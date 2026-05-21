@@ -115,6 +115,12 @@
   Status: open
   Last-reviewed: 2026-05-17
 
+- 2026-05-20 · orchestrator · [process] · P2 — AI chat panel bucket-E coverage gap (post-feature-completion)
+  Details: `docs/design/ai-chat-claude-desktop-parity.md` § Verification listed 5 mandatory bucket-E ImGui-Test-Engine scenarios (`ai_chat_pin_bookmark`, `ai_chat_copy_clipboard`, `ai_chat_history_persist`, `ai_chat_clear_confirm`, `ai_chat_keyboard_nav`). None authored — feature shipped on visual sign-off + the new `ai-chat-history-render` perf scenario as evidence. AGENTS.md § Verification automation says "manual residue without a backlog entry is a fail"; this entry closes that loop. Also: bucket-C screenshot golden bootstrap rig still doesn't exist; AI chat user-bubble + pin-strip + theme-token visuals inherit that existing gap.
+  Concrete next action: `test-author` to spec the 5 ImGui-Test-Engine scenarios using the existing `tests/ui/views_columns_reorder.test.cpp` shape + `ninja-ui-test-msys2` preset as the reference. Each scenario is ~30-50 lines of ImGui-Test-Engine driver code (open panel → seed messages via `g_ui` mutation or direct dispatch → click via test engine → assert state). Estimated 3-4 hours total. Per-scenario cost amortised because the seed + open-panel scaffolding is shared.
+  Status: open
+  Last-reviewed: 2026-05-20
+
 - 2026-05-16 · orchestrator · [process] · P3 — ReDoS / perf budget figures in agent packets must be STL-backend-qualified
   Details: callstack-adversarial-subcases packet specified `≥64 KiB / 50 ms` for the ReDoS sentinel. On MinGW UCRT64 `std::regex` (`Source_Core/src/CallstackParser.cpp:57-58` regex, `-O2`), probe shows: 256 B → 1 ms, 512 B → 4 ms, 1 KiB → 21 ms, 2 KiB → 101 ms, 4 KiB → 403 ms, ≥ ~32 KiB stack-overflows runner (0xC00000FD). Orchestrator-spec was ~3 orders of magnitude away from achievable. Agent retuned to 1 KiB / 100 ms and routed regex hardening to `p4-blame` via the security-category backlog entry.
   Concrete next action: at packet-composition time, the orchestrator runs a 4-point probe (256B / 512B / 1KiB / 2KiB) for any regex-bearing budget claim before pinning numbers. Land in AGENTS.md § Orchestrator delegation packet § Invariant decisions. Estimated cost 15 min doc edit (packet template note) + one-time 5 min per packet that names a regex budget.

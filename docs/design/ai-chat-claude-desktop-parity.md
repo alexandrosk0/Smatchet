@@ -218,3 +218,60 @@ Per AGENTS.md § Verification automation rule, every check below must be either 
 - Cross-machine sync of pinned messages or history (would require a backend storage layer).
 - Two-process relaunch test (drive the second process from doctest; deferred until the test rig supports subprocess control — backlog entry, `tooling`).
 - Screen-reader compatibility — Pillar 4 § out-of-scope.
+
+## Implementation log
+
+Branch `feat/ai-chat-claude-desktop-parity`, shipped on PR [#334](https://github.com/alexandrosk0/Smatchet/pull/334).
+
+- `55dcacd` · Phase 1 — `AiChatTimestamp.{h,cpp}` pure helpers + doctest (every relative-time branch boundary pinned)
+- `ec1b4dd` · Phase 2 — `AiMessage` schema additions (`CreatedAtUnixMs`, `Pinned`) + stamping at `dispatchSend` + both `AiAssistantController` finalisation sites
+- `7ee54a9` · `MISSING_BASELINE` backlog entry for the develop-level perf-review gap surfaced during Phase 1+2 pillar2-scan
+- `723c4a7` · Phase 3 — SQLite persistence + `smatchet::ai::chat_persist` coalescing worker; `LocalCacheManager` ai_chat_messages CRUD; AppController Start/Stop wiring; hydration path with inline-vs-async cutoff; 9 chat doctest cases (39 assertions); measured hydration at 143–161 µs / 200-row load
+- `ab09c04` · Phase 4 — Font Awesome 6 Solid integration with runtime fallback; vendored `IconsFontAwesome6.h` (zlib); CMake POST_BUILD copy + `SMATCHET_ASSETS_SOURCE_DIR` define; `g_FaIconsLoaded` flag + text-label fallback path; `THIRD_PARTY_LICENSES.md`
+- `1f0270b` · Gitignore for `assets/fonts/*.ttf` per the "NOT committed" design contract
+- `a7a580c` · Phase 5 — `SmatchetThemeAiColors` struct + `GetActiveAiColors()` accessor; per-theme palettes for all 7 themes; 7 doctest cases pinning the contract + Pillar-4 alpha-band invariant
+- `6ccd27b` · Phase 6 — `DrawHistoryArea` rewrite (pin strip + bubble bg + always-reserved action row + scroll-to-pinned latch + Y-cache); `ai_chat.history.{draw,pin_strip,render_turn}` perf scopes; new `ai-chat-history-render` scenario
+- `bfe058f` · Perf auto-gating slice — added `ai-chat-history-render` to PR-fast set; updated `perf-gatekeeper.md` diff map; new AGENTS.md "Perf slice-boundary auto-run — scenario-aware" rule
+- `a930f95` · Phase 7 — clear-chat header button + confirm popup + copy toast strip with always-reserved layout slot + fade-out tail
+
+## Deviations from plan
+
+| Change | Rationale |
+|---|---|
+| Worker pattern: replaced per-write detached-thread design with single coalescing worker | Phase 3 § Persistence — Pillar 3 use-after-free path closed (detached thread could outlive `LocalCacheManager`); shipped as `smatchet::ai::chat_persist::{Start, Stop, Enqueue}` with 250 ms drain budget + join boundary in `~AppController` before LCM destructs. |
+| FA glyph range widened to `[0xe005, 0xf8ff]` (not just `[0xF000, 0xF8FF]`) | Phase 4 — `ICON_FA_THUMBTACK_SLASH` lives at `U+e68f`, below the `0xF000` floor the plan named. Wider range matches upstream `ICON_MIN_FA` / `ICON_MAX_FA` constants. |
+| Per-theme palette additions touched ALL 7 themes (not just SmatchetDark + light) | Phase 5 — keeping in lock-step with the existing `SmatchetThemeSyntaxColors` shape that already covers every theme; partial coverage would have left HighContrast / Norton without AI tokens and silently fallen back to the default seed. |
+| Y-cache size matched per-frame (not at-push-back only) | Phase 6 — simpler invariant; vector `assign(N, -1.0f)` whenever size diverges, no per-mutation tracking required. Cost is sub-µs even at N=500. |
+| Hover/focus alpha-gate uses previous-frame state, not current-frame query | Phase 6 — ImGui chicken-and-egg: `IsItemHovered` requires the item rendered; rendering only on hover means hover never fires. 1-frame lag on first hover is imperceptible. |
+| Perf gating added in its own slice (`bfe058f`) — not part of Phase 6's commit | Surfaced when the user asked "how is the performance" after Phase 6; ended up as a separate self-contained concern (CI workflow JSON + perf-gatekeeper map + AGENTS.md rule, no code). |
+| Pillar 2 Phase 3.10 measurement via doctest microbench, not via `perf.snapshot` against a UI scenario | Phase 3 — no AI-chat scenario existed yet; microbench against in-memory SQLite gave a deterministic number for the dominant cost (`LoadChatMessages`). The full scenario shipped in Phase 6 (`ai-chat-history-render`). |
+| Bucket-E ImGui-Test-Engine scenarios listed in § Verification — deferred entirely | None of the 5 listed scenarios authored; bucket-E coverage for AI chat is open work. User performed visual sign-off after Phase 6 + Phase 7 in lieu of automated scenarios. Flagged in `docs/backlog/agent-self-improvement/process.md` (category `process`). |
+| Bucket-C screenshot golden bootstrap — deferred entirely | Per the plan's "if bootstrap rig doesn't exist, add backlog entry as merge precondition" guidance — bootstrap rig still doesn't exist; deferral inherits the existing backlog item. |
+
+## Verification
+
+What actually got verified vs. what the plan listed.
+
+**Bucket A — pure-logic doctest** (mandatory, ✅ delivered):
+- `tests/Source_Core/AiChatTimestamp.test.cpp` — every relative-time branch boundary pinned (Phase 1).
+- `tests/Source_Core/LocalCacheManagerChat.test.cpp` — 9 cases / 39 assertions covering Append + Load + UpdatePin + Trim + ClearAll, "pinned exempt from trim" invariant, graceful UpdatePin on missing id, plus the hydration latency microbench (143–161 µs at 200 rows).
+- `tests/Source_Core/SmatchetThemeAiColors.test.cpp` — 7 cases pinning SmatchetDark / Vs2022Light / HighContrast palettes verbatim + pairwise divergence + round-trip + idempotency + Pillar-4 alpha-band invariant.
+
+**Bucket B — dual-target build gate** (mandatory, ✅ delivered):
+- `SmatchetStandalone` clean every slice; `SmatchetCore_DX12` clean on all Phase-1-through-7 TUs (DX12 build halts later on the pre-existing `WhisperAiAssistantAutosendScenario.cpp` develop bug per `docs/backlog/agent-self-improvement/bug.md:16` — unrelated, predates this work by `4c56b83b`).
+- `clang-format` / `cppcheck` / `clang-tidy` clean via the deferred lint pipeline at every slice boundary.
+
+**Bucket E — ImGui Test Engine scenarios** (mandatory in plan, ❌ deferred):
+- None of the 5 listed scenarios authored. Substituted manual visual sign-off after Phase 6 + Phase 7. Tracked: `docs/backlog/agent-self-improvement/process.md` (category `process`) — "AI chat panel bucket-E coverage gap".
+
+**Bucket-C screenshot diff** (mandatory in plan, ❌ deferred):
+- Bootstrap rig still not in tree. Inherits the existing backlog item to introduce it.
+
+**Perf gating** (added beyond original plan, ✅ delivered):
+- New `ai-chat-history-render` scenario emits permanent `ai_chat.history.{draw, pin_strip, render_turn}` perf rows.
+- PR-fast CI runs it on every PR touching `Source_Core/**` and auto-bootstraps the baseline on first run.
+- AGENTS.md slice-boundary rule + `agents/perf-gatekeeper.md` diff map route local + agent-routed perf checks to the new scenario.
+- Measured at Phase 7: `drawAiAssistantPanel` outer = 0.084 ms / frame (1.2 % of the 6.94 ms Pillar 1 budget).
+
+**Manual residue + backlog**:
+- Bucket-E scenarios for clear-chat, copy-clipboard, pin-bookmark scroll, history-persist, keyboard-nav — all deferred. `process.md` backlog entry to be added in a follow-up commit (this revision is the trigger).
