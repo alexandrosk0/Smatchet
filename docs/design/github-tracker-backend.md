@@ -4,7 +4,7 @@
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 >
-> **Scope evolution**: 2026-05-20 initial draft (GitHub tracker only). 2026-05-21 a.m. expanded to triage tracker-agnostic refactor (8 locked decisions via grill-with-docs + 3 architect passes). 2026-05-21 mid-day scope reduced (refactor deferred). 2026-05-21 p.m. expanded to full agentic ripout incl. docs + AGENTS.md. **2026-05-21 evening narrowed**: rip out only the **C++** agentic surface added by PRs whose title starts with `(agentic)` — keep all AGENTS.md sections, all docs/, all scripts, all agents/*.md, all ADRs, all `.github/workflows/` untouched. Code-only ripout, narrow + reversible.
+> **Scope evolution**: 2026-05-20 initial draft (GitHub tracker only). 2026-05-21 a.m. expanded to triage tracker-agnostic refactor (8 locked decisions via grill-with-docs + 3 architect passes). 2026-05-21 mid-day scope reduced (refactor deferred). 2026-05-21 p.m. expanded to full agentic ripout incl. docs + AGENTS.md. 2026-05-21 evening narrowed: rip out only the **C++** agentic surface added by PRs whose title starts with `(agentic)` — keep all AGENTS.md sections, all docs/, all scripts, all agents/*.md, all ADRs, all `.github/workflows/` untouched. Code-only ripout, narrow + reversible. **2026-05-21 late evening grill-with-docs pass (4 plan revisions)**: (1) `SmatchetUI.cpp` added to PR1's modified-files list (was missing — mounts agentic UI panels at lines 31-32 includes + 710 + 714 Render calls); (2) AppController.cpp deletion now driven by a pre-walked symbol-name list, not "approximately lines 1655-2200" (file has 240 agentic-ref lines scattered through 3408 total — non-contiguous); (3) PR1 verification gains a mandatory boot-smoke gate (launch `Smatchet.exe --ephemeral` + reach first ImGui frame + exit cleanly) on top of bucket-A; (4) `docs/CONTEXT.md` glossary trim deferred to `agentic-ripout-doc-cleanup-v2.md` per user-confirmed decision-1 boundary (glossary references to `AgentProposal.sourceTracker`, `PrCommentWatcher`, `PrCheckRunWatcher`, `AgenticPollSource` stay in v1 — known stale, accepted).
 
 ## Context
 
@@ -24,7 +24,10 @@ Cross-link: prior plan revisions in this file's git history (`1c8135fd / 76c57d6
 4. **`UpdateField` semantics = set-replace at the virtual** — `values` is the intended full set after edit. `GitHubClient::UpdateField` for labels / assignees pre-fetches the current set and diffs internally via `ComputeLabelEditDiff` pure helper.
 5. **Static field catalog, no API** — 6 native fields (state, labels, assignees, milestone, title, body). Projects v2 deferred.
 6. **Split into TWO PRs** — PR1 ships the C++ ripout (deletions + the 3 affected modify-files: ConfigManager, AppController, CMakeLists); PR2 ships the new tracker (clean additions on top).
-7. **Verification = Bucket A pure-logic only** — no bucket-B/E in either PR. Backlog entry for tracker-switch UI coverage.
+7. **Verification = Bucket A pure-logic + boot-smoke gate** (boot-smoke added 2026-05-21 grill) — no bucket-B/E in either PR, but PR1 must additionally pass `Smatchet.exe --help` + `--ephemeral` first-frame smoke. Backlog entry for tracker-switch UI coverage.
+8. **AppController.cpp deletion = symbol-list pre-walk** (added 2026-05-21 grill) — before any deletion, produce a verified list of every symbol/method/lambda/member to remove, surfaced for user sign-off. Line ranges from the original plan ("~lines 1655-2200") are inaccurate (240 agentic refs are scattered through 3408 LOC, not contiguous).
+9. **`SmatchetUI.cpp` in PR1 modified-files list** (added 2026-05-21 grill) — the file mounts agentic UI panels at lines 31-32 (includes) + 710 + 714 (Render calls). PR1 must delete these or compile breaks.
+10. **`docs/CONTEXT.md` glossary trim → v2 cleanup plan** (added 2026-05-21 grill) — glossary lines 18-20 reference deleted runtime (`AgentProposal.sourceTracker`, `PrCommentWatcher`, `PrCheckRunWatcher`, `AgenticPollSource`). Per decision 1's "all docs untouched" boundary, glossary trim stays out of v1; tracked as a known-stale anchor in [`agentic-ripout-doc-cleanup-v2.md`](agentic-ripout-doc-cleanup-v2.md).
 
 ## Approach
 
@@ -116,15 +119,16 @@ Delete every `.h` / `.cpp` / `.test.cpp` added by `(agentic)`-titled PRs. Modify
 - `.coderabbit.yaml` — stays.
 - `docs/backlog/agent-self-improvement/*.md` — stay (entries reference deleted surfaces but the backlog is descriptive, not enforcing).
 
-**Files modified (3 — narrow surgery only)**:
+**Files modified (6 — narrow surgery only)**:
 
 1. [`Source_Core/include/ConfigManager.h`](../../Source_Core/include/ConfigManager.h:217) — delete the entire `#if defined(SMATCHET_WITH_AGENTIC)` block (lines 217 onwards through the matching `#endif`): `GitHubPat`, `AgenticPollEnabled`, `AgenticPollIntervalSec`, `AgenticPollSource`, `AgenticPollQuery`, `HandoffHarnessBinPath`, `HandoffRunnerName`, `HandoffClarificationPostToGithub`, and all related handoff fields. Drop the `#if` / `#endif` wrapper.
 2. [`Source_Core/src/ConfigManager.cpp`](../../Source_Core/src/ConfigManager.cpp) — drop Load / Save / DPAPI-encrypt for every removed field. Legacy-config tolerance: silently ignore the deleted JSON keys on Load.
 3. [`Source_Core/include/AppController.h`](../../Source_Core/include/AppController.h) — delete `EnsureAgenticGithubClient` + `agenticGithubClient_` + `InitAgentProposalStoreOnWorker` + `RestartAgenticPoll` + every triage / handoff / react lambda binding declaration + every controller member that holds an `AgenticTriageController` / `AgenticHandoffController` / `PrCommentWatcher` / `PrCheckRunWatcher` / `AgentProposalStore` reference.
-4. [`Source_Core/src/AppController.cpp`](../../Source_Core/src/AppController.cpp) — drop everything between approximately lines 1655-2200 (the GitHubClient lazy ctor + AuditSink lambdas + triage lambdas + watcher binding + scheduled-poll worker + handoff controller wire-up + AgentProposalStore worker init). Drop scenario registrations for AgentTriageScenarioStep / AgentHandoffScenarioStep. Drop AuditSink struct usage. AppController shrinks by ~600 LOC.
-5. [`CMakeLists.txt`](../../CMakeLists.txt) — delete the entire `REMOVE_ITEM CORE_SOURCES` block (lines ~654-678) + the `if(SMATCHET_WITH_AGENTIC)` re-add block (lines ~678-700) + the second `if(SMATCHET_WITH_AGENTIC)` test-gating block (line 751). Delete the `SMATCHET_WITH_AGENTIC` option declaration + the DX12-side `set(SMATCHET_WITH_AGENTIC OFF)` line (line 175). Drop the PUBLIC `target_compile_definitions` of `SMATCHET_WITH_AGENTIC`.
+4. [`Source_Core/src/AppController.cpp`](../../Source_Core/src/AppController.cpp) — **driven by a verified symbol-name list, not line ranges** (per 2026-05-21 grill — file is 3408 LOC with 240 agentic-ref lines scattered, not contiguous). Pre-walk step: `grep -nE "Agentic|AgentProposal|AgentHandoff|AgentTriage|PrCommentWatcher|PrCheckRunWatcher|OpenPrRegistrar|GitHubClient|CodingHarness|ClaudeCodeLocalRunner|HarnessRunState" Source_Core/src/AppController.cpp` → emit a per-symbol delete list (function bodies, lambda captures, ctor/dtor blocks, member initializers, scenario registrations). Surface the list to user for sign-off before any deletion. Drop AuditSink struct usage. AppController shrinks by ~600 LOC at the implementation level + 240 scattered references.
+5. [`Source_Core/src/SmatchetUI.cpp`](../../Source_Core/src/SmatchetUI.cpp) — **NEW (added by 2026-05-21 grill)**. Delete `#include "SmatchetAgentHandoffUi.h"` + `#include "SmatchetAgentProposalsUi.h"` (lines 31-32 on develop tip) + the two `SmatchetAgentProposalsUi::Render` + `SmatchetAgentHandoffUi::Render` mount calls (lines 710 + 714 on develop tip) including their surrounding `SMATCHET_UI_PERF_SCOPE` markers. Without this PR1 fails to compile.
+6. [`CMakeLists.txt`](../../CMakeLists.txt) — delete the entire `REMOVE_ITEM CORE_SOURCES` block (lines ~654-678) + the `if(SMATCHET_WITH_AGENTIC)` re-add block (lines ~678-700) + the second `if(SMATCHET_WITH_AGENTIC)` test-gating block (line 751). Delete the `SMATCHET_WITH_AGENTIC` option declaration + the DX12-side `set(SMATCHET_WITH_AGENTIC OFF)` line (line 175). Drop the PUBLIC `target_compile_definitions` of `SMATCHET_WITH_AGENTIC`.
 
-Net PR1 surface: ~80 files deleted, 5 files modified, **0 doc / script / workflow / ADR / agent-md / AGENTS.md files touched**. ~5000-10000 LOC removed.
+Net PR1 surface: ~80 files deleted, 6 files modified, **0 doc / script / workflow / ADR / agent-md / AGENTS.md files touched**. ~5000-10000 LOC removed.
 
 ### PR2 — Add GitHub as third tracker (clean addition)
 
@@ -240,6 +244,7 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 - **Build gate**: dual-target build pass: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. Must compile with zero agentic C++ symbols.
 - **Sanitizer gate**: `cmake --build --preset ninja-test-msys2` — ASan/UBSan clean post-deletion.
 - **Test gate**: `bash scripts/dev/test-all.sh` — all surviving (non-agentic) tests pass.
+- **Boot-smoke gate (mandatory; added 2026-05-21 grill)**: `Smatchet.exe --help` exits 0 within 5s + `Smatchet.exe --ephemeral` reaches the first ImGui frame + cleanly exits on `app.quit`. Catches missed UI-mount deletions (e.g. SmatchetUI.cpp ghost `Render(app, d)` calls referencing deleted panels) that compile-pass but crash on first draw. Script: extend `scripts/dev/test-boot-smoke.sh` (if absent, ship as part of PR1) — wraps both spawn checks + a 5s watchdog. Exit-0 required to merge.
 - **NOT a gate**: doc cross-ref grep over `docs/` / `AGENTS.md` / `agents/`. Stale references are intentional (decision 1).
 - **Perf gate**: `idle` + `priority-grid-scroll` scenarios — no regression.
 

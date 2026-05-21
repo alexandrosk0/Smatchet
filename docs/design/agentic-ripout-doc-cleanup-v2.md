@@ -61,6 +61,21 @@ Not modified by any `(agentic)`-titled PR but holds:
 - **ADR 0003 (github-as-itrackerclient)** — STAYS Accepted; v1 PR2 honors it for the tracker-only role. Optional one-line update noting the original "agentic triage half" rationale is partially obsolete; new tracker stands on the same interface choice.
 - **ADR 0007 (audit-trail-actor-column)** — already Withdrawn from prior session.
 
+### docs/CONTEXT.md glossary — trim deleted-runtime entries (added 2026-05-21 v1-grill deferral)
+
+V1 decision-1 boundary keeps glossary verbatim, but the entries describe deleted runtime and will confuse onboarding readers. V2 should:
+
+- **Strip § Agentic flow** (lines ~7-12) — `Triage half / Handoff half / Source tracker / Code host` subsections describe deleted controllers.
+- **Trim `Source tracker` entry** (line ~18) — keep the term (still used by `ITrackerClient::GetTrackerType`) but drop the `AgentProposal.sourceTracker` + `AgenticPollSource` references.
+- **Trim `Code host` entry** (line ~19) — keep the term (cross-link to ADR 0003 stays useful) but drop the `PrCommentWatcher` / `PrCheckRunWatcher` / `GraphQL` references.
+- **Keep `UpdateField semantics — set-replace`** (line ~20) — load-bearing for v1 PR2's `GitHubClient::UpdateField` impl. Already aligned.
+- **Keep `TrackerIssueKey`** (line ~21) — load-bearing for v1 PR2. Already aligned.
+- **Strip `Plan-lock`** (line ~27) — references deleted `.github/workflows/locks-render.yml` + lock-cleanup.yml; v2 audits whether workflows survive (see § Workflows below).
+- **Trim `SMATCHET_WITH_*` gates** (line ~61) — drop the `SMATCHET_WITH_AGENTIC` enumeration after v1 CMake-side retirement.
+- **Strip § Agentic-harness wiring + Worktree** (lines ~79-82) — references `ClaudeCodeLocalRunner` (deleted) + `agent/<proposalId>` worktree base (`SDK-spawn-only path stays`).
+
+Estimated diff: ~50-80 lines edited, ~4-6 entries stripped. Doc-anchor CI re-verifies cross-links.
+
 ### Scripts added by (agentic)-titled PRs — DELETE all 11
 
 Verified via `gh pr view $pr --json files --jq '.files[] | select(.path | startswith("scripts/"))'` over the 42-PR set. All drive deleted C++ surface; non-functional post-v1-ripout.
