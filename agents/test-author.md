@@ -165,6 +165,8 @@ For visual regressions (red text, icon visible, layout shift), use `debug.window
 
 Coordinate-based slicing of the PPM is brittle; prefer counting global colour-class occurrences (e.g. "≥ 100 pixels with R≥240 G≤80 B≤80 → red ErrorItems present"). Pink-clear (`glClearColor(1,0,1,1)`) is the existing pattern for UI-gap detection — see AGENTS.md § Debug techniques.
 
+**Golden-image bootstrap requires user approval.** When a Pattern-C test ships a checked-in reference golden (`tests/golden/<scen>.png` or equivalent reference artefact), the bootstrap path falls under AGENTS.md § Project rules § "Golden-image approval contract": build → hand the file + the launched-app handle to the user → wait for explicit "looks right" verdict before `git add tests/golden/<file>`. The 2026-05-19 theme-switch incident shipped a golden of the BUG; the diff gate would have certified the bug as expected behaviour. Treat every golden bootstrap as visual-validation-exception territory. **Prefer dual-capture-no-golden patterns** (see `scripts/dev/test-theme-roundtrip.sh`) when both states are produced at runtime within the same test — those tests have no checked-in artefact to enshrine, so the failure mode is structurally impossible.
+
 ### Pattern D — Sanitizer build run
 
 For UAF / leak / heap-overflow checks at shutdown, run the scenario under ASan / UBSan. `cmake/Sanitizers.cmake` already wires the flags; the existing CMakePresets has sanitizer variants. Test script invocation:
