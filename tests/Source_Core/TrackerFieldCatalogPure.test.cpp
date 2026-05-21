@@ -318,3 +318,75 @@ TEST_CASE("ExtractComponentOption → Merge → Sort end-to-end mimics catalog a
     CHECK(fields[0].AllowedValueOptions[1].Id == "20");
     CHECK(fields[0].AllowedValueOptions[2].Id == "30");
 }
+
+TEST_CASE("BuildDedupedIssueTypeOptions: name collision keeps project-scoped over global template") {
+    // Fixture mirrors the real /rest/api/3/issuetype shape that broke BLOOP Story create:
+    // two "Story" rows — global id=10008 (no scope) AND project-scoped id=10004
+    // (scope.project.id=10000). The project's editmeta only accepts the scoped id;
+    // the dedup MUST drop the global template when names collide.
+    nlohmann::json input = nlohmann::json::array({
+        {{"id", "10003"}, {"name", "Task"}, {"scope", {{"project", {{"id", "10000"}}}}}},
+        {{"id", "10008"}, {"name", "Story"}}, // global template — collides; must lose
+        {{"id", "10004"}, {"name", "Story"}, {"scope", {{"project", {{"id", "10000"}}}}}},
+        {{"id", "10007"}, {"name", "Bug"}, {"scope", {{"project", {{"id", "10000"}}}}}},
+    });
+
+    std::vector<std::string> allowedValues;
+    std::vector<TrackerFieldOption> options;
+    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(input, allowedValues, options);
+
+    REQUIRE(options.size() == 3);
+    REQUIRE(allowedValues.size() == 3);
+    CHECK(options[0].Id == "10003"); // Task
+    CHECK(options[1].Id == "10004"); // Story — project-scoped wins over 10008
+    CHECK(options[1].Value == "Story");
+    CHECK(options[2].Id == "10007"); // Bug
+}
+
+TEST_CASE("BuildDedupedIssueTypeOptions: first-wins when neither entry is scoped") {
+    nlohmann::json input = nlohmann::json::array({
+        {{"id", "10008"}, {"name", "Story"}}, // global, comes first
+        {{"id", "10009"}, {"name", "Story"}}, // also global — first kept
+    });
+    std::vector<std::string> allowedValues;
+    std::vector<TrackerFieldOption> options;
+    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(input, allowedValues, options);
+    REQUIRE(options.size() == 1);
+    CHECK(options[0].Id == "10008");
+}
+
+TEST_CASE("BuildDedupedIssueTypeOptions: id-only dedup also fires") {
+    nlohmann::json input = nlohmann::json::array({
+        {{"id", "10003"}, {"name", "Task"}},
+        {{"id", "10003"}, {"name", "Task-duplicate-id"}}, // same id — skipped
+    });
+    std::vector<std::string> allowedValues;
+    std::vector<TrackerFieldOption> options;
+    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(input, allowedValues, options);
+    REQUIRE(options.size() == 1);
+    CHECK(options[0].Value == "Task");
+}
+
+TEST_CASE("BuildDedupedIssueTypeOptions: skips entries missing id or name") {
+    nlohmann::json input = nlohmann::json::array({
+        {{"id", "10003"}, {"name", "Task"}},
+        {{"id", "10009"}},                    // no name
+        {{"name", "Bug"}},                    // no id
+        nlohmann::json::object(),             // empty
+    });
+    std::vector<std::string> allowedValues;
+    std::vector<TrackerFieldOption> options;
+    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(input, allowedValues, options);
+    REQUIRE(options.size() == 1);
+    CHECK(options[0].Id == "10003");
+}
+
+TEST_CASE("BuildDedupedIssueTypeOptions: non-array input clears outputs") {
+    nlohmann::json input = nlohmann::json::object();
+    std::vector<std::string> allowedValues = {"stale"};
+    std::vector<TrackerFieldOption> options;
+    options.push_back(TrackerFieldOption{});
+    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(input, allowedValues, options);
+    CHECK(allowedValues.empty());
+    CHECK(options.empty());
+}

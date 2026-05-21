@@ -9,6 +9,7 @@
 #include "StringUtil.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -280,38 +281,8 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
                 auto issueTypeJson = nlohmann::json::parse(issueTypeResp.text);
                 if (issueTypeJson.is_array()) {
                     TrackerField& issueTypeField = outFields[issueTypeFieldIt->second];
-                    issueTypeField.AllowedValues.clear();
-                    issueTypeField.AllowedValueOptions.clear();
-                    std::set<std::string> seenIds;
-                    for (const auto& issueTypeObj : issueTypeJson) {
-                        if (!issueTypeObj.is_object()) {
-                            continue;
-                        }
-                        std::string issueTypeId;
-                        if (issueTypeObj.contains("id")) {
-                            if (issueTypeObj["id"].is_string()) {
-                                issueTypeId = issueTypeObj["id"].get<std::string>();
-                            } else if (issueTypeObj["id"].is_number_integer()) {
-                                issueTypeId = std::to_string(issueTypeObj["id"].get<long long>());
-                            } else if (issueTypeObj["id"].is_number_unsigned()) {
-                                issueTypeId = std::to_string(issueTypeObj["id"].get<unsigned long long>());
-                            }
-                        }
-                        const std::string issueTypeName = issueTypeObj.value("name", std::string());
-                        if (issueTypeId.empty() || issueTypeName.empty() || !seenIds.insert(issueTypeId).second) {
-                            continue;
-                        }
-                        issueTypeField.AllowedValues.push_back(issueTypeName);
-                        TrackerFieldOption option;
-                        option.Id = issueTypeId;
-                        option.Value = issueTypeName;
-                        try {
-                            option.PayloadJson = issueTypeObj.dump();
-                        } catch (...) {
-                            option.PayloadJson.clear();
-                        }
-                        issueTypeField.AllowedValueOptions.push_back(std::move(option));
-                    }
+                    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(issueTypeJson, issueTypeField.AllowedValues,
+                                                                          issueTypeField.AllowedValueOptions);
                     issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
                 }
             } else {
