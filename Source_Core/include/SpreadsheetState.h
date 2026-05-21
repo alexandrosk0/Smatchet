@@ -121,6 +121,16 @@ struct SpreadsheetState {
     std::string SingleSelectActiveKey;
     char SingleSelectSearchBuf[128] = {};
 
+    /** Double-click arm-then-popup: in double-click-to-edit mode, a double-clicked combo cell
+     *  writes its `ticket.id + "::" + field.Id` here on frame N. On frame N+1 the matching
+     *  per-type editor sees the key, opens the popup once, and clears the field on combo close. */
+    std::string EditArmedKey;
+    /** True on the single frame after EditArmedKey is set; the per-type editor force-opens the
+     *  combo popup once and resets this flag. Used to distinguish "first frame after arm"
+     *  (force-open the popup) from "later frames where the popup is closed" (user dismissed →
+     *  release arm). */
+    bool EditArmedJustOpened = false;
+
   private:
     void CopyToEditBuffer(const std::string& val) {
         std::snprintf(EditBuffer, sizeof(EditBuffer), "%s", val.c_str());
@@ -129,9 +139,3 @@ struct SpreadsheetState {
 };
 
 #endif
-
-
-
-
-
-

@@ -17,6 +17,31 @@ Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitign
 
 Windows users can substitute `pwsh scripts/setup-harness.ps1 <name>`.
 
+## Required CLI tools
+
+`setup-harness.sh` runs `scripts/dev/check-required-tools.sh` as its first step. The probe fails loudly if any of these isn't on `PATH`:
+
+| Tool | Why | Install (Windows + MSYS2 UCRT64) |
+|---|---|---|
+| `git` | table stakes | bundled with Git for Windows |
+| `cmake` | every build preset | `pacman -S mingw-w64-ucrt-x86_64-cmake` |
+| `ninja` | preset generator | `pacman -S mingw-w64-ucrt-x86_64-ninja` |
+| `gcc` / `g++` | C/C++ toolchain | `pacman -S mingw-w64-ucrt-x86_64-gcc` |
+| `python` | dev scripts (perf-compare, etc.) | python.org installer (3.11+) or `pacman -S mingw-w64-ucrt-x86_64-python` |
+| `jq` | merge-gates poller + ad-hoc GraphQL parsing | `pacman -S mingw-w64-ucrt-x86_64-jq` *or* `winget install jqlang.jq` |
+| `gh` | PR ops + merge-gates poller | `winget install GitHub.cli` then add `C:/Program Files/GitHub CLI` to PATH |
+| `clang-format`, `clang-tidy` | lint hooks | `pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra` |
+| `cppcheck` | lint hooks | `pacman -S mingw-w64-ucrt-x86_64-cppcheck` |
+| `flock` | `lint-cpp-drain.sh` queue serialisation | usually built-in (Linux/macOS); MSYS2 needs `pacman -S util-linux` |
+
+Optional (warn-only — not required for the standard ship-loop):
+
+| Tool | Why |
+|---|---|
+| `OpenCppCoverage` | Coverage gates only — see "Optional: coverage tooling" below. |
+
+Ad-hoc invocation: `bash scripts/dev/check-required-tools.sh` (add `--quiet` to suppress PASS lines). Re-run anytime; idempotent.
+
 ## Why links + copies, not a tracked mirror
 
 The setup script uses **directory junctions** (Windows) / **symlinks** (Unix) for agent definitions and shared skills so edits to `agents/*.md` are picked up by the harness immediately — no sync step, no banner injection, no drift-check.

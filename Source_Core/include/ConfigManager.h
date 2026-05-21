@@ -77,6 +77,9 @@ struct TrackerConfig {
     // When true, show tooltips on hover when grid field text overflows (clipped or multiline).
     // Exposed in UI as Settings -> Preferences -> Appearance.
     bool EnableFieldOverflowTooltips = true;
+    // When true (default), single click on a grid cell starts editing. False requires double-click.
+    // Exposed in Settings -> Preferences -> Appearance.
+    bool SingleClickToEditGridCells = true;
     // When true, tracker-changing actions are disabled. Defaults on only for first launch with no setup config.
     bool ReadOnlyMode = false;
     // True after at least one AuthenticatedReachable probe / live request has been observed.

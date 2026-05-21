@@ -238,6 +238,57 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Default file-sink wire — addresses the debug-detective backlog entry at
+    // docs/backlog/agent-self-improvement/tooling.md "Smatchet Logger has no
+    // console output + no default file sink". Until this default wire shipped,
+    // every `LOG_INFO` / `LOG_DEBUG` from Smatchet itself was captured only in
+    // the in-memory deque + (unwired in standalone) async file sink; running
+    // `Smatchet.exe 2>&1 > out.log` captured only OpenGL banner + whisper.cpp
+    // stderr. Every debug-detective investigation paid the cost of wiring a
+    // temp file sink mid-investigation; this default removes that tax.
+    //
+    // Resolution order: SMATCHET_DEBUG_LOG env wins (operator override); else
+    // %LOCALAPPDATA%\Smatchet\Smatchet-<pid>.log on Windows / $TMPDIR fallback.
+    // The per-PID suffix means concurrent Smatchet processes (e.g. spawn-mode
+    // ephemeral + the user's manual instance) get distinct log files instead
+    // of interleaving + corrupting a shared sink.
+    {
+        std::string logPath;
+        const char* envLog = std::getenv("SMATCHET_DEBUG_LOG");
+        if (envLog && envLog[0] != '\0') {
+            logPath = envLog;
+        } else {
+#if defined(_WIN32)
+            const char* localAppData = std::getenv("LOCALAPPDATA");
+            if (localAppData && localAppData[0] != '\0') {
+                const std::string dir = std::string(localAppData) + "\\Smatchet";
+                SmatchetEnsureDirectoryExists(dir);
+                char pidBuf[32];
+                std::snprintf(pidBuf, sizeof(pidBuf), "Smatchet-%lu.log",
+                              static_cast<unsigned long>(GetCurrentProcessId()));
+                logPath = dir + "\\" + pidBuf;
+            }
+#else
+            // Non-Windows: $TMPDIR + timestamp suffix. Avoids the unistd.h
+            // / getpid portability dance — Smatchet's primary target is
+            // Windows so the POSIX fallback is best-effort, and a timestamp
+            // is sufficient to disambiguate concurrent processes.
+            const char* tmp = std::getenv("TMPDIR");
+            const std::string dir = (tmp && tmp[0] != '\0') ? std::string(tmp) : std::string("/tmp");
+            char tsBuf[64];
+            std::snprintf(tsBuf, sizeof(tsBuf), "/Smatchet-%lld.log", static_cast<long long>(std::time(nullptr)));
+            logPath = dir + tsBuf;
+#endif
+        }
+        if (!logPath.empty()) {
+            Logger::Instance().SetFileSinkPath(logPath);
+            // Use LOG_INFO so the launch path itself records where it landed;
+            // future debug sessions read this line first to know which file
+            // to tail. Logger::Instance() is process-static; safe pre-Load.
+            LOG_INFO("Logger file sink: %s", logPath.c_str());
+        }
+    }
+
     // Unified Command System — when the first non-flag positional after the
     // program name is `cmd`, short-circuit the GUI boot and run as an HTTP
     // client to a running Smatchet instance. This is the agent-friendly path

@@ -306,7 +306,7 @@ bool IsTrackerDateTimePickerField(const TrackerField& field) {
 
 void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
                                SpreadsheetState& state, const QueueDateTimeEditFn& queueEdit,
-                               const std::string& dateFormatOption, int thresholdDays) {
+                               const std::string& dateFormatOption, int thresholdDays, bool singleClickToEdit) {
     const std::string editorKey = ticket.id + "::" + field.Id;
     const std::string itemId = "##DateCell_" + ticket.id + "_" + field.Id;
     const bool isDateOnly = (field.Type == "date");
@@ -346,7 +346,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
                                             [](unsigned char ch) { return std::isspace(ch) != 0; });
         if (ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
             // Empty due date (and similar) would otherwise require double-click like populated cells.
-            if (blankValue || ImGui::IsMouseDoubleClicked(0)) {
+            if (blankValue || singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
                 state.StartEditingField(ticket.id, field.Id, currentValue);
             }
         }
