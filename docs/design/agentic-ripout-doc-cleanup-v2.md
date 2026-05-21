@@ -12,6 +12,22 @@ The v1 plan ([`github-tracker-backend.md`](github-tracker-backend.md)) explicitl
 
 This v2 plan exists to clean up that bit-rot once v1 has shipped + stabilised. **Do not start v2 work until v1 PR1 + PR2 merge** — running them in parallel creates rebase conflicts in the same files.
 
+**2026-05-21 evening re-grill (4 locked decisions)**: after v1 PR1 (#356) merged + v1 PR2 (#357) hit CI, two P1 tooling backlog entries landed on develop that change v2's preserve/strip balance:
+
+1. **`docs/backlog/agent-self-improvement/process.md` — "Draft PRs silently bypass CodeRabbit review"** (`9312695`) — calls for the merge-gates poller to auto-invoke `agents/coderabbit-triage.md` on CR feedback.
+2. **`docs/backlog/agent-self-improvement/tooling.md` — "Long-running CI/CR polls block the interactive session"** (`644f822`) — proposes `smatchet-merge-watcher` as a separate host process; reuses `scripts/dev/merge-gates.*` + `agents/coderabbit-triage.md` as ingredients.
+
+Both REVIVE pieces of the agentic surface in a new (watcher-driven) shape. V2's "delete coderabbit-triage" + "strip § Merge gates" calls were overreach. Re-grilled decisions:
+
+| Item | v2 v1 (original) | v2 v2 (post-2026-05-21-grill) |
+|---|---|---|
+| `agents/coderabbit-triage.md` | DELETE | **KEEP** — strip spawned-harness language only |
+| `AGENTS.md § Handoff envelope` | DELETE | **STRIP ENTIRELY** (watcher won't spawn) |
+| ADRs 0004 + 0005 | Withdraw status | **WITHDRAW + KEEP as historical** (1-line note → v1 ripout commits) |
+| Timing | "after v1 merges" | **Wait for watcher P1 first** — that work clarifies preserve/strip boundaries |
+
+V2 stays in DRAFT until watcher P1 lands; once it does, the watcher's actual reuse surface determines the exact strip vs. preserve list.
+
 ## Scope (sketch — not locked)
 
 ### AGENTS.md — strip what `(agentic)`-titled PRs added
@@ -42,7 +58,7 @@ Not modified by any `(agentic)`-titled PR but holds:
 
 - **`agents/handoff-implementer.md`** (PR#248; v-bumped by #299) — **DELETE entire file**.
 - **`agents/pr-iterator.md`** (PR#255) — **DELETE entire file**.
-- **`agents/coderabbit-triage.md`** (`ac8aeb85` `docs(agentic)`) — **DELETE entire file**.
+- **`agents/coderabbit-triage.md`** (`ac8aeb85` `docs(agentic)`) — **KEEP** (per 2026-05-21 re-grill). Strip the agent's spawned-harness language: drop `dispatch_source` / `SEED.json` / "first delegate inside spawned harness" references; drop the `## Routed via` header contract. Keep the classification logic + Smatchet-invariant-aware fix-or-reject rules + the routing table to subsystem agents. Future `smatchet-merge-watcher` invokes this agent (e.g. via `claude --headless` or as a direct Python-delegated classifier) when CR posts CHANGES_REQUESTED on a watched PR.
 
 ### Other docs added by `(agentic)`-titled PRs
 
@@ -110,10 +126,11 @@ Verified via `gh pr view $pr --json files --jq '.files[] | select(.path | starts
 
 ## Sequencing
 
-1. **Wait for v1 PR1 + PR2 to merge.**
-2. **Grill v2 plan** via `grill-with-docs` once concrete decisions need locking (which non-(agentic)-titled sections to strip; how aggressive on workflow deletion; ADR status policy).
-3. **Architect pre-code review** before opening v2 PR.
-4. **One squashed v2 PR** for all doc + agent file + ADR + script deletions. Net negative LOC; reviewable as a single mechanical sweep.
+1. **Wait for v1 PR1 + PR2 to merge.** (PR1 #356 = MERGED `b1d241bc` 2026-05-21; PR2 #357 = in CI flight at the time of this re-grill.)
+2. **Wait for the watcher P1** (`docs/backlog/agent-self-improvement/tooling.md` — "Long-running CI/CR polls block the interactive session"). The watcher's implementation surface defines what v2 must preserve vs. strip — re-running v2's grill against the watcher PR's diff (not against the empty stub) is the only way to get the preserve list right. Risk of starting earlier: re-deleting code the watcher needs, then having to revert in the same week.
+3. **Grill v2 plan** via `grill-with-docs` once concrete decisions need locking (which non-(agentic)-titled sections to strip; how aggressive on workflow deletion; ADR status policy).
+4. **Architect pre-code review** before opening v2 PR.
+5. **One squashed v2 PR** for all doc + agent file + ADR + script deletions. Net negative LOC; reviewable as a single mechanical sweep.
 
 ## Risks / non-goals
 
