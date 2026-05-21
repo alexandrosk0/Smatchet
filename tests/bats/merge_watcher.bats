@@ -200,3 +200,201 @@ print('valid')
     [ "$status" -eq 2 ]
     [[ "$output" == *"malformed JSON"* ]]
 }
+
+# ---------- Phase 2: cascade lock + auto-merge state shape ----------
+
+@test "cascade_lock acquires + releases a per-branch lockfile" {
+    # Direct Python smoke — exercise the cascade_lock helper without gh deps.
+    run python -c "
+import os, sys, pathlib
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+locks_dir = mw.cascade_locks_dir()
+print('locks_dir_before:', locks_dir.exists())
+with mw.cascade_lock('feat/my-child', timeout_seconds=2.0):
+    lock_path = locks_dir / 'cascade-feat__my-child.lock'
+    print('locked:', lock_path.exists())
+print('after:', (locks_dir / 'cascade-feat__my-child.lock').exists())
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"locked: True"* ]]
+    [[ "$output" == *"after: False"* ]]
+}
+
+@test "cascade_lock branch-name sanitization (/ → __)" {
+    run python -c "
+import os
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+with mw.cascade_lock('chore/v2-agentic-ripout-doc-cleanup'):
+    import pathlib
+    lock = mw.cascade_locks_dir() / 'cascade-chore__v2-agentic-ripout-doc-cleanup.lock'
+    print('found:', lock.exists())
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"found: True"* ]]
+}
+
+@test "handle_pass on PR-already-merged (404 from merge API) → merge_failed" {
+    # Stub gh on PATH to return 404 for the merge call. Verifies the error
+    # path doesn't crash the daemon — just records merge_failed in state.
+    STUB_BIN=$(mktemp -d)
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$2 $3" in
+    "repo view") echo '{"owner":{"login":"o"},"name":"r"}'; exit 0 ;;
+    "api repos/o/r/pulls/999")          # detect_merged_branch_name
+        echo '{"head":{"ref":"feat/foo"}}'; exit 0 ;;
+    "api -X")                            # merge call
+        echo "HTTP 404" >&2; exit 1 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN/gh"
+    PATH="$STUB_BIN:$PATH" run python -c "
+import os, sys
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+print('merge_action:', extras.get('merge_action'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merge_action: merge_failed"* ]] || [[ "$output" == *"merge_action: skipped"* ]]
+    rm -rf "$STUB_BIN"
+}
+
+# ---------- Phase 3: CR-triage classifier ----------
+
+@test "classifier parses CR review body + rejects string_view as invariant violation" {
+    run python -c "
+import sys, importlib.util
+sys.modules['cr'] = sys.modules.get('cr', None)
+spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-triage.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['cr'] = m
+spec.loader.exec_module(m)
+body = '''In \`@Source_Core/src/X.cpp\`:\n- Around line 5: Use std::string_view instead of const std::string& for read-only parameters to avoid heap allocation.'''
+findings = [m.classify_finding(f) for f in m.parse_findings(body)]
+print('count:', len(findings))
+print('verdict:', findings[0].verdict.value if findings else 'NONE')
+print('reason:', findings[0].reason if findings else 'NONE')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"count: 1"* ]]
+    [[ "$output" == *"verdict: REJECT_INVARIANT"* ]]
+    [[ "$output" == *"string_view banned"* ]]
+}
+
+@test "classifier accepts a legit finding (no Smatchet rule violation)" {
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-triage.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['cr'] = m
+spec.loader.exec_module(m)
+body = '''In \`@Source_Core/src/X.cpp\`:\n- Around line 5: The function ignores the return value of fclose(), which can mask write errors on buffered streams. Capture the return + LOG_WARN if non-zero so silent data loss is visible.'''
+findings = [m.classify_finding(f) for f in m.parse_findings(body)]
+print('verdict:', findings[0].verdict.value if findings else 'NONE')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"verdict: VALID"* ]]
+}
+
+@test "classifier flags too-short body as AMBIGUOUS" {
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-triage.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['cr'] = m
+spec.loader.exec_module(m)
+body = '''In \`@Source_Core/src/X.cpp\`:\n- Around line 5: short'''
+findings = [m.classify_finding(f) for f in m.parse_findings(body)]
+print('verdict:', findings[0].verdict.value if findings else 'NONE')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"verdict: REJECT_AMBIGUOUS"* ]]
+}
+
+@test "classifier rejects structured bindings (banned by C++14 hard)" {
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-triage.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['cr'] = m
+spec.loader.exec_module(m)
+body = '''In \`@Source_Core/include/X.h\`:\n- Around line 5: Replace the manual loop with a structured binding for iteration to improve readability and avoid the auxiliary index variable.'''
+findings = [m.classify_finding(f) for f in m.parse_findings(body)]
+print('verdict:', findings[0].verdict.value if findings else 'NONE')
+print('reason:', findings[0].reason if findings else 'NONE')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"verdict: REJECT_INVARIANT"* ]]
+    [[ "$output" == *"structured bindings"* ]]
+}
+
+@test "classifier rejects raw new/delete (RAII required)" {
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-triage.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['cr'] = m
+spec.loader.exec_module(m)
+body = '''In \`@Source_Core/src/Y.cpp\`:\n- Around line 5: Replace the std::unique_ptr usage with raw new Foo() for clarity — the explicit allocation makes ownership obvious.'''
+findings = [m.classify_finding(f) for f in m.parse_findings(body)]
+print('verdict:', findings[0].verdict.value if findings else 'NONE')
+print('reason:', findings[0].reason if findings else 'NONE')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"verdict: REJECT_INVARIANT"* ]]
+    [[ "$output" == *"raw new"* ]]
+}
+
+@test "_bump_triage_attempts increments registry counter" {
+    # Register a PR first
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    # Bump via the daemon's helper
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['mw'] = m
+spec.loader.exec_module(m)
+m._bump_triage_attempts(999, r'$(pwd)', 2)
+"
+    [ "$status" -eq 0 ]
+    # Verify
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"triage_attempts": 2'* ]]
+}
+
+@test "_looks_like_cr_finding_block matches expected status-line shapes" {
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec)
+sys.modules['mw'] = m
+spec.loader.exec_module(m)
+# Should match
+assert m._looks_like_cr_finding_block('Poll 1/1 CodeRabbit: COMMENTED (3 actionable - block)')
+assert m._looks_like_cr_finding_block('Poll 1/1 CodeRabbit: STALE_WITH_FINDINGS (5 actionable on prior commit - block)')
+assert m._looks_like_cr_finding_block('Poll 1/1 CodeRabbit: CHANGES_REQUESTED')
+# Should NOT match
+assert not m._looks_like_cr_finding_block('Poll 1/1 CI: 5/8 pass (1 fail, 2 pending)')
+assert not m._looks_like_cr_finding_block('Poll 1/1 CodeRabbit: NONE+grace-expired')
+assert not m._looks_like_cr_finding_block('Poll 1/1 User: 2')
+print('all assertions passed')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"all assertions passed"* ]]
+}
