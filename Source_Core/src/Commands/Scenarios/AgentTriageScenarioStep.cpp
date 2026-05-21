@@ -31,11 +31,13 @@
 #include "AgenticInferenceClientPure.h"
 #include "AgenticTriageController.h"
 #include "Logger.h"
+#include "UiPerfMonitor.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <utility>
@@ -46,11 +48,11 @@ namespace cmd {
 
 namespace {
 
+using ::AgenticInferenceClientPure::ProposalDraft;
+using ::AgenticInferenceClientPure::ProposedAction;
 using ::smatchet::agentic::AgenticTriageController;
 using ::smatchet::agentic::IGitHubReadClient;
 using ::smatchet::agentic::IInferenceClient;
-using ::AgenticInferenceClientPure::ProposalDraft;
-using ::AgenticInferenceClientPure::ProposedAction;
 
 // Mock IGitHubReadClient — canned 3 issues with 5 comments total across them.
 // The shape mirrors what tests/fixtures/github_issues_sample.json records on
@@ -187,7 +189,8 @@ class AgentTriageScenario : public IScenario {
     }
 
     void OnFrame(AppController& /*app*/, int frameIndex) override {
-        if (state_ == State::Done) return;
+        if (state_ == State::Done)
+            return;
         // Bundle C CR#233:207 — once a transition failed fatally, latch and
         // refuse to advance the state machine. The previous shape kept stepping
         // through subsequent OnFrame calls after RunBatch / a transition set
@@ -243,9 +246,26 @@ class AgentTriageScenario : public IScenario {
         out["approved_id"] = approvedId_;
         out["rejected_id"] = rejectedId_;
         out["state_transitions_ok"] = stateTransitionsOk_;
-        out["passed"] = (errors_.empty() && state_ == State::Done && stateTransitionsOk_ &&
-                         batch_.proposalsInserted > 0);
+        out["passed"] =
+            (errors_.empty() && state_ == State::Done && stateTransitionsOk_ && batch_.proposalsInserted > 0);
         out["errors"] = errors_;
+        // Perf-rows emit so `scripts/dev/perf-baseline.sh init agent-triage-roundtrip`
+        // captures a baseline (per the 8-of-15 retrofit in
+        // docs/backlog/agent-self-improvement/tooling.md). Pattern mirrors
+        // PriorityGridScrollScenario::OnFinish.
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        nlohmann::json rowsJson = nlohmann::json::array();
+        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
+            return nlohmann::json{
+                {"name", r.name},
+                {"lastTotalMs", r.lastTotalMs},
+                {"avgPerCallMs", r.avgPerCallMs},
+                {"maxMs", r.maxMs},
+                {"calls", r.calls},
+                {"emaAvgMs", r.emaAvgMs},
+            };
+        });
+        out["rows"] = std::move(rowsJson);
         return out;
     }
 
@@ -261,12 +281,18 @@ class AgentTriageScenario : public IScenario {
 
     static const char* StateName(State s) {
         switch (s) {
-        case State::Initial:                return "Initial";
-        case State::WaitingForBatch:        return "WaitingForBatch";
-        case State::WaitingForInitialQuery: return "WaitingForInitialQuery";
-        case State::WaitingForApproval:     return "WaitingForApproval";
-        case State::WaitingForRejection:    return "WaitingForRejection";
-        case State::Done:                   return "Done";
+        case State::Initial:
+            return "Initial";
+        case State::WaitingForBatch:
+            return "WaitingForBatch";
+        case State::WaitingForInitialQuery:
+            return "WaitingForInitialQuery";
+        case State::WaitingForApproval:
+            return "WaitingForApproval";
+        case State::WaitingForRejection:
+            return "WaitingForRejection";
+        case State::Done:
+            return "Done";
         }
         return "Unknown";
     }
@@ -278,11 +304,9 @@ class AgentTriageScenario : public IScenario {
             state_ = State::Done;
             return;
         }
-        if (!batch_.perIssueErrors.empty()) {
-            for (const auto& kv : batch_.perIssueErrors) {
-                errors_.push_back("per-issue " + kv.first + ": " + kv.second);
-            }
-        }
+        std::transform(
+            batch_.perIssueErrors.begin(), batch_.perIssueErrors.end(), std::back_inserter(errors_),
+            [](const std::pair<std::string, std::string>& kv) { return "per-issue " + kv.first + ": " + kv.second; });
         if (batch_.proposalsInserted <= 0) {
             errors_.push_back("TriageBatch inserted zero proposals — fixture / mock mismatch?");
             state_ = State::Done;
@@ -323,10 +347,12 @@ class AgentTriageScenario : public IScenario {
         // contractually guaranteed to be insertion order.
         std::vector<int64_t> ids;
         ids.reserve(rows.size());
-        for (const auto& r : rows) ids.push_back(r.id);
+        std::transform(rows.begin(), rows.end(), std::back_inserter(ids), [](const AgentProposal& r) { return r.id; });
         std::sort(ids.begin(), ids.end());
-        if (ids.size() >= 1) candidateApproveId_ = ids[0];
-        if (ids.size() >= 2) candidateRejectId_ = ids[1];
+        if (ids.size() >= 1)
+            candidateApproveId_ = ids[0];
+        if (ids.size() >= 2)
+            candidateRejectId_ = ids[1];
     }
 
     void TransitionFirst(AgentProposalState target) {

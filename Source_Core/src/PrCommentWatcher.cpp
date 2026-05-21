@@ -79,39 +79,70 @@ bool CommentIdLess(const std::string& a, const std::string& b) {
 } // namespace
 
 PrCommentWatcher::PrCommentWatcher(AgenticHandoffController* controller, int iterationBudget, WatchMode mode)
-    : controller_(controller), iterationBudget_(ClampBudget(iterationBudget)), mode_(mode) {}
+    : controller_(controller), iterationBudget_(ClampBudget(iterationBudget)), mode_(mode) {
+    LOG_TRACE("PrCommentWatcher::PrCommentWatcher enter controller=%p budget=%d mode=%d",
+              static_cast<void*>(controller), ClampBudget(iterationBudget), static_cast<int>(mode));
+}
 
 PrCommentWatcher::~PrCommentWatcher() = default;
 
-void PrCommentWatcher::SetPrCommentFetcher(PrCommentFetcher fetcher) { fetcher_ = std::move(fetcher); }
-void PrCommentWatcher::SetPrCommentPoster(PrCommentPoster poster) { poster_ = std::move(poster); }
+void PrCommentWatcher::SetPrCommentFetcher(PrCommentFetcher fetcher) {
+    LOG_TRACE("PrCommentWatcher::SetPrCommentFetcher enter");
+    fetcher_ = std::move(fetcher);
+}
+void PrCommentWatcher::SetPrCommentPoster(PrCommentPoster poster) {
+    LOG_TRACE("PrCommentWatcher::SetPrCommentPoster enter");
+    poster_ = std::move(poster);
+}
 void PrCommentWatcher::SetRespawnDispatcher(HarnessRespawnDispatcher dispatcher) {
+    LOG_TRACE("PrCommentWatcher::SetRespawnDispatcher enter");
     dispatcher_ = std::move(dispatcher);
 }
 void PrCommentWatcher::SetOpenPrRespawnDispatcher(OpenPrRespawnDispatcher dispatcher) {
+    LOG_TRACE("PrCommentWatcher::SetOpenPrRespawnDispatcher enter");
     openPrDispatcher_ = std::move(dispatcher);
 }
-void PrCommentWatcher::SetReviewThreadResolver(ReviewThreadResolver resolver) { threadResolver_ = std::move(resolver); }
+void PrCommentWatcher::SetReviewThreadResolver(ReviewThreadResolver resolver) {
+    LOG_TRACE("PrCommentWatcher::SetReviewThreadResolver enter");
+    threadResolver_ = std::move(resolver);
+}
 void PrCommentWatcher::SetClassifier(std::unique_ptr<PrCommentClassifier> classifier) {
+    LOG_TRACE("PrCommentWatcher::SetClassifier enter classifier=%p", static_cast<void*>(classifier.get()));
     classifier_ = std::move(classifier);
 }
-WatchMode PrCommentWatcher::GetMode() const { return mode_; }
+WatchMode PrCommentWatcher::GetMode() const {
+    LOG_TRACE("PrCommentWatcher::GetMode enter mode=%d", static_cast<int>(mode_));
+    return mode_;
+}
 
-void PrCommentWatcher::SetIterationBudget(int budget) { iterationBudget_.store(ClampBudget(budget)); }
-int PrCommentWatcher::GetIterationBudget() const { return iterationBudget_.load(); }
+void PrCommentWatcher::SetIterationBudget(int budget) {
+    LOG_TRACE("PrCommentWatcher::SetIterationBudget enter raw=%d clamped=%d", budget, ClampBudget(budget));
+    iterationBudget_.store(ClampBudget(budget));
+}
+int PrCommentWatcher::GetIterationBudget() const {
+    LOG_TRACE("PrCommentWatcher::GetIterationBudget enter");
+    return iterationBudget_.load();
+}
 
-void PrCommentWatcher::SetProposalStore(AgentProposalStore* store) { store_ = store; }
+void PrCommentWatcher::SetProposalStore(AgentProposalStore* store) {
+    LOG_TRACE("PrCommentWatcher::SetProposalStore enter store=%p", static_cast<void*>(store));
+    store_ = store;
+}
 
 int PrCommentWatcher::LoadCursorsFromStore() {
+    LOG_TRACE("PrCommentWatcher::LoadCursorsFromStore enter");
     // H10 — hydrate the in-memory controller cursor + iteration count from
     // persisted agent_pr_watch rows. Best-effort: failures LOG_WARN and the
     // affected handoff falls back to "first poll" semantics (cursor=0,
     // iterationCount=0). The watcher proceeds; the user sees at most one
     // duplicate respawn dispatch on the first post-restart tick.
     if (!controller_ || !store_) {
+        LOG_DEBUG("PrCommentWatcher::LoadCursorsFromStore: short-circuit (controller=%p store=%p)",
+                  static_cast<void*>(controller_), static_cast<void*>(store_));
         return 0;
     }
     const auto handoffs = controller_->SnapshotPrOpen();
+    LOG_DEBUG("PrCommentWatcher::LoadCursorsFromStore: snapshot returned %zu PrOpen handoff(s)", handoffs.size());
     if (handoffs.empty()) {
         return 0;
     }
@@ -177,7 +208,11 @@ namespace {
 // for the rest of the session.
 void PersistWatchRowBestEffort(AgentProposalStore* store, std::int64_t proposalId, const std::string& prUrl,
                                std::int64_t cursorSec, const std::string& cursorIdStr, int iterationCount) {
+    LOG_TRACE("PersistWatchRowBestEffort enter proposalId=%lld cursorSec=%lld iter=%d",
+              static_cast<long long>(proposalId), static_cast<long long>(cursorSec), iterationCount);
     if (!store) {
+        LOG_DEBUG("PersistWatchRowBestEffort: store null — skipping persist for proposalId=%lld",
+                  static_cast<long long>(proposalId));
         return;
     }
     AgentProposalStore::PrWatchRow row;
@@ -201,6 +236,8 @@ void PersistWatchRowBestEffort(AgentProposalStore* store, std::int64_t proposalI
 } // namespace
 
 std::string PrCommentWatcher::BuildBudgetExhaustedCommentBody(std::int64_t proposalId, int iterationsUsed) {
+    LOG_TRACE("PrCommentWatcher::BuildBudgetExhaustedCommentBody enter proposalId=%lld used=%d",
+              static_cast<long long>(proposalId), iterationsUsed);
     // Marker prefix matches AgenticHandoffController::HandoffBotMarker() so
     // the next tick's bot-filter skips our own posted comment. Keep the
     // body short — operators read this in the PR thread and scan for the
@@ -218,6 +255,7 @@ std::string PrCommentWatcher::BuildBudgetExhaustedCommentBody(std::int64_t propo
 }
 
 bool PrCommentWatcher::ParsePrKeyFromUrl(const std::string& prUrl, std::string& outPrKey, std::string& outError) {
+    LOG_TRACE("PrCommentWatcher::ParsePrKeyFromUrl enter url=%s", prUrl.c_str());
     // GitHub PR URL shape: `https://github.com/<owner>/<repo>/pull/<N>` (with
     // an optional trailing `/`, query string, or `#` fragment that we
     // tolerate by chopping off at the first non-digit after the N).
@@ -285,7 +323,9 @@ bool PrCommentWatcher::ParsePrKeyFromUrl(const std::string& prUrl, std::string& 
 }
 
 int PrCommentWatcher::Tick() {
+    LOG_TRACE("PrCommentWatcher::Tick enter mode=%d budget=%d", static_cast<int>(mode_), iterationBudget_.load());
     if (!controller_) {
+        LOG_DEBUG("PrCommentWatcher::Tick: controller null — early return");
         return 0;
     }
     if (!fetcher_) {
@@ -316,13 +356,21 @@ int PrCommentWatcher::Tick() {
             return 0;
         }
         const int budget = iterationBudget_.load();
+        LOG_INFO("coderabbit watcher tick begin mode=OpenPrScan rows=%zu budget=%d", rows.size(), budget);
         int dispatched = 0;
+        int rejected = 0;
+        int skipped = 0;
+        int rowIdx = 0;
         for (const auto& row : rows) {
+            ++rowIdx;
+            LOG_DEBUG("watcher row pr=%s iter=%d/%d cursor=%s", row.prUrl.c_str(), row.iterationCount, budget,
+                      row.lastSeenCommentIdStr.c_str());
             std::string prKey;
             std::string keyErr;
             if (!ParsePrKeyFromUrl(row.prUrl, prKey, keyErr)) {
                 LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: malformed PR URL '%s' (%s) — skipping", row.prUrl.c_str(),
                          keyErr.c_str());
+                ++skipped;
                 continue;
             }
 
@@ -330,6 +378,7 @@ int PrCommentWatcher::Tick() {
             // already at cap. The OpenPrScan budget lives on the persisted
             // `iteration_count` column (no controller-side FSM here).
             if (row.iterationCount >= budget) {
+                LOG_WARN("iteration budget exhausted pr=%s budget=%d", row.prUrl.c_str(), budget);
                 if (poster_) {
                     const std::string body = BuildBudgetExhaustedCommentBody(/*proposalId*/ 0, row.iterationCount);
                     std::string postErr;
@@ -341,16 +390,20 @@ int PrCommentWatcher::Tick() {
                 }
                 LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: budget exhausted on prUrl=%s (used=%d budget=%d)",
                          row.prUrl.c_str(), row.iterationCount, budget);
+                ++skipped;
                 continue;
             }
 
             std::vector<PostedComment> comments;
             std::string fetchErr;
+            LOG_DEBUG("HTTP GET PR comments pr=%s", prKey.c_str());
             if (!fetcher_(prKey, comments, fetchErr)) {
                 LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: fetch failed (%s) for prUrl=%s", fetchErr.c_str(),
                          row.prUrl.c_str());
+                ++skipped;
                 continue;
             }
+            LOG_DEBUG("HTTP ok pr=%s comments_returned=%zu", prKey.c_str(), comments.size());
             // Mirror OriginTracking's tuple-sort. The OpenPrScan row only
             // persists the id-string cursor (no separate `cursorSec` column),
             // so the tuple key here is just `id` — but sorting by
@@ -388,8 +441,13 @@ int PrCommentWatcher::Tick() {
             // missing classifier registration doesn't dispatch our own
             // marker post back at the watcher).
             if (AgenticHandoffController::IsHandoffBotComment(firstNewComment->body)) {
+                LOG_DEBUG("OpenPrScan: bot-filter skip pr=%s comment=%s", row.prUrl.c_str(),
+                          firstNewComment->id.c_str());
                 std::string cursorErr;
                 (void)store_->SetOpenPrCommentCursor(row.prUrl, firstNewComment->id, cursorErr);
+                LOG_DEBUG("cursor advance pr=%s old=%s new=%s", row.prUrl.c_str(), baselineId.c_str(),
+                          firstNewComment->id.c_str());
+                ++skipped;
                 continue;
             }
             // Classifier hook (Risk #1 correction) — runs BEFORE the
@@ -407,6 +465,8 @@ int PrCommentWatcher::Tick() {
                 cls.verdict = ClassifierVerdict::Dispatch;
                 cls.dispatchTargetAgent.clear();
             }
+            LOG_DEBUG("classify comment id=%s author=%s verdict=%d target=%s", firstNewComment->id.c_str(),
+                      firstNewComment->author.c_str(), static_cast<int>(cls.verdict), cls.dispatchTargetAgent.c_str());
             // Cursor-advance happens regardless of verdict so a Skip /
             // Reject doesn't re-fire on the next tick. We use the
             // dedicated `SetOpenPrCommentCursor` helper (NOT
@@ -416,18 +476,25 @@ int PrCommentWatcher::Tick() {
             if (!store_->SetOpenPrCommentCursor(row.prUrl, firstNewComment->id, cursorErr)) {
                 LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: SetOpenPrCommentCursor failed for prUrl=%s: %s",
                          row.prUrl.c_str(), cursorErr.c_str());
+                ++skipped;
                 continue;
             }
+            LOG_DEBUG("cursor advance pr=%s old=%s new=%s", row.prUrl.c_str(), baselineId.c_str(),
+                      firstNewComment->id.c_str());
             if (cls.verdict == ClassifierVerdict::Skip) {
                 LOG_INFO("PrCommentWatcher::Tick[OpenPrScan]: Skip verdict on prUrl=%s (reason=%s)", row.prUrl.c_str(),
                          cls.skipReason.c_str());
+                ++skipped;
                 continue;
             }
             if (cls.verdict == ClassifierVerdict::RejectShortCircuit) {
+                LOG_INFO("reject reply pr=%s comment=%s rule=%s", row.prUrl.c_str(), firstNewComment->id.c_str(),
+                         cls.rejectRuleCitation.c_str());
                 bool rejectReplyPosted = false;
                 if (poster_) {
                     std::string postErr;
                     rejectReplyPosted = poster_(prKey, cls.rejectReplyBody, postErr);
+                    LOG_DEBUG("HTTP POST reject-reply pr=%s ok=%d", prKey.c_str(), static_cast<int>(rejectReplyPosted));
                     if (!rejectReplyPosted) {
                         LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: reject-reply post failed for prUrl=%s: %s",
                                  row.prUrl.c_str(), postErr.c_str());
@@ -441,8 +508,13 @@ int PrCommentWatcher::Tick() {
                 // of the resolve itself is non-fatal — the reply already
                 // landed; manual resolve is a recoverable follow-up.
                 if (rejectReplyPosted && threadResolver_ && !firstNewComment->id.empty()) {
+                    LOG_DEBUG("GraphQL ResolveReviewThread (via comment-id lookup) pr=%s comment=%s", row.prUrl.c_str(),
+                              firstNewComment->id.c_str());
                     std::string resolveErr;
-                    if (!threadResolver_(firstNewComment->id, resolveErr)) {
+                    const bool resolveOk = threadResolver_(firstNewComment->id, resolveErr);
+                    LOG_INFO("resolve review thread pr=%s comment=%s ok=%d", row.prUrl.c_str(),
+                             firstNewComment->id.c_str(), static_cast<int>(resolveOk));
+                    if (!resolveOk) {
                         LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: review-thread resolve failed for prUrl=%s "
                                  "commentId=%s: %s",
                                  row.prUrl.c_str(), firstNewComment->id.c_str(), resolveErr.c_str());
@@ -450,6 +522,7 @@ int PrCommentWatcher::Tick() {
                 }
                 LOG_INFO("PrCommentWatcher::Tick[OpenPrScan]: RejectShortCircuit on prUrl=%s (%s)", row.prUrl.c_str(),
                          cls.rejectRuleCitation.c_str());
+                ++rejected;
                 continue;
             }
             // ClassifierVerdict::Dispatch.
@@ -459,12 +532,16 @@ int PrCommentWatcher::Tick() {
                              "verdict on prUrl=%s (target=%s) recorded but cannot spawn (phase-7 binding)",
                              row.prUrl.c_str(), cls.dispatchTargetAgent.c_str());
                 }
+                ++skipped;
                 continue;
             }
+            LOG_INFO("dispatch coderabbit-triage pr=%s iter=%d target=%s", row.prUrl.c_str(), row.iterationCount + 1,
+                     cls.dispatchTargetAgent.c_str());
             std::string dispatchErr;
             if (!openPrDispatcher_(row.prUrl, firstNewComment->body, cls.dispatchTargetAgent, dispatchErr)) {
                 LOG_WARN("PrCommentWatcher::Tick[OpenPrScan]: openPrDispatcher failed for prUrl=%s: %s",
                          row.prUrl.c_str(), dispatchErr.c_str());
+                ++skipped;
                 continue;
             }
             // Bump iteration_count atomically.
@@ -479,6 +556,8 @@ int PrCommentWatcher::Tick() {
                      "target=%s)",
                      row.prUrl.c_str(), newCount, budget, cls.dispatchTargetAgent.c_str());
         }
+        LOG_INFO("coderabbit watcher tick end mode=OpenPrScan dispatched=%d rejected=%d skipped=%d rows=%d", dispatched,
+                 rejected, skipped, rowIdx);
         return dispatched;
     }
 
@@ -488,18 +567,28 @@ int PrCommentWatcher::Tick() {
     // outside the lock — each fetch can be hundreds of ms.
     const auto handoffs = controller_->SnapshotPrOpen();
     if (handoffs.empty()) {
+        LOG_DEBUG("PrCommentWatcher::Tick[OriginTracking]: no PrOpen handoffs — early return");
         return 0;
     }
 
     const int budget = iterationBudget_.load();
+    LOG_INFO("coderabbit watcher tick begin mode=OriginTracking rows=%zu budget=%d", handoffs.size(), budget);
     int dispatched = 0;
+    int rejected = 0;
+    int skipped = 0;
+    int rowIdx = 0;
 
     for (const auto& h : handoffs) {
+        ++rowIdx;
+        LOG_DEBUG("watcher row pr=%s iter=%d/%d cursor=%s (proposalId=%lld)", h.prUrl.c_str(), h.iterationCount, budget,
+                  h.prCommentCursorIdStr.c_str(), static_cast<long long>(h.proposalId));
         // Pre-flight: budget already at or above the cap? Trip the
         // exhausted path immediately so we never miss the boundary across
         // restarts (the in-memory record could be reconstructed from
         // SQLite in a future H10).
         if (h.iterationCount >= budget) {
+            LOG_WARN("iteration budget exhausted pr=%s budget=%d (proposalId=%lld)", h.prUrl.c_str(), budget,
+                     static_cast<long long>(h.proposalId));
             std::string transErr;
             if (controller_->MarkHandoffBudgetExhausted(h.proposalId, budget, transErr)) {
                 // Best-effort post the marker comment.
@@ -508,6 +597,7 @@ int PrCommentWatcher::Tick() {
                 if (poster_ && ParsePrKeyFromUrl(h.prUrl, prKey, keyErr)) {
                     const std::string body = BuildBudgetExhaustedCommentBody(h.proposalId, h.iterationCount);
                     std::string postErr;
+                    LOG_DEBUG("HTTP POST budget-exhausted marker pr=%s", prKey.c_str());
                     if (!poster_(prKey, body, postErr)) {
                         LOG_WARN(
                             "PrCommentWatcher::Tick: failed to post budget-exhausted marker for proposalId=%lld: %s",
@@ -534,16 +624,20 @@ int PrCommentWatcher::Tick() {
         if (!ParsePrKeyFromUrl(h.prUrl, prKey, keyErr)) {
             LOG_WARN("PrCommentWatcher::Tick: malformed PR URL '%s' on proposalId=%lld (%s) — skipping",
                      h.prUrl.c_str(), static_cast<long long>(h.proposalId), keyErr.c_str());
+            ++skipped;
             continue;
         }
 
         std::vector<PostedComment> comments;
         std::string fetchErr;
+        LOG_DEBUG("HTTP GET PR comments pr=%s (proposalId=%lld)", prKey.c_str(), static_cast<long long>(h.proposalId));
         if (!fetcher_(prKey, comments, fetchErr)) {
             LOG_WARN("PrCommentWatcher::Tick: fetch failed (%s) for proposalId=%lld", fetchErr.c_str(),
                      static_cast<long long>(h.proposalId));
+            ++skipped;
             continue;
         }
+        LOG_DEBUG("HTTP ok pr=%s comments_returned=%zu", prKey.c_str(), comments.size());
         // (CR Bundle A6) Sort by `(createdAtSec, id)` so multiple comments
         // sharing the same `createdAtSec` are processed in a deterministic
         // backend-stable order. GitHub returns oldest-first but does not
@@ -573,8 +667,8 @@ int PrCommentWatcher::Tick() {
             // is "baselineId is strictly numerically less than c.id" which
             // is exactly "c.id is strictly greater than baselineId" for the
             // numeric-aware ordering.
-            const bool tupleGreater = (c.createdAtSec > baselineSec) ||
-                                      (c.createdAtSec == baselineSec && CommentIdLess(baselineId, c.id));
+            const bool tupleGreater =
+                (c.createdAtSec > baselineSec) || (c.createdAtSec == baselineSec && CommentIdLess(baselineId, c.id));
             if (!tupleGreater) {
                 continue;
             }
@@ -602,6 +696,9 @@ int PrCommentWatcher::Tick() {
         } else {
             cls.verdict = ClassifierVerdict::Dispatch;
         }
+        LOG_DEBUG("classify comment id=%s author=%s verdict=%d target=%s (proposalId=%lld)", bodyId.c_str(),
+                  firstNewComment->author.c_str(), static_cast<int>(cls.verdict), cls.dispatchTargetAgent.c_str(),
+                  static_cast<long long>(h.proposalId));
 
         // Advance the cursor BEFORE dispatching so a concurrent tick (or a
         // dispatcher that takes longer than the poll interval) cannot pick
@@ -610,8 +707,11 @@ int PrCommentWatcher::Tick() {
         if (!controller_->MarkHandoffIteration(h.proposalId, bodyTs, bodyId, markErr)) {
             LOG_WARN("PrCommentWatcher::Tick: MarkHandoffIteration failed (%s) for proposalId=%lld — skipping",
                      markErr.c_str(), static_cast<long long>(h.proposalId));
+            ++skipped;
             continue;
         }
+        LOG_DEBUG("cursor advance pr=%s old=%s new=%s (proposalId=%lld)", h.prUrl.c_str(), baselineId.c_str(),
+                  bodyId.c_str(), static_cast<long long>(h.proposalId));
         // H10 — persist the post-Mark in-memory state to agent_pr_watch.
         // After MarkHandoffIteration the in-memory iterationCount is
         // (h.iterationCount + 1); we mirror that to the row.
@@ -620,12 +720,17 @@ int PrCommentWatcher::Tick() {
         if (cls.verdict == ClassifierVerdict::Skip) {
             LOG_INFO("PrCommentWatcher::Tick: Skip verdict on proposalId=%lld (reason=%s)",
                      static_cast<long long>(h.proposalId), cls.skipReason.c_str());
+            ++skipped;
             continue;
         }
         if (cls.verdict == ClassifierVerdict::RejectShortCircuit) {
+            LOG_INFO("reject reply pr=%s comment=%s rule=%s (proposalId=%lld)", h.prUrl.c_str(), bodyId.c_str(),
+                     cls.rejectRuleCitation.c_str(), static_cast<long long>(h.proposalId));
             bool rejectReplyPosted = false;
             if (poster_) {
                 std::string postErr;
+                LOG_DEBUG("HTTP POST reject-reply pr=%s (proposalId=%lld)", prKey.c_str(),
+                          static_cast<long long>(h.proposalId));
                 rejectReplyPosted = poster_(prKey, cls.rejectReplyBody, postErr);
                 if (!rejectReplyPosted) {
                     LOG_WARN("PrCommentWatcher::Tick: reject-reply post failed for proposalId=%lld: %s",
@@ -636,8 +741,13 @@ int PrCommentWatcher::Tick() {
             // gated on a successful reply post so a thread is never
             // closed when the reject reply did not land.
             if (rejectReplyPosted && threadResolver_ && !bodyId.empty()) {
+                LOG_DEBUG("GraphQL ResolveReviewThread (via comment-id lookup) pr=%s comment=%s (proposalId=%lld)",
+                          h.prUrl.c_str(), bodyId.c_str(), static_cast<long long>(h.proposalId));
                 std::string resolveErr;
-                if (!threadResolver_(bodyId, resolveErr)) {
+                const bool resolveOk = threadResolver_(bodyId, resolveErr);
+                LOG_INFO("resolve review thread pr=%s comment=%s ok=%d (proposalId=%lld)", h.prUrl.c_str(),
+                         bodyId.c_str(), static_cast<int>(resolveOk), static_cast<long long>(h.proposalId));
+                if (!resolveOk) {
                     LOG_WARN(
                         "PrCommentWatcher::Tick: review-thread resolve failed for proposalId=%lld commentId=%s: %s",
                         static_cast<long long>(h.proposalId), bodyId.c_str(), resolveErr.c_str());
@@ -645,6 +755,7 @@ int PrCommentWatcher::Tick() {
             }
             LOG_INFO("PrCommentWatcher::Tick: RejectShortCircuit on proposalId=%lld (%s)",
                      static_cast<long long>(h.proposalId), cls.rejectRuleCitation.c_str());
+            ++rejected;
             continue;
         }
         // ClassifierVerdict::Dispatch.
@@ -653,8 +764,11 @@ int PrCommentWatcher::Tick() {
                 LOG_INFO("PrCommentWatcher::Tick: respawn dispatcher not wired — recording iteration but cannot "
                          "respawn (operator must intervene)");
             }
+            ++skipped;
             continue;
         }
+        LOG_INFO("dispatch coderabbit-triage pr=%s iter=%d proposalId=%lld target=%s", h.prUrl.c_str(),
+                 h.iterationCount + 1, static_cast<long long>(h.proposalId), cls.dispatchTargetAgent.c_str());
         // dispatchTargetAgent is logged for parity with OpenPrScan but is
         // not (yet) plumbed into the proposalId-based dispatcher seam —
         // phase-7 widens that seam.
@@ -662,12 +776,15 @@ int PrCommentWatcher::Tick() {
         if (!dispatcher_(h.proposalId, body, respawnErr)) {
             LOG_WARN("PrCommentWatcher::Tick: respawn dispatcher failed (%s) for proposalId=%lld", respawnErr.c_str(),
                      static_cast<long long>(h.proposalId));
+            ++skipped;
             continue;
         }
         ++dispatched;
         LOG_INFO("PrCommentWatcher::Tick: dispatched respawn for proposalId=%lld (iteration %d of %d, target=%s)",
                  static_cast<long long>(h.proposalId), h.iterationCount + 1, budget, cls.dispatchTargetAgent.c_str());
     }
+    LOG_INFO("coderabbit watcher tick end mode=OriginTracking dispatched=%d rejected=%d skipped=%d rows=%d", dispatched,
+             rejected, skipped, rowIdx);
     return dispatched;
 }
 

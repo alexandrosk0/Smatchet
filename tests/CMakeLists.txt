@@ -74,6 +74,18 @@ add_executable(SmatchetTests
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
     # TU. Link it into the test rig so the symbols resolve.
     "${CMAKE_SOURCE_DIR}/Source_Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp"
+    # code-syntax-coloring-and-tooltips § Slice 1 — CodeColorView substrate.
+    # The .cpp is auto-globbed into CORE_SOURCES by the root CMakeLists but
+    # the test rig links a curated subset of Source_Core/src/*.cpp, so the
+    # CodeColorView TU has to be named here. SmatchetTheme.cpp + TextEditor.cpp
+    # already linked above. `DrawColoredCppText` symbol resolves via the
+    # pre-existing local stub in `Source_Core/MarkdownPreviewPlan.test.cpp`
+    # (the same stub that lets MarkdownPreviewRender link without pulling
+    # SmatchetImGuiFonts/CppSyntaxHighlight). CodeColorView's Tokenize tests
+    # never exercise the C++/C `DrawColoredCppText` delegation path, so the
+    # stub is sufficient.
+    Source_Core/CodeColorViewLang.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/CodeColorView.cpp"
     # Slice 4 — pure-logic coverage of SelectableText::GetSelectedText
     # (doc-order range walk + reverse normalisation + block-boundary
     # newline insertion). Constructs a synthetic Context directly so no

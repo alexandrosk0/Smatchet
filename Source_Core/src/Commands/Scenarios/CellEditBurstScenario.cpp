@@ -16,9 +16,12 @@
 #include "AppController.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "UiPerfMonitor.h"
 
 #include <algorithm>
+#include <iterator>
 #include <utility>
+#include <vector>
 
 namespace smatchet {
 namespace cmd {
@@ -64,6 +67,23 @@ class CellEditBurstScenario : public IScenario {
     nlohmann::json OnFinish(AppController& /*app*/) override {
         nlohmann::json out = result_;
         out["scenario"] = "cell-edit-burst";
+        // Perf-rows emit so `scripts/dev/perf-baseline.sh init cell-edit-burst`
+        // captures a baseline (per the 8-of-15 retrofit in
+        // docs/backlog/agent-self-improvement/tooling.md). Pattern mirrors
+        // PriorityGridScrollScenario::OnFinish.
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        nlohmann::json rowsJson = nlohmann::json::array();
+        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
+            return nlohmann::json{
+                {"name", r.name},
+                {"lastTotalMs", r.lastTotalMs},
+                {"avgPerCallMs", r.avgPerCallMs},
+                {"maxMs", r.maxMs},
+                {"calls", r.calls},
+                {"emaAvgMs", r.emaAvgMs},
+            };
+        });
+        out["rows"] = std::move(rowsJson);
         return out;
     }
 

@@ -88,6 +88,13 @@ class AgentProposalStore {
     // error; outError describes which.
     bool Transition(int64_t id, AgentProposalState newState, const std::string& applyError, std::string& outError);
 
+    // (Edit-before-send) Overwrite the payload JSON for a Pending row. Used
+    // by the proposals panel when the user edits a CommentAdd body before
+    // clicking Approve. Refuses on non-Pending rows (the state machine owns
+    // payload immutability post-approval). Returns false + outError on row
+    // not found, non-Pending row, JSON-serialise failure, or DB error.
+    bool UpdatePayload(int64_t id, const nlohmann::json& newPayload, std::string& outError);
+
     // Bulk query with simple AND-conjunctive filters. Empty fields disable
     // their respective predicates; `limit == 0` disables the SQL LIMIT.
     struct Filter {
@@ -125,7 +132,14 @@ class AgentProposalStore {
     // increment (AGENTS.md § Schema-version bumps). Increment in lock-step
     // with EnsureSchemaVersion's migration ladder whenever a real migration
     // body lands. H10 ships v2 (adds `agent_pr_watch` + handoff_status).
-    static constexpr int kCurrentSchemaVersion = 2;
+    // v3 adds `issue_title` + `issue_body` columns so the proposals panel
+    // can render the upstream-tracker context without a second HTTP round-
+    // trip per row. Populated at triage-insert time from the same
+    // FetchIssueBody call that feeds the LLM.
+    // v4 adds `issue_comments_json` column with the captured comment thread
+    // alongside title + body — the panel renders comments under a
+    // collapsible block.
+    static constexpr int kCurrentSchemaVersion = 4;
 
     // Returns the schema_version recorded in the database. Stamped at the
     // current shipped version on first open (whether the db is brand-new or
@@ -285,8 +299,8 @@ class AgentProposalStore {
     //
     // Single-subscriber for H9 (last setter wins); upgrade to multi-listener
     // when a second consumer materialises. Reset by passing an empty function.
-    using OnApprovedFn = std::function<void(std::int64_t proposalId,
-                                            AgenticInferenceClientPure::ProposedAction action)>;
+    using OnApprovedFn =
+        std::function<void(std::int64_t proposalId, AgenticInferenceClientPure::ProposedAction action)>;
     void SetOnProposalApproved(OnApprovedFn cb);
 
   private:

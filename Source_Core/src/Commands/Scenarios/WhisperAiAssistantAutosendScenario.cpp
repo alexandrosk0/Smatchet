@@ -44,6 +44,7 @@
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
+#include "UiPerfMonitor.h"
 #include "WhisperPlugin.h"
 
 #include <algorithm>
@@ -51,8 +52,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace smatchet {
 namespace cmd {
@@ -65,7 +68,7 @@ namespace {
 // text plus auto-send + clear behaviour.
 constexpr std::size_t kAutosendBufferCap = 512;
 char g_autosendBuffer[kAutosendBufferCap] = {0};
-int  g_autosendCursor = 0;
+int g_autosendCursor = 0;
 
 // Synthetic item id — non-zero so `IsFocusedTargetAiAssistant()` returns true
 // and the splice arms the pending-reload slot. Chosen to be obviously
@@ -125,18 +128,15 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         // return true (entries_.front().ItemId != 0 + buf match).
         std::memset(g_autosendBuffer, 0, kAutosendBufferCap);
         g_autosendCursor = 0;
-        g_dictationRouter.RegisterAiAssistantInputText(g_autosendBuffer, kAutosendBufferCap,
-                                                        &g_autosendCursor);
-        g_dictationRouter.RegisterInputTextWithItemId(g_autosendBuffer, kAutosendBufferCap,
-                                                        &g_autosendCursor,
-                                                        kFakeAiAssistantItemId);
+        g_dictationRouter.RegisterAiAssistantInputText(g_autosendBuffer, kAutosendBufferCap, &g_autosendCursor);
+        g_dictationRouter.RegisterInputTextWithItemId(g_autosendBuffer, kAutosendBufferCap, &g_autosendCursor,
+                                                      kFakeAiAssistantItemId);
 
         // Auto-send hook — fires on the UI thread when the post-insertion
         // gate decides to dispatch. The scenario lambda is a strict observer:
         // bumps the counter and returns. No re-entry into router state.
-        g_dictationRouter.SetAiAssistantSendCallback([]() {
-            g_autoSendCallbackFireCount.fetch_add(1, std::memory_order_acq_rel);
-        });
+        g_dictationRouter.SetAiAssistantSendCallback(
+            []() { g_autoSendCallbackFireCount.fetch_add(1, std::memory_order_acq_rel); });
 
         // Arm the mock seam — the press / release worker pair will route
         // through the mock branch and call the post-insertion hooks
@@ -215,16 +215,13 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
                 state_ = State::Asserted;
                 LOG_INFO("WhisperAiAssistantAutosendScenario: auto-send fired at frame %d "
                          "(observed='%s', pendingReloadIdSeen=0x%X, transcribingObserved=%d)",
-                         frameIndex, observedText_.c_str(),
-                         g_pendingReloadIdLastSeen.load(std::memory_order_acquire),
+                         frameIndex, observedText_.c_str(), g_pendingReloadIdLastSeen.load(std::memory_order_acquire),
                          g_observedTranscribingTrue.load(std::memory_order_acquire) ? 1 : 0);
             }
         }
     }
 
-    bool IsDone(int frameIndex) const override {
-        return state_ == State::Asserted || frameIndex >= frameLimit_;
-    }
+    bool IsDone(int frameIndex) const override { return state_ == State::Asserted || frameIndex >= frameLimit_; }
 
     void OnCancel(AppController& /*app*/) override { Teardown(); }
 
@@ -251,9 +248,25 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         // Cell 3 = text_match + auto_send_fires >= 1.
         // Reload-arm cell = pending_reload_id_matches.
         // Cell 4 (router-level) = observed_transcribing_true + transcribing_cleared.
-        out["passed"] = textMatch && autoSendFires >= 1 &&
-                        pendingId == kFakeAiAssistantItemId && sawTranscribing &&
+        out["passed"] = textMatch && autoSendFires >= 1 && pendingId == kFakeAiAssistantItemId && sawTranscribing &&
                         transcribingCleared;
+        // Perf-rows emit so `scripts/dev/perf-baseline.sh init
+        // whisper-ai-assistant-autosend` captures a baseline (per the 8-of-15
+        // retrofit in docs/backlog/agent-self-improvement/tooling.md). Pattern
+        // mirrors PriorityGridScrollScenario::OnFinish.
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        nlohmann::json rowsJson = nlohmann::json::array();
+        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
+            return nlohmann::json{
+                {"name", r.name},
+                {"lastTotalMs", r.lastTotalMs},
+                {"avgPerCallMs", r.avgPerCallMs},
+                {"maxMs", r.maxMs},
+                {"calls", r.calls},
+                {"emaAvgMs", r.emaAvgMs},
+            };
+        });
+        out["rows"] = std::move(rowsJson);
         return out;
     }
 
@@ -268,11 +281,16 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
 
     static const char* StateName(State s) {
         switch (s) {
-        case State::Initial:                return "Initial";
-        case State::WaitingForReleaseFrame: return "WaitingForReleaseFrame";
-        case State::WaitingForInsertion:    return "WaitingForInsertion";
-        case State::WaitingForAutoSend:     return "WaitingForAutoSend";
-        case State::Asserted:               return "Asserted";
+        case State::Initial:
+            return "Initial";
+        case State::WaitingForReleaseFrame:
+            return "WaitingForReleaseFrame";
+        case State::WaitingForInsertion:
+            return "WaitingForInsertion";
+        case State::WaitingForAutoSend:
+            return "WaitingForAutoSend";
+        case State::Asserted:
+            return "Asserted";
         }
         return "Unknown";
     }
@@ -309,20 +327,20 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         g_ui.assistantPanelOpen = prevAssistantPanelOpen_;
     }
 
-    State       state_                 = State::Initial;
+    State state_ = State::Initial;
     std::string expectedText_;
     std::string observedText_;
-    bool        teardownDone_          = false;
-    bool        autoSendWasEnabled_    = false;
-    bool        prevAssistantPanelOpen_= false;
-    int         delayMs_               = 50;
-    int         frameLimit_            = 360;
-    int         pressFrame_            = 1;
-    int         releaseFrame_          = 4;
+    bool teardownDone_ = false;
+    bool autoSendWasEnabled_ = false;
+    bool prevAssistantPanelOpen_ = false;
+    int delayMs_ = 50;
+    int frameLimit_ = 360;
+    int pressFrame_ = 1;
+    int releaseFrame_ = 4;
 };
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
 /// Factory function — registered in AppController.cpp::Initialize behind the
 /// same `#if defined(SMATCHET_WITH_WHISPER)` gate as the existing
