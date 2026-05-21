@@ -4,6 +4,8 @@
 
 #include <cctype>
 #include <chrono>
+#include <cstdio>  // snprintf / sscanf — per CodeRabbit on PR #357 (some toolchains don't transitively include via <ctime>/<sstream>)
+#include <cstdlib>
 #include <ctime>
 #include <sstream>
 #include <string>
@@ -100,6 +102,9 @@ std::string BuildIssuePatchUrlSuffix(const std::string& owner, const std::string
 }
 
 bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError) {
+    // Strict per CodeRabbit on PR #357 — accept exactly "https://api.github.com" (cloud) or
+    // any URL whose path is exactly "/api/v3" on an arbitrary https host (Enterprise).
+    // Reject any other shape so downstream URL composition lands on a working REST root.
     if (baseUrl.empty()) {
         outError = "GitHub base URL is empty";
         return false;
@@ -108,8 +113,30 @@ bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError) {
         outError = "GitHub base URL must start with https://";
         return false;
     }
-    if (!baseUrl.empty() && baseUrl.back() == '/') {
+    if (baseUrl.back() == '/') {
         outError = "GitHub base URL must not have a trailing slash";
+        return false;
+    }
+    // Exact cloud match.
+    if (baseUrl == "https://api.github.com") {
+        outError.clear();
+        return true;
+    }
+    // Enterprise — must end with /api/v3 + host portion non-empty.
+    const std::string apiSuffix = "/api/v3";
+    if (baseUrl.size() <= 8 + apiSuffix.size()) {
+        outError = "GitHub base URL must be 'https://api.github.com' or 'https://<host>/api/v3'";
+        return false;
+    }
+    if (baseUrl.compare(baseUrl.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) != 0) {
+        outError = "GitHub Enterprise base URL must end with '/api/v3' (got '" + baseUrl + "')";
+        return false;
+    }
+    // Verify the host portion (between 'https://' and '/api/v3') is non-empty + contains no
+    // additional path segments.
+    const std::string host = baseUrl.substr(8, baseUrl.size() - 8 - apiSuffix.size());
+    if (host.empty() || host.find('/') != std::string::npos) {
+        outError = "GitHub Enterprise base URL has invalid host portion: '" + host + "'";
         return false;
     }
     outError.clear();
@@ -137,11 +164,33 @@ std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outE
         outError = "empty timestamp";
         return 0;
     }
-    // Strict format: YYYY-MM-DDTHH:MM:SS[Z|+00:00]. Tolerant on the offset
-    // form; we only consume the date+time and treat as UTC.
+    // Parse YYYY-MM-DDTHH:MM:SS first, then handle the optional timezone suffix.
+    // Per CodeRabbit on PR #357 — prior impl ignored non-zero offsets (e.g. +05:30)
+    // and returned wrong epoch. Now: 'Z' → UTC; '+HH:MM' / '-HH:MM' / '+HHMM' / '-HHMM' →
+    // adjust the computed time_t accordingly; missing suffix → reject (force callers to
+    // disambiguate UTC explicitly).
     int year = 0, mon = 0, day = 0, hour = 0, minute = 0, sec = 0;
-    if (std::sscanf(iso8601.c_str(), "%d-%d-%dT%d:%d:%d", &year, &mon, &day, &hour, &minute, &sec) != 6) {
+    int consumed = 0;
+    if (std::sscanf(iso8601.c_str(), "%d-%d-%dT%d:%d:%d%n", &year, &mon, &day, &hour, &minute, &sec, &consumed) != 6) {
         outError = "bad ISO-8601 format: " + iso8601;
+        return 0;
+    }
+    const std::string suffix = iso8601.substr(static_cast<std::size_t>(consumed));
+    std::int64_t offsetSec = 0;
+    if (suffix == "Z" || suffix == "+00:00" || suffix == "-00:00" || suffix == "+0000" || suffix == "-0000") {
+        offsetSec = 0;
+    } else if (!suffix.empty() && (suffix.front() == '+' || suffix.front() == '-')) {
+        const int sign = (suffix.front() == '-') ? -1 : 1;
+        int offH = 0, offM = 0;
+        // Tolerate `+HH:MM` and `+HHMM` shapes (both standard ISO-8601).
+        if (std::sscanf(suffix.c_str() + 1, "%d:%d", &offH, &offM) != 2 &&
+            std::sscanf(suffix.c_str() + 1, "%2d%2d", &offH, &offM) != 2) {
+            outError = "unrecognised timezone offset: '" + suffix + "' in " + iso8601;
+            return 0;
+        }
+        offsetSec = sign * (static_cast<std::int64_t>(offH) * 3600 + static_cast<std::int64_t>(offM) * 60);
+    } else {
+        outError = "ISO-8601 timestamp missing timezone suffix (need 'Z' or '\xC2\xB1HH:MM'): " + iso8601;
         return 0;
     }
     std::tm tm{};
@@ -161,7 +210,8 @@ std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outE
         return 0;
     }
     outError.clear();
-    return static_cast<std::int64_t>(t);
+    // UTC = local - offset (e.g. 12:00 +05:30 → 06:30 UTC → subtract 5:30 from local epoch).
+    return static_cast<std::int64_t>(t) - offsetSec;
 }
 
 } // namespace github

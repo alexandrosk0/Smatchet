@@ -371,10 +371,19 @@ void ConfigManager::Save(const TrackerConfig& config) {
 #if defined(_WIN32)
     j.erase("token");
     j.erase("plane_api_key");
-    j.erase("github_pat");
     j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
     j["plane_api_key_enc"] = ProtectSecretForConfig(config.PlaneApiKey);
-    j["github_pat_enc"] = ProtectSecretForConfig(config.GitHubPat);
+    // GitHub PAT — same plaintext-fallback pattern as McpAuthToken / AiApiKey / WhisperApiKey
+    // below. Only erase the plaintext `github_pat` when DPAPI protection succeeded; otherwise
+    // keep the plaintext so the user doesn't lose the only copy. Per CodeRabbit finding on
+    // PR #357 (HEAD `1a3ed3318d` review): the prior unconditional `j.erase("github_pat")` +
+    // `j["github_pat_enc"] = ProtectSecretForConfig(...)` ordering would delete the plaintext
+    // even on a failed protector call, leaving the user with neither plaintext nor encrypted.
+    const std::string githubPatEnc = ProtectSecretForConfig(config.GitHubPat);
+    if (config.GitHubPat.empty() || !githubPatEnc.empty()) {
+        j.erase("github_pat");
+    }
+    j["github_pat_enc"] = githubPatEnc;
     const std::string mcpAuthTokenEnc = ProtectSecretForConfig(config.McpAuthToken);
     // New field migration: keep the legacy plaintext fallback if DPAPI fails instead of dropping the only copy.
     if (config.McpAuthToken.empty() || !mcpAuthTokenEnc.empty()) {
@@ -1029,12 +1038,14 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         cfg.McpAllowRemote = (s == "true" || s == "1");
     }
 
-    // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken or Plane ApiKey).
+    // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken / Plane ApiKey / GitHub PAT).
     // Never stored in argv; always passed as an env var for CI/agent runs.
     if (const char* envToken = std::getenv("SMATCHET_TRACKER_TOKEN")) {
         if (envToken[0] != '\0') {
             if (cfg.TrackerType == "Plane") {
                 cfg.PlaneApiKey = envToken;
+            } else if (cfg.TrackerType == "github") {
+                cfg.GitHubPat = envToken;
             } else {
                 cfg.ApiToken = envToken;
             }
@@ -1044,10 +1055,16 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     // SMATCHET_TRACKER_BASE_URL — tracker origin URL.
     // For Jira: maps to cfg.Domain (e.g. "https://company.atlassian.net").
     // For Plane: maps to cfg.PlaneUrl (e.g. "https://api.plane.so").
+    // For GitHub: maps to cfg.GitHubBaseUrl (e.g. "https://api.github.com" or
+    //   "https://<enterprise>/api/v3"). Per CodeRabbit finding on PR #357 — env-driven
+    //   trackerType=github used to run with empty credentials because this mapper only
+    //   targeted Jira/Plane.
     if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
         if (envBase[0] != '\0') {
             if (cfg.TrackerType == "Plane") {
                 cfg.PlaneUrl = envBase;
+            } else if (cfg.TrackerType == "github") {
+                cfg.GitHubBaseUrl = envBase;
             } else {
                 cfg.Domain = envBase;
             }
