@@ -81,7 +81,10 @@ JSON
         exit 0
         ;;
 esac
-exit 0
+# Per CodeRabbit on PR #368 — unknown gh invocations must fail loudly so a
+# missing-case in the stub doesn't silently turn into a passing test.
+echo "stub-gh: unhandled invocation: $*" >&2
+exit 1
 STUB
     chmod +x "$STUB_BIN_DIR/gh"
     export PATH="$STUB_BIN_DIR:$PATH"
@@ -101,24 +104,33 @@ watch_cli() {
     python "$SCRIPTS_DIR/merge-watcher-cli.py" "$@"
 }
 
-@test "integration: register → poll-blocked → triage_attempts increments" {
+@test "integration: poll-blocked CR-finding fixture → daemon lands in BLOCKED state + _bump_triage_attempts increments registry" {
+    # Per CodeRabbit on PR #368 — test name promised triage_attempts assertion
+    # but the original body only checked last_state. Now explicitly bumps the
+    # counter via the helper + verifies via the CLI's list view.
     run watch_cli register 100
     [ "$status" -eq 0 ]
 
     export MERGE_WATCHER_TEST_PHASE=poll-blocked
     run python -c "
-import sys, os, importlib.util
+import sys, os, importlib.util, json
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-entry = {'pr': 100, 'clone_path': r'$REPO_ROOT', 'triage_attempts': 0}
+clone = json.load(open(os.path.join(r'$LOCALAPPDATA', 'Smatchet', 'merge-watch', 'active.json')))[0]['clone_path']
+entry = {'pr': 100, 'clone_path': clone, 'triage_attempts': 0}
 state = m.poll_one(entry)
 print('last_state:', state['last_state'])
-# Simulate the daemon-loop BLOCKED branch — even if triage classifier subprocess
-# fails (no real coderabbit-triage.py invocation here), the triage_attempts
-# counter bumps via _bump_triage_attempts.
+# Exercise the daemon-loop BLOCKED branch's registry-increment path directly
+# (the full handle_blocked_cr_triage would invoke coderabbit-triage.py subprocess,
+# which needs more gh stub work; the increment helper is what matters here).
+m._bump_triage_attempts(100, clone, 1)
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"last_state: BLOCKED"* ]]
+    # Verify the counter incremented in the registry.
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"triage_attempts": 1'* ]]
 }
 
 @test "integration: handle_pass squash-merges via gh api stub + drops from registry" {
@@ -171,9 +183,13 @@ if extras.get('cascade_children'):
 @test "integration: full state-machine walk register → BLOCKED → unregister leaves registry clean" {
     # Belt-and-suspenders end-to-end smoke. Combines CRUD + poll + cleanup in
     # one test so a regression to any one stage fails this case.
+    # Per CodeRabbit on PR #368 — every `run` followed by an output assertion
+    # also gets a `[ "$status" -eq 0 ]` guard so the assertion never silently
+    # succeeds on a crashed run.
     run watch_cli register 100
     [ "$status" -eq 0 ]
     run watch_cli list
+    [ "$status" -eq 0 ]
     [[ "$output" == *'"pr": 100'* ]]
     # Poll once (fakeable; we don't care about the result here — just that the
     # daemon helper doesn't crash on a registered PR with stub gh available).
@@ -196,5 +212,6 @@ print('OK')
     [ "$status" -eq 0 ]
     [ ! -f "$LOCALAPPDATA/Smatchet/merge-watch/state/100.json" ]
     run watch_cli list
+    [ "$status" -eq 0 ]
     [[ "$output" == "[]" ]]
 }
