@@ -27,10 +27,6 @@
 #include "SmatchetMcpServerUi.h"
 #include "SmatchetAiAssistantUi.h"
 #endif
-#if defined(SMATCHET_WITH_AGENTIC)
-#include "SmatchetAgentHandoffUi.h"
-#include "SmatchetAgentProposalsUi.h"
-#endif
 #include "SmatchetToast.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
@@ -474,15 +470,6 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("MainThreadDispatcher::Drain");
         app.mainThreadDispatcher.Drain();
     }
-#if defined(SMATCHET_WITH_AGENTIC)
-    {
-        // (Bundle A) Drain any detached agentic-poll worker that has actually exited.
-        // Steady-state cost is one atomic load (no-op when nothing is detached); the
-        // join only fires once per Preferences toggle when the previous worker stops.
-        SMATCHET_UI_PERF_SCOPE("AgenticPoll::JoinDetached");
-        app.JoinDetachedAgenticPollIfReady();
-    }
-#endif
     {
         SMATCHET_UI_PERF_SCOPE("drawEnsureCatalogAndInitialSync");
         drawEnsureCatalogAndInitialSync(app, d);
@@ -702,16 +689,6 @@ void SmatchetUI::Draw(AppController& app) {
     {
         SMATCHET_UI_PERF_SCOPE("drawAiAssistantPanel");
         drawAiAssistantPanel(app, d);
-    }
-#endif
-#if defined(SMATCHET_WITH_AGENTIC)
-    {
-        SMATCHET_UI_PERF_SCOPE("SmatchetAgentProposalsUi::Render");
-        SmatchetAgentProposalsUi::Render(app, d);
-    }
-    {
-        SMATCHET_UI_PERF_SCOPE("SmatchetAgentHandoffUi::Render");
-        SmatchetAgentHandoffUi::Render(app, d);
     }
 #endif
     {

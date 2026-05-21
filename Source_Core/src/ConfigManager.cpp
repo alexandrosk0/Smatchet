@@ -231,73 +231,6 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["assistant_context_block_audit_trail"] = config.AssistantContextBlockAuditTrail;
     j["assistant_history_max_rows"] = config.AssistantHistoryMaxRows;
     j["ai_prefs_verify_on_save"] = config.AiPrefsVerifyOnSave;
-#if defined(SMATCHET_WITH_AGENTIC)
-    // Agentic flow scheduled-poll preferences (T7). Master toggle defaults off — the
-    // user must explicitly opt in via Preferences > Agentic. All four fields are
-    // additive; missing keys round-trip back to the construct-time defaults.
-    j["agentic_poll_enabled"] = config.AgenticPollEnabled;
-    j["agentic_poll_interval_sec"] = config.AgenticPollIntervalSec;
-    j["agentic_poll_source"] = config.AgenticPollSource;
-    j["agentic_poll_query"] = config.AgenticPollQuery;
-    // H3 — coding-harness runner selection. Additive; both fields round-trip
-    // with `j.value()` defaults on Load (no schema bump). Production callers
-    // leave bin-path empty so the runner resolves the CLI from PATH; tests
-    // inject the stub_claude path here.
-    j["handoff_harness_bin_path"] = config.HandoffHarnessBinPath;
-    j["handoff_runner_name"] = config.HandoffRunnerName;
-    // H5 — clarification dual-channel toggle. Additive boolean; defaults to
-    // true on Load via `j.value()` so existing configs gain the field with
-    // the expected behaviour. No schema bump.
-    j["handoff_clarification_post_to_github"] = config.HandoffClarificationPostToGithub;
-    // H6 — PR-open fallback knobs. All additive; missing keys round-trip to
-    // the construct-time defaults via `j.value()` on Load. No schema bump.
-    j["handoff_auto_create_pr_if_missing"] = config.HandoffAutoCreatePrIfMissing;
-    j["handoff_pr_base_branch"] = config.HandoffPrBaseBranch;
-    j["handoff_pr_body_template"] = config.HandoffPrBodyTemplate;
-    j["handoff_git_bin_path"] = config.HandoffGitBinPath;
-    j["handoff_gh_bin_path"] = config.HandoffGhBinPath;
-    // H7 — PR-iteration loop tunables. Both clamped on Load to keep a
-    // hand-edited config from looping forever (budget < 1) or polling too
-    // aggressively (interval < 30s would hammer GitHub rate limits).
-    j["handoff_pr_iteration_budget"] = config.HandoffPrIterationBudget;
-    j["handoff_pr_comment_poll_interval_sec"] = config.HandoffPrCommentPollIntervalSec;
-    // H9 — cross-flow auto-start gate. Persisted so a Preferences flip survives
-    // restart; default is FALSE per plan-locked decision #5 (manual handoff
-    // start is the trust baseline). No schema bump — j.value() on Load.
-    j["handoff_auto_start_on_approve"] = config.HandoffAutoStartOnApprove;
-    // (coderabbit-react-loop phase 8) CodeRabbit + CI react loop blocks.
-    // Both are additive nested objects; missing keys round-trip to the
-    // construct-time defaults on Load. No schema bump.
-    {
-        nlohmann::json cr = nlohmann::json::object();
-        cr["enabled"] = config.CoderabbitReact.Enabled;
-        cr["poll_interval_sec"] = config.CoderabbitReact.PollIntervalSec;
-        cr["watched_base_branches"] = config.CoderabbitReact.WatchedBaseBranches;
-        cr["bot_logins"] = config.CoderabbitReact.BotLogins;
-        cr["short_circuit_reject_enabled"] = config.CoderabbitReact.ShortCircuitRejectEnabled;
-        cr["auto_dispatch_fixes"] = config.CoderabbitReact.AutoDispatchFixes;
-        cr["iteration_budget_per_pr"] = config.CoderabbitReact.IterationBudgetPerPr;
-        cr["ad_hoc_worktree_root"] = config.CoderabbitReact.AdHocWorktreeRoot;
-        j["coderabbit_react"] = std::move(cr);
-    }
-    {
-        nlohmann::json ci = nlohmann::json::object();
-        ci["enabled"] = config.CiReact.Enabled;
-        ci["poll_interval_sec"] = config.CiReact.PollIntervalSec;
-        ci["watched_base_branches"] = config.CiReact.WatchedBaseBranches;
-        ci["watched_check_names"] = config.CiReact.WatchedCheckNames;
-        ci["ignored_check_names"] = config.CiReact.IgnoredCheckNames;
-        ci["auto_dispatch_build_doctor"] = config.CiReact.AutoDispatchBuildDoctor;
-        ci["auto_dispatch_test_rig"] = config.CiReact.AutoDispatchTestRig;
-        ci["auto_dispatch_debug_detective"] = config.CiReact.AutoDispatchDebugDetective;
-        ci["transient_rerun_enabled"] = config.CiReact.TransientRerunEnabled;
-        ci["transient_rerun_max_per_pr"] = config.CiReact.TransientRerunMaxPerPr;
-        ci["iteration_budget_per_pr"] = config.CiReact.IterationBudgetPerPr;
-        ci["annotation_fetch_count"] = config.CiReact.AnnotationFetchCount;
-        ci["log_tail_lines"] = config.CiReact.LogTailLines;
-        j["ci_react"] = std::move(ci);
-    }
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper dictation — Phase A schema (additive). Non-secret fields write
     // here; WhisperApiKey is DPAPI-encrypted alongside AiApiKey below.
@@ -406,6 +339,30 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
     }
     j["migrated_inherit_issuetype_v1"] = config.MigratedInheritIssueTypeV1;
+    // Purge legacy keys carried over from the deleted SMATCHET_WITH_AGENTIC config block.
+    // Save() merges over existing on-disk JSON via LoadMergedConfigJson(); without explicit
+    // j.erase() the agentic-era secrets + settings would persist indefinitely. Per
+    // CodeRabbit review on PR #356 (2026-05-21). Covers the GitHub PAT pair, the agentic-poll
+    // tunables, handoff knobs, coderabbit-react / ci-react nested objects.
+    j.erase("github_pat");
+    j.erase("github_pat_enc");
+    j.erase("agentic_poll_enabled");
+    j.erase("agentic_poll_interval_sec");
+    j.erase("agentic_poll_source");
+    j.erase("agentic_poll_query");
+    j.erase("handoff_harness_bin_path");
+    j.erase("handoff_runner_name");
+    j.erase("handoff_clarification_post_to_github");
+    j.erase("handoff_auto_create_pr_if_missing");
+    j.erase("handoff_pr_base_branch");
+    j.erase("handoff_pr_body_template");
+    j.erase("handoff_git_bin_path");
+    j.erase("handoff_gh_bin_path");
+    j.erase("handoff_pr_iteration_budget");
+    j.erase("handoff_pr_comment_poll_interval_sec");
+    j.erase("handoff_auto_start_on_approve");
+    j.erase("coderabbit_react");
+    j.erase("ci_react");
 #if defined(_WIN32)
     j.erase("token");
     j.erase("plane_api_key");
@@ -433,14 +390,6 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j.erase("ai_deepseek_api_key");
     }
     j["ai_deepseek_api_key_enc"] = aiDeepSeekEnc;
-#if defined(SMATCHET_WITH_AGENTIC)
-    // GitHubPat — same DPAPI + legacy-plaintext fallback shape as AiApiKey.
-    const std::string githubPatEnc = ProtectSecretForConfig(config.GitHubPat);
-    if (config.GitHubPat.empty() || !githubPatEnc.empty()) {
-        j.erase("github_pat");
-    }
-    j["github_pat_enc"] = githubPatEnc;
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
     // WhisperApiKey — same DPAPI + legacy-plaintext fallback shape as AiApiKey.
     const std::string whisperApiKeyEnc = ProtectSecretForConfig(config.WhisperApiKey);
@@ -462,10 +411,6 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["ai_api_key"] = config.AiApiKey;
     j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
     j["ai_deepseek_api_key"] = config.AiDeepSeekApiKey;
-#if defined(SMATCHET_WITH_AGENTIC)
-    j.erase("github_pat_enc");
-    j["github_pat"] = config.GitHubPat;
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
     j.erase("whisper_api_key_enc");
     j["whisper_api_key"] = config.WhisperApiKey;
@@ -604,19 +549,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     bool migrateLegacyPlaintextAiApiKey = false;
     bool migrateLegacyPlaintextAiAnthropicApiKey = false;
     bool migrateLegacyPlaintextAiDeepSeekApiKey = false;
-#if defined(SMATCHET_WITH_AGENTIC)
-    // Bundle B CR#226 + #232 — github_pat lazy plaintext-to-DPAPI migration.
-    // T1 stored GitHubPat DPAPI-encrypted from day one, but a manual edit to
-    // smatchet_config.json (or an external tool) can leave the legacy
-    // `github_pat` field in plaintext. On Load we read the plaintext fallback;
-    // this flag triggers an eager Save() at the bottom of the Load path so
-    // the next on-disk state has the value encrypted under `github_pat_enc`
-    // and the plaintext key removed. Mirror of the AiApiKey migration shape
-    // (see lines around 941 below).
-    bool migrateLegacyPlaintextGitHubPat = false;
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
-    // Mirror of the AiApiKey / GitHubPat migration shapes — when Load() falls
+    // Mirror of the AiApiKey migration shape — when Load() falls
     // back to plaintext `whisper_api_key` (because `whisper_api_key_enc` was
     // absent or undecryptable), flag for re-save so the next on-disk state
     // holds the value under `whisper_api_key_enc` and removes the plaintext.
@@ -736,17 +670,6 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
                 migrateLegacyPlaintextAiDeepSeekApiKey = !cfg.AiDeepSeekApiKey.empty();
             }
-#if defined(SMATCHET_WITH_AGENTIC)
-            cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
-            if (cfg.GitHubPat.empty()) {
-                cfg.GitHubPat = j.value("github_pat", std::string{});
-                // Bundle B CR#226 + #232 — if we read the PAT from the legacy
-                // plaintext `github_pat` field (because `github_pat_enc` was
-                // absent or undecryptable), flag for migration so the eager
-                // Save() below re-encrypts it. Mirrors AiApiKey above.
-                migrateLegacyPlaintextGitHubPat = !cfg.GitHubPat.empty();
-            }
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
             cfg.WhisperApiKey =
                 UnprotectSecretFieldFromConfig("whisper_api_key_enc", j.value("whisper_api_key_enc", std::string{}));
@@ -759,9 +682,6 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.AiApiKey = j.value("ai_api_key", std::string{});
             cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
             cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
-#if defined(SMATCHET_WITH_AGENTIC)
-            cfg.GitHubPat = j.value("github_pat", std::string{});
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
             cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
 #endif
@@ -827,143 +747,6 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             const int rawMaxRows = j.value("assistant_history_max_rows", cfg.AssistantHistoryMaxRows);
             cfg.AssistantHistoryMaxRows = (rawMaxRows < 1) ? 1 : (rawMaxRows > 100000 ? 100000 : rawMaxRows);
             cfg.AiPrefsVerifyOnSave = j.value("ai_prefs_verify_on_save", cfg.AiPrefsVerifyOnSave);
-#if defined(SMATCHET_WITH_AGENTIC)
-            // Agentic flow scheduled-poll preferences (T7). Additive — missing keys keep
-            // the construct-time defaults (master toggle off, 300 s, source=github, query="").
-            cfg.AgenticPollEnabled = j.value("agentic_poll_enabled", cfg.AgenticPollEnabled);
-            cfg.AgenticPollIntervalSec = j.value("agentic_poll_interval_sec", cfg.AgenticPollIntervalSec);
-            cfg.AgenticPollSource = j.value("agentic_poll_source", cfg.AgenticPollSource);
-            cfg.AgenticPollQuery = j.value("agentic_poll_query", cfg.AgenticPollQuery);
-            // H3 — coding-harness runner selection. Both keys default to empty / the
-            // canonical runner name; older configs round-trip cleanly.
-            cfg.HandoffHarnessBinPath = j.value("handoff_harness_bin_path", cfg.HandoffHarnessBinPath);
-            cfg.HandoffRunnerName = j.value("handoff_runner_name", cfg.HandoffRunnerName);
-            // H5 — clarification dual-channel. Default true; older configs without the
-            // key get the default. Operators flip false to suppress all GitHub posts.
-            cfg.HandoffClarificationPostToGithub =
-                j.value("handoff_clarification_post_to_github", cfg.HandoffClarificationPostToGithub);
-            // H6 — PR-open fallback. Additive; older configs gain the defaults.
-            cfg.HandoffAutoCreatePrIfMissing =
-                j.value("handoff_auto_create_pr_if_missing", cfg.HandoffAutoCreatePrIfMissing);
-            cfg.HandoffPrBaseBranch = j.value("handoff_pr_base_branch", cfg.HandoffPrBaseBranch);
-            cfg.HandoffPrBodyTemplate = j.value("handoff_pr_body_template", cfg.HandoffPrBodyTemplate);
-            cfg.HandoffGitBinPath = j.value("handoff_git_bin_path", cfg.HandoffGitBinPath);
-            cfg.HandoffGhBinPath = j.value("handoff_gh_bin_path", cfg.HandoffGhBinPath);
-            // H7 — PR-iteration tunables.
-            cfg.HandoffPrIterationBudget = j.value("handoff_pr_iteration_budget", cfg.HandoffPrIterationBudget);
-            cfg.HandoffPrCommentPollIntervalSec =
-                j.value("handoff_pr_comment_poll_interval_sec", cfg.HandoffPrCommentPollIntervalSec);
-            // Clamp interval into [60, 3600] so a hand-edited config can neither hammer
-            // GitHub's rate limit (interval=1) nor stall triage for days (interval=86400).
-            if (cfg.AgenticPollIntervalSec < 60) {
-                cfg.AgenticPollIntervalSec = 60;
-            } else if (cfg.AgenticPollIntervalSec > 3600) {
-                cfg.AgenticPollIntervalSec = 3600;
-            }
-            // H7 — clamp PR-iteration budget into [1, 50] (matches the
-            // PrCommentWatcher's own ClampBudget) and the dedicated poll
-            // interval into [30, 600]. Both are documented near the field
-            // declarations in ConfigManager.h.
-            if (cfg.HandoffPrIterationBudget < 1) {
-                cfg.HandoffPrIterationBudget = 1;
-            } else if (cfg.HandoffPrIterationBudget > 50) {
-                cfg.HandoffPrIterationBudget = 50;
-            }
-            if (cfg.HandoffPrCommentPollIntervalSec < 30) {
-                cfg.HandoffPrCommentPollIntervalSec = 30;
-            } else if (cfg.HandoffPrCommentPollIntervalSec > 600) {
-                cfg.HandoffPrCommentPollIntervalSec = 600;
-            }
-            // H9 — auto-start gate. Plan-locked decision #5: default FALSE.
-            // Older configs without the key hydrate to the safe default so
-            // upgrading the app never silently enables auto-handoff.
-            cfg.HandoffAutoStartOnApprove = j.value("handoff_auto_start_on_approve", cfg.HandoffAutoStartOnApprove);
-
-            // (coderabbit-react-loop phase 8) CodeRabbit react block. Each
-            // field round-trips with j.value() against the in-struct default,
-            // then clamped to a sane range so a hand-edited config can't
-            // hammer GitHub or starve the loop. No schema bump — every key
-            // is additive.
-            if (j.contains("coderabbit_react") && j["coderabbit_react"].is_object()) {
-                const nlohmann::json& cr = j["coderabbit_react"];
-                cfg.CoderabbitReact.Enabled = cr.value("enabled", cfg.CoderabbitReact.Enabled);
-                cfg.CoderabbitReact.PollIntervalSec =
-                    cr.value("poll_interval_sec", cfg.CoderabbitReact.PollIntervalSec);
-                cfg.CoderabbitReact.WatchedBaseBranches =
-                    cr.value("watched_base_branches", cfg.CoderabbitReact.WatchedBaseBranches);
-                cfg.CoderabbitReact.BotLogins = cr.value("bot_logins", cfg.CoderabbitReact.BotLogins);
-                cfg.CoderabbitReact.ShortCircuitRejectEnabled =
-                    cr.value("short_circuit_reject_enabled", cfg.CoderabbitReact.ShortCircuitRejectEnabled);
-                cfg.CoderabbitReact.AutoDispatchFixes =
-                    cr.value("auto_dispatch_fixes", cfg.CoderabbitReact.AutoDispatchFixes);
-                cfg.CoderabbitReact.IterationBudgetPerPr =
-                    cr.value("iteration_budget_per_pr", cfg.CoderabbitReact.IterationBudgetPerPr);
-                cfg.CoderabbitReact.AdHocWorktreeRoot =
-                    cr.value("ad_hoc_worktree_root", cfg.CoderabbitReact.AdHocWorktreeRoot);
-            }
-            // Clamp CodeRabbit react values regardless of whether the
-            // block was present (also protects the construct-time defaults
-            // from accidental future drift).
-            if (cfg.CoderabbitReact.PollIntervalSec < 60) {
-                cfg.CoderabbitReact.PollIntervalSec = 60;
-            } else if (cfg.CoderabbitReact.PollIntervalSec > 3600) {
-                cfg.CoderabbitReact.PollIntervalSec = 3600;
-            }
-            if (cfg.CoderabbitReact.IterationBudgetPerPr < 1) {
-                cfg.CoderabbitReact.IterationBudgetPerPr = 1;
-            } else if (cfg.CoderabbitReact.IterationBudgetPerPr > 50) {
-                cfg.CoderabbitReact.IterationBudgetPerPr = 50;
-            }
-
-            // (coderabbit-react-loop phase 8) CI react block. Same shape +
-            // additive contract.
-            if (j.contains("ci_react") && j["ci_react"].is_object()) {
-                const nlohmann::json& ci = j["ci_react"];
-                cfg.CiReact.Enabled = ci.value("enabled", cfg.CiReact.Enabled);
-                cfg.CiReact.PollIntervalSec = ci.value("poll_interval_sec", cfg.CiReact.PollIntervalSec);
-                cfg.CiReact.WatchedBaseBranches = ci.value("watched_base_branches", cfg.CiReact.WatchedBaseBranches);
-                cfg.CiReact.WatchedCheckNames = ci.value("watched_check_names", cfg.CiReact.WatchedCheckNames);
-                cfg.CiReact.IgnoredCheckNames = ci.value("ignored_check_names", cfg.CiReact.IgnoredCheckNames);
-                cfg.CiReact.AutoDispatchBuildDoctor =
-                    ci.value("auto_dispatch_build_doctor", cfg.CiReact.AutoDispatchBuildDoctor);
-                cfg.CiReact.AutoDispatchTestRig = ci.value("auto_dispatch_test_rig", cfg.CiReact.AutoDispatchTestRig);
-                cfg.CiReact.AutoDispatchDebugDetective =
-                    ci.value("auto_dispatch_debug_detective", cfg.CiReact.AutoDispatchDebugDetective);
-                cfg.CiReact.TransientRerunEnabled =
-                    ci.value("transient_rerun_enabled", cfg.CiReact.TransientRerunEnabled);
-                cfg.CiReact.TransientRerunMaxPerPr =
-                    ci.value("transient_rerun_max_per_pr", cfg.CiReact.TransientRerunMaxPerPr);
-                cfg.CiReact.IterationBudgetPerPr =
-                    ci.value("iteration_budget_per_pr", cfg.CiReact.IterationBudgetPerPr);
-                cfg.CiReact.AnnotationFetchCount = ci.value("annotation_fetch_count", cfg.CiReact.AnnotationFetchCount);
-                cfg.CiReact.LogTailLines = ci.value("log_tail_lines", cfg.CiReact.LogTailLines);
-            }
-            if (cfg.CiReact.PollIntervalSec < 60) {
-                cfg.CiReact.PollIntervalSec = 60;
-            } else if (cfg.CiReact.PollIntervalSec > 3600) {
-                cfg.CiReact.PollIntervalSec = 3600;
-            }
-            if (cfg.CiReact.IterationBudgetPerPr < 1) {
-                cfg.CiReact.IterationBudgetPerPr = 1;
-            } else if (cfg.CiReact.IterationBudgetPerPr > 50) {
-                cfg.CiReact.IterationBudgetPerPr = 50;
-            }
-            if (cfg.CiReact.TransientRerunMaxPerPr < 0) {
-                cfg.CiReact.TransientRerunMaxPerPr = 0;
-            } else if (cfg.CiReact.TransientRerunMaxPerPr > 10) {
-                cfg.CiReact.TransientRerunMaxPerPr = 10;
-            }
-            if (cfg.CiReact.AnnotationFetchCount < 1) {
-                cfg.CiReact.AnnotationFetchCount = 1;
-            } else if (cfg.CiReact.AnnotationFetchCount > 100) {
-                cfg.CiReact.AnnotationFetchCount = 100;
-            }
-            if (cfg.CiReact.LogTailLines < 10) {
-                cfg.CiReact.LogTailLines = 10;
-            } else if (cfg.CiReact.LogTailLines > 2000) {
-                cfg.CiReact.LogTailLines = 2000;
-            }
-#endif
 
             cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
             cfg.DateCompactRelativeThresholdDays =
@@ -1187,28 +970,18 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     //   override values to disk is a pre-existing concern outside the scope of this migration.
     bool migrateAny = migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey ||
                       migrateLegacyPlaintextAiAnthropicApiKey || migrateLegacyPlaintextAiDeepSeekApiKey;
-#if defined(SMATCHET_WITH_AGENTIC)
-    migrateAny = migrateAny || migrateLegacyPlaintextGitHubPat;
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
     migrateAny = migrateAny || migrateLegacyPlaintextWhisperApiKey;
 #endif
     if (migrateAny) {
         LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
                  "(mcp=%d ai=%d anthropic=%d deepseek=%d"
-#if defined(SMATCHET_WITH_AGENTIC)
-                 " github_pat=%d"
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
                  " whisper=%d"
 #endif
                  ")",
                  migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
                  migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0, migrateLegacyPlaintextAiDeepSeekApiKey ? 1 : 0
-#if defined(SMATCHET_WITH_AGENTIC)
-                 ,
-                 migrateLegacyPlaintextGitHubPat ? 1 : 0
-#endif
 #if defined(SMATCHET_WITH_WHISPER)
                  ,
                  migrateLegacyPlaintextWhisperApiKey ? 1 : 0
