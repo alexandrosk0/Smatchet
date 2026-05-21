@@ -176,10 +176,96 @@ set_fixture() {
 }
 
 @test "stale CodeRabbit APPROVED on old SHA → return 1 (STALE)" {
+    # Legacy fixture has no body — falls into STALE_UNKNOWN (safe-default block per
+    # P1 fix in docs/backlog/agent-self-improvement/process.md).
     set_fixture "$FIXTURES_DIR/merge_gates_cr_stale.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
-    [[ "$output" == *"CodeRabbit: STALE"* ]]
+    [[ "$output" == *"STALE_UNKNOWN"* ]]
+}
+
+# ---------- CR three-bucket actionable parsing (P1 from 2026-05-21) ----------
+
+@test "CR review on current head with 'Actionable comments posted: N>0' → block (P1: don't merge unaddressed findings)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_findings.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"COMMENTED (3 actionable"* ]]
+    [[ "$output" == *"block"* ]]
+}
+
+@test "CR review on current head with 'Actionable comments posted: 0' → pass" {
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_current_clean.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COMMENTED (0 actionable)"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+}
+
+@test "STALE CR review with 'Actionable comments posted: N>0' → block (P1: surface findings, don't force-merge)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_stale_findings.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"STALE_WITH_FINDINGS (5 actionable"* ]]
+}
+
+@test "STALE CR review with 'Actionable comments posted: 0' → pass (prior review was clean)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_stale_clean.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"STALE_CLEAN (0 actionable"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+}
+
+@test "STALE CR with no Actionable header in body → STALE_UNKNOWN block (safe default)" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_stale_clean.json" \
+        "data.repository.pullRequest.reviews.nodes.0.body" \
+        '"some completely unrelated body without the Actionable header"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"STALE_UNKNOWN"* ]]
+    rm -f "$f"
+}
+
+@test "CR COMMENTED on current head with empty body → pass (no Actionable header, conservative pass)" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_current_clean.json" \
+        "data.repository.pullRequest.reviews.nodes.0.body" \
+        '""')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COMMENTED (no Actionable header)"* ]]
+    rm -f "$f"
+}
+
+@test "CR body has 'Actionable comments posted: N' on line 7+ but not line 1 → cr_actionable=-1 (per #360 first-line-only parse)" {
+    # Per CodeRabbit on PR #360 — restrict parsing to first line. Body with the
+    # header on a non-first line is a pathological case (e.g. nested finding
+    # quoting CR's own header format). Should NOT be treated as actionable=N.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_current_clean.json" \
+        "data.repository.pullRequest.reviews.nodes.0.body" \
+        '"some unrelated first line\n\nLater on we mention Actionable comments posted: 99 inside a nested example"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COMMENTED (no Actionable header)"* ]]
+    rm -f "$f"
+}
+
+@test "CR APPROVED on current head with N>0 findings in body → pass (approval trumps body)" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_findings.json" \
+        "data.repository.pullRequest.reviews.nodes.0.state" \
+        '"APPROVED"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CodeRabbit: APPROVED"* ]]
+    rm -f "$f"
 }
 
 @test "no CodeRabbit review ever → cr_state=NONE → contributes to pass" {
