@@ -241,6 +241,21 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "CR body has 'Actionable comments posted: N' on line 7+ but not line 1 → cr_actionable=-1 (per #360 first-line-only parse)" {
+    # Per CodeRabbit on PR #360 — restrict parsing to first line. Body with the
+    # header on a non-first line is a pathological case (e.g. nested finding
+    # quoting CR's own header format). Should NOT be treated as actionable=N.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_current_clean.json" \
+        "data.repository.pullRequest.reviews.nodes.0.body" \
+        '"some unrelated first line\n\nLater on we mention Actionable comments posted: 99 inside a nested example"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COMMENTED (no Actionable header)"* ]]
+    rm -f "$f"
+}
+
 @test "CR APPROVED on current head with N>0 findings in body → pass (approval trumps body)" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_findings.json" \

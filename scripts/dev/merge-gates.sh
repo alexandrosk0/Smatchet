@@ -204,12 +204,18 @@ poll_merge_gates() {
                      end)
               end' <<<"$pr")
         # Extract N from "Actionable comments posted: N". -1 = header not found.
+        # Per CodeRabbit on PR #360 — restrict the parse to the FIRST LINE only. CR's
+        # convention is "Actionable comments posted: N" as the review body's opening line;
+        # subsequent lines may quote the same phrase in nested findings / agent prompts
+        # (e.g. a finding that itself says "Add to AGENTS.md: 'Actionable comments posted: N'")
+        # which would spuriously match the unrestricted grep + give the wrong N.
         local cr_actionable=-1
         if [ -n "$cr_review_body" ]; then
-            local match
-            match=$(printf '%s\n' "$cr_review_body" | grep -oE 'Actionable comments posted:[[:space:]]*[0-9]+' | head -n 1 || true)
+            local first_line match
+            first_line=$(printf '%s\n' "$cr_review_body" | head -n 1)
+            match=$(printf '%s' "$first_line" | grep -oE 'Actionable comments posted:[[:space:]]*[0-9]+' || true)
             if [ -n "$match" ]; then
-                cr_actionable=$(printf '%s' "$match" | grep -oE '[0-9]+' | head -n 1)
+                cr_actionable=$(printf '%s' "$match" | grep -oE '[0-9]+')
             fi
         fi
         local cr_open
