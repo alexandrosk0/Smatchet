@@ -384,6 +384,79 @@ def _gh_owner_repo(clone_path: str) -> tuple[str, str] | None:
 
 
 TRIAGE_SCRIPT = _HERE / "coderabbit-triage.py"
+NOTIFY_SCRIPT = _HERE / "smatchet-notify.sh"
+
+# Terminal states that fire Phase 4a notification (smatchet-notify.sh →
+# Smatchet in-app toast attempt + Windows native BurntToast fallback).
+# Other states (GATES_PASSED handled by handle_pass; BLOCKED-on-CR handled
+# by handle_blocked_cr_triage) don't notify directly — they're either acted
+# on in-loop or wait for the next cycle.
+NOTIFY_STATES = {
+    "CI_FAIL",
+    "GH_API_DOWN",
+    "PR_CLOSED_OR_MERGED",
+    "PAGINATION_OVERFLOW",
+    "TIMEOUT",
+    "TRIAGE_BUDGET_EXHAUSTED",
+}
+
+
+def maybe_notify(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    """Phase 4a — fire smatchet-notify.sh for terminal states; suppress
+    re-notify within the same state by comparing against the previous
+    state's `notify_dispatched_for_state` field.
+
+    Returns extras dict to merge into the state.
+    """
+    cur_state = state.get("last_state", "")
+    if cur_state not in NOTIFY_STATES:
+        return {}
+    # Suppression — read prior state file to check last notified state.
+    prior_state_file = state_dir() / f"{int(entry['pr'])}.json"
+    prior_notified_for = None
+    if prior_state_file.exists():
+        try:
+            prior = json.loads(prior_state_file.read_text(encoding="utf-8"))
+            prior_notified_for = prior.get("notify_dispatched_for_state")
+        except json.JSONDecodeError:
+            pass
+    if prior_notified_for == cur_state:
+        return {"notify_action": "suppressed (same state as last notify)"}
+    # Compose message + invoke notify script.
+    message = state.get("last_status_line", "(no status line)")[:200]
+    pr = int(entry["pr"])
+    # PR URL via gh from the clone path.
+    pr_url = ""
+    or_meta = _gh_owner_repo(entry["clone_path"])
+    if or_meta:
+        owner, repo = or_meta
+        pr_url = f"https://github.com/{owner}/{repo}/pull/{pr}"
+    args = [
+        "bash",
+        str(NOTIFY_SCRIPT),
+        "--pr",
+        str(pr),
+        "--state",
+        cur_state,
+        "--message",
+        message,
+    ]
+    if pr_url:
+        args += ["--pr-url", pr_url]
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return {
+                "notify_action": "dispatched",
+                "notify_dispatched_for_state": cur_state,
+                "notify_dispatched_at_unix": int(time.time()),
+            }
+        return {
+            "notify_action": f"failed (exit {result.returncode}): {result.stderr.strip()[:120]}",
+            "notify_dispatched_for_state": cur_state,
+        }
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return {"notify_action": f"exec failed: {exc}"}
 
 
 def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[str, Any]:
@@ -576,6 +649,14 @@ def daemon_loop(poll_interval: int) -> int:
                             f"  PR#{state['pr']:<6} state={state['last_state']:<24} "
                             f"poll_line={state.get('last_status_line', '')[:120]}"
                         )
+                    # Phase 4a — fire smatchet-notify on terminal states.
+                    notify_extras = maybe_notify(state, entry)
+                    if notify_extras:
+                        state.update(notify_extras)
+                        if "notify_action" in notify_extras and notify_extras["notify_action"] != "suppressed (same state as last notify)":
+                            print(
+                                f"    notify: {notify_extras.get('notify_action', '?')}"
+                            )
                     write_state(state)
             time.sleep(poll_interval)
     except StopSignal:
