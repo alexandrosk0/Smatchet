@@ -861,6 +861,24 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
                 ImGui::PopFont();
         } else {
             ImGui::PushID(r.codeBlockNextId++);
+            // Slice 4 of docs/design/code-syntax-coloring-and-tooltips.md — ghosted
+            // language badge at the row's left + hover tooltip surfacing the LD's
+            // canonical name + detection origin. ImGui::TextDisabled to keep the
+            // visual weight muted (the code itself owns the row). DelayNormal so
+            // the tooltip doesn't fire while the user is scrolling past.
+            const char* langLabel = smatchet::code_color::CanonicalName(lang);
+            ImGui::TextDisabled("%s", langLabel);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(langLabel);
+                if (b.codeLang.empty()) {
+                    ImGui::TextDisabled("(no language tag — rendering as plain text)");
+                } else {
+                    ImGui::Text("(detected from markdown fence tag: `%s`)", b.codeLang.c_str());
+                }
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine();
             const float availW = ImGui::GetContentRegionAvail().x;
             const float btnW = 60.0f;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + availW - btnW);
