@@ -87,6 +87,7 @@
 #include "SmatchetUI.h"
 
 #include "SmatchetToast.h"
+#include "SmatchetMergeWatchNotifyServer.h"
 
 #include "AiTypes.h"
 #if defined(SMATCHET_WITH_AI)
@@ -357,6 +358,15 @@ AppController::~AppController() {
     // Shutdown ordering matters here — every background thread that can post to mainThreadDispatcher
     // or read `this` via __smatchet_app must be joined BEFORE member destruction begins. This
     // matches the contract described in MainThreadDispatcher.h and AppController_LuaBindings.cpp.
+
+    // Phase 4b of docs/design/smatchet-merge-watcher.md — stop the merge-watch
+    // HTTP server FIRST. Its listen thread queues toast-append lambdas via
+    // mainThreadDispatcher; the join here guarantees no late post races
+    // BeginShutdown() below.
+    if (mergeWatchNotifyServer_) {
+        mergeWatchNotifyServer_->Stop();
+        mergeWatchNotifyServer_.reset();
+    }
 #if defined(SMATCHET_WITH_AI)
     // Drop the AI assistant first — its worker may still be inside SendStreaming. The
     // dtor flips the cancel atom + joins; only after the join can the main-thread
@@ -1322,6 +1332,16 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     }
 
     InitLua();
+
+    // Phase 4b of docs/design/smatchet-merge-watcher.md — start the localhost
+    // notify endpoint AFTER the main-thread dispatcher is initialised (it's a
+    // member initialiser, ready since the AppController ctor) and BEFORE Lua
+    // setup since the endpoint is independent of plugin state. Best-effort —
+    // bind failure (port-in-use, no socket lib) logs WARN + Smatchet continues;
+    // the daemon's shell bridge falls through to Windows native BurntToast.
+    mergeWatchNotifyServer_ = std::unique_ptr<SmatchetMergeWatchNotifyServer>(
+        new SmatchetMergeWatchNotifyServer());
+    mergeWatchNotifyServer_->Start(*this);
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 

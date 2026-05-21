@@ -35,6 +35,7 @@
 #include "LocalCacheManager.h"
 #include "ITrackerClient.h"
 #include "MainThreadDispatcher.h"
+#include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
 #include "JiraClient.h"
@@ -182,6 +183,20 @@ class AppController
     /// Worker-to-UI-thread deferred task queue (BACKLOG_CODE_REVIEW.md §6.1). Post lambdas here from any
     /// thread; SmatchetUI::Draw drains them at the top of each frame. Use instead of ad-hoc atomics.
     MainThreadDispatcher mainThreadDispatcher;
+
+    /// Phase 4b of docs/design/smatchet-merge-watcher.md — localhost HTTP receiver for
+    /// the merge-watcher daemon's in-app toast notifications. Bound 127.0.0.1:7679;
+    /// HTTP runs on cpp-httplib worker thread; toast appends post via
+    /// mainThreadDispatcher. Started in Initialize(); stopped at the top of
+    /// ~AppController BEFORE the dispatcher's BeginShutdown so in-flight POST
+    /// callbacks observe a live dispatcher. Best-effort — bind failure logs WARN +
+    /// continues (daemon falls back to Windows native toast).
+    ///
+    /// Full SmatchetMergeWatchNotifyServer header included below (not forward-
+    /// declared) so unique_ptr's destructor instantiation sees the complete
+    /// type in every TU that includes AppController.h (some consumers stack-
+    /// allocate or unique_ptr<AppController>).
+    std::unique_ptr<SmatchetMergeWatchNotifyServer> mergeWatchNotifyServer_;
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
     void AddAutomationLogSink(std::function<void(const std::string&)> sink);
