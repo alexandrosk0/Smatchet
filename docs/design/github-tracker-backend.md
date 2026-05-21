@@ -35,7 +35,7 @@ Single work-stream, single squashed PR. The existing `GitHubClient` keeps its tr
 
 **1. De-gate the TU** — drop `#if defined(SMATCHET_WITH_AGENTIC)` around the `GitHubClient` source list and `GitHubPat` config field. Runtime PAT-empty short-circuit means dead-code at zero cost without configuration.
 
-1.a **Header preprocessor audit** — `GitHubClient.h` lines 10-12 currently document the build-time-gating contract for consumers. Every `#if defined(SMATCHET_WITH_AGENTIC)` inside `GitHubClient.h` / `GitHubClient.cpp` / `GitHubClientHelpers.h` / `GitHubClientHelpers.cpp` either drops or converts to a runtime guard. No `#error` branch may remain.
+1.a **Header preprocessor audit** — `GitHubClient.h` lines 10-12 currently document the build-time-gating contract for consumers. Every `#if defined(SMATCHET_WITH_AGENTIC)` inside `GitHubClient.h` / `GitHubClient.cpp` / `GitHubClientHelpers.h` / `GitHubClientHelpers.cpp` either drops or converts to a runtime guard. No `#error` branch may remain. **Also drop the `#if defined(SMATCHET_WITH_AGENTIC)` wrapper around `AppController::EnsureAgenticGithubClient` decl ([AppController.h:1271-1279](../../Source_Core/include/AppController.h:1271)) + impl ([AppController.cpp:1654-1674](../../Source_Core/src/AppController.cpp:1654))** — the function (renamed `GetGithubClient` per file #12) now serves both triage and tracker call sites; gating it on AGENTIC would break tracker-only builds.
 
 1.b **`GitHubClientHelpers.cpp` un-gates alongside `GitHubClient.cpp`** — `CMakeLists.txt:654-655` + `:678-680` currently `REMOVE_ITEM` + re-add both files in the same gated block. The un-gate must cover both TUs together.
 
@@ -82,11 +82,11 @@ Grouped by subsystem; one squashed PR.
 
 7. [`Source_Core/src/DefaultTrackerBackendFactory.cpp`](../../Source_Core/src/DefaultTrackerBackendFactory.cpp:7) — `"github"` branch; ctor takes `AppController*`; `GitHubForwardingClient` private class with lazy `impl_` resolution.
 8. [`Source_Core/include/DefaultTrackerBackendFactory.h`](../../Source_Core/include/) — factory ctor signature change.
-9. [`Source_Core/include/ConfigManager.h`](../../Source_Core/include/ConfigManager.h:222) — un-gate `GitHubPat` (drop `#if SMATCHET_WITH_AGENTIC`); add `GitHubBaseUrl`, `GitHubOwner`, `GitHubRepo`.
+9. [`Source_Core/include/ConfigManager.h`](../../Source_Core/include/ConfigManager.h:222) — **pull `GitHubPat` out of the `#if defined(SMATCHET_WITH_AGENTIC)` block** at [line 217](../../Source_Core/include/ConfigManager.h:217) (split the block; the remaining fields `AgenticPollEnabled` / `AgenticPollIntervalSec` / `AgenticPollSource` / `AgenticPollQuery` / `HandoffHarnessBinPath` / `HandoffRunnerName` / `HandoffClarificationPostToGithub` stay gated — they remain agentic-flow-only). Add `GitHubBaseUrl`, `GitHubOwner`, `GitHubRepo` adjacent to the un-gated `GitHubPat` (also un-gated; new tracker-role fields).
 10. [`Source_Core/src/ConfigManager.cpp`](../../Source_Core/src/ConfigManager.cpp) — Load / Save the three new fields; legacy-config migration.
 11. [`Source_Core/src/SmatchetPreferencesUi.cpp`](../../Source_Core/src/SmatchetPreferencesUi.cpp) — GitHub profile group under Tracker section.
-12. [`Source_Core/include/AppController.h`](../../Source_Core/include/AppController.h:1276) — rename `EnsureAgenticGithubClient` → `GetGithubClient`; rename member `agenticGithubClient_` → `sharedGithubClient_`. Factory call site updated to pass `this`.
-13. [`Source_Core/src/AppController.cpp`](../../Source_Core/src/AppController.cpp:1655) — rename uses; agentic-flow lambdas continue to resolve through `GetGithubClient()` (same instance now); existing triage write lambdas at lines 1894-2036 unchanged in shape.
+12. [`Source_Core/include/AppController.h`](../../Source_Core/include/AppController.h:1276) — rename `EnsureAgenticGithubClient` → `GetGithubClient`; rename member `agenticGithubClient_` → `sharedGithubClient_`; **drop the `#if defined(SMATCHET_WITH_AGENTIC)` wrapper around the function decl + member decl** (function now serves tracker too). Factory call site updated to pass `this`.
+13. [`Source_Core/src/AppController.cpp`](../../Source_Core/src/AppController.cpp:1655) — rename uses; **drop the `#if defined(SMATCHET_WITH_AGENTIC)` wrapper around the function impl at lines 1654-1674**; agentic-flow lambdas continue to resolve through `GetGithubClient()` (same instance now); existing triage write lambdas at lines 1894-2036 unchanged in shape.
 
 **Build glue**
 
