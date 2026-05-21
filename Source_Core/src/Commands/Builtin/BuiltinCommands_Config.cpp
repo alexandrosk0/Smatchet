@@ -99,6 +99,7 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
             {"showPerformance", "show_performance_window", ""},
             {"showLogWindow", "show_log_window", ""},
             {"enableFieldOverflowTooltips", "field_overflow_tooltips", ""},
+            {"singleClickToEditGridCells", "single_click_to_edit_grid_cells", ""},
             {"jqlQuery", "jql", "takes effect on next sync"},
             {"domain", "domain", "restart required to reconnect"},
             {"email", "email", "restart required to reconnect"},

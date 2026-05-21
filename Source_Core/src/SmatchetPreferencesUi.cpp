@@ -60,6 +60,9 @@
 #if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #elif defined(__linux__)
 #include <unistd.h>
@@ -1330,9 +1333,10 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.cancelDownload", "Cancel download"))) {
                     dl.Cancel();
                 }
-                const float frac = (prog.bytesExpected > 0) ? std::min(1.0f, static_cast<float>(prog.bytesReceived) /
-                                                                                 static_cast<float>(prog.bytesExpected))
-                                                            : 0.0f;
+                const float frac = (prog.bytesExpected > 0)
+                                       ? (std::min)(1.0f, static_cast<float>(prog.bytesReceived) /
+                                                              static_cast<float>(prog.bytesExpected))
+                                       : 0.0f;
                 ImGui::ProgressBar(frac, ImVec2(-1, 0));
             }
             if (!prog.error.empty()) {
@@ -2270,6 +2274,16 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
 
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Grid")) {
+            ImGui::TextUnformatted("Editing");
+            ImGui::Separator();
+            ImGui::Spacing();
+            if (ImGui::Checkbox("Single-click to edit grid cells", &d.cfg.SingleClickToEditGridCells)) {
+                MarkPrefsDirty(d);
+            }
+            ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Fields Inputs")) {

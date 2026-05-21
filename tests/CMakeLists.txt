@@ -45,6 +45,7 @@ add_executable(SmatchetTests
     Source_Core/OfflineQueueServiceRuntime.test.cpp
     Source_Core/ConfigManager.test.cpp
     Source_Core/ConfigMigration.test.cpp
+    Source_Core/SingleClickEditConfig.test.cpp
     # (coderabbit-react-loop phase 8) New ConfigManager blocks — gated on
     # SMATCHET_WITH_AGENTIC inside the TU so the OFF build compiles as a
     # no-op stub. Same pattern as ConfigMigration.test.cpp.

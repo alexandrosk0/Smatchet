@@ -923,7 +923,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             TicketFieldEditor::RenderFieldCell(
                                 app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
                                 d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, d.gridState, pendingEdits,
-                                d.trackerGridAsync, d.cfg.DateFormatOption, d.cfg.DateCompactRelativeThresholdDays);
+                                d.trackerGridAsync, d.cfg.DateFormatOption, d.cfg.DateCompactRelativeThresholdDays,
+                                d.cfg.SingleClickToEditGridCells);
                             ImGui::EndGroup();
                             cellGroupMin = ImGui::GetItemRectMin();
                             cellGroupMax = ImGui::GetItemRectMax();
