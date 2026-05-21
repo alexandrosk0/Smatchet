@@ -1,0 +1,340 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "lua-recorder-fuzz",
+  "captureCommit": "70d4d006cd4329bcff3ba40d67d0ecc836e45f68",
+  "captureDate": "2026-05-21T03:17:33Z",
+  "captureHost": "dev",
+  "captureRunnerOs": "windows-msys2-ucrt64",
+  "rows": [
+    {
+      "avgPerCallMs": 3.485,
+      "calls": 1,
+      "emaAvgMs": 3.34432844027774,
+      "lastTotalMs": 3.485,
+      "maxMs": 3.485,
+      "name": "SmatchetUI::Draw"
+    },
+    {
+      "avgPerCallMs": 3.1531,
+      "calls": 1,
+      "emaAvgMs": 3.014659987293237,
+      "lastTotalMs": 3.1531,
+      "maxMs": 3.1531,
+      "name": "drawActiveProjectWindow"
+    },
+    {
+      "avgPerCallMs": 3.0492,
+      "calls": 1,
+      "emaAvgMs": 2.91293748408947,
+      "lastTotalMs": 3.0492,
+      "maxMs": 3.0492,
+      "name": "activeProject:grid.rows"
+    },
+    {
+      "avgPerCallMs": 0.038860000000000006,
+      "calls": 70,
+      "emaAvgMs": 0.04389234751778469,
+      "lastTotalMs": 2.7202,
+      "maxMs": 1.0198,
+      "name": "RenderFieldCell"
+    },
+    {
+      "avgPerCallMs": 0.26251,
+      "calls": 10,
+      "emaAvgMs": 0.2972239444182024,
+      "lastTotalMs": 2.6251,
+      "maxMs": 1.0188,
+      "name": "LuaDrawList::Record"
+    },
+    {
+      "avgPerCallMs": 0.18871,
+      "calls": 10,
+      "emaAvgMs": 0.17850037785113632,
+      "lastTotalMs": 1.8871,
+      "maxMs": 1.0003,
+      "name": "LuaDrawList::Replay"
+    },
+    {
+      "avgPerCallMs": 0.244,
+      "calls": 1,
+      "emaAvgMs": 0.23886683043670445,
+      "lastTotalMs": 0.244,
+      "maxMs": 0.244,
+      "name": "drawAiAssistantPanel"
+    },
+    {
+      "avgPerCallMs": 0.2152,
+      "calls": 1,
+      "emaAvgMs": 0.2124922278032767,
+      "lastTotalMs": 0.2152,
+      "maxMs": 0.2152,
+      "name": "ai_chat.history.draw"
+    },
+    {
+      "avgPerCallMs": 0.1018,
+      "calls": 2,
+      "emaAvgMs": 0.1009132175963105,
+      "lastTotalMs": 0.2036,
+      "maxMs": 0.2024,
+      "name": "ai_chat.history.render_turn"
+    },
+    {
+      "avgPerCallMs": 0.0168,
+      "calls": 1,
+      "emaAvgMs": 0.01792487387332699,
+      "lastTotalMs": 0.0168,
+      "maxMs": 0.0168,
+      "name": "drawViewsDashboardWindow"
+    },
+    {
+      "avgPerCallMs": 0.0162,
+      "calls": 1,
+      "emaAvgMs": 0.016438404355607825,
+      "lastTotalMs": 0.0162,
+      "maxMs": 0.0162,
+      "name": "drawMainMenuBar"
+    },
+    {
+      "avgPerCallMs": 0.0096,
+      "calls": 1,
+      "emaAvgMs": 0.010284289256415134,
+      "lastTotalMs": 0.0096,
+      "maxMs": 0.0096,
+      "name": "activeProject:grid.setup"
+    },
+    {
+      "avgPerCallMs": 0.0089,
+      "calls": 1,
+      "emaAvgMs": 0.008371877155527629,
+      "lastTotalMs": 0.0089,
+      "maxMs": 0.0089,
+      "name": "activeProject:header"
+    },
+    {
+      "avgPerCallMs": 0.0004,
+      "calls": 10,
+      "emaAvgMs": 0.0006985439744974362,
+      "lastTotalMs": 0.004,
+      "maxMs": 0.0008,
+      "name": "FormatCompactJiraDateForDisplay"
+    },
+    {
+      "avgPerCallMs": 0.0033,
+      "calls": 1,
+      "emaAvgMs": 0.0031938562704687656,
+      "lastTotalMs": 0.0033,
+      "maxMs": 0.0033,
+      "name": "activeProject:grid.rectSel.keys"
+    },
+    {
+      "avgPerCallMs": 0.0026,
+      "calls": 1,
+      "emaAvgMs": 0.002630900233132215,
+      "lastTotalMs": 0.0026,
+      "maxMs": 0.0026,
+      "name": "drawAttachmentPreviewWindow"
+    },
+    {
+      "avgPerCallMs": 0.0024,
+      "calls": 1,
+      "emaAvgMs": 0.0025908755549772637,
+      "lastTotalMs": 0.0024,
+      "maxMs": 0.0024,
+      "name": "SmatchetPerfUi::DrawWindow"
+    },
+    {
+      "avgPerCallMs": 0.0024,
+      "calls": 1,
+      "emaAvgMs": 0.0019986435584539233,
+      "lastTotalMs": 0.0024,
+      "maxMs": 0.0024,
+      "name": "activeProject:grid.newIssue"
+    },
+    {
+      "avgPerCallMs": 0.0023,
+      "calls": 1,
+      "emaAvgMs": 0.0017734315675133048,
+      "lastTotalMs": 0.0023,
+      "maxMs": 0.0023,
+      "name": "activeProject:grid.post"
+    },
+    {
+      "avgPerCallMs": 0.0022,
+      "calls": 1,
+      "emaAvgMs": 0.0020029811803210767,
+      "lastTotalMs": 0.0022,
+      "maxMs": 0.0022,
+      "name": "MainThreadDispatcher::Drain"
+    },
+    {
+      "avgPerCallMs": 0.0022,
+      "calls": 1,
+      "emaAvgMs": 0.0023194378098501285,
+      "lastTotalMs": 0.0022,
+      "maxMs": 0.0022,
+      "name": "drawPreferencesWindow"
+    },
+    {
+      "avgPerCallMs": 0.0021,
+      "calls": 1,
+      "emaAvgMs": 0.0018319843977857833,
+      "lastTotalMs": 0.0021,
+      "maxMs": 0.0021,
+      "name": "drawLogWindow"
+    },
+    {
+      "avgPerCallMs": 0.0017,
+      "calls": 1,
+      "emaAvgMs": 0.0016044682708220503,
+      "lastTotalMs": 0.0017,
+      "maxMs": 0.0017,
+      "name": "dispatcher.drain"
+    },
+    {
+      "avgPerCallMs": 0.0013,
+      "calls": 1,
+      "emaAvgMs": 0.0015117299452328493,
+      "lastTotalMs": 0.0013,
+      "maxMs": 0.0013,
+      "name": "ViewState::EnsureLoaded"
+    },
+    {
+      "avgPerCallMs": 0.0006,
+      "calls": 1,
+      "emaAvgMs": 0.0005115107077902822,
+      "lastTotalMs": 0.0006,
+      "maxMs": 0.0006,
+      "name": "drawAuditWindow"
+    },
+    {
+      "avgPerCallMs": 0.0005,
+      "calls": 1,
+      "emaAvgMs": 0.0005819686235293667,
+      "lastTotalMs": 0.0005,
+      "maxMs": 0.0005,
+      "name": "activeProject:grid.sort"
+    },
+    {
+      "avgPerCallMs": 0.0005,
+      "calls": 1,
+      "emaAvgMs": 0.0003438888157010128,
+      "lastTotalMs": 0.0005,
+      "maxMs": 0.0005,
+      "name": "TrackerGridFieldDisplay::DrawWatchersListWindow"
+    },
+    {
+      "avgPerCallMs": 0.0004,
+      "calls": 1,
+      "emaAvgMs": 0.00038232170301757463,
+      "lastTotalMs": 0.0004,
+      "maxMs": 0.0004,
+      "name": "SmatchetToastManager::Render"
+    },
+    {
+      "avgPerCallMs": 0.0004,
+      "calls": 1,
+      "emaAvgMs": 0.00035960654037790963,
+      "lastTotalMs": 0.0004,
+      "maxMs": 0.0004,
+      "name": "TickTrackerConnectivityMonitor"
+    },
+    {
+      "avgPerCallMs": 0.0003,
+      "calls": 1,
+      "emaAvgMs": 0.00024059033583130975,
+      "lastTotalMs": 0.0003,
+      "maxMs": 0.0003,
+      "name": "SmatchetDrawMcpServerWindow"
+    },
+    {
+      "avgPerCallMs": 0.0003,
+      "calls": 1,
+      "emaAvgMs": 0.00024087705535334757,
+      "lastTotalMs": 0.0003,
+      "maxMs": 0.0003,
+      "name": "DrawPlanDocViewer"
+    },
+    {
+      "avgPerCallMs": 0.0003,
+      "calls": 1,
+      "emaAvgMs": 0.00021856533028714902,
+      "lastTotalMs": 0.0003,
+      "maxMs": 0.0003,
+      "name": "AgenticPoll::JoinDetached"
+    },
+    {
+      "avgPerCallMs": 0.0003,
+      "calls": 1,
+      "emaAvgMs": 0.00024770931363036987,
+      "lastTotalMs": 0.0003,
+      "maxMs": 0.0003,
+      "name": "ai_chat.history.pin_strip"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00022208452403424094,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "SmatchetWhisperOverlayUi::Render"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.0003131179996094924,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "drawBulkImportWindow"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00017157857625253194,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "TrackerGridFieldDisplay::DrawVotesListWindow"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00016907185076953918,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "drawEnsureCatalogAndInitialSync"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00023301009061877444,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "SmatchetAgentProposalsUi::Render"
+    },
+    {
+      "avgPerCallMs": 0.0001,
+      "calls": 1,
+      "emaAvgMs": 0.0001762639009407132,
+      "lastTotalMs": 0.0001,
+      "maxMs": 0.0001,
+      "name": "drawBulkExportWindow"
+    },
+    {
+      "avgPerCallMs": 0.0001,
+      "calls": 1,
+      "emaAvgMs": 0.0001524474084427013,
+      "lastTotalMs": 0.0001,
+      "maxMs": 0.0001,
+      "name": "grid.cell_commit_pump"
+    },
+    {
+      "avgPerCallMs": 0.0001,
+      "calls": 1,
+      "emaAvgMs": 0.00019033497895910953,
+      "lastTotalMs": 0.0001,
+      "maxMs": 0.0001,
+      "name": "SmatchetAgentHandoffUi::Render"
+    }
+  ],
+  "hardwareNote": "",
+  "perScenarioPolicyOverride": null
+}
