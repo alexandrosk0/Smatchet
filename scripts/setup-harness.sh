@@ -196,6 +196,23 @@ setup_cursor() {
   echo "Done. .cursor/rules/agents.mdc points Cursor at AGENTS.md + agents/."
 }
 
+# Required-tools pre-check — fires before the harness-specific setup so a
+# missing dep surfaces at setup time, not at the next high-stakes moment
+# (merge-gates poll, lint flush, etc.). Non-fatal — the harness setup still
+# proceeds even if a required tool is missing, so the user can finish the
+# adapter wiring + install the missing tool separately. See
+# docs/backlog/agent-self-improvement/tooling.md "Required CLI tools must be
+# discoverable + verified at first-setup time" for the motivating incident.
+if [[ -x "$ROOT/scripts/dev/check-required-tools.sh" ]]; then
+  bash "$ROOT/scripts/dev/check-required-tools.sh" || {
+    echo "" >&2
+    echo "note: continuing setup despite missing required tool(s). Install the flagged" >&2
+    echo "      tools above before running build/test/poller commands. Re-run" >&2
+    echo "      'bash scripts/dev/check-required-tools.sh' to confirm." >&2
+    echo "" >&2
+  }
+fi
+
 case "$HARNESS" in
   claude-code) setup_claude_code ;;
   codex)       setup_codex ;;
