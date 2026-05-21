@@ -25,23 +25,25 @@ Confirmed up-front in the originating prompt; do not relitigate without the user
 - **Public open-source posture** — archiving GitHub means losing the public read URL. If the user wants to keep an external read mirror later, that is a follow-up plan, not part of this one.
 - **Smatchet's in-app `P4Blame` integration** (`Source_Core/src/P4Blame.cpp`) — already Perforce-aware, unaffected by where Smatchet's own source lives. Out of scope.
 
-## Inventory of Git touchpoints (verified 2026-05-15)
+## Inventory of Git touchpoints (refreshed 2026-05-21 — superseded numbers below)
 
-### `FetchContent` declarations to vendor
+### `FetchContent` declarations to vendor (12 deps)
 
-All in `CMakeLists.txt` and `tests/CMakeLists.txt`:
+Split across `CMakeLists.txt`, `cmake/ImGuiTestEngine.cmake`, and `tests/CMakeLists.txt`. Authoritative inventory lives at [`docs/dev/offline-builds.md`](../dev/offline-builds.md) — keep these two tables in lockstep.
 
-| Dep | Pin | Source line |
+| Dep | Pin | Source-of-truth |
 |---|---|---|
-| `nlohmann/json` | `v3.11.3` | `CMakeLists.txt:225` |
-| `libcpr/cpr` | `1.9.2` | `CMakeLists.txt:230` |
-| `SRombauts/SQLiteCpp` | `3.3.1` | `CMakeLists.txt:236` |
-| `yhirose/cpp-httplib` | `v0.14.1` | `CMakeLists.txt:255` |
-| `mity/md4c` | `release-0.5.2` | `CMakeLists.txt:263-265` |
-| `gulrak/filesystem` | `v1.5.14` | `CMakeLists.txt:282-284` |
-| `glfw/glfw` | `3.3.8` | `CMakeLists.txt:314` |
-| `ThePhD/sol2` | `v2.20.6` | `CMakeLists.txt:382` |
-| `ocornut/imgui` (docking) | `329c5a6b3be75ebf54506d3ae94b836ffcf19fa0` | `CMakeLists.txt:470-474` |
+| `nlohmann/json` | `v3.11.3` | `CMakeLists.txt:250` |
+| `libcpr/cpr` | `1.9.2` | `CMakeLists.txt:255` |
+| `SRombauts/SQLiteCpp` | `3.3.1` | `CMakeLists.txt:261` |
+| `yhirose/cpp-httplib` | `v0.14.1` | `CMakeLists.txt:280` |
+| `mity/md4c` | `release-0.5.2` | `CMakeLists.txt:288-290` |
+| `gulrak/filesystem` | `v1.5.14` | `CMakeLists.txt:307-309` |
+| `glfw/glfw` | `3.3.8` | `CMakeLists.txt:339` |
+| `ThePhD/sol2` | `v2.20.6` | `CMakeLists.txt:407` |
+| `ggerganov/whisper.cpp` | `v1.7.4` | `CMakeLists.txt:512-514` |
+| `ocornut/imgui` (docking) | `329c5a6b3be75ebf54506d3ae94b836ffcf19fa0` | `CMakeLists.txt:520-524` |
+| `ocornut/imgui_test_engine` | `8568767ad4c53d6ce02d65f01a09d30fb630bd80` | `cmake/ImGuiTestEngine.cmake` |
 | `doctest/doctest` | `v2.4.11` | `tests/CMakeLists.txt:4-6` |
 
 Lua tarball is already downloaded (not via Git) — verify in `CMakeLists.txt` and treat the same as the others (vendor the tarball into `//smatchet/main/third_party/lua/`).
@@ -221,3 +223,80 @@ To be filled in during implementation per AGENTS.md § Plan revision after imple
 ## Deviations from plan
 
 (empty — populate as decisions diverge from this draft during implementation)
+
+## Drift report — 2026-05-21
+
+This plan was committed 2026-05-15 (`9d36aab`). Develop advanced 164 files / +23 761 / −799 lines since. The original phases still describe the right shape, but inventory and Phase 4 + Phase 6 scope are stale. Capture what changed before any phase ships so the next refactor isn't built on outdated assumptions.
+
+### Inventory deltas
+
+- **FetchContent**: 10 → 12 deps (added `whisper_cpp` v1.7.4, `imgui_test_engine` 8568767...). Pin source split across three files now. Tables at top of plan refreshed; future drift detected by re-grepping the canonical command in `docs/dev/offline-builds.md:31`.
+- **CMakeLists.txt** grew +314 lines net; original line numbers stale. Tables refreshed.
+- **`.github/` no longer absent.** 11 workflows live: `build-and-test.yml`, `coverage.yml`, `coverage-gate.yml`, `doc-validation.yml`, `lock-cleanup.yml`, `lock-staleness.yml`, `locks-render.yml`, `perf-full.yml`, `perf-pr-fast.yml`, plus `CODEOWNERS` + `pull_request_template.md`. The original "Out of scope: GitHub Actions / CI replacement" line is **wrong** and must be revoked.
+- **`scripts/dev/` exploded from ~11 to 94 files.** Phase 4's 7-row rewrite table now needs ≥50 rows.
+- **`scripts/git-hooks/pre-push`** exists. Add to Phase 6 deletion list.
+- **`docs/CONTEXT.md`** now exists (81 entries across 7 sections). Sections "Agentic flow", "Plan locks", and parts of "Harness concepts" reference Git-specific primitives and need a separate sweep at cutover.
+- **ADRs**: 1 → 6. ADRs `0005-force-push-carve-out-for-spawned-agent-recovery.md` and `0006-orchestrator-pr-stays-draft-by-default.md` are Git-primitive-only. Either mark obsolete post-cutover or rewrite for the Perforce equivalents (shelved-CL contract, `p4 obliterate` carve-out).
+
+### Scope expansions for Phase 4
+
+Per-domain, ranked by depth of Git coupling. Each row needs its own Phase 4 sub-row (or its own retirement decision):
+
+1. **Plan-locks (git-ref database)** — `refs/locks/*` is THE coordination primitive between parallel orchestrators. Perforce has no native ref-as-database. Decision required before Phase 4 starts:
+   - (A) Replace with `p4 counter <name> <value>` (atomic set/get/inc, scales fine for ~10s of locks).
+   - (B) Replace with a `//smatchet/main/locks/...` depot subtree + `p4 edit` as claim (slower, but human-readable + audit-trail-free).
+   - (C) Retire the parallel-orchestrator coordination feature entirely (acceptable if you're solo).
+   - Affected files: `docs/design/_plan-locks.generated.md`, `docs/design/_plan-locks-archive.md`, `scripts/dev/lock-claim.sh`, `lock-claim-update.sh`, `lock-release.sh`, `lock-staleness-sweep.sh`, `locks-render-markdown.sh`, `locks-show.sh`, `manual-locks-render-sync.sh`, `setup-locks-ruleset.sh`, `_lock-json.py`, plus 3 workflows (`lock-cleanup.yml`, `lock-staleness.yml`, `locks-render.yml`).
+
+2. **Merge-gates poller** — `scripts/dev/merge-gates.sh` + `merge-gates.graphql` runs a 60-poll loop against GitHub's GraphQL for CI + CodeRabbit + user-comment state. Has no Perforce equivalent. Decision:
+   - (A) Retire (GitHub Actions + CodeRabbit don't exist post-cutover; there's nothing to poll).
+   - (B) Rewire to Helix Swarm reviews (out-of-scope per current "Helix Swarm out of scope" decision; would un-defer that decision).
+   - Affected files: `scripts/dev/merge-gates*`, `tests/bats/merge_gates.bats`, plus the entire AGENTS.md § "Merge gates" section.
+
+3. **Agentic coding-handoff** — `docs/agentic/USAGE.md` (897 lines), `Source_Core/include/HarnessRunState.h`, `AgenticHandoffController`, `ClaudeCodeLocalRunner`. Spawns a child `claude` that runs `gh pr create --draft` + writes sentinel files. PR primitive is structural. Decision:
+   - (A) Retire feature (loses the autonomous-ship loop).
+   - (B) Replace PR primitive with shelved-CL primitive — `p4 shelve` becomes the "PR" — keeps the handoff loop but rewrites every gh-API call to a `p4` call.
+   - Affected files: sentinel-file contract (§ Handoff envelope), `agents/handoff-implementer.md`, `agents/pr-iterator.md`, `agents/coderabbit-triage.md`, `agents/git-janitor.md` (already in plan), plus all `scripts/dev/test-agentic-*.sh` (8 files).
+
+4. **Pillar 1 + 2 perf-review-system** — `.github/workflows/perf-pr-fast.yml` + `perf-full.yml` block merges on regression. Per-host baselines at `docs/perf/baselines/<scenario>.<host>.json`. PR-time gate dies with GitHub. Decision:
+   - (A) Replace with pre-`p4 submit` trigger (`scripts/dev/perf-run.sh` + `perf-compare.py` already exist; wire them as a p4 server-side `change-submit` trigger).
+   - (B) Move enforcement to a nightly cron that emails the user instead of blocking submits.
+   - Affected files: the two workflows, the regression-policy.json gate, AGENTS.md § "Pillar 1 — Performance" CI-gate references.
+
+5. **Coverage gate** — `.github/workflows/coverage-gate.yml` + `coverage-delta-gate.sh`. OpenCppCoverage delta per PR. Same shape as #4 — local `coverage.sh` survives, the gh-API gate dies.
+
+6. **Doc-validation workflow** — `doc-validation.yml` checks AGENTS.md § anchors don't drift. Replace with a pre-`p4 submit` trigger.
+
+7. **`scripts/dev/check-main-repo-clean.sh`** — used by harness Stop-hook. Replaces with `p4 opened -m 1` style check.
+
+8. **`scripts/dev/is-pure-docs-diff.sh`** — gates the AGENTS.md "pure-docs slice skip" rule. Rewrite using `p4 describe` of the pending CL.
+
+9. **`scripts/dev/tail-agent.sh` + `agent-progress.sh`** — used by spawned agents to write `.progress.log`. No git dependency at first glance; verify.
+
+10. **AGENTS.md sections that die or rewrite**:
+    - § Destructive git ops in shared worktrees → replace with `p4 revert -n` pre-flight.
+    - § Force-push carve-out for spawned-agent recovery → dies (no force-push in p4).
+    - § Merge gates → see #2.
+    - § Plan-doc safety (`git add` + commit immediately) → already in plan Phase 4.
+    - § Trivial-visual-only change envelope — references `git stash`; rewrite for `p4 shelve`.
+    - § Stale-read recovery on `Edit` — generic, survives unchanged.
+    - § Plan revision after implementation SHA references → CL numbers.
+
+### Scope additions for Phase 6 cutover CL
+
+Original Phase 6 listed: remove `.gitignore`, remove `release_github.ps1`, replace agent files. Add to the cutover CL:
+
+- Delete `.github/` entirely (after archiving locally for archaeology).
+- Delete `scripts/git-hooks/pre-push`.
+- Delete or rewrite the 8 lock-* scripts + 3 lock workflows per decision #1.
+- Delete or rewrite the merge-gates surface per decision #2.
+- Delete or rewrite the agentic-handoff surface per decision #3.
+- Delete or rewrite the coverage + perf workflows per decisions #4 + #5.
+- Sweep `docs/CONTEXT.md` for git-primitive entries.
+- Mark ADRs 0005 + 0006 obsolete (don't delete — ADRs are write-once).
+- Rewrite `docs/agentic/USAGE.md` (or move to `docs/applied/archived/` if agentic-handoff retires).
+- Update `docs/dev/offline-builds.md:127` cross-reference once Phase 1 starts.
+
+### Recommendation
+
+Plan is structurally still correct but Phase 4 scope was understated by ~5×. Before committing to the migration, the **five decisions** above (#1 plan-locks / #2 merge-gates / #3 agentic-handoff / #4 perf-CI / #5 coverage-CI) must be resolved — each is "retire feature vs rebuild on Perforce". The right time to make those calls is at the start, not phase-by-phase, because they shape the cutover-CL size by an order of magnitude. Recommend a follow-up grilling session against this drift report before any phase ships.
