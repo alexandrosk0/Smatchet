@@ -1,0 +1,118 @@
+# .p4ignore — Perforce ignore file.
+#
+# Translates .gitignore with p4 syntax differences. Authored per Phase 1 Step 3
+# of docs/design/git-to-perforce-migration.md. Critically excludes .git/ so the
+# git metadata directory never gets reconciled into the p4 depot.
+#
+# Syntax notes (Perforce 2014.2+):
+#   - gitignore-compatible globs (`*`, `?`, `**`)
+#   - `!` negation (later rules override earlier)
+#   - leading `/` anchors to client root
+#   - trailing `/` matches directories only
+#   - `#` line-comments
+#
+# NOT listed here (intentional): .gitignore itself — it is tracked in git and
+# baseline-imported to p4 in Phase 1 Step 4. .p4ignore only governs untracked
+# candidates for `p4 add` / `p4 reconcile`.
+
+# ----- Git metadata (must never enter the depot) -----
+.git/
+.gitignore.swp
+
+# ----- FetchContent clones / Lua tarball -----
+.fetchcontent-src/
+/.fetchcontent-msvc
+
+# ----- Build output / cache -----
+build/
+build_*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/*.cmake.user
+CMakeUserPresets.json
+compile_commands.json
+/smatchet-cppcheck-build-dir
+cppcheck_*.txt
+
+# ----- C/C++ build artefacts -----
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.map
+
+# ----- IDEs -----
+.vs/
+.vscode/
+.idea/
+cmake-build-*/
+out/
+*.sln
+*.vcxproj
+*.filters
+*.user
+
+# ----- OS -----
+Thumbs.db
+Desktop.ini
+
+# ----- Secrets / local config -----
+.env
+*.key
+*.pem
+*.pfx
+credentials*.json
+
+# ----- App local state / logs -----
+Smatchet_LocalCache.sqlite
+Smatchet_LocalCache.sqlite-wal
+Smatchet_LocalCache.sqlite-shm
+*.log
+imgui.ini
+smatchet_config.json
+smatchet_config.json.lock
+smatchet_views.json
+smatchet_backend_audit.jsonl
+smatchet_field_catalog_cache.json
+
+# ----- Agent / harness scratch -----
+.vexp/
+.worktrees/
+.claude/
+.codex/
+.cursor/
+.agents/
+skills-lock.json
+.session-context.md
+.session-context.archive/
+.triage-reviews.json
+.triage-review-comments.json
+.triage-issue-comments.json
+.progress.log
+
+# ----- Debug-detective artefacts -----
+debug-*.log
+Smatchet-debug-*.log
+tests/_debug/
+*.cppcheck
+
+# ----- Stale / migrated triage docs (kept ignored for parity) -----
+BUILD_ITERATION_PLAN.md
+backlog/CPPCHECK_PLAN.md
+backlog/RICH_TEXT_EDITING_V3_PLAN.md
+
+# ----- Screenshots / Python bytecode -----
+screenshot_*
+*.pyc
+
+# ----- Font Awesome 6 Solid TTF — manually-dropped binary asset.
+# See assets/fonts/README.md for sourcing instructions. -----
+assets/fonts/*.ttf
