@@ -154,7 +154,10 @@ fi
 # integrated" and exits non-zero, which we ignore.
 needs_populate="$stream_was_created"
 if [ "$needs_populate" = 0 ]; then
-    stream_file_count=$("$p4" files -m1 "${stream}/..." 2>&1 | grep -cE '^//' || true)
+    # Match `//depot/path#<rev>` (real file entries) — bare `^//` would also
+    # match `p4 files` errors like `//smatchet/task-foo/... - no such file(s).`
+    # which would falsely report "stream has files" against a virgin stream.
+    stream_file_count=$("$p4" files -m1 "${stream}/..." 2>&1 | grep -cE '^//.*#[0-9]+' || true)
     if [ "${stream_file_count:-0}" = "0" ]; then
         echo "p4-task-stream: ${stream} exists but holds zero revs — re-populating" >&2
         needs_populate=1
