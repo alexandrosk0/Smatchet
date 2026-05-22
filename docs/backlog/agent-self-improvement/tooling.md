@@ -284,3 +284,9 @@
   Concrete next action: `p4 -c smatchet_main_alexk reopen -t text+w //smatchet/main/...` followed by `p4 submit -d "chore(p4): retype baseline revs to text+w (dual-VCS ReadOnly fix)"`. Re-submits change as @<next> with the corrected types. Spot-check via a throwaway client: `p4 client task-readonly-probe` rooted at `/tmp/probe` + `p4 sync //smatchet/main/...@head` + verify no `ReadOnly` attribute on the sync'd files. Estimated cost ~15 min. Safe to defer until the second-contributor case actually arises.
   Status: parked
   Last-reviewed: 2026-05-22
+
+- 2026-05-22 · orchestrator · [tooling] · P3 — `lock-claim-update-p4.sh` not implemented; p4-counter backend forces release+re-claim for write-set growth
+  Details: `scripts/dev/lock-claim-update.sh` (git-ref backend) supports in-place lock update via `--force-with-lease` push. The Perforce-counter sibling at `scripts/dev/lock-claim-p4.sh` ships claim + release only — no update path. Today `SMATCHET_LOCK_BACKEND=p4-counter bash scripts/dev/lock-claim-update.sh ...` exits 2 with a diagnostic pointing the caller at release-then-re-claim. Loses the atomic "grow this lock without releasing it" guarantee that the git-ref path has.
+  Concrete next action: author `scripts/dev/lock-claim-update-p4.sh` modelled on `lock-claim-p4.sh`. Read existing `<lock_prefix><slug>_meta` counter, rebuild claim JSON with updated write-set + bumped `updated`, write back via `p4 counter --from=<old-json> --to=<new-json>` (CAS on the meta counter itself preserves atomicity). Then flip `scripts/dev/lock-claim-update.sh` p4-counter dispatch from `exit 2` to `exec` of the new script. Estimated cost ~1 h. Surfaces only when a p4-backend session needs in-place lock growth — until then the release+re-claim workaround is fine.
+  Status: parked
+  Last-reviewed: 2026-05-22

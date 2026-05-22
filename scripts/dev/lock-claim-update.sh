@@ -25,6 +25,29 @@
 
 set -euo pipefail
 
+# --- backend dispatch (Phase 4 of docs/design/git-to-perforce-migration.md)
+# `SMATCHET_LOCK_BACKEND=p4-counter` has no claim-update equivalent today:
+# `lock-claim-p4.sh` ships claim + release only (CAS via `p4 counter`).
+# Update-in-place against an existing counter is feasible but unscoped; the
+# safe interim behaviour is to refuse loudly so the caller routes around
+# (release + re-claim) instead of silently dropping write-set growth.
+if [ "${SMATCHET_LOCK_BACKEND:-git-ref}" = "p4-counter" ]; then
+    cat >&2 <<'EOF'
+lock-claim-update: not supported in the p4-counter backend.
+
+The Perforce backend (lock-claim-p4.sh + lock-release-p4.sh) ships claim
++ release only. To grow an existing lock's write-set, run release then a
+fresh claim:
+
+    bash scripts/dev/lock-release.sh <slug>
+    bash scripts/dev/lock-claim.sh <slug> <new-write-set-file>
+
+Backlog: implement lock-claim-update-p4.sh as a follow-up. Filed in
+docs/backlog/agent-self-improvement/tooling.md.
+EOF
+    exit 2
+fi
+
 usage() {
     echo "usage: bash scripts/dev/lock-claim-update.sh <slug> <write-set-file>" >&2
     exit 2
