@@ -50,6 +50,11 @@ void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manual);
 
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
     if (ImGui::BeginMainMenuBar()) {
+        // NC 2.01 menu bar: white text on gray strip. Other themes inherit ImGuiCol_Text.
+        const bool nortonMenuTint = (d.cfg.Theme == ThemeId::NortonCommander);
+        if (nortonMenuTint) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
         auto ticketsSnap = app.GetActiveTicketsSnapshot();
         const std::vector<CachedTicket> emptyTickets;
         const auto& tickets = ticketsSnap ? *ticketsSnap : emptyTickets;
@@ -536,6 +541,9 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
         }
 #endif
+        if (nortonMenuTint) {
+            ImGui::PopStyleColor();
+        }
         ImGui::EndMainMenuBar();
     }
 }

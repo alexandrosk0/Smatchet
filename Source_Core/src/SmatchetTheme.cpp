@@ -539,13 +539,15 @@ void ApplyHighContrast(ImGuiStyle& /*style*/, ImVec4* colors) {
 // dark text in the real Norton — but ImGui has a single global Text color, so we keep PopupBg
 // gray and accept yellow-on-gray for dialogs as the trade-off for the iconic yellow filename look.
 void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
-    const ImVec4 ncTeal = ImVec4(0.00f, 0.50f, 0.50f, 1.00f);        // #008080 — panel bg
-    const ImVec4 ncTealBright = ImVec4(0.00f, 0.667f, 0.667f, 1.0f); // #00AAAA — panel header strip
-    const ImVec4 ncBlue = ImVec4(0.00f, 0.00f, 0.667f, 1.00f);       // #0000AA — selection bar
-    const ImVec4 ncBrightCyan = ImVec4(0.333f, 1.00f, 1.00f, 1.0f);  // #55FFFF — numeric cells
-    const ImVec4 ncWhite = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);       // #FFFFFF — panel frame
-    const ImVec4 ncYellow = ImVec4(1.00f, 1.00f, 0.333f, 1.00f);     // #FFFF55 — body text
-    const ImVec4 ncGray = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);        // #C0C0C0 — dialog bg
+    // Inverted Norton palette: blue dominates panels/chrome, teal becomes the accent / selection.
+    const ImVec4 ncTeal = ImVec4(0.00f, 0.00f, 0.667f, 1.00f);      // #0000AA — panel bg (was teal)
+    const ImVec4 ncTealBright = ImVec4(0.00f, 0.00f, 0.85f, 1.00f); // #0000DD — panel header strip (brighter blue)
+    const ImVec4 ncBlue = ImVec4(0.00f, 0.50f, 0.50f, 1.00f);       // #008080 — selection bar (was blue, now teal)
+    const ImVec4 ncBrightCyan = ImVec4(0.333f, 1.00f, 1.00f, 1.0f); // #55FFFF — accent
+    const ImVec4 ncCyan = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);       // #00FFFF — body text + borders + scrollbars
+    const ImVec4 ncWhite = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);      // #FFFFFF
+    const ImVec4 ncYellow = ImVec4(1.00f, 1.00f, 0.333f, 1.00f);    // #FFFF55 — highlight text
+    const ImVec4 ncGray = ImVec4(0.667f, 0.667f, 0.667f, 1.00f);    // #AAAAAA — NC 2.01 menu bar bg
 
     // Norton Commander's chrome is sharp 1px boxes — no rounded corners on any region.
     style.WindowRounding = 0.0f;
@@ -558,27 +560,27 @@ void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
 
     // Body text = yellow (filename color). Most iconic NC tone — reads on teal panels, blue
     // selection bars, and (less ideally) on gray popups.
-    colors[ImGuiCol_Text] = ncYellow;
+    colors[ImGuiCol_Text] = ncCyan;
     colors[ImGuiCol_TextDisabled] = ImVec4(0.667f, 0.667f, 0.667f, 1.00f); // #AAAAAA
     colors[ImGuiCol_WindowBg] = ncTeal;
     colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_PopupBg] = ncGray;
-    colors[ImGuiCol_Border] = ncWhite;
-    colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.30f, 0.30f, 1.00f);
+    colors[ImGuiCol_PopupBg] = ncBlue; // dropdown menu = teal in inverted palette (matches NC 2.01 menu dropdown)
+    colors[ImGuiCol_Border] = ncCyan;
+    colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.30f, 1.00f);
 
-    // Input fields sit on blue (NC's command-line surface at the bottom of the panel).
+    // Input fields sit on the accent (teal in this inverted palette).
     colors[ImGuiCol_FrameBg] = ncBlue;
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.00f, 0.00f, 0.85f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.00f, 0.667f, 0.667f, 1.00f);
     colors[ImGuiCol_FrameBgActive] = ncBrightCyan;
 
-    // Title bars match the panel header strip (#00AAAA — slightly brighter teal).
+    // Title bars use the brighter blue header strip.
     colors[ImGuiCol_TitleBg] = ncTealBright;
     colors[ImGuiCol_TitleBgActive] = ncBlue;
-    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.30f, 0.30f, 0.80f);
+    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.30f, 0.80f);
 
-    colors[ImGuiCol_MenuBarBg] = ncTealBright;
-    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.00f, 0.30f, 0.30f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrab] = ncWhite;
+    colors[ImGuiCol_MenuBarBg] = ncGray; // NC 2.01 top menu bar — gray strip
+    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.00f, 0.00f, 0.30f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrab] = ncCyan;
     colors[ImGuiCol_ScrollbarGrabHovered] = ncBrightCyan;
     colors[ImGuiCol_ScrollbarGrabActive] = ncYellow;
 
@@ -591,12 +593,12 @@ void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
     colors[ImGuiCol_ButtonHovered] = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
     colors[ImGuiCol_ButtonActive] = ncBlue;
 
-    // Selected row in the file panel = blue bg with yellow text. THE iconic Norton highlight.
+    // Selected row = teal bg with yellow text (inverted Norton highlight).
     colors[ImGuiCol_Header] = ncBlue;
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.00f, 0.85f, 1.00f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.667f, 0.667f, 1.00f);
     colors[ImGuiCol_HeaderActive] = ncBrightCyan;
 
-    colors[ImGuiCol_Separator] = ncWhite;
+    colors[ImGuiCol_Separator] = ncCyan;
     colors[ImGuiCol_SeparatorHovered] = ncBrightCyan;
     colors[ImGuiCol_SeparatorActive] = ncYellow;
 
@@ -607,30 +609,30 @@ void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
     colors[ImGuiCol_Tab] = ncTeal;
     colors[ImGuiCol_TabHovered] = ncBrightCyan;
     colors[ImGuiCol_TabActive] = ncBlue;
-    colors[ImGuiCol_TabUnfocused] = ImVec4(0.00f, 0.30f, 0.30f, 1.00f);
+    colors[ImGuiCol_TabUnfocused] = ImVec4(0.00f, 0.00f, 0.30f, 1.00f);
     colors[ImGuiCol_TabUnfocusedActive] = ncTeal;
 
-    colors[ImGuiCol_DockingPreview] = ImVec4(0.00f, 0.00f, 0.85f, 0.70f);
-    colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.00f, 0.30f, 0.30f, 1.00f);
+    colors[ImGuiCol_DockingPreview] = ImVec4(0.00f, 0.667f, 0.667f, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.00f, 0.00f, 0.30f, 1.00f);
 
     colors[ImGuiCol_PlotLines] = ncBrightCyan;
     colors[ImGuiCol_PlotLinesHovered] = ncYellow;
     colors[ImGuiCol_PlotHistogram] = ncYellow;
     colors[ImGuiCol_PlotHistogramHovered] = ncWhite;
 
-    // Table header = bright teal (#00AAAA strip in NC's panel). Alt-rows on a faint blue tint.
+    // Table header = brighter blue strip. Alt-rows on a faint teal tint.
     colors[ImGuiCol_TableHeaderBg] = ncTealBright;
-    colors[ImGuiCol_TableBorderStrong] = ncWhite;
+    colors[ImGuiCol_TableBorderStrong] = ncCyan;
     colors[ImGuiCol_TableBorderLight] = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
     colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.00f, 0.00f, 0.40f, 0.40f);
+    colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.00f, 0.40f, 0.40f, 0.40f);
 
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 0.00f, 0.85f, 0.55f);
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.00f, 0.667f, 0.667f, 0.55f);
     colors[ImGuiCol_DragDropTarget] = ncYellow;
     colors[ImGuiCol_NavHighlight] = ncYellow;
     colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 0.333f, 0.70f);
-    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.00f, 0.20f, 0.20f, 0.40f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.20f, 0.20f, 0.55f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.00f, 0.00f, 0.20f, 0.40f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.20f, 0.55f);
 
     // C++ syntax palette — match NC's panel tones. Keyword bright yellow (filename accent),
     // string light red, comment light gray, number bright cyan (matches the date/time column
