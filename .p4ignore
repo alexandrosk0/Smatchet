@@ -76,6 +76,9 @@ Smatchet_LocalCache.sqlite
 Smatchet_LocalCache.sqlite-wal
 Smatchet_LocalCache.sqlite-shm
 *.log
+# Anchored extensionless `log` at client root only — picked up by
+# /remote-control during Phase 1 bring-up; `*.log` does not match.
+/log
 imgui.ini
 smatchet_config.json
 smatchet_config.json.lock

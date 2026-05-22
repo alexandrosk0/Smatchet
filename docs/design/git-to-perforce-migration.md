@@ -202,13 +202,28 @@ Exit: deliberately have two agents try to edit the same `+l`-locked file; one is
 Slug is `git-to-perforce-migration` for historical continuity (this doc was first committed under that name on 2026-05-15 as a full-migration plan). After 2026-05-21 scope-correction the doc describes a dual-VCS opt-in layer, not a migration. Slug retained because external references exist (`docs/dev/offline-builds.md:127`). Future renames are cheap if the slug becomes confusing.
 
 ## Implementation log
-*(populated post-ship per AGENTS.md § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `61795b8` · Phase 1 Step 3 — `.p4ignore` translation from `.gitignore` (PR #374).
+- 2026-05-21 (local, no git commit) · **Phase 0 — server bring-up** on Windows host `MainBot`: Helix Core 2025.2 (`p4d -r C:\depot`) already installed by user; auto-user `alexk` email + full-name updated to `alexkonstantonis@gmail.com` / `Alexandros Konstantonis`; stream depot `//smatchet` (depth 1) created; mainline stream `//smatchet/main` created with `ParentView: inherit`; client `smatchet_main_alexk` rooted at `C:\Development\Smatchet` created; typemap configured (binary+w for png/jpg/dll/exe/pdb/lib/ttf/zip; **text+wx** for sh/py/bat/cmd; **text+w** for cpp/h/cmake/lua/json/yml/md/toml/graphql — `+w` is critical for dual-VCS, see Deviations). Persistent user-env: `P4PORT=localhost:1666`, `P4USER=alexk`, `P4CLIENT=smatchet_main_alexk`, `P4IGNORE=.p4ignore`.
+- 2026-05-21 (p4 change `@2`) · **Phase 1 Steps 1-2, 4-5**: `p4 reconcile //smatchet/main/...` opened 820 files; submitted as change @2 ("baseline import from git feat/p4-migration-phase-1-p4ignore@61795b8"). 9 254 445 bytes total. Dry-run pre-flight confirmed `.p4ignore` correctly excludes `.git/`, `build/`, `.claude/`, `.vs/`, `.fetchcontent-src/`. No leakage.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **`+w` modifier on every text type in typemap (critical dual-VCS fix)**: plan listed bare `text` types (`text *.cpp`, `text *.md`, etc.). After change @2 submitted, every reconciled file got Windows `ReadOnly` attribute set per p4's default "checked-in = read-only" rule — which **breaks the dual-VCS edit-from-either-side contract** (the next `git`-only edit attempt failed with `EPERM` on `docs/design/git-to-perforce-migration.md` itself, that's how we found it). Recovery: bulk `attrib -R /S /D` over the tree to clear the bits, then re-submitted typemap with `text+w` / `text+wx` modifiers so future `p4 add`s never set ReadOnly. Existing change @2 revs still need `p4 reopen -t text+w //smatchet/main/... && p4 submit` to retroactively retype — tracked as next-step before any Phase 2 work touches the depot. **Plan needs amending**: the typemap section in Phase 0 Step 5 must list every text type with `+w` and every script type with `+wx`. Update on next pass.
+- **Case sensitivity** (Phase 0 Step 4): plan listed `case-sensitive=2` — invalid value (legal values are `0` insensitive / `1` sensitive). Server was initialized insensitive (Windows / NTFS default); kept as-is. Case-sensitive mode would break the dual-VCS invariant on a case-insensitive filesystem.
+- **Unicode mode** (Phase 0 Step 4): plan said `unicode=1`. Skipped. Rationale: single-user dev box; all content ASCII-safe UTF-8 (Locales/*.json round-trip cleanly as `text`); one-way switch adds per-client `P4CHARSET` declarations forever for marginal benefit. Empty depot keeps the re-enable path cheap if a real charset bug ever surfaces. Revisit if a second user with non-ASCII content joins.
+- **Daily checkpoint scheduled task** (Phase 0 Step 6): deferred. Recommended-not-blocking per plan (depot is non-canonical; git remains truth). Tracked: future entry in `docs/backlog/agent-self-improvement/tooling.md` — "automate `p4d -jc` checkpoint via Windows Scheduled Task."
+- **Client root path** (Phase 1 Step 2): plan said `C:\Dev\Smatchet`; actual repo at `C:\Development\Smatchet`. Client `smatchet_main_alexk` uses the actual path. Update the plan's path placeholders on next pass.
+- **Server root**: user installed `p4d` with `c:\depot\` (NOT the canonical-tree path). Plan didn't pin a server root; this is fine — depot files live in `c:\depot\db.*` and `c:\depot\smatchet.p4s/`, separate from the client workspace.
+- **`docs/perforce/SETUP.md` runbook**: not authored in this PR (deferred to follow-up). Phase 0/1 commands are reproducible from this Implementation log + PR #374 description; full runbook should land before Phase 2 to make the bring-up scripted instead of ad-hoc.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Phase 0 exit** (`p4 info` succeeds; throwaway CL submits + re-syncs): ✅ via change @2 baseline submit; `p4 info` shows the right user/client/server/case-handling.
+- **Phase 1 Step 5 exit** (clean tree shows empty `git status` AND empty `p4 opened`): ✅ — `p4 opened` returns "File(s) not opened on this client"; `p4 reconcile -n //smatchet/main/...` returns "no file(s) to reconcile". (`git status` shows `?? log` — unrelated stale file from a 2026-05-21 `/remote-control` test; not Phase-1-relevant.)
+- **Edit-driven round-trip** (the exit gate Phase 1 actually mandates): ✅ — transient `.p4-roundtrip-probe.txt` was flagged by both `git status --porcelain` (`?? .p4-roundtrip-probe.txt`) AND `p4 reconcile -n` (`opened for add`); clean-up restores empty state on both sides.
+- **Dual-VCS ReadOnly regression check**: ⚠️ initial change @2 submit triggered ReadOnly on every text file (root cause: bare `text` types in typemap). Recovered via bulk `attrib -R` + typemap re-submit with `+w`. Retroactive `p4 reopen -t text+w` against change @2 still pending before any next p4-touching work.
+- **Phase 2+**: not yet started.
 
 ## Superseded — 2026-05-15 full-migration plan
 
