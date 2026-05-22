@@ -234,12 +234,21 @@ bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::st
         f.Type = type;
         outCatalog.Fields.push_back(f);
     };
-    addField("state", kStateLabel, "string");
+    // Field IDs must match what GitHubIssueSearchMapping writes into
+    // CachedTicket::fieldValues (summary/description/status/assignee/labels/
+    // author/created/updated) — otherwise the Views UI fields-picker shows
+    // entries that have no underlying data, and Jira-shaped column IDs
+    // (which the data IS keyed by) are absent from the picker. The kFooLabel
+    // strings remain GitHub-native display names.
+    addField("summary", kTitleLabel, "string");
+    addField("description", kBodyLabel, "string");
+    addField("status", kStateLabel, "string");
+    addField("assignee", kAssigneesLabel, "string");
     addField("labels", kLabelsLabel, "array");
-    addField("assignees", kAssigneesLabel, "array");
+    addField("author", "Author", "string");
+    addField("created", "Created", "datetime");
+    addField("updated", "Updated", "datetime");
     addField("milestone", kMilestoneLabel, "string");
-    addField("title", kTitleLabel, "string");
-    addField("body", kBodyLabel, "string");
     // PR12 — PR-only fields. Strings ("true"/"false"/"computing"/"" for
     // mergeable; "true"/"false"/"" for draft) consistent with the existing
     // bool-as-string pattern used by other tracker catalogs.
@@ -259,12 +268,16 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
     // error, which AppController treats as a transient failure and retries forever).
     outError.clear();
     outFieldIdCanEdit.clear();
-    outFieldIdCanEdit["state"] = true;
+    // Field IDs aligned with the catalog (summary/description/status/assignee).
+    outFieldIdCanEdit["summary"] = true;
+    outFieldIdCanEdit["description"] = true;
+    outFieldIdCanEdit["status"] = true;
+    outFieldIdCanEdit["assignee"] = true;
     outFieldIdCanEdit["labels"] = true;
-    outFieldIdCanEdit["assignees"] = true;
     outFieldIdCanEdit["milestone"] = true;
-    outFieldIdCanEdit["title"] = true;
-    outFieldIdCanEdit["body"] = true;
+    outFieldIdCanEdit["author"] = false; // immutable on GitHub
+    outFieldIdCanEdit["created"] = false;
+    outFieldIdCanEdit["updated"] = false;
     return true;
 }
 
