@@ -38,6 +38,38 @@ import sys
 import time
 from typing import Any
 
+# Defensive: force stdout / stderr to UTF-8 so any future unicode in print()
+# doesn't crash the daemon on Windows where the default codec is cp1252.
+# Cycle 861 (2026-05-22) crashed because of `→` in a status line; the
+# arrow has been ASCII-folded but other unicode might creep into BLOCKED
+# status lines (CR review bodies, branch names with non-ASCII chars, etc.).
+# Python 3.7+ supports reconfigure(); older versions silently no-op via try.
+with contextlib.suppress(AttributeError, ValueError):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+def _resolve_gh_bin() -> str:
+    """Locate the `gh` CLI. Scheduled-task env on Windows usually doesn't
+    include `C:\\Program Files\\GitHub CLI\\` on PATH, so bare `gh` fails
+    with FileNotFoundError. Probe standard install locations + PATH; cache
+    the result so we resolve once per daemon lifetime."""
+    import shutil
+    via_path = shutil.which("gh") or shutil.which("gh.exe")
+    if via_path:
+        return via_path
+    for candidate in (
+        r"C:\Program Files\GitHub CLI\gh.exe",
+        r"C:\Program Files (x86)\GitHub CLI\gh.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\GitHub CLI\gh.exe"),
+    ):
+        if os.path.exists(candidate):
+            return candidate
+    return "gh"  # last-resort fallback — subprocess will FileNotFoundError
+
+
+GH_BIN = _resolve_gh_bin()
+
 # Import shared helpers from the CLI module (in the same directory).
 _HERE = pathlib.Path(__file__).resolve().parent
 _CLI_SPEC = importlib.util.spec_from_file_location("merge_watcher_cli", _HERE / "merge-watcher-cli.py")
@@ -83,6 +115,39 @@ def clear_pid_file() -> None:
 # ---------------------------------------------------------------------------
 # Per-PR poll
 # ---------------------------------------------------------------------------
+_orch_user_cache: str | None = None
+
+
+def _resolve_orch_user(clone_path: str) -> str:
+    """Resolve ORCH_USER via `gh api user --jq .login`. Cached for the daemon
+    lifetime — `gh` auth identity doesn't change mid-session, and we don't
+    want one extra `gh api` call per PR per poll cycle.
+
+    Returns empty string on failure (merge-gates.sh will then fail loudly
+    with "ORCH_USER not set" rather than silently mis-attributing comments).
+    """
+    global _orch_user_cache
+    if _orch_user_cache is not None:
+        return _orch_user_cache
+    try:
+        r = subprocess.run(
+            [GH_BIN, "api", "user", "--jq", ".login"],
+            cwd=clone_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            _orch_user_cache = r.stdout.strip()
+            return _orch_user_cache
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    _orch_user_cache = ""
+    return ""
+
+
 def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
     """Run merge-gates.sh for one registered PR, parse the last status line,
     return a state dict the daemon writes to state/<pr>.json.
@@ -100,7 +165,7 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
     # Resolve owner / repo via `gh repo view --json owner,name` in the clone.
     try:
         meta = subprocess.run(
-            ["gh", "repo", "view", "--json", "owner,name"],
+            [GH_BIN, "repo", "view", "--json", "owner,name"],
             cwd=clone_path,
             capture_output=True,
             text=True,
@@ -140,6 +205,15 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
     env = os.environ.copy()
     env.setdefault("MERGE_GATES_MAX_POLLS", "1")
     env.setdefault("MERGE_GATES_POLL_INTERVAL", "0")
+    # ORCH_USER is required by merge-gates.sh but the Scheduled Task spawns
+    # python with an inherited env that often lacks it (user-scope env vars
+    # only flow through interactive shells). Resolve once and cache.
+    env.setdefault("ORCH_USER", _resolve_orch_user(clone_path))
+    # merge-gates.sh shells out to `gh` from bash; the daemon's PATH may not
+    # include the GitHub CLI install dir. Prepend the resolved GH_BIN's
+    # directory so bare `gh` invocations in the script work.
+    if GH_BIN and os.path.dirname(GH_BIN):
+        env["PATH"] = os.path.dirname(GH_BIN) + os.pathsep + env.get("PATH", "")
     try:
         gates = subprocess.run(
             ["bash", str(MERGE_GATES_SCRIPT), owner, repo, str(pr)],
@@ -234,7 +308,7 @@ def cascade_lock(branch: str, timeout_seconds: float = 30.0):
 def _gh_json(args: list[str], cwd: str | None = None, timeout: int = 30) -> dict | list:
     """Run a `gh` subcommand expecting JSON on stdout; return parsed."""
     result = subprocess.run(
-        ["gh", *args],
+        [GH_BIN, *args],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -322,7 +396,7 @@ def cascade_update_child(owner: str, repo: str, child_pr: int) -> tuple[bool, st
     """
     result = subprocess.run(
         [
-            "gh",
+            GH_BIN,
             "api",
             "-X",
             "PUT",
@@ -637,7 +711,7 @@ def daemon_loop(poll_interval: int) -> int:
                         state.update(extras)
                         if extras.get("triage_action"):
                             print(
-                                f"  PR#{state['pr']:<6} BLOCKED → triage: {extras.get('triage_action')}"
+                                f"  PR#{state['pr']:<6} BLOCKED -> triage: {extras.get('triage_action')}"
                             )
                         else:
                             print(
