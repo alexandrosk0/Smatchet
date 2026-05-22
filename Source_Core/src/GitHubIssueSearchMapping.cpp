@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // PR12 — pure-logic JSON → CachedTicket mapping. Extracted out of
 // GitHubIssueSearch.cpp so doctest can exercise it without cpr.
@@ -353,6 +354,45 @@ void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json&
         draft = prDetail["draft"].get<bool>() ? "true" : "false";
     }
     ticket.fieldValues["pr.draft"] = draft;
+}
+
+std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, const std::string& owner,
+                                                    const std::string& repo, bool includePullRequests) {
+    std::vector<CachedTicket> out;
+    if (!nodes.is_array()) {
+        return out;
+    }
+    out.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        if (!node.is_object()) {
+            continue;
+        }
+        const auto tnIt = node.find("__typename");
+        const bool isPr = (tnIt != node.end() && tnIt->is_string() && tnIt->get<std::string>() == "PullRequest");
+        if (isPr && !includePullRequests) {
+            continue;
+        }
+        try {
+            const nlohmann::json restShape = MapGraphQlNodeToRestShape(node);
+            CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(restShape, owner, repo);
+            if (isPr) {
+                const nlohmann::json prShape = MapGraphQlPullRequestNodeToRestPrShape(node);
+                if (!prShape.is_null()) {
+                    EnrichPullRequestFieldsFromJson(t, prShape);
+                }
+            }
+            // Strip the internal sentinel — callers see PR rows via the [PR]
+            // summary prefix + pr.* columns, not the sentinel.
+            t.fieldValues.erase(kIsPullRequestSentinel);
+            out.push_back(std::move(t));
+        } catch (const std::exception&) {
+            // Malformed node — skip silently. The live caller logs aggregate
+            // counts via LOG_INFO so a per-node LOG_WARN here would only
+            // duplicate noise (and would force this pure-logic TU to depend
+            // on Logger.h, which we deliberately avoid for doctest purity).
+        }
+    }
+    return out;
 }
 
 } // namespace github

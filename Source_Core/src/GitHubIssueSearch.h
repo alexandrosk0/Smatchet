@@ -11,7 +11,9 @@
 #include "CachedTicketTypes.h"
 
 #include <cpr/cpr.h>
+#include <nlohmann/json.hpp>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -48,6 +50,28 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                                                  const std::string& owner, const std::string& repo,
                                                  const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                                                  std::string* outFetchError, std::string* outWarning);
+
+/// PR12 latency fix — same as `FetchIssuesViaRestApi` but emits each page's
+/// mapped tickets via `onPage` as soon as the page mapping completes (before
+/// the next page's HTTP roundtrip). Used by `GitHubClient::FetchIssuesStreamed`
+/// so the grid populates progressively (t+1.7s, t+3.4s, ...) instead of
+/// all-at-once after the last page returns.
+///
+/// `onPage` is invoked with the mapped + sentinel-stripped tickets for that
+/// page, and `isLast == true` on the final invocation (last page OR cap hit
+/// OR fatal error mid-stream). `isLast` fires exactly once for any non-empty
+/// fetch (zero pages → no callback invocations). When `onPage` is null the
+/// helper accumulates into the return vector with no per-page emission,
+/// matching the legacy single-shot contract.
+///
+/// Return value: same accumulated vector as the legacy overload (for callers
+/// like single-shot tests that still want the all-at-once snapshot). The
+/// streaming callers ignore the return value and consume the per-page batches.
+std::vector<CachedTicket> FetchIssuesViaRestApi(
+    const std::string& baseUrl, const std::string& pat, const std::string& owner, const std::string& repo,
+    const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted, std::string* outFetchError, std::string* outWarning,
+    const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage);
+
 
 /// PR4 — single-issue lookup loop used by GitHubClient::FetchIssuesForKeys.
 ///

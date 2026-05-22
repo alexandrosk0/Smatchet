@@ -26,6 +26,14 @@ class GitHubClient : public ITrackerClient {
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                           const ViewsStore* viewsOverride, std::string* outFetchError,
                                           std::string* outWarning) override;
+    /// PR12 latency fix — overrides the default single-batch
+    /// `ITrackerClient::FetchIssuesStreamed` so each GraphQL page is forwarded
+    /// to `onBatch` as soon as it returns from GitHub. Without this override the
+    /// grid stays empty until all 4 pages complete (~6s wall-clock); with it,
+    /// each page lands in ActiveTickets ~1.5s sooner.
+    TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
+                                                  const TrackerConfig* configOverride = nullptr,
+                                                  const ViewsStore* viewsOverride = nullptr) override;
     bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                             const ViewsStore& views, std::vector<CachedTicket>& outTickets,
                             std::string& outError) override;

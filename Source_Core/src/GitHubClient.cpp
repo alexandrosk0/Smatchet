@@ -159,6 +159,55 @@ std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, 
                                                    outFullSyncCompleted, outFetchError, outWarning);
 }
 
+TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& onBatch,
+                                                            const CancelCallback& shouldCancel,
+                                                            const TrackerConfig* configOverride,
+                                                            const ViewsStore* /*viewsOverride*/) {
+    // PR12 latency fix — per-page emission. Each GraphQL page's mapped tickets
+    // are posted to `onBatch` immediately, so the UI grid populates
+    // progressively instead of waiting for all 4 pages (~6s wall-clock).
+    TrackerIssueFetchSummary summary;
+    const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
+
+    std::string fetchError;
+    std::string fetchWarning;
+    bool fullSyncCompleted = false;
+    std::size_t pageCount = 0;
+    std::size_t totalEmitted = 0;
+
+    auto onPage = [&](const std::vector<CachedTicket>& page, bool isLast) {
+        ++pageCount;
+        totalEmitted += page.size();
+        LOG_INFO("GitHubClient::FetchIssuesStreamed: emitting page #%zu size=%zu isLast=%d", pageCount, page.size(),
+                 isLast ? 1 : 0);
+        if (!onBatch) {
+            return;
+        }
+        if (shouldCancel && shouldCancel()) {
+            return;
+        }
+        if (page.empty()) {
+            return;
+        }
+        // Copy into a movable buffer — the per-page helper returns const& so we
+        // can't move directly. Per-batch copy is cheap (≤100 tickets) and the
+        // alternative is duplicating the helper's signature.
+        std::vector<CachedTicket> batch = page;
+        onBatch(std::move(batch));
+    };
+
+    smatchet::github::FetchIssuesViaRestApi(baseUrl_, pat_, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
+                                            &fullSyncCompleted, &fetchError, &fetchWarning, onPage);
+
+    summary.FetchedCount = totalEmitted;
+    summary.FullSyncCompleted = fullSyncCompleted;
+    summary.FetchError = fetchError;
+    summary.Warning = fetchWarning;
+    LOG_INFO("GitHubClient::FetchIssuesStreamed: done pages=%zu total=%zu fullSync=%d err='%s'", pageCount,
+             totalEmitted, fullSyncCompleted ? 1 : 0, fetchError.c_str());
+    return summary;
+}
+
 bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
                                       const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
                                       std::string& outError) {

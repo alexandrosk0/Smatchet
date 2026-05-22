@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <vector>
 
 using namespace smatchet::github;
 
@@ -378,4 +379,125 @@ TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape → Enrich — UNKNOWN encodes
     CachedTicket t;
     EnrichPullRequestFieldsFromJson(t, prShape);
     CHECK(GetField(t, "pr.mergeable") == "computing");
+}
+
+// ---- PR12 latency-fix tests — per-page streaming helper ----
+
+namespace {
+nlohmann::json MakeIssueNode(int number, const std::string& title) {
+    nlohmann::json n;
+    n["__typename"] = "Issue";
+    n["number"] = number;
+    n["title"] = title;
+    n["state"] = "OPEN";
+    n["repository"] = nlohmann::json::object();
+    n["repository"]["name"] = "Smatchet";
+    n["repository"]["owner"] = nlohmann::json::object();
+    n["repository"]["owner"]["login"] = "alexandrosk0";
+    return n;
+}
+
+nlohmann::json MakePrNode(int number, const std::string& title) {
+    nlohmann::json n = MakeIssueNode(number, title);
+    n["__typename"] = "PullRequest";
+    n["headRefName"] = "feat/x";
+    n["baseRefName"] = "develop";
+    n["mergeable"] = "MERGEABLE";
+    n["isDraft"] = false;
+    return n;
+}
+} // namespace
+
+TEST_CASE("MapGraphQlNodesToTickets — maps issues only, no sentinel residue, when includePRs=false") {
+    nlohmann::json nodes = nlohmann::json::array();
+    nodes.push_back(MakeIssueNode(1, "Issue one"));
+    nodes.push_back(MakePrNode(2, "PR two")); // should be filtered out
+    nodes.push_back(MakeIssueNode(3, "Issue three"));
+
+    const std::vector<CachedTicket> mapped = MapGraphQlNodesToTickets(nodes, "alexandrosk0", "Smatchet", false);
+    CHECK(mapped.size() == 2);
+    CHECK(mapped[0].id == "alexandrosk0/Smatchet#1");
+    CHECK(mapped[1].id == "alexandrosk0/Smatchet#3");
+    for (const auto& t : mapped) {
+        CHECK(t.fieldValues.count(kIsPullRequestSentinel) == 0);
+    }
+}
+
+TEST_CASE("MapGraphQlNodesToTickets — includePRs=true keeps PR nodes with [PR] prefix") {
+    nlohmann::json nodes = nlohmann::json::array();
+    nodes.push_back(MakeIssueNode(1, "Issue one"));
+    nodes.push_back(MakePrNode(2, "PR two"));
+
+    const std::vector<CachedTicket> mapped = MapGraphQlNodesToTickets(nodes, "alexandrosk0", "Smatchet", true);
+    CHECK(mapped.size() == 2);
+    CHECK(GetField(mapped[0], "summary") == "Issue one");
+    CHECK(StartsWith(GetField(mapped[1], "summary"), "[PR] "));
+    // pr.* fields populated on the PR row.
+    CHECK(GetField(mapped[1], "pr.head") == "feat/x");
+    CHECK(GetField(mapped[1], "pr.base") == "develop");
+    // Sentinel stripped on both rows.
+    CHECK(mapped[0].fieldValues.count(kIsPullRequestSentinel) == 0);
+    CHECK(mapped[1].fieldValues.count(kIsPullRequestSentinel) == 0);
+}
+
+TEST_CASE("MapGraphQlNodesToTickets — non-array input yields empty vector") {
+    nlohmann::json notAnArray = nlohmann::json::object();
+    const std::vector<CachedTicket> mapped = MapGraphQlNodesToTickets(notAnArray, "o", "r", true);
+    CHECK(mapped.empty());
+}
+
+TEST_CASE("MapGraphQlNodesToTickets — skips malformed entries silently") {
+    nlohmann::json nodes = nlohmann::json::array();
+    nodes.push_back(MakeIssueNode(1, "Good"));
+    nodes.push_back(nlohmann::json("scalar-not-object")); // skipped — not an object
+    nodes.push_back(nlohmann::json::object());            // skipped — missing __typename treated as Issue but no number → mapper may throw; either way not the first slot
+    nodes.push_back(MakeIssueNode(2, "Also good"));
+
+    const std::vector<CachedTicket> mapped = MapGraphQlNodesToTickets(nodes, "o", "r", true);
+    // Must include at least the two well-formed Issues; malformed entries swallow silently.
+    CHECK(mapped.size() >= 2);
+    bool sawOne = false, sawTwo = false;
+    for (const auto& t : mapped) {
+        if (GetField(t, "summary") == "Good") sawOne = true;
+        if (GetField(t, "summary") == "Also good") sawTwo = true;
+    }
+    CHECK(sawOne);
+    CHECK(sawTwo);
+}
+
+TEST_CASE("MapGraphQlNodesToTickets — accumulating 4 simulated pages preserves order + total count") {
+    // Simulates the per-page emission contract: a worker calls
+    // MapGraphQlNodesToTickets once per page and accumulates the results in
+    // the order pages arrived. The total + ordering must match what the
+    // legacy all-at-once path would have produced.
+    std::vector<CachedTicket> accumulated;
+    int pageCallbackInvocations = 0;
+    int isLastTrueCount = 0;
+    auto simulateOnPage = [&](const std::vector<CachedTicket>& page, bool isLast) {
+        ++pageCallbackInvocations;
+        if (isLast) ++isLastTrueCount;
+        accumulated.insert(accumulated.end(), page.begin(), page.end());
+    };
+
+    const int kPagesToSimulate = 4;
+    for (int p = 0; p < kPagesToSimulate; ++p) {
+        nlohmann::json nodes = nlohmann::json::array();
+        // 2 issues per page → 8 total.
+        nodes.push_back(MakeIssueNode(p * 2 + 1, std::string("page ") + std::to_string(p) + " issue 1"));
+        nodes.push_back(MakeIssueNode(p * 2 + 2, std::string("page ") + std::to_string(p) + " issue 2"));
+        const std::vector<CachedTicket> mapped = MapGraphQlNodesToTickets(nodes, "o", "r", true);
+        CHECK(mapped.size() == 2);
+        const bool isLast = (p == kPagesToSimulate - 1);
+        simulateOnPage(mapped, isLast);
+    }
+
+    CHECK(pageCallbackInvocations == kPagesToSimulate);
+    CHECK(isLastTrueCount == 1);
+    CHECK(accumulated.size() == 8);
+    // Order preserved (page 0 issues come before page 3 issues). The mapper
+    // resolves owner/repo from the node's repository sub-object when present,
+    // so the synthetic owner ("alexandrosk0") + repo ("Smatchet") from
+    // MakeIssueNode win over the ownerHint/repoHint arguments.
+    CHECK(accumulated.front().id == "alexandrosk0/Smatchet#1");
+    CHECK(accumulated.back().id == "alexandrosk0/Smatchet#8");
 }

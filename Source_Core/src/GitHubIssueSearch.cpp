@@ -162,6 +162,14 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                                                 const std::string& owner, const std::string& repo,
                                                 const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                                                 std::string* outFetchError, std::string* outWarning) {
+    return FetchIssuesViaRestApi(baseUrl, pat, owner, repo, jqlQueryOrEmpty, outFullSyncCompleted, outFetchError,
+                                 outWarning, nullptr);
+}
+
+std::vector<CachedTicket> FetchIssuesViaRestApi(
+    const std::string& baseUrl, const std::string& pat, const std::string& owner, const std::string& repo,
+    const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted, std::string* outFetchError, std::string* outWarning,
+    const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage) {
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = false;
     }
@@ -215,6 +223,16 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
     std::vector<CachedTicket> results;
     bool reachedShortPage = false;
     std::string cursor; // empty → page 1; subsequent pages use endCursor.
+    bool emittedTerminal = false;
+    // Helper: fire onPage with an empty terminal page after a mid-stream
+    // error. Idempotent — only fires when no prior emission carried isLast.
+    auto emitTerminalIfNeeded = [&]() {
+        if (onPage && !emittedTerminal) {
+            std::vector<CachedTicket> empty;
+            onPage(empty, /*isLast*/ true);
+            emittedTerminal = true;
+        }
+    };
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
         const std::string body = BuildGraphQlBody(graphQlQuery, cursor);
@@ -228,6 +246,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
             }
             LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL HTTP %ld on page %d: %s", resp.status_code,
                       page, msg.c_str());
+            emitTerminalIfNeeded();
             return results;
         }
 
@@ -237,6 +256,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                 *outFetchError = "GitHub returned invalid JSON";
             }
             LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL invalid JSON on page %d", page);
+            emitTerminalIfNeeded();
             return results;
         }
 
@@ -249,6 +269,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                 *outFetchError = std::string("GitHub GraphQL error: ") + gqlErrors;
             }
             LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL errors on page %d: %s", page, gqlErrors.c_str());
+            emitTerminalIfNeeded();
             return results;
         }
 
@@ -258,6 +279,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                 *outFetchError = "GitHub GraphQL response missing data.search";
             }
             LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL response missing data.search on page %d", page);
+            emitTerminalIfNeeded();
             return results;
         }
 
@@ -267,69 +289,65 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
             if (outFetchError) {
                 *outFetchError = "GitHub GraphQL search.nodes not an array";
             }
+            emitTerminalIfNeeded();
             return results;
         }
 
-        for (const auto& node : nodes) {
-            if (!node.is_object()) {
-                continue;
-            }
-            // Honour the same includePullRequests gate the REST path used —
-            // when the user didn't ask for PRs, drop PullRequest nodes. (GitHub
-            // GraphQL search() with `type: ISSUE` returns both Issues and PRs
-            // by design.)
-            const auto tnIt = node.find("__typename");
-            const bool isPr = (tnIt != node.end() && tnIt->is_string() && tnIt->get<std::string>() == "PullRequest");
-            if (isPr && !plan.includePullRequests) {
-                continue;
-            }
-            try {
-                const nlohmann::json restShape = MapGraphQlNodeToRestShape(node);
-                CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(restShape, owner, repo);
-                // PR-only enrichment — synthesize the /pulls/{n} REST shape
-                // from the same GraphQL node so EnrichPullRequestFieldsFromJson
-                // stays unchanged + the pure-logic mapping coverage holds.
-                if (isPr) {
-                    const nlohmann::json prShape = MapGraphQlPullRequestNodeToRestPrShape(node);
-                    if (!prShape.is_null()) {
-                        EnrichPullRequestFieldsFromJson(t, prShape);
-                    }
-                }
-                results.push_back(std::move(t));
-            } catch (const std::exception& ex) {
-                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: skipping malformed GraphQL node: %s", ex.what());
-            }
-        }
+        // Map this page's nodes — pure-logic helper (no HTTP, sentinel stripped).
+        std::vector<CachedTicket> pageTickets =
+            MapGraphQlNodesToTickets(nodes, owner, repo, plan.includePullRequests);
 
-        // Pagination via pageInfo (cursor-based; no per_page mod-100 hack).
+        // Determine isLast BEFORE recording the next-cursor — the per-page
+        // callback contract requires `isLast == true` on exactly one
+        // invocation (the terminal page, regardless of why we stopped).
         const nlohmann::json& pageInfo = search.value("pageInfo", nlohmann::json::object());
         const bool hasNext = pageInfo.value("hasNextPage", false);
         const std::string endCursor = pageInfo.value("endCursor", std::string());
 
+        bool isLastPage = false;
+        bool stopLoop = false;
         if (!hasNext) {
             reachedShortPage = true;
-            break;
-        }
-
-        if (page == kGitHubMaxPages) {
+            isLastPage = true;
+            stopLoop = true;
+        } else if (page == kGitHubMaxPages) {
             AppendOutWarning(outWarning, std::string("GitHub fetch page cap (") + std::to_string(kGitHubMaxPages) +
                                              ") reached; further results not fetched. Narrow your view JQL to fit.");
             LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: page cap %d reached", kGitHubMaxPages);
+            isLastPage = true;
+            stopLoop = true;
+        } else if (endCursor.empty()) {
+            // Defensive — hasNext=true but endCursor empty would loop forever.
+            reachedShortPage = true;
+            isLastPage = true;
+            stopLoop = true;
+        }
+
+        LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: page %d mapped=%zu isLast=%d", page, pageTickets.size(),
+                 isLastPage ? 1 : 0);
+
+        // Emit this page to the streaming callback (when provided) BEFORE
+        // accumulating into `results`. Per-page emission is what lets the UI
+        // grid populate progressively (t+1.7s, t+3.4s, ...) instead of
+        // all-at-once after the last page returns.
+        if (onPage) {
+            onPage(pageTickets, isLastPage);
+            if (isLastPage) {
+                emittedTerminal = true;
+            }
+        }
+
+        // Accumulate into the legacy return vector — non-streaming callers
+        // (tests, FetchIssues backward-compat) still want the all-at-once
+        // snapshot.
+        results.insert(results.end(), std::make_move_iterator(pageTickets.begin()),
+                       std::make_move_iterator(pageTickets.end()));
+
+        if (stopLoop) {
             break;
         }
 
         cursor = endCursor;
-        if (cursor.empty()) {
-            // Defensive — hasNext=true but endCursor empty would loop forever.
-            reachedShortPage = true;
-            break;
-        }
-    }
-
-    // Strip the internal sentinel before returning — callers see PR rows via
-    // the `[PR] ` summary prefix and the `pr.*` columns, not the sentinel.
-    for (CachedTicket& t : results) {
-        t.fieldValues.erase(kIsPullRequestSentinel);
     }
 
     if (outFullSyncCompleted) {
