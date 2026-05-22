@@ -150,3 +150,61 @@ TEST_CASE("TranslateJqlToGitHubSearch — unsupported field emits warning") {
     CHECK(r.Query.empty());
     CHECK(Contains(r.Warning, "sprint"));
 }
+
+// PR12 — `type:` token recognition.
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:pr sets is:pr + IsPullRequestQuery") {
+    const auto r = TranslateJqlToGitHubSearch("type:pr", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:pr"));
+    CHECK(r.IsPullRequestQuery == true);
+    CHECK(r.Warning.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:issue emits is:issue without IsPullRequestQuery") {
+    const auto r = TranslateJqlToGitHubSearch("type:issue", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:issue"));
+    CHECK(r.IsPullRequestQuery == false);
+    CHECK(r.Warning.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:pr AND assignee = currentUser()") {
+    const auto r = TranslateJqlToGitHubSearch("type:pr AND assignee = currentUser()", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:pr"));
+    CHECK(Contains(r.Query, "assignee:@me"));
+    CHECK(r.IsPullRequestQuery == true);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — TYPE:PR case-insensitive") {
+    const auto r = TranslateJqlToGitHubSearch("TYPE:PR", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:pr"));
+    CHECK(r.IsPullRequestQuery == true);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — no type token preserves issues-only default") {
+    const auto r = TranslateJqlToGitHubSearch("assignee = currentUser()", "", "");
+    CHECK(r.Ok);
+    CHECK_FALSE(Contains(r.Query, "is:pr"));
+    CHECK_FALSE(Contains(r.Query, "is:issue"));
+    CHECK(r.IsPullRequestQuery == false);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:foo unknown value drops with warning") {
+    const auto r = TranslateJqlToGitHubSearch("type:foo", "", "");
+    CHECK(r.Ok);
+    CHECK_FALSE(Contains(r.Query, "is:pr"));
+    CHECK_FALSE(Contains(r.Query, "is:issue"));
+    CHECK(r.IsPullRequestQuery == false);
+    CHECK(Contains(r.Warning, "type:"));
+    CHECK(Contains(r.Warning, "foo"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — type = \"pr\" full JQL shape") {
+    const auto r = TranslateJqlToGitHubSearch("type = \"pr\"", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:pr"));
+    CHECK(r.IsPullRequestQuery == true);
+}

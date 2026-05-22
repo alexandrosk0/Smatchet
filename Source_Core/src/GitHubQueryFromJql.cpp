@@ -14,9 +14,9 @@ namespace github {
 namespace {
 
 enum class TokKind {
-    Word,    // bareword (identifier or keyword)
-    String,  // quoted string (quotes stripped)
-    Op,      // =, !=, ~
+    Word,   // bareword (identifier or keyword)
+    String, // quoted string (quotes stripped)
+    Op,     // =, !=, ~
     LParen,
     RParen,
     Comma,
@@ -115,7 +115,11 @@ bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error)
             i += 2;
             continue;
         }
-        if (c == '=' || c == '~') {
+        if (c == '=' || c == '~' || c == ':') {
+            // PR12 — accept `:` as an operator so the JQL-shorthand `type:pr`
+            // tokenizes as Word("type") + Op(":") + Word("pr"). Only the
+            // `type` field handler treats `:` as equivalent to `=`; all other
+            // handlers reject `:` as an unsupported operator.
             Tok t;
             t.Kind = TokKind::Op;
             t.Text = std::string(1, static_cast<char>(c));
@@ -152,9 +156,8 @@ bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error)
 // then RParen). On match consumes through ')' and returns true; otherwise i is
 // untouched.
 bool MatchCurrentUser(const std::vector<Tok>& tokens, std::size_t& i) {
-    if (i + 2 < tokens.size() && tokens[i].Kind == TokKind::Word &&
-        EqIgnoreCase(tokens[i].Text, "currentUser") && tokens[i + 1].Kind == TokKind::LParen &&
-        tokens[i + 2].Kind == TokKind::RParen) {
+    if (i + 2 < tokens.size() && tokens[i].Kind == TokKind::Word && EqIgnoreCase(tokens[i].Text, "currentUser") &&
+        tokens[i + 1].Kind == TokKind::LParen && tokens[i + 2].Kind == TokKind::RParen) {
         i += 3;
         return true;
     }
@@ -251,8 +254,7 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
         for (std::size_t j = 0; j + 1 < tokens.size(); ++j) {
             if (tokens[j].Kind == TokKind::Word && EqIgnoreCase(tokens[j].Text, "ORDER") &&
                 tokens[j + 1].Kind == TokKind::Word && EqIgnoreCase(tokens[j + 1].Text, "BY")) {
-                AppendWarning(result.Warning,
-                              "ORDER BY clause dropped (GitHub search uses separate sort parameter)");
+                AppendWarning(result.Warning, "ORDER BY clause dropped (GitHub search uses separate sort parameter)");
                 tokens.resize(j); // drop everything from `ORDER` onward
                 break;
             }
@@ -321,8 +323,7 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
                 } else if (op == "!=" && isOpenLike) {
                     AppendQueryTerm(body, "is:closed");
                 } else {
-                    AppendWarning(result.Warning,
-                                  "status '" + value + "' has no direct GitHub equivalent (dropped)");
+                    AppendWarning(result.Warning, "status '" + value + "' has no direct GitHub equivalent (dropped)");
                 }
             } else if (EqIgnoreCase(field, "labels") || EqIgnoreCase(field, "label")) {
                 if (op != "=") {
@@ -331,6 +332,25 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
                     AppendWarning(result.Warning, "Empty label value dropped");
                 } else {
                     AppendQueryTerm(body, std::string("label:") + MaybeQuote(value));
+                }
+            } else if (EqIgnoreCase(field, "type")) {
+                // PR12 — `type:pr` / `type = "pr"` → is:pr (and IsPullRequestQuery
+                // = true so the fetch plan keeps PR items). `type:issue` →
+                // is:issue (explicit; GitHub's default). Unknown value drops
+                // with a warning.
+                if (op != "=" && op != ":") {
+                    AppendWarning(result.Warning, "Unsupported operator '" + op + "' on type");
+                } else {
+                    const std::string lowerVal = ToLower(value);
+                    if (lowerVal == "pr" || lowerVal == "pullrequest" || lowerVal == "pull-request") {
+                        AppendQueryTerm(body, "is:pr");
+                        result.IsPullRequestQuery = true;
+                    } else if (lowerVal == "issue") {
+                        AppendQueryTerm(body, "is:issue");
+                    } else {
+                        AppendWarning(result.Warning, std::string("Unknown 'type:' value '") + value +
+                                                          "' — ignored (use 'pr' or 'issue')");
+                    }
                 }
             } else if (EqIgnoreCase(field, "text") || EqIgnoreCase(field, "summary") ||
                        EqIgnoreCase(field, "description")) {

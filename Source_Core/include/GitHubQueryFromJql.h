@@ -30,6 +30,12 @@ struct JqlToGitHubResult {
     bool Ok = false;
     /// Populated when Ok == false.
     std::string Error;
+    /// PR12 — true when the source JQL contained `type:pr` (or `type = "pr"`).
+    /// Caller threads this through `ComputeGitHubFetchPlan` so the
+    /// repo-scoped path knows to keep PR items instead of filtering them out,
+    /// and so the cross-repo path knows it has already injected `is:pr` into
+    /// the body. Default `false` preserves issues-only behavior.
+    bool IsPullRequestQuery = false;
 };
 
 /// Translate a Smatchet JQL view query to a GitHub /search/issues `q=` value.
@@ -48,14 +54,15 @@ struct JqlToGitHubResult {
 ///   labels = "<label>"         → label:"<label>" (chained via space = AND)
 ///   text ~ "<phrase>"          → "<phrase>"
 ///   reporter = currentUser()   → author:@me
+///   type = "pr" / type:pr      → is:pr (sets result.IsPullRequestQuery=true)
+///   type = "issue" / type:issue → is:issue (explicit; GitHub default)
 ///   ORDER BY <field> <dir>     → ignored with warning
 ///   AND / OR connectors        → AND becomes space (GitHub default);
 ///                                OR is unsupported and emits a warning
 ///
 /// Unsupported / unknown terms drop with a warning. Empty input → Ok=true,
 /// Query empty (or just `repo:o/r` when owner+repo provided).
-JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::string& owner,
-                                             const std::string& repo);
+JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::string& owner, const std::string& repo);
 
 } // namespace github
 } // namespace smatchet
