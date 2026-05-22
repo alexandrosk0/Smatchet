@@ -162,6 +162,8 @@ struct TrackerConfig {
     std::vector<std::string> NewIssueInheritFieldIds;
     // Plane field ids copied from the last grid row when seeding a new-issue draft (+ New issue).
     std::vector<std::string> NewIssueInheritFieldIdsPlane;
+    // GitHub field ids copied from the last grid row when seeding a new-issue draft (+ New issue).
+    std::vector<std::string> NewIssueInheritFieldIdsGitHub;
     // One-shot migration flag: injects "issuetype" into both inherit lists for users who saved
     // their config before issuetype was added to the defaults. Persisted so the injection only
     // fires once — the user is free to remove "issuetype" again afterwards.

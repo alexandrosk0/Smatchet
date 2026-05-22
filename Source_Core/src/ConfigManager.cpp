@@ -343,6 +343,12 @@ void ConfigManager::Save(const TrackerConfig& config) {
                      std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
         j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
     }
+    {
+        nlohmann::json inheritIds = nlohmann::json::array();
+        std::copy_if(config.NewIssueInheritFieldIdsGitHub.begin(), config.NewIssueInheritFieldIdsGitHub.end(),
+                     std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
+        j["new_issue_inherit_field_ids_github"] = std::move(inheritIds);
+    }
     j["migrated_inherit_issuetype_v1"] = config.MigratedInheritIssueTypeV1;
     // Purge legacy keys carried over from the deleted SMATCHET_WITH_AGENTIC config block.
     // Save() merges over existing on-disk JSON via LoadMergedConfigJson(); without explicit
@@ -943,8 +949,32 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                     cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
                 }
             }
+            {
+                cfg.NewIssueInheritFieldIdsGitHub = DefaultNewIssueInheritFieldIdsList();
+                if (j.contains("new_issue_inherit_field_ids_github") &&
+                    j["new_issue_inherit_field_ids_github"].is_array()) {
+                    cfg.NewIssueInheritFieldIdsGitHub.clear();
+                    for (const auto& item : j["new_issue_inherit_field_ids_github"]) {
+                        if (item.is_string()) {
+                            std::string s = item.get<std::string>();
+                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
+                                s.erase(0, 1);
+                            }
+                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
+                                s.pop_back();
+                            }
+                            if (!s.empty() && s != "summary") {
+                                cfg.NewIssueInheritFieldIdsGitHub.push_back(std::move(s));
+                            }
+                        }
+                    }
+                }
+                if (cfg.NewIssueInheritFieldIdsGitHub.empty()) {
+                    cfg.NewIssueInheritFieldIdsGitHub = DefaultNewIssueInheritFieldIdsList();
+                }
+            }
 
-            // One-shot migration: inject "issuetype" into the front of both inherit lists if it
+            // One-shot migration: inject "issuetype" into the front of all inherit lists if it
             // is absent. Older configs were persisted with the legacy default list (no issuetype),
             // so a fresh-install benefit only ships to existing users via this migration.
             cfg.MigratedInheritIssueTypeV1 = j.value("migrated_inherit_issuetype_v1", false);
@@ -956,6 +986,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 };
                 injectIfMissing(cfg.NewIssueInheritFieldIds);
                 injectIfMissing(cfg.NewIssueInheritFieldIdsPlane);
+                injectIfMissing(cfg.NewIssueInheritFieldIdsGitHub);
                 cfg.MigratedInheritIssueTypeV1 = true;
             }
         } catch (const std::exception& ex) {

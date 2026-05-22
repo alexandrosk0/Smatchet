@@ -271,10 +271,43 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 - **Bucket-E Preferences tracker-switch coverage** — backlog entry.
 
 ## Implementation log
-*(populated post-ship per [`AGENTS.md`](../../AGENTS.md) § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `b1d241bc` · PR1 — C++ agentic ripout (85 deletions, 12 mods); merged via #356.
+- `cd66e28c` · PR2 — GitHub as third ITrackerClient backend (substrate: factory + client shell + helpers + static field catalog; HTTP impl stubbed); merged via #357.
+- `c76256de` · PR2 fixup — applied 5 CodeRabbit findings missed on #357.
+- `67e3abb4` · PR3 — Preferences UI dropdown + TicketSyncService GitHub backend swap + in-memory cache-clear on backend-kind change. Bundled three originally-separate slices because the dropdown is non-functional without the swap, and the swap surfaced the pre-existing Jira↔Plane cache-stale bug.
+- `25ef6a50` · Adjacent fix shipped via #379 — `fix(dx12): guard WhisperAi scenario refs with SMATCHET_WITH_AI`. Not strictly part of this plan, but pre-existing dual-target breakage on develop tip was blocking PR3 verification.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **PR2 HTTP impl deferred**: plan §PR2 implied complete `GitHubClient` HTTP methods (`FetchIssues`, `FetchIssuesForKeys`, `UpdateField`, `UpdateIssueFields`, `CreateIssue`, `ProbeReachability`); shipped substrate emits `"… HTTP impl deferred to a follow-up slice of docs/design/github-tracker-backend.md PR2"` via a shared `StubError` helper. Tracked as follow-up PRs (see § Remaining for GitHub issues to work below).
+- **PR3 not in original plan**: original doc had two PRs; PR3 was carved out post-merge of PR2 once it became clear the Preferences UI line item §152 was load-bearing on its own. PR3 also expanded scope to include `TicketSyncService` swap + cache-clear because `SmatchetPreferencesUi.cpp:2666 app.SyncWithBackend(...)` would otherwise no-op on the GitHub case.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- PR3 dual-target build: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — passed. `libSmatchetCore_DX12.a` linked (step 194/198), `Smatchet.exe` linked (step 195/198).
+- PR3 ctest: `ctest --test-dir build/ninja-test-msys2` — 2/2 pass (`smatchet_tests` 1.89 s, `smatchet_lua_tests` 0.01 s).
+- PR3 visual verify: user-driven against `build/ninja-iter-msys2/Smatchet.exe` from worktree `.claude/worktrees/agent-a42ad27499adf9969/`. Log evidence:
+  ```text
+  [INFO] Updated tracker config (GitHub). BaseUrl='https://api.github.com' (PAT length=93)
+  [INFO] GitHubClient: ctor baseUrl='https://api.github.com' pat_bytes=93
+  [INFO] TicketSyncService: Switched backend to GitHub.
+  [INFO] TicketSyncService: Cleared in-memory ActiveTickets on backend-kind change.
+  [INFO] TickStreamingApply finished sync session. saved_or_kept=0 total_stale=0 fullSync=0 err=FetchIssues: GitHubClient HTTP impl deferred to a follow-up slice of docs/design/github-tracker-backend.md PR2
+  ```
+- Dropdown shows three options; GitHub config inputs render with correct tooltips; switching tracker kind clears the grid (in-memory `ActiveTickets`). Stub error surfaces as designed.
+
+## Remaining for GitHub issues to work
+
+Ordered ship list (each ≈ a single PR; estimates rough):
+
+1. **PR4 — `FetchIssues` + `FetchIssuesForKeys` HTTP impl** (~300 LOC). Paginated `GET /search/issues` (cross-repo) or `GET /repos/{owner}/{repo}/issues` (repo-scoped). New TU `Source_Core/src/GitHubIssueSearch.cpp` per plan §143. ETag + `If-None-Match` for cheap re-polls. Sets `outFullSyncCompleted=true` on the final page so the existing `KeepIds` purge in `TicketSyncService` works.
+2. **PR5 — view-query translation** (~150 LOC + tests). Smatchet's view definitions use JQL (`project = SMAT AND assignee = currentUser()`). GitHub uses its own search syntax (`is:issue is:open assignee:@me repo:foo/bar`). Either (a) ship a JQL → GitHub-query translator (`Source_Core/src/GitHubQueryFromJql.cpp`, pure helper, bucket-A testable) or (b) add `ITrackerClient::GetQueryLanguage() → enum {Jql, GitHubSearch, PlaneQuery}` so the view editor can switch syntax per backend. Pick before PR4 — fetch needs to know what query string to use.
+3. **PR6 — `GitHubOwner` + `GitHubRepo` config + Preferences inputs** (~50 LOC). Plan §150 named them; PR3 didn't wire them. Determines whether fetches are cross-repo (search) or repo-scoped (issues listing). Probably also needed for the `ListProjects` shape.
+4. **PR7 — `UpdateField` + `UpdateIssueFields` HTTP impl** (~200 LOC). `PATCH /repos/{o}/{r}/issues/{n}` for title/body/state/milestone/assignees; label-diff via `POST /repos/{o}/{r}/issues/{n}/labels` + `DELETE /repos/{o}/{r}/issues/{n}/labels/{name}` per existing `LabelEditDiffPure` helper. Audit-trail via `BackendAuditTrail::AppendBegin/AppendResult` with `source="github_client"` per plan §140.
+5. **PR8 — `CreateIssue` + `BuildCreatePayload`** (~100 LOC). `POST /repos/{o}/{r}/issues`. Wires into the `+ New issue` draft pipeline.
+6. **PR9 — `ProbeReachability` real probe** (~50 LOC). `GET /rate_limit` with the PAT. Replaces the current "PAT present" placeholder so the connectivity banner can distinguish auth failure (`401`) from network unreachable.
+7. **PR10 — bucket-E coverage for Preferences tracker switch** (~150 LOC). Plan §271 named this as a backlog item. ImGui Test Engine scenario asserting dropdown switches the live backend instance + clears tickets. Catches future regressions where a fourth tracker is added but the swap-switch is missed (the bug PR3 fixed for GitHub had also been silently latent for Jira↔Plane).
+8. **PR11 — rate-limit + retry policy** (~100 LOC). GitHub's secondary rate-limit + abuse-detection responses (`403` + `Retry-After`). Mirror `TrackerHttpUtils::ParseRetryAfter` from Jira's HTTP path.
+
+PR4 is the minimum for read-only browsing of GitHub issues. PR5 is mandatory if the user wants to write views; without it, the view editor's JQL input will produce empty fetches. PR7-PR8 unlock writes. Total remaining: ~1100 LOC across 8 PRs to reach functional parity with the Jira / Plane backends.

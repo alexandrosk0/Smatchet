@@ -112,8 +112,15 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         // so SmatchetDrawAiAssistantPanel doesn't (a) replace aiAssistantBuf_
         // with its TU-local s_inputCharBuf pointer and (b) drain the pending-
         // reload slot before our OnFrame can observe it. Restored in Teardown.
+        // SMATCHET_WITH_AI guard: the AI side-panel state lives behind
+        // `#if defined(SMATCHET_WITH_AI)` in SmatchetUiSession.h:174 — DX12 /
+        // Unreal builds compile this TU with SMATCHET_WITH_AI undefined per
+        // CMakeLists.txt:762-766, so the field is absent and the suppression
+        // is a no-op (there's no panel to suppress on that target anyway).
+#if defined(SMATCHET_WITH_AI)
         prevAssistantPanelOpen_ = g_ui.assistantPanelOpen;
         g_ui.assistantPanelOpen = false;
+#endif
 
         // Reset all observers BEFORE wiring callbacks so the count starts at 0
         // and there's no race with a prior scenario's leftover signal.
@@ -324,7 +331,9 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         // scenario started. Without this, opening the AI Assistant panel
         // from the menu after running this scenario in a long-running
         // dogfood session would silently fail (the flag would be stuck false).
+#if defined(SMATCHET_WITH_AI)
         g_ui.assistantPanelOpen = prevAssistantPanelOpen_;
+#endif
     }
 
     State state_ = State::Initial;

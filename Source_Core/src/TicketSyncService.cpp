@@ -446,15 +446,47 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         newTracker = "Jira";
     const std::string trackerLower = ToLowerAsciiCopy(newTracker);
     const std::string currentType = deps_.Backend() ? deps_.Backend()->GetTrackerType() : "";
-    const bool isCurrentlyJira = (currentType == "Jira");
-    const bool isCurrentlyPlane = (currentType == "Plane");
+    // Normalize currentType to lowercase too — JiraClient/PlaneClient report mixed case
+    // ("Jira" / "Plane") while GitHubClient reports lowercase ("github"). Compare in one
+    // case to avoid silent miss on a GitHub→Plane switch (etc.).
+    const std::string currentLower = ToLowerAsciiCopy(currentType);
+    const bool isCurrentlyJira = (currentLower == "jira");
+    const bool isCurrentlyPlane = (currentLower == "plane");
+    const bool isCurrentlyGitHub = (currentLower == "github");
 
+    bool backendSwapped = false;
     if (trackerLower == "plane" && !isCurrentlyPlane) {
         deps_.SetBackend(deps_.BackendFactory()->Create("Plane"));
         LOG_INFO("TicketSyncService: Switched backend to Plane.");
+        backendSwapped = true;
     } else if (trackerLower == "jira" && !isCurrentlyJira) {
         deps_.SetBackend(deps_.BackendFactory()->Create("Jira"));
         LOG_INFO("TicketSyncService: Switched backend to Jira.");
+        backendSwapped = true;
+    } else if (trackerLower == "github" && !isCurrentlyGitHub) {
+        deps_.SetBackend(deps_.BackendFactory()->Create("GitHub"));
+        LOG_INFO("TicketSyncService: Switched backend to GitHub.");
+        backendSwapped = true;
+    }
+
+    // Backend-kind switch: clear in-memory tickets so the old backend's items don't
+    // linger in the grid while the new backend's first fetch is in flight. Without this,
+    // switching Jira → GitHub (or any cross-kind swap) leaves stale tickets visible and
+    // the per-row update path tries to mutate them against the new backend, which fails
+    // or silently writes to the wrong tracker. SQLite cache rows survive — switching
+    // back later re-populates ActiveTickets via the cache hydrate path.
+    if (backendSwapped) {
+        {
+            std::lock_guard<std::mutex> lk(deps_.ActiveTicketsMutex());
+            deps_.ActiveTickets().clear();
+        }
+        deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>());
+        deps_.BumpActiveTicketsRevision();
+        // Invariant (see file-level comment ~L108): every ActiveTickets-mutating path
+        // flips the Lua-window-bump flag so downstream Lua-side window state stays
+        // synchronised with the grid. CR finding on PR #386.
+        deps_.SetPendingLuaWindowBump(true);
+        LOG_INFO("TicketSyncService: Cleared in-memory ActiveTickets on backend-kind change.");
     }
 
     const std::uint64_t reqId = ++currentFetchRequestId_;

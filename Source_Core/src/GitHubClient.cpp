@@ -4,6 +4,11 @@
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
 #include "TrackerFieldSchema.h"
+#include "TrackerHttpUtils.h"
+
+#include <cpr/cpr.h>
+
+#include <sstream>
 
 namespace {
 
@@ -24,6 +29,18 @@ void StubError(std::string& out, const char* method) {
                                 "docs/design/github-tracker-backend.md PR2";
 }
 
+// GitHub REST API auth + content-negotiation headers. Bearer-PAT auth (fine-grained
+// or classic both work), JSON-only response, pinned API version (2022-11-28) so the
+// server can't silently flip our response shape on us.
+cpr::Header BuildGitHubHeaders(const std::string& pat) {
+    return cpr::Header{
+        {"Authorization", std::string("Bearer ") + pat},
+        {"Accept", "application/vnd.github+json"},
+        {"X-GitHub-Api-Version", "2022-11-28"},
+        {"User-Agent", "Smatchet-GitHubClient"},
+    };
+}
+
 } // namespace
 
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
@@ -34,17 +51,79 @@ GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
 std::string GitHubClient::GetTrackerType() const { return "github"; }
 
 TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConfig& /*cfg*/) {
-    // Deferred: real impl is a GET /rate_limit with the PAT. For now report
-    // "config OK" only when the PAT is present so the connectivity banner
-    // distinguishes "configure PAT" from "GitHub unreachable".
+    // GET /rate_limit — cheap, always available even on free PATs, returns auth
+    // status + remaining quota. Maps HTTP codes to TrackerReachabilityProbeKind
+    // the same shape JiraClient::ProbeReachability uses so the connectivity
+    // banner doesn't care which backend is active.
     TrackerReachabilityProbeResult out;
     if (pat_.empty()) {
         out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
         out.Diagnostic = kPatMissingError;
-    } else {
-        out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
-        out.Diagnostic = "GitHubClient probe: PAT present (HTTP probe deferred)";
+        return out;
     }
+
+    const std::string url = baseUrl_ + "/rate_limit";
+    const cpr::Header headers = BuildGitHubHeaders(pat_);
+    const cpr::Response resp =
+        TrackerGetLogged("GitHubClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
+
+    const long sc = resp.status_code;
+    if (sc == 200) {
+        out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
+        // Extract core rate-limit numbers if the body parses; non-fatal on parse failure.
+        std::ostringstream oss;
+        oss << "HTTP 200";
+        try {
+            const nlohmann::json j = nlohmann::json::parse(resp.text);
+            if (j.contains("resources") && j["resources"].contains("core")) {
+                const auto& core = j["resources"]["core"];
+                const int limit = core.value("limit", 0);
+                const int remaining = core.value("remaining", 0);
+                oss << " (core " << remaining << "/" << limit << ")";
+            }
+        } catch (const std::exception&) {
+            // Body wasn't JSON or didn't carry the expected shape — banner still passes.
+        }
+        out.Diagnostic = oss.str();
+        return out;
+    }
+
+    if (sc == 401 || sc == 403) {
+        // 401 = bad PAT. 403 = scope-missing OR secondary rate-limit. Both are
+        // "you reached us but auth is off"; the connectivity banner shape is
+        // the same.
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
+        std::ostringstream oss;
+        oss << "HTTP " << sc;
+        if (sc == 401) {
+            oss << " (invalid or expired PAT)";
+        } else {
+            oss << " (PAT missing scope, or secondary rate-limit)";
+        }
+        out.Diagnostic = oss.str();
+        return out;
+    }
+
+    if (sc >= 500 && sc < 600) {
+        out.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
+        std::ostringstream oss;
+        oss << "HTTP " << sc;
+        out.Diagnostic = oss.str();
+        return out;
+    }
+
+    if (sc > 0 && sc < 500) {
+        // 404 / 4xx that aren't auth — typically a malformed Base URL.
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
+        std::ostringstream oss;
+        oss << "HTTP " << sc << " (check Base URL — expected https://api.github.com or "
+            << "https://<enterprise>/api/v3)";
+        out.Diagnostic = oss.str();
+        return out;
+    }
+
+    out.Kind = TrackerReachabilityProbeKind::TransportDown;
+    out.Diagnostic = resp.error.message.empty() ? std::string("Unknown network error") : resp.error.message;
     return out;
 }
 
