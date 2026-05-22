@@ -86,18 +86,22 @@ N/A — diff does not touch `Source_Core/`. Plan changes are limited to scripts,
 Implementation breaks into seven ordered phases. Each phase ships independently; each is reversible (no destructive cutover — git stays working throughout).
 
 ### Phase 0 — Helix Core bring-up
-1. Install `p4d` LTS (e.g. `r24.2`) on the developer Windows host.
-2. Install `p4` CLI + P4V on the dev machine. `p4 info` reaches `ssl:localhost:1666`.
+1. Install `p4d` LTS (e.g. P4D 2025.2 or later) on the developer Windows host. Smatchet ships against the remote-LAN topology authored in PR #373; see [`docs/perforce/SETUP.md`](../perforce/SETUP.md) for the authoritative recipe.
+2. Install `p4` CLI + P4V on the dev machine. `p4 info` reaches the configured `P4PORT` (default `localhost:1666` for the original single-host plan; `Brick:1666` or equivalent for the shipped remote-LAN topology).
 3. Create one user matching the git author (`alexkonstantonis@gmail.com`).
-4. Server config: `unicode=1`, `case-sensitive=2`, `P4CHARSET=utf8`.
-5. Configure `p4 typemap`: `binary+w *.png *.jpg *.dll *.exe *.lib`, `text+x *.sh *.py`, `unicode *.json *.md`, `text+w *.cpp *.h *.cmake`. Critically `.git/...` excluded entirely.
-6. Daily checkpoint via Windows Scheduled Task. Offsite checkpoint copy to OneDrive / NAS / cloud bucket — recommended but **not blocking** because the depot is non-canonical (git remains the truth).
+4. Server config: `case-sensitive` (`-C0`); unicode mode optional — Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8; one-way switch). Enable later via `p4d -xi` if a real charset bug surfaces.
+5. Configure `p4 typemap` with **explicit `+w` (writeable) modifier on every text type** — critical for the dual-VCS edit-from-either-side contract. Without `+w`, p4 sets Windows ReadOnly on every reconciled file, blocking the next `git`-only edit with `EPERM`. Shipped typemap:
+   - `binary+w *.png *.jpg *.dll *.exe *.pdb *.lib *.ttf *.zip`
+   - `text+wx *.sh *.py *.bat *.cmd`
+   - `text+w *.cpp *.h *.cmake *.lua *.json *.yml *.md *.toml *.graphql`
+   `.git/...` excluded entirely.
+6. Daily checkpoint via Windows Scheduled Task. Offsite checkpoint copy to OneDrive / NAS / cloud bucket — recommended but **not blocking** (depot is non-canonical; git remains the truth). Operational details + restore recipe in [`docs/perforce/RUNBOOK.md`](../perforce/RUNBOOK.md).
 
 Exit: `p4 info` succeeds; a throwaway test CL submits and re-syncs.
 
 ### Phase 1 — Dual-VCS canonical tree
-1. Create a stream depot (NOT classic) at `//smatchet`, with mainline `//smatchet/main` rooted at `C:\Dev\Smatchet`. Stream depot is required upfront because Phase 2 needs task streams as children.
-2. Create client `smatchet_main_<user>`. View: `//smatchet/main/... //smatchet_main_<user>/...`. Root: `C:\Dev\Smatchet`.
+1. Create a stream depot (NOT classic) at `//smatchet`, with mainline `//smatchet/main` rooted at the canonical repo path. Stream depot is required upfront because Phase 2 needs task streams as children.
+2. Create client `smatchet_main_<user>`. View: `//smatchet/main/... //smatchet_main_<user>/...`. Root: the user's actual repo path (shipped instance uses `C:\Development\Smatchet`; substitute your own).
 3. Author `.p4ignore` at repo root (translation of `.gitignore` — Perforce `!` negation, `**` globstar supported since p4 2014.2, also exclude `.git/`). Note: `.gitignore` itself is **tracked** in git and gets baseline-imported to p4; do not list it in `.p4ignore` (the ignore file only governs untracked candidates for `p4 add` / `p4 reconcile`).
 4. `p4 reconcile //smatchet/main/...` opens the whole tree (typemap + `.p4ignore` exclude `.git/`, build output, harness adapters); submit as a single baseline CL `chore(p4): baseline import from git develop@<SHA>`. **Optional** — most teams will accept a baseline-only import without history. Full `git p4` history import is filed as a follow-up plan (slug TBD); not required for the agentic-WIP use case.
 5. Verify: a clean working tree shows empty `git status` AND empty `p4 opened`. After the baseline submit, both `.gitignore` and `.p4ignore` are tracked-and-unchanged — `git status` doesn't list them and neither does `p4 reconcile -n` (nothing was modified).
@@ -210,13 +214,10 @@ Slug is `git-to-perforce-migration` for historical continuity (this doc was firs
 - `ae6f004` · **Phase 4 — p4-counter plan-locks backend** (PR #383). Two new scripts (`scripts/dev/lock-claim-p4.sh`, `scripts/dev/lock-release-p4.sh`) using `p4 counter --from=<old> --to=<new>` compare-and-swap atomicity. 4-line `exec`-dispatch added to existing `lock-claim.sh` / `lock-release.sh` so `SMATCHET_LOCK_BACKEND=p4-counter` switches transparently; default stays `git-ref` with zero behavioural change. Metadata stored in sibling counter `smatchet_lock_<slug>_meta` as JSON claim record. 6/6 lifecycle scenarios verified end-to-end against live `p4d`.
 - `ba652be` · **Phase 5 — exclusive-lock discipline + `AGENT_FLOWS.md`** (PR #384). `docs/perforce/AGENT_FLOWS.md` (~140 lines, the dual-VCS playbook the plan listed as Phase 0/1 deliverable but never authored) covers task-stream lifecycle, lock discipline, shelf-vs-stash, filetype hygiene, cross-link reconciliation, when-not-to-use-Perforce. Plus `docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh` — opt-in `PreToolUse:Edit` hook template that warns (or with `SMATCHET_P4_LOCK_HOOK_BLOCK=1`, blocks) when Edit targets a file held under `+l` by a different client. Off by default; activated via `setup-harness.sh` with `SMATCHET_AGENT_VCS=p4`.
 
-**Phases 2 / 3 / 6 / 7 — pending merge:**
-- PR #380 — Phase 2 task-stream allocator + GC scripts (open; CR re-review pending on `4bff831`).
-- PR #382 — Phase 3 submit-to-PR bridge (open; CR re-review pending on `0823ff6`).
-- PR #388 — Phase 6 `agents/p4-janitor.md` + `AGENTS.md § Dual-VCS topology` + `docs/CONTEXT.md § Source control` (open).
-- PR #389 — Phase 7 verification scenarios (`scripts/dev/test-p4-dual-vcs.sh`, 9 assertions across 3 scenarios; open).
-
-Entries will fold into the bulleted log above when those PRs merge — pending to avoid section-overlap conflicts while they're still open.
+- `2fa3730` · **Phase 2 — task-stream allocator + GC scripts** (PR #380). `scripts/dev/p4-task-stream.sh` allocates `//smatchet/tasks/<id>` from a `task-stream-template` parented to `//smatchet/main` and populates `.claude/streams/<id>/`. `scripts/dev/p4-task-stream-gc.sh --older-than-days N` purges streams with no pending CLs older than the threshold. CR re-review cleared on `4bff831`.
+- `f506556` · **Phase 3 — submit-to-PR bridge script** (PR #382). `scripts/dev/p4-task-stream-to-pr.sh <agent-id> <pr-title>` integrates the task stream up to `//smatchet/main`, syncs the canonical tree, creates an `agent/<id>/<short-slug>` git branch with the integrated CL's description as the commit body, pushes, and opens a draft PR via `gh pr create`. CR re-review cleared on `0823ff6`.
+- `7f00cbe` · **Phase 6 — agent + AGENTS.md + CONTEXT.md wiring** (PR #388). `agents/p4-janitor.md` companion; `AGENTS.md § Dual-VCS topology` short section cross-linking the new docs; `docs/CONTEXT.md § Source control (dual-VCS)` glossary additions.
+- `3395fc2` · **Phase 7 — verification scenario driver** (PR #389). `scripts/dev/test-p4-dual-vcs.sh` covers 9 assertions across 3 scenarios (single-agent p4 round-trip, default-git regression gate, parallel-streams multi-agent).
 
 ## Deviations from plan
 
@@ -237,10 +238,26 @@ Entries will fold into the bulleted log above when those PRs merge — pending t
 - **Phase 0 exit** (`p4 info` succeeds; throwaway CL submits + re-syncs): ✅ via change @2 baseline submit; `p4 info` shows the right user/client/server/case-handling.
 - **Phase 1 Step 5 exit** (clean tree shows empty `git status` AND empty `p4 opened`): ✅ — `p4 opened` returns "File(s) not opened on this client"; `p4 reconcile -n //smatchet/main/...` returns "no file(s) to reconcile". (`git status` shows `?? log` — unrelated stale file from a 2026-05-21 `/remote-control` test; not Phase-1-relevant.)
 - **Edit-driven round-trip** (the exit gate Phase 1 actually mandates): ✅ — transient `.p4-roundtrip-probe.txt` was flagged by both `git status --porcelain` (`?? .p4-roundtrip-probe.txt`) AND `p4 reconcile -n` (`opened for add`); clean-up restores empty state on both sides.
-- **Dual-VCS ReadOnly regression check**: ⚠️ initial change @2 submit triggered ReadOnly on every text file (root cause: bare `text` types in typemap). Recovered via bulk `attrib -R` + typemap re-submit with `+w`. Retroactive `p4 reopen -t text+w` against change @2 still pending before any next p4-touching work.
+- **Dual-VCS ReadOnly regression check**: ⚠️ initial change @2 submit triggered ReadOnly on every text file (root cause: bare `text` types in typemap). Recovered via bulk `attrib -R` + typemap re-submit with `+w`. Retroactive `p4 reopen -t text+w //smatchet/main/...` against existing revs **still pending** as of 2026-05-22 — Phases 2-7 shipped against the fixed typemap but did not retype the original @2 revs. Tracked in `docs/backlog/agent-self-improvement/tooling.md`: "retype change @2 revs to `text+w` so the dual-VCS ReadOnly contract holds across the whole baseline history."
 - **Phase 4 exit** (claim CAS + release + idempotent re-release; default backend unaffected): ✅ 6/6 lifecycle scenarios pass against live `p4d` — first-ever-claim bootstrap → re-claim by another agent fails with existing meta → release → re-claim → idempotent release → default `git-ref` backend takes the early-exit path with zero p4 calls. Detailed run output in PR #383.
 - **Phase 5 exit** (deliberate two-agent contention on a `+l`-locked file; one is warned): ✅ verified via a second main-stream client (`smatchet_main_test` rooted at `/tmp`) opening `README.md` with `p4 edit -t +l`; hook fired against the canonical client with both warning-mode (`WARNING` to stderr + exit 0) and block-mode (`SMATCHET_P4_LOCK_HOOK_BLOCK=1` → exit 2) paths. Negative cases (`SMATCHET_AGENT_VCS=git`, unlocked file) silently exit 0. Detailed run output in PR #384.
-- **Phase 2 / 3 / 6 / 7**: verification recorded in their open PRs (#380, #382, #388, #389). Will fold here when those land.
+- **Phase 2 exit** (spawn stub child with `SMATCHET_AGENT_VCS=p4`, observe populated task stream; GC purges on exit): ✅ — `scripts/dev/test-p4-dual-vcs.sh` § Scenario 1 covers allocation + GC end-to-end against live `p4d`. PR #380 verification log.
+- **Phase 3 exit** (submit-to-PR bridge end-to-end): ✅ — `test-p4-dual-vcs.sh` § Scenario 2 walks the integrate → sync → `git push` → `gh pr create` chain with a fake-gh harness. PR #382 verification log.
+- **Phase 6 exit** (AGENTS.md + CONTEXT.md additions present + cross-linked): ✅ — anchor checker (`scripts/dev/test_doc_anchors.py`) passes against the new sections; `agents/p4-janitor.md` discoverable per the agents.md spec.
+- **Phase 7 exit** (3 round-trip scenarios green): ✅ — `bash scripts/dev/test-p4-dual-vcs.sh` exits 0 across all 9 assertions on the shipped `Brick`-LAN topology.
+
+### Gap audit (2026-05-22)
+
+Plan promised 8 modified-file deltas + 2 new files that did not ship with the per-phase PRs. PR A (`docs(p4): close 7 mechanical gaps in perforce dual-VCS plan`, branch `wip/perforce-plan-gap-closeout-a`) closes 7 of them:
+
+- ✅ `docs/perforce/RUNBOOK.md` authored.
+- ✅ `scripts/dev/p4-reconcile-check.sh` authored.
+- ✅ `scripts/git-hooks/pre-push` invokes the reconcile check.
+- ✅ `scripts/dev/lock-claim-update.sh` adds `SMATCHET_LOCK_BACKEND=p4-counter` dispatch (refuses with exit 2 + diagnostic; full p4-side update path filed as a P3 backlog entry).
+- ✅ `scripts/setup-harness.sh` adds dual-VCS opt-in check.
+- ✅ `docs/dev/offline-builds.md:127` cross-reference de-stale-d.
+- ✅ `agents/git-janitor.md` adds the `See also` cross-link to `agents/p4-janitor.md`.
+- ⏭ `scripts/dev/_lock-json.py` — no change required (the helper is backend-agnostic and already shared by both backends).
 
 ## Superseded — 2026-05-15 full-migration plan
 
