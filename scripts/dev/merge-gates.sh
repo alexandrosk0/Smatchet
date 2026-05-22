@@ -187,11 +187,17 @@ poll_merge_gates() {
         # position (StatusContext lacks startedAt and GH overwrites by context name).
         # `jq | sort_by` is stable, so missing startedAt → original chronological order.
         local ctx
+        # Composite key — `[__typename, name|context]` — prevents a CheckRun.name
+        # colliding with an identically-named StatusContext.context (which would
+        # otherwise group both into one bucket and drop one required entry).
         ctx='((.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // []
-              | map(. + {_keyname: (if .__typename=="CheckRun" then .name else .context end)})
-              | group_by(._keyname)
+              | map(. + {_dedup_key: (if .__typename=="CheckRun"
+                                        then ["CheckRun", (.name // "")]
+                                        else ["StatusContext", (.context // "")]
+                                        end)})
+              | group_by(._dedup_key)
               | map(sort_by(.startedAt // "") | .[-1])
-              | map(del(._keyname)))'
+              | map(del(._dedup_key)))'
         local ci_total ci_fail ci_pend ci_warn_downgraded
         ci_total=$(jq "[$ctx | .[] | select(.isRequired==true)] | length" <<<"$pr")
         # Failing contexts before label downgrades.

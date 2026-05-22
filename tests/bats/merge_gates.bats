@@ -460,6 +460,24 @@ set_fixture() {
     [[ "$output" == *"0 fail"* ]]
 }
 
+@test "dedup key separates CheckRun vs StatusContext with identical names (CR #398)" {
+    # A CheckRun named "build" must NOT collide with a StatusContext whose
+    # context is also "build" — both are required, both must be counted.
+    # Composite [__typename, name] dedup key. With name-only dedup, one would
+    # be silently dropped.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T11:00:00Z","isRequired":true},
+          {"__typename":"StatusContext","context":"build","state":"FAILURE","isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    [[ "$output" == *"2/2"* || "$output" == *"1/2"* ]]  # both required, not deduped to 1
+    rm -f "$f"
+}
+
 @test "rerun: dedup picks latest by startedAt regardless of array order" {
     # Reverse order: SUCCESS first (older), FAILURE second (newer) — newer must win → still block.
     local f

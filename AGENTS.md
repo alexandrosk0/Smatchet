@@ -166,7 +166,7 @@ Additional pass conditions:
 Poll 3/60 — CI: 4/8 pass (1 fail, 2 pending, 1 warn-downgraded) | CodeRabbit: COMMENTED (3 actionable — block) (2 open) | User: 1 | reviewDecision: APPROVED
 ```
 
-The `warn-downgraded` cell counts CheckRuns whose FAILURE was suppressed by a per-PR label override (`tests-out-of-band` / `perf-out-of-band`). Downgraded checks do NOT contribute to `fail` and do NOT block; an `WARN: out-of-band label(s) downgraded …` line on stderr names which checks were silenced for the operator's review.
+The `warn-downgraded` cell counts CheckRuns whose failing conclusion (`FAILURE`, `TIMED_OUT`, `CANCELLED`, `ACTION_REQUIRED`, `STARTUP_FAILURE`) was suppressed by a per-PR label override (`tests-out-of-band` / `perf-out-of-band`). Downgraded checks do NOT contribute to `fail` and do NOT block; an `WARN: out-of-band label(s) downgraded …` line on stderr names which checks were silenced for the operator's review.
 
 The CR cell encodes the seven outcomes verbatim — examples: `APPROVED`, `COMMENTED (3 actionable — block)`, `COMMENTED (0 actionable)`, `COMMENTED (no Actionable header)`, `STALE_WITH_FINDINGS (5 actionable on prior commit — block + surface review)`, `STALE_CLEAN (0 actionable on prior commit — pass)`, `STALE_UNKNOWN (no Actionable header — treat as block per safe-default policy)`, `CHANGES_REQUESTED`, `DISMISSED`, `NONE+pending (poll N/<grace>)`, `NONE+status-SUCCESS`, `NONE+grace-expired` (paired with `WARN` on stderr).
 
