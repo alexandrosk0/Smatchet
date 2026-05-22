@@ -30,8 +30,13 @@ PROBE_AGENT_B="phase7-probe-b"
 # 127 (command-not-found) the first time it tried to invoke one, which
 # test-all.sh would mis-classify as a real failure.
 for dep in scripts/dev/p4-task-stream.sh scripts/dev/p4-task-stream-gc.sh scripts/dev/lock-claim.sh; do
-    if ! [ -x "$dep" ]; then
-        echo "test-p4-dual-vcs: required helper '${dep}' missing; skipping (Passed: 0  Failed: 0)"
+    # Invocations are `bash <script>` (not `<script>` directly), so we only
+    # need read access — not the executable bit. On Windows / NTFS the
+    # x-bit often isn't set even when the script runs fine under bash;
+    # `-x` would false-skip in that case (e.g. lock-claim.sh ships as
+    # -rw-r--r-- depending on how the repo was cloned).
+    if ! [ -r "$dep" ]; then
+        echo "test-p4-dual-vcs: required helper '${dep}' missing/unreadable; skipping (Passed: 0  Failed: 0)"
         exit 2
     fi
 done
