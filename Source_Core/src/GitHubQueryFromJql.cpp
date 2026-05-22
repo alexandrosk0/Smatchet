@@ -281,7 +281,14 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
         // Field-comparison clauses: <field> <op> <value>.
         if (t.Kind == TokKind::Word && i + 1 < tokens.size() && tokens[i + 1].Kind == TokKind::Op) {
             const std::string field = t.Text;
-            const std::string op = tokens[i + 1].Text;
+            // Normalize `:` shorthand (e.g. `status:open`, `assignee:@me`) to `=`
+            // so every field handler treats them uniformly. The `type` handler
+            // already accepted `:`; this generalizes the same behaviour to
+            // status / assignee / labels / reporter / etc.
+            std::string op = tokens[i + 1].Text;
+            if (op == ":") {
+                op = "=";
+            }
             std::size_t valIdx = i + 2;
             std::string value;
             bool isCurrentUser = false;
