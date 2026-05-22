@@ -76,6 +76,10 @@ add_executable(SmatchetTests
     # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
     Source_Core/GitHubQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubQueryFromJql.cpp"
+    # PR4 follow-up — pure helper ComputeGitHubFetchPlan deciding repo-scoped vs
+    # cross-repo fetch + the empty-config fallback warning. Pure TU (no cpr).
+    Source_Core/GitHubFetchPlan.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubFetchPlan.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit

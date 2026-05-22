@@ -1,6 +1,7 @@
 #include "GitHubIssueSearch.h"
 
 #include "GitHubClientHelpers.h"
+#include "GitHubFetchPlan.h"
 #include "GitHubQueryFromJql.h"
 #include "Logger.h"
 #include "TrackerHttpUtils.h"
@@ -138,7 +139,7 @@ CachedTicket MapIssueToCachedTicket(const nlohmann::json& issue, const std::stri
 
     std::string body = JsonString(issue, "body");
     if (body.size() > kGitHubBodyMaxBytes) {
-        LOG_DEBUG("GitHubIssueSearch: truncating issue body %zu → %zu bytes for %s", body.size(), kGitHubBodyMaxBytes,
+        LOG_TRACE("GitHubIssueSearch: truncating issue body %zu → %zu bytes for %s", body.size(), kGitHubBodyMaxBytes,
                   ticket.id.c_str());
         body.resize(kGitHubBodyMaxBytes);
     }
@@ -213,7 +214,11 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
         AppendOutWarning(outWarning, translated.Warning);
     }
 
-    const bool repoScoped = !owner.empty() && !repo.empty();
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan(owner, repo, translated.Query);
+    const bool repoScoped = plan.repoScoped;
+    if (!plan.warning.empty()) {
+        AppendOutWarning(outWarning, plan.warning);
+    }
     // On the repo-scoped path, GitHub's REST endpoint does not accept a
     // search-qualifier query string — flag the dropped JQL so the user
     // understands why the result set is broader than the JQL suggested.
@@ -232,13 +237,10 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
         if (repoScoped) {
             url = BuildRepoIssuesUrl(baseUrl, owner, repo, page);
         } else {
-            // Cross-repo path. Empty translated.Query → fall back to
-            // `is:issue is:open` so we don't ask GitHub for "everything ever".
-            std::string q = translated.Query;
-            if (q.empty()) {
-                q = "is:issue is:open";
-            }
-            url = BuildSearchUrl(baseUrl, q, page);
+            // Cross-repo path; ComputeGitHubFetchPlan already resolved the
+            // effective query (with the `is:issue is:open` fallback when both
+            // owner+repo+jql empty).
+            url = BuildSearchUrl(baseUrl, plan.effectiveQuery, page);
         }
 
         const cpr::Response resp =
