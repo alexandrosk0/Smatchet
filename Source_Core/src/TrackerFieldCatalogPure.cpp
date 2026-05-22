@@ -5,6 +5,8 @@
 #include "StringUtil.h"
 
 #include <algorithm>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -120,6 +122,55 @@ void SortComponentCatalog(std::vector<TrackerField>& fields, std::vector<Tracker
               });
     RefreshTrackerAllowedValuesFromOptions(*fieldIt);
     fieldIt->Family = ClassifyTrackerFieldFamily(*fieldIt);
+}
+
+void BuildDedupedIssueTypeOptions(const nlohmann::json& issueTypeArray, std::vector<std::string>& outAllowedValues,
+                                  std::vector<TrackerFieldOption>& outOptions) {
+    outAllowedValues.clear();
+    outOptions.clear();
+    if (!issueTypeArray.is_array()) {
+        return;
+    }
+    std::set<std::string> seenIds;
+    std::map<std::string, size_t> indexByLowerName;
+    for (const auto& issueTypeObj : issueTypeArray) {
+        if (!issueTypeObj.is_object()) {
+            continue;
+        }
+        const std::string issueTypeId = ComponentJsonIdToString(issueTypeObj.value("id", nlohmann::json(nullptr)));
+        const std::string issueTypeName = issueTypeObj.value("name", std::string());
+        if (issueTypeId.empty() || issueTypeName.empty() || !seenIds.insert(issueTypeId).second) {
+            continue;
+        }
+        const bool hasProjectScope = issueTypeObj.contains("scope") && issueTypeObj["scope"].is_object() &&
+                                     issueTypeObj["scope"].contains("project");
+        TrackerFieldOption option;
+        option.Id = issueTypeId;
+        option.Value = issueTypeName;
+        try {
+            option.PayloadJson = issueTypeObj.dump();
+        } catch (...) {
+            option.PayloadJson.clear();
+        }
+
+        const std::string lowerName = ToLowerAsciiCopy(issueTypeName);
+        const auto existing = indexByLowerName.find(lowerName);
+        if (existing != indexByLowerName.end()) {
+            TrackerFieldOption& prior = outOptions[existing->second];
+            const nlohmann::json priorJson = prior.PayloadJson.empty()
+                                                 ? nlohmann::json(nullptr)
+                                                 : nlohmann::json::parse(prior.PayloadJson, nullptr, false);
+            const bool priorHasScope = priorJson.is_object() && priorJson.contains("scope") &&
+                                       priorJson["scope"].is_object() && priorJson["scope"].contains("project");
+            if (hasProjectScope && !priorHasScope) {
+                prior = std::move(option);
+            }
+            continue;
+        }
+        indexByLowerName[lowerName] = outOptions.size();
+        outAllowedValues.push_back(issueTypeName);
+        outOptions.push_back(std::move(option));
+    }
 }
 
 } // namespace TrackerFieldCatalogPure
