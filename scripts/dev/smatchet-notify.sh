@@ -4,11 +4,15 @@
 # Notification dispatcher for smatchet-merge-watcher Phase 4a (per
 # `docs/design/smatchet-merge-watcher.md`).
 #
-# Tries two channels in order:
+# Tries three channels in order:
 #   1. Smatchet in-app toast via localhost HTTP POST (Phase 4b — currently
 #      no-op since the endpoint hasn't been built yet; we still attempt the
 #      POST so wiring is in place + retries become free once 4b lands).
 #   2. Windows native toast via `smatchet-notify-windows.ps1` (BurntToast).
+#   3. File log under $LOCALAPPDATA/Smatchet/merge-watch/notifications.log
+#      (or $XDG_STATE_HOME/smatchet/merge-watch/...) — always succeeds when
+#      the FS is writable; gives the user a paper trail when neither
+#      Smatchet nor BurntToast is available.
 #
 # Inputs (env or args):
 #   --pr <N>           PR number
@@ -107,10 +111,15 @@ if [[ -n "$NOTIFY_LOG_DIR" ]]; then
     mkdir -p "$NOTIFY_LOG_DIR" 2>/dev/null || true
     NOTIFY_LOG="$NOTIFY_LOG_DIR/notifications.log"
     ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    printf '[%s] PR#%s %s — %s%s\n' \
-        "$ts" "$PR" "$STATE" "$MESSAGE" \
-        "${PR_URL:+ ($PR_URL)}" >> "$NOTIFY_LOG" 2>/dev/null && success=1
-    if [[ $success -eq 1 ]]; then
+    # Gate the dispatch echo on the printf's own exit status — not on
+    # the cumulative `success` flag, which may already be 1 from
+    # Channel 1/2. Without this, the echo prints "file-log dispatched"
+    # even when printf silently failed (permissions, disk full, etc.).
+    # CR finding on PR #392.
+    if printf '[%s] PR#%s %s — %s%s\n' \
+            "$ts" "$PR" "$STATE" "$MESSAGE" \
+            "${PR_URL:+ ($PR_URL)}" >> "$NOTIFY_LOG" 2>/dev/null; then
+        success=1
         echo "smatchet-notify: file-log dispatched to ${NOTIFY_LOG}"
     fi
 fi

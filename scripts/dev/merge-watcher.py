@@ -346,7 +346,14 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
     """
     args = [GH_BIN, "pr", "ready", str(pr), "--repo", f"{owner}/{repo}"]
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     # gh exits 0 on success; also exits 0 with "already marked as ready" stderr
@@ -682,9 +689,9 @@ def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
     extras["merge_action"] = "merged"
     extras["merge_sha"] = merge_sha
     extras["merged_branch"] = head_branch
-    # 3. Drop from registry.
+    # 4. Drop from registry.
     maybe_remove_from_registry(pr, clone_path)
-    # 4. Cascade — find stacked children + trigger update-branch on each.
+    # 5. Cascade — find stacked children + trigger update-branch on each.
     children_results = []
     if head_branch:
         children = find_stacked_children(owner, repo, head_branch)
