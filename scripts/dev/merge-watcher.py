@@ -612,7 +612,7 @@ def maybe_notify(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
         owner, repo = or_meta
         pr_url = f"https://github.com/{owner}/{repo}/pull/{pr}"
     args = [
-        "bash",
+        BASH_BIN,
         str(NOTIFY_SCRIPT),
         "--pr",
         str(pr),
@@ -623,8 +623,26 @@ def maybe_notify(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
     ]
     if pr_url:
         args += ["--pr-url", pr_url]
+    # Same env discipline as the merge-gates.sh subprocess (see poll_one):
+    # ensure gh/jq dirs are on PATH in case smatchet-notify.sh shells out to
+    # either; force utf-8 + errors=replace on stdout decode so the daemon's
+    # state-file write doesn't crash on a `→` in CR review text we surface
+    # as the message. Pre-#393, this path ran with WSL bash (System32) which
+    # printed `<3>WSL (12 - Relay) ERROR: execvpe(/bin/bash) failed` per poll
+    # cycle and broke every Phase 4a notification.
+    notify_env = os.environ.copy()
+    extra_path_parts = []
+    for bin_path in (GH_BIN, JQ_BIN):
+        d = os.path.dirname(bin_path) if bin_path else ""
+        if d and d not in extra_path_parts:
+            extra_path_parts.append(d)
+    if extra_path_parts:
+        notify_env["PATH"] = os.pathsep.join(extra_path_parts) + os.pathsep + notify_env.get("PATH", "")
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            args, env=notify_env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
         if result.returncode == 0:
             return {
                 "notify_action": "dispatched",
