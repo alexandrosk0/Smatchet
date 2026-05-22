@@ -637,7 +637,7 @@ def daemon_loop(poll_interval: int) -> int:
                         state.update(extras)
                         if extras.get("triage_action"):
                             print(
-                                f"  PR#{state['pr']:<6} BLOCKED → triage: {extras.get('triage_action')}"
+                                f"  PR#{state['pr']:<6} BLOCKED -> triage: {extras.get('triage_action')}"
                             )
                         else:
                             print(
@@ -695,6 +695,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Force UTF-8 on stdout / stderr so any future non-ASCII glyph in a print
+    # call doesn't crash the daemon under Windows' default cp1252 codepage.
+    # `reconfigure` lands in 3.7+. Fail open — the daemon must keep running
+    # even if reconfigure raises on an exotic stdout wrapper.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
     args = build_parser().parse_args(argv)
     if getattr(args, "background", False):
         print(
