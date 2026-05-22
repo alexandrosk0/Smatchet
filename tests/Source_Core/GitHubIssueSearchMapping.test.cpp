@@ -155,3 +155,227 @@ TEST_CASE("EnrichPullRequestFieldsFromJson — non-object input is a no-op") {
     EnrichPullRequestFieldsFromJson(t, pr);
     CHECK(t.fieldValues.empty());
 }
+
+// PR12 Strategy C — GraphQL node → REST shape adapter tests.
+
+TEST_CASE("MapGraphQlNodeToRestShape — Issue node maps to REST issue shape") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    node["number"] = 42;
+    node["title"] = "Bug: thing broken";
+    node["state"] = "OPEN";
+    node["body"] = "details";
+    node["createdAt"] = "2026-01-01T00:00:00Z";
+    node["updatedAt"] = "2026-01-02T00:00:00Z";
+    node["author"] = nlohmann::json::object();
+    node["author"]["login"] = "octocat";
+    node["repository"] = nlohmann::json::object();
+    node["repository"]["name"] = "Smatchet";
+    node["repository"]["owner"] = nlohmann::json::object();
+    node["repository"]["owner"]["login"] = "alexandrosk0";
+
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    CHECK(rest["number"].get<int>() == 42);
+    CHECK(rest["title"].get<std::string>() == "Bug: thing broken");
+    CHECK(rest["state"].get<std::string>() == "open");
+    CHECK(rest["body"].get<std::string>() == "details");
+    CHECK(rest["created_at"].get<std::string>() == "2026-01-01T00:00:00Z");
+    CHECK(rest["updated_at"].get<std::string>() == "2026-01-02T00:00:00Z");
+    CHECK(rest["user"]["login"].get<std::string>() == "octocat");
+    CHECK(rest["repository_url"].get<std::string>() == "https://api.github.com/repos/alexandrosk0/Smatchet");
+    // Issue nodes do NOT carry the `pull_request` marker.
+    CHECK(rest.find("pull_request") == rest.end());
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — PullRequest node carries pull_request{merged_at}") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["number"] = 7;
+    node["title"] = "Add foo";
+    node["state"] = "MERGED";
+    node["mergedAt"] = "2026-01-03T12:00:00Z";
+    node["repository"] = nlohmann::json::object();
+    node["repository"]["name"] = "Smatchet";
+    node["repository"]["owner"] = nlohmann::json::object();
+    node["repository"]["owner"]["login"] = "alexandrosk0";
+
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    // MERGED → REST "closed" (REST never returns "merged" — merge state is in
+    // pull_request.merged_at).
+    CHECK(rest["state"].get<std::string>() == "closed");
+    REQUIRE(rest.contains("pull_request"));
+    CHECK(rest["pull_request"]["merged_at"].get<std::string>() == "2026-01-03T12:00:00Z");
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — open PR carries pull_request{merged_at:null}") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["number"] = 8;
+    node["title"] = "WIP";
+    node["state"] = "OPEN";
+    // mergedAt omitted (open PR has no mergedAt)
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    CHECK(rest["state"].get<std::string>() == "open");
+    REQUIRE(rest.contains("pull_request"));
+    CHECK(rest["pull_request"]["merged_at"].is_null());
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — assignees.nodes[0].login flattens to assignee.login") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    node["number"] = 1;
+    node["title"] = "t";
+    node["state"] = "OPEN";
+    node["assignees"] = nlohmann::json::object();
+    nlohmann::json assigneesNodes = nlohmann::json::array();
+    nlohmann::json a = nlohmann::json::object();
+    a["login"] = "alice";
+    assigneesNodes.push_back(a);
+    node["assignees"]["nodes"] = assigneesNodes;
+
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    REQUIRE(rest.contains("assignee"));
+    CHECK(rest["assignee"]["login"].get<std::string>() == "alice");
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — labels.nodes[].name flattens to labels[].name") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    node["number"] = 1;
+    node["title"] = "t";
+    node["state"] = "OPEN";
+    node["labels"] = nlohmann::json::object();
+    nlohmann::json labelsNodes = nlohmann::json::array();
+    nlohmann::json l1 = nlohmann::json::object();
+    l1["name"] = "bug";
+    nlohmann::json l2 = nlohmann::json::object();
+    l2["name"] = "p0";
+    labelsNodes.push_back(l1);
+    labelsNodes.push_back(l2);
+    node["labels"]["nodes"] = labelsNodes;
+
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    REQUIRE(rest.contains("labels"));
+    REQUIRE(rest["labels"].is_array());
+    REQUIRE(rest["labels"].size() == 2);
+    CHECK(rest["labels"][0]["name"].get<std::string>() == "bug");
+    CHECK(rest["labels"][1]["name"].get<std::string>() == "p0");
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — milestone{title} maps") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    node["number"] = 1;
+    node["title"] = "t";
+    node["state"] = "OPEN";
+    node["milestone"] = nlohmann::json::object();
+    node["milestone"]["title"] = "v1.0";
+
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    REQUIRE(rest.contains("milestone"));
+    CHECK(rest["milestone"]["title"].get<std::string>() == "v1.0");
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — non-object input returns empty object") {
+    nlohmann::json node = "not-an-object";
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    CHECK(rest.is_object());
+    CHECK(rest.empty());
+}
+
+// Integration: GraphQL adapter → existing CachedTicket mapper end-to-end.
+TEST_CASE("MapGraphQlNodeToRestShape — composes with MapIssueOrPullRequestJsonToCachedTicket for merged PR") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["number"] = 7;
+    node["title"] = "Add foo";
+    node["state"] = "MERGED";
+    node["mergedAt"] = "2026-01-03T12:00:00Z";
+    node["repository"] = nlohmann::json::object();
+    node["repository"]["name"] = "Smatchet";
+    node["repository"]["owner"] = nlohmann::json::object();
+    node["repository"]["owner"]["login"] = "alexandrosk0";
+
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(rest, "", "");
+    CHECK(t.id == "alexandrosk0/Smatchet#7");
+    CHECK(StartsWith(GetField(t, "summary"), "[PR] "));
+    CHECK(GetField(t, "status") == "merged-PR");
+    CHECK(t.fieldValues.count(kIsPullRequestSentinel) == 1);
+}
+
+// MapGraphQlPullRequestNodeToRestPrShape tests.
+
+TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape — MERGEABLE → true, isDraft passthrough") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["headRefName"] = "feat/foo";
+    node["baseRefName"] = "develop";
+    node["mergeable"] = "MERGEABLE";
+    node["isDraft"] = false;
+
+    const nlohmann::json pr = MapGraphQlPullRequestNodeToRestPrShape(node);
+    REQUIRE(pr.is_object());
+    CHECK(pr["head"]["ref"].get<std::string>() == "feat/foo");
+    CHECK(pr["base"]["ref"].get<std::string>() == "develop");
+    CHECK(pr["mergeable"].is_boolean());
+    CHECK(pr["mergeable"].get<bool>() == true);
+    CHECK(pr["draft"].get<bool>() == false);
+}
+
+TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape — CONFLICTING → false") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["mergeable"] = "CONFLICTING";
+    node["isDraft"] = true;
+    const nlohmann::json pr = MapGraphQlPullRequestNodeToRestPrShape(node);
+    CHECK(pr["mergeable"].is_boolean());
+    CHECK(pr["mergeable"].get<bool>() == false);
+    CHECK(pr["draft"].get<bool>() == true);
+}
+
+TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape — UNKNOWN → null (computing)") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["mergeable"] = "UNKNOWN";
+    node["isDraft"] = false;
+    const nlohmann::json pr = MapGraphQlPullRequestNodeToRestPrShape(node);
+    CHECK(pr["mergeable"].is_null());
+}
+
+TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape — Issue node returns null") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    const nlohmann::json pr = MapGraphQlPullRequestNodeToRestPrShape(node);
+    CHECK(pr.is_null());
+}
+
+TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape — end-to-end PR enrichment via Enrich helper") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["headRefName"] = "feat/foo";
+    node["baseRefName"] = "develop";
+    node["mergeable"] = "MERGEABLE";
+    node["isDraft"] = false;
+
+    const nlohmann::json prShape = MapGraphQlPullRequestNodeToRestPrShape(node);
+    CachedTicket t;
+    EnrichPullRequestFieldsFromJson(t, prShape);
+    CHECK(GetField(t, "pr.head") == "feat/foo");
+    CHECK(GetField(t, "pr.base") == "develop");
+    CHECK(GetField(t, "pr.mergeable") == "true");
+    CHECK(GetField(t, "pr.draft") == "false");
+}
+
+TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape → Enrich — UNKNOWN encodes as 'computing'") {
+    nlohmann::json node;
+    node["__typename"] = "PullRequest";
+    node["headRefName"] = "x";
+    node["baseRefName"] = "y";
+    node["mergeable"] = "UNKNOWN";
+    node["isDraft"] = false;
+    const nlohmann::json prShape = MapGraphQlPullRequestNodeToRestPrShape(node);
+    CachedTicket t;
+    EnrichPullRequestFieldsFromJson(t, prShape);
+    CHECK(GetField(t, "pr.mergeable") == "computing");
+}

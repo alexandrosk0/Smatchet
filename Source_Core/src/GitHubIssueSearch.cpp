@@ -13,9 +13,10 @@
 #include <string>
 #include <vector>
 
-// PR4 of docs/design/github-tracker-backend.md — paginated REST fetcher.
-// Lives outside the GitHubClient class (mirrors JiraIssueSearch / PlaneIssueSearch
-// convention). Pure consumer of the public helpers; no class state, no globals.
+// PR4 of docs/design/github-tracker-backend.md — paginated fetcher.
+// PR12 (Strategy C revision) — replaced REST N+1 (paginated /search/issues +
+// per-PR GET /pulls/{n}) with one GraphQL query per page. Same 10-page cap;
+// PR-only fields arrive inline in the same response via PullRequest fragment.
 
 namespace smatchet {
 namespace github {
@@ -27,69 +28,74 @@ namespace {
 constexpr long kGitHubFetchConnectTimeoutMs = 5000;
 constexpr long kGitHubFetchOverallTimeoutMs = 30000;
 
-// GitHub paginates at 100 items/page. We cap at 10 pages for the first slice
-// (matches the JiraIssueSearch safety cap + plan note); when reached, surface
-// a Warning rather than failing.
+// GitHub GraphQL search caps at 100 nodes/page (mirrors REST per_page=100).
+// We cap at 10 pages = 1000 items, same ceiling as the GitHub REST search
+// API hard limit. Surface a Warning when reached.
 constexpr int kGitHubPerPage = 100;
 constexpr int kGitHubMaxPages = 10;
 
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
 
-// PR12 — JSON → CachedTicket mapping (incl. PR detection + status encoding +
-// [PR] summary prefix) lives in GitHubIssueSearchMapping.cpp so the doctest
-// rig can link it without cpr. This TU only owns the cpr-side fetch loop.
-
-// Extract the per-PR detail URL from a list-response item's `pull_request`
-// sub-object. Returns empty when the field is absent or malformed.
-std::string ExtractPullRequestApiUrl(const nlohmann::json& issue) {
-    if (!issue.is_object()) {
-        return std::string();
+// Resolve the GraphQL endpoint from the REST base URL.
+//   - "https://api.github.com"     → "https://api.github.com/graphql"
+//   - "https://<host>/api/v3"      → "https://<host>/api/graphql"
+//
+// GHE convention: REST lives at `/api/v3`, GraphQL lives at `/api/graphql`.
+std::string ResolveGraphQlEndpoint(const std::string& baseUrl) {
+    const std::string kApiV3Suffix = "/api/v3";
+    if (baseUrl.size() > kApiV3Suffix.size() &&
+        baseUrl.compare(baseUrl.size() - kApiV3Suffix.size(), kApiV3Suffix.size(), kApiV3Suffix) == 0) {
+        return baseUrl.substr(0, baseUrl.size() - kApiV3Suffix.size()) + "/api/graphql";
     }
-    const auto it = issue.find("pull_request");
-    if (it == issue.end() || !it->is_object()) {
-        return std::string();
-    }
-    const auto urlIt = it->find("url");
-    if (urlIt == it->end() || !urlIt->is_string()) {
-        return std::string();
-    }
-    return urlIt->get<std::string>();
+    return baseUrl + "/graphql";
 }
 
-// Build the canonical /pulls/{n} URL from owner/repo/number when the list
-// payload didn't carry `pull_request.url` (defensive fallback — happens
-// when the response shape changes between API versions).
-std::string BuildPullsUrl(const std::string& baseUrl, const std::string& owner, const std::string& repo,
-                          const std::string& issueKey) {
-    // issueKey is "<owner>/<repo>#<number>" — extract the number suffix.
-    const std::size_t hashPos = issueKey.find('#');
-    if (hashPos == std::string::npos) {
-        return std::string();
+// The GraphQL document. Inline `search()` so we get both Issues and PRs in
+// one round-trip. PullRequest fragment carries the 4 PR-only fields PR12
+// surfaces in the grid (headRefName, baseRefName, mergeable, isDraft) plus
+// mergedAt for the merged-PR status discriminator.
+const char* const kGraphQlSearchQuery = R"GQL(
+query($q: String!, $first: Int!, $after: String) {
+  search(query: $q, type: ISSUE, first: $first, after: $after) {
+    issueCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      __typename
+      ... on Issue {
+        number
+        title
+        state
+        body
+        createdAt
+        updatedAt
+        author { login }
+        assignees(first: 1) { nodes { login } }
+        labels(first: 50) { nodes { name } }
+        milestone { title }
+        repository { name owner { login } }
+      }
+      ... on PullRequest {
+        number
+        title
+        state
+        body
+        createdAt
+        updatedAt
+        mergedAt
+        headRefName
+        baseRefName
+        mergeable
+        isDraft
+        author { login }
+        assignees(first: 1) { nodes { login } }
+        labels(first: 50) { nodes { name } }
+        milestone { title }
+        repository { name owner { login } }
+      }
     }
-    const std::string number = issueKey.substr(hashPos + 1);
-    if (number.empty()) {
-        return std::string();
-    }
-    return baseUrl + "/repos/" + owner + "/" + repo + "/pulls/" + number;
+  }
 }
-
-// Build the page URL for the cross-repo /search/issues path.
-std::string BuildSearchUrl(const std::string& baseUrl, const std::string& query, int page) {
-    std::string url = baseUrl + "/search/issues?q=" + UrlEncode(query);
-    url += "&per_page=" + std::to_string(kGitHubPerPage);
-    url += "&page=" + std::to_string(page);
-    return url;
-}
-
-// Build the page URL for the repo-scoped /repos/{o}/{r}/issues path. JQL is
-// NOT applied here — the endpoint doesn't accept a `q=` parameter.
-std::string BuildRepoIssuesUrl(const std::string& baseUrl, const std::string& owner, const std::string& repo,
-                               int page) {
-    std::string url = baseUrl + "/repos/" + owner + "/" + repo + "/issues?state=all";
-    url += "&per_page=" + std::to_string(kGitHubPerPage);
-    url += "&page=" + std::to_string(page);
-    return url;
-}
+)GQL";
 
 // Append `msg` to `*out` (when non-null) with "; " separators between entries.
 void AppendOutWarning(std::string* out, const std::string& msg) {
@@ -100,6 +106,54 @@ void AppendOutWarning(std::string* out, const std::string& msg) {
         out->append("; ");
     }
     out->append(msg);
+}
+
+// Build the JSON body for one GraphQL search page.
+//   - effectiveQuery is the translated JQL search string (same syntax as REST
+//     /search/issues — GraphQL `search()` accepts the same qualifiers).
+//   - afterCursor is empty on page 1; subsequent pages use the previous
+//     pageInfo.endCursor.
+std::string BuildGraphQlBody(const std::string& effectiveQuery, const std::string& afterCursor) {
+    nlohmann::json variables = nlohmann::json::object();
+    variables["q"] = effectiveQuery;
+    variables["first"] = kGitHubPerPage;
+    if (afterCursor.empty()) {
+        variables["after"] = nullptr;
+    } else {
+        variables["after"] = afterCursor;
+    }
+    nlohmann::json body = nlohmann::json::object();
+    body["query"] = kGraphQlSearchQuery;
+    body["variables"] = variables;
+    return body.dump();
+}
+
+// Flatten `parsed.errors[]` (when present) into a single human-readable string.
+// Returns empty when no errors. GraphQL HTTP responses can be 200 OK with a
+// non-empty `errors` array — we must surface that as a fatal fetch error.
+std::string ExtractGraphQlErrors(const nlohmann::json& parsed) {
+    if (!parsed.is_object()) {
+        return std::string();
+    }
+    const auto it = parsed.find("errors");
+    if (it == parsed.end() || !it->is_array() || it->empty()) {
+        return std::string();
+    }
+    std::string out;
+    for (const auto& err : *it) {
+        if (!err.is_object()) {
+            continue;
+        }
+        const auto msgIt = err.find("message");
+        if (msgIt == err.end() || !msgIt->is_string()) {
+            continue;
+        }
+        if (!out.empty()) {
+            out.append("; ");
+        }
+        out.append(msgIt->get<std::string>());
+    }
+    return out;
 }
 
 } // namespace
@@ -132,40 +186,39 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
     }
 
     const GitHubFetchPlan plan = ComputeGitHubFetchPlan(owner, repo, translated.Query, translated.IsPullRequestQuery);
-    const bool repoScoped = plan.repoScoped;
     if (!plan.warning.empty()) {
         AppendOutWarning(outWarning, plan.warning);
     }
-    // On the repo-scoped path, GitHub's REST endpoint does not accept a
-    // search-qualifier query string — flag the dropped JQL so the user
-    // understands why the result set is broader than the JQL suggested.
-    if (repoScoped && !jqlQueryOrEmpty.empty()) {
-        AppendOutWarning(outWarning, "GitHub repo-scoped fetch ignores JQL filters; result includes all issues "
-                                     "in " +
-                                         owner + "/" + repo + " (use cross-repo search to apply filters)");
-    }
 
+    // GraphQL path always uses `search()` with the same qualifier syntax as
+    // REST /search/issues. The fetch plan was built for the REST split (its
+    // `effectiveQuery` is empty on the repo-scoped path because REST
+    // /repos/{o}/{r}/issues doesn't accept `q=`); GraphQL accepts the same
+    // qualifier syntax universally, so we prefer `translated.Query` (which
+    // already carries the `repo:owner/repo` prefix when configured) and only
+    // fall back to `plan.effectiveQuery` for the cross-repo no-JQL case where
+    // it carries the "is:issue is:open" fallback.
+    //
+    // Repo-scoped JQL is honoured here (GraphQL search accepts the qualifiers
+    // REST /repos/{o}/{r}/issues couldn't). Strategy C deviation from PR12
+    // plan, documented in the plan-doc § Deviations.
+    std::string graphQlQuery = translated.Query.empty() ? plan.effectiveQuery : translated.Query;
+    if (graphQlQuery.empty()) {
+        graphQlQuery = "is:issue is:open";
+    }
+    const std::string endpoint = ResolveGraphQlEndpoint(baseUrl);
     const cpr::Header headers = BuildGitHubHeaders(pat);
+
+    // Per AGENTS.md: nlohmann json `obj["k"] = v`, not brace-list reassignment.
+    // BuildGraphQlBody already follows this convention.
+
     std::vector<CachedTicket> results;
-    // PR12 — parallel list of /pulls/{n} URLs to enrich post-loop. Indexed by
-    // position in `results` (only PR rows get an entry; non-PR rows store an
-    // empty string so indices line up).
-    std::vector<std::string> prDetailUrls;
     bool reachedShortPage = false;
+    std::string cursor; // empty → page 1; subsequent pages use endCursor.
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
-        std::string url;
-        if (repoScoped) {
-            url = BuildRepoIssuesUrl(baseUrl, owner, repo, page);
-        } else {
-            // Cross-repo path; ComputeGitHubFetchPlan already resolved the
-            // effective query (with the `is:issue is:open` fallback when both
-            // owner+repo+jql empty).
-            url = BuildSearchUrl(baseUrl, plan.effectiveQuery, page);
-        }
-
-        const cpr::Response resp =
-            TrackerGetLogged("GitHubClient", url, headers, kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
+        const std::string body = BuildGraphQlBody(graphQlQuery, cursor);
+        const cpr::Response resp = TrackerPostLogged("GitHubClient", endpoint, headers, body);
 
         if (resp.status_code != 200) {
             const std::string msg = ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
@@ -173,8 +226,8 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                 *outFetchError =
                     std::string("GitHub fetch error (HTTP ") + std::to_string(resp.status_code) + "): " + msg;
             }
-            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi HTTP %ld on page %d: %s", resp.status_code, page,
-                      msg.c_str());
+            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL HTTP %ld on page %d: %s", resp.status_code,
+                      page, msg.c_str());
             return results;
         }
 
@@ -183,51 +236,77 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
             if (outFetchError) {
                 *outFetchError = "GitHub returned invalid JSON";
             }
-            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi: invalid JSON on page %d", page);
+            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL invalid JSON on page %d", page);
             return results;
         }
 
-        // /search/issues wraps results in {"items":[...], "total_count": N};
-        // /repos/.../issues returns a bare array.
-        const nlohmann::json* items = nullptr;
-        if (parsed.is_array()) {
-            items = &parsed;
-        } else if (parsed.is_object() && parsed.contains("items") && parsed["items"].is_array()) {
-            items = &parsed["items"];
-        }
-        if (items == nullptr) {
+        // GraphQL responses can return HTTP 200 + a populated `errors` array
+        // (partial failure / rate-limit warning / bad query). Treat any
+        // non-empty `errors` as fatal.
+        const std::string gqlErrors = ExtractGraphQlErrors(parsed);
+        if (!gqlErrors.empty()) {
             if (outFetchError) {
-                *outFetchError = "GitHub response missing items array";
+                *outFetchError = std::string("GitHub GraphQL error: ") + gqlErrors;
             }
-            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi: response missing items array on page %d", page);
+            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL errors on page %d: %s", page, gqlErrors.c_str());
             return results;
         }
 
-        const std::size_t pageCount = items->size();
-        for (const auto& issue : *items) {
-            // PR12 — /repos/.../issues + /search/issues both include PRs under
-            // the issues namespace (they share the issues table). Drop them
-            // unless the user's JQL explicitly asked for PRs via `type:pr`.
-            if (!plan.includePullRequests && issue.is_object() && issue.contains("pull_request")) {
+        if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
+            !parsed["data"].contains("search") || !parsed["data"]["search"].is_object()) {
+            if (outFetchError) {
+                *outFetchError = "GitHub GraphQL response missing data.search";
+            }
+            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL response missing data.search on page %d", page);
+            return results;
+        }
+
+        const nlohmann::json& search = parsed["data"]["search"];
+        const nlohmann::json& nodes = search.value("nodes", nlohmann::json::array());
+        if (!nodes.is_array()) {
+            if (outFetchError) {
+                *outFetchError = "GitHub GraphQL search.nodes not an array";
+            }
+            return results;
+        }
+
+        for (const auto& node : nodes) {
+            if (!node.is_object()) {
+                continue;
+            }
+            // Honour the same includePullRequests gate the REST path used —
+            // when the user didn't ask for PRs, drop PullRequest nodes. (GitHub
+            // GraphQL search() with `type: ISSUE` returns both Issues and PRs
+            // by design.)
+            const auto tnIt = node.find("__typename");
+            const bool isPr = (tnIt != node.end() && tnIt->is_string() && tnIt->get<std::string>() == "PullRequest");
+            if (isPr && !plan.includePullRequests) {
                 continue;
             }
             try {
-                CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, owner, repo);
-                std::string detailUrl;
-                if (plan.includePullRequests && t.fieldValues.count(kIsPullRequestSentinel) != 0) {
-                    detailUrl = ExtractPullRequestApiUrl(issue);
-                    if (detailUrl.empty()) {
-                        detailUrl = BuildPullsUrl(baseUrl, owner, repo, t.id);
+                const nlohmann::json restShape = MapGraphQlNodeToRestShape(node);
+                CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(restShape, owner, repo);
+                // PR-only enrichment — synthesize the /pulls/{n} REST shape
+                // from the same GraphQL node so EnrichPullRequestFieldsFromJson
+                // stays unchanged + the pure-logic mapping coverage holds.
+                if (isPr) {
+                    const nlohmann::json prShape = MapGraphQlPullRequestNodeToRestPrShape(node);
+                    if (!prShape.is_null()) {
+                        EnrichPullRequestFieldsFromJson(t, prShape);
                     }
                 }
                 results.push_back(std::move(t));
-                prDetailUrls.push_back(std::move(detailUrl));
             } catch (const std::exception& ex) {
-                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: skipping malformed issue: %s", ex.what());
+                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: skipping malformed GraphQL node: %s", ex.what());
             }
         }
 
-        if (pageCount < static_cast<std::size_t>(kGitHubPerPage)) {
+        // Pagination via pageInfo (cursor-based; no per_page mod-100 hack).
+        const nlohmann::json& pageInfo = search.value("pageInfo", nlohmann::json::object());
+        const bool hasNext = pageInfo.value("hasNextPage", false);
+        const std::string endCursor = pageInfo.value("endCursor", std::string());
+
+        if (!hasNext) {
             reachedShortPage = true;
             break;
         }
@@ -236,62 +315,15 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
             AppendOutWarning(outWarning, std::string("GitHub fetch page cap (") + std::to_string(kGitHubMaxPages) +
                                              ") reached; further results not fetched. Narrow your view JQL to fit.");
             LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: page cap %d reached", kGitHubMaxPages);
+            break;
         }
-    }
 
-    // PR12 — when the user asked for PRs, walk the result set and enrich each
-    // PR row with the 4 PR-only fields (pr.head, pr.base, pr.mergeable,
-    // pr.draft) via a per-PR GET /repos/{o}/{r}/pulls/{n}. The list/search
-    // response only carries `{url, html_url, merged_at}` in the
-    // `pull_request` sub-object — branch refs + mergeable + draft come only
-    // from the detail endpoint. Cap matches the page cap (kGitHubMaxPages *
-    // kGitHubPerPage); on hit emit a Warning rather than silently truncating.
-    if (plan.includePullRequests) {
-        constexpr std::size_t kEnrichCap =
-            static_cast<std::size_t>(kGitHubMaxPages) * static_cast<std::size_t>(kGitHubPerPage);
-        std::size_t enriched = 0;
-        bool capWarned = false;
-        for (std::size_t idx = 0; idx < results.size() && idx < prDetailUrls.size(); ++idx) {
-            const std::string& detailUrl = prDetailUrls[idx];
-            if (detailUrl.empty()) {
-                continue; // non-PR row
-            }
-            if (enriched >= kEnrichCap) {
-                if (!capWarned) {
-                    AppendOutWarning(outWarning, std::string("GitHub PR-enrichment cap (") +
-                                                     std::to_string(kEnrichCap) +
-                                                     ") reached; further PR rows left without pr.* "
-                                                     "fields. Narrow your view JQL to fit.");
-                    LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment cap %zu reached", kEnrichCap);
-                    capWarned = true;
-                }
-                continue;
-            }
-            const cpr::Response prResp = TrackerGetLogged("GitHubClient", detailUrl, headers,
-                                                          kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
-            if (prResp.status_code != 200) {
-                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment HTTP %ld on %s — leaving pr.* fields "
-                         "empty",
-                         prResp.status_code, detailUrl.c_str());
-                ++enriched;
-                continue;
-            }
-            nlohmann::json prDetail = nlohmann::json::parse(prResp.text, nullptr, false);
-            if (prDetail.is_discarded()) {
-                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment invalid JSON for %s",
-                         detailUrl.c_str());
-                ++enriched;
-                continue;
-            }
-            try {
-                EnrichPullRequestFieldsFromJson(results[idx], prDetail);
-            } catch (const std::exception& ex) {
-                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment failed for %s: %s", detailUrl.c_str(),
-                         ex.what());
-            }
-            ++enriched;
+        cursor = endCursor;
+        if (cursor.empty()) {
+            // Defensive — hasNext=true but endCursor empty would loop forever.
+            reachedShortPage = true;
+            break;
         }
-        LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: enriched %zu PR rows", enriched);
     }
 
     // Strip the internal sentinel before returning — callers see PR rows via
@@ -303,8 +335,8 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = reachedShortPage;
     }
-    LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu issues (repoScoped=%d, includePRs=%d)",
-             results.size(), repoScoped ? 1 : 0, plan.includePullRequests ? 1 : 0);
+    LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu issues via GraphQL (includePRs=%d)",
+             results.size(), plan.includePullRequests ? 1 : 0);
     return results;
 }
 

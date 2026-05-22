@@ -169,6 +169,166 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     return ticket;
 }
 
+namespace {
+
+// Map GraphQL IssueState/PullRequestState ("OPEN" | "CLOSED" | "MERGED") to
+// the REST-shape lower-case state expected by MapIssueOrPullRequestJsonToCachedTicket.
+// Note: REST never returns "merged" — it returns "closed" + pull_request.merged_at
+// for merged PRs. We preserve that contract: MERGED → "closed" + mergedAt set.
+std::string GraphQlStateToRest(const std::string& gqlState) {
+    if (gqlState == "OPEN") {
+        return "open";
+    }
+    // CLOSED + MERGED both map to "closed"; merged-vs-not is disambiguated
+    // downstream via pull_request.merged_at on the same item.
+    return "closed";
+}
+
+// Pull a string from `obj[key]` only when present + a string. Empty on miss.
+std::string MaybeString(const nlohmann::json& obj, const char* key) {
+    if (!obj.is_object()) {
+        return std::string();
+    }
+    const auto it = obj.find(key);
+    if (it == obj.end() || !it->is_string()) {
+        return std::string();
+    }
+    return it->get<std::string>();
+}
+
+} // namespace
+
+nlohmann::json MapGraphQlNodeToRestShape(const nlohmann::json& node) {
+    nlohmann::json out = nlohmann::json::object();
+    if (!node.is_object()) {
+        return out;
+    }
+
+    const std::string typeName = MaybeString(node, "__typename");
+    const bool isPr = (typeName == "PullRequest");
+
+    // number (GraphQL returns int64-compatible scalar)
+    if (node.contains("number") && node["number"].is_number_integer()) {
+        out["number"] = node["number"].get<std::int64_t>();
+    }
+    out["title"] = MaybeString(node, "title");
+    out["body"] = MaybeString(node, "body");
+    out["created_at"] = MaybeString(node, "createdAt");
+    out["updated_at"] = MaybeString(node, "updatedAt");
+
+    // state — GraphQL uses uppercase; REST mapper expects lowercase.
+    out["state"] = GraphQlStateToRest(MaybeString(node, "state"));
+
+    // repository{owner.login, name} → repository_url
+    if (node.contains("repository") && node["repository"].is_object()) {
+        const auto& repo = node["repository"];
+        std::string ownerLogin;
+        if (repo.contains("owner") && repo["owner"].is_object()) {
+            ownerLogin = MaybeString(repo["owner"], "login");
+        }
+        const std::string repoName = MaybeString(repo, "name");
+        if (!ownerLogin.empty() && !repoName.empty()) {
+            out["repository_url"] = std::string("https://api.github.com/repos/") + ownerLogin + "/" + repoName;
+        }
+    }
+
+    // author{login} → user{login}
+    if (node.contains("author") && node["author"].is_object()) {
+        nlohmann::json user = nlohmann::json::object();
+        user["login"] = MaybeString(node["author"], "login");
+        out["user"] = user;
+    }
+
+    // assignees.nodes[0].login → assignee{login}  (REST shape exposes only the
+    // first assignee on the legacy `assignee` field; we mirror that contract.)
+    if (node.contains("assignees") && node["assignees"].is_object()) {
+        const auto& nodes = node["assignees"].value("nodes", nlohmann::json::array());
+        if (nodes.is_array() && !nodes.empty() && nodes.front().is_object()) {
+            nlohmann::json assignee = nlohmann::json::object();
+            assignee["login"] = MaybeString(nodes.front(), "login");
+            out["assignee"] = assignee;
+        }
+    }
+
+    // labels.nodes[].name → labels[]{name}
+    if (node.contains("labels") && node["labels"].is_object()) {
+        const auto& nodes = node["labels"].value("nodes", nlohmann::json::array());
+        nlohmann::json restLabels = nlohmann::json::array();
+        if (nodes.is_array()) {
+            for (const auto& lbl : nodes) {
+                if (!lbl.is_object()) {
+                    continue;
+                }
+                nlohmann::json item = nlohmann::json::object();
+                item["name"] = MaybeString(lbl, "name");
+                restLabels.push_back(item);
+            }
+        }
+        out["labels"] = restLabels;
+    }
+
+    // milestone{title}
+    if (node.contains("milestone") && node["milestone"].is_object()) {
+        nlohmann::json ms = nlohmann::json::object();
+        ms["title"] = MaybeString(node["milestone"], "title");
+        out["milestone"] = ms;
+    }
+
+    // PR detection: emit the `pull_request` marker sub-object so the existing
+    // mapper's IsPullRequest() returns true. Carry `merged_at` through so the
+    // merged-PR vs closed-PR discriminator stays accurate.
+    if (isPr) {
+        nlohmann::json pr = nlohmann::json::object();
+        if (node.contains("mergedAt") && node["mergedAt"].is_string()) {
+            pr["merged_at"] = node["mergedAt"].get<std::string>();
+        } else {
+            pr["merged_at"] = nullptr;
+        }
+        out["pull_request"] = pr;
+    }
+
+    return out;
+}
+
+nlohmann::json MapGraphQlPullRequestNodeToRestPrShape(const nlohmann::json& node) {
+    if (!node.is_object() || MaybeString(node, "__typename") != "PullRequest") {
+        return nlohmann::json();
+    }
+    nlohmann::json out = nlohmann::json::object();
+
+    nlohmann::json head = nlohmann::json::object();
+    head["ref"] = MaybeString(node, "headRefName");
+    out["head"] = head;
+
+    nlohmann::json base = nlohmann::json::object();
+    base["ref"] = MaybeString(node, "baseRefName");
+    out["base"] = base;
+
+    // GraphQL `mergeable`: MERGEABLE / CONFLICTING / UNKNOWN.
+    // Map to REST shape: true / false / null (null encodes as "computing"
+    // downstream in EnrichPullRequestFieldsFromJson).
+    if (node.contains("mergeable") && node["mergeable"].is_string()) {
+        const std::string m = node["mergeable"].get<std::string>();
+        if (m == "MERGEABLE") {
+            out["mergeable"] = true;
+        } else if (m == "CONFLICTING") {
+            out["mergeable"] = false;
+        } else {
+            // UNKNOWN / anything else → REST null → "computing"
+            out["mergeable"] = nullptr;
+        }
+    } else {
+        out["mergeable"] = nullptr;
+    }
+
+    if (node.contains("isDraft") && node["isDraft"].is_boolean()) {
+        out["draft"] = node["isDraft"].get<bool>();
+    } else {
+        out["draft"] = false;
+    }
+    return out;
+}
+
 void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json& prDetail) {
     if (!prDetail.is_object()) {
         return;
