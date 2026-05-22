@@ -326,6 +326,34 @@ def _gh_json(args: list[str], cwd: str | None = None, timeout: int = 30) -> dict
         raise RuntimeError(f"gh {' '.join(args[:2])} produced non-JSON: {exc}") from exc
 
 
+def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
+    """Idempotent flip-draft-to-ready via `gh pr ready <pr>`.
+
+    Per AGENTS.md § Post-ship turn-end protocol: the watcher's first step on
+    a `GATES_PASSED` PR is to make sure it's non-draft. Without this, the
+    subsequent REST squash-merge call returns HTTP 405 "Pull Request is
+    still a draft" and the PR stays stuck forever in `GATES_PASSED but
+    merge_failed` state.
+
+    `gh pr ready` is idempotent — it's a no-op on a PR that's already
+    non-draft, so we don't need to gate on a prior `isDraft` check.
+
+    Returns True on success (PR is now non-draft), False on failure.
+    Failure here does NOT abort the merge attempt — the caller's
+    `squash_merge_pr` will surface the underlying problem if the PR
+    really is still a draft, and the registry entry stays for the next
+    poll cycle.
+    """
+    args = [GH_BIN, "pr", "ready", str(pr), "--repo", f"{owner}/{repo}"]
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    # gh exits 0 on success; also exits 0 with "already marked as ready" stderr
+    # if the PR was already non-draft (verified manually 2026-05-22).
+    return result.returncode == 0
+
+
 def squash_merge_pr(owner: str, repo: str, pr: int) -> str:
     """Squash-merge a PR via REST. Returns the merge commit SHA.
 
@@ -639,9 +667,13 @@ def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
         extras["merge_action"] = "skipped: gh repo view failed"
         return extras
     owner, repo = or_meta
-    # 1. Detect the head branch (for cascade after merge).
+    # 1. Flip draft → ready-for-review (idempotent). Required per AGENTS.md
+    #    § Post-ship turn-end protocol; without this, draft PRs that pass
+    #    gates fail the squash-merge with HTTP 405 and stay stuck.
+    ensure_pr_ready_for_review(owner, repo, pr)
+    # 2. Detect the head branch (for cascade after merge).
     head_branch = detect_merged_branch_name(owner, repo, pr)
-    # 2. Squash-merge.
+    # 3. Squash-merge.
     try:
         merge_sha = squash_merge_pr(owner, repo, pr)
     except RuntimeError as exc:

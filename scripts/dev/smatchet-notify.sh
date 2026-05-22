@@ -90,8 +90,34 @@ if [[ "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || -n "${WINDIR:-}"
     fi
 fi
 
+# Channel 3: persistent file log. Always succeeds — gives the user a paper
+# trail when neither Smatchet nor BurntToast is available. Without this,
+# the daemon spams `notify: failed (exit 1)` every cycle on hosts that
+# haven't installed BurntToast (the recommended PS module that ships
+# Windows native toasts; `Install-Module BurntToast -Scope CurrentUser`).
+NOTIFY_LOG_DIR=""
+if [[ -n "${LOCALAPPDATA:-}" ]]; then
+    NOTIFY_LOG_DIR="$LOCALAPPDATA/Smatchet/merge-watch"
+elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
+    NOTIFY_LOG_DIR="$XDG_STATE_HOME/smatchet/merge-watch"
+elif [[ -n "${HOME:-}" ]]; then
+    NOTIFY_LOG_DIR="$HOME/.local/state/smatchet/merge-watch"
+fi
+if [[ -n "$NOTIFY_LOG_DIR" ]]; then
+    mkdir -p "$NOTIFY_LOG_DIR" 2>/dev/null || true
+    NOTIFY_LOG="$NOTIFY_LOG_DIR/notifications.log"
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    printf '[%s] PR#%s %s — %s%s\n' \
+        "$ts" "$PR" "$STATE" "$MESSAGE" \
+        "${PR_URL:+ ($PR_URL)}" >> "$NOTIFY_LOG" 2>/dev/null && success=1
+    if [[ $success -eq 1 ]]; then
+        echo "smatchet-notify: file-log dispatched to ${NOTIFY_LOG}"
+    fi
+fi
+
 if [[ $success -eq 0 ]]; then
-    # Last resort: write to stderr so the daemon's log captures something.
+    # Truly last resort — no LOCALAPPDATA / HOME, no file-log channel.
+    # Write to stderr so the daemon's log captures something.
     echo "smatchet-notify: ALL channels failed for PR #${PR} state=${STATE}: ${MESSAGE}" >&2
     exit 1
 fi
