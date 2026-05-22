@@ -49,26 +49,60 @@ with contextlib.suppress(AttributeError, ValueError):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-def _resolve_gh_bin() -> str:
-    """Locate the `gh` CLI. Scheduled-task env on Windows usually doesn't
-    include `C:\\Program Files\\GitHub CLI\\` on PATH, so bare `gh` fails
-    with FileNotFoundError. Probe standard install locations + PATH; cache
-    the result so we resolve once per daemon lifetime."""
+def _resolve_bin(name: str, *extra_candidates: str) -> str:
+    """Locate a CLI on the daemon's env. Scheduled-task env on Windows
+    usually doesn't include the GitHub CLI / WinGet-installed tools on
+    PATH, so bare `subprocess.run(["jq", ...])` fails with FileNotFoundError.
+    Probe standard install locations + PATH; cache once per daemon."""
     import shutil
-    via_path = shutil.which("gh") or shutil.which("gh.exe")
+    via_path = shutil.which(name) or shutil.which(name + ".exe")
     if via_path:
         return via_path
+    for candidate in extra_candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return name  # last-resort — subprocess.run will FileNotFoundError loudly
+
+
+GH_BIN = _resolve_bin(
+    "gh",
+    r"C:\Program Files\GitHub CLI\gh.exe",
+    r"C:\Program Files (x86)\GitHub CLI\gh.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\GitHub CLI\gh.exe"),
+)
+# `merge-gates.sh` shells out to `jq` from bash; winget puts jq under
+# %LOCALAPPDATA%\Microsoft\WinGet\Links which is rarely on Scheduled-Task
+# PATH. Resolve so we can prepend its dir + the GitHub CLI dir to the
+# bash subprocess's PATH together.
+JQ_BIN = _resolve_bin(
+    "jq",
+    os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\jq.exe"),
+    r"C:\msys64\ucrt64\bin\jq.exe",
+    r"C:\Program Files\Git\usr\bin\jq.exe",
+)
+# On Windows + WSL, bare `bash` on PATH usually resolves to WSL's bash via
+# %SystemRoot%\System32\bash.exe — which can't run `merge-gates.sh` (WSL
+# has its own /bin/bash that may be misconfigured or missing). Force Git
+# for Windows' bash.exe by full path. Cycle 862 (after the gh+jq fix)
+# crashed with `execvpe(/bin/bash) failed: No such file or directory`
+# because WSL was first on PATH.
+BASH_BIN = _resolve_bin(
+    "bash",
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+    r"C:\msys64\usr\bin\bash.exe",
+)
+# If shutil.which picked up WSL bash, override with the Git Bash path even
+# though the resolution looked successful — WSL bash isn't usable here.
+if BASH_BIN.lower().endswith(r"system32\bash.exe"):
     for candidate in (
-        r"C:\Program Files\GitHub CLI\gh.exe",
-        r"C:\Program Files (x86)\GitHub CLI\gh.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\GitHub CLI\gh.exe"),
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\msys64\usr\bin\bash.exe",
     ):
         if os.path.exists(candidate):
-            return candidate
-    return "gh"  # last-resort fallback — subprocess will FileNotFoundError
-
-
-GH_BIN = _resolve_gh_bin()
+            BASH_BIN = candidate
+            break
 
 # Import shared helpers from the CLI module (in the same directory).
 _HERE = pathlib.Path(__file__).resolve().parent
@@ -209,14 +243,20 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
     # python with an inherited env that often lacks it (user-scope env vars
     # only flow through interactive shells). Resolve once and cache.
     env.setdefault("ORCH_USER", _resolve_orch_user(clone_path))
-    # merge-gates.sh shells out to `gh` from bash; the daemon's PATH may not
-    # include the GitHub CLI install dir. Prepend the resolved GH_BIN's
-    # directory so bare `gh` invocations in the script work.
-    if GH_BIN and os.path.dirname(GH_BIN):
-        env["PATH"] = os.path.dirname(GH_BIN) + os.pathsep + env.get("PATH", "")
+    # merge-gates.sh shells out to `gh` AND `jq` from bash; the daemon's
+    # PATH may not include either tool's install dir (Scheduled-Task env
+    # is minimal). Prepend both resolved binaries' dirs so the bash
+    # subprocess finds them via bare-name invocation.
+    extra_path_parts = []
+    for bin_path in (GH_BIN, JQ_BIN):
+        d = os.path.dirname(bin_path) if bin_path else ""
+        if d and d not in extra_path_parts:
+            extra_path_parts.append(d)
+    if extra_path_parts:
+        env["PATH"] = os.pathsep.join(extra_path_parts) + os.pathsep + env.get("PATH", "")
     try:
         gates = subprocess.run(
-            ["bash", str(MERGE_GATES_SCRIPT), owner, repo, str(pr)],
+            [BASH_BIN, str(MERGE_GATES_SCRIPT), owner, repo, str(pr)],
             env=env,
             capture_output=True,
             text=True,
@@ -236,7 +276,18 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
     # (here, MAX=1 → exactly one). Phase 1 records the raw line + return code;
     # Phase 2 will branch on the parsed state.
     status_lines = [ln for ln in gates.stdout.splitlines() if ln.startswith("Poll ")]
-    last_line = status_lines[-1] if status_lines else gates.stdout.strip().splitlines()[-1] if gates.stdout.strip() else ""
+    if status_lines:
+        last_line = status_lines[-1]
+    elif gates.stdout.strip():
+        last_line = gates.stdout.strip().splitlines()[-1]
+    elif gates.stderr.strip():
+        # Surface stderr when stdout is empty — otherwise empty status_line
+        # is a debugging black hole. Trim aggressively so the JSON state file
+        # stays readable.
+        err = " | ".join(ln.strip() for ln in gates.stderr.splitlines() if ln.strip())
+        last_line = f"STDERR: {err[:300]}"
+    else:
+        last_line = ""
     state_label = {
         0: "GATES_PASSED",
         1: "BLOCKED",
