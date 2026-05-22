@@ -94,6 +94,16 @@ TEST_CASE("TranslateJqlToGitHubSearch — ORDER BY clause dropped with warning")
     CHECK(Contains(r.Warning, "ORDER BY"));
 }
 
+TEST_CASE("TranslateJqlToGitHubSearch — ORDER BY substring inside quoted text NOT stripped") {
+    // Regression for CR finding on PR #387: pre-tokenize lower.find("order by")
+    // was context-blind and would corrupt the quoted phrase. Token-aware
+    // detection only matches bare Word tokens.
+    const auto r = TranslateJqlToGitHubSearch("text ~ \"work order by priority\"", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "\"work order by priority\""));
+    CHECK_FALSE(Contains(r.Warning, "ORDER BY"));
+}
+
 TEST_CASE("TranslateJqlToGitHubSearch — OR connector emits warning, terms still emitted as AND") {
     const auto r = TranslateJqlToGitHubSearch("assignee = currentUser() OR status = \"Open\"", "", "");
     CHECK(r.Ok);

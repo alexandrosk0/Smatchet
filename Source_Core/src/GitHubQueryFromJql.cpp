@@ -230,24 +230,33 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
     // Empty input → owner/repo-prefixed (when provided) or empty.
     std::string body; // accumulator for the translated terms (excluding repo: prefix)
 
-    // Strip a trailing `ORDER BY ...` clause first — JQL allows it, GitHub
-    // doesn't (uses &sort= separately). Lowercase scan once.
-    std::string trimmed = jql;
-    {
-        const std::string lower = ToLower(trimmed);
-        const std::size_t pos = lower.find("order by");
-        if (pos != std::string::npos) {
-            AppendWarning(result.Warning, "ORDER BY clause dropped (GitHub search uses separate sort parameter)");
-            trimmed = trimmed.substr(0, pos);
-        }
-    }
-
     std::vector<Tok> tokens;
     std::string tokError;
-    if (!Tokenize(trimmed, tokens, tokError)) {
+    if (!Tokenize(jql, tokens, tokError)) {
         result.Ok = false;
         result.Error = tokError;
         return result;
+    }
+
+    // Token-aware ORDER BY clause stripping. JQL allows `ORDER BY <field> <dir>`
+    // at the end of the query; GitHub `/search/issues` uses a separate `&sort=`
+    // parameter so we drop the clause + emit a warning.
+    //
+    // CR finding on PR #387: the prior pre-tokenize `lower.find("order by")`
+    // was context-blind and corrupted any quoted string containing the
+    // substring (e.g. `text ~ "work order by priority"`). Walking the token
+    // stream and matching only on bare `Word` tokens fixes that — quoted-
+    // string tokens carry a different Kind and never match.
+    {
+        for (std::size_t j = 0; j + 1 < tokens.size(); ++j) {
+            if (tokens[j].Kind == TokKind::Word && EqIgnoreCase(tokens[j].Text, "ORDER") &&
+                tokens[j + 1].Kind == TokKind::Word && EqIgnoreCase(tokens[j + 1].Text, "BY")) {
+                AppendWarning(result.Warning,
+                              "ORDER BY clause dropped (GitHub search uses separate sort parameter)");
+                tokens.resize(j); // drop everything from `ORDER` onward
+                break;
+            }
+        }
     }
 
     std::size_t i = 0;
