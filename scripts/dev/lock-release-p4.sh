@@ -58,8 +58,17 @@ if ! "$p4" info >/dev/null 2>&1; then
 fi
 
 # Read current state before attempting release — produces a clearer message
-# than relying on the CAS error.
-current=$("$p4" counter "$state_counter" 2>/dev/null || echo 0)
+# than relying on the CAS error. Distinguish "p4 read failed" (server
+# unreachable, auth, etc.) from "counter is 0 or absent": `|| echo 0`
+# coerces both into the phantom "already released" path, masking real
+# server-side errors and reporting success while the lock remains held.
+if ! current=$("$p4" counter "$state_counter" 2>/dev/null); then
+    echo "lock-release-p4: failed to read ${state_counter} (p4 command errored)" >&2
+    exit 3
+fi
+# `p4 counter` reports both "value=0" and "counter doesn't exist" as the
+# literal "0", so treat them the same. Defensive whitespace strip.
+current="${current//[[:space:]]/}"
 case "$current" in
     0)
         echo "lock-release-p4: ${state_counter} already 0 (no-op)"
@@ -79,8 +88,14 @@ esac
 # CAS 1 → 0
 cas_err=$("$p4" counter --from=1 --to=0 "$state_counter" 2>&1 >/dev/null) && rc=0 || rc=$?
 if [ "$rc" -ne 0 ]; then
-    # Could have raced with another release call — re-check.
-    after=$("$p4" counter "$state_counter" 2>/dev/null || echo 0)
+    # Could have raced with another release call — re-check. Same masking
+    # concern as above: distinguish read-error from "counter is 0".
+    if ! after=$("$p4" counter "$state_counter" 2>/dev/null); then
+        echo "lock-release-p4: CAS failed AND post-CAS read also failed; aborting" >&2
+        printf '%s\n' "$cas_err" >&2
+        exit 3
+    fi
+    after="${after//[[:space:]]/}"
     if [ "$after" = "0" ]; then
         echo "lock-release-p4: ${state_counter} concurrently released (no-op)"
         "$p4" counter -d "$meta_counter" >/dev/null 2>&1 || true
