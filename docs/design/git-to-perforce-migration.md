@@ -1,7 +1,7 @@
 # Plan — Perforce as local agent VCS (dual with git)
 
 > **Slug**: `git-to-perforce-migration` (file's basename; retained for ref stability — see § Naming).
-> **Status**: draft (locked decisions, unimplemented).
+> **Status**: in-progress — Phase 0 + Phase 1 implemented (see § Implementation log); Phase 2+ in flight.
 > **Originating prompt**: 2026-05-15 "transition the project from git to perforce", scope-clarified 2026-05-21 to dual-VCS rather than migration.
 
 ## Context
@@ -98,7 +98,7 @@ Exit: `p4 info` succeeds; a throwaway test CL submits and re-syncs.
 ### Phase 1 — Dual-VCS canonical tree
 1. Create a stream depot (NOT classic) at `//smatchet`, with mainline `//smatchet/main` rooted at `C:\Dev\Smatchet`. Stream depot is required upfront because Phase 2 needs task streams as children.
 2. Create client `smatchet_main_<user>`. View: `//smatchet/main/... //smatchet_main_<user>/...`. Root: `C:\Dev\Smatchet`.
-3. Author `.p4ignore` at repo root (translation of `.gitignore` — Perforce `!` negation, no `**`, also exclude `.git/`). Note: `.gitignore` itself is **tracked** in git and gets baseline-imported to p4; do not list it in `.p4ignore` (the ignore file only governs untracked candidates for `p4 add` / `p4 reconcile`).
+3. Author `.p4ignore` at repo root (translation of `.gitignore` — Perforce `!` negation, `**` globstar supported since p4 2014.2, also exclude `.git/`). Note: `.gitignore` itself is **tracked** in git and gets baseline-imported to p4; do not list it in `.p4ignore` (the ignore file only governs untracked candidates for `p4 add` / `p4 reconcile`).
 4. `p4 reconcile //smatchet/main/...` opens the whole tree (typemap + `.p4ignore` exclude `.git/`, build output, harness adapters); submit as a single baseline CL `chore(p4): baseline import from git develop@<SHA>`. **Optional** — most teams will accept a baseline-only import without history. Full `git p4` history import is filed as a follow-up plan (slug TBD); not required for the agentic-WIP use case.
 5. Verify: a clean working tree shows empty `git status` AND empty `p4 opened`. After the baseline submit, both `.gitignore` and `.p4ignore` are tracked-and-unchanged — `git status` doesn't list them and neither does `p4 reconcile -n` (nothing was modified).
 
