@@ -277,11 +277,18 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 - `c76256de` · PR2 fixup — applied 5 CodeRabbit findings missed on #357.
 - `67e3abb4` · PR3 — Preferences UI dropdown + TicketSyncService GitHub backend swap + in-memory cache-clear on backend-kind change. Bundled three originally-separate slices because the dropdown is non-functional without the swap, and the swap surfaced the pre-existing Jira↔Plane cache-stale bug.
 - `25ef6a50` · Adjacent fix shipped via #379 — `fix(dx12): guard WhisperAi scenario refs with SMATCHET_WITH_AI`. Not strictly part of this plan, but pre-existing dual-target breakage on develop tip was blocking PR3 verification.
+- `cc0e1a00` · PR5 — JQL → GitHub-search translator (`Source_Core/include/GitHubQueryFromJql.h` + `Source_Core/src/GitHubQueryFromJql.cpp`) + 19 bucket-A doctest cases. Pure-helper TU; no I/O, no globals. Maps the JQL subset used by Smatchet view editors (assignee/status/labels/text/reporter + currentUser() + AND/OR + ORDER BY) to GitHub `/search/issues` qualifier syntax. Unsupported terms drop with a non-fatal `Warning`.
+- `be82becd` · PR4 — `FetchIssues` + `FetchIssuesForKeys` HTTP impl. New `Source_Core/src/GitHubIssueSearch.{cpp,h}` paginated REST fetcher (cross-repo `/search/issues` or repo-scoped `/repos/{o}/{r}/issues`). `BuildGitHubHeaders` hoisted from `GitHubClient.cpp`'s anon namespace into `smatchet::github` so the helper TU shares the same header builder. 10-page soft cap, 30s overall timeout, pull-requests filtered out of the repo-scoped path. PR9's `BuildGitHubHeaders` was the dependency anchor — PR4's branch was based off `feat/github-tracker-pr9-probereachability` to inherit it without cherry-pick.
 
 ## Deviations from plan
 
 - **PR2 HTTP impl deferred**: plan §PR2 implied complete `GitHubClient` HTTP methods (`FetchIssues`, `FetchIssuesForKeys`, `UpdateField`, `UpdateIssueFields`, `CreateIssue`, `ProbeReachability`); shipped substrate emits `"… HTTP impl deferred to a follow-up slice of docs/design/github-tracker-backend.md PR2"` via a shared `StubError` helper. Tracked as follow-up PRs (see § Remaining for GitHub issues to work below).
 - **PR3 not in original plan**: original doc had two PRs; PR3 was carved out post-merge of PR2 once it became clear the Preferences UI line item §152 was load-bearing on its own. PR3 also expanded scope to include `TicketSyncService` swap + cache-clear because `SmatchetPreferencesUi.cpp:2666 app.SyncWithBackend(...)` would otherwise no-op on the GitHub case.
+- **PR4/PR5 bundled in one PR**: plan §300 sequenced them as separate PRs; shipped as a single bundle because PR4's fetcher directly consumes PR5's translator — splitting them would have left PR4 referencing a not-yet-merged symbol. Commits are split for reviewability (PR5 commit first, then PR4).
+- **Repo-scoped path drops JQL**: GitHub's `/repos/{o}/{r}/issues` REST endpoint does NOT accept a `q=` search expression. Plan §145 implied the same URL shape would handle both flows; reality forced the split. When a user is in repo-scoped mode AND has a non-empty JQL, we surface a `Warning` explaining the JQL was dropped and the result is the full repo issue list. Cross-repo (search) mode honours JQL.
+- **10-page soft cap**: plan §300 didn't specify a pagination cap. Cap at 1000 issues to match `PlaneIssueSearch`'s `kMaxPlanePages * 100` safety limit; when reached, surfaces a `Warning` and returns the partial result rather than failing. Future PR can raise the cap or switch to cursor-based pagination if needed.
+- **Field mapping unified**: cross-repo + repo-scoped paths share one `MapIssueToCachedTicket` helper. The cross-repo `/search/issues` response embeds `repository_url`; the repo-scoped + single-issue paths fall back to the `ownerHint`/`repoHint` parameters from the URL itself.
+- **Pull-request filter**: `/repos/{o}/{r}/issues` returns issues AND PRs in one stream (they share the issues table server-side). PR4 filters out any object with a `pull_request` field so the tracker grid is issue-only. Plan didn't call this out — discovered while reviewing the GitHub REST docs.
 
 ## Verification (actual)
 
@@ -296,6 +303,8 @@ Pure helpers are net-new; no code reuse from the agentic surface.
   [INFO] TickStreamingApply finished sync session. saved_or_kept=0 total_stale=0 fullSync=0 err=FetchIssues: GitHubClient HTTP impl deferred to a follow-up slice of docs/design/github-tracker-backend.md PR2
   ```
 - Dropdown shows three options; GitHub config inputs render with correct tooltips; switching tracker kind clears the grid (in-memory `ActiveTickets`). Stub error surfaces as designed.
+- PR4/PR5 dual-target build: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — passed clean. Both `Smatchet.exe` and `libSmatchetCore_DX12.a` linked.
+- PR4/PR5 ctest: `ctest --test-dir build/ninja-test-msys2 --output-on-failure` — 2/2 pass (`smatchet_tests` 1.99 s, `smatchet_lua_tests` 0.04 s). `SmatchetTests --test-case="*Translate*"` reports 19 / 19 PR5 translator cases pass; `--test-case="*GitHub*"` reports 26 / 26 GitHub-related cases pass overall (PR2 helpers + PR5 translator).
 
 ## Remaining for GitHub issues to work
 

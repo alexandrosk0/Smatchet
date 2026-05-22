@@ -4,6 +4,7 @@
 #include "ITrackerClient.h"
 
 #include <string>
+#include <unordered_map>
 
 // GitHubClient — third `ITrackerClient` backend (PR2 of
 // docs/design/github-tracker-backend.md). Tracker-only — does NOT implement
@@ -43,6 +44,13 @@ class GitHubClient : public ITrackerClient {
     std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override;
     std::string ExtractProjectFromQuery(const std::string& query) const override;
     std::vector<RemoteProject> ListProjects() override;
+    // GitHub issues have no per-issue editmeta concept (no field-level permission API like
+    // Jira's `/issue/{key}/editmeta`). All 6 native fields are editable when the PAT has
+    // repo write scope. Return an all-`true` map for the static catalog so AppController
+    // caches a positive result and stops re-fetching per UI frame.
+    bool FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
+                            std::unordered_map<std::string, bool>& outFieldIdCanEdit,
+                            std::string& outError) override;
 
   private:
     std::string baseUrl_; // e.g. "https://api.github.com" or "https://<enterprise>/api/v3"

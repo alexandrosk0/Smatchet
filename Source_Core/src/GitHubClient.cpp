@@ -1,6 +1,7 @@
 #include "GitHubClient.h"
 
 #include "GitHubClientHelpers.h"
+#include "GitHubIssueSearch.h"
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
 #include "TrackerFieldSchema.h"
@@ -29,9 +30,15 @@ void StubError(std::string& out, const char* method) {
                                 "docs/design/github-tracker-backend.md PR2";
 }
 
+} // namespace
+
 // GitHub REST API auth + content-negotiation headers. Bearer-PAT auth (fine-grained
 // or classic both work), JSON-only response, pinned API version (2022-11-28) so the
-// server can't silently flip our response shape on us.
+// server can't silently flip our response shape on us. Defined here, declared in
+// GitHubIssueSearch.h so GitHubIssueSearch.cpp shares the helper.
+namespace smatchet {
+namespace github {
+
 cpr::Header BuildGitHubHeaders(const std::string& pat) {
     return cpr::Header{
         {"Authorization", std::string("Bearer ") + pat},
@@ -41,7 +48,10 @@ cpr::Header BuildGitHubHeaders(const std::string& pat) {
     };
 }
 
-} // namespace
+} // namespace github
+} // namespace smatchet
+
+using smatchet::github::BuildGitHubHeaders;
 
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
     : baseUrl_(baseUrl.empty() ? std::string("https://api.github.com") : baseUrl), pat_(pat) {
@@ -127,23 +137,30 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
     return out;
 }
 
-std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* /*configOverride*/,
+std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                    const ViewsStore* /*viewsOverride*/, std::string* outFetchError,
-                                                   std::string* /*outWarning*/) {
-    if (outFullSyncCompleted) {
-        *outFullSyncCompleted = false;
-    }
-    if (outFetchError) {
-        StubError(*outFetchError, "FetchIssues");
-    }
-    return {};
+                                                   std::string* outWarning) {
+    // PR4 — delegate to the standalone fetcher (mirrors JiraIssueSearch /
+    // PlaneIssueSearch convention; the per-class FetchIssues is just a thin
+    // shim that resolves config + forwards). Called from
+    // TicketSyncService::SyncWithBackend on a worker thread (never the UI
+    // thread, per Pillar 2).
+    const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
+    return smatchet::github::FetchIssuesViaRestApi(baseUrl_, pat_, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
+                                                    outFullSyncCompleted, outFetchError, outWarning);
 }
 
-bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& /*issueKeys*/,
-                                      const ViewsStore& /*views*/, std::vector<CachedTicket>& /*outTickets*/,
+bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
+                                      const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
                                       std::string& outError) {
-    StubError(outError, "FetchIssuesForKeys");
-    return false;
+    // PR4 — single-issue GET loop per key. baseUrl_/pat_ snapshots captured
+    // at ctor time; the cfg/views overrides aren't consulted here because the
+    // canonical owner/repo is already embedded in each key (`owner/repo#N`).
+    if (pat_.empty()) {
+        outError = kPatMissingError;
+        return false;
+    }
+    return smatchet::github::FetchIssuesForKeysViaRestApi(baseUrl_, pat_, issueKeys, outTickets, outError);
 }
 
 bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
@@ -165,6 +182,25 @@ bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::st
     addField("milestone", kMilestoneLabel, "string");
     addField("title", kTitleLabel, "string");
     addField("body", kBodyLabel, "string");
+    return true;
+}
+
+bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
+                                      std::unordered_map<std::string, bool>& outFieldIdCanEdit,
+                                      std::string& outError) {
+    // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly
+    // editable when the PAT has repo write scope. Return success with all-true so
+    // AppController caches the result and doesn't refetch every UI frame (the
+    // default `ITrackerClient::FetchIssueEditMeta` returns false + an "unsupported"
+    // error, which AppController treats as a transient failure and retries forever).
+    outError.clear();
+    outFieldIdCanEdit.clear();
+    outFieldIdCanEdit["state"] = true;
+    outFieldIdCanEdit["labels"] = true;
+    outFieldIdCanEdit["assignees"] = true;
+    outFieldIdCanEdit["milestone"] = true;
+    outFieldIdCanEdit["title"] = true;
+    outFieldIdCanEdit["body"] = true;
     return true;
 }
 
