@@ -6,8 +6,10 @@ Tools see the same options.
 
 ## Prerequisites
 
+### Build toolchain
+
 - CMake 3.24 or newer
-- Git
+- Git (Git for Windows on Windows hosts — provides the `bash.exe` the dev scripts need; **must be earlier on PATH than `C:\Windows\System32\bash.exe` which is the WSL launcher**)
 - MSYS2 UCRT64
 - Ninja available in the shell you use for builds
 
@@ -15,6 +17,7 @@ Install the recommended toolchain:
 
 ```powershell
 winget install MSYS2.MSYS2
+winget install Git.Git           # Git for Windows
 ```
 
 Then, in an MSYS2 terminal:
@@ -22,6 +25,28 @@ Then, in an MSYS2 terminal:
 ```bash
 pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
 ```
+
+### Dev-script CLI tools
+
+The orchestrator + agent scripts (`scripts/dev/*.sh`, `scripts/dev/merge-watcher.py`, etc.) require a small set of CLI tools beyond the build toolchain:
+
+| Tool | Used by | Install (Windows) |
+|---|---|---|
+| `gh` | merge-gates poller, PR ops, watcher daemon | `winget install GitHub.cli` |
+| `jq` | merge-gates JSON parsing, watcher daemon | `winget install jqlang.jq` |
+| `python` 3.11+ | dev scripts (perf-compare, watcher CLI, etc.) | `winget install Python.Python.3.13` |
+| `clang-format` / `clang-tidy` / `cppcheck` | lint hooks | `pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra mingw-w64-ucrt-x86_64-cppcheck` |
+| `flock` | lint-cpp-drain queue serialisation | MSYS2 built-in (`util-linux`) |
+
+Verify the full set in one shot:
+
+```bash
+bash scripts/dev/check-required-tools.sh
+```
+
+Exits 0 when every required tool resolves; fails loudly with install hints for any missing tool. The orchestrator's `setup-harness.sh` runs this on every fresh clone.
+
+**Scheduled-Task / service environments** (notably `SmatchetMergeWatcher`) get a more minimal PATH than an interactive shell and may not resolve `gh` / `jq` / `bash` via bare-name lookup. The `merge-watcher-install-autostart.ps1` installer probes standard install locations + winget's Links dir + Git's `bin` dir explicitly so daemons keep working. See [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md) § Daemon environment prerequisites for the gotchas.
 
 ## Supported Presets
 
