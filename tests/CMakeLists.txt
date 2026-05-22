@@ -23,6 +23,8 @@ add_executable(SmatchetTests
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
     Source_Core/SmatchetThemeAiColors.test.cpp
+    # Regression guard for the inverted Norton Commander palette (blue-dominant, NC 2.01 menu).
+    Source_Core/SmatchetThemeNortonPalette.test.cpp
     Source_Core/MarkdownPreviewLangTag.test.cpp
     Source_Core/MarkdownConvertAdf.test.cpp
     Source_Core/IssueDraft.test.cpp
