@@ -222,6 +222,9 @@ std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerTy
     if (t == "plane") {
         return "Plane";
     }
+    if (t == "github") {
+        return "GitHub";
+    }
     return SmatchetDefaults::kDefaultBackendType;
 }
 
