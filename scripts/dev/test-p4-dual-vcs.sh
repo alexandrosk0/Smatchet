@@ -24,6 +24,18 @@ PROBE_AGENT_A="phase7-probe-a"
 PROBE_AGENT_B="phase7-probe-b"
 
 # ----- preconditions -------------------------------------------------------
+# Helper-script precheck — if any of the dependent scripts (owned by #380
+# and merged piecemeal) aren't on disk, exit 2 per scripts/dev/test-all.sh
+# "missing binary → skip" contract. Otherwise the test would die with exit
+# 127 (command-not-found) the first time it tried to invoke one, which
+# test-all.sh would mis-classify as a real failure.
+for dep in scripts/dev/p4-task-stream.sh scripts/dev/p4-task-stream-gc.sh scripts/dev/lock-claim.sh; do
+    if ! [ -x "$dep" ]; then
+        echo "test-p4-dual-vcs: required helper '${dep}' missing; skipping (Passed: 0  Failed: 0)"
+        exit 2
+    fi
+done
+
 P4_BIN="${P4_BIN:-p4}"
 if ! command -v "$P4_BIN" >/dev/null 2>&1; then
     P4_BIN="/c/Program Files/Perforce/p4.exe"
@@ -82,9 +94,13 @@ assert_eq "alloc is idempotent (same workspace path)" "$ws" "$ws2"
 echo ""
 echo "=== Scenario 2: git-only baseline (no p4 calls) ==="
 
-# Trace `p4` invocation by intercepting via a counter under PATH.
-# scripts/dev/lock-claim.sh with default SMATCHET_LOCK_BACKEND should not
-# fork p4 at all. Mock by prefixing PATH with a wrapper that records calls.
+# Trace `p4` invocation by routing PATH through a wrapper that logs every
+# call. Then actually invoke scripts/dev/lock-claim.sh with the default
+# (git-ref) backend; the wrapper p4 must NOT be called because the dispatcher
+# at the top of lock-claim.sh `exec`s into lock-claim-p4.sh only when
+# SMATCHET_LOCK_BACKEND=p4-counter is set. Vacuous-pass concern (CR #389)
+# resolved: previous shape only inspected the env-comparison snippet inline,
+# never crossed into the real script.
 TRACE_DIR=$(mktemp -d)
 cat > "$TRACE_DIR/p4" <<'EOF'
 #!/usr/bin/env bash
@@ -95,17 +111,27 @@ chmod +x "$TRACE_DIR/p4"
 export P4_TRACE_LOG="$TRACE_DIR/p4-calls.log"
 : > "$P4_TRACE_LOG"
 
-# Try the dispatch — git-ref backend takes the early-exit path before any p4
-# fork, so the wrapper p4 must NOT be called. We're not actually exercising
-# the git push (no remote-mutating side effects allowed in a test); we just
-# inspect the env dispatcher behaviour by sourcing the head of lock-claim.sh.
-SMATCHET_LOCK_BACKEND_DISPATCH=$(SMATCHET_LOCK_BACKEND="" bash -c '
+# Tiny write-set fixture for the claim. Use a slug + remote that no other
+# session can race on (SMATCHET_LOCK_BYPASS_REPO_CHECK=1 lets us point at a
+# bogus remote so we don't actually fork git push either). The claim is
+# allowed to FAIL — we only care about whether the wrapper p4 was called.
+ws_file=$(mktemp)
+printf 'scripts/dev/test-p4-dual-vcs.sh\n' > "$ws_file"
+PATH="${TRACE_DIR}:${PATH}" \
+    SMATCHET_LOCK_BACKEND="" \
+    SMATCHET_LOCK_BYPASS_REPO_CHECK=1 \
+    LOCK_REMOTE="file:///nonexistent-test-remote" \
+    bash scripts/dev/lock-claim.sh "phase7-trace-${RANDOM}" "$ws_file" >/dev/null 2>&1 || true
+rm -f "$ws_file"
+
+call_count=$(wc -l < "$P4_TRACE_LOG" 2>/dev/null | tr -d ' ')
+assert_eq "default backend invokes zero p4 calls (PATH-traced)" "0" "${call_count:-0}"
+
+# Sanity check the dispatcher logic in isolation too (no scripts/dev/ call).
+dispatch_under_default=$(SMATCHET_LOCK_BACKEND="" bash -c '
     [ "${SMATCHET_LOCK_BACKEND:-git-ref}" = "p4-counter" ] && echo "p4-dispatched" || echo "git-ref"
 ')
-assert_eq "default backend stays git-ref" "git-ref" "$SMATCHET_LOCK_BACKEND_DISPATCH"
-
-call_count=$(wc -l < "$P4_TRACE_LOG" 2>/dev/null || echo 0)
-assert_eq "default backend invokes zero p4 calls" "0" "${call_count// /}"
+assert_eq "dispatcher default stays git-ref" "git-ref" "$dispatch_under_default"
 
 rm -rf "$TRACE_DIR"
 
