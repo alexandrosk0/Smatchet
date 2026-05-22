@@ -60,6 +60,39 @@ if (-not (Test-Path $logDir)) {
 }
 $logFile = Join-Path $logDir "daemon.log"
 
+# Resolve gh + bash locations at install time. The scheduled task inherits a
+# minimal PATH (system PATH, NOT the interactive user's PATH), so without
+# explicit augmentation `merge-gates.sh` exits 127 (command not found) every
+# poll inside the daemon. Bake the dirs holding gh.exe + bash.exe into the
+# task command so the daemon's bash subprocess can resolve them.
+$ghCmd = Get-Command gh -ErrorAction SilentlyContinue
+if (-not $ghCmd) {
+    Write-Error "No 'gh' on PATH. Install GitHub CLI (https://cli.github.com/) -- merge-gates.sh relies on it."
+    exit 1
+}
+$bashCmd = Get-Command bash -ErrorAction SilentlyContinue
+if (-not $bashCmd) {
+    Write-Error "No 'bash' on PATH. Install Git for Windows (provides bash.exe) -- merge-gates.sh runs under bash."
+    exit 1
+}
+$ghDir = Split-Path -Parent $ghCmd.Source
+$bashDir = Split-Path -Parent $bashCmd.Source
+$pathAugment = "$ghDir;$bashDir"
+
+# Resolve ORCH_USER once at install time via 'gh api user --jq .login'. This
+# value identifies "self" in the merge-gates user-comments check so a CR
+# review from yourself doesn't block your own merge. Without ORCH_USER set,
+# merge-gates.sh aborts immediately and the watcher records EXIT_127 every poll.
+$orchUser = (& $ghCmd.Source api user --jq .login 2>$null)
+if ([string]::IsNullOrEmpty($orchUser)) {
+    Write-Error "Failed to resolve ORCH_USER via 'gh api user --jq .login'. Run 'gh auth login' first."
+    exit 1
+}
+Write-Host "Resolved env for daemon:"
+Write-Host "  gh.exe:    $($ghCmd.Source)"
+Write-Host "  bash.exe:  $($bashCmd.Source)"
+Write-Host "  ORCH_USER: $orchUser"
+
 # Build the argument string. Wrap each path in double quotes for cmd.exe
 # parsing inside Task Scheduler.
 $daemonArgs = "`"$daemonScript`" daemon --poll-interval $PollInterval"
@@ -73,8 +106,11 @@ if ($existing) {
 
 # Wrap python invocation in cmd.exe so the > redirect actually writes to the
 # log file. Scheduled-task Action takes Execute + Argument; the cleanest way
-# to get stdout redirection is to spawn cmd.exe /c "...".
-$cmdArgs = "/c `"`"$PythonExe`" $daemonArgs > `"$logFile`" 2>&1`""
+# to get stdout redirection is to spawn cmd.exe /c "...". Inject the PATH
+# augment + ORCH_USER via `set` so the daemon (and its bash subprocesses)
+# see them. Order: PATH set BEFORE the python invocation; the `&&` chains
+# fail fast if any set fails.
+$cmdArgs = "/c `"set ""PATH=$pathAugment;%PATH%"" && set ""ORCH_USER=$orchUser"" && `"$PythonExe`" $daemonArgs > `"$logFile`" 2>&1`""
 
 $action = New-ScheduledTaskAction `
     -Execute "cmd.exe" `
