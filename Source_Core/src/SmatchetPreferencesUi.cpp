@@ -260,6 +260,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         CopyStringToBuffer(d.githubBaseUrlBuf,
                            d.cfg.GitHubBaseUrl.empty() ? std::string("https://api.github.com") : d.cfg.GitHubBaseUrl);
         CopyStringToBuffer(d.githubPatBuf, d.cfg.GitHubPat);
+        CopyStringToBuffer(d.githubOwnerBuf, d.cfg.GitHubOwner);
+        CopyStringToBuffer(d.githubRepoBuf, d.cfg.GitHubRepo);
         CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
         CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
         CopyStringToBuffer(d.newIssueInheritFieldsGitHubBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsGitHub));
@@ -348,6 +350,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::InputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf),
                                  ImGuiInputTextFlags_Password);
                 ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
+                ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf),
+                                 ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
+                ImGui::InputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf),
+                                 ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SetItemTooltip(
+                    "Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues from "
+                    "github.com/<owner>/<repo>. Leave both empty for cross-repo /search/issues (PR4).");
                 ImGui::Spacing();
                 ImGui::InputText("New issue: inherit fields from last row (GitHub)", d.newIssueInheritFieldsGitHubBuf,
                                  sizeof(d.newIssueInheritFieldsGitHubBuf));
@@ -370,7 +380,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     endpoint = std::string(d.planeUrlBuf) + std::string("|") + std::string(d.planeWorkspaceBuf);
                 } else if (currentItem == 2) {
                     backendKind = "GitHub";
-                    endpoint = std::string(d.githubBaseUrlBuf);
+                    endpoint = std::string(d.githubBaseUrlBuf) + std::string("|") + std::string(d.githubOwnerBuf) +
+                               std::string("/") + std::string(d.githubRepoBuf);
                 } else {
                     backendKind = "Jira";
                     endpoint = std::string(d.domainBuf);
@@ -2590,6 +2601,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             d.cfg.GitHubBaseUrl = "https://api.github.com";
         }
         d.cfg.GitHubPat = d.githubPatBuf;
+        d.cfg.GitHubOwner = d.githubOwnerBuf;
+        d.cfg.GitHubRepo = d.githubRepoBuf;
         {
             std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsBuf));
             d.cfg.NewIssueInheritFieldIds.clear();
@@ -2650,7 +2663,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             LOG_INFO("Updated tracker config (Plane). URL='%s', Workspace='%s' (project is per-operation)",
                      d.cfg.PlaneUrl.c_str(), d.cfg.PlaneWorkspaceSlug.c_str());
         } else if (d.cfg.TrackerType == "GitHub") {
-            LOG_INFO("Updated tracker config (GitHub). BaseUrl='%s' (PAT length=%zu)", d.cfg.GitHubBaseUrl.c_str(),
+            LOG_INFO("Updated tracker config (GitHub). BaseUrl='%s' Owner='%s' Repo='%s' (PAT length=%zu)",
+                     d.cfg.GitHubBaseUrl.c_str(), d.cfg.GitHubOwner.c_str(), d.cfg.GitHubRepo.c_str(),
                      d.cfg.GitHubPat.size());
         } else {
             LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(),
