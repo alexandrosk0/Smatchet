@@ -301,8 +301,23 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(
         // callback contract requires `isLast == true` on exactly one
         // invocation (the terminal page, regardless of why we stopped).
         const nlohmann::json& pageInfo = search.value("pageInfo", nlohmann::json::object());
-        const bool hasNext = pageInfo.value("hasNextPage", false);
-        const std::string endCursor = pageInfo.value("endCursor", std::string());
+        // Null-safe extraction: nlohmann's .value() default only fires on missing
+        // key, NOT on JSON null. GitHub returns `endCursor: null` when the result
+        // set is empty (e.g. issueCount=0), which would throw type_error.302.
+        bool hasNext = false;
+        {
+            const auto it = pageInfo.find("hasNextPage");
+            if (it != pageInfo.end() && it->is_boolean()) {
+                hasNext = it->get<bool>();
+            }
+        }
+        std::string endCursor;
+        {
+            const auto it = pageInfo.find("endCursor");
+            if (it != pageInfo.end() && it->is_string()) {
+                endCursor = it->get<std::string>();
+            }
+        }
 
         bool isLastPage = false;
         bool stopLoop = false;
