@@ -182,11 +182,31 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_state(state: dict[str, Any]) -> None:
+    # Windows occasionally races on the temp-file write — concurrent CLI reads
+    # (`merge-watcher-cli.py status`) lock the inode, anti-virus scanners
+    # hold the just-created .tmp for an instant, etc. A transient EACCES /
+    # EBUSY would crash the entire daemon (no per-cycle exception handler in
+    # the poll loop). Retry-with-backoff makes the write resilient to the
+    # ~100 ms window where another reader is holding the file open.
     state_dir().mkdir(parents=True, exist_ok=True)
     p = state_dir() / f"{int(state['pr'])}.json"
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(p)
+    payload = json.dumps(state, indent=2, sort_keys=True) + "\n"
+    last_exc: Exception | None = None
+    for delay in (0.0, 0.05, 0.15, 0.5, 1.0):
+        if delay:
+            time.sleep(delay)
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(p)
+            return
+        except (PermissionError, OSError) as exc:
+            last_exc = exc
+            continue
+    # All retries exhausted — surface to the poll loop so the daemon can log
+    # WARN + skip this cycle's state write instead of crashing the process.
+    assert last_exc is not None
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +677,13 @@ def daemon_loop(poll_interval: int) -> int:
                             print(
                                 f"    notify: {notify_extras.get('notify_action', '?')}"
                             )
-                    write_state(state)
+                    try:
+                        write_state(state)
+                    except OSError as _write_err:
+                        print(
+                            f"  WARN: write_state PR#{state['pr']} failed after retries: {_write_err}; "
+                            "skipping this cycle's state flush — daemon continues"
+                        )
             time.sleep(poll_interval)
     except StopSignal:
         print("\nmerge-watcher: stop signal received; exiting cleanly.")
