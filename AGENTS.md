@@ -365,6 +365,29 @@ Every delegated agent ends its report with a `## Self-improvement` section. **Em
 
 Operational rules — format, categories (`bug` / `process` / `tooling` / `infra` / `test` / `security`), priority enum (P0–P3), workflow steps, apply threshold, triage cadence — live alongside the index at [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](docs/backlog/AGENT_SELF_IMPROVEMENT.md). Live entries split per category under [`docs/backlog/agent-self-improvement/`](docs/backlog/agent-self-improvement/). Applied entries archive immediately to `agent-self-improvement/applied.md`. The goal is a self-tightening loop — agents notice friction, the orchestrator accumulates evidence, prompts get patched, friction drops.
 
+## Dual-VCS topology (Perforce as opt-in local layer)
+
+Smatchet runs git/GitHub as the **ship-line** (canonical, PR review, CI, `smatchet-merge-watcher`) and Perforce as an **opt-in local layer** for agentic-WIP primitives that git doesn't express well — named server-side shelves, atomic counters as plan-locks, exclusive file locks via `+l`, task streams as a per-subagent isolation primitive parallel to `git worktree add`.
+
+Sessions opt in via `SMATCHET_AGENT_VCS=p4` (default `git`). Agents that don't set the env see no behaviour change — every git-only flow keeps working.
+
+| Concern | git path | p4 path |
+|---|---|---|
+| Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash scripts/dev/p4-task-stream.sh <agent-id>` |
+| Plan-lock backend | `refs/locks/<slug>` (default) | `SMATCHET_LOCK_BACKEND=p4-counter` |
+| Submit subagent work as PR | (manual) | `bash scripts/dev/p4-task-stream-to-pr.sh <id> <title>` |
+| Stale-stream GC | (cron via `agents/git-janitor.md`) | `agents/p4-janitor.md` + `scripts/dev/p4-task-stream-gc.sh` |
+| Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
+| Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
+
+Cross-links:
+- **Bring-up**: [`docs/perforce/SETUP.md`](docs/perforce/SETUP.md) — one-time `p4d` server + client + typemap setup.
+- **Verb-choice playbook**: [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md) — when to reach for which side; lock discipline; shelf-vs-stash; cross-link reconciliation.
+- **Plan**: [`docs/design/git-to-perforce-migration.md`](docs/design/git-to-perforce-migration.md) — phase log + deviations.
+- **Janitor**: [`agents/p4-janitor.md`](agents/p4-janitor.md) — periodic maintenance.
+
+Existing git-centric sections (merge-gates, plan-locks default, force-push carve-out, destructive-git-op preflight, ship-loop) are unchanged. The Perforce layer is purely additive — never required, never authoritative, never on the ship-line.
+
 ## Harness adapter
 
 Each agent declares a closed set of **capability tags**. The orchestrator (and the harness) maps tags to concrete tools. Currently known mappings:

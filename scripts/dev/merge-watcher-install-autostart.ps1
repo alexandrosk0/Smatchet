@@ -39,6 +39,48 @@ if (-not (Test-Path $daemonScript)) {
     exit 1
 }
 
+# --- Daemon runtime prerequisites -------------------------------------------
+# The Scheduled Task spawns python with a MINIMAL inherited env (user PATH
+# only). The daemon shells out to bash + gh + jq via merge-gates.sh; if any
+# of those aren't discoverable at task-start time, polls fail silently with
+# empty status lines. Fail at INSTALL time rather than at first-poll-after-
+# user-logout — much easier to fix in front of the screen.
+$requiredTools = @(
+    @{ name = "gh.exe"; install = "winget install GitHub.cli" },
+    @{ name = "jq.exe"; install = "winget install jqlang.jq" },
+    @{ name = "bash.exe"; install = "Git for Windows (https://git-scm.com/download/win)" }
+)
+$missing = @()
+foreach ($t in $requiredTools) {
+    $found = Get-Command $t.name -ErrorAction SilentlyContinue
+    if (-not $found) {
+        # Probe winget's Links dir + Git's known location since they're often
+        # on user PATH but not Scheduled-Task PATH.
+        $extraPaths = @(
+            (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links\$($t.name)"),
+            (Join-Path "$env:ProgramFiles\Git\bin" $t.name),
+            (Join-Path "$env:ProgramFiles\GitHub CLI" $t.name)
+        )
+        $alt = $extraPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($alt) {
+            Write-Host "  [OK] $($t.name) -> $alt (not on PATH; daemon will resolve via _resolve_gh_bin)" -ForegroundColor Yellow
+        } else {
+            $missing += "$($t.name) -- install: $($t.install)"
+        }
+    } else {
+        Write-Host "  [OK] $($t.name) -> $($found.Source)" -ForegroundColor Green
+    }
+}
+if ($missing.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Daemon prerequisites missing:" -ForegroundColor Red
+    foreach ($m in $missing) { Write-Host "  - $m" -ForegroundColor Red }
+    Write-Host ""
+    Write-Host "Install the missing tools, restart your shell to pick up PATH, then re-run this script."
+    Write-Host "Same set is checked at orchestrator setup time by: bash scripts/dev/check-required-tools.sh"
+    exit 1
+}
+
 # Resolve Python -- explicit param wins, else first `python` on PATH.
 if ([string]::IsNullOrEmpty($PythonExe)) {
     $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
