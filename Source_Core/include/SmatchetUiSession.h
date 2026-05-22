@@ -280,8 +280,11 @@ struct UiDrawSession {
     char planeUrlBuf[256]{};
     char planeWorkspaceBuf[128]{};
     char planeApiKeyBuf[512]{};
+    char githubBaseUrlBuf[256]{};
+    char githubPatBuf[512]{};
     char newIssueInheritFieldsBuf[512]{};
     char newIssueInheritFieldsPlaneBuf[512]{};
+    char newIssueInheritFieldsGitHubBuf[512]{};
     bool mcpEnabled = false;
     int mcpPort = SmatchetDefaults::Mcp::kDefaultPort;
     bool mcpAllowRemote = false;

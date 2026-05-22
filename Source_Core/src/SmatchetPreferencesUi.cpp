@@ -257,8 +257,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         CopyStringToBuffer(d.planeUrlBuf, d.cfg.PlaneUrl);
         CopyStringToBuffer(d.planeWorkspaceBuf, d.cfg.PlaneWorkspaceSlug);
         CopyStringToBuffer(d.planeApiKeyBuf, d.cfg.PlaneApiKey);
+        CopyStringToBuffer(d.githubBaseUrlBuf,
+                           d.cfg.GitHubBaseUrl.empty() ? std::string("https://api.github.com") : d.cfg.GitHubBaseUrl);
+        CopyStringToBuffer(d.githubPatBuf, d.cfg.GitHubPat);
         CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
         CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
+        CopyStringToBuffer(d.newIssueInheritFieldsGitHubBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsGitHub));
 #if defined(SMATCHET_WITH_MCP)
         d.mcpEnabled = d.cfg.McpEnabled;
         d.mcpPort = d.cfg.McpPort;
@@ -283,8 +287,16 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                                   "write replay. Enabled by default on first launch before setup.");
             ImGui::Spacing();
 
-            const char* items[] = {"Jira", "Plane"};
-            int currentItem = (std::string(d.trackerTypeBuf) == "Plane") ? 1 : 0;
+            const char* items[] = {"Jira", "Plane", "GitHub"};
+            int currentItem = 0;
+            {
+                const std::string trackerTypeStr(d.trackerTypeBuf);
+                if (trackerTypeStr == "Plane") {
+                    currentItem = 1;
+                } else if (trackerTypeStr == "GitHub") {
+                    currentItem = 2;
+                }
+            }
             if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
                 CopyStringToBuffer(d.trackerTypeBuf, items[currentItem]);
             }
@@ -308,7 +320,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::SetItemTooltip(
                     "Comma-separated Jira field ids copied from the last grid row when you click + New issue "
                     "(e.g. description, priority, assignee, labels, components).");
-            } else {
+            } else if (currentItem == 1) {
                 ImGui::TextUnformatted("Plane Configuration (plane.so)");
                 ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
                 ImGui::SetItemTooltip("e.g. https://api.plane.so");
@@ -322,6 +334,21 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::SetItemTooltip(
                     "Comma-separated Plane field ids copied from the last grid row when you click + New issue "
                     "(e.g. description, priority, assignee, labels).");
+            } else {
+                // GitHub-as-tracker — PR3 of docs/design/github-tracker-backend.md.
+                ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
+                ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
+                                 ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
+                ImGui::InputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf),
+                                 ImGuiInputTextFlags_Password);
+                ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
+                ImGui::Spacing();
+                ImGui::InputText("New issue: inherit fields from last row (GitHub)", d.newIssueInheritFieldsGitHubBuf,
+                                 sizeof(d.newIssueInheritFieldsGitHubBuf));
+                ImGui::SetItemTooltip(
+                    "Comma-separated GitHub field ids copied from the last grid row when you click + New issue "
+                    "(e.g. body, labels, assignees, milestone).");
             }
             ImGui::Spacing();
 
@@ -331,11 +358,18 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             ImGui::Separator();
             ImGui::TextUnformatted(SmatchetLocalization::T("prefs.recentProjects", "Recently used projects"));
             {
-                const std::string backendKind = (currentItem == 1) ? std::string("Plane") : std::string("Jira");
-                const std::string endpoint =
-                    (currentItem == 1)
-                        ? (std::string(d.planeUrlBuf) + std::string("|") + std::string(d.planeWorkspaceBuf))
-                        : std::string(d.domainBuf);
+                std::string backendKind;
+                std::string endpoint;
+                if (currentItem == 1) {
+                    backendKind = "Plane";
+                    endpoint = std::string(d.planeUrlBuf) + std::string("|") + std::string(d.planeWorkspaceBuf);
+                } else if (currentItem == 2) {
+                    backendKind = "GitHub";
+                    endpoint = std::string(d.githubBaseUrlBuf);
+                } else {
+                    backendKind = "Jira";
+                    endpoint = std::string(d.domainBuf);
+                }
                 std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
                 // Filter to current backend + endpoint.
                 cached.erase(std::remove_if(cached.begin(), cached.end(),
@@ -2546,6 +2580,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         d.cfg.PlaneUrl = d.planeUrlBuf;
         d.cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
         d.cfg.PlaneApiKey = d.planeApiKeyBuf;
+        d.cfg.GitHubBaseUrl = d.githubBaseUrlBuf;
+        if (d.cfg.GitHubBaseUrl.empty()) {
+            d.cfg.GitHubBaseUrl = "https://api.github.com";
+        }
+        d.cfg.GitHubPat = d.githubPatBuf;
         {
             std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsBuf));
             d.cfg.NewIssueInheritFieldIds.clear();
@@ -2572,6 +2611,19 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
         }
+        {
+            std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsGitHubBuf));
+            d.cfg.NewIssueInheritFieldIdsGitHub.clear();
+            for (const auto& s : parsedInherit) {
+                if (!s.empty() && s != "summary") {
+                    d.cfg.NewIssueInheritFieldIdsGitHub.push_back(s);
+                }
+            }
+            if (d.cfg.NewIssueInheritFieldIdsGitHub.empty()) {
+                d.cfg.NewIssueInheritFieldIdsGitHub = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
+            }
+            CopyStringToBuffer(d.newIssueInheritFieldsGitHubBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsGitHub));
+        }
 #if defined(SMATCHET_WITH_MCP)
         d.cfg.McpEnabled = d.mcpEnabled;
         d.cfg.McpPort = d.mcpPort;
@@ -2592,6 +2644,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         if (d.cfg.TrackerType == "Plane") {
             LOG_INFO("Updated tracker config (Plane). URL='%s', Workspace='%s' (project is per-operation)",
                      d.cfg.PlaneUrl.c_str(), d.cfg.PlaneWorkspaceSlug.c_str());
+        } else if (d.cfg.TrackerType == "GitHub") {
+            LOG_INFO("Updated tracker config (GitHub). BaseUrl='%s' (PAT length=%zu)", d.cfg.GitHubBaseUrl.c_str(),
+                     d.cfg.GitHubPat.size());
         } else {
             LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(),
                      d.cfg.Email.c_str());
