@@ -152,7 +152,7 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
         v.Id = "github_default_view";
         v.Name = "Default GitHub View";
         v.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-        v.Fields = {"summary", "status", "assignee", "labels", "author", "created", "updated"};
+        v.Fields = {"summary", "description", "status", "assignee", "labels", "author", "created", "updated"};
         v.ColumnOrder = {"id"};
         for (const auto& fieldId : v.Fields) {
             v.ColumnOrder.push_back("field:" + fieldId);
