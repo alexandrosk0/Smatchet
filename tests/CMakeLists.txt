@@ -73,6 +73,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/LabelEditDiffPure.cpp"
     Source_Core/GitHubClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubClientHelpers.cpp"
+    # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
+    Source_Core/GitHubQueryFromJql.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubQueryFromJql.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
