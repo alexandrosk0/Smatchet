@@ -26,6 +26,14 @@ struct GitHubFetchPlan {
     /// (owner+repo+jql all empty) this is "is:issue is:open".
     std::string effectiveQuery;
 
+    /// PR12 — true when the source JQL contained `type:pr`. Both endpoints
+    /// need this signal: the repo-scoped path uses it to keep PR items in
+    /// the response (the default filter drops them), and the cross-repo
+    /// path has already had `is:pr` injected into the effective query but
+    /// still needs the flag so the per-PR enrichment loop (GET /pulls/{n})
+    /// runs.
+    bool includePullRequests = false;
+
     /// Single human-readable warning string, or empty when the plan is
     /// unambiguous. The caller forwards this to outWarning so TicketSyncService
     /// surfaces it as a Sync Warning toast (5s).
@@ -40,8 +48,12 @@ struct GitHubFetchPlan {
 ///                     didn't scope the search.
 ///   translatedQuery — the JQL → GitHub-search translator's output Query
 ///                     field (may be empty).
+///   isPullRequestQuery — PR12: the JQL → GitHub-search translator's
+///                     IsPullRequestQuery field. Forwarded onto
+///                     `plan.includePullRequests` unchanged so the caller
+///                     doesn't have to reach across two structs.
 GitHubFetchPlan ComputeGitHubFetchPlan(const std::string& owner, const std::string& repo,
-                                       const std::string& translatedQuery);
+                                       const std::string& translatedQuery, bool isPullRequestQuery = false);
 
 } // namespace github
 } // namespace smatchet
