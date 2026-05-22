@@ -2,6 +2,7 @@
 
 #include "GitHubClientHelpers.h"
 #include "GitHubFetchPlan.h"
+#include "GitHubIssueSearchMapping.h"
 #include "GitHubQueryFromJql.h"
 #include "Logger.h"
 #include "TrackerHttpUtils.h"
@@ -32,128 +33,44 @@ constexpr long kGitHubFetchOverallTimeoutMs = 30000;
 constexpr int kGitHubPerPage = 100;
 constexpr int kGitHubMaxPages = 10;
 
-// Truncate description bodies above this size — saves memory + log volume.
-constexpr std::size_t kGitHubBodyMaxBytes = 4096;
-
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
 
-std::string JsonString(const nlohmann::json& j, const char* key) {
-    if (!j.is_object()) {
+// PR12 — JSON → CachedTicket mapping (incl. PR detection + status encoding +
+// [PR] summary prefix) lives in GitHubIssueSearchMapping.cpp so the doctest
+// rig can link it without cpr. This TU only owns the cpr-side fetch loop.
+
+// Extract the per-PR detail URL from a list-response item's `pull_request`
+// sub-object. Returns empty when the field is absent or malformed.
+std::string ExtractPullRequestApiUrl(const nlohmann::json& issue) {
+    if (!issue.is_object()) {
         return std::string();
     }
-    const auto it = j.find(key);
-    if (it == j.end() || it->is_null()) {
+    const auto it = issue.find("pull_request");
+    if (it == issue.end() || !it->is_object()) {
         return std::string();
     }
-    if (it->is_string()) {
-        return it->get<std::string>();
-    }
-    // Coerce numbers / bools to string for permissive parsing.
-    try {
-        return it->dump();
-    } catch (...) {
+    const auto urlIt = it->find("url");
+    if (urlIt == it->end() || !urlIt->is_string()) {
         return std::string();
     }
+    return urlIt->get<std::string>();
 }
 
-// Pluck the issue number out of `/repos/.../issues/<n>` or the top-level
-// "number" field, returning "0" as a fallback (we still write the ticket, but
-// the id won't be canonical).
-std::string IssueNumberString(const nlohmann::json& issue) {
-    if (issue.is_object() && issue.contains("number") && issue["number"].is_number_integer()) {
-        return std::to_string(issue["number"].get<std::int64_t>());
+// Build the canonical /pulls/{n} URL from owner/repo/number when the list
+// payload didn't carry `pull_request.url` (defensive fallback — happens
+// when the response shape changes between API versions).
+std::string BuildPullsUrl(const std::string& baseUrl, const std::string& owner, const std::string& repo,
+                          const std::string& issueKey) {
+    // issueKey is "<owner>/<repo>#<number>" — extract the number suffix.
+    const std::size_t hashPos = issueKey.find('#');
+    if (hashPos == std::string::npos) {
+        return std::string();
     }
-    return std::string("0");
-}
-
-// Map a single GitHub issue JSON to a CachedTicket. `ownerHint` / `repoHint`
-// are used to compose the canonical id when the issue payload doesn't carry
-// `repository_url` (single-issue endpoint). The /search/issues + /repos
-// endpoints both include `repository_url`, so the hints are only consulted on
-// the single-issue fetch path.
-CachedTicket MapIssueToCachedTicket(const nlohmann::json& issue, const std::string& ownerHint,
-                                     const std::string& repoHint) {
-    CachedTicket ticket;
-    std::string owner = ownerHint;
-    std::string repo = repoHint;
-
-    // Cross-repo path embeds the repo in `repository_url` of the form
-    // "https://api.github.com/repos/<owner>/<repo>".
-    const std::string repoUrl = JsonString(issue, "repository_url");
-    if (!repoUrl.empty()) {
-        const std::size_t reposPos = repoUrl.find("/repos/");
-        if (reposPos != std::string::npos) {
-            const std::string tail = repoUrl.substr(reposPos + 7);
-            const std::size_t slash = tail.find('/');
-            if (slash != std::string::npos) {
-                owner = tail.substr(0, slash);
-                repo = tail.substr(slash + 1);
-            }
-        }
+    const std::string number = issueKey.substr(hashPos + 1);
+    if (number.empty()) {
+        return std::string();
     }
-
-    const std::string number = IssueNumberString(issue);
-    if (!owner.empty() && !repo.empty() && number != "0") {
-        ticket.id = owner + "/" + repo + "#" + number;
-    } else {
-        // Fallback shape — best-effort; ParseGitHubIssueKey will reject this
-        // but at least the row is visible in the grid.
-        ticket.id = std::string("#") + number;
-    }
-    ticket.fieldValues["key"] = ticket.id;
-
-    ticket.fieldValues["summary"] = JsonString(issue, "title");
-    ticket.fieldValues["status"] = JsonString(issue, "state");
-
-    if (issue.is_object() && issue.contains("assignee") && issue["assignee"].is_object()) {
-        ticket.fieldValues["assignee"] = JsonString(issue["assignee"], "login");
-    } else {
-        ticket.fieldValues["assignee"] = std::string();
-    }
-
-    if (issue.is_object() && issue.contains("user") && issue["user"].is_object()) {
-        ticket.fieldValues["reporter"] = JsonString(issue["user"], "login");
-    } else {
-        ticket.fieldValues["reporter"] = std::string();
-    }
-
-    std::string labelStr;
-    if (issue.is_object() && issue.contains("labels") && issue["labels"].is_array()) {
-        for (const auto& lbl : issue["labels"]) {
-            std::string name;
-            if (lbl.is_object()) {
-                name = JsonString(lbl, "name");
-            } else if (lbl.is_string()) {
-                name = lbl.get<std::string>();
-            }
-            if (name.empty()) {
-                continue;
-            }
-            if (!labelStr.empty()) {
-                labelStr.append(", ");
-            }
-            labelStr.append(name);
-        }
-    }
-    ticket.fieldValues["labels"] = labelStr;
-
-    std::string body = JsonString(issue, "body");
-    if (body.size() > kGitHubBodyMaxBytes) {
-        LOG_TRACE("GitHubIssueSearch: truncating issue body %zu → %zu bytes for %s", body.size(), kGitHubBodyMaxBytes,
-                  ticket.id.c_str());
-        body.resize(kGitHubBodyMaxBytes);
-    }
-    ticket.fieldValues["description"] = body;
-
-    ticket.fieldValues["created"] = JsonString(issue, "created_at");
-    ticket.fieldValues["updated"] = JsonString(issue, "updated_at");
-
-    // Milestone — flatten to title string when present.
-    if (issue.is_object() && issue.contains("milestone") && issue["milestone"].is_object()) {
-        ticket.fieldValues["milestone"] = JsonString(issue["milestone"], "title");
-    }
-
-    return ticket;
+    return baseUrl + "/repos/" + owner + "/" + repo + "/pulls/" + number;
 }
 
 // Build the page URL for the cross-repo /search/issues path.
@@ -188,9 +105,9 @@ void AppendOutWarning(std::string* out, const std::string& msg) {
 } // namespace
 
 std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat,
-                                                 const std::string& owner, const std::string& repo,
-                                                 const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
-                                                 std::string* outFetchError, std::string* outWarning) {
+                                                const std::string& owner, const std::string& repo,
+                                                const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
+                                                std::string* outFetchError, std::string* outWarning) {
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = false;
     }
@@ -214,7 +131,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
         AppendOutWarning(outWarning, translated.Warning);
     }
 
-    const GitHubFetchPlan plan = ComputeGitHubFetchPlan(owner, repo, translated.Query);
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan(owner, repo, translated.Query, translated.IsPullRequestQuery);
     const bool repoScoped = plan.repoScoped;
     if (!plan.warning.empty()) {
         AppendOutWarning(outWarning, plan.warning);
@@ -223,13 +140,17 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
     // search-qualifier query string — flag the dropped JQL so the user
     // understands why the result set is broader than the JQL suggested.
     if (repoScoped && !jqlQueryOrEmpty.empty()) {
-        AppendOutWarning(outWarning,
-                         "GitHub repo-scoped fetch ignores JQL filters; result includes all issues "
-                         "in " + owner + "/" + repo + " (use cross-repo search to apply filters)");
+        AppendOutWarning(outWarning, "GitHub repo-scoped fetch ignores JQL filters; result includes all issues "
+                                     "in " +
+                                         owner + "/" + repo + " (use cross-repo search to apply filters)");
     }
 
     const cpr::Header headers = BuildGitHubHeaders(pat);
     std::vector<CachedTicket> results;
+    // PR12 — parallel list of /pulls/{n} URLs to enrich post-loop. Indexed by
+    // position in `results` (only PR rows get an entry; non-PR rows store an
+    // empty string so indices line up).
+    std::vector<std::string> prDetailUrls;
     bool reachedShortPage = false;
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
@@ -249,8 +170,8 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
         if (resp.status_code != 200) {
             const std::string msg = ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
             if (outFetchError) {
-                *outFetchError = std::string("GitHub fetch error (HTTP ") + std::to_string(resp.status_code) +
-                                  "): " + msg;
+                *outFetchError =
+                    std::string("GitHub fetch error (HTTP ") + std::to_string(resp.status_code) + "): " + msg;
             }
             LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi HTTP %ld on page %d: %s", resp.status_code, page,
                       msg.c_str());
@@ -284,14 +205,23 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
 
         const std::size_t pageCount = items->size();
         for (const auto& issue : *items) {
-            // /repos/.../issues includes pull requests under the issues namespace
-            // (they all share the issues table). Filter them out — Smatchet's
-            // tracker grid is for issues, not PRs.
-            if (issue.is_object() && issue.contains("pull_request")) {
+            // PR12 — /repos/.../issues + /search/issues both include PRs under
+            // the issues namespace (they share the issues table). Drop them
+            // unless the user's JQL explicitly asked for PRs via `type:pr`.
+            if (!plan.includePullRequests && issue.is_object() && issue.contains("pull_request")) {
                 continue;
             }
             try {
-                results.push_back(MapIssueToCachedTicket(issue, owner, repo));
+                CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, owner, repo);
+                std::string detailUrl;
+                if (plan.includePullRequests && t.fieldValues.count(kIsPullRequestSentinel) != 0) {
+                    detailUrl = ExtractPullRequestApiUrl(issue);
+                    if (detailUrl.empty()) {
+                        detailUrl = BuildPullsUrl(baseUrl, owner, repo, t.id);
+                    }
+                }
+                results.push_back(std::move(t));
+                prDetailUrls.push_back(std::move(detailUrl));
             } catch (const std::exception& ex) {
                 LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: skipping malformed issue: %s", ex.what());
             }
@@ -303,24 +233,84 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
         }
 
         if (page == kGitHubMaxPages) {
-            AppendOutWarning(outWarning,
-                             std::string("GitHub fetch page cap (") + std::to_string(kGitHubMaxPages) +
-                                 ") reached; further results not fetched. Narrow your view JQL to fit.");
+            AppendOutWarning(outWarning, std::string("GitHub fetch page cap (") + std::to_string(kGitHubMaxPages) +
+                                             ") reached; further results not fetched. Narrow your view JQL to fit.");
             LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: page cap %d reached", kGitHubMaxPages);
         }
+    }
+
+    // PR12 — when the user asked for PRs, walk the result set and enrich each
+    // PR row with the 4 PR-only fields (pr.head, pr.base, pr.mergeable,
+    // pr.draft) via a per-PR GET /repos/{o}/{r}/pulls/{n}. The list/search
+    // response only carries `{url, html_url, merged_at}` in the
+    // `pull_request` sub-object — branch refs + mergeable + draft come only
+    // from the detail endpoint. Cap matches the page cap (kGitHubMaxPages *
+    // kGitHubPerPage); on hit emit a Warning rather than silently truncating.
+    if (plan.includePullRequests) {
+        constexpr std::size_t kEnrichCap =
+            static_cast<std::size_t>(kGitHubMaxPages) * static_cast<std::size_t>(kGitHubPerPage);
+        std::size_t enriched = 0;
+        bool capWarned = false;
+        for (std::size_t idx = 0; idx < results.size() && idx < prDetailUrls.size(); ++idx) {
+            const std::string& detailUrl = prDetailUrls[idx];
+            if (detailUrl.empty()) {
+                continue; // non-PR row
+            }
+            if (enriched >= kEnrichCap) {
+                if (!capWarned) {
+                    AppendOutWarning(outWarning, std::string("GitHub PR-enrichment cap (") +
+                                                     std::to_string(kEnrichCap) +
+                                                     ") reached; further PR rows left without pr.* "
+                                                     "fields. Narrow your view JQL to fit.");
+                    LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment cap %zu reached", kEnrichCap);
+                    capWarned = true;
+                }
+                continue;
+            }
+            const cpr::Response prResp = TrackerGetLogged("GitHubClient", detailUrl, headers,
+                                                          kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
+            if (prResp.status_code != 200) {
+                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment HTTP %ld on %s — leaving pr.* fields "
+                         "empty",
+                         prResp.status_code, detailUrl.c_str());
+                ++enriched;
+                continue;
+            }
+            nlohmann::json prDetail = nlohmann::json::parse(prResp.text, nullptr, false);
+            if (prDetail.is_discarded()) {
+                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment invalid JSON for %s",
+                         detailUrl.c_str());
+                ++enriched;
+                continue;
+            }
+            try {
+                EnrichPullRequestFieldsFromJson(results[idx], prDetail);
+            } catch (const std::exception& ex) {
+                LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: PR enrichment failed for %s: %s", detailUrl.c_str(),
+                         ex.what());
+            }
+            ++enriched;
+        }
+        LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: enriched %zu PR rows", enriched);
+    }
+
+    // Strip the internal sentinel before returning — callers see PR rows via
+    // the `[PR] ` summary prefix and the `pr.*` columns, not the sentinel.
+    for (CachedTicket& t : results) {
+        t.fieldValues.erase(kIsPullRequestSentinel);
     }
 
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = reachedShortPage;
     }
-    LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu issues (repoScoped=%d)", results.size(),
-             repoScoped ? 1 : 0);
+    LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu issues (repoScoped=%d, includePRs=%d)",
+             results.size(), repoScoped ? 1 : 0, plan.includePullRequests ? 1 : 0);
     return results;
 }
 
 bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
-                                   const std::vector<std::string>& issueKeys,
-                                   std::vector<CachedTicket>& outTickets, std::string& outError) {
+                                  const std::vector<std::string>& issueKeys, std::vector<CachedTicket>& outTickets,
+                                  std::string& outError) {
     if (issueKeys.empty()) {
         return true;
     }
@@ -336,8 +326,8 @@ bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string&
             outError = std::string("Invalid GitHub issue key (expected owner/repo#N): ") + key;
             return false;
         }
-        const std::string url = baseUrl + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" +
-                                std::to_string(parsed.Number);
+        const std::string url =
+            baseUrl + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
         const cpr::Response resp =
             TrackerGetLogged("GitHubClient", url, headers, kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
         if (resp.status_code != 200) {
@@ -354,7 +344,12 @@ bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string&
             return false;
         }
         try {
-            outTickets.push_back(MapIssueToCachedTicket(parsed_json, parsed.Owner, parsed.Repo));
+            CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(parsed_json, parsed.Owner, parsed.Repo);
+            // Single-issue path doesn't currently enrich PR rows (callers are
+            // FetchIssuesForKeys which works on issue keys); strip the
+            // sentinel so it doesn't leak into the cache.
+            t.fieldValues.erase(kIsPullRequestSentinel);
+            outTickets.push_back(std::move(t));
         } catch (const std::exception& ex) {
             outError = std::string("Failed to parse issue ") + key + ": " + ex.what();
             return false;

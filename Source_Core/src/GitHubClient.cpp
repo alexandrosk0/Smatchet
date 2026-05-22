@@ -23,6 +23,15 @@ const char* const kMilestoneLabel = "Milestone";
 const char* const kTitleLabel = "Title";
 const char* const kBodyLabel = "Body";
 
+// PR12 — PR-only columns populated by the per-PR /pulls/{n} enrichment loop
+// in GitHubIssueSearch.cpp. Read-only on the grid; never targeted by
+// UpdateField (mergeable + draft + head/base are not user-editable from
+// Smatchet's grid).
+const char* const kPrHeadLabel = "PR Head Branch";
+const char* const kPrBaseLabel = "PR Base Branch";
+const char* const kPrMergeableLabel = "PR Mergeable";
+const char* const kPrDraftLabel = "PR Draft";
+
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
 
 void StubError(std::string& out, const char* method) {
@@ -138,8 +147,8 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
 }
 
 std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
-                                                   const ViewsStore* /*viewsOverride*/, std::string* outFetchError,
-                                                   std::string* outWarning) {
+                                                    const ViewsStore* /*viewsOverride*/, std::string* outFetchError,
+                                                    std::string* outWarning) {
     // PR4 — delegate to the standalone fetcher (mirrors JiraIssueSearch /
     // PlaneIssueSearch convention; the per-class FetchIssues is just a thin
     // shim that resolves config + forwards). Called from
@@ -147,7 +156,7 @@ std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, 
     // thread, per Pillar 2).
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
     return smatchet::github::FetchIssuesViaRestApi(baseUrl_, pat_, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
-                                                    outFullSyncCompleted, outFetchError, outWarning);
+                                                   outFullSyncCompleted, outFetchError, outWarning);
 }
 
 bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
@@ -182,12 +191,18 @@ bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::st
     addField("milestone", kMilestoneLabel, "string");
     addField("title", kTitleLabel, "string");
     addField("body", kBodyLabel, "string");
+    // PR12 — PR-only fields. Strings ("true"/"false"/"computing"/"" for
+    // mergeable; "true"/"false"/"" for draft) consistent with the existing
+    // bool-as-string pattern used by other tracker catalogs.
+    addField("pr.head", kPrHeadLabel, "string");
+    addField("pr.base", kPrBaseLabel, "string");
+    addField("pr.mergeable", kPrMergeableLabel, "string");
+    addField("pr.draft", kPrDraftLabel, "string");
     return true;
 }
 
 bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
-                                      std::unordered_map<std::string, bool>& outFieldIdCanEdit,
-                                      std::string& outError) {
+                                      std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
     // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly
     // editable when the PAT has repo write scope. Return success with all-true so
     // AppController caches the result and doesn't refetch every UI frame (the
@@ -214,7 +229,8 @@ std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std
     // suffix with empty.
     std::string host = baseUrl_;
     const std::string apiSuffix = "/api/v3";
-    if (host.size() > apiSuffix.size() && host.compare(host.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
+    if (host.size() > apiSuffix.size() &&
+        host.compare(host.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
         host = host.substr(0, host.size() - apiSuffix.size());
     } else if (host == "https://api.github.com") {
         host = "https://github.com";
@@ -256,7 +272,7 @@ bool GitHubClient::BuildFieldPayload(const TrackerField& field, const std::vecto
                                      nlohmann::json& outPayload, std::string& outError) {
     outError.clear();
     if (field.Id == "labels" || field.Id == "assignees") {
-        outPayload = values;  // array of strings
+        outPayload = values; // array of strings
         return true;
     }
     if (field.Id == "state" || field.Id == "milestone" || field.Id == "title" || field.Id == "body") {
