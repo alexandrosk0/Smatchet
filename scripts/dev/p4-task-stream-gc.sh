@@ -122,13 +122,21 @@ echo "$streams_raw" | awk '{print $2}' | while read -r stream; do
 
     # Derive agent-id by stripping the full task_prefix (e.g. //smatchet/task-)
     # — `${stream##*/}` would leave the prefix glued on (task-probe-phase2)
-    # because the prefix doesn't end in `/`.
-    agent_id="${stream#${task_prefix}}"
+    # because the prefix doesn't end in `/`. Quote the prefix so `*`/`?`/`[`
+    # in P4_TASK_PREFIX (if a user picks an unusual override) aren't
+    # interpreted as glob patterns during parameter expansion.
+    agent_id="${stream#"${task_prefix}"}"
     client="${client_prefix}_${agent_id}"
 
-    # Safety: refuse to GC a stream with pending CLs on its client
-    pending=$("$p4" changes -s pending -c "$client" 2>/dev/null | wc -l || echo 0)
-    if [ "$pending" -gt 0 ]; then
+    # Safety: refuse to GC a stream with pending CLs on its client. Two-step
+    # so a pipefail in `... | wc -l` isn't masked by `|| echo 0` returning
+    # a multi-line "wc-l-output\n0" value that breaks the integer test.
+    if pending_out=$("$p4" changes -s pending -c "$client" 2>/dev/null); then
+        pending=$(printf '%s' "$pending_out" | grep -c . || true)
+    else
+        pending=0
+    fi
+    if [ "${pending:-0}" -gt 0 ]; then
         echo "p4-task-stream-gc: ${stream} — has ${pending} pending CL(s) on ${client}; keep" >&2
         kept=$((kept + 1))
         continue

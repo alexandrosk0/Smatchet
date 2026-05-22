@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # p4-task-stream.sh — allocate a per-agent Perforce task stream + workspace.
 #
-# Creates `//smatchet/tasks/<agent-id>` as a task stream parented to
+# Creates `//smatchet/task-<agent-id>` as a task stream parented to
 # `//smatchet/main`, plus a client `task_<agent-id>` rooted at
 # `<repo>/.claude/streams/<agent-id>/`, then syncs the workspace to HEAD.
+# (Single-segment depot name because `//smatchet` has `StreamDepth: //smatchet/1`;
+# override via `P4_TASK_PREFIX` if you rebuild the depot deeper.)
 # Idempotent — if stream + client already exist, only the sync runs.
+# Idempotent re-populate — if the task stream exists but holds zero revs
+# (e.g. a prior populate aborted mid-flight), re-running populates it.
 #
 # This is the Perforce sibling of `git worktree add .claude/worktrees/<id>`
 # used by git-only sessions. Triggered by orchestrators that opt into the
@@ -136,16 +140,31 @@ EOF
     printf '%s\n' "$spec" | "$p4" client -i >&2
 fi
 
-# --- seed the task stream from parent (one-time on creation) --------------
+# --- seed the task stream from parent (one-time on creation OR recovery) -
 # Task streams hold zero revs until something is branched into them.
 # `p4 populate` lazy-branches every parent file into the task stream's
 # depot path so the next `p4 sync` actually finds something to fetch.
 # Without this, `p4 sync` returns "No such file(s)." against a virgin task
 # stream — silently giving the caller an empty workspace.
-if [ "$stream_was_created" = 1 ]; then
+#
+# Re-populate when the stream exists but has zero files (e.g. a prior
+# allocate aborted between `p4 stream -i` and `p4 populate`, leaving an
+# unpopulated husk). `p4 populate` is naturally idempotent against an
+# already-populated stream — it returns "all revision(s) already
+# integrated" and exits non-zero, which we ignore.
+needs_populate="$stream_was_created"
+if [ "$needs_populate" = 0 ]; then
+    stream_file_count=$("$p4" files -m1 "${stream}/..." 2>&1 | grep -cE '^//' || true)
+    if [ "${stream_file_count:-0}" = "0" ]; then
+        echo "p4-task-stream: ${stream} exists but holds zero revs — re-populating" >&2
+        needs_populate=1
+    fi
+fi
+if [ "$needs_populate" = 1 ]; then
     echo "p4-task-stream: seeding ${stream} from ${parent} via p4 populate" >&2
     "$p4" populate -d "seed task stream ${agent_id} from parent ${parent}" \
-        "${parent}/..." "${stream}/..." >&2
+        "${parent}/..." "${stream}/..." >&2 || \
+        echo "p4-task-stream: populate returned non-zero (already integrated?) — continuing" >&2
 fi
 
 # --- sync workspace to HEAD ----------------------------------------------
