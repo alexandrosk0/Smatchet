@@ -180,8 +180,8 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
         }
     }
 
-    const char* trLabel = "● TRACKER";
-    ImVec4 trColor(0.65f, 0.68f, 0.72f, 1.0f);
+    const char* trLabel;
+    ImVec4 trColor;
     std::string trTip;
     if (trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
         trLabel = "● TRACKER ERROR";
@@ -219,6 +219,8 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
             }
             break;
         default:
+            trLabel = "● TRACKER";
+            trColor = ImVec4(0.65f, 0.68f, 0.72f, 1.0f);
             trTip = "Tracker connectivity state is indeterminate.";
             break;
         }
@@ -471,6 +473,7 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                     d.gridEditSuccess.clear();
                 }
                 d.newIssueScrollDraftRowIntoViewPending = true;
+                d.newIssueFocusSummaryPending = true;
             }
             ImGui::PopStyleColor(3);
             if (ImGui::IsItemHovered()) {

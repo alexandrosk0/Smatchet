@@ -468,6 +468,9 @@ struct UiDrawSession {
     bool newIssueDraftActive = false;
     /** After "+ New issue", scroll table once so Create/Queue/Cancel stay in view. */
     bool newIssueScrollDraftRowIntoViewPending = false;
+    /** After "+ New issue" pressed: focus the Summary InputText on next frame. Cleared
+     *  after SetKeyboardFocusHere runs, or when the draft is cancelled / discarded. */
+    bool newIssueFocusSummaryPending = false;
     IssueDraft newIssueDraft;
     std::unordered_map<std::string, std::vector<char>> newIssueDraftEditBufs;
     /** Per-field quick-filter buffers for new-issue draft single-select combos. Indexed by
