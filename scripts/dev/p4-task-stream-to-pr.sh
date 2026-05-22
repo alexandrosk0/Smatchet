@@ -19,9 +19,12 @@
 #               slug from it (`agent/<agent-id>/<slug>`)
 #
 # Options:
-#   --dry-run — do every step EXCEPT `gh pr create`. Useful for integration
-#               testing so the PR list doesn't get polluted with test PRs.
-#               Prints what the gh invocation would have been.
+#   --dry-run — do every step EXCEPT remote actions (`git push` AND
+#               `gh pr create`). Useful for integration testing so the
+#               PR list doesn't get polluted with test PRs and no stray
+#               branch lands on origin. The p4 integrate + submit ARE
+#               still real (p4 has no native dry-run for submit).
+#               Prints what the git-push + gh invocations would have been.
 #
 # Required environment (see docs/perforce/SETUP.md § 1):
 #   P4PORT, P4USER
@@ -139,11 +142,21 @@ fi
 # Pending CLs on the main client = leftover state from a prior failed run.
 # Abort + tell the user how to clean up — auto-revert would silently
 # discard work that might be unrelated to this invocation.
-pending_on_main=$("$p4" changes -s pending -c "$main_client" 2>/dev/null | wc -l || echo 0)
-if [ "$pending_on_main" -gt 0 ]; then
+#
+# Two-step counting (NOT `... | wc -l || echo 0`): under `set -o pipefail`,
+# the fallback `echo 0` only fires if the WHOLE pipeline fails. When p4
+# succeeds but produces zero lines, the captured value is the wc-l output
+# alone ("0"). When p4 FAILS, the value becomes "wc-output\n0" — multi-line,
+# which breaks the integer test downstream with "integer expression expected".
+if pending_out=$("$p4" changes -s pending -c "$main_client" 2>/dev/null); then
+    pending_on_main=$(printf '%s' "$pending_out" | grep -c . || true)
+else
+    pending_on_main=0
+fi
+if [ "${pending_on_main:-0}" -gt 0 ]; then
     echo "p4-task-stream-to-pr: ${main_client} has ${pending_on_main} pending CL(s); leftover from prior run?" >&2
     "$p4" changes -s pending -c "$main_client" >&2
-    echo "p4-task-stream-to-pr: clean up with: p4 revert -c <cl> //smatchet/main/... && p4 change -d <cl>" >&2
+    echo "p4-task-stream-to-pr: clean up with: p4 revert -c <cl> ${parent}/... && p4 change -d <cl>" >&2
     exit 1
 fi
 
