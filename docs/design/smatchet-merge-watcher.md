@@ -123,13 +123,15 @@ Five decisions locked via `grill-with-docs` pass before Phase 1 starts. Each aff
 
 The watcher runs as a Windows Scheduled Task (`SmatchetMergeWatcher`), which spawns the daemon with a **minimal inherited env** — only the user's persistent `PATH`, not the augmented one a Git Bash session enjoys. Three tools MUST be discoverable to the daemon for polls to succeed (added by [PR #391](https://github.com/alexandrosk0/Smatchet/pull/391) after the daemon crashed on its first real poll cycle):
 
-| Tool | Used by | Install |
-|---|---|---|
-| `gh` | daemon directly + `merge-gates.sh` (graphql call) | `winget install GitHub.cli` |
-| `jq` | `merge-gates.sh` (parsing graphql response) | `winget install jqlang.jq` |
-| `bash` | spawning `merge-gates.sh` | Git for Windows (`git-scm.com/download/win`) |
+| Tool | Used by | Install | Standard location |
+|---|---|---|---|
+| `gh` | daemon directly + `merge-gates.sh` (graphql call) | `winget install GitHub.cli` | `C:\Program Files\GitHub CLI\gh.exe` |
+| `jq` | `merge-gates.sh` (parsing graphql response) | `winget install jqlang.jq` | `%LOCALAPPDATA%\Microsoft\WinGet\Links\jq.exe` |
+| `bash` | spawning `merge-gates.sh` | Git for Windows (`git-scm.com/download/win`) | `C:\Program Files\Git\bin\bash.exe` |
 
-`scripts/dev/merge-watcher-install-autostart.ps1` checks all three at install time and refuses to register the task if any are missing, with the exact `winget` command to fix it. The daemon itself also probes standard install paths (`Get-Command` + `winget Links` dir + Git's `bin`) via `_resolve_gh_bin()` and `_resolve_orch_user()` at startup as a defence-in-depth — but failing at install time is the loud-and-early posture we want.
+**Crucial Windows gotcha — `bash` resolution**: Windows ships `C:\Windows\System32\bash.exe` as a WSL launcher. Bare `bash` on PATH often resolves to WSL bash first, which **cannot run `merge-gates.sh`** (WSL has its own `/bin/bash` that may be misconfigured; symptom: `execvpe(/bin/bash) failed: No such file or directory`). The daemon's `_resolve_bin("bash", …)` explicitly probes Git for Windows' install dir first AND rejects `System32\bash.exe` even if `shutil.which()` returns it — both belt-and-braces because System32 is so often early on PATH.
+
+`scripts/dev/merge-watcher-install-autostart.ps1` checks all three at install time and refuses to register the task if any are missing, with the exact `winget` command to fix it. The daemon itself also probes standard install paths (`Get-Command` + `winget Links` dir + Git's `bin`) via `_resolve_bin()` and `_resolve_orch_user()` at startup as a defence-in-depth — but failing at install time is the loud-and-early posture we want.
 
 `ORCH_USER` is auto-resolved at daemon startup via `gh api user --jq .login` and cached for the daemon's lifetime, so no per-PR cost.
 
