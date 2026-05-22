@@ -80,6 +80,12 @@ add_executable(SmatchetTests
     # cross-repo fetch + the empty-config fallback warning. Pure TU (no cpr).
     Source_Core/GitHubFetchPlan.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubFetchPlan.cpp"
+    # PR12 — pure-logic JSON → CachedTicket mapping (PR detection, status
+    # encoding, [PR] summary prefix) + per-PR field enrichment helper. Split
+    # out of GitHubIssueSearch.cpp (which pulls cpr) so doctest can link it
+    # without HTTP.
+    Source_Core/GitHubIssueSearchMapping.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubIssueSearchMapping.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit

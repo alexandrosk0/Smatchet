@@ -16,8 +16,9 @@ constexpr int kPlanMaxPages = 10;
 } // namespace
 
 GitHubFetchPlan ComputeGitHubFetchPlan(const std::string& owner, const std::string& repo,
-                                       const std::string& translatedQuery) {
+                                       const std::string& translatedQuery, bool isPullRequestQuery) {
     GitHubFetchPlan plan;
+    plan.includePullRequests = isPullRequestQuery;
     const bool ownerSet = !owner.empty();
     const bool repoSet = !repo.empty();
 

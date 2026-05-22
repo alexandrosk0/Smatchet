@@ -1,7 +1,7 @@
 # Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend)
 
 > **Slug**: `github-tracker-pr12-prs-in-grid`.
-> **Status**: queued — blocked behind PR4 (`#387`) landing on develop.
+> **Status**: shipped — PR4 (`#387`) merged 2026-05-22; this PR opens against develop.
 > **Originating prompt**: 2026-05-22 "can I see PRs?" during PR4 dogfood.
 > **Parent plan**: [`docs/design/github-tracker-backend.md`](github-tracker-backend.md) § Remaining for GitHub issues to work.
 
@@ -95,13 +95,29 @@ N/A — diff touches `Source_Core/` but the changed code paths are not in any PR
   - Default view (no `type:`), observe issues-only (regression gate — same as today).
 
 ## Implementation log
-*(populated post-ship per AGENTS.md § Plan revision after implementation)*
+
+- `<sha-PR12a>` · `feat(github-tracker): PR12a — type: token in JQL translator + tests` — adds `IsPullRequestQuery` to `JqlToGitHubResult`, tokenises `:` as an Op so `type:pr` shorthand parses, accepts `type = "pr"` full JQL too, emits `is:pr` / `is:issue` accordingly. Tests in `tests/Source_Core/GitHubQueryFromJql.test.cpp` (+7 cases).
+- `<sha-PR12b>` · `feat(github-tracker): PR12b — includePullRequests in fetch plan + tests` — adds `bool includePullRequests` to `GitHubFetchPlan`; `ComputeGitHubFetchPlan` gains a 4th `isPullRequestQuery` arg (default false) forwarded onto the plan flag. Tests in `tests/Source_Core/GitHubFetchPlan.test.cpp` (+3 cases).
+- `<sha-PR12c>` · `feat(github-tracker): PR12c — surface PRs in fetch + per-PR enrichment + status encoding + 4 columns` — extracts JSON→CachedTicket mapping into a pure TU at `Source_Core/{include,src}/GitHubIssueSearchMapping.{h,cpp}` so doctest can link it without cpr; threads `includePullRequests` through the fetch loop (drops PR-skip filter when set); adds per-PR enrichment loop calling `GET /repos/{o}/{r}/pulls/{n}` for branch refs + mergeable + draft; adds 4 `pr.*` fields to the static catalog in `GitHubClient::FetchFieldCatalog`. Tests in `tests/Source_Core/GitHubIssueSearchMapping.test.cpp` (9 cases covering issue/PR detection, status encoding, enrichment).
+- `<sha-PR12d>` · `docs(plan): revise github-tracker-pr12-prs-in-grid.md post-impl` — this revision.
+- `<sha-PR12e>` · `perf(github-tracker): PR12 — replace REST N+1 with single GraphQL query per page` — replaces paginated REST `/search/issues` + per-PR `GET /pulls/{n}` (up to 1000 sync HTTP calls on the worker thread) with one `POST /graphql` per page (up to 10 calls total, N/100). Adds `MapGraphQlNodeToRestShape` + `MapGraphQlPullRequestNodeToRestPrShape` adapters in `GitHubIssueSearchMapping.{h,cpp}` so the existing `MapIssueOrPullRequestJsonToCachedTicket` + `EnrichPullRequestFieldsFromJson` pure-logic mappers stay unchanged. Adds 12 bucket-A tests in `GitHubIssueSearchMapping.test.cpp`.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Field source — Strategy B (per-PR enrichment) instead of list-payload extraction**: the plan's § Approach point 3 assumed branch refs + mergeable + draft were available in the `/issues` / `/search/issues` response. They aren't — only `{url, html_url, merged_at}` ride on the `pull_request` sub-object. The shipped implementation issues a per-PR `GET /repos/{o}/{r}/pulls/{n}` after the main list fetch, capped at the same 1000-item ceiling (10×100). Cost: N extra round-trips per refresh when `type:pr` is active. Mitigation: only PR rows enrich; cap matches list cap; missing / null fields tolerated.
+- **`includePullRequests` threaded as a separate flag, not encoded in `effectiveQuery`**: the plan suggested signalling "user asked for PRs" via the literal `is:pr` substring in the translated query. Repo-scoped path doesn't use `effectiveQuery` at all (it hits `/repos/.../issues` which doesn't take `q=`), so the substring would never be visible there. The shipped `GitHubFetchPlan.includePullRequests` flag works on both paths uniformly. Cross-repo path additionally injects `is:pr` into the body for server-side filtering.
+- **`mergeable == null` encoded as the literal string `"computing"`**: GitHub returns `null` when its merge-check job hasn't finished yet. The plan didn't enumerate this case. The shipped encoding ("computing" vs "true" vs "false" vs "") gives the user a clear next-poll signal.
+- **JQL tokenizer accepts `:` as an Op character**: required by `type:pr` shorthand. Side effect — other JQL field handlers (`assignee:foo`) now emit an explicit "Unsupported operator ':'" warning where they previously silently dropped the colon. Slight UX improvement; not a regression.
+- **Internal sentinel field `_smatchet_is_pr` in `CachedTicket::fieldValues`**: short-lived marker placed during mapping so the fetch loop knows which rows to enrich, then erased before returning. Not part of any public API. Tests document the contract via the `kIsPullRequestSentinel` constant in `GitHubIssueSearchMapping.h`.
+- **Strategy C — single GraphQL query per page replaces REST N+1 (post-ship perf fix)**: the original PR12c shipped Strategy B (paginated REST `/search/issues` + per-PR `GET /pulls/{n}`). Real-world dogfood revealed up to 1000 sync HTTP calls per refresh on the worker thread, manifesting as slow load + collateral UI framerate drops. Strategy C ships one `POST /graphql` per page with inline `... on PullRequest { headRefName baseRefName mergeable isDraft mergedAt }` fragments — PR-only fields arrive in the same response, no second fetch. N+1 → N/100. Page cap unchanged (10 pages × 100 = 1000 items, matches REST `/search/issues` hard cap). Repo-scoped JQL is now honoured (GraphQL `search()` accepts qualifier syntax that REST `/repos/{o}/{r}/issues` couldn't), so the prior "repo-scoped fetch ignores JQL filters" warning is gone. GHE endpoint resolution: `<base>/api/v3` → `<base>/api/graphql` (GHE places GraphQL at `/api/graphql`, not `/api/v3/graphql`). Two pure-logic adapters (`MapGraphQlNodeToRestShape`, `MapGraphQlPullRequestNodeToRestPrShape`) keep the existing CachedTicket mapper + PR-enrich helper unchanged. The `kIsPullRequestSentinel` sentinel is still used for transient "is this row a PR" routing within the fetch loop.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Bucket A — pure-logic ctest**: `cmake --build --preset ninja-test-msys2` then `ctest --test-dir build/ninja-test-msys2 --output-on-failure` — passes (44 GitHub-* doctest cases pass total, including 7 new JQL translator, 3 new fetch plan, 9 new mapping/enrichment).
+- **Dual-target build**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — both link clean.
+- **Lint**: `clang-format -i` applied to all 8 edited source + 3 edited test files. Build is warning-clean on the touched files.
+- **Bucket E (ImGui Test Engine)**: deferred to umbrella PR10 (bucket-E for tracker switch) per the parent plan; no new UI shape change beyond column population (the 4 `pr.*` columns render via the existing field-catalog rendering path).
+- **Manual residue**: setting view JQL to `type:pr` and observing PR rows in the running exe — to be exercised post-merge by the user; no test-author backlog entry needed because the verifiable surface (translator → plan → mapping → enrichment) is fully bucket-A covered.
 
 ## Sequencing
 

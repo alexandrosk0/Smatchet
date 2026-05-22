@@ -80,3 +80,25 @@ TEST_CASE("ComputeGitHubFetchPlan — partial config + empty query → combined 
     CHECK(Contains(plan.warning, "partial config"));
     CHECK(Contains(plan.warning, "No GitHub Owner/Repo"));
 }
+
+// PR12 — `includePullRequests` propagation from translator output.
+
+TEST_CASE("ComputeGitHubFetchPlan — repo-scoped + isPullRequestQuery=true keeps flag set") {
+    const GitHubFetchPlan plan =
+        ComputeGitHubFetchPlan("alexandrosk0", "Smatchet", /*translatedQuery=*/"", /*isPullRequestQuery=*/true);
+    CHECK(plan.repoScoped == true);
+    CHECK(plan.effectiveQuery.empty());
+    CHECK(plan.includePullRequests == true);
+}
+
+TEST_CASE("ComputeGitHubFetchPlan — cross-repo + isPullRequestQuery=true keeps flag set") {
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("", "", "assignee:@me is:pr", /*isPullRequestQuery=*/true);
+    CHECK(plan.repoScoped == false);
+    CHECK(plan.effectiveQuery == "assignee:@me is:pr");
+    CHECK(plan.includePullRequests == true);
+}
+
+TEST_CASE("ComputeGitHubFetchPlan — default isPullRequestQuery=false preserves issues-only path") {
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "Smatchet", "");
+    CHECK(plan.includePullRequests == false);
+}
