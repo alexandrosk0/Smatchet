@@ -900,12 +900,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                             const std::string saveDisplay = DisplayValueForTrackerDateField(
                                 column.FieldId, fieldMeta, currentValue, d.cfg.DateFormatOption,
                                 d.cfg.DateCompactRelativeThresholdDays);
-                            // GitHub's body field carries markdown identical to a Jira
-                            // description; treat both as description-style for tooltip rendering.
                             const bool isDescriptionField =
                                 !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
-                                                            column.FieldId.find("Description") != std::string::npos ||
-                                                            column.FieldId == "body" || column.FieldId == "Body");
+                                                            column.FieldId.find("Description") != std::string::npos);
                             // Description tooltip needs the raw markdown source so the markdown
                             // preview pipeline can parse it; date-like fields show the full ISO.
                             const std::string* saveTip =

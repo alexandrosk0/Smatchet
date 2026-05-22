@@ -1033,12 +1033,9 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         if (disabled && display.empty()) {
             display = "-";
         }
-        // GitHub's body field carries markdown identical to a Jira description;
-        // treat both as description-style for tooltip rendering.
         const bool isDescriptionField =
             !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
-                                        column.FieldId.find("Description") != std::string::npos ||
-                                        column.FieldId == "body" || column.FieldId == "Body");
+                                        column.FieldId.find("Description") != std::string::npos);
         // For date-like + description fields, hover should show the raw value (full ISO
         // timestamp / raw markdown source) rather than the formatted single-line display.
         // The description path additionally renders the raw markdown through the preview
