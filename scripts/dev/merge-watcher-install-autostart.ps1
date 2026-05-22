@@ -86,11 +86,12 @@ $action = New-ScheduledTaskAction `
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 
 # Restart-on-crash: up to 3 attempts, 5 min apart.
+# ExecutionTimeLimit of TimeSpan::Zero = no time limit (daemon runs indefinitely).
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 5) `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) ` # 0 = no time limit
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -MultipleInstances IgnoreNew
 
 Register-ScheduledTask `
