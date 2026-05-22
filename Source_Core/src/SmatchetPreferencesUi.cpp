@@ -290,10 +290,15 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             const char* items[] = {"Jira", "Plane", "GitHub"};
             int currentItem = 0;
             {
+                // Defensive case-insensitive match against persisted config —
+                // smatchet_config.json could be hand-edited with lowercase
+                // "plane"/"github" values; the combo writer at line 302 always
+                // emits canonical PascalCase, but the load path doesn't
+                // canonicalize. CR finding on PR #386/#387.
                 const std::string trackerTypeStr(d.trackerTypeBuf);
-                if (trackerTypeStr == "Plane") {
+                if (trackerTypeStr == "Plane" || trackerTypeStr == "plane") {
                     currentItem = 1;
-                } else if (trackerTypeStr == "GitHub") {
+                } else if (trackerTypeStr == "GitHub" || trackerTypeStr == "github") {
                     currentItem = 2;
                 }
             }

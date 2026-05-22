@@ -482,6 +482,10 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         }
         deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>());
         deps_.BumpActiveTicketsRevision();
+        // Invariant (see file-level comment ~L108): every ActiveTickets-mutating path
+        // flips the Lua-window-bump flag so downstream Lua-side window state stays
+        // synchronised with the grid. CR finding on PR #386.
+        deps_.SetPendingLuaWindowBump(true);
         LOG_INFO("TicketSyncService: Cleared in-memory ActiveTickets on backend-kind change.");
     }
 

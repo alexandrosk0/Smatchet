@@ -288,7 +288,7 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 - PR3 dual-target build: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — passed. `libSmatchetCore_DX12.a` linked (step 194/198), `Smatchet.exe` linked (step 195/198).
 - PR3 ctest: `ctest --test-dir build/ninja-test-msys2` — 2/2 pass (`smatchet_tests` 1.89 s, `smatchet_lua_tests` 0.01 s).
 - PR3 visual verify: user-driven against `build/ninja-iter-msys2/Smatchet.exe` from worktree `.claude/worktrees/agent-a42ad27499adf9969/`. Log evidence:
-  ```
+  ```text
   [INFO] Updated tracker config (GitHub). BaseUrl='https://api.github.com' (PAT length=93)
   [INFO] GitHubClient: ctor baseUrl='https://api.github.com' pat_bytes=93
   [INFO] TicketSyncService: Switched backend to GitHub.
