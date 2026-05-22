@@ -81,12 +81,35 @@ bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::
 
 bool IsLikelyOfflineCreateError(const std::string& error) { return IsTrackerTransportErrorText(error); }
 
+/** Shared submit path used by both the Create button and the Enter-on-Summary shortcut.
+ *  Mirrors the legacy inline body so behaviour stays identical regardless of which
+ *  surface triggers the create. Caller is responsible for gating on `!disabled` and
+ *  `!projectMissing` — the helper itself does no precondition checks. */
+void TrySubmitNewIssueDraft(AppController& app, UiDrawSession& d) {
+    PrepareNewIssueDraftForSubmit(d);
+    d.gridEditError.clear();
+    d.newIssueQueueFallbackVisible = false;
+    d.newIssueQueueFallbackError.clear();
+    d.newIssueMissingFieldIds = IssueDraftHelpers::MissingRequiredFields(
+        d.newIssueDraft, app.GetRequiredFieldSet(d.newIssueDraft.ProjectKey, d.newIssueDraft.IssueTypeId,
+                                                 d.newIssueDraft.IssueTypeName));
+    if (!d.newIssueMissingFieldIds.empty()) {
+        d.gridEditSuccess.clear();
+        std::vector<std::string> names =
+            IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, app.GetAvailableFields());
+        d.gridEditError = "Missing required fields: " + JoinStrings(names, ", ");
+    } else {
+        d.newIssueCreateFuture = app.CreateIssueAsync(d.newIssueDraft);
+        d.newIssueCreateInFlight = true;
+    }
+}
+
 std::vector<char>& EnsureDraftEditBuf(UiDrawSession& d, const std::string& fieldId, const std::string& seed,
                                       size_t minSize = 512) {
     auto& buf = d.newIssueDraftEditBufs[fieldId];
     if (buf.empty()) {
-        buf.resize(std::max(minSize, seed.size() + 64), '\0');
-        std::memcpy(buf.data(), seed.data(), std::min(buf.size() - 1, seed.size()));
+        buf.resize((std::max)(minSize, seed.size() + 64), '\0');
+        std::memcpy(buf.data(), seed.data(), (std::min)(buf.size() - 1, seed.size()));
         // Previously description newlines were stripped to work around the single-line InputText.
         // The description field now uses InputTextMultiline so newlines are preserved.
     }
@@ -195,6 +218,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             }
             d.newIssueDraftActive = true;
             d.newIssueScrollDraftRowIntoViewPending = true;
+            d.newIssueFocusSummaryPending = true;
             d.newIssueDraftEditBufs.clear();
             d.newIssueMissingFieldIds.clear();
             d.newIssueQueueFallbackVisible = false;
@@ -281,22 +305,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                 ImGui::BeginDisabled();
             }
             if (ImGui::Button("Create", draftActionBtn)) {
-                PrepareNewIssueDraftForSubmit(d);
-                d.gridEditError.clear();
-                d.newIssueQueueFallbackVisible = false;
-                d.newIssueQueueFallbackError.clear();
-                d.newIssueMissingFieldIds = IssueDraftHelpers::MissingRequiredFields(
-                    d.newIssueDraft, app.GetRequiredFieldSet(d.newIssueDraft.ProjectKey, d.newIssueDraft.IssueTypeId,
-                                                             d.newIssueDraft.IssueTypeName));
-                if (!d.newIssueMissingFieldIds.empty()) {
-                    d.gridEditSuccess.clear();
-                    std::vector<std::string> names =
-                        IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, app.GetAvailableFields());
-                    d.gridEditError = "Missing required fields: " + JoinStrings(names, ", ");
-                } else {
-                    d.newIssueCreateFuture = app.CreateIssueAsync(d.newIssueDraft);
-                    d.newIssueCreateInFlight = true;
-                }
+                TrySubmitNewIssueDraft(app, d);
             }
             if (projectMissing) {
                 ImGui::EndDisabled();
@@ -319,6 +328,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             }
             if (ImGui::Button("Cancel", draftActionBtn)) {
                 d.newIssueDraftActive = false;
+                d.newIssueFocusSummaryPending = false;
                 d.newIssueDraft = IssueDraft{};
                 d.newIssueDraftEditBufs.clear();
                 d.newIssueMissingFieldIds.clear();
@@ -478,9 +488,9 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                     ImGui::SetKeyboardFocusHere();
                 }
                 ImGui::SetNextItemWidth(-FLT_MIN);
-                const bool submitOnEnter = ImGui::InputTextWithHint(
-                    "##NewIssueComboSearch", "Filter options", searchBuf.data(), searchBuf.size(),
-                    ImGuiInputTextFlags_EnterReturnsTrue);
+                const bool submitOnEnter =
+                    ImGui::InputTextWithHint("##NewIssueComboSearch", "Filter options", searchBuf.data(),
+                                             searchBuf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::Separator();
 
                 const std::string filterLower = ToLowerAsciiCopy(TrimCopy(std::string(searchBuf.data())));
@@ -508,8 +518,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                     for (const auto& opt : field->AllowedValueOptions) {
                         const std::string optId = opt.Id.empty() ? opt.Value : opt.Id;
                         const bool matchesFilter =
-                            filterLower.empty() ||
-                            ToLowerAsciiCopy(opt.Value).find(filterLower) != std::string::npos ||
+                            filterLower.empty() || ToLowerAsciiCopy(opt.Value).find(filterLower) != std::string::npos ||
                             ToLowerAsciiCopy(opt.SecondaryValue).find(filterLower) != std::string::npos ||
                             ToLowerAsciiCopy(optId).find(filterLower) != std::string::npos;
                         if (!matchesFilter) {
@@ -556,10 +565,29 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             ImGui::TextDisabled("Markdown: **bold**, *em*, # heading, - list, ```code```");
         } else {
             auto& buf = EnsureDraftEditBuf(d, fieldId, current);
-            if (ImGui::InputText("##input", buf.data(), buf.size())) {
+            // Summary field gets two affordances tied to "+ New Issue" workflow:
+            //   1. Auto-focus on first frame after the draft row opens (newIssueFocusSummaryPending).
+            //   2. Enter submits the draft (EnterReturnsTrue) iff the same disable/project-pick
+            //      gates the Create button uses are clear AND the trimmed buffer is non-empty.
+            //      Mirrors the Create button at the Id-column branch above.
+            const bool isSummary = (fieldId == "summary");
+            if (isSummary && d.newIssueFocusSummaryPending) {
+                ImGui::SetKeyboardFocusHere();
+                d.newIssueFocusSummaryPending = false;
+            }
+            const ImGuiInputTextFlags textFlags =
+                isSummary ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_None;
+            const bool submitted = ImGui::InputText("##input", buf.data(), buf.size(), textFlags);
+            if (submitted) {
                 d.newIssueQueueFallbackVisible = false;
                 d.newIssueQueueFallbackError.clear();
                 d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
+            }
+            if (submitted && isSummary && !d.newIssueCreateInFlight && !d.newIssueDraft.ProjectKey.empty()) {
+                const std::string trimmed = TrimCopy(std::string(buf.data()));
+                if (!trimmed.empty()) {
+                    TrySubmitNewIssueDraft(app, d);
+                }
             }
         }
 
