@@ -34,6 +34,14 @@
 
 set -euo pipefail
 
+# --- backend dispatch (Phase 4 of docs/design/git-to-perforce-migration.md)
+# `SMATCHET_LOCK_BACKEND=p4-counter` defers to the Perforce-counter sibling
+# script. Default backend stays git-ref (this script's body). Dispatch is at
+# top-of-script so the git-ref impl below is unchanged from the original.
+if [ "${SMATCHET_LOCK_BACKEND:-git-ref}" = "p4-counter" ]; then
+    exec bash "$(dirname "$0")/lock-claim-p4.sh" "$@"
+fi
+
 usage() {
     echo "usage: bash scripts/dev/lock-claim.sh <slug> <write-set-file>" >&2
     exit 2
