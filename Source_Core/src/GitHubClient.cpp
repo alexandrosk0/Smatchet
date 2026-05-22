@@ -185,6 +185,25 @@ bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::st
     return true;
 }
 
+bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
+                                      std::unordered_map<std::string, bool>& outFieldIdCanEdit,
+                                      std::string& outError) {
+    // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly
+    // editable when the PAT has repo write scope. Return success with all-true so
+    // AppController caches the result and doesn't refetch every UI frame (the
+    // default `ITrackerClient::FetchIssueEditMeta` returns false + an "unsupported"
+    // error, which AppController treats as a transient failure and retries forever).
+    outError.clear();
+    outFieldIdCanEdit.clear();
+    outFieldIdCanEdit["state"] = true;
+    outFieldIdCanEdit["labels"] = true;
+    outFieldIdCanEdit["assignees"] = true;
+    outFieldIdCanEdit["milestone"] = true;
+    outFieldIdCanEdit["title"] = true;
+    outFieldIdCanEdit["body"] = true;
+    return true;
+}
+
 std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std::string& issueKey) const {
     smatchet::github::ParsedIssueKey parsed;
     if (!smatchet::github::ParseGitHubIssueKey(issueKey, parsed)) {
