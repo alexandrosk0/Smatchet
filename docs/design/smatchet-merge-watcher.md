@@ -119,6 +119,22 @@ Five decisions locked via `grill-with-docs` pass before Phase 1 starts. Each aff
 - **Persistent storage beyond JSON files** — no SQLite. State volume is small (< 100 PRs at peak); JSON survives daemon restarts adequately.
 - **Reverting bad merges** — watcher merges; never unmerges. Reverts are a human-initiated `gh pr` operation.
 
+## Daemon environment prerequisites
+
+The watcher runs as a Windows Scheduled Task (`SmatchetMergeWatcher`), which spawns the daemon with a **minimal inherited env** — only the user's persistent `PATH`, not the augmented one a Git Bash session enjoys. Three tools MUST be discoverable to the daemon for polls to succeed (added by [PR #391](https://github.com/alexandrosk0/Smatchet/pull/391) after the daemon crashed on its first real poll cycle):
+
+| Tool | Used by | Install |
+|---|---|---|
+| `gh` | daemon directly + `merge-gates.sh` (graphql call) | `winget install GitHub.cli` |
+| `jq` | `merge-gates.sh` (parsing graphql response) | `winget install jqlang.jq` |
+| `bash` | spawning `merge-gates.sh` | Git for Windows (`git-scm.com/download/win`) |
+
+`scripts/dev/merge-watcher-install-autostart.ps1` checks all three at install time and refuses to register the task if any are missing, with the exact `winget` command to fix it. The daemon itself also probes standard install paths (`Get-Command` + `winget Links` dir + Git's `bin`) via `_resolve_gh_bin()` and `_resolve_orch_user()` at startup as a defence-in-depth — but failing at install time is the loud-and-early posture we want.
+
+`ORCH_USER` is auto-resolved at daemon startup via `gh api user --jq .login` and cached for the daemon's lifetime, so no per-PR cost.
+
+If the daemon polls and you see per-PR state files at `%LOCALAPPDATA%\Smatchet\merge-watch\state\*.json` with empty `last_status_line` + `triage_action: "skipped: BLOCKED but not CR-finding"`, that's the symptom — re-run the install script and read the prerequisite-check output.
+
 ## Verification
 
 Per [`AGENTS.md`](../../AGENTS.md) § Verification automation — zero manual steps. Buckets:
