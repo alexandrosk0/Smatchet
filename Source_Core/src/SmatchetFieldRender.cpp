@@ -57,7 +57,12 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     ImGui::EndGroup();
 
     const std::string& tipSource = (rawForTooltip && !rawForTooltip->empty()) ? *rawForTooltip : displayValue;
-    if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
+    // Description-style fields (renderMarkdown=true) always surface the tooltip
+    // on hover so the user sees rendered markdown even when the cell text fits
+    // in one line and isn't horizontally clipped. Other fields keep the
+    // hasNewline/clipped gate to avoid noisy tooltips on plain values.
+    const bool forceTooltip = renderMarkdown && !tipSource.empty();
+    if (tooltipsEnabled && (hasNewline || horizontallyClipped || forceTooltip) && ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         if (isCallstack) {
             // Slice 7 — semantic callstack tokenizer.
