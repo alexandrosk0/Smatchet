@@ -282,6 +282,8 @@ struct UiDrawSession {
     char planeApiKeyBuf[512]{};
     char githubBaseUrlBuf[256]{};
     char githubPatBuf[512]{};
+    char githubOwnerBuf[128]{};
+    char githubRepoBuf[128]{};
     char newIssueInheritFieldsBuf[512]{};
     char newIssueInheritFieldsPlaneBuf[512]{};
     char newIssueInheritFieldsGitHubBuf[512]{};
