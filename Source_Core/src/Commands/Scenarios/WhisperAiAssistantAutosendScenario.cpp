@@ -341,7 +341,9 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
     std::string observedText_;
     bool teardownDone_ = false;
     bool autoSendWasEnabled_ = false;
+#if defined(SMATCHET_WITH_AI)
     bool prevAssistantPanelOpen_ = false;
+#endif
     int delayMs_ = 50;
     int frameLimit_ = 360;
     int pressFrame_ = 1;
