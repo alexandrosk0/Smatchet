@@ -450,6 +450,80 @@ set_fixture() {
     [[ "$output" == *"0 fail, 0 pending"* ]]
 }
 
+# ---------- Latest-per-name dedup (rerun jobs) ----------
+
+@test "rerun: same check name with stale FAILURE + fresh SUCCESS → pass via latest-per-name dedup" {
+    set_fixture "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"0 fail"* ]]
+}
+
+@test "rerun: dedup picks latest by startedAt regardless of array order" {
+    # Reverse order: SUCCESS first (older), FAILURE second (newer) — newer must win → still block.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T11:00:00Z","isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"FAILURE","status":"COMPLETED","startedAt":"2026-05-22T12:00:00Z","isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
+# ---------- Per-PR label overrides ----------
+
+@test "tests-out-of-band label downgrades Test-delta FAILURE → WARN, gates pass" {
+    set_fixture "$FIXTURES_DIR/merge_gates_label_tests_oob.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"1 warn-downgraded"* ]]
+    [[ "$output" == *"tests-out-of-band"* || "$output" == *"WARN: out-of-band"* ]]
+}
+
+@test "perf-out-of-band label downgrades Perf PR-fast FAILURE → WARN, gates pass" {
+    set_fixture "$FIXTURES_DIR/merge_gates_label_perf_oob.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"1 warn-downgraded"* ]]
+}
+
+@test "out-of-band label does NOT silence unrelated failing checks" {
+    set_fixture "$FIXTURES_DIR/merge_gates_label_oob_other_fail_blocks.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    [[ "$output" == *"1 warn-downgraded"* ]]
+}
+
+@test "no out-of-band label → Test-delta FAILURE still blocks" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_label_tests_oob.json" \
+        "data.repository.pullRequest.labels.nodes" '[]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    [[ "$output" == *"0 warn-downgraded"* ]]
+    rm -f "$f"
+}
+
+@test "labels.pageInfo.hasNextPage=true → return 5" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pagination.json" \
+        "data.repository.pullRequest.labels.pageInfo.hasNextPage" 'true')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"PAGINATION_OVERFLOW"* ]]
+    rm -f "$f"
+}
+
 # ---------- gh_pr_ready_idempotent ----------
 
 @test "gh_pr_ready_idempotent: already-ready (not in draft state) returns 0" {

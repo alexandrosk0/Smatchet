@@ -15,6 +15,15 @@
 # Plus: pullRequest.state == OPEN, reviewDecision in {APPROVED, null},
 # all connection pageInfo.hasNextPage == false.
 #
+# Rollup dedup: required CheckRuns with the same `.name` are deduped to the
+# entry with the latest `.startedAt` so stale FAILUREs from rerun jobs don't
+# falsely block. StatusContexts are deduped by `.context` (GitHub overwrites).
+#
+# Per-PR label overrides (AGENTS.md § Merge gates § Per-PR overrides):
+#   tests-out-of-band → downgrades `Test-delta gate` FAIL → WARN
+#   perf-out-of-band  → downgrades `Perf PR-fast (...)` FAIL → WARN
+# Downgraded failures are logged on stderr but do NOT contribute to ci_fail.
+#
 # Usage:
 #   source scripts/dev/merge-gates.sh
 #   poll_merge_gates <owner> <repo> <pr_number>
@@ -154,6 +163,7 @@ poll_merge_gates() {
              or (.reviews.pageInfo.hasNextPage // false)
              or (.reviewThreads.pageInfo.hasNextPage // false)
              or (.comments.pageInfo.hasNextPage // false)
+             or (.labels.pageInfo.hasNextPage // false)
              or (any(.reviewThreads.nodes[]?; .comments.pageInfo.hasNextPage // false)))
         ' <<<"$pr")
         if [ "$overflow" = "true" ]; then
@@ -161,18 +171,62 @@ poll_merge_gates() {
             return 5
         fi
 
-        # CI — required-only
-        local ctx='((.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])'
-        local ci_total ci_fail ci_pend
+        # Labels — per-PR overrides per AGENTS.md § Merge gates § Per-PR overrides.
+        # `tests-out-of-band`  → downgrades `Test-delta gate` CheckRun FAIL → WARN.
+        # `perf-out-of-band`   → downgrades `Perf PR-fast (...)` CheckRun FAIL → WARN.
+        # WARN means the failure is logged but does NOT contribute to ci_fail; the
+        # gate still requires every non-downgraded required check to pass.
+        local has_tests_oob has_perf_oob
+        has_tests_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="tests-out-of-band")' <<<"$pr")
+        has_perf_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="perf-out-of-band")' <<<"$pr")
+
+        # CI — required-only, with latest-per-name dedup.
+        # GitHub's rollup keeps every historical run of a rerun job (old FAILURE
+        # alongside new SUCCESS). We dedup by (CheckRun.name | StatusContext.context),
+        # keeping the entry with the latest `startedAt` (CheckRun) or last-in-array
+        # position (StatusContext lacks startedAt and GH overwrites by context name).
+        # `jq | sort_by` is stable, so missing startedAt → original chronological order.
+        local ctx
+        ctx='((.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // []
+              | map(. + {_keyname: (if .__typename=="CheckRun" then .name else .context end)})
+              | group_by(._keyname)
+              | map(sort_by(.startedAt // "") | .[-1])
+              | map(del(._keyname)))'
+        local ci_total ci_fail ci_pend ci_warn_downgraded
         ci_total=$(jq "[$ctx | .[] | select(.isRequired==true)] | length" <<<"$pr")
-        ci_fail=$(jq "[$ctx | .[] | select(.isRequired==true) | select(
+        # Failing contexts before label downgrades.
+        local failing_json
+        failing_json=$(jq -c "[$ctx | .[] | select(.isRequired==true) | select(
             (.__typename==\"CheckRun\"      and .status==\"COMPLETED\" and ((.conclusion // \"\") | IN(\"FAILURE\",\"TIMED_OUT\",\"CANCELLED\",\"ACTION_REQUIRED\",\"STARTUP_FAILURE\"))) or
             (.__typename==\"StatusContext\" and ((.state // \"\") | IN(\"FAILURE\",\"ERROR\")))
-        )] | length" <<<"$pr")
+        )]" <<<"$pr")
+        # Split failing contexts into downgraded (label-suppressed) + real-fail.
+        # Downgrade rules — keep matchers narrow to avoid stomping unrelated checks
+        # that happen to fail (e.g. a future `Test-engine bucket-E` should NOT be
+        # silenced by `tests-out-of-band`).
+        local downgraded_json
+        downgraded_json=$(jq -c --argjson tests "$has_tests_oob" --argjson perf "$has_perf_oob" '
+            map(select(
+                ($tests and .__typename=="CheckRun" and .name=="Test-delta gate") or
+                ($perf  and .__typename=="CheckRun" and (.name // "" | startswith("Perf PR-fast")))
+            ))' <<<"$failing_json")
+        ci_warn_downgraded=$(jq 'length' <<<"$downgraded_json")
+        ci_fail=$(jq --argjson dg "$downgraded_json" '
+            map(select(
+                . as $f | ($dg | any(.name==$f.name and .__typename==$f.__typename)) | not
+            )) | length' <<<"$failing_json")
         ci_pend=$(jq "[$ctx | .[] | select(.isRequired==true) | select(
             (.__typename==\"CheckRun\"      and .status!=\"COMPLETED\") or
             (.__typename==\"StatusContext\" and ((.state // \"\") | IN(\"PENDING\",\"EXPECTED\")))
         )] | length" <<<"$pr")
+
+        # Surface every downgraded check on stderr so the operator sees what the
+        # label hid. Mirrors the "Skip gates and merge anyway" LOG_WARN pattern.
+        if [ "$ci_warn_downgraded" -gt 0 ]; then
+            local dg_names
+            dg_names=$(jq -r '[.[].name] | join(", ")' <<<"$downgraded_json")
+            echo "WARN: out-of-band label(s) downgraded ${ci_warn_downgraded} failing check(s) to WARN: ${dg_names}" >&2
+        fi
 
         # CodeRabbit — four-bucket discrimination with body-aware actionable parsing.
         # P1 fix per docs/backlog/agent-self-improvement/process.md "Force-merge on CR
@@ -316,8 +370,9 @@ poll_merge_gates() {
                 ;;
         esac
 
-        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
-            $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend)) "$ci_total" "$ci_fail" "$ci_pend" \
+        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
+            $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend - ci_warn_downgraded)) "$ci_total" \
+            "$ci_fail" "$ci_pend" "$ci_warn_downgraded" \
             "$cr_state_print" "$cr_open" "$user" "$review_decision"
 
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \
