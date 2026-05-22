@@ -37,7 +37,7 @@ The orchestrator + agent scripts (`scripts/dev/*.sh`, `scripts/dev/merge-watcher
 | `python` 3.11+ | dev scripts (perf-compare, watcher CLI, etc.) | `winget install Python.Python.3.13` |
 | `clang-format` / `clang-tidy` / `cppcheck` | lint hooks | `pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra mingw-w64-ucrt-x86_64-cppcheck` |
 | `flock` | lint-cpp-drain queue serialisation | MSYS2 built-in (`util-linux`) |
-| `bats` | `tests/bats/*.bats` regression suite (merge-gates poller, etc.) | `npm i -g bats` (preferred — resolves on the bash-tool PATH) · MSYS2: `pacman -S bats` · macOS: `brew install bats-core` |
+| `bats` | `tests/bats/*.bats` regression suite (merge-gates poller, etc.) | `npm i -g bats` (preferred — resolves on the bash-tool PATH) · MSYS2: `pacman -S bats` |
 
 Verify the full set in one shot:
 
