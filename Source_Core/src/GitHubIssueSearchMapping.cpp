@@ -128,11 +128,14 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
         ticket.fieldValues["assignee"] = std::string();
     }
 
+    // GitHub calls the creator `author` in the GraphQL/REST surface; Jira calls
+    // it `reporter`. Write both so views can opt into either naming.
+    std::string creatorLogin;
     if (issue.is_object() && issue.contains("user") && issue["user"].is_object()) {
-        ticket.fieldValues["reporter"] = JsonString(issue["user"], "login");
-    } else {
-        ticket.fieldValues["reporter"] = std::string();
+        creatorLogin = JsonString(issue["user"], "login");
     }
+    ticket.fieldValues["reporter"] = creatorLogin;
+    ticket.fieldValues["author"] = creatorLogin;
 
     std::string labelStr;
     if (issue.is_object() && issue.contains("labels") && issue["labels"].is_array()) {
