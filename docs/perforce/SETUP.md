@@ -203,7 +203,14 @@ These are deviations from `docs/design/git-to-perforce-migration.md` § Phase 0 
 
 ## 9. Troubleshooting
 
-**`Edit` fails with `EPERM`**: a text file in the depot doesn't have `+w`. Fix once per file with `p4 edit -t text+w <file> && p4 submit -d "retype"`, or globally with `attrib -R /S /D C:\Development\Smatchet\*.*` + re-submit typemap with the `text+w //...` catch-all per § 5.
+**`Edit` fails with `EPERM`**: a text file in the depot doesn't have `+w`. Fix once per file:
+
+```powershell
+& $p4 edit -t text+w <file>
+if ($LASTEXITCODE -eq 0) { & $p4 submit -d "retype" }
+```
+
+(PowerShell 5.1 has no `&&` chain operator — sequential + `$LASTEXITCODE` check is the equivalent.) Or fix globally with `attrib -R /S /D C:\Development\Smatchet\*.*` followed by re-submitting the typemap with the `text+w //...` catch-all per § 5.
 
 **`Can't clobber writable file <path>` on `p4 delete` / `p4 sync`**: p4 refuses to remove a writable on-disk file. Use `p4 delete -k <path>` (delete depot rev, keep workspace file), or `p4 sync -f <path>` to force overwrite. For deletion, also `Remove-Item <path>` from the workspace afterward.
 
