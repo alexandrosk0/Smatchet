@@ -213,6 +213,24 @@ if [[ -x "$ROOT/scripts/dev/check-required-tools.sh" ]]; then
   }
 fi
 
+# Dual-VCS opt-in check (per AGENTS.md § Dual-VCS topology + Phase 5/6 of
+# docs/design/git-to-perforce-migration.md). Non-fatal — only warns when the
+# session has opted into the p4 layer (`SMATCHET_AGENT_VCS=p4`) but the p4
+# client is unconfigured. Sessions on the default `git` backend see nothing.
+if [[ "${SMATCHET_AGENT_VCS:-git}" == "p4" ]]; then
+  echo "" >&2
+  echo "dual-VCS: SMATCHET_AGENT_VCS=p4 set — verifying p4 client config:" >&2
+  if ! command -v p4 >/dev/null 2>&1; then
+    echo "  WARN  p4 binary not on PATH. Install Helix Core client per docs/perforce/SETUP.md." >&2
+  elif [[ -z "${P4PORT:-}" ]]; then
+    echo "  WARN  P4PORT not set. Export per docs/perforce/SETUP.md § Decisions locked." >&2
+  elif ! p4 info >/dev/null 2>&1; then
+    echo "  WARN  p4 info failed against P4PORT=${P4PORT}. Server unreachable or auth missing." >&2
+  else
+    echo "  OK    p4 client reaches ${P4PORT}." >&2
+  fi
+fi
+
 case "$HARNESS" in
   claude-code) setup_claude_code ;;
   codex)       setup_codex ;;

@@ -27,6 +27,22 @@
 
 set -euo pipefail
 
+# Dual-VCS drift check — runs first because it's orthogonal to the merged-PR
+# refusal below. Silent no-op when SMATCHET_AGENT_VCS != p4 (default git
+# users pay zero cost). See:
+#   - scripts/dev/p4-reconcile-check.sh (the checker itself)
+#   - docs/design/git-to-perforce-migration.md § Files to modify §
+#     scripts/git-hooks/pre-push:1
+#   - AGENTS.md § Dual-VCS topology
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+if [ -n "$repo_root" ] && [ -x "$repo_root/scripts/dev/p4-reconcile-check.sh" ]; then
+    if ! bash "$repo_root/scripts/dev/p4-reconcile-check.sh"; then
+        # Exit code 2 from p4-reconcile-check = drift detected + block mode.
+        # The script already printed its own diagnostic; just propagate.
+        exit 2
+    fi
+fi
+
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 
 case "$branch" in

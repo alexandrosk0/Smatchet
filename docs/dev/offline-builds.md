@@ -124,4 +124,4 @@ You want this doc when:
 
 - [BUILD.md](../../BUILD.md) — top-level build recipes + first-time verification.
 - [scripts/dev/doctor.sh](../../scripts/dev/doctor.sh) — toolchain pre-flight checks (Slices 2/3).
-- [docs/design/git-to-perforce-migration.md](../design/git-to-perforce-migration.md) — if you're reading this because you're on the Perforce-migration path, that plan eventually vendors every FetchContent dep into `//smatchet/main/third_party/`, killing the network-dependency entirely. Phase 1 of that plan supersedes this doc.
+- [docs/design/git-to-perforce-migration.md](../design/git-to-perforce-migration.md) — the dual-VCS plan adds Perforce as an opt-in local layer alongside git; FetchContent stays git-backed, so this offline-builds doc continues to apply regardless of whether you've enabled the p4 layer. Earlier drafts of that plan called for vendoring all third-party deps into `//smatchet/main/third_party/`, but that scope was dropped per the 2026-05-21 rewrite — see § Superseded in the plan doc.

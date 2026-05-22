@@ -31,6 +31,8 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
+**See also**: [`agents/p4-janitor.md`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../AGENTS.md) § Dual-VCS topology.
+
 ## Path resolution — `<main-repo>` / `<worktree>`
 
 Commands below use placeholders. Resolve them at session start:
