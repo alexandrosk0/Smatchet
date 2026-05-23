@@ -248,7 +248,27 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
     # (per `docs/agent-rules/merge-gates.md` § Auto-`gh pr ready` + merge).
     # The call is idempotent on already-non-draft PRs, so calling it every
     # poll has no semantic effect beyond one extra `gh` API hop per minute.
-    ensure_pr_ready_for_review(owner, repo, pr)
+    #
+    # Per CR feedback on PR #428: if the flip-ready step returns False, the PR
+    # is still observably draft (or we couldn't confirm non-draft state). DO
+    # NOT proceed with the gates poll — that would re-introduce the C4 bypass
+    # this PR is fixing (gates pass via the placeholder StatusContext SUCCESS
+    # branch on a draft PR). Return a transient state the daemon retries on
+    # the next cycle; the underlying issue (auth failure, network blip, PR
+    # genuinely refusing the flip) will surface on a subsequent attempt.
+    if not ensure_pr_ready_for_review(owner, repo, pr):
+        return {
+            "pr": pr,
+            "clone_path": clone_path,
+            "last_poll_unix": int(time.time()),
+            "last_state": "READY_FLIP_FAILED",
+            "last_status_line": (
+                "ensure_pr_ready_for_review returned False — PR may still be draft; "
+                "skipping gates poll this cycle to avoid C4 bypass path. "
+                "Re-attempts on next poll. If persistent, surface to user via "
+                "`gh pr view <N> --json isDraft` + manual `gh pr ready <N>`."
+            ),
+        }
     # Invoke merge-gates.sh once (single poll iteration — MERGE_GATES_MAX_POLLS=1).
     env = os.environ.copy()
     env.setdefault("MERGE_GATES_MAX_POLLS", "1")
@@ -611,6 +631,7 @@ NOTIFY_STATES = {
     "PAGINATION_OVERFLOW",
     "TIMEOUT",
     "TRIAGE_BUDGET_EXHAUSTED",
+    "READY_FLIP_FAILED",
 }
 
 
