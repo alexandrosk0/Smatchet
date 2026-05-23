@@ -182,7 +182,15 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 
 ## Watcher-invocation mode
 
-When invoked by `smatchet-merge-watcher` (per `docs/design/smatchet-merge-watcher.md` Phase 3), this agent reads the watcher's prepared payload (`{pr_number, head_sha, cr_review_body, cr_review_threads}`), runs the 18-rule override table + validation pass, applies valid fixes via subsystem delegates (`tracker-backend`, `grid-engine`, `mechanic`, etc.), commits + pushes. The watcher then re-polls; CR re-reviews on push.
+When invoked by `smatchet-merge-watcher` (per `docs/design/smatchet-merge-watcher.md` Phase 3) the dispatch shape is:
+
+1. **Watcher** spawns `claude -p AUTO_ACT_PROMPT` (see `scripts/dev/merge-watcher.py:AUTO_ACT_PROMPT` for the literal text). Spawn is gated by `MERGE_WATCH_AUTO_ACT=true` + per-PR / per-head-sha budget; defaults are off to prevent runaway-loop risk.
+2. **Spawned session** invokes this agent (`coderabbit-triage`) first. The agent reads the watcher's prepared payload (`{pr_number, head_sha, cr_review_body, cr_review_threads}`), runs the 18-rule override table + validation pass, and emits per-finding handoff packets — VALID (with target subsystem named) + REJECT-INVARIANT / REJECT-AMBIGUOUS with rationale.
+3. **Spawned session** routes each VALID packet to its target subsystem agent (`tracker-backend`, `grid-engine`, `mechanic`, etc.) for the actual edits. REJECT findings are skipped outright; rationale surfaces in the commit body.
+4. **Spawned session** commits + pushes once all subsystem dispatches complete.
+5. **Watcher** re-polls on the next cycle; CR re-reviews the new head; the C4 (prongs 1 + 2) gate logic decides whether to merge.
+
+Per the Hand-back contract below, this agent itself is read-only — the file-edit step happens in the dispatched subsystem agents, and the commit + push happens in the spawned session orchestrator. C4 prong 3 (per `docs/evaluation/agentic-infrastructure-2026-05-23.md`) is what wires this multi-step dispatch into `AUTO_ACT_PROMPT`.
 
 The Phase 3 Python port (`scripts/dev/coderabbit-triage.py`) is the canonical implementation reference for the rule body; this `agents/coderabbit-triage.md` file remains the source-of-truth for the 18-rule override table + Smatchet-invariant rejection rules + subsystem-routing decisions. Keep the two in sync — a doctest-style bash check at end-of-CI greps both files for a shared "rules version" marker and fails if they disagree (per the watcher plan-doc § Risks).
 
