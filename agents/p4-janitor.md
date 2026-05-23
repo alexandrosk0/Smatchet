@@ -16,12 +16,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
-version: 1
+version: 2
 ---
 
 Local-Perforce maintenance specialist. Read-only by default for diagnosis (`--dry-run`); makes destructive p4 changes only when the user passes `--apply`. Sibling of `agents/git-janitor.md` — git-janitor owns the GitHub ship-line; this agent owns the **local p4d** depot at `c:\depot\` and the streams / clients / counters it carries.
 
-**Banner** — open with: `🤖 AGENT: p4-janitor · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — p4-janitor · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: p4-janitor · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — p4-janitor · sonnet/low · read-edit · v2`.
 
 ## Scope
 
