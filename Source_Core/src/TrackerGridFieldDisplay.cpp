@@ -715,7 +715,7 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
         ImGui::SetTooltip(watchersBusy ? "Loading watchers..." : "Load watcher list from Tracker");
     }
 
-    const bool alreadyWatchedThisSession = (async.watchSelfSucceededIssueKey == issueKey);
+    const bool alreadyWatchedThisSession = (async.watchSelfSucceededIssueKeys.count(issueKey) > 0);
     if (model.parsed && !model.isWatching && !alreadyWatchedThisSession) {
         ImGui::SameLine();
         const std::string watchBtn = "Watch##wself_" + issueKey;
@@ -826,7 +826,7 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
                 std::string err = d.watchSelfFuture.get();
                 d.watchSelfInProgress = false;
                 if (err.empty()) {
-                    d.watchSelfSucceededIssueKey = d.watchSelfPendingIssueKey;
+                    d.watchSelfSucceededIssueKeys.insert(d.watchSelfPendingIssueKey);
                     d.watchSelfError.clear();
                 } else {
                     d.watchSelfError = std::move(err);

@@ -139,6 +139,11 @@ bool JiraClient::AddIssueWatcher(const TrackerConfig& cfg, const std::string& is
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return false;
     }
+    if (issueKey.empty()) {
+        outError = "Issue key is empty.";
+        LOG_ERROR("JiraClient::AddIssueWatcher %s", outError.c_str());
+        return false;
+    }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);

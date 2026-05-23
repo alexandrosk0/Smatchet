@@ -1125,6 +1125,11 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
 
 bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& outError) {
     outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::AddIssueWatcher blocked by read-only mode issue=%s", issueKey.c_str());
+        return false;
+    }
     if (!Backend) {
         outError = "Tracker backend is not initialized.";
         return false;
