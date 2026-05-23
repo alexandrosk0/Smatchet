@@ -5,6 +5,7 @@ triggers:
   - perf-gate
   - perf-review
   - regression check
+version: 1
 ---
 
 Scenario-aware PR-time perf gatekeeper (Claude Code skill alias of `agents/perf-gatekeeper.md`).

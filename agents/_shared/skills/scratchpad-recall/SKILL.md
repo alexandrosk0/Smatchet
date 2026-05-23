@@ -1,6 +1,7 @@
 ---
 name: scratchpad-recall
 description: Recall facts from prior session scratchpads — list archives, show a specific archive, or grep across all archives. Use when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question. Archives live at `.session-context.archive/` and are written by `scripts/clear-session-context.sh` on SessionStart. Read-only — never writes.
+version: 1
 ---
 
 # scratchpad-recall

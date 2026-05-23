@@ -11,6 +11,8 @@
 #   7. AGENTS.md § Agent output contract has 5 class rows (the post-PR split).
 #   8. agents/_shared/token-tracking/tests/test_infer_outcome.py passes (Python unit cases for the telemetry classifier).
 #   9. agent-token-log.py canonical and .claude/hooks/ copy are byte-identical (link_file drift check per process.md 2026-05-19 P3).
+#  10. Frontmatter `version: N` matches banner `· vN` (H7 fix from eval doc).
+#  11. Skill ↔ agent SKILL.md sibling parity — same version + same triggers (eval punch-list item 7 + M9).
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
@@ -29,7 +31,7 @@ check_fail() { FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); printf '  FAIL  %s\n' "$
 # -------------------------------------------------------------------------
 # 1. Implementer agents — 3 required headings.
 # -------------------------------------------------------------------------
-echo "[1/9] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
+echo "[1/11] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
 IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-blame unreal-bridge mechanic)
 for a in "${IMPLEMENTERS[@]}"; do
   f="agents/$a.md"
@@ -44,7 +46,7 @@ done
 # 2. Maintenance agents — 4 required headings.
 # -------------------------------------------------------------------------
 echo
-echo "[2/9] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
+echo "[2/11] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
 MAINTENANCE=(build-doctor test-author git-janitor p4-janitor)
 for a in "${MAINTENANCE[@]}"; do
   f="agents/$a.md"
@@ -59,7 +61,7 @@ done
 # 3. Diagnostic read-edit (debug-detective) — 6 required headings.
 # -------------------------------------------------------------------------
 echo
-echo "[3/9] Diagnostic read-edit required headings (debug-detective)"
+echo "[3/11] Diagnostic read-edit required headings (debug-detective)"
 DD_REQUIRED=("## Hypotheses" "## Evidence" "## Cause" "## Files changed (temp-debug)" "## Cleanup" "## Handoff")
 miss=0
 for h in "${DD_REQUIRED[@]}"; do
@@ -74,7 +76,7 @@ if [[ $miss -eq 0 ]]; then check_pass "debug-detective 6/6"; else check_fail "de
 # 4. Every agent has ## Outcome: mandate text.
 # -------------------------------------------------------------------------
 echo
-echo "[4/9] ## Outcome: mandate present in every agent prompt (24 files, README excluded)"
+echo "[4/11] ## Outcome: mandate present in every agent prompt (24 files, README excluded)"
 miss_outcome=()
 for f in agents/*.md; do
   base=$(basename "$f")
@@ -92,7 +94,7 @@ fi
 # 5. Banner model/effort substring matches frontmatter harness-hints.claude-code.{model,effort}.
 # -------------------------------------------------------------------------
 echo
-echo "[5/9] Banner ↔ frontmatter model/effort match"
+echo "[5/11] Banner ↔ frontmatter model/effort match"
 banner_mismatch=()
 for f in agents/*.md; do
   base=$(basename "$f")
@@ -117,7 +119,7 @@ fi
 # 6. agents/architect.md does NOT contain a git commit self-directive.
 # -------------------------------------------------------------------------
 echo
-echo "[6/9] architect.md emit-only (no self-commit directive)"
+echo "[6/11] architect.md emit-only (no self-commit directive)"
 if grep -qE '^[^>`]*Commit immediately with ' agents/architect.md; then
   check_fail "architect.md still instructs the agent to commit"
 else
@@ -128,7 +130,7 @@ fi
 # 7. AGENTS.md § Agent output contract has 5 class rows.
 # -------------------------------------------------------------------------
 echo
-echo "[7/9] docs/agent-rules/delegation.md output-contract table has 5 class rows"
+echo "[7/11] docs/agent-rules/delegation.md output-contract table has 5 class rows"
 # Table lives in docs/agent-rules/delegation.md § Agent output contract since
 # AGENTS.md L192-422 was extracted into the new file. AGENTS.md still carries
 # a redirect stub naming the subsection.
@@ -143,7 +145,7 @@ fi
 # 8. _infer_outcome unit tests pass.
 # -------------------------------------------------------------------------
 echo
-echo "[8/9] agents/_shared/token-tracking/tests/test_infer_outcome.py"
+echo "[8/11] agents/_shared/token-tracking/tests/test_infer_outcome.py"
 if python agents/_shared/token-tracking/tests/test_infer_outcome.py; then
   check_pass "_infer_outcome unit tests"
 else
@@ -161,7 +163,7 @@ fi
 # don't propagate; the live Claude Code SubagentStop hook runs the stale copy.
 # Catch the drift at PR time before the misclassification ships.
 echo
-echo "[9/9] agent-token-log.py — canonical vs .claude/hooks/ copy drift"
+echo "[9/11] agent-token-log.py — canonical vs .claude/hooks/ copy drift"
 canonical=agents/_shared/token-tracking/agent-token-log.py
 hook_copy=.claude/hooks/agent-token-log.py
 if [[ ! -f "$hook_copy" ]]; then
@@ -171,6 +173,78 @@ elif cmp -s "$canonical" "$hook_copy"; then
   check_pass "canonical and hook copy byte-identical"
 else
   check_fail "DRIFT: $canonical vs $hook_copy differ — run \`cp -f $canonical $hook_copy\` or \`bash scripts/setup-harness.sh claude-code\` (after \`rm $hook_copy\`)"
+fi
+
+# -------------------------------------------------------------------------
+# 10. Frontmatter `version: N` matches banner `· vN`.
+# -------------------------------------------------------------------------
+# H7 from docs/evaluation/agentic-infrastructure-2026-05-23.md: eight agents
+# had `version: 1` in frontmatter but `· v2` in their banner; telemetry
+# pivots on frontmatter so v2 work was undercounted. PR #421 fixed those
+# eight. This check prevents future drift by asserting the two are always
+# kept in lockstep (the agent-versioning rule in
+# docs/agent-rules/delegation.md § Agent versioning).
+echo
+echo "[10/11] Frontmatter version ↔ banner version match"
+version_mismatch=()
+for f in agents/*.md; do
+  base=$(basename "$f")
+  [[ "$base" == "README.md" ]] && continue
+  fm_version=$(awk '/^---$/{p=!p;next}p' "$f" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  [[ -z "$fm_version" ]] && continue  # No frontmatter version — skip.
+  banner=$(grep -m1 -F '**Banner**' "$f" || true)
+  # Banner shape: "... · v<N>`. Close (before ..." — find the `· v<N>` token.
+  if ! printf '%s' "$banner" | grep -qE "· v${fm_version}([\` ]|$)"; then
+    version_mismatch+=("$base: frontmatter v$fm_version not found in banner line")
+  fi
+done
+if [[ ${#version_mismatch[@]} -eq 0 ]]; then
+  check_pass "all frontmatter versions match banner"
+else
+  for m in "${version_mismatch[@]}"; do echo "    $m"; done
+  check_fail "${#version_mismatch[@]} frontmatter↔banner version mismatches"
+fi
+
+# -------------------------------------------------------------------------
+# 11. Skill ↔ agent sibling parity (eval punch-list item 7).
+# -------------------------------------------------------------------------
+# Three agents (perf-instrument / perf-measure / perf-gatekeeper) live as
+# both `agents/<name>.md` AND `agents/_shared/skills/<name>/SKILL.md`. With
+# no parity gate, edits to one form silently diverged from the other. This
+# check enforces: when a sibling pair exists, version + triggers must match.
+# Skills with no sibling agent (`grill-with-docs`, `scratchpad-recall`)
+# still require their own `version:` field for telemetry parity (eval M9).
+echo
+echo "[11/11] Skill ↔ agent SKILL.md parity (version + triggers)"
+skill_drift=()
+for skill_md in agents/_shared/skills/*/SKILL.md; do
+  skill_name=$(basename "$(dirname "$skill_md")")
+  skill_ver=$(awk '/^---$/{p=!p;next}p' "$skill_md" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  if [[ -z "$skill_ver" ]]; then
+    skill_drift+=("$skill_name SKILL.md: missing frontmatter version: field (telemetry parity, eval M9)")
+    continue
+  fi
+  agent_md="agents/$skill_name.md"
+  if [[ ! -f "$agent_md" ]]; then
+    continue  # Skill-only (no sibling agent) — version-presence check already passed.
+  fi
+  agent_ver=$(awk '/^---$/{p=!p;next}p' "$agent_md" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  if [[ "$skill_ver" != "$agent_ver" ]]; then
+    skill_drift+=("$skill_name: SKILL.md v=$skill_ver vs agents/$skill_name.md v=$agent_ver")
+  fi
+  # Trigger parity — extract the list of triggers from each. Use sorted
+  # comparison so order-of-triggers in the YAML doesn't trip the check.
+  skill_triggers=$(awk '/^---$/{p=!p;next}p' "$skill_md" | awk '/^triggers:/{f=1;next} f && /^[a-zA-Z]/{f=0} f{print $0}' | sort)
+  agent_triggers=$(awk '/^---$/{p=!p;next}p' "$agent_md" | awk '/^triggers:/{f=1;next} f && /^[a-zA-Z]/{f=0} f{print $0}' | sort)
+  if [[ "$skill_triggers" != "$agent_triggers" ]]; then
+    skill_drift+=("$skill_name: SKILL.md triggers differ from agents/$skill_name.md triggers")
+  fi
+done
+if [[ ${#skill_drift[@]} -eq 0 ]]; then
+  check_pass "all skill / agent sibling pairs in parity"
+else
+  for d in "${skill_drift[@]}"; do echo "    $d"; done
+  check_fail "${#skill_drift[@]} skill↔agent parity violations"
 fi
 
 # -------------------------------------------------------------------------
