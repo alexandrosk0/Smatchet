@@ -187,8 +187,17 @@ done < <(printf '%s\n' "$streams_raw" | awk '{print $2}')
 
 # H5a: counters are now in parent scope (process-substitution loop above),
 # so report them directly. The remaining count is a sanity check on the
-# fresh state. `grep -c .` counts non-empty lines and degrades to 0 cleanly
-# on a missing/erroring `p4 streams` (vs the prior `wc -l || echo 0` which
-# could return multi-line junk when p4 errored mid-pipe).
-remaining=$("$p4" streams "${scan_pattern}" 2>/dev/null | grep -c . || echo 0)
+# fresh state.
+#
+# CR feedback on PR #423: `grep -c .` exits 1 on zero matches but still
+# prints `0`, so `... | grep -c . || echo 0` produces a TWO-line value
+# (`0\n0`) when `p4 streams` returns empty. Split capture from counting:
+# capture p4's output first, count non-empty lines via a second `grep`
+# whose `|| true` swallows the exit-1-on-zero quirk cleanly. Either path
+# now yields a single integer.
+if streams_remaining_raw=$("$p4" streams "${scan_pattern}" 2>/dev/null); then
+    remaining=$(printf '%s\n' "$streams_remaining_raw" | grep -c . || true)
+else
+    remaining=0
+fi
 echo "p4-task-stream-gc: done. purged=${purged} kept=${kept} remaining=${remaining} under ${scan_pattern}." >&2

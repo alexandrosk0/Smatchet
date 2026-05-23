@@ -408,11 +408,17 @@ case "$mode" in
         # their env. The export is scoped to this single awk invocation.
         desc_first="${pr_title}"
         desc_body="Integrated from ${stream} — awaiting shelf review (no submit yet)."
+        # CR feedback on PR #423: the env-var prefix above the pipe only sets
+        # vars on `p4 change -o` (the LHS), not on `awk` (the RHS). In bash,
+        # `FOO=bar cmd1 | cmd2` scopes FOO to cmd1 only — awk's ENVIRON[FOO]
+        # would have been empty, dropping Description/tag/body entirely. Fix:
+        # put the env-prefix directly on `awk`, where it's read.
         new_cl_out=$(
-            SMATCHET_PT_TITLE="$desc_first" \
-            SMATCHET_PT_TAG="$task_tag" \
-            SMATCHET_PT_BODY="$desc_body" \
-            P4CLIENT="$main_client" "$p4" change -o | awk '
+            P4CLIENT="$main_client" "$p4" change -o \
+            | SMATCHET_PT_TITLE="$desc_first" \
+              SMATCHET_PT_TAG="$task_tag" \
+              SMATCHET_PT_BODY="$desc_body" \
+              awk '
                 /^Description:/ {
                     print
                     # Tab-indented body per p4 change-spec format. Trailing
