@@ -96,7 +96,13 @@ fi
 
 purged=0
 kept=0
-echo "$streams_raw" | awk '{print $2}' | while read -r stream; do
+# H5a: process substitution keeps the while-loop in the PARENT shell, so
+# `purged` and `kept` increments are visible after the loop. The previous
+# pipe form (`echo ... | awk | while`) ran the loop in a subshell and the
+# counter increments were lost; the script worked around it via a final
+# `p4 streams | wc -l || echo 0` re-derive, which itself has a multi-line-
+# junk failure mode when p4 errors out.
+while read -r stream; do
     [ -n "$stream" ] || continue
 
     # Resolve update epoch from the stream spec
@@ -149,8 +155,17 @@ echo "$streams_raw" | awk '{print $2}' | while read -r stream; do
     fi
 
     echo "p4-task-stream-gc: purging ${stream} (client ${client})" >&2
-    # Resolve client root before deleting the client (need it for on-disk cleanup)
-    client_root=$("$p4" client -o "$client" 2>/dev/null | grep -E '^Root:' | head -1 | awk '{print $2}' || true)
+    # Resolve client root before deleting the client (need it for on-disk
+    # cleanup). H5b: strip "Root:" prefix + surrounding whitespace via sed
+    # rather than `awk '{print $2}'` — awk's whitespace splitter only
+    # captures the first word, so a legitimate `C:\Program Files\…` root
+    # would lose everything after the first space + the on-disk cleanup
+    # below would either no-op or try to rm-rf the wrong path.
+    client_root=$("$p4" client -o "$client" 2>/dev/null \
+        | grep -E '^Root:' \
+        | head -1 \
+        | sed -E 's/^Root:[[:space:]]+//; s/[[:space:]]+$//' \
+        || true)
     "$p4" client -d "$client" >&2 2>&1 || echo "p4-task-stream-gc: client delete returned non-zero (continuing)" >&2
     "$p4" stream -d "$stream" >&2 2>&1 || echo "p4-task-stream-gc: stream delete returned non-zero (continuing)" >&2
 
@@ -168,8 +183,12 @@ echo "$streams_raw" | awk '{print $2}' | while read -r stream; do
     fi
 
     purged=$((purged + 1))
-done
+done < <(printf '%s\n' "$streams_raw" | awk '{print $2}')
 
-# Subshell loses purged/kept counters; re-derive from one final stream list for reporting.
-remaining=$("$p4" streams "${scan_pattern}" 2>/dev/null | wc -l || echo 0)
-echo "p4-task-stream-gc: done. ${remaining} task stream(s) remain under ${scan_pattern}." >&2
+# H5a: counters are now in parent scope (process-substitution loop above),
+# so report them directly. The remaining count is a sanity check on the
+# fresh state. `grep -c .` counts non-empty lines and degrades to 0 cleanly
+# on a missing/erroring `p4 streams` (vs the prior `wc -l || echo 0` which
+# could return multi-line junk when p4 errored mid-pipe).
+remaining=$("$p4" streams "${scan_pattern}" 2>/dev/null | grep -c . || echo 0)
+echo "p4-task-stream-gc: done. purged=${purged} kept=${kept} remaining=${remaining} under ${scan_pattern}." >&2
