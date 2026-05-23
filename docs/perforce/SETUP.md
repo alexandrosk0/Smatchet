@@ -94,20 +94,33 @@ The `-C0` arg on first run locks the server into case-sensitive mode. The `-xi` 
 
 ### 4. Register Windows service `p4d_smatchet`
 
+Use `p4s.exe` (the Windows service wrapper that ships with Helix Core 2025.x), **not** `p4d.exe` directly. `p4d.exe` is the command-line server and has no SCM dispatcher — registering it as a Windows service produces a `[SC] StartService failed` error on start. `p4s.exe` reads its config from per-service Perforce env vars (`P4ROOT` / `P4PORT` / `P4LOG` / `P4JOURNAL`) set via `p4 set -S <service>`.
+
 ```powershell
-sc.exe create p4d_smatchet `
-  binPath= "\"C:\Program Files\Perforce\Server\p4d.exe\" -r C:\depot-smatchet -p 1666 -L C:\depot-smatchet\p4d.log" `
-  DisplayName= "Perforce Server (Smatchet)" `
-  start= auto
-sc.exe description p4d_smatchet "Helix Core server hosting //smatchet depot for the Smatchet project."
-sc.exe start p4d_smatchet
+# Create the service first (it WILL fail to start until the per-service env vars are set below).
+New-Service -Name 'p4d_smatchet' `
+  -BinaryPathName '"C:\Program Files\Perforce\Server\p4s.exe"' `
+  -DisplayName 'Perforce Server (Smatchet)' `
+  -Description 'Helix Core server hosting //smatchet depot for the Smatchet project.' `
+  -StartupType Automatic
+
+# Set per-service env vars (the service uses these to locate the depot, port, and logs).
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4ROOT=C:\depot-smatchet
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4PORT=1666
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4LOG=C:\depot-smatchet\p4d.log
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4JOURNAL=C:\depot-smatchet\journal
+
+Start-Service -Name 'p4d_smatchet'
 ```
 
 Verify:
 ```powershell
-sc.exe query p4d_smatchet                 # STATE: 4 RUNNING
+Get-Service p4d_smatchet                  # Status: Running
 Test-NetConnection -ComputerName localhost -Port 1666
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet   # should list P4ROOT/P4PORT/P4LOG/P4JOURNAL
 ```
+
+If `Start-Service` fails with "Cannot start service", double-check `p4 set -S p4d_smatchet` shows all four env vars. Per-service config lives in the registry under `HKLM\SOFTWARE\[Wow6432Node\]Perforce` and is **bound to the service name** — deleting the service drops its per-service config. If you need to rename the service later, re-add the four `p4 set -S <new-name> ...` lines before starting.
 
 ### 5. Configure user `alexk`
 
@@ -220,6 +233,8 @@ Phase 0 closes when a throwaway client can submit + re-sync a file. This step ge
 - **Two p4d hosts** instead of one — the dev box's existing `Brick:1666` (Unreal) is left untouched; Smatchet's depot lives on a remote LAN host. Plan § Approach assumed one combined `p4d`; the split is operationally cleaner and matches user preference.
 - **Case sensitivity**: server initialized case-sensitive per plan. Windows default would have been insensitive.
 - **Server version**: 2025.2 (latest LTS available 2026-05-21) instead of plan's `r24.2`.
+- **Service wrapper**: original runbook prescribed `sc.exe create … binPath= "…\p4d.exe -r … -p … -L …"` (direct `p4d.exe` invocation). On Helix Core 2025.2 that registration succeeds but `Start-Service` fails — `p4d.exe` has no SCM dispatcher. The runbook above is the corrected version using `p4s.exe` + per-service env vars (`p4 set -S p4d_smatchet …`).
+- **Existing Mainbot install (2026-05-22)**: actual server root is `C:\depot\` (Helix installer default) instead of the runbook's `C:\depot-smatchet\`, and case handling is **insensitive** (the `-C0` initialization step was skipped on first start, and the depot has accumulated data since — cannot be flipped to sensitive without a full backup-wipe-replay rebuild). Service was renamed from the installer-default `Perforce` to `p4d_smatchet` in-place; per-service env vars point at `C:\depot\`. Doc keeps the original `C:\depot-smatchet\` path as the canonical fresh-install target.
 
 ## Open items (post-Phase-0)
 
