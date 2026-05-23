@@ -105,14 +105,18 @@ Lands inside `process-rules.md` (with a stub in AGENTS.md pointing at it). Text:
 
 **New files** (4, all kebab-case per D1):
 
-1. `docs/agent-rules/merge-gates.md` — lifted from `AGENTS.md:149-230` (CI / CR / user-comment semantics, halt prompts, env knobs, REST-merge contract).
-2. `docs/agent-rules/ux-pillars.md` — lifted from `AGENTS.md:5-72` (Pillars 1-4 enforceable invariants + agent ownership table).
-3. `docs/agent-rules/ship-loops.md` — lifted from `AGENTS.md:73-148` (Autonomous ship-loop default + P4-gated subsection + Post-ship turn-end protocol).
-4. `docs/agent-rules/process-rules.md` — combined per D2 + D4 + D7:
-   - Plan-doc family lifted from `AGENTS.md:258-300` (Plan location, Plan-doc safety, Plan revision, Plan stress-test, Plan template, Plan-doc perf-gate).
-   - Git/p4 discipline lifted from `AGENTS.md:262-283` (Destructive git ops, Destructive p4 ops, Force-push carve-out).
-   - Cadence/verification family lifted from `AGENTS.md:299-349` (Verification automation, Schema-version bumps, Trivial-visual-only envelope, Build/ctest cadence + P4-gated carve-out, Perf slice-boundary auto-run, Pure-docs slice skip, Stale-read recovery on Edit).
-   - Meta-rule "where do new rules go?" (D7).
+References below name **sections** (and named sub-rules within § Project rules), not numeric line ranges — line numbers shift as AGENTS.md evolves, and the three sub-rule families lifted into `process-rules.md` are **interleaved bold sub-bullets** within a single `## Project rules` section, not contiguous line ranges.
+
+1. `docs/agent-rules/merge-gates.md` — lifted from `AGENTS.md` § Merge gates (CI / CR / user-comment semantics, halt prompts, env knobs, REST-merge contract).
+2. `docs/agent-rules/ux-pillars.md` — lifted from `AGENTS.md` § UX Pillars (Pillars 1-4 enforceable invariants + agent ownership table).
+3. `docs/agent-rules/ship-loops.md` — lifted from `AGENTS.md` § Autonomous ship-loop default (the section's full body — default sequence, exceptions list, § P4-gated ship-loop subsection, § Post-ship turn-end protocol subsection).
+4. `docs/agent-rules/process-rules.md` — combined per D2 + D4 + D7, lifted as named sub-rules from `AGENTS.md` § Project rules:
+   - **Plan-doc family**: § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test — `grill-with-docs` skill, § Plan template — start from `docs/design/_plan-template.md`, § Plan-doc perf-gate section.
+   - **Git/p4 discipline**: § Destructive git ops in shared worktrees, § Destructive `p4` ops in p4-mode, § Force-push carve-out for Claude Code SDK-spawned recovery and p4 task-stream promotion.
+   - **Cadence/verification family**: § Verification automation — zero manual steps, § Schema-version bumps, § Trivial-visual-only change envelope, § Build / ctest cadence — slice-boundary only (with its § P4-gated loops carve-out), § Perf slice-boundary auto-run — scenario-aware, § Pure-docs slice skip, § Stale-read recovery on `Edit`.
+   - Meta-rule "where do new rules go?" (D7 — newly authored, not lifted).
+
+Sub-rules NOT extracted from § Project rules (deliberately kept inline per § Approach § "What stays inline in AGENTS.md"): § Build, § Language, § Layout, § Available libs, § Logging, § nlohmann json, § Optional plugins, § Don't, § Dual-target, § Quality, § Lint, § Perf workflow, § Golden-image approval contract. These are 1-line invariants that every agent must see on first read; extracting them would cost more in cross-link follow than it saves in AGENTS.md height.
 
 **Renames** (1):
 
