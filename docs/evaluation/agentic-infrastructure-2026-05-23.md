@@ -30,9 +30,11 @@ findings are addressed in which PR).
 | PR | Findings | Branch | State |
 |---|---|---|---|
 | [#419](https://github.com/alexandrosk0/Smatchet/pull/419) | **C3** — `manual-locks-render-sync.sh` `--force` → `--force-with-lease` + sync-branch fetch | `fix/manual-locks-render-force-with-lease` | **MERGED** (squash `1cb370d`) |
-| [#420](https://github.com/alexandrosk0/Smatchet/pull/420) | **C1** + **C2** — `SKIP_MERGE_GATES` guard + `set -uo pipefail` + fail-closed jq defaults + 2 new bats tests + this eval doc | `fix/merge-gates-skip-and-fail-closed` | Open (CR re-review pending after this commit addresses the "files outside" wording) |
-| [#421](https://github.com/alexandrosk0/Smatchet/pull/421) | **H7** + **H8** + **H10** — 8 agent version bumps + perf-instrument/measure Helper-class sections + p4-janitor Maintenance-class sections + delegation.md table row | `chore/agent-contract-hygiene` | Open (registered with watcher) |
-| [#422](https://github.com/alexandrosk0/Smatchet/pull/422) | **H6** + **H13** + **H15** — `lock-claim-p4.sh` CAS stream capture + `lock-release.sh` case-glob split + path-boundary anchor on `[Ss]matchet*` repo check | `fix/lock-primitives-hardening` | Open (registered with watcher) |
+| [#420](https://github.com/alexandrosk0/Smatchet/pull/420) | **C1** + **C2** — `SKIP_MERGE_GATES` guard + `set -uo pipefail` + fail-closed jq defaults + 2 new bats tests + this eval doc | `fix/merge-gates-skip-and-fail-closed` | **MERGED** (squash, ~19:14 UTC) |
+| [#421](https://github.com/alexandrosk0/Smatchet/pull/421) | **H7** + **H8** + **H10** — 8 agent version bumps + perf-instrument/measure Helper-class sections + p4-janitor Maintenance-class sections + delegation.md table row | `chore/agent-contract-hygiene` | Open — CR flagged 4 actionable; watcher TRIAGE_BUDGET_EXHAUSTED (needs manual triage) |
+| [#422](https://github.com/alexandrosk0/Smatchet/pull/422) | **H6** + **H13** + **H15** — `lock-claim-p4.sh` CAS stream capture + `lock-release.sh` case-glob split + path-boundary anchor on `[Ss]matchet*` repo check | `fix/lock-primitives-hardening` | Open — CR flagged 1 actionable; watcher TRIAGE_BUDGET_EXHAUSTED |
+| [#423](https://github.com/alexandrosk0/Smatchet/pull/423) | **H4** + **H5** — `p4-task-stream-to-pr.sh` defensive awk env-pass + `p4-task-stream-gc.sh` subshell counter loss + Root-with-spaces parsing | `fix/p4-task-stream-hardening` | Open — CR flagged 2 actionable; watcher TRIAGE_BUDGET_EXHAUSTED |
+| (this PR) | **H1** + **H12** — APPROVED CR ignores `cr_open` per spec + `cr_installed` probe distinguishes 404 from auth/transient errors (fail safe) + 5 new bats tests | `fix/merge-gates-h1-h12` | In flight |
 
 Still on the punch list (highest-leverage first):
 
@@ -40,21 +42,19 @@ Still on the punch list (highest-leverage first):
   `ensure_pr_ready_for_review` fix yet, so every PR in this session needed
   a manual `gh pr ready` before CR would review. 3-pronged fix designed in
   `docs/backlog/agent-self-improvement/process.md` (~3 h).
-- **H1** — APPROVED CR should pass unconditionally even with unrelated
-  open `cr_open` threads (1-line `merge-gates.sh` fix; gated on PR #420
-  merging first to avoid conflicts).
+- **CR-triage backlog** — PRs #421 / #422 / #423 have CR-actionable
+  findings (4 / 1 / 2 respectively). Watcher gave up after the configured
+  triage attempts. Needs manual triage / fix / push round before they
+  unblock. Captured here so it's not silently forgotten.
 - **H2** — `gh_pr_ready_idempotent` matches on English error strings only.
-- **H4** — `p4-task-stream-to-pr.sh` awk injection via PR title.
-- **H5** — `p4-task-stream-gc.sh` subshell counter loss + Root-with-spaces.
 - **H9** — `architect.md` Investigator-vs-Implementer output drift (needs
   design decision on adding a new "Design" class).
 - **H11** — trigger keyword collisions across agents (needs
   disambiguation rules).
-- **H12** — `cr_installed` auto-probe fails open on non-404 errors.
 - **Eval-punch-list item 4** — agent-contract test extension to enforce
   P2 systemic findings.
 - **Eval-punch-list item 5** — bash-lint sweep via `shellcheck` across
-  the rest of `scripts/dev/*.sh` (covers H4 + H5 + various MEDIUM).
+  the rest of `scripts/dev/*.sh`.
 - **Eval-punch-list item 6** — bats coverage for lock primitives.
 - **Eval-punch-list item 7** — skill ↔ agent parity gate.
 
