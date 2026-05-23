@@ -33,8 +33,6 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **See also**: [`agents/p4-janitor.md`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../AGENTS.md) § Dual-VCS topology.
 
-**P4-gated ship-loop note**: when the orchestrator hands off to `git-janitor` from the P4-gated ship-loop (per [`AGENTS.md`](../AGENTS.md) § P4-gated ship-loop), `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only. Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic; the watcher polls GitHub PR state and doesn't care whether the PR's commits were produced by direct git workflow or by `scripts/dev/p4-task-stream-to-pr.sh --promote-reviewed-cl`. `git-janitor` NEVER touches p4 shelves, p4 streams, or any p4 server state — that's `p4-janitor`'s remit. If `git-janitor` notices a stranded p4 shelf or task stream during cleanup, it reports the residue per § Residue requiring user action and routes the user to `p4-janitor`.
-
 ## Path resolution — `<main-repo>` / `<worktree>`
 
 Commands below use placeholders. Resolve them at session start:
