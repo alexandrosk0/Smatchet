@@ -126,10 +126,16 @@ struct UiDrawSession {
     char paletteInlineBuf[256] = {};
 
     bool showPreferences = false;
+    /// One-frame focus latch for the Preferences window. Set true by the menu-bar
+    /// item; the window consumer calls `ImGui::SetWindowFocus()` and clears it.
+    /// Drives the always-reveal-on-menu-click contract (AGENTS.md).
+    bool requestPreferencesFocus = false;
     bool showViewsDashboard = true;
     bool requestActiveProjectFocus = false;
     bool requestViewsDashboardFocus = false;
     bool showPerformance = false;
+    /// One-frame focus latch for the Performance window. See `requestPreferencesFocus`.
+    bool requestPerformanceFocus = false;
     bool showBlameAnalysis = false;
     /** 0 = Grid tab, 1 = Annotate tab. */
     int activeGridTab = 0;
@@ -139,15 +145,23 @@ struct UiDrawSession {
      *  set this to true; Close button in Annotate sets it false. */
     bool annotateTabVisible = false;
     bool showBulkImport = false;
+    /// One-frame focus latch for the Bulk Import window. See `requestPreferencesFocus`.
+    bool requestBulkImportFocus = false;
     bool showBulkExport = false;
+    /// One-frame focus latch for the Bulk Export window. See `requestPreferencesFocus`.
+    bool requestBulkExportFocus = false;
     bool showAuditTrail = false;
     /// Plan-doc viewer window. Toggled from View → Plan docs and via
     /// `view.toggle.plan_doc_viewer`. Read-only TextEditor backed by
     /// SmatchetPlanDocViewerUi over docs/design/*.md + docs/adr/*.md.
     bool showPlanDocViewer = false;
+    /// One-frame focus latch for the Plan-doc viewer. See `requestPreferencesFocus`.
+    bool requestPlanDocViewerFocus = false;
     bool requestAuditTrailFocus = false;
     /** When false, the Log window is hidden (dock tab X sets this; reopen from Settings). */
     bool showLogWindow = true;
+    /// One-frame focus latch for the Log window. See `requestPreferencesFocus`.
+    bool requestLogFocus = false;
     int layoutForceDefaultsFrames = 0;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)

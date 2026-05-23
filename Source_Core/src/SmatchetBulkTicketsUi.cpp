@@ -5,6 +5,7 @@
 #include "IssueDraft.h"
 #include "IssueTableSerializer.h"
 #include "ITrackerClient.h"
+#include "Logger.h"
 #include "ProjectResolver.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetProjectPicker.h"
@@ -137,12 +138,22 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     }
     d.bulkImportWasOpen = true;
 
-    prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f);
+    const bool wantFocus = d.requestBulkImportFocus;
+    // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
+    prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f, wantFocus);
     if (!ImGui::Begin("Bulk import tickets", &d.showBulkImport)) {
+        if (wantFocus) {
+            d.requestBulkImportFocus = false;
+        }
         ImGui::End();
         return;
     }
     repairTopLevelWindow(d, "bulk_import", 520.0f, 360.0f);
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestBulkImportFocus = false;
+        LOG_DEBUG("Bulk Import window: focused via menu request");
+    }
 
     if (d.bulkImportTextBuf.empty())
         d.bulkImportTextBuf.assign(1, '\0');
@@ -507,12 +518,22 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
     if (!d.showBulkExport)
         return;
 
-    prepareTopLevelWindow(d, "bulk_export", 720.0f, 480.0f);
+    const bool wantFocus = d.requestBulkExportFocus;
+    // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
+    prepareTopLevelWindow(d, "bulk_export", 720.0f, 480.0f, wantFocus);
     if (!ImGui::Begin("Bulk export tickets", &d.showBulkExport)) {
+        if (wantFocus) {
+            d.requestBulkExportFocus = false;
+        }
         ImGui::End();
         return;
     }
     repairTopLevelWindow(d, "bulk_export", 420.0f, 320.0f);
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestBulkExportFocus = false;
+        LOG_DEBUG("Bulk Export window: focused via menu request");
+    }
 
     ImGui::TextUnformatted("Destination path (for Save):");
     ImGui::SameLine();

@@ -208,11 +208,25 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     }
 
     ImGui::SetNextWindowSize(ImVec2(720.0f, 540.0f), ImGuiCond_FirstUseEver);
+    const bool wantFocus = d.requestPlanDocViewerFocus;
+    if (wantFocus) {
+        // SetNextWindowFocus BEFORE Begin is the only path that activates a docked tab.
+        // Post-Begin SetWindowFocus below is belt-and-braces for floating state.
+        ImGui::SetNextWindowFocus();
+    }
     bool open = d.showPlanDocViewer;
     if (!ImGui::Begin("Plan docs", &open)) {
         d.showPlanDocViewer = open;
+        if (wantFocus) {
+            d.requestPlanDocViewerFocus = false;
+        }
         ImGui::End();
         return;
+    }
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestPlanDocViewerFocus = false;
+        LOG_DEBUG("Plan docs window: focused via menu request");
     }
 
     if (s.files.empty()) {
