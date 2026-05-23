@@ -129,6 +129,7 @@ Key invariants (both loops):
 - Review gate fires **exactly once**. Test failures → fix → re-test without re-review. Re-review only on explicit user request.
 - Small-change submits land on `//smatchet/main` directly — no task stream overhead.
 - Multi-slice task-stream submits never touch `//smatchet/main` until `p4-task-stream-to-pr.sh` integrates them.
+- **No git worktrees until PR promotion.** When `SMATCHET_AGENT_VCS=p4`, the orchestrator and all subagents MUST NOT call `git worktree add`. Subagent isolation uses `scripts/dev/p4-task-stream.sh <id>` exclusively. The first git write on the repo is the `git checkout -b` / `git add -A` / `git push` inside the promote-to-PR step.
 - After PR creation, **default to post-ship option 3** (register with `smatchet-merge-watcher`) in p4-mode so CI + CodeRabbit + user-comments gate runs automatically. When `merge-gates-ci-coderabbit-comments.md` is fully implemented, this registration becomes implicit — no `AskUserQuestion` needed.
 
 ## Files to modify
