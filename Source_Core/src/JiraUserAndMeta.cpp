@@ -146,7 +146,7 @@ bool JiraClient::AddIssueWatcher(const TrackerConfig& cfg, const std::string& is
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    const cpr::Header headers = BuildTrackerHeaders(cfg, true);
 
     const std::string myselfUrl = base + "/rest/api/3/myself";
     auto myselfResp = TrackerGetLogged("JiraClient", myselfUrl, headers);
