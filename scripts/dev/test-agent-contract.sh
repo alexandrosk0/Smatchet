@@ -128,15 +128,15 @@ fi
 # 7. AGENTS.md § Agent output contract has 5 class rows.
 # -------------------------------------------------------------------------
 echo
-echo "[7/9] docs/agent-rules/DELEGATION.md output-contract table has 5 class rows"
-# Table lives in docs/agent-rules/DELEGATION.md § Agent output contract since
+echo "[7/9] docs/agent-rules/delegation.md output-contract table has 5 class rows"
+# Table lives in docs/agent-rules/delegation.md § Agent output contract since
 # AGENTS.md L192-422 was extracted into the new file. AGENTS.md still carries
 # a redirect stub naming the subsection.
-class_rows=$(awk '/^## Agent output contract/,/^All five classes also end/' docs/agent-rules/DELEGATION.md | grep -cE '^\| \*\*(Investigator|Diagnostic|Implementer|Helper|Maintenance)\b')
+class_rows=$(awk '/^## Agent output contract/,/^All five classes also end/' docs/agent-rules/delegation.md | grep -cE '^\| \*\*(Investigator|Diagnostic|Implementer|Helper|Maintenance)\b')
 if [[ "$class_rows" -eq 5 ]]; then
   check_pass "5 class rows present"
 else
-  check_fail "expected 5 class rows in DELEGATION.md, found $class_rows"
+  check_fail "expected 5 class rows in delegation.md, found $class_rows"
 fi
 
 # -------------------------------------------------------------------------

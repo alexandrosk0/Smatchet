@@ -24,7 +24,7 @@ Under those three invariants, `--force-with-lease` (which refuses the push if th
 
 Add one carve-out to the global force-push ban:
 
-> `git push --force-with-lease origin agent/<id>` and `git push --force-with-lease origin claude/<id>` are permitted **only** during API-500 recovery (per `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch.
+> `git push --force-with-lease origin agent/<id>` and `git push --force-with-lease origin claude/<id>` are permitted **only** during API-500 recovery (per `docs/agent-rules/delegation.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch.
 
 Explicitly excludes:
 
@@ -52,6 +52,6 @@ Explicitly excludes:
 # Cross-references
 
 - Backlog: `docs/backlog/agent-self-improvement/process.md` (Wave A2 API-500 entry, archived to `applied.md` on Slice 5 ship).
-- Recovery procedure: `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery.
+- Recovery procedure: `docs/agent-rules/delegation.md` § API-500 mid-run recovery.
 - Plan: `docs/design/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 5.
 - Global ban: AGENTS.md § Project rules § Force-push carve-out for spawned-agent recovery (the rule this ADR records).
