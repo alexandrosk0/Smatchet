@@ -32,6 +32,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import signal
 import subprocess
 import sys
@@ -762,6 +763,214 @@ def _bump_triage_attempts(pr: int, clone_path: str, new_count: int) -> None:
         _CLI.write_registry(entries)
 
 
+def _bump_auto_act_state(pr: int, clone_path: str, head_sha: str, new_attempts: int) -> None:
+    """Record an auto-act attempt against the (pr, clone_path) registry entry.
+
+    `auto_act_attempts` is a per-PR-lifetime counter (NOT reset on head_sha
+    change) so a runaway loop where Claude's fix produces fresh CR findings
+    can't auto-retry forever. `auto_act_for_head_sha` deduplicates within a
+    single head (one attempt per push).
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                e["auto_act_attempts"] = new_attempts
+                e["auto_act_for_head_sha"] = head_sha
+                e["auto_act_dispatched_at_unix"] = int(time.time())
+                break
+        _CLI.write_registry(entries)
+
+
+def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: int):
+    """Atomically check dedup + budget AND reserve a slot under registry_lock.
+
+    Returns one of:
+      ("ok", attempts_after)  — slot reserved; caller may spawn.
+      ("dedup", None)         — already acted on this head_sha.
+      ("budget", attempts)    — budget exhausted; returns prior attempts.
+
+    Closing the race window the prior split-read-then-write left open:
+    two daemons used to both observe attempts=N before either wrote
+    attempts=N+1, dispatching N+1 spawns instead of one. The check +
+    bump now happen inside a single `registry_lock()` critical section.
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) != pr or e.get("clone_path") != clone_path:
+                continue
+            if e.get("auto_act_for_head_sha") == head_sha:
+                return ("dedup", None)
+            attempts_before = int(e.get("auto_act_attempts", 0))
+            attempts_after = attempts_before + 1
+            if attempts_after > budget:
+                return ("budget", attempts_before)
+            e["auto_act_attempts"] = attempts_after
+            e["auto_act_for_head_sha"] = head_sha
+            e["auto_act_dispatched_at_unix"] = int(time.time())
+            _CLI.write_registry(entries)
+            return ("ok", attempts_after)
+        # PR not in registry — shouldn't happen, but treat as dedup-block.
+        return ("dedup", None)
+
+
+# Single source of truth for the spawned Claude session's instructions.
+# Deliberately spare — no project rules pasted in; the spawned session reads
+# AGENTS.md + CLAUDE.md from the clone on its own. We only tell it WHAT to do
+# (address PR #N's CodeRabbit findings) and HOW to get a checkout (gh pr
+# checkout) so it doesn't waste tokens guessing the branch.
+AUTO_ACT_PROMPT = (
+    "You are the auto-act helper spawned by smatchet-merge-watcher because "
+    "PR #{pr} is BLOCKED on CodeRabbit findings.\n\n"
+    "Address every actionable CodeRabbit comment on this PR. Steps:\n"
+    "  1. `gh pr checkout {pr}` to switch this clone to the PR's branch.\n"
+    "  2. `gh api repos/{owner}/{repo}/pulls/{pr}/comments` to read the inline findings.\n"
+    "  3. Apply the smallest possible fix per finding. Reject any finding that "
+    "violates the AGENTS.md invariants (C++14 hard, RAII, never-crash, etc).\n"
+    "  4. Build / test only when the diff actually warrants it (docs-only "
+    "diffs skip both per the pure-docs slice rule).\n"
+    "  5. `git commit` with a message of the form "
+    "`fix(merge-watcher auto-act): address CR findings on PR #{pr}` "
+    "and `git push`.\n\n"
+    "Auto-act head_sha at dispatch was {head_sha}. If the PR's head has moved "
+    "since (user pushed manually), STOP — say so and exit without committing.\n"
+    "Auto-act is gated to {budget} attempts per PR lifetime; this is attempt "
+    "{attempt}/{budget}."
+)
+
+
+def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    """Option-A loop closer — spawn `claude -p ...` in the background to
+    address CR findings when the watcher hits a CR-finding terminal state.
+
+    Opt-in via `MERGE_WATCH_AUTO_ACT=true`. Off by default — auto-spawning
+    a Claude session against a checked-in clone has real cost (token spend)
+    + runaway-loop risk (Claude's fix produces new CR findings → another
+    auto-act → repeat). Safeguards:
+
+      - Single attempt per (PR, head_sha) pair. Dedup key persisted on the
+        registry entry's `auto_act_for_head_sha` field. A push to the PR
+        (which advances head_sha) unlocks one more attempt — bounded by:
+      - Per-PR-lifetime budget. `MERGE_WATCH_AUTO_ACT_BUDGET` (default 2).
+        Once attempts >= budget the auto-act stops firing on this PR even
+        on new pushes; the user `merge-watch unregister`s to take back.
+      - Refuses if `claude` is not on PATH (no silent no-op).
+      - Refuses if the clone has uncommitted tracked-modified files (a
+        concurrent agent / user may be editing).
+      - Detached subprocess so the daemon's poll loop is NOT blocked by
+        Claude's session runtime; output captured to a per-(PR,sha) log
+        file under the state dir for after-the-fact inspection.
+
+    Returns extras dict to merge into the state.
+    """
+    if os.environ.get("MERGE_WATCH_AUTO_ACT", "").strip().lower() not in {"true", "1", "yes"}:
+        return {}
+    cur_state = state.get("last_state", "")
+    status_line = state.get("last_status_line", "")
+    if cur_state != "TRIAGE_BUDGET_EXHAUSTED" and not _looks_like_cr_finding_block(status_line):
+        return {}
+    pr = int(entry["pr"])
+    clone_path = entry["clone_path"]
+    or_meta = _gh_owner_repo(clone_path)
+    if not or_meta:
+        return {"auto_act_action": "skipped: gh repo view failed"}
+    owner, repo = or_meta
+    # Fetch head_sha — we don't trust last_status_line for this since the
+    # gates poller redacts it. One extra gh call per auto-act candidate is
+    # cheap; gating happens upstream so we only land here on real CR blocks.
+    try:
+        meta_json = _gh_json(
+            ["pr", "view", str(pr), "--json", "headRefOid"],
+            cwd=clone_path,
+        )
+        head_sha = meta_json.get("headRefOid", "")
+    except RuntimeError as exc:
+        return {"auto_act_action": f"skipped: gh pr view failed: {exc}"}
+    if not head_sha:
+        return {"auto_act_action": "skipped: headRefOid empty"}
+    # Per-PR-lifetime budget — fail-open on malformed env values so a typo
+    # in MERGE_WATCH_AUTO_ACT_BUDGET doesn't kill the daemon loop.
+    budget_raw = os.environ.get("MERGE_WATCH_AUTO_ACT_BUDGET", "2")
+    try:
+        budget = int(budget_raw)
+    except ValueError:
+        budget = 2
+    # claude binary on PATH?
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        return {"auto_act_action": "skipped: claude binary not on PATH"}
+    # Refuse if the clone has uncommitted work — concurrent edits would race.
+    try:
+        st = subprocess.run(
+            ["git", "-C", clone_path, "status", "--porcelain"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10,
+        )
+        if st.returncode == 0 and st.stdout.strip():
+            return {
+                "auto_act_action": (
+                    "skipped: clone has uncommitted changes "
+                    f"({len(st.stdout.splitlines())} file(s))"
+                ),
+            }
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return {"auto_act_action": f"skipped: git status check failed: {exc}"}
+    # Atomically check dedup + budget AND reserve a slot under a single
+    # `registry_lock()` critical section. Closes a race where two daemons
+    # could both observe attempts=N before either wrote attempts=N+1.
+    reserved, payload = _atomic_reserve_auto_act(pr, clone_path, head_sha, budget)
+    if reserved == "dedup":
+        return {"auto_act_action": "suppressed (already acted on this head_sha)"}
+    if reserved == "budget":
+        return {
+            "auto_act_action": f"BUDGET_EXHAUSTED ({payload}/{budget})",
+        }
+    attempts_after = payload  # int — the reserved slot index
+    # Spawn detached.
+    log_path = state_dir() / f"{pr}-auto-act-{head_sha[:8]}.log"
+    prompt = AUTO_ACT_PROMPT.format(
+        pr=pr, owner=owner, repo=repo,
+        head_sha=head_sha[:12], budget=budget, attempt=attempts_after,
+    )
+    try:
+        # Context-manage the parent's log handle. The child inherits its
+        # own copy via the OS dup-on-fork/spawn; the parent's close-after-
+        # Popen does not affect the child's stream. Prevents fd leaks
+        # across many auto-act cycles in long-running daemons.
+        with open(log_path, "w", encoding="utf-8") as logf:
+            popen_kwargs: dict[str, Any] = {
+                "stdout": logf, "stderr": subprocess.STDOUT,
+                "cwd": clone_path,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = (
+                    subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+                    | 0x00000008  # DETACHED_PROCESS — daemon outlives this poll cycle.
+                )
+            else:
+                popen_kwargs["start_new_session"] = True
+            proc = subprocess.Popen(
+                [claude_bin, "-p", prompt],
+                **popen_kwargs,
+            )
+        return {
+            "auto_act_action": (
+                f"dispatched (background pid={proc.pid}, "
+                f"attempt {attempts_after}/{budget})"
+            ),
+            "auto_act_for_head_sha": head_sha,
+            "auto_act_attempts": attempts_after,
+            "auto_act_dispatched_at_unix": int(time.time()),
+            "auto_act_log": str(log_path),
+        }
+    except (OSError, ValueError) as exc:
+        # Slot was already reserved — spawn failure consumes one budget point.
+        # Documented behavior: failed auto-acts count against the per-PR budget
+        # so a wedge'd claude binary can't burn unbounded attempts.
+        return {"auto_act_action": f"spawn failed: {exc}"}
+
+
 def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
     """PASS-branch handler — squash-merge + cascade to stacked children.
 
@@ -871,6 +1080,15 @@ def daemon_loop(poll_interval: int) -> int:
                         if "notify_action" in notify_extras and notify_extras["notify_action"] != "suppressed (same state as last notify)":
                             print(
                                 f"    notify: {notify_extras.get('notify_action', '?')}"
+                            )
+                    # Option A (opt-in) — spawn `claude -p` in the background
+                    # to address CR findings. Gated by MERGE_WATCH_AUTO_ACT.
+                    auto_act_extras = maybe_auto_act(state, entry)
+                    if auto_act_extras:
+                        state.update(auto_act_extras)
+                        if "auto_act_action" in auto_act_extras:
+                            print(
+                                f"    auto-act: {auto_act_extras.get('auto_act_action', '?')}"
                             )
                     try:
                         write_state(state)
