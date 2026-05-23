@@ -67,7 +67,10 @@ fi
 
 # Tell the doctest CASE that resolves fixture paths where to look. The test already probes
 # several relative-path candidates, but a deterministic env var is the cleanest in CI.
-export SMATCHET_TEST_FIXTURES="$(pwd)/$FIXTURES_DIR"
+# Split declare + assign per SC2155 — `local`/`export var=$(...)` masks the command exit
+# code, so a `pwd` failure here would silently set an empty path instead of erroring.
+SMATCHET_TEST_FIXTURES="$(pwd)/$FIXTURES_DIR"
+export SMATCHET_TEST_FIXTURES
 
 OUT=$("$TESTS_EXE" --test-case='ConfigMigration*' --reporters=console 2>&1 || true)
 echo "$OUT"
