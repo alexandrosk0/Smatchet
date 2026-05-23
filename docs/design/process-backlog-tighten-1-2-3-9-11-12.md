@@ -207,11 +207,11 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 **Current state**: plan-doc § File-level changes tables ship with `git grep`-falsifiable claims. PR `ai-assistant-side-panel` Phase A listed `FieldCatalogCache.cpp` as a `NetworkUsageTracker::Instance().Record(...)` caller — grep returns zero hits. Also listed a `CORE_SOURCES` list-edit that doesn't exist (it's a `file(GLOB_RECURSE …)`). Each error costs ~10 min of downstream-agent confusion.
 
-**Target state**: at packet-seal time, the orchestrator runs a 2-command probe — `git grep <symbol-list>` + `grep -n <cmake-variable> CMakeLists.txt` — for every symbol / CMake variable named in the file-level table. **Rule lives in `docs/agent-rules/DELEGATION.md` § Orchestrator delegation packet** (codebase probe during grill-with-docs Q3 found that the body of that section lives in DELEGATION.md, not AGENTS.md — AGENTS.md carries only a one-line index pointer at line 264). Helper script `scripts/dev/plan-doc-table-probe.sh` ships in v1.
+**Target state**: at packet-seal time, the orchestrator runs a 2-command probe — `git grep <symbol-list>` + `grep -n <cmake-variable> CMakeLists.txt` — for every symbol / CMake variable named in the file-level table. **Rule lives in `docs/agent-rules/delegation.md` § Orchestrator delegation packet** (codebase probe during grill-with-docs Q3 found that the body of that section lives in delegation.md, not AGENTS.md — AGENTS.md carries only a one-line index pointer at line 264). Helper script `scripts/dev/plan-doc-table-probe.sh` ships in v1.
 
 **Steps**:
 
-1. Edit `docs/agent-rules/DELEGATION.md` § Orchestrator delegation packet. Add a new sub-section **§ File-level table re-verify (before sealing)** alongside the existing § Plan-lock pre-flight / § Shared inventory bullets:
+1. Edit `docs/agent-rules/delegation.md` § Orchestrator delegation packet. Add a new sub-section **§ File-level table re-verify (before sealing)** alongside the existing § Plan-lock pre-flight / § Shared inventory bullets:
    ```markdown
    #### File-level table re-verify (before sealing)
 
@@ -248,7 +248,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 4. Bucket-A self-test `scripts/dev/test-plan-doc-table-probe.sh` (auto-enrolled by `scripts/dev/test-all.sh`): synthetic fixture plan with one valid symbol + one invalid symbol + one GLOB-populated CMake variable. Assert exit 1 + miss line reports the invalid symbol.
 
 **Verification**:
-- Read DELEGATION.md diff; the sub-section is present under § Orchestrator delegation packet.
+- Read delegation.md diff; the sub-section is present under § Orchestrator delegation packet.
 - `bash scripts/dev/plan-doc-table-probe.sh docs/design/ai-assistant-side-panel.md` reports a MISS on `FieldCatalogCache.cpp` (re-validating the original backlog entry).
 - `bash scripts/dev/test-plan-doc-table-probe.sh` exits 0 (self-test passes).
 - `bash scripts/dev/test-all.sh` picks up the new self-test.
@@ -334,7 +334,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
    ```
    If nothing, this is greenfield documentation.
 
-2. Add a sub-section to `AGENTS.md` § Project rules (or `docs/agent-rules/DELEGATION.md` if that's where stale-state contracts live — check both):
+2. Add a sub-section to `AGENTS.md` § Project rules (or `docs/agent-rules/delegation.md` if that's where stale-state contracts live — check both):
    ```markdown
    ### Stale-read recovery on `Edit`
 
@@ -375,7 +375,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 - **One PR, six commits**: easier review (each commit maps 1:1 to a backlog item) + easier rollback if one slice regresses. Branch name: `chore/process-rules-tighten-1-2-3-9-11-12`.
 - **Backlog hygiene**: every slice ends by moving its entry from `process.md` to `applied.md` with a resolution stanza linking back to this plan + the commit sha. Net: `process.md` shrinks by 6 entries; `applied.md` grows by 6.
-- **`grill-with-docs`**: run on 2026-05-19. 9 decisions captured (Q1–Q9). Material changes — Slice 1 trigger tightened to two-part (visual-path touch AND no bucket-C/E coverage); Slice 1 "no" handling = leave-dirty in-place iteration (not stash); Slice 3 single-file hook (no sidecar split); Slice 4 target file = `docs/agent-rules/DELEGATION.md` (not AGENTS.md — codebase probe revealed § Orchestrator delegation packet body lives there); Slice 4 ships `plan-doc-table-probe.sh` + bucket-A self-test in v1 (not deferred); Slice 5 carve-out covers both `agent/*` AND `claude/*` (not `agent/*` only); Slice 5 step 5 = backlog entry to `process.md` (concrete artifact); ADR 0005 added for the force-push carve-out (passes hard-to-reverse + surprising + real-trade-off). No new glossary terms; CONTEXT.md unchanged.
+- **`grill-with-docs`**: run on 2026-05-19. 9 decisions captured (Q1–Q9). Material changes — Slice 1 trigger tightened to two-part (visual-path touch AND no bucket-C/E coverage); Slice 1 "no" handling = leave-dirty in-place iteration (not stash); Slice 3 single-file hook (no sidecar split); Slice 4 target file = `docs/agent-rules/delegation.md` (not AGENTS.md — codebase probe revealed § Orchestrator delegation packet body lives there); Slice 4 ships `plan-doc-table-probe.sh` + bucket-A self-test in v1 (not deferred); Slice 5 carve-out covers both `agent/*` AND `claude/*` (not `agent/*` only); Slice 5 step 5 = backlog entry to `process.md` (concrete artifact); ADR 0005 added for the force-push carve-out (passes hard-to-reverse + surprising + real-trade-off). No new glossary terms; CONTEXT.md unchanged.
 - **Slice 3 wiring decision**: §Steps 2 names option A vs option B for hook installation. Slice 3 is the only piece with a real design choice; flagged for orchestrator decision before implementation.
 - **Trivial-visual-only envelope** does **not** apply (this is docs + 1 small script, not visual). Slice 3 is the only piece that needs a build / test pass; Slices 1, 2, 4, 5, 6 are pure-docs and qualify for the Slice-2-introduced pure-docs sub-exception (chicken-and-egg: ship Slice 2 first to make the pure-docs path real, OR rely on the existing FF-clean test-all.sh gate for this PR).
 

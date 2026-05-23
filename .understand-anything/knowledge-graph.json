@@ -1020,10 +1020,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:docs/agent-rules/DELEGATION.md",
+      "id": "document:docs/agent-rules/delegation.md",
       "type": "document",
-      "name": "DELEGATION.md",
-      "filePath": "docs/agent-rules/DELEGATION.md",
+      "name": "delegation.md",
+      "filePath": "docs/agent-rules/delegation.md",
       "summary": "Canonical Smatchet agent orchestration rulebook â€” delegation packets, parallel dispatch, scratchpad protocol, progress markers, output contracts, trigger auto-activation, API-500 recovery, and subsystem specialist routing. Lifted out of AGENTS.md for navigability.",
       "tags": [
         "documentation",
@@ -1295,7 +1295,7 @@
       "type": "document",
       "name": "agentic-ripout-doc-cleanup-v2.md",
       "filePath": "docs/design/agentic-ripout-doc-cleanup-v2.md",
-      "summary": "Follow-up cleanup plan that strips stale content added by deleted (agentic) PRs from AGENTS.md, DELEGATION.md, agent files, scripts, fixtures and ADRs after the github-tracker-backend v1 ripout.",
+      "summary": "Follow-up cleanup plan that strips stale content added by deleted (agentic) PRs from AGENTS.md, delegation.md, agent files, scripts, fixtures and ADRs after the github-tracker-backend v1 ripout.",
       "tags": [
         "documentation",
         "design-plan",
@@ -29182,14 +29182,14 @@
     },
     {
       "source": "document:docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md",
-      "target": "document:docs/agent-rules/DELEGATION.md",
+      "target": "document:docs/agent-rules/delegation.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:docs/adr/0006-orchestrator-pr-stays-draft-by-default.md",
-      "target": "document:docs/agent-rules/DELEGATION.md",
+      "target": "document:docs/agent-rules/delegation.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
@@ -29210,27 +29210,27 @@
     },
     {
       "source": "document:docs/AGENT_TOKEN_TRACKING.md",
-      "target": "document:docs/agent-rules/DELEGATION.md",
+      "target": "document:docs/agent-rules/delegation.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/agent-rules/DELEGATION.md",
+      "source": "document:docs/agent-rules/delegation.md",
       "target": "document:docs/design/_plan-locks-archive.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/agent-rules/DELEGATION.md",
+      "source": "document:docs/agent-rules/delegation.md",
       "target": "document:docs/CONTEXT.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/agent-rules/DELEGATION.md",
+      "source": "document:docs/agent-rules/delegation.md",
       "target": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
       "type": "related",
       "direction": "forward",
@@ -29238,7 +29238,7 @@
     },
     {
       "source": "document:docs/agent-rules/golden-image-approval.md",
-      "target": "document:docs/agent-rules/DELEGATION.md",
+      "target": "document:docs/agent-rules/delegation.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
@@ -29357,14 +29357,14 @@
     },
     {
       "source": "document:docs/design/_plan-template.md",
-      "target": "document:docs/agent-rules/DELEGATION.md",
+      "target": "document:docs/agent-rules/delegation.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:docs/design/agent-contract-alignment.md",
-      "target": "document:docs/agent-rules/DELEGATION.md",
+      "target": "document:docs/agent-rules/delegation.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
@@ -50375,7 +50375,7 @@
         "document:docs/adr/0006-orchestrator-pr-stays-draft-by-default.md",
         "document:docs/adr/0007-audit-trail-actor-column.md",
         "document:docs/AGENT_TOKEN_TRACKING.md",
-        "document:docs/agent-rules/DELEGATION.md",
+        "document:docs/agent-rules/delegation.md",
         "document:docs/agent-rules/golden-image-approval.md",
         "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
         "document:docs/backlog/agent-self-improvement/applied.md",

@@ -47200,8 +47200,8 @@
       "totalLines": 42,
       "hasStructuralAnalysis": true
     },
-    "docs/agent-rules/DELEGATION.md": {
-      "filePath": "docs/agent-rules/DELEGATION.md",
+    "docs/agent-rules/delegation.md": {
+      "filePath": "docs/agent-rules/delegation.md",
       "contentHash": "cf0611ca012c92d7b828633e4996f7df286146dc8dc504699b6be864ff1f142b",
       "functions": [],
       "classes": [],

@@ -8,7 +8,7 @@
 
 ## Context
 
-The v1 plan ([`github-tracker-backend.md`](github-tracker-backend.md)) explicitly accepts **bit-rot in docs** as a known cost — `AGENTS.md` sections, `agents/*.md` agent files, `docs/agentic/`, `docs/agent-rules/DELEGATION.md`, `docs/design/agentic-*.md`, ADRs 0004 + 0005, `scripts/dev/test-agentic-*.sh`, `scripts/dev/test-coderabbit-react.sh`, `scripts/dev/test-ui-agent-*.sh` all stay verbatim while their underlying C++ runtime disappears.
+The v1 plan ([`github-tracker-backend.md`](github-tracker-backend.md)) explicitly accepts **bit-rot in docs** as a known cost — `AGENTS.md` sections, `agents/*.md` agent files, `docs/agentic/`, `docs/agent-rules/delegation.md`, `docs/design/agentic-*.md`, ADRs 0004 + 0005, `scripts/dev/test-agentic-*.sh`, `scripts/dev/test-coderabbit-react.sh`, `scripts/dev/test-ui-agent-*.sh` all stay verbatim while their underlying C++ runtime disappears.
 
 This v2 plan exists to clean up that bit-rot once v1 has shipped + stabilised. **Do not start v2 work until v1 PR1 + PR2 merge** — running them in parallel creates rebase conflicts in the same files.
 
@@ -57,8 +57,8 @@ The gate semantics (CI / CodeRabbit / user-comments / mergeStateStatus / paginat
 The diagnose → fix → build → commit → push → open PR → gate-check → squash-merge → janitor → backlog sequence is general orchestrator behavior, NOT agentic-specific. Specific edits:
 
 - **Line 81** (`[gate-check]` phrasing) → keep the rule; add "the watcher takes over from this point when the user picks post-ship option 3" so the handoff to the daemon is documented.
-- **Line 89** (Exception 1 — Debug-mode pause-loop cross-link) → cross-link breaks once `docs/agent-rules/DELEGATION.md § Debug-mode pause-loop` is stripped (see § DELEGATION.md below). Either (a) **inline the pause-loop rule body into AGENTS.md** under this exception (5-6 lines: debug-detective owns the investigation; pause-loop overrides ship-loop until user signals "ship it"; orchestrator emits `[temp-debug]` instrumentation per `agents/debug-detective.md`); or (b) keep the cross-link if DELEGATION.md § Debug-mode pause-loop is RETAINED (it's not agentic — debug-detective is general). Option (b) is simpler — see § DELEGATION.md decision below.
-- **Line 123** (Cross-link footer) → strip the broken `§ Debug-mode pause-loop` reference if DELEGATION.md drops it; otherwise leave.
+- **Line 89** (Exception 1 — Debug-mode pause-loop cross-link) → cross-link breaks once `docs/agent-rules/delegation.md § Debug-mode pause-loop` is stripped (see § delegation.md below). Either (a) **inline the pause-loop rule body into AGENTS.md** under this exception (5-6 lines: debug-detective owns the investigation; pause-loop overrides ship-loop until user signals "ship it"; orchestrator emits `[temp-debug]` instrumentation per `agents/debug-detective.md`); or (b) keep the cross-link if delegation.md § Debug-mode pause-loop is RETAINED (it's not agentic — debug-detective is general). Option (b) is simpler — see § delegation.md decision below.
+- **Line 123** (Cross-link footer) → strip the broken `§ Debug-mode pause-loop` reference if delegation.md drops it; otherwise leave.
 
 #### § Post-ship turn-end protocol § option 3 (line 116, 121) — **KEEP; REWORD, not strip**
 
@@ -70,18 +70,18 @@ Original v2 said "trim option 3". Post-grill: option 3 is the watcher integratio
 
 #### § Project rules § Force-push carve-out for spawned-agent recovery (line 238) — **REWRITE around `claude/<id>` only**
 
-Original v2 said "trim to just the `claude/<id>` case". Post-grill: same outcome, fuller rewrite needed because the surrounding cross-link to DELEGATION.md § API-500 mid-run recovery references both `agent/<id>` and `claude/<id>`:
+Original v2 said "trim to just the `claude/<id>` case". Post-grill: same outcome, fuller rewrite needed because the surrounding cross-link to delegation.md § API-500 mid-run recovery references both `agent/<id>` and `claude/<id>`:
 
-- **Old (line 238)**: `the global git push --force ban ... gets one narrow carve-out — git push --force-with-lease origin agent/<id> and git push --force-with-lease origin claude/<id> are permitted only during API-500 recovery (see docs/agent-rules/DELEGATION.md § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch.`
-- **New**: `the global git push --force ban ... gets one narrow carve-out — git push --force-with-lease origin claude/<id> is permitted only during API-500 recovery (see docs/agent-rules/DELEGATION.md § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a Claude Code SDK-spawned worktree branch. The agent/<id> case is GONE — that branch shape came from the deleted ClaudeCodeLocalRunner (per v1 of github-tracker-backend.md). Smatchet's future smatchet-merge-watcher runs as a host daemon, not a spawned subprocess, so it has no worktree branch that would need this carve-out.`
+- **Old (line 238)**: `the global git push --force ban ... gets one narrow carve-out — git push --force-with-lease origin agent/<id> and git push --force-with-lease origin claude/<id> are permitted only during API-500 recovery (see docs/agent-rules/delegation.md § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a spawned-agent worktree branch.`
+- **New**: `the global git push --force ban ... gets one narrow carve-out — git push --force-with-lease origin claude/<id> is permitted only during API-500 recovery (see docs/agent-rules/delegation.md § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a Claude Code SDK-spawned worktree branch. The agent/<id> case is GONE — that branch shape came from the deleted ClaudeCodeLocalRunner (per v1 of github-tracker-backend.md). Smatchet's future smatchet-merge-watcher runs as a host daemon, not a spawned subprocess, so it has no worktree branch that would need this carve-out.`
 - **ADR cross-link**: 0005's `agent/<id>` reference becomes obsolete once 0005 is Withdrawn (per § ADRs above). The carve-out's `claude/<id>` case stays valid + its rationale folds into the new v2-shipped status header on 0005.
 
-### `docs/agent-rules/DELEGATION.md` (locked 2026-05-21 re-grill)
+### `docs/agent-rules/delegation.md` (locked 2026-05-21 re-grill)
 
 Not modified by any `(agentic)`-titled PR but holds rules cross-linked from AGENTS.md. Edits per the re-grill:
 
 - **§ Debug-mode pause-loop — KEEP** (re-grill correction). Originally said "strip" because the spawned-harness debug-trigger surface is gone, but the `debug-detective` agent is general-purpose + still alive. The pause-loop rule body (debug-detective owns the investigation; ship-loop overrides until "ship it" signal; orchestrator emits `[temp-debug]` instrumentation per `agents/debug-detective.md`) applies whether or not anything spawns a subprocess. KEEP wholesale; only strip any references to spawned-harness or `dispatch_source` if they appear inside the subsection.
-- **§ API-500 mid-run recovery — TRIM** (was "strip subsection"). The 5-step recovery (inspect → run gates → `git add -A` + commit → push + open draft PR → backlog entry) applies to ANY delegated agent that errors API-500, not just spawned ones. Trim the `agent/<id>` worktree-branch references (deleted ClaudeCodeLocalRunner shape); keep the `claude/<id>` references (Claude Code SDK spawn shape, still valid). Concrete edits: at line 203 of DELEGATION.md, change `the spawned-agent's own agent/<id> or claude/<id> worktree` → `the Claude Code SDK-spawned claude/<id> worktree`. Drop the agent/<id> half of every example.
+- **§ API-500 mid-run recovery — TRIM** (was "strip subsection"). The 5-step recovery (inspect → run gates → `git add -A` + commit → push + open draft PR → backlog entry) applies to ANY delegated agent that errors API-500, not just spawned ones. Trim the `agent/<id>` worktree-branch references (deleted ClaudeCodeLocalRunner shape); keep the `claude/<id>` references (Claude Code SDK spawn shape, still valid). Concrete edits: at line 203 of delegation.md, change `the spawned-agent's own agent/<id> or claude/<id> worktree` → `the Claude Code SDK-spawned claude/<id> worktree`. Drop the agent/<id> half of every example.
 - **§ Trigger auto-activation table rows — TRIM** (was "strip rows" for all 3):
   - `handoff-implementer` row — STRIP (agent file deleted).
   - `pr-iterator` row — STRIP (agent file deleted).

@@ -4,7 +4,7 @@
 Problem (process.md 2026-05-19 orchestrator P3 — cross-link rot):
 Across the repo, ~74 files reference AGENTS.md sections by name. The
 redirect-stub pattern from PR #273 (AGENTS.md § Delegation lifted to
-docs/agent-rules/DELEGATION.md) is convention-only — nothing automated
+docs/agent-rules/delegation.md) is convention-only — nothing automated
 catches a typo or stale anchor today.
 
 Strategy:
