@@ -489,20 +489,36 @@ poll_merge_gates() {
 # ----------------------------------------------------------------------------
 # gh_pr_ready_idempotent <pr_number>
 # ----------------------------------------------------------------------------
+# H2: positive-check fallback. `gh pr ready` returns non-zero with an English
+# stderr message ("not in draft state" / "already marked ready") when called
+# against an already-non-draft PR. Matching on English text breaks if `gh`
+# updates its wording, ships a localised build, or the user is on a locale-
+# overridden CLI. Fall back to a positive state probe via
+# `gh pr view --json isDraft`: if the PR is observably non-draft, the
+# original `gh pr ready` failure was the benign "already ready" case and we
+# can return 0. Any other failure surfaces as exit 6.
 gh_pr_ready_idempotent() {
     local prNumber="${1:?gh_pr_ready_idempotent: pr_number required}"
     local out
     if ! out=$(gh pr ready "$prNumber" 2>&1); then
+        # Fast path — known English phrases. Cheaper than the extra API call
+        # and preserves backward compatibility with the prior contract.
         case "$out" in
             *"not in draft state"*|*"already marked ready"*)
-                # Idempotent — already non-draft.
                 return 0
                 ;;
-            *)
-                echo "$out" >&2
-                return 6
-                ;;
         esac
+        # Positive-check fallback: probe the PR's actual draft state. If it's
+        # already non-draft, the `gh pr ready` failure was benign. Robust
+        # against `gh` wording changes + locale variation + CLI version drift.
+        local is_draft
+        if is_draft=$(gh pr view "$prNumber" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$is_draft" = "false" ]; then
+                return 0
+            fi
+        fi
+        echo "$out" >&2
+        return 6
     fi
 }
 
