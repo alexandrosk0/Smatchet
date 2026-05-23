@@ -20,7 +20,7 @@ The dev box already has an unrelated `p4d` on `Brick:1666` serving an Unreal pro
 |---|---|---|
 | Server version | P4D 2025.2 or later | Existing Brick install is 2025.2 — match. |
 | Port | `1666` on remote host | Default; no SSL on LAN. |
-| Case handling | `insensitive` (Windows installer default — **don't pass `-C0`** on Windows) | Match the host filesystem. Windows + NTFS is case-insensitive; a case-sensitive p4d would let `Foo.cpp` and `foo.cpp` coexist in the depot but the Windows filesystem cannot, producing phantom drift + `p4 sync` failures. Case-sensitive (`-C1`) is correct only on case-sensitive filesystems (Linux/ext4, case-sensitive APFS volume). Locked at first server start; cannot be flipped later without depot rebuild. |
+| Case handling | match host filesystem; **don't pass any `-C` flag** for the typical install | p4d defaults to its platform's native case-mode — case-insensitive on Windows, case-sensitive on Linux. That's correct in both cases. The `-C` flags only OVERRIDE the platform default: `-C0` forces case-sensitive, `-C1` forces case-insensitive (per Perforce docs + CR's own web query). Only useful when crossing platforms (e.g. `-C1` to force insensitive on a case-sensitive APFS volume to match a Windows team). Forcing sensitive on Windows (`-C0`) is **wrong** for Smatchet's dual-VCS layout: a sensitive p4d on Windows would let `Foo.cpp` and `foo.cpp` coexist in the depot but the filesystem can hold only one, producing phantom drift + `p4 sync` failures. Locked at first server start; cannot be flipped later without depot rebuild. |
 | Unicode mode | optional, skip on the shipped instance | `p4d -xi` after init; one-way. Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8). Enable later if a real charset bug surfaces. |
 | Charset | n/a (server non-unicode) | Clients leave `P4CHARSET` unset (or `none`). |
 | Server root | `C:\depot-smatchet` | Holds `db.*` files + checkpoints. |
@@ -80,23 +80,21 @@ if (Get-Service -Name 'Perforce' -ErrorAction SilentlyContinue) {
 }
 ```
 
-If you're installing on a **case-sensitive filesystem** (Linux/ext4, case-sensitive APFS volume), then DO wipe + re-init with `-C1` (`-C0` = case-insensitive, `-C1` = case-sensitive):
+**Case-sensitive filesystem (Linux/ext4, case-sensitive APFS volume)**: nothing extra to do — the installer-default db will be case-sensitive (the platform default on those filesystems). No wipe needed; the db files from the installer's first run are correct. Skip to step 4.
+
+**If you ever need to OVERRIDE the platform default** (rare — e.g. you're on case-sensitive APFS but want insensitive to match a Windows-majority team), pass `-C1` at first start:
 ```bash
 rm -f /var/depot-smatchet/db.* /var/depot-smatchet/journal /var/depot-smatchet/log
 p4d -r /var/depot-smatchet -C1
 ```
+Per Perforce docs: `-C0` forces case-sensitive (overrides platform default), `-C1` forces case-insensitive. **Don't pass `-C0` on Windows** for Smatchet — see Decisions table § Case handling above.
 
-### 3. (Windows) Skip re-init; (case-sensitive OS) initialize
+### 3. (Both platforms) Optional unicode mode
 
-On Windows the installer-default case-insensitive db is what you want — skip to step 4 and reuse the existing db.
-
-On case-sensitive filesystems, initialize after the wipe in step 2:
-
+Unicode mode is optional + one-way; Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8). To lock it on, run once after install:
 ```bash
-p4d -r /var/depot-smatchet -C1     # locks case-sensitive at first start
+p4d -r /var/depot-smatchet -xi
 ```
-
-Unicode mode is optional + one-way; Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8). Add `-xi` to the line above if you want it locked on.
 
 ### 4. Register Windows service `p4d_smatchet`
 
@@ -232,7 +230,7 @@ The `Case Handling` line should match the **server host's filesystem**:
 - Windows → `insensitive` (correct; matches NTFS + matches git `core.ignorecase=true` default on Windows).
 - Linux / case-sensitive APFS → `sensitive` (correct; required to preserve filename case in the depot).
 
-If the server-host filesystem is case-sensitive but `Case Handling` reads `insensitive`, you missed `-C1` at first start — wipe `db.*` on the server host and redo step 3 with `-C1`. If the server-host filesystem is case-insensitive (Windows) and `Case Handling` reads `sensitive`, you passed `-C0` against an installer-default db — wipe + redo step 3 omitting the `-C` flag (or pass `-C2` for insensitive-explicit). Either drift between the server's case mode and the host filesystem will produce `p4 sync` failures.
+If `Case Handling` doesn't match the host filesystem, the installer's first run got overridden with the wrong `-C` flag — wipe `db.*` on the server host and redo step 3 without any `-C` flag (the platform default is what you want). The `-C` flags exist to FORCE a non-default mode and only have legitimate use when crossing platforms (`-C1` to force insensitive on Linux, very rare). `-C2` is not a valid p4d flag.
 
 ## Phase 0 exit gate — throwaway CL roundtrip
 
@@ -241,7 +239,7 @@ Phase 0 closes when a throwaway client can submit + re-sync a file. This step ge
 ## Deviations from plan
 
 - **Two p4d hosts** instead of one — the dev box's existing `Brick:1666` (Unreal) is left untouched; Smatchet's depot lives on a remote LAN host. Plan § Approach assumed one combined `p4d`; the split is operationally cleaner and matches user preference.
-- **Case sensitivity**: original runbook hard-prescribed `sensitive` (`-C0`) for all hosts. Revised in 2026-05-22 to match the host filesystem — Windows hosts use the installer-default `insensitive`, case-sensitive filesystems use `-C1`. Rationale per the plan's own analysis (`docs/design/git-to-perforce-migration.md:225`): case-sensitive p4d on a case-insensitive filesystem breaks the dual-VCS invariant because the filesystem cannot hold two files differing only in case while the depot can, producing phantom drift + `p4 sync` failures. Mainbot's shipped install runs `insensitive` and that is correct for a Windows host.
+- **Case sensitivity**: original runbook hard-prescribed `sensitive` (`-C0`) for all hosts. Revised in 2026-05-22 to match the host filesystem — Windows hosts get the installer-default `insensitive` (no `-C` flag needed), Linux hosts get the installer-default `sensitive` (no `-C` flag needed). The `-C` flags only OVERRIDE the platform default: `-C0` forces case-sensitive, `-C1` forces case-insensitive. Rationale per the plan's own analysis (`docs/design/git-to-perforce-migration.md:225`): case-sensitive p4d on a case-insensitive filesystem breaks the dual-VCS invariant because the filesystem cannot hold two files differing only in case while the depot can, producing phantom drift + `p4 sync` failures. Mainbot's shipped install runs `insensitive` and that is correct for a Windows host.
 - **Server version**: 2025.2 (latest LTS available 2026-05-21) instead of plan's `r24.2`.
 - **Service wrapper**: original runbook prescribed `sc.exe create … binPath= "…\p4d.exe -r … -p … -L …"` (direct `p4d.exe` invocation). On Helix Core 2025.2 that registration succeeds but `Start-Service` fails — `p4d.exe` has no SCM dispatcher. The runbook above is the corrected version using `p4s.exe` + per-service env vars (`p4 set -S p4d_smatchet …`).
 - **Existing Mainbot install (2026-05-22)**: actual server root is `C:\depot\` (Helix installer default) instead of the runbook's `C:\depot-smatchet\` — purely cosmetic, both paths work equivalently. Service was renamed from the installer-default `Perforce` to `p4d_smatchet` in-place; per-service env vars point at `C:\depot\`. Case handling is `insensitive`, which is the correct Windows setting per the revised guidance above. Doc keeps the original `C:\depot-smatchet\` path as the canonical fresh-install target so new installs don't accidentally collide with a future Helix re-install at `C:\depot`.
