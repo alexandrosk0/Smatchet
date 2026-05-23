@@ -63,12 +63,7 @@ Still on the punch list (highest-leverage first):
 
 ## 1b. Next-session resume checklist
 
-**Session 1 (2026-05-23) shipped 8 PRs** (#419–#424 + CR-fix follow-ups on
-#421 and #423). At session-2 start: five session-1 PRs merged (#419 C3,
-#420 C1+C2+eval-doc, #421 H7+H8+H10, #423 H4+H5, #424 H1+H12). Session 2
-(this resume) ships #426 H16 STALE_RESOLVED — the merge-gates fix that
-unwedged the queue — then drains the residue (#422 H6+H13+H15, #425 this
-PR).
+**Session 1 (2026-05-23) shipped 8 PRs** (`#419`–`#424` plus CR-fix follow-ups on `#421` and `#423`). At session-2 start: five session-1 PRs merged (`#419` C3, `#420` C1+C2+eval-doc, `#421` H7+H8+H10, `#423` H4+H5, `#424` H1+H12). Session 2 (this resume) ships `#426` H16 STALE_RESOLVED — the merge-gates fix that unwedged the queue — then drains the residue (`#422` H6+H13+H15, `#425` this PR).
 
 ### Step 1 — Drain the queue (do first, ~5 min)
 
