@@ -72,10 +72,10 @@ Per AGENTS.md § Agent output contract § Helper class — these sections must a
 
 - `## Spec executed` — scenario name, frame count, build preset, run path (A1 spawn / A2 ad-hoc / A3 new scenario registered). One line per parameter.
 - `## Result` — top rows by `lastTotalMs`, formatted as:
-  ```
+  ```text
   Scenario: <name>, <N> frames
   Top rows by lastTotalMs:
-  1. <name>  lastTotalMs=<ms>  callCount=<n>  avgPerCallMs=<µs>
+  1. <name>  lastTotalMs=<ms>  callCount=<n>  avgPerCallMs=<ms>
   2. ...
 
   perf_temp:* rows: <list>  (markers the caller is tracking this round)

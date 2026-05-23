@@ -392,23 +392,50 @@ case "$mode" in
         # a form with `Description:` followed by a placeholder line. We
         # replace the placeholder block with the PR title + task-stream-id
         # tag (the tag is the contract that promote-mode validates against).
+        #
+        # H4 defensive: pass pr_title / task_tag / desc_body via ENV +
+        # ENVIRON["..."] rather than `-v t="$pr_title"`. The -v form is
+        # safe under bash's `"$var"` quoting for the simple cases that
+        # land here today, but env-var pass is robust against:
+        #   - awk's `-v` escape-sequence interpretation of `\n`/`\t`/`\\`
+        #     (which would silently mangle a title containing a literal
+        #     backslash);
+        #   - any future caller that forgets the outer `"$..."` quotes
+        #     when invoking the script (the env pattern stays correct
+        #     even if the calling site degrades).
+        # Env-name choice: SMATCHET_PT_* prefix (not bare PR_TITLE/TASK_TAG)
+        # to avoid colliding with whatever the caller happens to have in
+        # their env. The export is scoped to this single awk invocation.
         desc_first="${pr_title}"
         desc_body="Integrated from ${stream} — awaiting shelf review (no submit yet)."
-        new_cl_out=$(P4CLIENT="$main_client" "$p4" change -o | awk -v t="$desc_first" -v tag="$task_tag" -v body="$desc_body" '
-            /^Description:/ {
-                print
-                # Tab-indented body per p4 change-spec format. Trailing
-                # blank line keeps the standard p4 section separator
-                # between Description and the next field (Files: / Jobs:).
-                printf "\t%s\n\n\t%s\n\n\t%s\n\n", t, tag, body
-                in_desc=1
-                next
-            }
-            in_desc && /^[ \t]/ { next }
-            in_desc && /^$/ { next }
-            in_desc && /^[A-Z]/ { in_desc=0; print; next }
-            !in_desc { print }
-        ' | P4CLIENT="$main_client" "$p4" change -i 2>&1)
+        # CR feedback on PR #423: the env-var prefix above the pipe only sets
+        # vars on `p4 change -o` (the LHS), not on `awk` (the RHS). In bash,
+        # `FOO=bar cmd1 | cmd2` scopes FOO to cmd1 only — awk's ENVIRON[FOO]
+        # would have been empty, dropping Description/tag/body entirely. Fix:
+        # put the env-prefix directly on `awk`, where it's read.
+        new_cl_out=$(
+            P4CLIENT="$main_client" "$p4" change -o \
+            | SMATCHET_PT_TITLE="$desc_first" \
+              SMATCHET_PT_TAG="$task_tag" \
+              SMATCHET_PT_BODY="$desc_body" \
+              awk '
+                /^Description:/ {
+                    print
+                    # Tab-indented body per p4 change-spec format. Trailing
+                    # blank line keeps the standard p4 section separator
+                    # between Description and the next field (Files: / Jobs:).
+                    printf "\t%s\n\n\t%s\n\n\t%s\n\n",
+                          ENVIRON["SMATCHET_PT_TITLE"],
+                          ENVIRON["SMATCHET_PT_TAG"],
+                          ENVIRON["SMATCHET_PT_BODY"]
+                    in_desc=1
+                    next
+                }
+                in_desc && /^[ \t]/ { next }
+                in_desc && /^$/ { next }
+                in_desc && /^[A-Z]/ { in_desc=0; print; next }
+                !in_desc { print }
+            ' | P4CLIENT="$main_client" "$p4" change -i 2>&1)
         echo "$new_cl_out" >&2
 
         new_cl=$(printf '%s\n' "$new_cl_out" | sed -nE 's/.*Change ([0-9]+) created.*/\1/p' | tail -1)
