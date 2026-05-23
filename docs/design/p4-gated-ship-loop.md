@@ -87,7 +87,8 @@ For each slice (repeat until all slices done):
     bash scripts/dev/test-doc-anchors.sh      # if AGENTS.md or agents/** touched
     bash scripts/dev/test-agent-contract.sh   # if AGENTS.md or agents/** touched
     bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
-    # perf gate — conditional on diff hitting the scenario map
+    # perf gate — conditional on diff hitting the scenario map (agents/perf-gatekeeper.md)
+    # uses $SMATCHET_PERF_HOST env var for per-machine baseline selection
     bash scripts/dev/perf-run.sh <scenario>
     python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.$SMATCHET_PERF_HOST.json \
         build/perf-runs/<scenario>-<ts>.json
@@ -128,10 +129,18 @@ Key invariants (both loops):
 
 ## Existing utilities reused
 
-- `scripts/dev/p4-task-stream.sh` — allocates task stream + client (AGENT_FLOWS.md § Task-stream lifecycle).
-- `scripts/dev/p4-task-stream-to-pr.sh` — integrates task stream → main → git push → gh pr create; the promote-to-PR step.
-- `scripts/dev/test-all.sh` — full test gate at the post-approval step.
-- `scripts/dev/lock-claim.sh` / `lock-release.sh` — plan-lock mechanics; referenced in doc, no changes.
+- `scripts/dev/p4-task-stream.sh` — allocates task stream + client (`AGENT_FLOWS.md § Task-stream lifecycle`).
+- `scripts/dev/p4-task-stream-to-pr.sh` — integrates task stream → main → git push → gh pr create; promote-to-PR for multi-slice.
+- `scripts/dev/doctor.sh` — toolchain pre-flight; first step of every test gate.
+- `scripts/dev/lint-flush.sh` — drains clang-format + cppcheck + clang-tidy; explicit lint step in the gate.
+- `scripts/dev/test-all.sh` — scenario/integration/bash-driver test runner.
+- `scripts/dev/coverage-delta-gate.sh` — test-delta gate when `Source_Core/src/*.cpp` touched.
+- `scripts/dev/test-doc-anchors.sh` — AGENTS.md cross-reference validation; conditional on doc-path touch.
+- `scripts/dev/test-agent-contract.sh` — agent frontmatter/heading contract check; conditional on doc-path touch.
+- `scripts/dev/perf-run.sh` — runs a named scenario, writes snapshot JSON; perf gate driver.
+- `scripts/dev/perf-compare.py` — diffs snapshot against baseline, exits non-zero on regression.
+- `scripts/dev/perf-baseline.sh` — manages per-host baseline files; used for one-time machine bootstrap.
+- `scripts/dev/lock-claim.sh` / `lock-release.sh` — plan-lock mechanics; no changes, referenced in doc.
 
 ## UX Pillar callouts
 
@@ -152,9 +161,10 @@ N/A — diff is strictly `AGENTS.md` + `docs/**` (pure-docs allow-list). `bash s
 
 ## Risks / non-goals
 
-- **Risk**: all p4-mode tasks gate on user review before PR — even trivial one-liner fixes. *Mitigation*: doc notes the user can confirm the shelf immediately; the gate is the pause, not the P4V review duration.
+- **Risk**: all p4-mode tasks gate on user review before PR — even trivial one-liner fixes. *Mitigation*: small-change loop keeps the shelf step lightweight; user can confirm immediately without a deep P4V review session.
 - **Non-goal**: git ship-loop unchanged when `SMATCHET_AGENT_VCS` is unset or `git`.
 - **Non-goal**: no programmatic enforcement (no script blocking `gh pr create` in p4-mode). Rule is doc-level; agents read the doc.
+- **Non-goal**: `SMATCHET_PERF_HOST` env var not auto-detected from hostname — must be set explicitly per machine. Avoids surprising baseline mismatches on machines with identical names.
 
 ## Verification
 
@@ -162,13 +172,14 @@ N/A — diff is strictly `AGENTS.md` + `docs/**` (pure-docs allow-list). `bash s
 - **Bucket E**: N/A — no ImGui widget change.
 - **Bash-driver**: N/A — no new script.
 - **Build gate**: N/A — pure-docs; `bash scripts/dev/is-pure-docs-diff.sh develop` exits 0, skip build + test-all.
-- **Manual residue**: read both edited files, confirm new sections present + internally consistent + cross-linked. No automated equivalent needed for doc edits.
+- **Manual residue**: read both edited files (`AGENTS.md`, `docs/perforce/AGENT_FLOWS.md`), confirm new sections present + internally consistent + cross-linked. No automated equivalent needed for doc edits.
 
 ## Out of scope (flagged, not designed)
 
 - **Script-level enforcement** — a pre-`gh pr create` guard that checks `SMATCHET_AGENT_VCS=p4` and blocks without a shelf approval record. Follow-up if doc-level rule proves insufficient.
-- **Incremental shelf review** — multiple review checkpoints during iteration, not just at completion. Follow-up if one-gate model proves insufficient.
+- **Incremental shelf review** — multiple review checkpoints during iteration, not just at completion. Current design is one gate at the end; multi-checkpoint model is a follow-up.
 - **P4V diff integration** — automating a diff view launch from the shelf step. User opens P4V manually.
+- **Auto-detect `SMATCHET_PERF_HOST` from `$HOSTNAME`** — deferred; explicit opt-in avoids silent baseline mismatches on renamed or cloned machines.
 
 ## Implementation log
 *(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
