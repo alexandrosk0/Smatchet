@@ -399,6 +399,108 @@ print('all assertions passed')
     [[ "$output" == *"all assertions passed"* ]]
 }
 
+# ---------- Option A: auto-act spawn-Claude-headless guards ----------
+
+@test "maybe_auto_act: returns empty when MERGE_WATCH_AUTO_ACT unset (default off)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ.pop('MERGE_WATCH_AUTO_ACT', None)
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)'}
+state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: STALE_WITH_FINDINGS (5 actionable on prior commit - block)'}
+extras = m.maybe_auto_act(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extras: {}"* ]]
+}
+
+@test "maybe_auto_act: returns empty on non-CR-finding state even when AUTO_ACT=true" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_AUTO_ACT'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CI: 4/5 pass (1 fail, 0 pending) | CodeRabbit: NONE+pending'}
+extras = m.maybe_auto_act(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extras: {}"* ]]
+}
+
+@test "maybe_auto_act: dedup suppresses repeat on same head_sha" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_AUTO_ACT'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+# Stub _gh_owner_repo + _gh_json so the function never reaches gh.
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._gh_json = lambda args, **kw: {'headRefOid': 'deadbeefcafebabe1234567890abcdef12345678'}
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'deadbeefcafebabe1234567890abcdef12345678'}
+state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (3 actionable - block)'}
+extras = m.maybe_auto_act(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"suppressed (already acted on this head_sha)"* ]]
+}
+
+@test "maybe_auto_act: refuses when claude binary missing" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_AUTO_ACT'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._gh_json = lambda args, **kw: {'headRefOid': 'aaaa1111bbbb2222cccc3333dddd4444eeee5555'}
+m.shutil.which = lambda _n: None  # force claude-missing path
+entry = {'pr': 999, 'clone_path': r'$(pwd)'}
+state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: CHANGES_REQUESTED'}
+extras = m.maybe_auto_act(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipped: claude binary not on PATH"* ]]
+}
+
+@test "maybe_auto_act: refuses when per-PR budget exhausted" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_AUTO_ACT'] = 'true'
+os.environ['MERGE_WATCH_AUTO_ACT_BUDGET'] = '2'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._gh_json = lambda args, **kw: {'headRefOid': 'feedfacefeedfacefeedfacefeedfacefeedface'}
+entry = {'pr': 999, 'clone_path': r'$(pwd)', 'auto_act_attempts': 2}
+state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (1 actionable - block)'}
+extras = m.maybe_auto_act(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"BUDGET_EXHAUSTED (2/2)"* ]]
+}
+
 # ---------- Triage budget default (option C: fast notify on CR findings) ----------
 
 @test "MERGE_WATCH_TRIAGE_BUDGET default is 1 (was 3 — option C)" {
