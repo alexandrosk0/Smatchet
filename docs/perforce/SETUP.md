@@ -20,9 +20,9 @@ The dev box already has an unrelated `p4d` on `Brick:1666` serving an Unreal pro
 |---|---|---|
 | Server version | P4D 2025.2 or later | Existing Brick install is 2025.2 — match. |
 | Port | `1666` on remote host | Default; no SSL on LAN. |
-| Case handling | `sensitive` (`-C0`) | Plan-mandated. **Must** be set at first server start; cannot be flipped later without depot rebuild. |
-| Unicode mode | on | `p4d -xi` after init; one-way. |
-| Charset | `utf8` | Client sets `P4CHARSET=utf8`. |
+| Case handling | `insensitive` (Windows installer default — **don't pass `-C0`** on Windows) | Match the host filesystem. Windows + NTFS is case-insensitive; a case-sensitive p4d would let `Foo.cpp` and `foo.cpp` coexist in the depot but the Windows filesystem cannot, producing phantom drift + `p4 sync` failures. Case-sensitive (`-C1`) is correct only on case-sensitive filesystems (Linux/ext4, case-sensitive APFS volume). Locked at first server start; cannot be flipped later without depot rebuild. |
+| Unicode mode | optional, skip on the shipped instance | `p4d -xi` after init; one-way. Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8). Enable later if a real charset bug surfaces. |
+| Charset | n/a (server non-unicode) | Clients leave `P4CHARSET` unset (or `none`). |
 | Server root | `C:\depot-smatchet` | Holds `db.*` files + checkpoints. |
 | Service name | `p4d_smatchet` | Distinct from any other Perforce service. |
 
@@ -67,30 +67,33 @@ Set-Service -Name 'Perforce' -StartupType Disabled
 sc.exe delete Perforce   # removes the installer's default service
 ```
 
-### 2. Wipe the installer's db files (we re-init with the right flags)
+### 2. Stop the installer-default service (don't wipe db files on Windows)
 
-The installer may have started the server once during setup, which writes `db.*` files with case-**insensitive** flag (Windows default). Delete them so the next start locks in case-sensitive:
+The installer auto-registers a `Perforce` Windows service and starts it once during setup, writing `db.*` files with case-**insensitive** flag (Windows default). On Windows, that's the **correct** setting — keep it. Do NOT delete `db.*` to force case-sensitive: a sensitive p4d on a case-insensitive Windows filesystem would let `Foo.cpp` and `foo.cpp` coexist in the depot but the filesystem can hold only one, producing `p4 sync` failures and phantom reconcile drift. The custom-named service we register in step 4 reuses the existing `db.*` files.
 
 ```powershell
 Stop-Service -Name 'Perforce' -ErrorAction SilentlyContinue
-Remove-Item C:\depot-smatchet\db.* -Force -ErrorAction SilentlyContinue
-Remove-Item C:\depot-smatchet\journal -Force -ErrorAction SilentlyContinue
-Remove-Item C:\depot-smatchet\log -Force -ErrorAction SilentlyContinue
+Set-Service -Name 'Perforce' -StartupType Disabled
+sc.exe delete Perforce   # removes the installer's default service entry; depot files stay
 ```
 
-### 3. Initialize case-sensitive + unicode
-
-```powershell
-& 'C:\Program Files\Perforce\Server\p4d.exe' -r C:\depot-smatchet -C0 -xi
+If you're installing on a **case-sensitive filesystem** (Linux/ext4, case-sensitive APFS volume), then DO wipe + re-init with `-C1`:
+```bash
+rm -f /var/depot-smatchet/db.* /var/depot-smatchet/journal /var/depot-smatchet/log
+p4d -r /var/depot-smatchet -C1
 ```
 
-Expected output:
-```
-Perforce db files in 'C:\depot-smatchet' will be created if missing...
-Server switched to Unicode mode.
+### 3. (Windows) Skip re-init; (case-sensitive OS) initialize
+
+On Windows the installer-default case-insensitive db is what you want — skip to step 4 and reuse the existing db.
+
+On case-sensitive filesystems, initialize after the wipe in step 2:
+
+```bash
+p4d -r /var/depot-smatchet -C1     # locks case-sensitive at first start
 ```
 
-The `-C0` arg on first run locks the server into case-sensitive mode. The `-xi` flag flips unicode mode.
+Unicode mode is optional + one-way; Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8). Add `-xi` to the line above if you want it locked on.
 
 ### 4. Register Windows service `p4d_smatchet`
 
@@ -219,10 +222,14 @@ Expected:
 Server address: <REMOTE_HOST>:1666
 Server root: C:\depot-smatchet
 Server version: P4D/NTX64/2025.2/...
-Case Handling: sensitive
+Case Handling: insensitive    # on Windows; sensitive on case-sensitive OSes
 ```
 
-If `Case Handling` reads `insensitive` — STOP, the `-C0` flag did not take. Wipe `C:\depot-smatchet\db.*` on remote and redo step 3.
+The `Case Handling` line should match the **server host's filesystem**:
+- Windows → `insensitive` (correct; matches NTFS + matches git `core.ignorecase=true` default on Windows).
+- Linux / case-sensitive APFS → `sensitive` (correct; required to preserve filename case in the depot).
+
+If the server-host filesystem is case-sensitive but `Case Handling` reads `insensitive`, you missed `-C1` at first start — wipe `db.*` on the server host and redo step 3 with `-C1`. If the server-host filesystem is case-insensitive (Windows) and `Case Handling` reads `sensitive`, you passed `-C0` against an installer-default db — wipe + redo step 3 omitting the `-C` flag (or pass `-C2` for insensitive-explicit). Either drift between the server's case mode and the host filesystem will produce `p4 sync` failures.
 
 ## Phase 0 exit gate — throwaway CL roundtrip
 
@@ -231,10 +238,10 @@ Phase 0 closes when a throwaway client can submit + re-sync a file. This step ge
 ## Deviations from plan
 
 - **Two p4d hosts** instead of one — the dev box's existing `Brick:1666` (Unreal) is left untouched; Smatchet's depot lives on a remote LAN host. Plan § Approach assumed one combined `p4d`; the split is operationally cleaner and matches user preference.
-- **Case sensitivity**: server initialized case-sensitive per plan. Windows default would have been insensitive.
+- **Case sensitivity**: original runbook hard-prescribed `sensitive` (`-C0`) for all hosts. Revised in 2026-05-22 to match the host filesystem — Windows hosts use the installer-default `insensitive`, case-sensitive filesystems use `-C1`. Rationale per the plan's own analysis (`docs/design/git-to-perforce-migration.md:225`): case-sensitive p4d on a case-insensitive filesystem breaks the dual-VCS invariant because the filesystem cannot hold two files differing only in case while the depot can, producing phantom drift + `p4 sync` failures. Mainbot's shipped install runs `insensitive` and that is correct for a Windows host.
 - **Server version**: 2025.2 (latest LTS available 2026-05-21) instead of plan's `r24.2`.
 - **Service wrapper**: original runbook prescribed `sc.exe create … binPath= "…\p4d.exe -r … -p … -L …"` (direct `p4d.exe` invocation). On Helix Core 2025.2 that registration succeeds but `Start-Service` fails — `p4d.exe` has no SCM dispatcher. The runbook above is the corrected version using `p4s.exe` + per-service env vars (`p4 set -S p4d_smatchet …`).
-- **Existing Mainbot install (2026-05-22)**: actual server root is `C:\depot\` (Helix installer default) instead of the runbook's `C:\depot-smatchet\`, and case handling is **insensitive** (the `-C0` initialization step was skipped on first start, and the depot has accumulated data since — cannot be flipped to sensitive without a full backup-wipe-replay rebuild). Service was renamed from the installer-default `Perforce` to `p4d_smatchet` in-place; per-service env vars point at `C:\depot\`. Doc keeps the original `C:\depot-smatchet\` path as the canonical fresh-install target.
+- **Existing Mainbot install (2026-05-22)**: actual server root is `C:\depot\` (Helix installer default) instead of the runbook's `C:\depot-smatchet\` — purely cosmetic, both paths work equivalently. Service was renamed from the installer-default `Perforce` to `p4d_smatchet` in-place; per-service env vars point at `C:\depot\`. Case handling is `insensitive`, which is the correct Windows setting per the revised guidance above. Doc keeps the original `C:\depot-smatchet\` path as the canonical fresh-install target so new installs don't accidentally collide with a future Helix re-install at `C:\depot`.
 
 ## Open items (post-Phase-0)
 
