@@ -17,35 +17,74 @@ Add a **P4-gated ship-loop variant** documented in two places:
 
 The existing git ship-loop is unchanged. Pure-docs change.
 
-### Loop sequence (SMATCHET_AGENT_VCS=p4)
+### Small vs multi-slice: stream selection
+
+| Situation | p4 stream | Promote-to-PR |
+|---|---|---|
+| **Small change** — single slice, ≤ ~5 files, no parallel agents | `//smatchet/main` client directly | `git add -A && git commit && git push && gh pr create` |
+| **Multi-slice / complex** — multiple slices, many files, or parallel subagents | task stream via `scripts/dev/p4-task-stream.sh <id>` | `scripts/dev/p4-task-stream-to-pr.sh <id> "<title>"` |
+
+"Small" threshold: orchestrator judgment. When in doubt (scope unclear, >1 subsystem, parallel agents planned) → use task stream.
+
+### Loop sequence — small change (single slice, main stream)
 
 ```
-[p4 iterate]
-  edit → p4 submit (task stream only, never //smatchet/main)
-  repeat until implementation complete
+[p4 iterate — on //smatchet/main]
+  edit → p4 submit to //smatchet/main
+  repeat until complete
 
 [p4 shelf for review]
   p4 shelve -c <pending-CL>
   AskUserQuestion: "Shelf <CL> ready — review in P4V and confirm."
-  → rejected: iterate back to [p4 iterate]
+  → rejected: iterate back
   → approved: continue
 
 [full tests]
   cmake --build --preset ninja-iter-msys2
   bash scripts/dev/test-all.sh
   (bucket-E if visual paths touched)
-  → failure: fix in p4 → re-test (NO re-review; design already approved)
+  → failure: fix in p4 → re-test (NO re-review)
   → pass: continue
 
 [promote to PR]
-  bash scripts/dev/p4-task-stream-to-pr.sh <agent-id> "<title>"
+  git add -A && git commit && git push -u origin <branch>
+  gh pr create --draft
   post-ship AskUserQuestion (existing 4-option protocol)
 ```
 
-Key invariants:
-- `p4 submit` during iteration lands on task stream (`//smatchet/task-<id>/...`), never `//smatchet/main`.
+### Loop sequence — multi-slice (task stream)
+
+```
+For each slice (repeat until all slices done):
+  [p4 iterate — on task stream]
+    edit → p4 submit to //smatchet/task-<id>/...
+    repeat within slice until complete
+
+  [inter-slice auto-gate — automatic, NO user pause]
+    cmake --build --preset ninja-iter-msys2
+    bash scripts/dev/test-all.sh
+    code-review agent (cumulative task-stream diff)
+    → issues: fix autonomously → re-build → re-test → re-review → repeat until clean
+    → clean: continue to next slice (or proceed to end-gate if last slice)
+
+[end-gate — after ALL slices pass inter-slice gates]
+  [p4 shelf for user validation]
+    p4 shelve -c <pending-CL>
+    code-review agent (full cumulative diff — final pass)
+    AskUserQuestion: "All slices done, tests green. Shelf <CL> ready — review in P4V and confirm."
+    → feedback: fix in p4 → re-shelve → re-present
+    → approved: continue
+
+  [promote to PR]
+    bash scripts/dev/p4-task-stream-to-pr.sh <agent-id> "<title>"
+    post-ship AskUserQuestion (existing 4-option protocol)
+```
+
+Key invariants (both loops):
 - `git push` / `gh pr create` happen **once**, after user approval AND full test-pass.
 - Review gate fires **exactly once**. Test failures → fix → re-test without re-review. Re-review only on explicit user request.
+- Small-change submits land on `//smatchet/main` directly — no task stream overhead.
+- Multi-slice task-stream submits never touch `//smatchet/main` until `p4-task-stream-to-pr.sh` integrates them.
 
 ## Files to modify
 
