@@ -558,14 +558,35 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
     const ImVec2 textSize = ImGui::CalcTextSize(display.c_str());
     const bool horizontallyClipped = (regionAvail > 0.0f && textSize.x > regionAvail + 1.0f);
-    if (tooltipsEnabled && (hasNewlineInValue || horizontallyClipped) && ImGui::IsItemHovered()) {
+    // GitHub body + Jira description carry markdown — render preview tooltip on
+    // hover even when the cell fits in one line (no clip / no newline). Other
+    // text fields keep the clip-gate so plain values don't tooltip noisily.
+    const bool isDescriptionLike =
+        !field.Id.empty() && (field.Id.find("description") != std::string::npos ||
+                              field.Id.find("Description") != std::string::npos || field.Id == "body" ||
+                              field.Id == "Body");
+    if (tooltipsEnabled && (hasNewlineInValue || horizontallyClipped || isDescriptionLike) &&
+        ImGui::IsItemHovered()) {
         const std::string* rawTip = IsTrackerDateOrDateTimeField(field.Id, &field) ? &currentValue : nullptr;
-        const std::string& tipSource = (rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay;
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-        ImGui::TextUnformatted(tipSource.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
+        // Description tooltip needs the raw markdown source (currentValue), not the
+        // newline-stripped single-line display value.
+        const std::string& tipSource = isDescriptionLike
+                                           ? currentValue
+                                           : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
+        if (!tipSource.empty()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+            if (isDescriptionLike) {
+                MarkdownPreviewRender::Options opts;
+                opts.mode = MarkdownPreviewRender::Mode::Tooltip;
+                opts.clickableLinks = false;
+                MarkdownPreviewRender::Render(tipSource, opts);
+            } else {
+                ImGui::TextUnformatted(tipSource.c_str());
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
     }
 }
 
