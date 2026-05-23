@@ -782,6 +782,39 @@ def _bump_auto_act_state(pr: int, clone_path: str, head_sha: str, new_attempts: 
         _CLI.write_registry(entries)
 
 
+def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: int):
+    """Atomically check dedup + budget AND reserve a slot under registry_lock.
+
+    Returns one of:
+      ("ok", attempts_after)  — slot reserved; caller may spawn.
+      ("dedup", None)         — already acted on this head_sha.
+      ("budget", attempts)    — budget exhausted; returns prior attempts.
+
+    Closing the race window the prior split-read-then-write left open:
+    two daemons used to both observe attempts=N before either wrote
+    attempts=N+1, dispatching N+1 spawns instead of one. The check +
+    bump now happen inside a single `registry_lock()` critical section.
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) != pr or e.get("clone_path") != clone_path:
+                continue
+            if e.get("auto_act_for_head_sha") == head_sha:
+                return ("dedup", None)
+            attempts_before = int(e.get("auto_act_attempts", 0))
+            attempts_after = attempts_before + 1
+            if attempts_after > budget:
+                return ("budget", attempts_before)
+            e["auto_act_attempts"] = attempts_after
+            e["auto_act_for_head_sha"] = head_sha
+            e["auto_act_dispatched_at_unix"] = int(time.time())
+            _CLI.write_registry(entries)
+            return ("ok", attempts_after)
+        # PR not in registry — shouldn't happen, but treat as dedup-block.
+        return ("dedup", None)
+
+
 # Single source of truth for the spawned Claude session's instructions.
 # Deliberately spare — no project rules pasted in; the spawned session reads
 # AGENTS.md + CLAUDE.md from the clone on its own. We only tell it WHAT to do
@@ -856,17 +889,13 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         return {"auto_act_action": f"skipped: gh pr view failed: {exc}"}
     if not head_sha:
         return {"auto_act_action": "skipped: headRefOid empty"}
-    # Dedup within the same head_sha.
-    if entry.get("auto_act_for_head_sha") == head_sha:
-        return {"auto_act_action": "suppressed (already acted on this head_sha)"}
-    # Per-PR-lifetime budget.
-    budget = int(os.environ.get("MERGE_WATCH_AUTO_ACT_BUDGET", "2"))
-    attempts_before = int(entry.get("auto_act_attempts", 0))
-    attempts_after = attempts_before + 1
-    if attempts_after > budget:
-        return {
-            "auto_act_action": f"BUDGET_EXHAUSTED ({attempts_before}/{budget})",
-        }
+    # Per-PR-lifetime budget — fail-open on malformed env values so a typo
+    # in MERGE_WATCH_AUTO_ACT_BUDGET doesn't kill the daemon loop.
+    budget_raw = os.environ.get("MERGE_WATCH_AUTO_ACT_BUDGET", "2")
+    try:
+        budget = int(budget_raw)
+    except ValueError:
+        budget = 2
     # claude binary on PATH?
     claude_bin = shutil.which("claude")
     if not claude_bin:
@@ -887,6 +916,17 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
             }
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return {"auto_act_action": f"skipped: git status check failed: {exc}"}
+    # Atomically check dedup + budget AND reserve a slot under a single
+    # `registry_lock()` critical section. Closes a race where two daemons
+    # could both observe attempts=N before either wrote attempts=N+1.
+    reserved, payload = _atomic_reserve_auto_act(pr, clone_path, head_sha, budget)
+    if reserved == "dedup":
+        return {"auto_act_action": "suppressed (already acted on this head_sha)"}
+    if reserved == "budget":
+        return {
+            "auto_act_action": f"BUDGET_EXHAUSTED ({payload}/{budget})",
+        }
+    attempts_after = payload  # int — the reserved slot index
     # Spawn detached.
     log_path = state_dir() / f"{pr}-auto-act-{head_sha[:8]}.log"
     prompt = AUTO_ACT_PROMPT.format(
@@ -894,23 +934,26 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         head_sha=head_sha[:12], budget=budget, attempt=attempts_after,
     )
     try:
-        logf = open(log_path, "w", encoding="utf-8")
-        popen_kwargs: dict[str, Any] = {
-            "stdout": logf, "stderr": subprocess.STDOUT,
-            "cwd": clone_path,
-        }
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = (
-                subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
-                | 0x00000008  # DETACHED_PROCESS — daemon outlives this poll cycle.
+        # Context-manage the parent's log handle. The child inherits its
+        # own copy via the OS dup-on-fork/spawn; the parent's close-after-
+        # Popen does not affect the child's stream. Prevents fd leaks
+        # across many auto-act cycles in long-running daemons.
+        with open(log_path, "w", encoding="utf-8") as logf:
+            popen_kwargs: dict[str, Any] = {
+                "stdout": logf, "stderr": subprocess.STDOUT,
+                "cwd": clone_path,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = (
+                    subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+                    | 0x00000008  # DETACHED_PROCESS — daemon outlives this poll cycle.
+                )
+            else:
+                popen_kwargs["start_new_session"] = True
+            proc = subprocess.Popen(
+                [claude_bin, "-p", prompt],
+                **popen_kwargs,
             )
-        else:
-            popen_kwargs["start_new_session"] = True
-        proc = subprocess.Popen(
-            [claude_bin, "-p", prompt],
-            **popen_kwargs,
-        )
-        _bump_auto_act_state(pr, clone_path, head_sha, attempts_after)
         return {
             "auto_act_action": (
                 f"dispatched (background pid={proc.pid}, "
@@ -922,6 +965,9 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
             "auto_act_log": str(log_path),
         }
     except (OSError, ValueError) as exc:
+        # Slot was already reserved — spawn failure consumes one budget point.
+        # Documented behavior: failed auto-acts count against the per-PR budget
+        # so a wedge'd claude binary can't burn unbounded attempts.
         return {"auto_act_action": f"spawn failed: {exc}"}
 
 
