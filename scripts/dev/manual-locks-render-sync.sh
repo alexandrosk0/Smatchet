@@ -65,9 +65,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. Fetch develop tip + refs/locks/*.
+# 1. Fetch develop tip + refs/locks/* + the sync branch itself (the last
+#    is required so the `--force-with-lease` check at step 5 has a real
+#    remote tip to compare against — without it the lease falls back to a
+#    missing-tracking-ref state that's effectively the same as `--force`).
 git fetch --quiet "$remote" "$base_branch"
 git fetch --quiet --prune "$remote" '+refs/locks/*:refs/locks/*'
+git fetch --quiet "$remote" "$sync_branch" 2>/dev/null || true
 
 # 2. Move onto a fresh branch rooted at develop tip.
 git checkout --quiet -B "$sync_branch" "${remote}/${base_branch}"
@@ -101,7 +105,7 @@ the locks-render.yml workflow cannot open its PR (typically because
 LOCK_RENDER_PAT is not configured). See
 docs/design/git-ref-plan-locks.md § Operational requirements."
 
-git push --force --quiet -u "$remote" "$sync_branch"
+git push --force-with-lease --quiet -u "$remote" "$sync_branch"
 
 # 6. Open PR if not already open.
 existing=$(gh pr list --head "$sync_branch" --base "$base_branch" --state open --json number --jq '.[].number' | head -n1 || true)
