@@ -284,10 +284,11 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
 #endif
             ImGui::Separator();
             if (ImGui::MenuItem("Views Dashboard", "Ctrl+Shift+E", d.showViewsDashboard)) {
-                d.showViewsDashboard = !d.showViewsDashboard;
-                if (d.showViewsDashboard) {
-                    d.requestViewsDashboardFocus = true;
-                }
+                // Menu click always reveals + focuses the window. Closing happens via the
+                // window's X button (the p_open arg to ImGui::Begin flips d.showViewsDashboard
+                // back to false). See AGENTS.md for the always-reveal contract.
+                d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
                 recentViews_.Touch("view.toggle.views-dashboard");
             }
             if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.annotateTabVisible && d.activeGridTab == 1)) {
@@ -304,61 +305,59 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Log", "Ctrl+Shift+U", d.showLogWindow)) {
-                d.showLogWindow = !d.showLogWindow;
+                d.showLogWindow = true;
+                d.requestLogFocus = true;
                 recentViews_.Touch("view.toggle.log");
             }
             if (ImGui::MenuItem("Backend Audit", "Ctrl+Shift+M", d.showAuditTrail)) {
-                d.showAuditTrail = !d.showAuditTrail;
-                if (d.showAuditTrail) {
-                    d.requestAuditTrailFocus = true;
-                }
+                d.showAuditTrail = true;
+                d.requestAuditTrailFocus = true;
                 recentViews_.Touch("view.toggle.backend-audit");
             }
-            if (ImGui::MenuItem("Performance", nullptr, d.showPerformance)) {
-                d.showPerformance = !d.showPerformance;
+            if (ImGui::MenuItem("Performance", "Ctrl+Shift+F", d.showPerformance)) {
+                d.showPerformance = true;
+                d.requestPerformanceFocus = true;
                 recentViews_.Touch("view.toggle.performance");
             }
-            if (ImGui::MenuItem("Plan docs", nullptr, d.showPlanDocViewer)) {
-                d.showPlanDocViewer = !d.showPlanDocViewer;
+            if (ImGui::MenuItem("Plan docs", "Ctrl+Shift+D", d.showPlanDocViewer)) {
+                d.showPlanDocViewer = true;
+                d.requestPlanDocViewerFocus = true;
                 recentViews_.Touch("view.toggle.plan_doc_viewer");
             }
-            if (ImGui::MenuItem("Bulk Import", nullptr, d.showBulkImport)) {
-                d.showBulkImport = !d.showBulkImport;
+            if (ImGui::MenuItem("Bulk Import", "Ctrl+Shift+I", d.showBulkImport)) {
+                d.showBulkImport = true;
+                d.requestBulkImportFocus = true;
                 recentViews_.Touch("view.toggle.bulk-import");
             }
-            if (ImGui::MenuItem("Bulk Export", nullptr, d.showBulkExport)) {
-                d.showBulkExport = !d.showBulkExport;
+            if (ImGui::MenuItem("Bulk Export", "Ctrl+Shift+X", d.showBulkExport)) {
+                d.showBulkExport = true;
+                d.requestBulkExportFocus = true;
                 recentViews_.Touch("view.toggle.bulk-export");
             }
-            if (ImGui::MenuItem("Preferences", nullptr, d.showPreferences)) {
-                d.showPreferences = !d.showPreferences;
+            if (ImGui::MenuItem("Preferences", "Ctrl+,", d.showPreferences)) {
+                d.showPreferences = true;
+                d.requestPreferencesFocus = true;
                 recentViews_.Touch("view.toggle.preferences");
             }
 #if defined(SMATCHET_WITH_MCP)
-            if (ImGui::MenuItem("MCP Server", nullptr, d.showMcpServerWindow)) {
-                d.showMcpServerWindow = !d.showMcpServerWindow;
-                if (d.showMcpServerWindow) {
-                    d.requestMcpServerFocus = true;
-                }
+            if (ImGui::MenuItem("MCP Server", "Ctrl+Shift+K", d.showMcpServerWindow)) {
+                d.showMcpServerWindow = true;
+                d.requestMcpServerFocus = true;
                 recentViews_.Touch("view.toggle.mcp-server");
             }
 #endif
 #if defined(SMATCHET_WITH_AI)
             if (ImGui::MenuItem("Assistant", "Ctrl+Shift+A", d.assistantPanelOpen)) {
-                d.assistantPanelOpen = !d.assistantPanelOpen;
-                if (d.assistantPanelOpen) {
-                    d.requestAssistantFocus = true;
-                }
+                d.assistantPanelOpen = true;
+                d.requestAssistantFocus = true;
                 recentViews_.Touch("view.toggle.assistant");
             }
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            if (ImGui::MenuItem("Scripts & Actions", nullptr, d.showLuaAutomationWindow)) {
-                d.showLuaAutomationWindow = !d.showLuaAutomationWindow;
-                if (d.showLuaAutomationWindow) {
-                    d.requestLuaAutomationFocus = true;
-                    d.requestScriptingEditorTabFocus = true;
-                }
+            if (ImGui::MenuItem("Scripts & Actions", "Ctrl+Shift+L", d.showLuaAutomationWindow)) {
+                d.showLuaAutomationWindow = true;
+                d.requestLuaAutomationFocus = true;
+                d.requestScriptingEditorTabFocus = true;
                 recentViews_.Touch("view.toggle.scripts-and-actions");
             }
 #endif
@@ -408,6 +407,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         if (ImGui::BeginMenu("Tools")) {
             if (ImGui::MenuItem("Preferences...", "Ctrl+,")) {
                 d.showPreferences = true;
+                d.requestPreferencesFocus = true;
             }
 #if defined(SMATCHET_WITH_MCP)
             if (trackerLocked)

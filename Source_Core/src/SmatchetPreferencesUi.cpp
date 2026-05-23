@@ -241,12 +241,23 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         return;
     }
 
-    prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, d.layoutForceDefaultsFrames > 0);
+    const bool wantFocus = d.requestPreferencesFocus;
+    // wantFocus OR layoutForceDefaultsFrames forces SetNextWindowFocus before Begin — the only
+    // path that activates a docked tab. Post-Begin SetWindowFocus is belt-and-braces for floating.
+    prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, wantFocus || d.layoutForceDefaultsFrames > 0);
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
+        if (wantFocus) {
+            d.requestPreferencesFocus = false;
+        }
         ImGui::End();
         return;
     }
     repairTopLevelWindow(d, "preferences", 420.0f, 360.0f);
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestPreferencesFocus = false;
+        LOG_DEBUG("Preferences window: focused via menu request");
+    }
 
     if (!d.preferencesBuffersLoaded) {
         CopyStringToBuffer(d.domainBuf, d.cfg.Domain);

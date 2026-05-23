@@ -113,12 +113,24 @@ void FillLogViewLinesFromEntries(const std::vector<LogEntry>& entries, std::vect
 
 void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     Logger& logger = Logger::Instance();
-    prepareTopLevelWindow(d, "log", 900.0f, 320.0f);
+    const bool wantFocus = d.requestLogFocus;
+    // Pass wantFocus as 4th arg so prepareTopLevelWindow calls SetNextWindowFocus before Begin —
+    // this is what activates a docked tab. The post-Begin SetWindowFocus below is belt-and-braces
+    // for floating-window state (mirrors SmatchetViewsDashboardUi.cpp pattern).
+    prepareTopLevelWindow(d, "log", 900.0f, 320.0f, wantFocus);
     if (!ImGui::Begin("Log", &d.showLogWindow)) {
+        if (wantFocus) {
+            d.requestLogFocus = false;
+        }
         ImGui::End();
         return;
     }
     repairTopLevelWindow(d, "log", 360.0f, 220.0f);
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestLogFocus = false;
+        LOG_DEBUG("Log window: focused via menu request");
+    }
 
     DrawLogWindowPreferences(d);
     ImGui::Separator();
