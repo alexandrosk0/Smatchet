@@ -51,6 +51,12 @@ The existing git ship-loop is unchanged. Pure-docs change.
   bash scripts/dev/test-doc-anchors.sh      # if AGENTS.md or agents/** touched
   bash scripts/dev/test-agent-contract.sh   # if AGENTS.md or agents/** touched
   bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
+  # perf gate — conditional on diff hitting the scenario map (agents/perf-gatekeeper.md)
+  # uses $SMATCHET_PERF_HOST env var for per-machine baseline selection
+  bash scripts/dev/perf-run.sh <scenario>
+  python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.$SMATCHET_PERF_HOST.json \
+      build/perf-runs/<scenario>-<ts>.json
+  # if SMATCHET_PERF_HOST unset or no baseline for this host → MISSING_BASELINE, skip
   (bucket-E if visual paths touched)
   → failure: fix in p4 → re-test (NO re-review)
   → pass: continue
@@ -81,6 +87,11 @@ For each slice (repeat until all slices done):
     bash scripts/dev/test-doc-anchors.sh      # if AGENTS.md or agents/** touched
     bash scripts/dev/test-agent-contract.sh   # if AGENTS.md or agents/** touched
     bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
+    # perf gate — conditional on diff hitting the scenario map
+    bash scripts/dev/perf-run.sh <scenario>
+    python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.$SMATCHET_PERF_HOST.json \
+        build/perf-runs/<scenario>-<ts>.json
+    # if SMATCHET_PERF_HOST unset or no baseline for this host → MISSING_BASELINE, skip
     code-review agent (cumulative task-stream diff)
     → issues: fix autonomously → re-build → re-lint → re-test → re-review → repeat until clean
     → clean: continue to next slice (or proceed to end-gate if last slice)
@@ -97,6 +108,12 @@ For each slice (repeat until all slices done):
     bash scripts/dev/p4-task-stream-to-pr.sh <agent-id> "<title>"
     post-ship AskUserQuestion (existing 4-option protocol)
 ```
+
+**Per-machine perf baseline setup** (one-time per machine):
+- Set `SMATCHET_PERF_HOST=<name>` in the shell profile on each machine (e.g. `desktop`, `laptop`).
+- Bootstrap: `bash scripts/dev/perf-baseline.sh init <scenario> --host=$SMATCHET_PERF_HOST` for each affected scenario.
+- Baselines land at `docs/perf/baselines/<scenario>.<host>.json` — committed, both machines coexist in the same repo.
+- If `SMATCHET_PERF_HOST` unset or no baseline file for this host → gate logs `MISSING_BASELINE` and skips (non-blocking).
 
 Key invariants (both loops):
 - `git push` / `gh pr create` happen **once**, after user approval AND full test-pass.
