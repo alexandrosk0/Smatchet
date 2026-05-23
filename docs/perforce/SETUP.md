@@ -72,12 +72,15 @@ sc.exe delete Perforce   # removes the installer's default service
 The installer auto-registers a `Perforce` Windows service and starts it once during setup, writing `db.*` files with case-**insensitive** flag (Windows default). On Windows, that's the **correct** setting — keep it. Do NOT delete `db.*` to force case-sensitive: a sensitive p4d on a case-insensitive Windows filesystem would let `Foo.cpp` and `foo.cpp` coexist in the depot but the filesystem can hold only one, producing `p4 sync` failures and phantom reconcile drift. The custom-named service we register in step 4 reuses the existing `db.*` files.
 
 ```powershell
-Stop-Service -Name 'Perforce' -ErrorAction SilentlyContinue
-Set-Service -Name 'Perforce' -StartupType Disabled
-sc.exe delete Perforce   # removes the installer's default service entry; depot files stay
+# Idempotent — safe to re-run if installer service was already removed
+if (Get-Service -Name 'Perforce' -ErrorAction SilentlyContinue) {
+    Stop-Service -Name 'Perforce' -ErrorAction SilentlyContinue
+    Set-Service -Name 'Perforce' -StartupType Disabled
+    sc.exe delete Perforce   # removes the installer's default service entry; depot files stay
+}
 ```
 
-If you're installing on a **case-sensitive filesystem** (Linux/ext4, case-sensitive APFS volume), then DO wipe + re-init with `-C1`:
+If you're installing on a **case-sensitive filesystem** (Linux/ext4, case-sensitive APFS volume), then DO wipe + re-init with `-C1` (`-C0` = case-insensitive, `-C1` = case-sensitive):
 ```bash
 rm -f /var/depot-smatchet/db.* /var/depot-smatchet/journal /var/depot-smatchet/log
 p4d -r /var/depot-smatchet -C1
