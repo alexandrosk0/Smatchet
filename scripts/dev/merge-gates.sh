@@ -350,6 +350,23 @@ poll_merge_gates() {
              | select(.__typename=="StatusContext" and .context=="CodeRabbit")
              | .state] | (.[0] // "ABSENT")' <<<"$pr")
 
+        # C4 prong 2: count CR review-thread comments anchored to the current
+        # head commit. CR's placeholder StatusContext fires SUCCESS regardless
+        # of whether CR actually reviewed (the C4 draft-PR bypass), so the
+        # `NONE + status-SUCCESS` pass path was over-trusting the status alone.
+        # A non-zero count here is positive evidence CR has actively reviewed
+        # the current head (review-thread comments are CR's per-line inline
+        # findings; their `commit.oid` matches the commit they were left on).
+        # Zero is suspicious — either the repo is status-only (rare; CR's
+        # default emits both status + review) OR CR skipped this commit.
+        # The NONE branch below uses this to distinguish the two cases.
+        local cr_thread_comments_on_head
+        cr_thread_comments_on_head=$(jq -r --arg sha "$head_sha" '
+            [.reviewThreads.nodes[]?
+             | .comments.nodes[]?
+             | select((.author.login=="coderabbitai" or .author.login=="coderabbitai[bot]")
+                      and (.commit.oid // "")==$sha)] | length' <<<"$pr" 2>/dev/null || echo -1)
+
         # User comments — typename bot filter, login case-insensitive.
         # C2 defensive default: -1 on jq failure fails the `user -eq 0` check.
         local user
@@ -433,10 +450,32 @@ poll_merge_gates() {
                 if [ "$cr_installed" != true ]; then
                     # Repo doesn't have CodeRabbit installed — NONE is the steady state.
                     cr_pass=true
-                elif [ "$cr_status_state" = "SUCCESS" ]; then
-                    # Status-only CR config explicitly reported success on this commit.
+                elif [ "$cr_status_state" = "SUCCESS" ] && [ "$cr_thread_comments_on_head" -gt 0 ]; then
+                    # C4 prong 2: status-SUCCESS PLUS at least one CR review-thread
+                    # comment on the current head. CR has actively reviewed this
+                    # commit — placeholder status is corroborated by real review
+                    # activity. This is the safe pass path. The previous rule
+                    # (status-SUCCESS alone) let draft-PR bypass slip through:
+                    # CR's auto_review.drafts:false skipped the review but its
+                    # StatusContext placeholder still fired SUCCESS.
                     cr_pass=true
-                    cr_state_print="NONE+status-SUCCESS"
+                    cr_state_print="NONE+status-SUCCESS+inline-evidence (${cr_thread_comments_on_head} CR comment(s) on head)"
+                elif [ "$cr_status_state" = "SUCCESS" ] && [ "$p" -ge "$CR_GRACE_POLLS" ]; then
+                    # Status-SUCCESS but zero inline evidence on current head. Two
+                    # possible causes: (a) a status-only CR config (rare; CR's
+                    # default emits both status + review), or (b) CR's placeholder
+                    # fired without a real review (the C4 bypass). After the grace
+                    # window we fall through to pass so the loop never wedges on a
+                    # status-only config, but the WARN names the suspicious shape.
+                    echo "WARN: CodeRabbit status=SUCCESS but no inline CR comments on head after grace ($CR_GRACE_POLLS polls); possible status-only config OR C4 bypass." >&2
+                    cr_pass=true
+                    cr_state_print="NONE+status-SUCCESS+no-inline-evidence (grace expired — assume status-only)"
+                elif [ "$cr_status_state" = "SUCCESS" ]; then
+                    # Status fired SUCCESS, no inline evidence yet, still within
+                    # grace. Wait — a real CR review on a freshly-flipped-ready PR
+                    # often lands a poll or two after the placeholder. Distinct
+                    # from NONE+pending so the operator can see the placeholder.
+                    cr_state_print="NONE+status-SUCCESS-waiting-for-inline (poll $((p+1))/$CR_GRACE_POLLS)"
                 elif [ "$p" -ge "$CR_GRACE_POLLS" ]; then
                     # Grace window elapsed; CR never started. Log + fall through to pass
                     # so the loop is never wedged by a stuck integration.
