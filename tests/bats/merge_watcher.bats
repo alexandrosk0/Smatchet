@@ -437,6 +437,7 @@ print('extras:', extras)
     [[ "$output" == *"newhead"* ]]
     # Registry persists the new head_sha for the next poll.
     run watch_cli list
+    [ "$status" -eq 0 ]
     [[ "$output" == *'"triage_for_head_sha": "newheadbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'* ]]
 }
 
