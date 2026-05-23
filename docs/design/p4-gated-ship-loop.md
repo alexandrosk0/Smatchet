@@ -64,7 +64,10 @@ The existing git ship-loop is unchanged. Pure-docs change.
 [promote to PR]
   git add -A && git commit && git push -u origin <branch>
   gh pr create --draft
-  post-ship AskUserQuestion (existing 4-option protocol)
+  # merge-gates auto-register (when merge-gates-ci-coderabbit-comments.md is implemented):
+  # automatically register with smatchet-merge-watcher so CI + CodeRabbit + user-comments
+  # gate runs to completion. Until that plan ships: post-ship AskUserQuestion defaults option 3.
+  post-ship AskUserQuestion (existing 4-option protocol; default option 3 in p4-mode)
 ```
 
 ### Loop sequence — multi-slice (task stream)
@@ -107,7 +110,12 @@ For each slice (repeat until all slices done):
 
   [promote to PR]
     bash scripts/dev/p4-task-stream-to-pr.sh <agent-id> "<title>"
-    post-ship AskUserQuestion (existing 4-option protocol)
+    # merge-gates auto-register (when merge-gates-ci-coderabbit-comments.md is implemented):
+    # instead of post-ship AskUserQuestion option 3 ("Register with watcher"), automatically
+    # register the PR with smatchet-merge-watcher so the CI + CodeRabbit + user-comments
+    # gate runs to completion before the task is considered done.
+    # Until that plan ships: post-ship AskUserQuestion defaults to option 3.
+    post-ship AskUserQuestion (existing 4-option protocol; default option 3 in p4-mode)
 ```
 
 **Per-machine perf baseline setup** (one-time per machine):
@@ -121,6 +129,7 @@ Key invariants (both loops):
 - Review gate fires **exactly once**. Test failures → fix → re-test without re-review. Re-review only on explicit user request.
 - Small-change submits land on `//smatchet/main` directly — no task stream overhead.
 - Multi-slice task-stream submits never touch `//smatchet/main` until `p4-task-stream-to-pr.sh` integrates them.
+- After PR creation, **default to post-ship option 3** (register with `smatchet-merge-watcher`) in p4-mode so CI + CodeRabbit + user-comments gate runs automatically. When `merge-gates-ci-coderabbit-comments.md` is fully implemented, this registration becomes implicit — no `AskUserQuestion` needed.
 
 ## Files to modify
 
@@ -180,6 +189,7 @@ N/A — diff is strictly `AGENTS.md` + `docs/**` (pure-docs allow-list). `bash s
 - **Incremental shelf review** — multiple review checkpoints during iteration, not just at completion. Current design is one gate at the end; multi-checkpoint model is a follow-up.
 - **P4V diff integration** — automating a diff view launch from the shelf step. User opens P4V manually.
 - **Auto-detect `SMATCHET_PERF_HOST` from `$HOSTNAME`** — deferred; explicit opt-in avoids silent baseline mismatches on renamed or cloned machines.
+- **Fully implicit merge-gates registration** — automatic `smatchet-merge-watcher` register without `AskUserQuestion` depends on `merge-gates-ci-coderabbit-comments.md` being shipped. Until then, post-ship option 3 is the default choice but still presented as a question.
 
 ## Implementation log
 *(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
