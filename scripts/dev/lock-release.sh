@@ -43,8 +43,9 @@ remote="${LOCK_REMOTE:-origin}"
 remote_url=$(git config --get "remote.${remote}.url" || true)
 [ -n "$remote_url" ] || { echo "lock-release: remote '$remote' not configured" >&2; exit 2; }
 if [ "${SMATCHET_LOCK_BYPASS_REPO_CHECK:-0}" != "1" ]; then
+    # H15: path-boundary anchor — matches `lock-claim.sh`'s tightened check.
     case "$remote_url" in
-        *[Ss]matchet*) : ;;
+        *[/:][Ss]matchet*) : ;;
         *) echo "lock-release: remote URL does not look like a Smatchet repo" >&2; exit 2 ;;
     esac
 fi
@@ -70,12 +71,22 @@ while : ; do
     fi
 
     # If the remote says ref already gone, treat as success.
-    case "$push_output" in
-        *"remote ref does not exist"*|*"unable to delete"*"does not exist"*)
-            echo "lock-release: $ref vanished mid-delete — treating as no-op"
-            exit 0
-            ;;
-    esac
+    # H13: split the multi-substring case-glob into explicit alternatives
+    # so a future error string that happens to carry both "unable to delete"
+    # and "does not exist" out-of-context (e.g. a remote message naming a
+    # *different* ref that does not exist) doesn't silently get swallowed.
+    # The two real shapes:
+    #   "remote ref does not exist"  → ref already deleted, no-op
+    #   "unable to delete '<ref>': remote ref does not exist"
+    #                                → same outcome, different phrasing
+    if [[ "$push_output" == *"remote ref does not exist"* ]]; then
+        echo "lock-release: $ref vanished mid-delete — treating as no-op"
+        exit 0
+    fi
+    if [[ "$push_output" == *"unable to delete"* && "$push_output" == *"does not exist"* ]]; then
+        echo "lock-release: $ref vanished mid-delete — treating as no-op"
+        exit 0
+    fi
 
     if [ "$attempt" -ge "$max_attempts" ]; then
         echo "lock-release: delete of $ref failed after $attempt attempts:" >&2

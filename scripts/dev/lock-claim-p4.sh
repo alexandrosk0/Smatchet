@@ -105,7 +105,14 @@ backoff=1
 bootstrapped=0
 while :; do
     attempt=$((attempt + 1))
-    cas_err=$("$p4" counter --from=0 --to=1 "$state_counter" 2>&1 >/dev/null) && rc=0 || rc=$?
+    # H6: capture stdout AND stderr (was: `2>&1 >/dev/null`, captured stderr
+    # only). Older p4d versions emit "Current value is N" on stdout, newer
+    # ones on stderr — the old single-stream capture missed the stdout case,
+    # leaving cas_err empty and routing a legitimate lock-held into the
+    # transient retry loop (eventual exit 3 instead of correct exit 1).
+    # On the success path `rc=0` short-circuits cas_err inspection, so any
+    # success-path stdout mixed in here is harmless.
+    cas_err=$("$p4" counter --from=0 --to=1 "$state_counter" 2>&1) && rc=0 || rc=$?
     if [ "$rc" -eq 0 ]; then
         # Won the CAS — store metadata. Metadata write is best-effort.
         "$p4" counter "$meta_counter" "$claim_json" >/dev/null 2>&1 || \
