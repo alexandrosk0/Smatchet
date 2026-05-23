@@ -340,6 +340,22 @@ TEST_CASE("LocalCacheManager: MarkFieldEditConflict + ResolveFieldEditConflict f
     CHECK(rows[0].FieldsPayloadJson == "{\"d\":\"resolved\"}");
 }
 
+TEST_CASE("LocalCacheManager: ResolveFieldEditConflict clears original_rich_value" *
+          doctest::test_suite("[high-risk]")) {
+    SqliteMemFixture fix;
+    const std::int64_t id =
+        fix.Ref().EnqueuePendingFieldEdit("ABC-1", "description", "{\"d\":\"mine\"}", "{\"type\":\"doc\"}");
+
+    fix.Ref().MarkFieldEditConflict(id, "{\"base\":\"b\",\"mine\":\"m\",\"theirs\":\"t\"}");
+    fix.Ref().ResolveFieldEditConflict(id, "{\"d\":\"resolved\"}");
+
+    auto rows = fix.Ref().LoadPendingFieldEdits();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].OriginalRichValue.empty());
+    CHECK_FALSE(rows[0].HasMergeConflict);
+    CHECK(rows[0].FieldsPayloadJson == "{\"d\":\"resolved\"}");
+}
+
 TEST_CASE("LocalCacheManager: UpdatePendingFieldEdit bumps attempts + last_error") {
     SqliteMemFixture fix;
     const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("ABC-1", "summary", "{}", "");
