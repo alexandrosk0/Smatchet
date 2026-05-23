@@ -107,14 +107,36 @@ poll_merge_gates() {
     # `.coderabbit.yaml` (or `.coderabbit.yml`). The `auto_review.drafts: false` default
     # plus CR's eventual-consistency means a freshly-opened PR can race the poller —
     # NONE on Poll 1 is a race, not "CR not installed". Override via env if needed.
+    #
+    # H12: separate 404 (file truly absent → cr_installed=false) from other
+    # errors (auth, network, transient — fail safe, cr_installed=true). The
+    # previous probe treated any non-zero `gh api` exit as "absent", which
+    # silently disabled the CR gate on auth failures or transient network
+    # blips. Fail-safe direction = assume installed so the gate blocks on
+    # unknown CR state instead of waving through.
     local cr_installed
     if [ -n "${MERGE_GATES_CR_INSTALLED:-}" ]; then
         cr_installed="$MERGE_GATES_CR_INSTALLED"
-    elif gh api "repos/$owner/$repo/contents/.coderabbit.yaml" --silent >/dev/null 2>&1 \
-         || gh api "repos/$owner/$repo/contents/.coderabbit.yml" --silent >/dev/null 2>&1; then
-        cr_installed=true
     else
-        cr_installed=false
+        local yaml_err="" yaml_rc=0 yml_err="" yml_rc=0
+        yaml_err=$(gh api "repos/$owner/$repo/contents/.coderabbit.yaml" 2>&1 >/dev/null) || yaml_rc=$?
+        if [ "$yaml_rc" -eq 0 ]; then
+            cr_installed=true
+        elif echo "$yaml_err" | grep -q "HTTP 404"; then
+            # .yaml confirmed 404; try .yml
+            yml_err=$(gh api "repos/$owner/$repo/contents/.coderabbit.yml" 2>&1 >/dev/null) || yml_rc=$?
+            if [ "$yml_rc" -eq 0 ]; then
+                cr_installed=true
+            elif echo "$yml_err" | grep -q "HTTP 404"; then
+                cr_installed=false  # both files confirmed 404 — truly absent
+            else
+                echo "WARN: gh api .coderabbit.yml probe failed with non-404 error; assuming CR installed (fail safe)" >&2
+                cr_installed=true
+            fi
+        else
+            echo "WARN: gh api .coderabbit.yaml probe failed with non-404 error; assuming CR installed (fail safe)" >&2
+            cr_installed=true
+        fi
     fi
 
     # Read GraphQL document into a variable. `gh api graphql -f query=@file`
@@ -417,8 +439,19 @@ poll_merge_gates() {
             "$ci_fail" "$ci_pend" "$ci_warn_downgraded" \
             "$cr_state_print" "$cr_open" "$user" "$review_decision"
 
+        # H1: APPROVED CR review passes unconditionally per AGENTS.md § Merge
+        # gates § CodeRabbit ("APPROVED → pass unconditionally (approval trumps
+        # body)"). Previously the pass-check always required cr_open == 0, so
+        # an APPROVED review on the current head + any unresolved non-outdated
+        # CR thread (even one CR itself left for context) wedged the gate.
+        # Decompose into an explicit `cr_open_blocks` so the intent is legible.
+        local cr_open_blocks=false
+        if [ "$cr_state" != "APPROVED" ] && [ "$cr_open" -ne 0 ]; then
+            cr_open_blocks=true
+        fi
+
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \
-           [ "$cr_pass" = true ] && [ "$cr_open" -eq 0 ] && \
+           [ "$cr_pass" = true ] && [ "$cr_open_blocks" = false ] && \
            [ "$user" -eq 0 ] && [ "$review_pass" = true ]; then
             echo "GATES_PASSED"
             return 0
