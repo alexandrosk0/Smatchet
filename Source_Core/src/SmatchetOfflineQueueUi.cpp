@@ -711,11 +711,26 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
         ArmDeadLetterPanelStatus(d, buf);
     }
 
+    enum Col {
+        Col_Select = 0,
+        Col_Action,
+        Col_State,
+        Col_Id,
+        Col_OriginalId,
+        Col_Issue,
+        Col_Field,
+        Col_Retries,
+        Col_LastError,
+        Col_ActivityTime,
+        Col_Payload,
+        Col_COUNT
+    };
+
     std::string hoveredOfflineKey;
     const float tblH = OfflineAuxTableOuterHeight(rows.size());
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_NoSavedSettings;
-    if (ImGui::BeginTable("offlineQueueTbl", 11, flags, ImVec2(0.0f, tblH))) {
+    if (ImGui::BeginTable("offlineQueueTbl", Col_COUNT, flags, ImVec2(0.0f, tblH))) {
         ImGui::TableSetupColumn("Select", ImGuiTableColumnFlags_WidthFixed, 50.0f);
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 130.0f);
         ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 70.0f);
@@ -734,7 +749,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
             ImGui::PushID(static_cast<int>(ri));
             ImGui::TableNextRow();
 
-            if (ImGui::TableSetColumnIndex(0)) {
+            if (ImGui::TableSetColumnIndex(Col_Select)) {
                 bool sel = selectedOfflineRowKeys.count(row.key) > 0;
                 if (ImGui::Checkbox("##check", &sel)) {
                     if (sel) {
@@ -748,7 +763,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 }
             }
 
-            ImGui::TableSetColumnIndex(1);
+            ImGui::TableSetColumnIndex(Col_Action);
             if (row.kind == UnifiedOfflineKind::PendingCreate) {
                 ImGui::TextDisabled("Queued create");
             } else if (row.kind == UnifiedOfflineKind::DeadCreate) {
@@ -785,7 +800,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 ImGui::PopStyleColor();
             }
 
-            ImGui::TableSetColumnIndex(2);
+            ImGui::TableSetColumnIndex(Col_State);
             {
                 ImGui::Selectable(row.state.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
                 if (ImGui::IsItemHovered()) {
@@ -953,23 +968,23 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 }
             }
 
-            ImGui::TableSetColumnIndex(3);
+            ImGui::TableSetColumnIndex(Col_Id);
             ImGui::Text("%lld", static_cast<long long>(row.dbId));
 
-            ImGui::TableSetColumnIndex(4);
+            ImGui::TableSetColumnIndex(Col_OriginalId);
             if (row.originalId != 0) {
                 ImGui::Text("%lld", static_cast<long long>(row.originalId));
             } else {
                 ImGui::TextUnformatted("-");
             }
-            ImGui::TableSetColumnIndex(5);
+            ImGui::TableSetColumnIndex(Col_Issue);
             ImGui::TextUnformatted(row.issue.empty() ? "-" : row.issue.c_str());
-            ImGui::TableSetColumnIndex(6);
+            ImGui::TableSetColumnIndex(Col_Field);
             ImGui::TextUnformatted(row.field.empty() ? "-" : row.field.c_str());
-            ImGui::TableSetColumnIndex(7);
+            ImGui::TableSetColumnIndex(Col_Retries);
             ImGui::Text("%d", row.attempts);
 
-            ImGui::TableSetColumnIndex(8);
+            ImGui::TableSetColumnIndex(Col_LastError);
             {
                 const std::string errShow = UnifiedOfflineRowLastErrorDisplay(row);
                 const std::string errPreview = BuildPayloadPreview(errShow, 120);
@@ -980,12 +995,12 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 }
             }
 
-            ImGui::TableSetColumnIndex(9);
+            ImGui::TableSetColumnIndex(Col_ActivityTime);
             {
                 const std::int64_t activityEpoch = row.archivedEpoch != 0 ? row.archivedEpoch : row.createdEpoch;
                 ImGui::TextUnformatted(FormatEpochLocal(activityEpoch).c_str());
             }
-            ImGui::TableSetColumnIndex(10);
+            ImGui::TableSetColumnIndex(Col_Payload);
             {
                 const std::string payloadPreview = BuildPayloadPreview(row.payload, 140);
                 ImGui::TextUnformatted(payloadPreview.empty() ? "-" : payloadPreview.c_str());
