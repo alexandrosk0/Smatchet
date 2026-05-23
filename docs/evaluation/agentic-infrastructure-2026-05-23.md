@@ -64,8 +64,11 @@ Still on the punch list (highest-leverage first):
 ## 1b. Next-session resume checklist
 
 **Session 1 (2026-05-23) shipped 8 PRs** (#419–#424 + CR-fix follow-ups on
-#421 and #423). Two merged (#419 C3, #420 C1+C2+eval-doc). Six waiting
-for the watcher to clear gates + auto-merge.
+#421 and #423). At session-2 start: five session-1 PRs merged (#419 C3,
+#420 C1+C2+eval-doc, #421 H7+H8+H10, #423 H4+H5, #424 H1+H12). Session 2
+(this resume) ships #426 H16 STALE_RESOLVED — the merge-gates fix that
+unwedged the queue — then drains the residue (#422 H6+H13+H15, #425 this
+PR).
 
 ### Step 1 — Drain the queue (do first, ~5 min)
 
@@ -105,12 +108,13 @@ python scripts/dev/merge-watcher-cli.py register <N>
 
 ### Step 2 — Update § 1a Implementation status
 
-After the queue drains, edit this doc's § 1a table to mark
-#421 / #422 / #423 / #424 as MERGED. Keep #422's row note about the
-sweep CR comment (CR'd `agents/perf-measure.md` on a PR that didn't touch
-it; resolved by #421's fix). Ship the eval-doc update via a small
-docs-only PR or direct-push to develop per the open backlog P2 about
-plan-revision direct-pushes.
+After the queue drains, edit this doc's § 1a table to mark any
+remaining open rows as MERGED with their squash sha. As of this PR
+(session 2 start), #421 / #423 / #424 are already updated to MERGED in
+§ 1a; only #422 (H6+H13+H15) is still open pending the watcher's
+H16-aware re-poll. Ship eval-doc updates via small docs-only PRs (this
+PR is the pattern) or direct-push to develop per the open backlog P2
+about plan-revision direct-pushes.
 
 ### Step 3 — Pick the next batch from the punch list
 
