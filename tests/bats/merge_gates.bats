@@ -42,6 +42,24 @@ case "$1" in
             cat "${MERGE_GATES_TEST_FIXTURE:?stub gh: fixture not set}"
             exit 0
         fi
+        # `gh api repos/.../contents/<path>` — used by poll_merge_gates' H12
+        # cr_installed probe. Default: simulate 404 (no .coderabbit.yaml/.yml
+        # in the test repo). Override via env for the specific H12 + grace
+        # tests:
+        #   MERGE_GATES_STUB_CR_CONFIG=200       → file present
+        #   MERGE_GATES_STUB_CR_CONFIG=404       → confirmed absent (default)
+        #   MERGE_GATES_STUB_CR_CONFIG=401       → auth failure (other error)
+        #   MERGE_GATES_STUB_CR_CONFIG=transient → network-style error
+        case "$3" in
+            */contents/.coderabbit.yaml|*/contents/.coderabbit.yml)
+                case "${MERGE_GATES_STUB_CR_CONFIG:-404}" in
+                    200) exit 0 ;;
+                    404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+                    401) echo "gh: HTTP 401: Bad credentials" >&2; exit 1 ;;
+                    *)   echo "gh: stub transient error (no HTTP code)" >&2; exit 1 ;;
+                esac
+                ;;
+        esac
         ;;
     pr)
         if [ "$2" = "ready" ]; then
@@ -71,7 +89,7 @@ STUB
 teardown() {
     rm -rf "$STUB_BIN_DIR"
     unset MERGE_GATES_TEST_FIXTURE MERGE_GATES_STUB_GH_FAIL MERGE_GATES_STUB_READY_STDERR MERGE_GATES_STUB_READY_EXIT
-    unset MERGE_GATES_TEST_ANSWER
+    unset MERGE_GATES_TEST_ANSWER MERGE_GATES_STUB_CR_CONFIG
 }
 
 # ---------- helpers ----------
@@ -622,6 +640,95 @@ set_fixture() {
     set_fixture "$fixture"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
+}
+
+# ---------- H1 (APPROVED → pass unconditionally even with open cr_open) ----------
+# docs/evaluation/agentic-infrastructure-2026-05-23.md § H1: AGENTS.md spec
+# says "APPROVED → pass unconditionally (approval trumps body)" but the
+# pass-check unconditionally required cr_open==0, so an APPROVED review on
+# the current head + any unresolved non-outdated CR thread (even one CR
+# itself left for context) wedged the gate. Fix decomposes into an explicit
+# `cr_open_blocks` that's false when cr_state==APPROVED.
+
+@test "H1: APPROVED on head + 1 unresolved CR thread → pass (approval trumps cr_open)" {
+    # Start from the pass fixture (which has cr_state=NONE) and graft on:
+    #   - an APPROVED CR review on the current head SHA,
+    #   - an unresolved non-outdated thread with a CR comment (would
+    #     have set cr_open=1 under the prior logic).
+    # Expected pre-fix: gate blocks because cr_open=1.
+    # Expected post-fix: gate passes — APPROVED ignores cr_open.
+    local f1 f2
+    f1=$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.reviews.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"state":"APPROVED","submittedAt":"2026-05-23T18:00:00Z","commit":{"oid":"abc123"},"body":""}]')
+    f2=$(fixture_override "$f1" \
+        "data.repository.pullRequest.reviewThreads.nodes" \
+        '[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"}}],"pageInfo":{"hasNextPage":false}}}]')
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CodeRabbit: APPROVED"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f1" "$f2"
+}
+
+@test "H1: COMMENTED on head + 1 unresolved CR thread still blocks (only APPROVED waives cr_open)" {
+    # Anti-regression test: ensure the cr_open=0 requirement still binds for
+    # non-APPROVED CR states. Use the existing CR-clean fixture (Actionable=0
+    # → cr_pass=true under COMMENTED) and graft on an unresolved thread.
+    local f
+    f=$(fixture_override "$FIXTURES_DIR/merge_gates_cr_current_clean.json" \
+        "data.repository.pullRequest.reviewThreads.nodes" \
+        '[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"}}],"pageInfo":{"hasNextPage":false}}}]')
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    rm -f "$f"
+}
+
+# ---------- H12 (cr_installed probe — distinguish 404 from other errors) ----------
+# docs/evaluation/agentic-infrastructure-2026-05-23.md § H12: previously any
+# non-zero `gh api .coderabbit.yaml` exit set cr_installed=false → the CR
+# gate auto-passed on transient gh errors, auth failures, network blips.
+# Fix-direction: confirmed 404 → cr_installed=false; anything else →
+# cr_installed=true (fail safe; gate blocks on unknown state rather than
+# silently passing).
+
+@test "H12: cr_installed probe — confirmed 404 → cr_installed=false → NONE passes (preserved behavior)" {
+    # Default stub behavior is 404. Existing test
+    # "no CodeRabbit review ever → cr_state=NONE → contributes to pass"
+    # already exercises this; re-asserting here for clarity grouped with H12.
+    export MERGE_GATES_STUB_CR_CONFIG=404
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CodeRabbit: NONE"* ]]
+    unset MERGE_GATES_STUB_CR_CONFIG
+}
+
+@test "H12: cr_installed probe — 401 auth failure → cr_installed=true (fail safe) → NONE blocks until grace expires" {
+    # With cr_installed=true (fail-safe assumed) and no CR review,
+    # NONE+pending blocks on poll 1 (grace=10 by default, poll 0 < 10).
+    # Pre-H12: any non-zero gh exit → cr_installed=false → NONE passes
+    # silently. Post-H12: 401 not 404 → fail safe → block.
+    export MERGE_GATES_STUB_CR_CONFIG=401
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [[ "$output" == *"non-404 error"* ]]
+    unset MERGE_GATES_STUB_CR_CONFIG
+}
+
+@test "H12: cr_installed probe — transient (no HTTP code) → cr_installed=true (fail safe) → block" {
+    # Same as 401 test but with a stub error that doesn't carry "HTTP 404"
+    # — covers DNS / connect / read-timeout shape.
+    export MERGE_GATES_STUB_CR_CONFIG=transient
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    unset MERGE_GATES_STUB_CR_CONFIG
 }
 
 # ---------- ask_user_question shim ----------
