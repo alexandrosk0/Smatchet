@@ -41,7 +41,9 @@ The existing git ship-loop is unchanged. Pure-docs change.
 
 [full tests]
   cmake --build --preset ninja-iter-msys2
-  bash scripts/dev/test-all.sh
+  cmake --build --preset ninja-test-msys2   # doctest rig (ctest)
+  bash scripts/dev/lint-flush.sh            # clang-format + cppcheck + clang-tidy drain
+  bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
   (bucket-E if visual paths touched)
   → failure: fix in p4 → re-test (NO re-review)
   → pass: continue
@@ -62,9 +64,11 @@ For each slice (repeat until all slices done):
 
   [inter-slice auto-gate — automatic, NO user pause]
     cmake --build --preset ninja-iter-msys2
-    bash scripts/dev/test-all.sh
+    cmake --build --preset ninja-test-msys2   # doctest rig (ctest)
+    bash scripts/dev/lint-flush.sh            # clang-format + cppcheck + clang-tidy drain
+    bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
     code-review agent (cumulative task-stream diff)
-    → issues: fix autonomously → re-build → re-test → re-review → repeat until clean
+    → issues: fix autonomously → re-build → re-lint → re-test → re-review → repeat until clean
     → clean: continue to next slice (or proceed to end-gate if last slice)
 
 [end-gate — after ALL slices pass inter-slice gates]
