@@ -8,7 +8,8 @@
 #   4. Every agent prompt contains the `## Outcome:` mandate text.
 #   5. Banner `model/effort` substring matches frontmatter `harness-hints.claude-code.{model,effort}` byte-for-byte.
 #   6. agents/architect.md does NOT contain a `git commit` self-directive.
-#   7. AGENTS.md § Agent output contract has 5 class rows (the post-PR split).
+#   7. docs/agent-rules/delegation.md § Agent output contract has 6 class rows (post-H9 Design class added).
+#   7b. architect.md emits the Design-class sections (Goal / Affected components / Interface contracts / Risks / Implementation handoff).
 #   8. agents/_shared/token-tracking/tests/test_infer_outcome.py passes (Python unit cases for the telemetry classifier).
 #   9. agent-token-log.py canonical and .claude/hooks/ copy are byte-identical (link_file drift check per process.md 2026-05-19 P3).
 #  10. Frontmatter `version: N` matches banner `· vN` (H7 fix from eval doc).
@@ -127,18 +128,41 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# 7. AGENTS.md § Agent output contract has 5 class rows.
+# 7. AGENTS.md § Agent output contract has 6 class rows (Design class added
+#    per H9 from docs/evaluation/agentic-infrastructure-2026-05-23.md).
 # -------------------------------------------------------------------------
 echo
-echo "[7/11] docs/agent-rules/delegation.md output-contract table has 5 class rows"
+echo "[7/11] docs/agent-rules/delegation.md output-contract table has 6 class rows"
 # Table lives in docs/agent-rules/delegation.md § Agent output contract since
 # AGENTS.md L192-422 was extracted into the new file. AGENTS.md still carries
 # a redirect stub naming the subsection.
-class_rows=$(awk '/^## Agent output contract/,/^All five classes also end/' docs/agent-rules/delegation.md | grep -cE '^\| \*\*(Investigator|Diagnostic|Implementer|Helper|Maintenance)\b')
-if [[ "$class_rows" -eq 5 ]]; then
-  check_pass "5 class rows present"
+class_rows=$(awk '/^## Agent output contract/,/^All six classes also end/' docs/agent-rules/delegation.md | grep -cE '^\| \*\*(Investigator|Design|Diagnostic|Implementer|Helper|Maintenance)\b')
+if [[ "$class_rows" -eq 6 ]]; then
+  check_pass "6 class rows present"
 else
-  check_fail "expected 5 class rows in delegation.md, found $class_rows"
+  check_fail "expected 6 class rows in delegation.md, found $class_rows"
+fi
+
+# H9 extension: also verify the architect agent has the Design class's 5
+# required headings. architect's prompt has historically emitted Goal /
+# Affected components / Interface contracts / Risks / Implementation handoff
+# as numbered list items (`1. **Goal** — ...`) rather than `## Goal`
+# section headings; the check matches both shapes so the existing prompt
+# passes without a rewrite. A future architect.md rewrite that uses literal
+# `## Goal` headings will also pass.
+echo
+echo "[7b/11] architect.md emits Design-class sections (Goal / Affected components / Interface contracts / Risks / Implementation handoff)"
+design_miss=0
+for h in "Goal" "Affected components" "Interface contracts" "Risks" "Implementation handoff"; do
+  if ! grep -qE "^(## $h|[0-9]+\. \*\*$h\*\*)" agents/architect.md; then
+    design_miss=$((design_miss+1))
+    echo "    missing: $h"
+  fi
+done
+if [[ $design_miss -eq 0 ]]; then
+  check_pass "architect.md 5/5 Design sections"
+else
+  check_fail "architect.md missing $design_miss/5 Design sections"
 fi
 
 # -------------------------------------------------------------------------
