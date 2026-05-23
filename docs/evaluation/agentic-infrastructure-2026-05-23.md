@@ -10,7 +10,53 @@ definition under `agents/`, and the bash / Python / PowerShell glue under
 **Branch**: `develop` @ `96ab99f` (clean; in sync with `origin/develop`).
 **Reviewer**: orchestrator + two parallel research subagents.
 
-This is a research deliverable. **No files outside this one were modified.**
+This is a research deliverable. As initially landed (CL 137 / PR #420 commit
+`b0d2047`), this doc shipped alongside two non-eval files —
+`scripts/dev/merge-gates.sh` and `tests/bats/merge_gates.bats` — that
+implement the C1 + C2 fixes the doc names; bundling the eval with the first
+PR it motivates keeps the PR self-documenting. Other findings in this doc
+land in follow-up PRs (see § 1a Implementation status). The "this audit
+itself touched no other files" guarantee that the original phrasing
+implied applied only to the *audit pass* — the punch-list fixes are
+explicitly out of audit scope and ship as separate slices.
+
+---
+
+## 1a. Implementation status
+
+Updated 2026-05-23 (live; this section is the running ledger of which
+findings are addressed in which PR).
+
+| PR | Findings | Branch | State |
+|---|---|---|---|
+| [#419](https://github.com/alexandrosk0/Smatchet/pull/419) | **C3** — `manual-locks-render-sync.sh` `--force` → `--force-with-lease` + sync-branch fetch | `fix/manual-locks-render-force-with-lease` | **MERGED** (squash `1cb370d`) |
+| [#420](https://github.com/alexandrosk0/Smatchet/pull/420) | **C1** + **C2** — `SKIP_MERGE_GATES` guard + `set -uo pipefail` + fail-closed jq defaults + 2 new bats tests + this eval doc | `fix/merge-gates-skip-and-fail-closed` | Open (CR re-review pending after this commit addresses the "files outside" wording) |
+| [#421](https://github.com/alexandrosk0/Smatchet/pull/421) | **H7** + **H8** + **H10** — 8 agent version bumps + perf-instrument/measure Helper-class sections + p4-janitor Maintenance-class sections + delegation.md table row | `chore/agent-contract-hygiene` | Open (registered with watcher) |
+| [#422](https://github.com/alexandrosk0/Smatchet/pull/422) | **H6** + **H13** + **H15** — `lock-claim-p4.sh` CAS stream capture + `lock-release.sh` case-glob split + path-boundary anchor on `[Ss]matchet*` repo check | `fix/lock-primitives-hardening` | Open (registered with watcher) |
+
+Still on the punch list (highest-leverage first):
+
+- **C4** (P0) — draft-PR CR-bypass. Watcher hasn't shipped the
+  `ensure_pr_ready_for_review` fix yet, so every PR in this session needed
+  a manual `gh pr ready` before CR would review. 3-pronged fix designed in
+  `docs/backlog/agent-self-improvement/process.md` (~3 h).
+- **H1** — APPROVED CR should pass unconditionally even with unrelated
+  open `cr_open` threads (1-line `merge-gates.sh` fix; gated on PR #420
+  merging first to avoid conflicts).
+- **H2** — `gh_pr_ready_idempotent` matches on English error strings only.
+- **H4** — `p4-task-stream-to-pr.sh` awk injection via PR title.
+- **H5** — `p4-task-stream-gc.sh` subshell counter loss + Root-with-spaces.
+- **H9** — `architect.md` Investigator-vs-Implementer output drift (needs
+  design decision on adding a new "Design" class).
+- **H11** — trigger keyword collisions across agents (needs
+  disambiguation rules).
+- **H12** — `cr_installed` auto-probe fails open on non-404 errors.
+- **Eval-punch-list item 4** — agent-contract test extension to enforce
+  P2 systemic findings.
+- **Eval-punch-list item 5** — bash-lint sweep via `shellcheck` across
+  the rest of `scripts/dev/*.sh` (covers H4 + H5 + various MEDIUM).
+- **Eval-punch-list item 6** — bats coverage for lock primitives.
+- **Eval-punch-list item 7** — skill ↔ agent parity gate.
 
 ---
 
