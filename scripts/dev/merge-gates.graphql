@@ -63,7 +63,12 @@ query($owner: String!, $repo: String!, $pr: Int!) {
           isOutdated
           comments(first: 100) {
             pageInfo { hasNextPage }
-            nodes { author { login __typename } }
+            # C4 prong 2: commit { oid } lets the poller count CR review-thread
+            # comments on the current head, distinguishing "CR has actively
+            # reviewed this commit" (= pass via status-SUCCESS) from "CR's
+            # placeholder StatusContext fired without a real review" (= wait
+            # through grace, possibly the C4 draft-PR bypass path).
+            nodes { author { login __typename } commit { oid } }
           }
         }
       }

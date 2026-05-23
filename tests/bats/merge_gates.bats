@@ -372,10 +372,35 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
-@test "CR installed + NONE + StatusContext CodeRabbit=SUCCESS → pass" {
-    # Mutate the pass fixture to add a CodeRabbit StatusContext with state=SUCCESS.
-    # Tests the status-only CR config path (some workflows skip writing a review
-    # and only emit a status when the diff is clean).
+@test "C4 prong 2: CR installed + NONE + StatusContext=SUCCESS + CR inline comment on head → pass" {
+    # C4 prong 2 happy path. Status fires SUCCESS AND CR has posted at least
+    # one review-thread comment whose commit.oid matches headRefOid (= CR has
+    # actively reviewed THIS commit, not just emitted a placeholder).
+    # Thread is resolved so cr_open doesn't independently block.
+    local f
+    f="$(mktemp)"
+    jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes
+            += [{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","isRequired":false}]
+        | .data.repository.pullRequest.reviewThreads.nodes
+            += [{"isResolved": true, "isOutdated": false,
+                 "comments": {"pageInfo": {"hasNextPage": false},
+                              "nodes": [{"author": {"login":"coderabbitai[bot]", "__typename":"Bot"},
+                                         "commit": {"oid":"abc123"}}]}}]' \
+        "$FIXTURES_DIR/merge_gates_pass.json" > "$f"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NONE+status-SUCCESS+inline-evidence"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "C4 prong 2: CR installed + NONE + StatusContext=SUCCESS + NO inline CR comment → block during grace" {
+    # C4 prong 2 wait path. Status fires SUCCESS but no CR review-thread
+    # comment on head — the C4 draft-PR bypass shape, or a status-only CR
+    # config. Within grace window, hold.
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
@@ -383,11 +408,30 @@ set_fixture() {
     export MERGE_GATES_CR_INSTALLED=true
     set_fixture "$f"
     run poll_merge_gates org repo 1
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"NONE+status-SUCCESS"* ]]
-    [[ "$output" == *"GATES_PASSED"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+status-SUCCESS-waiting-for-inline"* ]]
     rm -f "$f"
     unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "C4 prong 2: NONE + StatusContext=SUCCESS + no inline + grace expired → pass with no-inline-evidence WARN" {
+    # Grace-expired path. Probably a status-only CR config — pass so the loop
+    # never wedges. WARN names the suspicious shape so the operator can spot
+    # the case where it's actually the C4 bypass + force-investigate.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NONE+status-SUCCESS+no-inline-evidence"* ]]
+    [[ "$output" == *"possible status-only config OR C4 bypass"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
 # ---------- PR state early-exit ----------
