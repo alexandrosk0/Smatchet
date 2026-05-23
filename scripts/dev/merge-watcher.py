@@ -236,6 +236,19 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
             "last_state": "GH_PARSE_ERR",
             "last_status_line": f"gh repo view JSON parse: {exc}",
         }
+    # C4 prong 1 — flip draft → ready BEFORE the gates poll, not just before
+    # the merge call. CodeRabbit's `auto_review.drafts: false` default means
+    # PRs that stay draft skip CR review entirely; the merge-gates then
+    # passes via the "NONE + StatusContext=SUCCESS" branch on CR's placeholder
+    # status without ever seeing a real review. Documented as C4 in
+    # `docs/evaluation/agentic-infrastructure-2026-05-23.md` and as P0 in
+    # `docs/backlog/agent-self-improvement/process.md` (2026-05-21).
+    #
+    # Registering with the watcher = explicit authorization to flip-ready
+    # (per `docs/agent-rules/merge-gates.md` § Auto-`gh pr ready` + merge).
+    # The call is idempotent on already-non-draft PRs, so calling it every
+    # poll has no semantic effect beyond one extra `gh` API hop per minute.
+    ensure_pr_ready_for_review(owner, repo, pr)
     # Invoke merge-gates.sh once (single poll iteration — MERGE_GATES_MAX_POLLS=1).
     env = os.environ.copy()
     env.setdefault("MERGE_GATES_MAX_POLLS", "1")
@@ -402,19 +415,18 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
     """Idempotent flip-draft-to-ready via `gh pr ready <pr>`.
 
     Per AGENTS.md § Post-ship turn-end protocol: the watcher's first step on
-    a `GATES_PASSED` PR is to make sure it's non-draft. Without this, the
-    subsequent REST squash-merge call returns HTTP 405 "Pull Request is
-    still a draft" and the PR stays stuck forever in `GATES_PASSED but
-    merge_failed` state.
+    a registered PR is to make sure it's non-draft. Without this, two failures:
+    1. CodeRabbit's `.coderabbit.yaml` ships `auto_review.drafts: false`, so
+       PRs that stay draft skip CR review entirely (C4 — see
+       `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4).
+    2. The eventual REST squash-merge returns HTTP 405 "Pull Request is still
+       a draft" if the PR somehow remains draft at merge time.
 
-    `gh pr ready` is idempotent — it's a no-op on a PR that's already
-    non-draft, so we don't need to gate on a prior `isDraft` check.
-
-    Returns True on success (PR is now non-draft), False on failure.
-    Failure here does NOT abort the merge attempt — the caller's
-    `squash_merge_pr` will surface the underlying problem if the PR
-    really is still a draft, and the registry entry stays for the next
-    poll cycle.
+    Per H2 (`scripts/dev/merge-gates.sh:gh_pr_ready_idempotent`): mirror the
+    bash positive-check fallback so the Python version is equally robust to
+    `gh` wording changes / locale variation. Returns True if the PR is
+    observably non-draft after the call (whether via successful flip OR
+    confirmed-already-non-draft).
     """
     args = [GH_BIN, "pr", "ready", str(pr), "--repo", f"{owner}/{repo}"]
     try:
@@ -428,9 +440,29 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
-    # gh exits 0 on success; also exits 0 with "already marked as ready" stderr
-    # if the PR was already non-draft (verified manually 2026-05-22).
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True
+    # Fast path — English phrase match (matches H2's bash fast path).
+    err = (result.stderr or "") + (result.stdout or "")
+    if "not in draft state" in err or "already marked ready" in err:
+        return True
+    # H2 positive-check fallback — probe observable state via `gh pr view`.
+    # Robust against `gh` wording changes + locale variation + CLI drift.
+    try:
+        probe = subprocess.run(
+            [GH_BIN, "pr", "view", str(pr), "--repo", f"{owner}/{repo}",
+             "--json", "isDraft", "--jq", ".isDraft"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    if probe.returncode == 0 and probe.stdout.strip() == "false":
+        return True
+    return False
 
 
 def squash_merge_pr(owner: str, repo: str, pr: int) -> str:
