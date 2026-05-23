@@ -198,6 +198,12 @@ class ITrackerClient {
         return false;
     }
 
+    virtual bool AddIssueWatcher(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                                 std::string& outError) {
+        outError = "AddIssueWatcher is not supported by this backend.";
+        return false;
+    }
+
     virtual bool FetchIssueVotes(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
                                  std::vector<TrackerUser>& /*outVoters*/, std::string& outError,
                                  int* /*outVoteCount*/ = nullptr, bool* /*outHasVoted*/ = nullptr,

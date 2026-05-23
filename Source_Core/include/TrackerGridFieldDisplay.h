@@ -34,6 +34,12 @@ struct TrackerGridFieldAsyncState {
     std::vector<TrackerUser> watchersLoadedList;
     std::string watchersLoadedError;
 
+    bool watchSelfInProgress = false;
+    std::future<std::string> watchSelfFuture;
+    std::string watchSelfError;
+    std::string watchSelfPendingIssueKey;
+    std::string watchSelfSucceededIssueKey;
+
     bool votesPanelOpen = false;
     std::string votesPopupIssueKey;
     bool votesLoadInProgress = false;
