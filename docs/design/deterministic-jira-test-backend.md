@@ -1,0 +1,254 @@
+# Plan - Deterministic Jira test backend and frontend tests
+
+> **Slug**: `deterministic-jira-test-backend`.
+>
+> **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) Section Project rules Section Plan location, Section Plan-doc safety, Section Plan revision after implementation, Section Plan stress-test, Section Plan template, Section Plan-doc perf-gate section.
+>
+> **Grill-with-docs pass**: completed against [`docs/CONTEXT.md`](../CONTEXT.md), the existing tracker/client seams, and the current Bucket E UI-test harness. No ADR is needed: the choice is test-only, reversible, and follows the existing `ITrackerBackendFactory` seam rather than introducing a surprising production architecture decision.
+
+## Context
+
+Smatchet's Jira-facing UI is difficult to test deterministically today. Unit tests already have [`tests/support/FakeTrackerClient.h`](../../tests/support/FakeTrackerClient.h), which is useful for service-level doctests, but it is not a scenario backend the running app can boot with. Bucket E tests under [`tests/ui/`](../../tests/ui/) can drive ImGui interactions, but they either mirror a narrow call-site shape or rely on live app state that is hard to seed without Jira.
+
+After this lands, frontend tests can boot Smatchet in UI-test mode with a scripted Jira-compatible backend, drive real sync/error/edit flows, and assert the grid, warning banners, async sync behavior, and edit affordances without live HTTP, real credentials, or timing flakes.
+
+## Approach
+
+Add a test-only deterministic Jira backend that implements `ITrackerClient` and is created through the existing `ITrackerBackendFactory` seam. The backend will be available only when `SMATCHET_BUILD_UI_TESTS` is enabled; production presets will not compile it and user config will not expose it as a tracker type.
+
+Keep fixture drift low by extracting Jira's existing JSON-to-`CachedTicket` mapper from the anonymous namespace in [`Source_Core/src/JiraIssueSearch.cpp`](../../Source_Core/src/JiraIssueSearch.cpp:116) into a small pure helper. The real `JiraClient` and the deterministic fixture loader will share that mapper, so raw Jira search-page fixtures exercise the same normalization path the live backend uses.
+
+Use the backend from two layers: Bucket A doctests validate fixture parsing and scripted call behavior, while Bucket E tests launch the app with `SMATCHET_TEST_JIRA_BACKEND_FIXTURE=<path>` and assert user-visible UI behavior through `ui_test.run`.
+
+## Detailed implementation plan
+
+### Slice 1 - Pure Jira issue mapping extraction
+
+Add `Source_Core/include/JiraIssueMappingPure.h` and `Source_Core/src/JiraIssueMappingPure.cpp`.
+
+Move these helpers out of `JiraIssueSearch.cpp` without behavior changes:
+
+- `BuildFetchFieldListsFromView(const ViewsStore&, vector<string>&, vector<string>&)`
+- `JiraAppendCachedTicketFromSearchIssue(...)`, renamed to `AppendCachedTicketFromJiraSearchIssue(...)`
+
+Keep the comment-fetch callback as a `std::function<bool(const std::string&, nlohmann::json&)>` so the production client can still fetch expanded comments, while tests can pass an in-memory callback.
+
+Add `tests/Source_Core/JiraIssueMappingPure.test.cpp` covering:
+
+- basic issue key + selected field mapping
+- comments already present vs fetched lazily
+- changelog to `history`
+- watchers vs watches alias
+- missing `fields` object does not throw
+- selected custom field object/array stringification
+
+### Slice 2 - Deterministic Jira backend fixture
+
+Add a test-support backend under `tests/support/`:
+
+- `DeterministicJiraBackend.h`
+- `DeterministicJiraBackend.cpp`
+- `DeterministicJiraBackendFixture.h` if the JSON loader becomes large enough to keep separate
+
+The backend implements `ITrackerClient` and returns `GetTrackerType() == "Jira"` so all Jira-specific UI branches stay realistic. It supports:
+
+- `ProbeReachability`
+- `FetchIssues` / `FetchIssuesStreamed`
+- `FetchIssuesForKeys`
+- `FetchFieldCatalog`
+- `SearchUsersByQuery`
+- `FetchIssueEditMeta`
+- `UpdateIssueFields`
+- `UpdateField`
+- `BuildFieldPayload`
+- `BuildCreatePayload`
+- `CreateIssue`
+- `AddIssueCommentPlain`
+- call recording for mutation assertions
+
+Fixture JSON shape:
+
+```json
+{
+  "name": "basic-grid",
+  "reachability": {"kind": "AuthenticatedReachable", "diagnostic": ""},
+  "catalog": {
+    "fields": [],
+    "components": [],
+    "issueTypeMeta": [],
+    "users": []
+  },
+  "fetches": [
+    {
+      "fullSyncCompleted": true,
+      "warning": "",
+      "fetchError": "",
+      "selectedFields": ["summary", "status", "priority", "assignee"],
+      "jiraSearchPages": [
+        {"issues": [], "isLast": true}
+      ]
+    }
+  ],
+  "mutations": {
+    "updateIssueFields": [{"ok": true}],
+    "createIssue": [{"ok": true, "issueKey": "SMAT-99"}]
+  }
+}
+```
+
+Prefer `jiraSearchPages` fixtures for sync tests so they flow through `AppendCachedTicketFromJiraSearchIssue`. Allow simplified `cachedTickets` only for cases that do not care about Jira JSON normalization.
+
+### Slice 3 - UI-test startup hook
+
+In [`Target_Standalone/main.cpp`](../../Target_Standalone/main.cpp:524), after constructing `AppController smatchetApp` and before [`smatchetApp.Initialize(...)`](../../Target_Standalone/main.cpp:553), add a `SMATCHET_BUILD_UI_TESTS`-guarded hook:
+
+```cpp
+if (const char* fixture = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE")) {
+    smatchetApp.SetBackendFactory(MakeDeterministicJiraBackendFactoryFromFixture(fixture));
+}
+```
+
+Implementation details:
+
+- The hook is compiled only in UI-test builds.
+- Missing/invalid fixture logs an error and falls back to the normal factory only if no fixture env var was set; if the env var is set but invalid, fail fast with a clear test error.
+- `tests/ui/CMakeLists.txt` adds `tests/support` to the include path and links the deterministic backend source into `SmatchetStandalone` when `SMATCHET_BUILD_UI_TESTS` is enabled.
+- Also compile the backend source into `SmatchetCore_DX12` under the same gate as a no-GL compile tripwire if it stays free of GLFW/OpenGL/ImGui dependencies.
+
+### Slice 4 - Frontend coverage
+
+Add `tests/ui/jira_deterministic_backend.test.cpp` and register it from [`tests/ui/ui_tests_registry.cpp`](../../tests/ui/ui_tests_registry.cpp:28).
+
+Initial Bucket E tests:
+
+- `JiraDeterministicSync_LoadsIssuesIntoGrid`: run `app.SyncWithBackend()` with a fixture-backed Jira client, yield until `!app.IsStreamingSyncActive()`, then assert `GetActiveTickets()` and visible grid text contain `SMAT-1`, summary, status, and priority values.
+- `JiraDeterministicSync_TransportErrorKeepsCachedGrid`: first fetch succeeds, second fetch returns a transport-style error. Assert cached rows remain visible and `GetTrackerConnectivityBannerForUi()` reports the cached-data warning.
+- `JiraDeterministicSync_PartialWarningDoesNotDeleteStaleRows`: second fetch returns fewer rows with `FullSyncCompleted=false` and a warning. Assert the old row remains and the sync-warning banner is visible.
+- `JiraDeterministicSync_SlowBackendDoesNotFreezeFrames`: scripted fetch sleeps on the sync worker. Assert the UI test engine advances frames while `app.IsStreamingSyncActive()` is true and the app does not block the render loop.
+
+Second wave tests after the basic sync surface is stable:
+
+- `JiraDeterministicEdit_SuccessRecordsUpdate`: edit a simple text/select cell, wait for async mutation completion, and assert the deterministic backend recorded one `UpdateIssueFields` call with the expected Jira payload.
+- `JiraDeterministicEdit_RejectShowsErrorAndKeepsValue`: script the update as a 400-style failure, assert the visible cell does not silently change and the error toast/banner appears.
+- `JiraDeterministicCreate_SuccessAddsRow`: use the new-issue draft row against a scripted `CreateIssue` response and assert the new issue key appears after sync/apply.
+
+### Slice 5 - Driver scripts and fixtures
+
+Add fixtures under `tests/fixtures/jira_backend/`:
+
+- `basic-grid.json`
+- `transport-error-after-cache.json`
+- `partial-warning.json`
+- `slow-sync.json`
+- `field-edit-success.json`
+- `field-edit-reject.json`
+
+Add `scripts/dev/test-ui-jira-deterministic-backend.sh`, mirroring [`scripts/dev/test-ui-views-columns-reorder.sh`](../../scripts/dev/test-ui-views-columns-reorder.sh:1):
+
+- uses `build/ninja-ui-test-msys2/Smatchet.exe` by default
+- sets an isolated `SMATCHET_USER_DATA`
+- sets `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`
+- invokes `Smatchet.exe cmd ui_test.run --name=JiraDeterministic --spawn --yes`
+- parses the JSON envelope and returns `0/1/2` like existing dev scripts
+
+## Files to modify
+
+Production/helper files:
+
+1. [`Source_Core/include/JiraIssueMappingPure.h`](../../Source_Core/include/) - new pure mapping API for Jira search issue JSON to `CachedTicket`.
+2. [`Source_Core/src/JiraIssueMappingPure.cpp`](../../Source_Core/src/) - new pure implementation extracted from the current Jira search anonymous namespace.
+3. [`Source_Core/src/JiraIssueSearch.cpp`](../../Source_Core/src/JiraIssueSearch.cpp:61) - replace anonymous helper bodies with calls to the pure helper.
+4. [`Target_Standalone/main.cpp`](../../Target_Standalone/main.cpp:524) - UI-test-only fixture-backed backend-factory hook before `Initialize`.
+5. [`CMakeLists.txt`](../../CMakeLists.txt:571) - confirm the new Source_Core helper is picked up by the glob; no special source-list add expected unless the glob cache misses it.
+
+Test support:
+
+6. [`tests/support/DeterministicJiraBackend.h`](../../tests/support/) - new scripted backend declarations.
+7. [`tests/support/DeterministicJiraBackend.cpp`](../../tests/support/) - new scripted backend implementation and factory.
+8. [`tests/Source_Core/JiraIssueMappingPure.test.cpp`](../../tests/Source_Core/) - new Bucket A mapper tests.
+9. [`tests/Source_Core/DeterministicJiraBackend.test.cpp`](../../tests/Source_Core/) - new Bucket A scripted behavior tests.
+10. [`tests/CMakeLists.txt`](../../tests/CMakeLists.txt:12) - add new doctest TUs and support source.
+11. [`tests/ui/jira_deterministic_backend.test.cpp`](../../tests/ui/) - new Bucket E frontend tests.
+12. [`tests/ui/ui_tests_registry.cpp`](../../tests/ui/ui_tests_registry.cpp:28) - register the new UI tests.
+13. [`tests/ui/CMakeLists.txt`](../../tests/ui/CMakeLists.txt:13) - include/link deterministic backend support into UI-test builds only.
+14. [`tests/fixtures/jira_backend/`](../../tests/fixtures/) - new deterministic Jira fixture set.
+15. [`scripts/dev/test-ui-jira-deterministic-backend.sh`](../../scripts/dev/) - new driver script.
+
+## Existing utilities reused
+
+- `AppController::SetBackendFactory` in [`Source_Core/src/AppController.cpp`](../../Source_Core/src/AppController.cpp:352) - existing injection seam for backend factories.
+- `AppController::SyncWithBackend` in [`Source_Core/include/AppController.h`](../../Source_Core/include/AppController.h:491) - trigger real streaming sync from UI tests.
+- `AppController::GetActiveTickets` and `GetTrackerConnectivityBannerForUi` in [`Source_Core/include/AppController.h`](../../Source_Core/include/AppController.h:515) - stable assertions for backend result and banner state.
+- `TicketSyncService::StartStreamingSync` in [`Source_Core/src/TicketSyncService.cpp`](../../Source_Core/src/TicketSyncService.cpp:459) - existing worker-thread path the deterministic backend should exercise.
+- `FakeTrackerClient` in [`tests/support/FakeTrackerClient.h`](../../tests/support/FakeTrackerClient.h:1) - reuse its scripting/call-recording style for lower-level test ergonomics.
+- `UiTestScenario` and `SmatchetActiveUiTestAppController` in [`Source_Core/src/Commands/Scenarios/UiTestScenario.cpp`](../../Source_Core/src/Commands/Scenarios/UiTestScenario.cpp:63) - existing in-process UI test bridge.
+- Existing UI-test script contract in [`scripts/dev/test-ui-views-columns-reorder.sh`](../../scripts/dev/test-ui-views-columns-reorder.sh:1) - copy the `0/1/2` behavior and JSON parsing shape.
+
+## UX Pillar callouts
+
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: the deterministic backend must not add steady-state production work because it is compiled only in UI-test builds; slow fixtures sleep on the existing sync worker, not the UI thread.
+- **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: no new sync I/O reaches ImGui render paths. Fixture JSON is loaded before `Initialize`; `FetchIssuesStreamed` runs through `TicketSyncService`'s worker.
+- **Pillar 3 (never crash)**: malformed fixture JSON returns a clear test setup error; production Jira mapping extraction gets hostile JSON tests to preserve graceful failure behavior.
+- **Pillar 4 (accessibility - keyboard nav / font scaling / WCAG AA)**: no user-facing production UI change. Frontend tests may later assert keyboard-driven edit flows, but this plan does not change accessibility behavior.
+
+## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A - <reason>`)
+
+1. **PR-fast CI** - fires. Closest existing perf scenario is `priority-grid-scroll` because the new tests seed and render the ticket grid. Behavioral coverage comes from `ui_test.run --name=JiraDeterministic`; perf check should run `bash scripts/dev/perf-run.sh priority-grid-scroll` before PR.
+2. **Pillar 2 static scanner** - fires. The scanner should see no new sync I/O reachable from `ImGui::*`; deterministic fixture loading is startup-only and `FetchIssuesStreamed` is worker-threaded.
+3. **Dispatcher drain** - N/A. No changes to `MainThreadDispatcher::Drain()`.
+4. **Visible-cue bucket-E harness** - N/A for new production code. The slow-backend UI test asserts frames keep advancing rather than adding a new UI-thread blocking path.
+5. **Marker inventory** - N/A. No new `SMATCHET_UI_PERF_SCOPE` markers planned.
+
+**Pre-push local check**: run `bash scripts/dev/perf-run.sh priority-grid-scroll` and compare against the dev baseline when available.
+
+## Risks / non-goals
+
+- **Fake backend drifts from real Jira parsing** - mitigated by extracting and sharing `AppendCachedTicketFromJiraSearchIssue`.
+- **Test backend leaks into production** - mitigated by `SMATCHET_BUILD_UI_TESTS` guards and by keeping the factory out of `DefaultTrackerBackendFactory`.
+- **UI tests become item-label brittle** - mitigate by pairing UI item assertions with app-state assertions and using stable fixture values (`SMAT-1`, unique summaries).
+- **Async tests flake** - use frame-yield loops bounded by `IsStreamingSyncActive()` and `GetActiveTicketsRevision()`, not wall-clock sleeps.
+- **Fixture schema grows into a second backend product** - keep fixtures scenario-focused; add only methods needed by a frontend test or service regression.
+- **Real Jira contract regressions still possible** - accepted. This plan adds deterministic frontend coverage, not live Jira E2E. Real-backend smoke remains separate and credential-gated.
+
+Non-goals:
+
+- Add a new production tracker type.
+- Mock `cpr` globally.
+- Cover Plane or GitHub in this first plan.
+- Regenerate or approve any golden image.
+- Add live Jira credential tests to CI.
+
+## Verification
+
+- **Bucket A (pure-logic ctest, `test-rig`)**:
+  - `JiraIssueMappingPure.test.cpp`
+  - `DeterministicJiraBackend.test.cpp`
+  - targeted run: `ctest --test-dir build/ninja-test-msys2 --output-on-failure -R "smatchet_tests"`
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)**:
+  - `tests/ui/jira_deterministic_backend.test.cpp`
+  - targeted driver: `bash scripts/dev/test-ui-jira-deterministic-backend.sh`
+- **Bash-driver scenario / screenshot / sanitizer**:
+  - new bash driver uses isolated `SMATCHET_USER_DATA`
+  - no screenshot/golden output
+  - sanitizer remains the standard `ninja-test-msys2` gate for Source_Core changes
+- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
+- **Manual residue**: none expected. If a stable grid cell cannot be asserted through ImGui Test Engine, add a `docs/backlog/agent-self-improvement/tooling.md` entry and keep the app-state assertion as the temporary automated guard.
+
+## Out of scope (flagged, not designed)
+
+- **Plane/GitHub deterministic backends** - follow the same fixture/factory shape once the Jira path proves stable.
+- **Live Jira smoke** - separate credential-gated script, not CI.
+- **Full field-editor matrix** - start with text/select success and failure; rich text/date/sprint edits get follow-up tests.
+- **Contract tests against Atlassian's live OpenAPI schema** - useful later, but too broad for the frontend determinism goal.
+
+## Implementation log
+
+*(populated post-ship per `AGENTS.md` Section Plan revision after implementation - bullet per shipped commit: `<sha> - <one-line summary>`)*.
+
+## Deviations from plan
+
+*(populated post-ship - what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*.
+
+## Verification (actual)
+
+*(populated post-ship - what was actually tested + result, passed / failed / not-run)*.
