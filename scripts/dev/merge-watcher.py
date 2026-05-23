@@ -682,6 +682,15 @@ def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[st
     Default budget lowered from 3 → 1 (option C of the watcher-loop fix):
     triage retries don't fix code, they only re-classify. The loop's value
     is the user notification — get it on the next poll, not 3 polls later.
+
+    Per-HEAD reset (P2 process self-improvement, 2026-05-23): a new push
+    advances the PR's `headRefOid`, which means CR will re-review the new
+    commit. The old triage_attempts counter is no longer informative for
+    the new review, so reset to 0 when `triage_for_head_sha` differs from
+    the current head_sha. This matches the auto-act path's `_atomic_reserve_auto_act`
+    semantics (dedup per head_sha; new push = one fresh attempt available).
+    Without the reset, the user hit TRIAGE_BUDGET_EXHAUSTED on push N and
+    every subsequent push, because the counter persisted across HEAD moves.
     """
     extras: dict[str, Any] = {}
     if not _looks_like_cr_finding_block(status_line):
@@ -695,10 +704,33 @@ def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[st
         return extras
     owner, repo = or_meta
     budget = int(os.environ.get("MERGE_WATCH_TRIAGE_BUDGET", "1"))
-    attempts_before = int(entry.get("triage_attempts", 0))
+    # Fetch current head_sha to decide whether to reset the per-HEAD
+    # counter. One extra `gh pr view` per BLOCKED-on-CR poll is cheap; the
+    # auto-act path at handle_pass / maybe_auto_act already does the same.
+    # Fail-open: if gh can't return a head_sha, fall back to the legacy
+    # per-PR-lifetime counter rather than spuriously resetting.
+    try:
+        meta_json = _gh_json(
+            ["pr", "view", str(pr), "--json", "headRefOid"],
+            cwd=clone_path,
+        )
+        head_sha = meta_json.get("headRefOid", "")
+    except RuntimeError:
+        head_sha = ""
+    prior_head_sha = entry.get("triage_for_head_sha", "")
+    if head_sha and prior_head_sha and head_sha != prior_head_sha:
+        # HEAD moved since last triage attempt → reset counter to 0.
+        # This poll will count as attempt 1 after the bump below.
+        attempts_before = 0
+        extras["triage_reset_on_head_change"] = (
+            f"{prior_head_sha[:8]} -> {head_sha[:8]}"
+        )
+    else:
+        attempts_before = int(entry.get("triage_attempts", 0))
     attempts_after = attempts_before + 1
-    # Bump the registry entry's triage_attempts (registry-locked).
-    _bump_triage_attempts(pr, clone_path, attempts_after)
+    # Bump the registry entry's triage_attempts (registry-locked). Persist
+    # the head_sha so the next poll knows what HEAD this counter is for.
+    _bump_triage_attempts(pr, clone_path, attempts_after, head_sha)
     extras["triage_attempts"] = attempts_after
     extras["triage_budget"] = budget
     if attempts_after > budget:
@@ -753,12 +785,23 @@ def _looks_like_cr_finding_block(status_line: str) -> bool:
     ) or "changes_requested" in s
 
 
-def _bump_triage_attempts(pr: int, clone_path: str, new_count: int) -> None:
+def _bump_triage_attempts(pr: int, clone_path: str, new_count: int, head_sha: str = "") -> None:
+    """Update registry entry's triage_attempts (and triage_for_head_sha when given).
+
+    `triage_for_head_sha` is the HEAD this counter is for. Per-HEAD reset
+    in handle_blocked_cr_triage compares the current head_sha to this
+    stored value to decide whether the counter is still meaningful.
+
+    Backwards-compatible: callers passing only (pr, clone_path, new_count)
+    leave triage_for_head_sha untouched (legacy per-PR-lifetime semantics).
+    """
     with _CLI.registry_lock():
         entries = _CLI.read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
                 e["triage_attempts"] = new_count
+                if head_sha:
+                    e["triage_for_head_sha"] = head_sha
                 break
         _CLI.write_registry(entries)
 

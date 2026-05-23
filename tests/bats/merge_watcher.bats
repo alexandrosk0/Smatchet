@@ -378,6 +378,142 @@ m._bump_triage_attempts(999, r'$(pwd)', 2)
     [[ "$output" == *'"triage_attempts": 2'* ]]
 }
 
+@test "_bump_triage_attempts persists triage_for_head_sha when given" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._bump_triage_attempts(999, r'$(pwd)', 3, 'feedface1234567890abcdef0987654321deadbe')
+"
+    [ "$status" -eq 0 ]
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"triage_attempts": 3'* ]]
+    [[ "$output" == *'"triage_for_head_sha": "feedface1234567890abcdef0987654321deadbe"'* ]]
+}
+
+@test "handle_blocked_cr_triage resets counter when HEAD moved since last triage" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    # Pre-populate: counter at budget, prior triage was on old HEAD.
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._bump_triage_attempts(999, r'$(pwd)', 5, 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+"
+    [ "$status" -eq 0 ]
+    # Now call handle_blocked_cr_triage with a CR-finding status line +
+    # stub gh to return a NEW head_sha. Expect counter resets to 1.
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._gh_json = lambda args, **kw: {'headRefOid': 'newheadbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}
+# Stub the subprocess that would invoke the triage classifier — return
+# rc=0 so handle_blocked_cr_triage takes the success branch.
+import subprocess
+class FakeResult:
+    returncode = 0
+    stdout = 'ok'
+    stderr = ''
+subprocess.run = lambda *a, **kw: FakeResult()
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'triage_attempts': 5,
+         'triage_for_head_sha': 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+status_line = 'Poll 1/1 CodeRabbit: COMMENTED (2 actionable - block)'
+extras = m.handle_blocked_cr_triage(entry, status_line)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    # Counter reset to 0 then bumped → triage_attempts: 1.
+    [[ "$output" == *"'triage_attempts': 1"* ]]
+    # Reset annotation present in extras (per-HEAD reset diagnostic).
+    [[ "$output" == *"'triage_reset_on_head_change'"* ]]
+    [[ "$output" == *"oldhead"* ]]
+    [[ "$output" == *"newhead"* ]]
+    # Registry persists the new head_sha for the next poll.
+    run watch_cli list
+    [[ "$output" == *'"triage_for_head_sha": "newheadbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'* ]]
+}
+
+@test "handle_blocked_cr_triage preserves counter when HEAD unchanged (same head_sha)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._bump_triage_attempts(999, r'$(pwd)', 0, 'samehead1111111111111111111111111111111111')
+"
+    [ "$status" -eq 0 ]
+    # Stub gh to return the SAME head_sha — counter must increment normally.
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._gh_json = lambda args, **kw: {'headRefOid': 'samehead1111111111111111111111111111111111'}
+import subprocess
+class FakeResult:
+    returncode = 0
+    stdout = 'ok'
+    stderr = ''
+subprocess.run = lambda *a, **kw: FakeResult()
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'triage_attempts': 0,
+         'triage_for_head_sha': 'samehead1111111111111111111111111111111111'}
+status_line = 'Poll 1/1 CodeRabbit: COMMENTED (1 actionable - block)'
+extras = m.handle_blocked_cr_triage(entry, status_line)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    # Counter went 0 → 1 (no reset, no annotation).
+    [[ "$output" == *"'triage_attempts': 1"* ]]
+    [[ "$output" != *"triage_reset_on_head_change"* ]]
+}
+
+@test "handle_blocked_cr_triage falls back to legacy counter when gh returns no head_sha" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._bump_triage_attempts(999, r'$(pwd)', 2, 'oldhead2222222222222222222222222222222222')
+"
+    [ "$status" -eq 0 ]
+    # Stub gh to fail (RuntimeError) → fall back to legacy increment.
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+def _failing_gh_json(args, **kw):
+    raise RuntimeError('gh down')
+m._gh_json = _failing_gh_json
+import subprocess
+class FakeResult:
+    returncode = 0
+    stdout = 'ok'
+    stderr = ''
+subprocess.run = lambda *a, **kw: FakeResult()
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'triage_attempts': 2,
+         'triage_for_head_sha': 'oldhead2222222222222222222222222222222222'}
+status_line = 'Poll 1/1 CodeRabbit: COMMENTED (1 actionable - block)'
+extras = m.handle_blocked_cr_triage(entry, status_line)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    # No head_sha → no reset, counter goes 2 → 3 via legacy path.
+    [[ "$output" == *"'triage_attempts': 3"* ]]
+    [[ "$output" != *"triage_reset_on_head_change"* ]]
+}
+
 @test "_looks_like_cr_finding_block matches expected status-line shapes" {
     run python -c "
 import sys, importlib.util
