@@ -40,9 +40,16 @@ The existing git ship-loop is unchanged. Pure-docs change.
   → approved: continue
 
 [full tests]
-  cmake --build --preset ninja-iter-msys2
-  cmake --build --preset ninja-test-msys2   # doctest rig (ctest)
-  bash scripts/dev/lint-flush.sh            # clang-format + cppcheck + clang-tidy drain
+  bash scripts/dev/doctor.sh                                              # toolchain pre-flight
+  cmake --build --preset ninja-test-msys2                                 # doctest rig build
+  ctest --output-on-failure --test-dir build/ninja-test-msys2            # doctest rig run
+  cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone    # main build
+  cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF    # sentinel: no-whisper
+  cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_AGENTIC=OFF    # sentinel: no-agentic
+  bash scripts/dev/lint-flush.sh                                          # clang-format + cppcheck + clang-tidy
+  bash scripts/dev/coverage-delta-gate.sh   # if Source_Core/src/*.cpp touched
+  bash scripts/dev/test-doc-anchors.sh      # if AGENTS.md or agents/** touched
+  bash scripts/dev/test-agent-contract.sh   # if AGENTS.md or agents/** touched
   bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
   (bucket-E if visual paths touched)
   → failure: fix in p4 → re-test (NO re-review)
@@ -63,9 +70,16 @@ For each slice (repeat until all slices done):
     repeat within slice until complete
 
   [inter-slice auto-gate — automatic, NO user pause]
-    cmake --build --preset ninja-iter-msys2
-    cmake --build --preset ninja-test-msys2   # doctest rig (ctest)
-    bash scripts/dev/lint-flush.sh            # clang-format + cppcheck + clang-tidy drain
+    bash scripts/dev/doctor.sh                                              # toolchain pre-flight
+    cmake --build --preset ninja-test-msys2                                 # doctest rig build
+    ctest --output-on-failure --test-dir build/ninja-test-msys2            # doctest rig run
+    cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone    # main build
+    cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF    # sentinel: no-whisper
+    cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_AGENTIC=OFF    # sentinel: no-agentic
+    bash scripts/dev/lint-flush.sh                                          # clang-format + cppcheck + clang-tidy
+    bash scripts/dev/coverage-delta-gate.sh   # if Source_Core/src/*.cpp touched
+    bash scripts/dev/test-doc-anchors.sh      # if AGENTS.md or agents/** touched
+    bash scripts/dev/test-agent-contract.sh   # if AGENTS.md or agents/** touched
     bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
     code-review agent (cumulative task-stream diff)
     → issues: fix autonomously → re-build → re-lint → re-test → re-review → repeat until clean
