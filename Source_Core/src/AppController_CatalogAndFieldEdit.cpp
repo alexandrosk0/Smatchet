@@ -1123,22 +1123,6 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
     return ok;
 }
 
-bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& outError) {
-    outError.clear();
-    if (!Backend) {
-        outError = "Tracker backend is not initialized.";
-        return false;
-    }
-    const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->AddIssueWatcher(cfg, issueKey, outError);
-    if (!ok) {
-        LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-    }
-    return ok;
-}
-
 bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
                                     std::string& outError, int* outVoteCount, bool* outHasVoted,
                                     bool* outVotersInResponse) const {

@@ -48,9 +48,9 @@ struct TrackerReachabilityProbeResult {
  * comparison, not formatted strings.
  */
 struct TrackerIssueComment {
-    std::string Id;                // backend-stable comment id
-    std::string Author;            // username / handle (GitHub user.login, Jira author.displayName)
-    std::string Body;              // raw comment body (markdown for GitHub; plain-text for Jira/Plane)
+    std::string Id;             // backend-stable comment id
+    std::string Author;         // username / handle (GitHub user.login, Jira author.displayName)
+    std::string Body;           // raw comment body (markdown for GitHub; plain-text for Jira/Plane)
     std::int64_t CreatedAtSec = 0; // unix epoch seconds
     std::int64_t UpdatedAtSec = 0; // unix epoch seconds (== CreatedAtSec if never edited)
 };
@@ -198,11 +198,6 @@ class ITrackerClient {
         return false;
     }
 
-    virtual bool AddIssueWatcher(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, std::string& outError) {
-        outError = "AddIssueWatcher is not supported by this backend.";
-        return false;
-    }
-
     virtual bool FetchIssueVotes(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
                                  std::vector<TrackerUser>& /*outVoters*/, std::string& outError,
                                  int* /*outVoteCount*/ = nullptr, bool* /*outHasVoted*/ = nullptr,
@@ -232,7 +227,8 @@ class ITrackerClient {
      * `issueKey` shape is backend-specific. GitHub uses `owner/repo#N` (see
      * `GitHubClientHelpers::ParseGitHubIssueKey`). Jira / Plane use their native key forms.
      */
-    virtual bool FetchIssueComments(const std::string& /*issueKey*/, std::vector<TrackerIssueComment>& /*outComments*/,
+    virtual bool FetchIssueComments(const std::string& /*issueKey*/,
+                                    std::vector<TrackerIssueComment>& /*outComments*/,
                                     std::string& outError) {
         outError = "FetchIssueComments is not supported by this backend.";
         return false;

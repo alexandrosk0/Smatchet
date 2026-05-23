@@ -134,54 +134,6 @@ bool JiraClient::FetchIssueWatchers(const TrackerConfig& cfg, const std::string&
     return true;
 }
 
-bool JiraClient::AddIssueWatcher(const TrackerConfig& cfg, const std::string& issueKey, std::string& outError) {
-    outError.clear();
-    if (!EnsureTrackerAuthConfig(cfg, outError)) {
-        return false;
-    }
-
-    const std::string base = NormalizeBaseUrl(cfg.Domain);
-    const cpr::Header headers = BuildTrackerHeaders(cfg);
-
-    // Fetch current user's accountId (required by Jira Cloud POST /watchers)
-    const std::string myselfUrl = base + "/rest/api/3/myself";
-    auto myselfResp = TrackerGetLogged("JiraClient", myselfUrl, headers);
-    if (myselfResp.status_code != 200) {
-        outError = "Failed to fetch current user: HTTP " + std::to_string(myselfResp.status_code);
-        LOG_ERROR("JiraClient::AddIssueWatcher myself failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-        return false;
-    }
-    std::string accountId;
-    try {
-        const auto me = nlohmann::json::parse(myselfResp.text);
-        accountId = me.value("accountId", std::string());
-    } catch (const std::exception& ex) {
-        outError = std::string("Failed to parse myself response: ") + ex.what();
-        LOG_ERROR("JiraClient::AddIssueWatcher %s", outError.c_str());
-        return false;
-    }
-    if (accountId.empty()) {
-        outError = "Could not determine current user accountId.";
-        LOG_ERROR("JiraClient::AddIssueWatcher %s issue=%s", outError.c_str(), issueKey.c_str());
-        return false;
-    }
-
-    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/watchers";
-    // Body must be the accountId as a JSON string literal
-    const nlohmann::json bodyJson = accountId;
-    const std::string bodyStr = bodyJson.dump();
-    auto response = TrackerPostLogged("JiraClient", url, headers, bodyStr);
-    if (response.status_code != 204 && response.status_code != 200) {
-        outError = "Failed to add watcher: HTTP " + std::to_string(response.status_code);
-        if (!response.text.empty()) {
-            outError += " — " + response.text.substr(0, 200);
-        }
-        LOG_ERROR("JiraClient::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-        return false;
-    }
-    return true;
-}
-
 bool JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
                                     std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
     outFieldIdCanEdit.clear();
