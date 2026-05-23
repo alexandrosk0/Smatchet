@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "IssueDraft.h"
 #include "MarkdownConvert.h"
+#include "MarkdownPreviewRender.h"
 #include "TrackerHttpUtils.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
@@ -989,7 +990,37 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 const std::string payloadPreview = BuildPayloadPreview(row.payload, 140);
                 ImGui::TextUnformatted(payloadPreview.empty() ? "-" : payloadPreview.c_str());
                 if (!row.payload.empty() && ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", row.payload.c_str());
+                    std::string md;
+                    try {
+                        const auto j = nlohmann::json::parse(row.payload);
+                        if (j.is_object()) {
+                            for (auto it = j.begin(); it != j.end(); ++it) {
+                                const auto& val = it.value();
+                                if (val.is_object() && val.value("type", std::string()) == "doc") {
+                                    md = MarkdownConvert::AdfToMarkdown(val);
+                                    break;
+                                }
+                                if (val.is_string()) {
+                                    bool fell = false;
+                                    md = MarkdownConvert::HtmlSubsetToMarkdown(val.get<std::string>(), &fell);
+                                    if (fell)
+                                        md = val.get<std::string>();
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (...) {
+                    }
+                    if (md.empty())
+                        md = BuildPayloadPreview(row.payload, 600);
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                    MarkdownPreviewRender::Options opts;
+                    opts.mode = MarkdownPreviewRender::Mode::Tooltip;
+                    opts.clickableLinks = false;
+                    MarkdownPreviewRender::Render(md, opts);
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
                 }
             }
             ImGui::PopID();
