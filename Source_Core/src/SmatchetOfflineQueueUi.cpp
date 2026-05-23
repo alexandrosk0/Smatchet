@@ -760,15 +760,14 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 if (row.terminalReason == "legacy_missing_project") {
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-                    ImGui::TextUnformatted(SmatchetLocalization::T(
-                        "offlineQueue.badge.missingProject", "missing project"));
+                    ImGui::TextUnformatted(
+                        SmatchetLocalization::T("offlineQueue.badge.missingProject", "missing project"));
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s",
-                                          SmatchetLocalization::T(
-                                              "offlineQueue.badge.missingProject.tooltip",
-                                              "This queued create was missing a project after the "
-                                              "project-key migration. Restore and pick a project to retry."));
+                        ImGui::SetTooltip("%s", SmatchetLocalization::T(
+                                                    "offlineQueue.badge.missingProject.tooltip",
+                                                    "This queued create was missing a project after the "
+                                                    "project-key migration. Restore and pick a project to retry."));
                     }
                 }
             } else if (row.kind == UnifiedOfflineKind::PendingFieldEdit) {
@@ -790,6 +789,12 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 ImGui::Selectable(row.state.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
                 if (ImGui::IsItemHovered()) {
                     hoveredOfflineKey = row.key;
+                    if (ImGui::IsMouseDoubleClicked(0) && row.hasMergeConflict &&
+                        row.kind == UnifiedOfflineKind::PendingFieldEdit) {
+                        d.conflictResolveDbId = row.dbId;
+                        d.conflictContextJson = row.conflictContextJson;
+                        d.showConflictResolveModal = true;
+                    }
                 }
                 const bool rightClicked = ImGui::BeginPopupContextItem("offRowCtx", ImGuiPopupFlags_MouseButtonRight);
                 if (rightClicked) {
@@ -823,7 +828,8 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                         if (ImGui::MenuItem(act.c_str())) {
                             const UnifiedOfflineRow* pick = nullptr;
                             for (const auto& p : picks) {
-                                if (p.kind == UnifiedOfflineKind::PendingCreate || p.kind == UnifiedOfflineKind::DeadCreate) {
+                                if (p.kind == UnifiedOfflineKind::PendingCreate ||
+                                    p.kind == UnifiedOfflineKind::DeadCreate) {
                                     pick = &p;
                                 }
                             }
@@ -838,9 +844,9 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                     }
 
                     // Conflict resolution — only for a single pending field edit with a conflict.
-                    const bool singleConflict = (picks.size() == 1 &&
-                                                  picks[0].kind == UnifiedOfflineKind::PendingFieldEdit &&
-                                                  picks[0].hasMergeConflict);
+                    const bool singleConflict =
+                        (picks.size() == 1 && picks[0].kind == UnifiedOfflineKind::PendingFieldEdit &&
+                         picks[0].hasMergeConflict);
                     if (singleConflict && ImGui::MenuItem("Resolve merge conflict...")) {
                         d.conflictResolveDbId = picks[0].dbId;
                         d.conflictContextJson = picks[0].conflictContextJson;
@@ -879,8 +885,9 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                             selectedOfflineRowKeys.erase(p.key);
                         }
                         char buf[256];
-                        std::snprintf(buf, sizeof(buf), "Discard offline context: successfully deleted %d rows (failed %d).",
-                                      del, failed);
+                        std::snprintf(buf, sizeof(buf),
+                                      "Discard offline context: successfully deleted %d rows (failed %d).", del,
+                                      failed);
                         ArmOfflineQueuePanelStatus(d, buf);
                     }
 
@@ -912,8 +919,8 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                             selectedOfflineRowKeys.erase(p.key);
                         }
                         char buf[256];
-                        std::snprintf(buf, sizeof(buf), "Restored dead creates to offline queue: %d retrying, %d failed.",
-                                      del, failed);
+                        std::snprintf(buf, sizeof(buf),
+                                      "Restored dead creates to offline queue: %d retrying, %d failed.", del, failed);
                         ArmOfflineQueuePanelStatus(d, buf);
                     }
 
@@ -973,14 +980,11 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
             }
 
             ImGui::TableSetColumnIndex(9);
-            ImGui::TextUnformatted(FormatEpochLocal(row.createdEpoch).c_str());
-            ImGui::TableSetColumnIndex(10);
-            if (row.archivedEpoch != 0) {
-                ImGui::TextUnformatted(FormatEpochLocal(row.archivedEpoch).c_str());
-            } else {
-                ImGui::TextUnformatted("-");
+            {
+                const std::int64_t activityEpoch = row.archivedEpoch != 0 ? row.archivedEpoch : row.createdEpoch;
+                ImGui::TextUnformatted(FormatEpochLocal(activityEpoch).c_str());
             }
-            ImGui::TableSetColumnIndex(11); // Wait, we have 11 columns set up. 0 to 10 inclusive is 11 columns!
+            ImGui::TableSetColumnIndex(10);
             {
                 const std::string payloadPreview = BuildPayloadPreview(row.payload, 140);
                 ImGui::TextUnformatted(payloadPreview.empty() ? "-" : payloadPreview.c_str());
@@ -1015,10 +1019,11 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
             try {
                 auto ctx = nlohmann::json::parse(d.conflictContextJson, nullptr, false);
                 if (ctx.is_object()) {
-                    mineMd   = ctx.value("mine",    std::string());
-                    theirsMd = ctx.value("theirs",  std::string());
+                    mineMd = ctx.value("mine", std::string());
+                    theirsMd = ctx.value("theirs", std::string());
                 }
-            } catch (...) {}
+            } catch (...) {
+            }
             const std::string seed = "<<<<<<< mine\n" + mineMd + "\n=======\n" + theirsMd + "\n>>>>>>> theirs";
             d.conflictResolveBuf.assign(64 * 1024, '\0');
             const size_t n = (std::min)(seed.size(), static_cast<size_t>(64 * 1024 - 1));
@@ -1033,11 +1038,12 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
         try {
             auto ctx = nlohmann::json::parse(d.conflictContextJson, nullptr, false);
             if (ctx.is_object()) {
-                mineMd   = ctx.value("mine",    std::string());
-                theirsMd = ctx.value("theirs",  std::string());
+                mineMd = ctx.value("mine", std::string());
+                theirsMd = ctx.value("theirs", std::string());
                 richKind = ctx.value("richKind", std::string("adf"));
             }
-        } catch (...) {}
+        } catch (...) {
+        }
 
         const ImVec2 vp = ImGui::GetMainViewport()->Size;
         const float halfW = vp.x * 0.28f;
@@ -1049,16 +1055,14 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
 
         ImGui::BeginGroup();
         ImGui::Text("Your edit (mine)");
-        ImGui::InputTextMultiline("##CRMine",
-            const_cast<char*>(mineMd.c_str()), mineMd.size() + 1,
-            ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
+        ImGui::InputTextMultiline("##CRMine", const_cast<char*>(mineMd.c_str()), mineMd.size() + 1,
+                                  ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::BeginGroup();
         ImGui::Text("Server version (theirs)");
-        ImGui::InputTextMultiline("##CRTheirs",
-            const_cast<char*>(theirsMd.c_str()), theirsMd.size() + 1,
-            ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
+        ImGui::InputTextMultiline("##CRTheirs", const_cast<char*>(theirsMd.c_str()), theirsMd.size() + 1,
+                                  ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
         ImGui::EndGroup();
 
         ImGui::Spacing();
@@ -1095,11 +1099,13 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
         }
         ImGui::SameLine();
         const bool saveEnabled = !hasConflictMarkers;
-        if (!saveEnabled) ImGui::BeginDisabled();
+        if (!saveEnabled)
+            ImGui::BeginDisabled();
         if (ImGui::Button("Save resolved", ImVec2(130, 0))) {
             doResolve(std::string(d.conflictResolveBuf.data()));
         }
-        if (!saveEnabled) ImGui::EndDisabled();
+        if (!saveEnabled)
+            ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(80, 0))) {
             d.conflictResolveBuf.clear();
