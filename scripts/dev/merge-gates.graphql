@@ -6,6 +6,10 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       reviewDecision
       headRefOid
       headRefName
+      labels(first: 50) {
+        pageInfo { hasNextPage }
+        nodes { name }
+      }
       commits(last: 1) {
         nodes {
           commit {
@@ -18,6 +22,11 @@ query($owner: String!, $repo: String!, $pr: Int!) {
                     name
                     conclusion
                     status
+                    # startedAt drives latest-per-name dedup: when a job is
+                    # rerun, GitHub keeps both the old (FAILURE) + new (SUCCESS)
+                    # rollup nodes. We pick the one with the latest startedAt
+                    # per name so stale FAILUREs don't falsely block merge.
+                    startedAt
                     isRequired(pullRequestNumber: $pr)
                   }
                   ... on StatusContext {
