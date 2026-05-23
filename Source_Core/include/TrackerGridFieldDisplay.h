@@ -43,6 +43,12 @@ struct TrackerGridFieldAsyncState {
     int votesLoadedVoteCount = 0;
     bool votesLoadedHasVoted = false;
     bool votesLoadedVotersArrayInResponse = false;
+
+    bool watchSelfInProgress = false;
+    std::future<std::string> watchSelfFuture; // empty = success, non-empty = error message
+    std::string watchSelfError;
+    std::string watchSelfPendingIssueKey;
+    std::string watchSelfSucceededIssueKey;
 };
 
 /**
@@ -57,10 +63,10 @@ class TrackerGridFieldDisplay {
 
     static void RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
                                        bool tooltipsEnabled);
-    static void RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue, float availWidth,
-                                    bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
-    static void RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue, float availWidth,
-                                 bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
+    static void RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue,
+                                    float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
+    static void RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue,
+                                 float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
     static void RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
 
     /** Column key `aggregateprogress` (Jira schema id; case-insensitive). */
@@ -93,9 +99,3 @@ class TrackerGridFieldDisplay {
     static void DrawWatchersListWindow(TrackerGridFieldAsyncState& async);
     static void DrawVotesListWindow(TrackerGridFieldAsyncState& async);
 };
-
-
-
-
-
-

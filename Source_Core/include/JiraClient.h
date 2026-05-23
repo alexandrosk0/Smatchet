@@ -67,6 +67,9 @@ class JiraClient : public ITrackerClient {
     bool FetchIssueWatchers(const TrackerConfig& cfg, const std::string& issueKey,
                             std::vector<TrackerUser>& outWatchers, std::string& outError) override;
 
+    /** POST /rest/api/3/issue/{issueKey}/watchers — adds the authenticated user as a watcher. */
+    bool AddIssueWatcher(const TrackerConfig& cfg, const std::string& issueKey, std::string& outError) override;
+
     /**
      * GET /rest/api/3/issue/{issueKey}/votes — fills voter users when `voters` is present.
      * On success, optional out-pointers are set from JSON (omit or null to ignore).

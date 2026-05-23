@@ -774,6 +774,8 @@ class AppController
     bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                             std::string& outError) const;
 
+    bool AddIssueWatcher(const std::string& issueKey, std::string& outError);
+
     bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters, std::string& outError,
                          int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
                          bool* outVotersInResponse = nullptr) const;
@@ -1057,7 +1059,6 @@ class AppController
     // still post to the dispatcher during its shutdown drain.
     std::unique_ptr<AiAssistantController> aiAssistant_;
 #endif
-
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     struct AutomationJob {
