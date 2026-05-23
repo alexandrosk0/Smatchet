@@ -107,6 +107,30 @@ All clarifications that the orchestrator anticipates needing are batched **once 
 
    Pillar anchor: see § UX Pillars § 4 § Visual-validation acceptance for the cross-link from the pillar side.
 
+### P4-gated ship-loop
+
+When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a **P4-gated ship-loop** instead of the default git ship-loop. The variant exists so the user reviews a Perforce shelf in P4V before any `git push` or `gh pr create` happens — git remains the ship-line, but git is touched **once**, at the end, after the change is known-good. The pause-loop in § Debug-mode pause-loop continues to **override** this loop for debug-detective triggers (same as it does for the default git loop).
+
+**Fires when** `SMATCHET_AGENT_VCS=p4` is set at session start AND `p4 info` confirms the local server is reachable. On `p4 info` failure → `LOG_ERROR "p4-mode requested but Perforce not bootstrapped"` + `AskUserQuestion`: (a) fall back to default git ship-loop for this session, (b) abort, (c) follow [`docs/perforce/SETUP.md`](docs/perforce/SETUP.md) and retry. Never silently downgrade.
+
+**Two sub-variants** — orchestrator asks once at task start via `AskUserQuestion` which to use:
+
+1. **Small-change loop** (default; single slice, single subsystem) — work directly on `//smatchet/main` via the canonical client. Iterate edits in a pending CL. Smoke build → shelve → user review → full tests → submit → git branch + push + PR.
+2. **Task-stream loop** (multi-slice OR write set spans multiple subsystems; only when user explicitly approves) — allocate `bash scripts/dev/p4-task-stream.sh <id>`. Each slice submits to the task stream's depot path. End-gate runs the full battery, then `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl` integrates into a pending main-stream CL + shelves. User reviews shelf. On approval, `--promote-reviewed-cl <CL>` submits + creates git branch + push + PR.
+
+**Key invariants (both sub-variants):**
+
+- `git push` / `gh pr create` happen **once**, after shelf approval AND full test-pass.
+- Shelf-review gate fires **exactly once** per task. Test failures post-approval → fix → re-test without re-review. Re-review only on explicit user request.
+- **No `git worktree add`** while `SMATCHET_AGENT_VCS=p4` — subagent isolation uses `scripts/dev/p4-task-stream.sh` exclusively. First git write is the `git checkout -b` inside the promote step.
+- **Smoke build precedes shelf** — user never sees a non-compiling change in P4V.
+- **`code-review` agent dispatched ONCE per task** at the end-gate / shelf step (cumulative diff). Not per slice.
+- Pure-docs slice skip still applies. Trivial-visual-only envelope still applies, with `p4 sync` + `p4 edit -t +l` substituting for `git stash` race-recovery.
+- Plan-lock backend auto-flips to `p4-counter` **only when unset** — `export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"` (no colon — empty-string setting is preserved per `scripts/dev/test-p4-dual-vcs.sh` scenario 2 line 149 + scenario 6 line 369).
+- Post-ship `AskUserQuestion` ALWAYS fires with option 3 ("Register with watcher") pre-selected; when `docs/design/merge-gates-ci-coderabbit-comments.md` ships end-to-end the `AskUserQuestion` goes away entirely in p4-mode.
+
+Full phase sequence + invariants + exception rules in [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/design/p4-gated-ship-loop.md`](docs/design/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](docs/adr/0008-p4-gated-ship-loop.md).
+
 ### Post-ship turn-end protocol
 
 After the loop reaches PR-opened (or the equivalent terminal state for the task), end the turn with `AskUserQuestion` offering the four canonical next steps as discrete options:
@@ -245,7 +269,18 @@ Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/me
 
 `reset --hard` permanently destroys uncommitted tracked-modified content; it is not in reflog. Branch pointers are reflog-recoverable; uncommitted changes are not. Cross-link: `agents/git-janitor.md` § Destructive-op pre-flight (authoritative checklist).
 
-**Force-push carve-out for Claude Code SDK-spawned recovery**: the global `git push --force` ban (and the harness's banned `--no-verify`/`--no-gpg-sign` flags) gets one narrow carve-out — `git push --force-with-lease origin claude/<id>` is permitted **only** during API-500 recovery (see `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on a Claude Code SDK-spawned worktree branch. The `agent/<id>` case is GONE — that branch shape came from the deleted `ClaudeCodeLocalRunner` (per v1 of `docs/design/github-tracker-backend.md`). The future `smatchet-merge-watcher` runs as a host daemon (per `docs/design/smatchet-merge-watcher.md`), not a spawned subprocess, so it has no worktree branch that would need this carve-out. Excludes `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`, and any branch with non-self commits in the ahead-range. ADR 0005 (`docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md`) is Withdrawn as historical (status flipped in this v2 cleanup); the `claude/<id>` rationale stands on its own here.
+**Destructive `p4` ops in p4-mode**: when `SMATCHET_AGENT_VCS=p4`, the same defensive principle applies to destructive Perforce verbs (`p4 revert -k`, `p4 obliterate`, `p4 unshelve -f`). Five-step pre-flight in [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md) § Destructive p4 ops pre-flight: confirm `p4 -ztag info` (client + user), inventory `p4 opened -c default //smatchet/...`, `p4 shelve -c <CL>` any pending unrelated CLs, run the destructive op, then `p4 changes -c <client>` to confirm state. `p4 revert` on a freshly-added file removes it from the workspace too — coordinate before running across shared depot paths.
+
+**Force-push carve-out for Claude Code SDK-spawned recovery and p4 task-stream promotion**: the global `git push --force` ban (and the harness's banned `--no-verify` / `--no-gpg-sign` flags) gets two narrow carve-outs — `git push --force-with-lease origin <branch>` is permitted **only** during API-500 recovery (see `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on:
+
+1. A Claude Code SDK-spawned worktree branch matching `claude/<id>/*`, OR
+2. A Perforce-task-stream-promoted branch matching `agent/<task-stream-id>/*` (created by `scripts/dev/p4-task-stream-to-pr.sh`).
+
+The `agent/<id>` carve-out was deleted post-`ClaudeCodeLocalRunner` (per v1 of `docs/design/github-tracker-backend.md`) and is reinstated here for the p4-task-stream surface: those branches are recovery-style throwaways, created by the script after a successful shelf submit, and they should never carry non-self commits. The `smatchet-merge-watcher` host daemon (per `docs/design/smatchet-merge-watcher.md`) runs in-process, not as a spawned subprocess, so it has no worktree branch that would need this carve-out.
+
+**Exclusion list — top-level-prefix-only** (an exclusion triggers only at the first path segment): `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`. Branches under `claude/<id>/*` and `agent/<task-stream-id>/*` are permitted regardless of the nested slug prefix (a slug like `feat-perf-fix` under `agent/perf-detective-01/` is fine — the `feat-` prefix is below the protected first segment).
+
+Additional conditions for the carve-out to apply: ahead-range contains zero non-self commits; `--force-with-lease` (never bare `--force`). ADR [0005](docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md) (Withdrawn as historical) covers the `claude/<id>` rationale; ADR [0008](docs/adr/0008-p4-gated-ship-loop.md) records the `agent/<task-stream-id>` extension + exclusion-list rewrite.
 
 **Plan revision after implementation**: when work shipped from a plan lands (PR merged, scenario validated, or feature shipped), edit the originating `docs/design/<slug>.md` in the same or next commit to record what actually happened. Mandatory sections to append:
 
@@ -270,6 +305,8 @@ A plan that ships without revision is a stale plan. Future agents read these doc
 **Golden-image approval contract**: any agent that writes or regenerates a checked-in reference artefact a regression gate diffs against (`tests/golden/*.png`, JSON snapshots, deterministic byte streams) MUST hand the file + launched-app handle to the user and wait for explicit approve-golden verdict before `git add`. Iterate the underlying fix on rejection; never amend the golden to match a buggy state. Full recipe + motivating incident + dual-capture-no-golden preference in [`docs/agent-rules/golden-image-approval.md`](docs/agent-rules/golden-image-approval.md).
 
 **Build / ctest cadence — slice-boundary only**: within a single agent turn (= one logical slice), invoke `cmake --build` and `scripts/dev/test-all.sh` **at most once each**, and only after the implementation is complete. Mid-slice rebuilds and mid-slice ctest runs are wasted work — Ninja is already incremental and the doctest rig is fast at the slice boundary but expensive when amortised across N edits.
+
+**P4-gated loops carve-out**: when running the small-change variant of § P4-gated ship-loop, the loop sequence has a legitimate `[smoke build] → [shelf] → [full tests]` phase split. The shelf-review boundary is a real phase transition (user-in-the-loop), so the pre-shelf smoke build (`ninja-iter-msys2` target `SmatchetStandalone`) and the post-shelf test-rig build (`ninja-test-msys2`) count as **distinct gates within the slice** — at-most-once per gate, not at-most-once total. The "wasteful mid-implementation rebuilds" rule the cadence targets still applies; the user-review boundary is not "mid-implementation".
 
 **Perf slice-boundary auto-run — scenario-aware**: when a slice's write set touches files in the curated diff→scenario map at [`agents/perf-gatekeeper.md`](agents/perf-gatekeeper.md) § "Curated diff → scenario map", the orchestrator runs the affected scenario(s) at slice boundary (right after the build + ctest pass) and surfaces the top-N rows inline. No need for the user to ask "how is the performance" — Pillar 1 evidence shows up automatically next to the regular slice output. Mechanically:
 

@@ -108,6 +108,16 @@ The helper resolves the worktree root via `git rev-parse --show-toplevel`, appen
 | `pr` | After `gh pr create` (include the PR URL on the same line) |
 | `end` | Final line before producing the report |
 
+**p4-mode phases** (per [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop) — emit these in addition to the default phases above when `SMATCHET_AGENT_VCS=p4`:
+
+| Phase | When to emit |
+|---|---|
+| `p4-shelf` | After `p4 shelve -c <CL>` (small-change loop, pre-user-review) |
+| `inter-slice` | After each slice-boundary gate (multi-slice task-stream loop) |
+| `end-gate` | After the full end-of-task test battery passes (multi-slice loop) |
+| `prepare-review-cl` | After `p4-task-stream-to-pr.sh --prepare-review-cl` returns a CL number |
+| `promote` | After `p4-task-stream-to-pr.sh --promote-reviewed-cl <CL>` submits the CL (just before the `commit` / `push` / `pr` phases) |
+
 **Why** — real-time visibility is otherwise expensive: the `<agentId>.output` stdout-capture file is empty for non-Bash agent work, and watching git-status snapshots in a loop is noisy. A small explicit log is low-cost to emit and gives the user a clean stream of "agent is at step N of M". Best-effort — not a merge gate; agents that forget aren't blocked but visibility regresses.
 
 **Quoting note** — phase + message live on one bash arg; use shell-safe quoting (no embedded newlines; avoid `$` unless intentional). Anything with backticks or curly braces should be single-quoted.
@@ -152,7 +162,7 @@ Each per-agent `triggers:` frontmatter list mirrors its row plus agent-specific 
 
 ## Debug-mode pause-loop (overrides ship-loop)
 
-When the user prompt matches the `debug-detective` trigger row above ("fix bug", "debug X", "investigate Y", "wrong output", "regression", "crash", "broken", "doesn't work", "looks wrong", "this used to work"), the orchestrator follows a **Cursor-style pause-loop** and **suspends the default autonomous ship-loop** (memory `feedback_autonomous_ship_loop.md`) for the duration of the investigation.
+When the user prompt matches the `debug-detective` trigger row above ("fix bug", "debug X", "investigate Y", "wrong output", "regression", "crash", "broken", "doesn't work", "looks wrong", "this used to work"), the orchestrator follows a **Cursor-style pause-loop** and **suspends BOTH ship-loop variants** — the default git ship-loop AND the P4-gated ship-loop (per [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop) — for the duration of the investigation. The override applies regardless of whether `SMATCHET_AGENT_VCS` is `git` or `p4`; debug investigations always pause both pipelines.
 
 **Phases — every phase ends in an explicit pause:**
 

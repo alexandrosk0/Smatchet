@@ -22,6 +22,13 @@ PASSED=0
 FAILED=0
 PROBE_AGENT_A="phase7-probe-a"
 PROBE_AGENT_B="phase7-probe-b"
+PROBE_AGENT_PREP="phase7-probe-prep"
+PROBE_PROMOTE_AGENT="phase7-probe-promote"
+
+# Track pending CLs created by scenarios 4 + 5 so cleanup can remove them
+# even when assertions fail mid-scenario.
+PREP_CL=""
+STRANDED_CL=""
 
 # ----- preconditions -------------------------------------------------------
 # Helper-script precheck — if any of the dependent scripts (owned by #380
@@ -75,7 +82,23 @@ cleanup_probe() {
     rm -rf ".claude/streams/${agent_id}"
 }
 
-trap 'cleanup_probe "$PROBE_AGENT_A"; cleanup_probe "$PROBE_AGENT_B"' EXIT
+# Cleanup for scenarios 4 + 5: any pending CL we created lives on the main
+# client and may have an attached shelf. Order matters — `p4 change -d` on
+# a CL with opened files OR a shelf returns "has files" error. So:
+#   1. shelve -d   (kills the shelf, files stay opened)
+#   2. revert      (drops the opened files; for adds this also removes
+#                   the on-disk file, restoring the workspace)
+#   3. change -d   (deletes the now-empty pending CL)
+cleanup_pending_cl() {
+    local cl="$1"
+    [ -n "$cl" ] || return 0
+    : "${P4_MAIN_CLIENT:=smatchet_main_${P4USER}}"
+    "$P4_BIN" shelve -d -c "$cl" >/dev/null 2>&1 || true
+    P4CLIENT="$P4_MAIN_CLIENT" "$P4_BIN" revert -c "$cl" //smatchet/main/... >/dev/null 2>&1 || true
+    "$P4_BIN" change -d "$cl" >/dev/null 2>&1 || true
+}
+
+trap 'cleanup_pending_cl "$PREP_CL"; cleanup_pending_cl "$STRANDED_CL"; cleanup_probe "$PROBE_AGENT_A"; cleanup_probe "$PROBE_AGENT_B"; cleanup_probe "$PROBE_AGENT_PREP"; cleanup_probe "$PROBE_PROMOTE_AGENT"' EXIT
 
 # ----- scenario 1: dual-VCS round-trip ------------------------------------
 echo ""
@@ -163,6 +186,192 @@ assert_eq "GC dry-run identifies both task streams" "2" "${purgeable// /}"
 bash scripts/dev/p4-task-stream-gc.sh --older-than-days 0 >/dev/null 2>&1
 remaining=$("$P4_BIN" streams "//smatchet/task-*" 2>/dev/null | grep -c "phase7-probe-" || true)
 assert_eq "GC real run removes both" "0" "${remaining// /}"
+
+# ----- scenario 4: prepare-review-cl creates pending CL + shelf ------------
+# Covers `bash scripts/dev/p4-task-stream-to-pr.sh --prepare-review-cl`
+# from docs/design/p4-gated-ship-loop.md. Verifies that prepare-mode:
+#   1. Creates a NAMED pending CL on //smatchet/main (not the default
+#      changelist).
+#   2. Stamps the CL description with the contract tag
+#      `task-stream-id: <agent-id>` (promote-mode validates against this).
+#   3. Shelves the CL (so a human can review in P4V from any machine).
+#   4. Does NOT call git or gh — script exits cleanly without touching
+#      the canonical git working tree's branch state.
+echo ""
+echo "=== Scenario 4: --prepare-review-cl creates pending CL + shelf ==="
+
+# Pre-flight: prepare-mode refuses if the canonical main client carries
+# any pending CL (per the script's hard rule — leftover state must be the
+# user's call to clean up). If we detect pre-existing pending CLs on the
+# canonical client, skip scenario 4 cleanly rather than asserting against
+# state we can't safely mutate.
+main_client_probe="${P4_MAIN_CLIENT:-smatchet_main_${P4USER}}"
+if pending_probe=$("$P4_BIN" changes -s pending -c "$main_client_probe" 2>/dev/null); then
+    pending_probe_count=$(printf '%s' "$pending_probe" | grep -c . || true)
+else
+    pending_probe_count=0
+fi
+if [ "${pending_probe_count:-0}" -gt 0 ]; then
+    echo "  SKIP: ${main_client_probe} has ${pending_probe_count} pre-existing pending CL(s) — scenario 4 cannot mutate user state"
+    echo "  (clean up unrelated pending CLs before re-running this test for full coverage)"
+else
+    cleanup_probe "$PROBE_AGENT_PREP"  # leftover state
+    ws_prep=$(bash scripts/dev/p4-task-stream.sh "$PROBE_AGENT_PREP" 2>/dev/null)
+    [ -n "$ws_prep" ] && [ -d "$ws_prep" ]
+    assert_eq "prepare probe: alloc emits workspace" "ok" "$([ -n "$ws_prep" ] && [ -d "$ws_prep" ] && echo ok)"
+
+# Seed a brand-new file into the task stream so prepare has something to
+# integrate. Use a probe-prefixed name so the file is unambiguously test
+# debris (cleanup will revert it).
+probe_file="phase7-probe-prep-touched.txt"
+echo "phase7 probe content $(date +%s)" > "${ws_prep}/${probe_file}"
+(
+    cd "$ws_prep"
+    P4CLIENT="task_${PROBE_AGENT_PREP}" "$P4_BIN" add "$probe_file" >/dev/null 2>&1 || true
+    P4CLIENT="task_${PROBE_AGENT_PREP}" "$P4_BIN" submit -d "phase7 probe add" >/dev/null 2>&1
+) || true
+
+# Run prepare-mode. P4_MAIN_CLIENT must be exported so the helper sees it
+# for cleanup. Stdout captures the CL number (the contract per the script
+# header) — stderr carries progress.
+# Use the `if foo; then …; else …; fi` idiom to capture the exit code
+# safely — bare `cmd; rc=$?` aborts under `set -e` if cmd fails, and the
+# script's EXIT trap then masks the abort with exit 0.
+PREP_OUT=$(mktemp)
+PREP_ERR=$(mktemp)
+if P4PORT="${P4PORT}" P4USER="${P4USER}" P4_BIN="${P4_BIN}" \
+        bash scripts/dev/p4-task-stream-to-pr.sh "$PROBE_AGENT_PREP" "Phase 7 prepare probe" --prepare-review-cl > "$PREP_OUT" 2>"$PREP_ERR"; then
+    prep_exit=0
+else
+    prep_exit=$?
+fi
+PREP_CL=$(tail -1 "$PREP_OUT" | tr -d '[:space:]')
+if [ "$prep_exit" -ne 0 ]; then
+    echo "  DEBUG: prepare-mode stderr tail:" >&2
+    tail -10 "$PREP_ERR" >&2
+fi
+rm -f "$PREP_OUT" "$PREP_ERR"
+
+assert_eq "prepare-mode exits 0" "0" "$prep_exit"
+# CL number is purely digits — guard against the script accidentally
+# leaking a DRY-RUN sentinel or empty string.
+prep_is_cl=$(printf '%s' "$PREP_CL" | grep -cE '^[0-9]+$' || true)
+assert_eq "prepare-mode emits CL number on stdout" "1" "${prep_is_cl}"
+
+# Validate the CL state via `p4 change -o <CL>` so we're checking actual
+# server-side facts, not just stdout.
+if [ -n "$PREP_CL" ] && [ "$prep_is_cl" = "1" ]; then
+    cl_spec=$("$P4_BIN" change -o "$PREP_CL" 2>&1 || true)
+
+    cl_status=$(printf '%s\n' "$cl_spec" | awk '/^Status:/ { print $2; exit }')
+    assert_eq "prepared CL status is pending" "pending" "$cl_status"
+
+    if printf '%s\n' "$cl_spec" | grep -qF "task-stream-id: ${PROBE_AGENT_PREP}"; then
+        tag_ok=ok
+    else
+        tag_ok=missing
+    fi
+    assert_eq "prepared CL has task-stream-id tag" "ok" "$tag_ok"
+
+    # `p4 describe -S <CL>` lists shelved files. When the CL has a shelf
+    # the output contains a "Shelved files" header (older p4) or
+    # "Shelved Files" (varies by version) plus the depot paths under it.
+    # Use case-insensitive grep on "shelved" to cover both spellings.
+    describe_out=$("$P4_BIN" describe -S "$PREP_CL" 2>&1 || true)
+    if printf '%s\n' "$describe_out" | grep -qi 'shelved'; then
+        shelf_ok=ok
+    else
+        shelf_ok=missing
+    fi
+    assert_eq "prepared CL has a shelf" "ok" "$shelf_ok"
+fi
+fi  # end scenario-4 pre-flight-clean guard
+
+# ----- scenario 5: promote-reviewed-cl refuses stranded / mismatched CL ----
+# Covers `bash scripts/dev/p4-task-stream-to-pr.sh --promote-reviewed-cl`
+# refusal path: when the CL is pending but its description doesn't carry
+# the `task-stream-id: <agent-id>` tag this caller expects, promote MUST
+# refuse with exit 5 and surface manual cleanup instructions (never
+# auto-clean — that's the user's call).
+echo ""
+echo "=== Scenario 5: --promote-reviewed-cl refuses stranded CL ==="
+
+main_client="${P4_MAIN_CLIENT:-smatchet_main_${P4USER}}"
+
+# Manually create an empty pending CL on the main client with a description
+# that does NOT contain the expected task-stream-id tag. This simulates
+# stranded state from a different prior run (or hand-edited mistake).
+stranded_out=$(P4CLIENT="$main_client" "$P4_BIN" change -o | awk '
+    /^Description:/ {
+        print
+        printf "\tphase7 stranded probe (intentionally missing task-stream-id tag)\n"
+        in_desc=1
+        next
+    }
+    in_desc && /^[ \t]/ { next }
+    in_desc && /^$/ { next }
+    in_desc && /^[A-Z]/ { in_desc=0; print; next }
+    !in_desc { print }
+' | P4CLIENT="$main_client" "$P4_BIN" change -i 2>&1)
+STRANDED_CL=$(printf '%s\n' "$stranded_out" | sed -nE 's/.*Change ([0-9]+) created.*/\1/p' | tail -1)
+
+if [ -n "$STRANDED_CL" ]; then
+    if promote_out=$(bash scripts/dev/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$STRANDED_CL" 2>&1); then
+        promote_exit=0
+    else
+        promote_exit=$?
+    fi
+
+    assert_eq "promote refuses stranded CL with exit 5" "5" "$promote_exit"
+    if printf '%s\n' "$promote_out" | grep -qF "missing tag 'task-stream-id: ${PROBE_PROMOTE_AGENT}'"; then
+        refusal_ok=ok
+    else
+        refusal_ok="missing — got: $(printf '%s' "$promote_out" | head -3)"
+    fi
+    assert_eq "promote refusal surfaces missing-tag message" "ok" "$refusal_ok"
+    if printf '%s\n' "$promote_out" | grep -qF "p4 shelve -d -c ${STRANDED_CL}"; then
+        cleanup_hint_ok=ok
+    else
+        cleanup_hint_ok=missing
+    fi
+    assert_eq "promote refusal prints cleanup commands" "ok" "$cleanup_hint_ok"
+else
+    echo "  SKIP: could not create stranded probe CL — p4 change -i did not return a CL number" >&2
+fi
+
+# Also verify the non-existent-CL refusal path.
+nonexistent_cl=99999999
+if promote_missing_out=$(bash scripts/dev/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$nonexistent_cl" 2>&1); then
+    promote_missing_exit=0
+else
+    promote_missing_exit=$?
+fi
+: "${promote_missing_out:=}"  # silence unused-var warning under set -u
+assert_eq "promote refuses non-existent CL with exit 5" "5" "$promote_missing_exit"
+
+# ----- scenario 6: lock-backend auto-flip if-unset pattern -----------------
+# Covers the contract from docs/design/p4-gated-ship-loop.md § Resolved
+# invariants § Plan-lock backend in p4-mode: orchestrator does
+#     export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
+# (no colon — preserves empty-string setting that scenario 2 above relies
+# on at this file's line 130). Verifies the bash-pattern semantics
+# directly so a future refactor that drifts to `:-` form fails this gate.
+echo ""
+echo "=== Scenario 6: SMATCHET_LOCK_BACKEND if-unset auto-flip semantics ==="
+
+# (a) Unset env → pattern fills in p4-counter.
+result_unset=$(bash -c 'unset SMATCHET_LOCK_BACKEND; export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"; echo "[$SMATCHET_LOCK_BACKEND]"')
+assert_eq "if-unset: unset env fills p4-counter" "[p4-counter]" "$result_unset"
+
+# (b) Empty env → pattern PRESERVES empty (without this, scenario 2 above
+#     breaks: SMATCHET_LOCK_BACKEND="" is the contract that lock-claim
+#     stays on git-ref).
+result_empty=$(SMATCHET_LOCK_BACKEND="" bash -c 'export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"; echo "[$SMATCHET_LOCK_BACKEND]"')
+assert_eq "if-unset: empty env preserved (NOT overridden to p4-counter)" "[]" "$result_empty"
+
+# (c) Explicit value → pattern respects user choice.
+result_set=$(SMATCHET_LOCK_BACKEND=git-ref bash -c 'export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"; echo "[$SMATCHET_LOCK_BACKEND]"')
+assert_eq "if-unset: explicit value respected" "[git-ref]" "$result_set"
 
 # ----- final tally ---------------------------------------------------------
 echo ""
