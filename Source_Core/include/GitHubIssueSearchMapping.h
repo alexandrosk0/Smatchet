@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <vector>
 
 namespace smatchet {
 namespace github {
@@ -75,6 +76,15 @@ nlohmann::json MapGraphQlNodeToRestShape(const nlohmann::json& node);
 /// `EnrichPullRequestFieldsFromJson`. Returns `null` JSON when the node is
 /// not a PR or is malformed (the caller treats null as "skip enrichment").
 nlohmann::json MapGraphQlPullRequestNodeToRestPrShape(const nlohmann::json& node);
+
+/// PR12 latency fix — pure-logic helper exposed for doctest coverage. Maps a
+/// GraphQL `search.nodes` array into a vector of CachedTicket, applying the
+/// `includePullRequests` filter and stripping the `kIsPullRequestSentinel`
+/// before return. Malformed nodes (mapping throws) are silently skipped so
+/// the helper remains logger-free; the live caller in `GitHubIssueSearch.cpp`
+/// can log a summary count if needed.
+std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, const std::string& owner,
+                                                    const std::string& repo, bool includePullRequests);
 
 } // namespace github
 } // namespace smatchet

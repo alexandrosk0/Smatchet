@@ -159,6 +159,55 @@ std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, 
                                                    outFullSyncCompleted, outFetchError, outWarning);
 }
 
+TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& onBatch,
+                                                            const CancelCallback& shouldCancel,
+                                                            const TrackerConfig* configOverride,
+                                                            const ViewsStore* /*viewsOverride*/) {
+    // PR12 latency fix — per-page emission. Each GraphQL page's mapped tickets
+    // are posted to `onBatch` immediately, so the UI grid populates
+    // progressively instead of waiting for all 4 pages (~6s wall-clock).
+    TrackerIssueFetchSummary summary;
+    const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
+
+    std::string fetchError;
+    std::string fetchWarning;
+    bool fullSyncCompleted = false;
+    std::size_t pageCount = 0;
+    std::size_t totalEmitted = 0;
+
+    auto onPage = [&](const std::vector<CachedTicket>& page, bool isLast) {
+        ++pageCount;
+        totalEmitted += page.size();
+        LOG_INFO("GitHubClient::FetchIssuesStreamed: emitting page #%zu size=%zu isLast=%d", pageCount, page.size(),
+                 isLast ? 1 : 0);
+        if (!onBatch) {
+            return;
+        }
+        if (shouldCancel && shouldCancel()) {
+            return;
+        }
+        if (page.empty()) {
+            return;
+        }
+        // Copy into a movable buffer — the per-page helper returns const& so we
+        // can't move directly. Per-batch copy is cheap (≤100 tickets) and the
+        // alternative is duplicating the helper's signature.
+        std::vector<CachedTicket> batch = page;
+        onBatch(std::move(batch));
+    };
+
+    smatchet::github::FetchIssuesViaRestApi(baseUrl_, pat_, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
+                                            &fullSyncCompleted, &fetchError, &fetchWarning, onPage);
+
+    summary.FetchedCount = totalEmitted;
+    summary.FullSyncCompleted = fullSyncCompleted;
+    summary.FetchError = fetchError;
+    summary.Warning = fetchWarning;
+    LOG_INFO("GitHubClient::FetchIssuesStreamed: done pages=%zu total=%zu fullSync=%d err='%s'", pageCount,
+             totalEmitted, fullSyncCompleted ? 1 : 0, fetchError.c_str());
+    return summary;
+}
+
 bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
                                       const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
                                       std::string& outError) {
@@ -185,12 +234,21 @@ bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::st
         f.Type = type;
         outCatalog.Fields.push_back(f);
     };
-    addField("state", kStateLabel, "string");
+    // Field IDs must match what GitHubIssueSearchMapping writes into
+    // CachedTicket::fieldValues (summary/description/status/assignee/labels/
+    // author/created/updated) — otherwise the Views UI fields-picker shows
+    // entries that have no underlying data, and Jira-shaped column IDs
+    // (which the data IS keyed by) are absent from the picker. The kFooLabel
+    // strings remain GitHub-native display names.
+    addField("summary", kTitleLabel, "string");
+    addField("description", kBodyLabel, "string");
+    addField("status", kStateLabel, "string");
+    addField("assignee", kAssigneesLabel, "string");
     addField("labels", kLabelsLabel, "array");
-    addField("assignees", kAssigneesLabel, "array");
+    addField("author", "Author", "string");
+    addField("created", "Created", "datetime");
+    addField("updated", "Updated", "datetime");
     addField("milestone", kMilestoneLabel, "string");
-    addField("title", kTitleLabel, "string");
-    addField("body", kBodyLabel, "string");
     // PR12 — PR-only fields. Strings ("true"/"false"/"computing"/"" for
     // mergeable; "true"/"false"/"" for draft) consistent with the existing
     // bool-as-string pattern used by other tracker catalogs.
@@ -210,12 +268,16 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
     // error, which AppController treats as a transient failure and retries forever).
     outError.clear();
     outFieldIdCanEdit.clear();
-    outFieldIdCanEdit["state"] = true;
+    // Field IDs aligned with the catalog (summary/description/status/assignee).
+    outFieldIdCanEdit["summary"] = true;
+    outFieldIdCanEdit["description"] = true;
+    outFieldIdCanEdit["status"] = true;
+    outFieldIdCanEdit["assignee"] = true;
     outFieldIdCanEdit["labels"] = true;
-    outFieldIdCanEdit["assignees"] = true;
     outFieldIdCanEdit["milestone"] = true;
-    outFieldIdCanEdit["title"] = true;
-    outFieldIdCanEdit["body"] = true;
+    outFieldIdCanEdit["author"] = false; // immutable on GitHub
+    outFieldIdCanEdit["created"] = false;
+    outFieldIdCanEdit["updated"] = false;
     return true;
 }
 

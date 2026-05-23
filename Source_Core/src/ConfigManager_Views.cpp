@@ -143,6 +143,25 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
         ws.Views.push_back(std::move(v));
         return ws;
     }
+    if (backendKey == "GitHub") {
+        // GitHub has no `priority` / `issuetype` / `description`-as-column —
+        // seed only fields present in TrackerFieldCatalog for the GitHub
+        // backend. Users add `pr.head` / `pr.base` / `pr.mergeable` / `pr.draft`
+        // when their JQL opts into `type:pr` per PR12.
+        ViewDefinition v;
+        v.Id = "github_default_view";
+        v.Name = "Default GitHub View";
+        v.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
+        v.Fields = {"summary", "description", "status", "assignee", "labels", "author", "created", "updated"};
+        v.ColumnOrder = {"id"};
+        for (const auto& fieldId : v.Fields) {
+            v.ColumnOrder.push_back("field:" + fieldId);
+        }
+        v.ColumnWidths["id"] = 90.0f;
+        ws.ActiveViewId = v.Id;
+        ws.Views.push_back(std::move(v));
+        return ws;
+    }
 
     ViewDefinition defaultView;
     defaultView.Id = "default_view";
@@ -202,6 +221,9 @@ std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerTy
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (t == "plane") {
         return "Plane";
+    }
+    if (t == "github") {
+        return "GitHub";
     }
     return SmatchetDefaults::kDefaultBackendType;
 }

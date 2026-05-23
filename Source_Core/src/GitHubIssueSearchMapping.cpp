@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // PR12 — pure-logic JSON → CachedTicket mapping. Extracted out of
 // GitHubIssueSearch.cpp so doctest can exercise it without cpr.
@@ -127,11 +128,14 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
         ticket.fieldValues["assignee"] = std::string();
     }
 
+    // GitHub calls the creator `author` in the GraphQL/REST surface; Jira calls
+    // it `reporter`. Write both so views can opt into either naming.
+    std::string creatorLogin;
     if (issue.is_object() && issue.contains("user") && issue["user"].is_object()) {
-        ticket.fieldValues["reporter"] = JsonString(issue["user"], "login");
-    } else {
-        ticket.fieldValues["reporter"] = std::string();
+        creatorLogin = JsonString(issue["user"], "login");
     }
+    ticket.fieldValues["reporter"] = creatorLogin;
+    ticket.fieldValues["author"] = creatorLogin;
 
     std::string labelStr;
     if (issue.is_object() && issue.contains("labels") && issue["labels"].is_array()) {
@@ -353,6 +357,61 @@ void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json&
         draft = prDetail["draft"].get<bool>() ? "true" : "false";
     }
     ticket.fieldValues["pr.draft"] = draft;
+}
+
+std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, const std::string& owner,
+                                                    const std::string& repo, bool includePullRequests) {
+    std::vector<CachedTicket> out;
+    if (!nodes.is_array()) {
+        return out;
+    }
+    out.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        if (!node.is_object()) {
+            continue;
+        }
+        // Reject nodes missing required identity fields before mapping. Without
+        // these guards, GitHub objects lacking __typename or a positive integer
+        // `number` would produce bogus tickets (e.g. `#0`). CR PR #399.
+        const auto tnIt = node.find("__typename");
+        const bool hasType = (tnIt != node.end() && tnIt->is_string());
+        if (!hasType) {
+            continue;
+        }
+        const std::string typeName = tnIt->get<std::string>();
+        const bool isPr = (typeName == "PullRequest");
+        const bool isIssue = (typeName == "Issue");
+        if (!isPr && !isIssue) {
+            continue;
+        }
+        if (isPr && !includePullRequests) {
+            continue;
+        }
+        const auto numIt = node.find("number");
+        if (numIt == node.end() || !numIt->is_number_integer() || numIt->get<long long>() <= 0) {
+            continue;
+        }
+        try {
+            const nlohmann::json restShape = MapGraphQlNodeToRestShape(node);
+            CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(restShape, owner, repo);
+            if (isPr) {
+                const nlohmann::json prShape = MapGraphQlPullRequestNodeToRestPrShape(node);
+                if (!prShape.is_null()) {
+                    EnrichPullRequestFieldsFromJson(t, prShape);
+                }
+            }
+            // Strip the internal sentinel — callers see PR rows via the [PR]
+            // summary prefix + pr.* columns, not the sentinel.
+            t.fieldValues.erase(kIsPullRequestSentinel);
+            out.push_back(std::move(t));
+        } catch (const std::exception&) {
+            // Malformed node — skip silently. The live caller logs aggregate
+            // counts via LOG_INFO so a per-node LOG_WARN here would only
+            // duplicate noise (and would force this pure-logic TU to depend
+            // on Logger.h, which we deliberately avoid for doctest purity).
+        }
+    }
+    return out;
 }
 
 } // namespace github
