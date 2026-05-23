@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <future>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,12 @@ struct TrackerGridFieldAsyncState {
     std::vector<TrackerUser> watchersLoadedList;
     std::string watchersLoadedError;
 
+    bool watchSelfInProgress = false;
+    std::future<std::string> watchSelfFuture;
+    std::string watchSelfError;
+    std::string watchSelfPendingIssueKey;
+    std::set<std::string> watchSelfSucceededIssueKeys;
+
     bool votesPanelOpen = false;
     std::string votesPopupIssueKey;
     bool votesLoadInProgress = false;
@@ -57,10 +64,10 @@ class TrackerGridFieldDisplay {
 
     static void RenderAttachmentsField(AppController& app, const std::string& currentValue, float availWidth,
                                        bool tooltipsEnabled);
-    static void RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue, float availWidth,
-                                    bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
-    static void RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue, float availWidth,
-                                 bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
+    static void RenderWatchersField(AppController& app, const std::string& issueKey, const std::string& currentValue,
+                                    float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
+    static void RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue,
+                                 float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
     static void RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
 
     /** Column key `aggregateprogress` (Jira schema id; case-insensitive). */
@@ -93,9 +100,3 @@ class TrackerGridFieldDisplay {
     static void DrawWatchersListWindow(TrackerGridFieldAsyncState& async);
     static void DrawVotesListWindow(TrackerGridFieldAsyncState& async);
 };
-
-
-
-
-
-

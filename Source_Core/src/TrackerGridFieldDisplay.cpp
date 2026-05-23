@@ -56,6 +56,7 @@ struct AttachmentRenderModel {
 
 struct WatchersRenderModel {
     bool parsed = false;
+    bool isWatching = false;
     std::string line;
     std::string tooltip;
 };
@@ -343,6 +344,7 @@ WatchersRenderModel BuildWatchersRenderModel(const std::string& currentValue) {
     }
 
     model.parsed = true;
+    model.isWatching = isWatching;
     if (watchCount <= 0) {
         model.line = isWatching ? "You watch" : "No watchers";
     } else if (watchCount == 1) {
@@ -712,6 +714,38 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip(watchersBusy ? "Loading watchers..." : "Load watcher list from Tracker");
     }
+
+    const bool alreadyWatchedThisSession = (async.watchSelfSucceededIssueKeys.count(issueKey) > 0);
+    if (model.parsed && !model.isWatching && !alreadyWatchedThisSession) {
+        ImGui::SameLine();
+        const std::string watchBtn = "Watch##wself_" + issueKey;
+        const bool watchBusy = async.watchSelfInProgress && async.watchSelfFuture.valid() &&
+                               async.watchSelfFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+        if (watchBusy) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::SmallButton(watchBtn.c_str())) {
+            async.watchSelfPendingIssueKey = issueKey;
+            async.watchSelfInProgress = true;
+            async.watchSelfError.clear();
+            async.watchSelfFuture = std::async(std::launch::async, [&app, issueKey]() {
+                std::string err;
+                return app.AddIssueWatcher(issueKey, err) ? std::string() : err;
+            });
+        }
+        if (watchBusy) {
+            ImGui::EndDisabled();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (watchBusy) {
+                ImGui::SetTooltip("Adding you as a watcher...");
+            } else if (!async.watchSelfError.empty() && !async.watchSelfFuture.valid()) {
+                ImGui::SetTooltip("Watch failed: %s", async.watchSelfError.c_str());
+            } else {
+                ImGui::SetTooltip("Watch this issue (adds you as a watcher)");
+            }
+        }
+    }
 }
 
 void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::string& issueKey,
@@ -786,6 +820,31 @@ void TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue
 }
 
 void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState& d) {
+    if (d.watchSelfFuture.valid()) {
+        if (d.watchSelfFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            try {
+                std::string err = d.watchSelfFuture.get();
+                d.watchSelfInProgress = false;
+                if (err.empty()) {
+                    d.watchSelfSucceededIssueKeys.insert(d.watchSelfPendingIssueKey);
+                    d.watchSelfError.clear();
+                } else {
+                    d.watchSelfError = std::move(err);
+                    LOG_ERROR("TrackerGridFieldDisplay: watch self failed issue=%s err=%s",
+                              d.watchSelfPendingIssueKey.c_str(), d.watchSelfError.c_str());
+                }
+            } catch (const std::exception& ex) {
+                d.watchSelfInProgress = false;
+                d.watchSelfError = std::string("Watch failed: ") + ex.what();
+                LOG_ERROR("TrackerGridFieldDisplay: watchSelf future exception: %s", ex.what());
+            } catch (...) {
+                d.watchSelfInProgress = false;
+                d.watchSelfError = "Watch failed.";
+                LOG_ERROR("TrackerGridFieldDisplay: watchSelf future unknown exception");
+            }
+        }
+    }
+
     if (d.watchersFuture.valid()) {
         if (d.watchersFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             try {
