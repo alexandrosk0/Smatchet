@@ -244,6 +244,34 @@ Phase 0 closes when a throwaway client can submit + re-sync a file. This step ge
 - **Service wrapper**: original runbook prescribed `sc.exe create … binPath= "…\p4d.exe -r … -p … -L …"` (direct `p4d.exe` invocation). On Helix Core 2025.2 that registration succeeds but `Start-Service` fails — `p4d.exe` has no SCM dispatcher. The runbook above is the corrected version using `p4s.exe` + per-service env vars (`p4 set -S p4d_smatchet …`).
 - **Existing Mainbot install (2026-05-22)**: actual server root is `C:\depot\` (Helix installer default) instead of the runbook's `C:\depot-smatchet\` — purely cosmetic, both paths work equivalently. Service was renamed from the installer-default `Perforce` to `p4d_smatchet` in-place; per-service env vars point at `C:\depot\`. Case handling is `insensitive`, which is the correct Windows setting per the revised guidance above. Doc keeps the original `C:\depot-smatchet\` path as the canonical fresh-install target so new installs don't accidentally collide with a future Helix re-install at `C:\depot`.
 
+## Per-machine perf baseline
+
+Used by the P4-gated ship-loop's perf gate (per [`docs/design/p4-gated-ship-loop.md`](../design/p4-gated-ship-loop.md) § Per-machine perf baseline setup) and by the slice-boundary auto-run in [`AGENTS.md`](../../AGENTS.md) § Perf slice-boundary auto-run. Each developer machine that participates in p4-mode work gets its own per-host baseline so a benchmark recorded on a fast desktop doesn't false-fail a regression check on a slower laptop.
+
+**One-time per machine:**
+
+1. Pick a stable short name for the host (e.g. `desktop`, `laptop`, `mainbot`). Add it to your shell profile so every interactive p4-mode session sees it:
+   ```bash
+   # ~/.bashrc or equivalent
+   export SMATCHET_PERF_HOST=desktop
+   ```
+2. Bootstrap a baseline for each scenario you expect to gate against:
+   ```bash
+   for scenario in idle priority-grid-scroll cell-edit-burst ai-chat-history-render attachment-preview-open; do
+       bash scripts/dev/perf-baseline.sh init "$scenario" --host="$SMATCHET_PERF_HOST"
+   done
+   ```
+   `perf-baseline.sh init` runs the scenario via `perf-run.sh` and writes the captured snapshot to `docs/perf/baselines/<scenario>.<host>.json`. Both `desktop.json` and `laptop.json` can coexist for the same scenario — the gate picks the one matching the current `SMATCHET_PERF_HOST`.
+3. Commit the new baseline files via the same path you'd use for a baseline bump (see `agents/perf-gatekeeper.md` § Hard rules). The baselines are checked-in source of truth.
+
+**At gate time:**
+
+- If `SMATCHET_PERF_HOST` is unset, the gate logs `MISSING_BASELINE` for every affected scenario and skips (non-blocking) rather than mis-reporting against a foreign host's baseline.
+- If `SMATCHET_PERF_HOST=desktop` but `docs/perf/baselines/<scenario>.desktop.json` doesn't exist, the gate logs `MISSING_BASELINE` for that scenario specifically. Bootstrap with `perf-baseline.sh init` to add it.
+- The dev host (`dev`) and CI host (`ci-windows-latest`) baselines used elsewhere in the repo are NOT overwritten by per-machine bootstrap — `init` writes to the host you named, not to `dev`.
+
+**Not auto-detected**: the host name is explicit opt-in, not derived from `$HOSTNAME`. Auto-detection would couple gate behaviour to the host's literal hostname (which changes across VMs, dev-container rebuilds, fresh laptops), making baseline files fragile. Explicit opt-in keeps the human in the loop on the binding.
+
 ## Open items (post-Phase-0)
 
 - Remote `<REMOTE_HOST>` to be supplied by user post-install.

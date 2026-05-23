@@ -160,3 +160,99 @@ If they disagree, something has gone wrong with the dual-VCS state — investiga
 - **Public discoverability**: the GitHub repo is the public face; p4 depot is private to the dev box.
 
 For all of these, ship via git/GitHub. The Perforce layer is purely for agentic-WIP primitives that git can't express.
+
+## P4-gated ship-loop
+
+When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a P4-gated ship-loop instead of the default git ship-loop. Documented at [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop; this section is the full phase sequence + invariants. Plan: [`docs/design/p4-gated-ship-loop.md`](../design/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](../adr/0008-p4-gated-ship-loop.md).
+
+### Session-init in p4-mode
+
+```bash
+# Probe p4 reachability first. Refuse to silently downgrade.
+if ! p4 info >/dev/null 2>&1; then
+    # AskUserQuestion: fall back to git ship-loop / abort / follow SETUP.md and retry
+    ...
+fi
+
+# Plan-lock backend auto-flips to p4-counter, ONLY when unset (no colon —
+# empty-string setting is preserved so test-p4-dual-vcs.sh scenario 2
+# (line 149) keeps passing).
+export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
+```
+
+### Sub-variant selection (ask the user)
+
+| Situation | p4 stream | Promote-to-PR |
+|---|---|---|
+| **Default** | `//smatchet/main` via canonical client directly | `p4 submit` (approved CL) + `git push` + `gh pr create` |
+| **User-approved task stream** | `bash scripts/dev/p4-task-stream.sh <id>` | `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>` |
+
+**Default**: always `//smatchet/main`. Task streams are never chosen automatically — orchestrator asks via `AskUserQuestion` before allocating one.
+
+**Suggest a task stream** when: multiple slices planned OR write set spans multiple subsystems.
+
+**Never suggest** for single-slice, single-subsystem work. Ask once at task start; do not re-ask mid-task.
+
+### Phase sequence — small-change loop (single slice, main stream)
+
+1. **`p4 iterate` on `//smatchet/main`** — `p4 edit` / `p4 add` / `p4 reconcile` into a pending CL. Keep the final review candidate **pending**; do not submit yet.
+2. **Smoke build** (`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone`) — confirm compilable BEFORE shelf. Failure → fix → re-build, no shelf yet. Pass → continue.
+3. **Shelf for review** (`p4 shelve -c <pending-CL>`) — present shelf to user via `AskUserQuestion`. Rejected → iterate → re-shelve with `p4 shelve -f -c <pending-CL>`. Approved → continue.
+4. **Full tests** — `doctor.sh`, `ninja-test-msys2` + `ctest`, dual-target sentinels, `lint-flush.sh`, coverage-delta (Source_Core touch), doc-anchors / agent-contract (AGENTS.md / agents/** touch), `test-all.sh`, `ninja-ui-test-msys2` (visual touch), `perf-run.sh` + `perf-compare.py` (scenario-map hit). Failure → fix → re-test (no re-review). Pass → continue.
+5. **Promote to PR** — `p4 submit -c <approved-CL>` lands on `//smatchet/main`. Then `git add -A && git commit -m "<title>" && git push -u origin <branch> && gh pr create --draft`. Post-ship `AskUserQuestion` fires with option 3 pre-selected.
+
+### Phase sequence — multi-slice loop (task stream, user-approved)
+
+For each slice (repeat until all slices done):
+
+- **Iterate in task stream** — edit → `p4 submit` to `//smatchet/task-<id>/...`.
+- **Inter-slice slice-boundary gate** — at-most-once per [`AGENTS.md`](../../AGENTS.md) § Build / ctest cadence: `ninja-test-msys2` + `ctest` + `lint-flush.sh` + `test-all.sh`. `code-review` agent NOT dispatched here. Failure → fix in p4 → re-gate (still one slice; cadence respected within the retry loop).
+
+After all slices pass slice-boundary gates:
+
+- **End-gate** — full battery of sentinels + coverage-delta + doc-anchors + agent-contract + bucket-E + perf. Runs ONCE here, NOT per slice. Failures iterate in p4 (no shelf yet; user sees nothing until end-gate green).
+- **Prepare main-stream review CL** — `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl`. Integrates task stream → `//smatchet/main` into a pending CL, resolves auto-safe, shelves it, prints CL number on stdout.
+- **Code-review pass** — `code-review` agent dispatched ONCE (cumulative diff across all slices). Findings → fix inline → re-run end-gate → re-prepare review CL → re-dispatch code-review.
+- **Shelf-for-user-validation** — `AskUserQuestion`: "All slices done, tests green, code-review clean. Shelf <CL> ready — review in P4V and confirm." Feedback → fix in p4 → `p4 shelve -f -c <CL>` → re-present. Approved → continue.
+- **Promote** — `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>`. Submits the approved CL to `//smatchet/main`, then creates git branch + commit + push + draft PR. Post-ship `AskUserQuestion` (option 3 pre-selected).
+
+### Stranded-CL recovery — `--prepare-review-cl` / `--promote-reviewed-cl`
+
+If a session dies between `--prepare-review-cl` and `--promote-reviewed-cl`, the pending main-stream CL persists across sessions. On resume:
+
+- `--promote-reviewed-cl <CL>` validates: (1) CL exists, (2) CL is pending (not submitted), (3) CL belongs to the current client, (4) CL description matches the task stream's task-id (`task-stream-id: <agent-id>` tag in the description body).
+- On mismatch, the script refuses with exit 5 and prints the manual cleanup recipe:
+  ```bash
+  p4 shelve -d -c <CL>
+  P4CLIENT=smatchet_main_$P4USER p4 revert -c <CL> //smatchet/main/...
+  p4 change -d <CL>
+  ```
+- The script never auto-cleans — the user decides whether the stranded CL contains valuable work to recover or is safe to drop.
+
+### Pure-docs slice + p4-mode
+
+The § Pure-docs slice skip rule applies as written. Shelf-review gate still fires — the user is the final reviewer in p4-mode even for docs-only changes. The pending CL is still required (a p4 shelf cannot wrap a submitted CL).
+
+### Trivial-visual-only envelope + p4-mode
+
+The envelope from [`AGENTS.md`](../../AGENTS.md) § Trivial-visual-only change envelope applies. P4 race-recovery substitutes for `git stash`:
+
+1. `p4 sync //smatchet/main/...` before opening any file for edit.
+2. `p4 edit -t +l <file>` on hot files (exclusive lock blocks concurrent edits at the p4 server — see § Exclusive file lock above).
+3. On conflict surface: `p4 resolve -am` (auto-merge), then `p4 resolve` (manual), then fall back to user.
+
+The shelf step subsumes the Pillar-4 visual-validation pause — the user reviewing the shelf IS the visual sign-off.
+
+## Destructive p4 ops pre-flight
+
+Companion to [`AGENTS.md`](../../AGENTS.md) § Destructive git ops in shared worktrees. Before running any destructive Perforce verb (`p4 revert -k`, `p4 obliterate`, `p4 unshelve -f`), run the five-step pre-flight:
+
+1. **`p4 -ztag info`** — confirm client + user. Tagged output is easier to parse + harder to misread than the human-formatted default.
+2. **`p4 opened -c default //smatchet/...`** — inventory opened files on the default change. Any non-empty result means another in-flight edit could be clobbered.
+3. **`p4 shelve -c <CL>`** any pending unrelated CLs that the destructive op might touch. Shelving preserves the work server-side; if the destructive op proves wrong, `p4 unshelve` restores it.
+4. **Run the destructive op only after 1–3 succeed.**
+5. **`p4 changes -c <client>`** to confirm post-op state matches expectation.
+
+`p4 revert` on a newly-added file removes the file from the workspace AND from the pending CL. `p4 obliterate` is admin-only and destroys submitted history — coordinate explicitly before invoking it.
+
+`p4 unshelve -f` overwrites the current workspace state with shelf content, blowing away any in-flight uncommitted edits. Pair it with step 3 (shelve current state first) before resort.
