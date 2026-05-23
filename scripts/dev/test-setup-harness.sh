@@ -97,10 +97,10 @@ for agent in perf-detective spike-hunter debug-detective; do
     fi
 done
 
-if grep -q "Claude Code skill alias" "docs/agent-rules/DELEGATION.md"; then
-    ok "DELEGATION.md mentions skill-alias availability"
+if grep -q "Claude Code skill alias" "docs/agent-rules/delegation.md"; then
+    ok "delegation.md mentions skill-alias availability"
 else
-    nope "DELEGATION.md missing skill-alias note"
+    nope "delegation.md missing skill-alias note"
 fi
 
 # -------------------------------------------------------------------- Report

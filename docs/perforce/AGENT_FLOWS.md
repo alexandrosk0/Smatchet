@@ -8,6 +8,21 @@ Smatchet runs git/GitHub as the **ship-line** (canonical, PR review, CI, merge-w
 
 This doc is the playbook for what to use when.
 
+## Topology
+
+Concern-oriented summary of which side owns which agentic-WIP primitive — absorbed from `AGENTS.md` § Dual-VCS topology per [`docs/design/agents-md-reduction.md`](../design/agents-md-reduction.md) D3.
+
+| Concern | git path | p4 path |
+|---|---|---|
+| Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash scripts/dev/p4-task-stream.sh <agent-id>` |
+| Plan-lock backend | `refs/locks/<slug>` (default) | `SMATCHET_LOCK_BACKEND=p4-counter` |
+| Submit subagent work as PR | (manual) | `bash scripts/dev/p4-task-stream-to-pr.sh <id> <title>` |
+| Stale-stream GC | (cron via `agents/git-janitor.md`) | `agents/p4-janitor.md` + `scripts/dev/p4-task-stream-gc.sh` |
+| Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
+| Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
+
+The verb-level TL;DR below extends this concern view with per-operation guidance. Existing git-centric AGENTS.md sections (merge-gates, plan-locks default, force-push carve-out, destructive-git-op preflight, ship-loops) are unchanged — the Perforce layer is purely additive, never required, never authoritative, never on the ship-line.
+
 ## TL;DR
 
 | If you need to… | git verb | p4 verb | Owner |

@@ -49,7 +49,7 @@ This re-introduces the `agent/<id>` namespace deleted post-`ClaudeCodeLocalRunne
 
 - **User reviews every p4-mode change before it reaches GitHub.** No CI cycles burned on shelves the user would reject. No CodeRabbit reviews on shelved drafts that get re-shelved 5 times before the user approves. The p4 shelf becomes the human-review primitive that git's draft-PR mechanism was trying (poorly) to be.
 - **Slower cadence for trivial fixes** — even a one-line typo fix in p4-mode goes through the shelf step. Mitigated by the small-change loop's lightweight shape: smoke build + shelve + confirm + tests + submit fits in ~30 seconds for trivial changes.
-- **Pause-loop interaction** — debug-detective triggers (per [`docs/agent-rules/DELEGATION.md`](../agent-rules/DELEGATION.md) § Debug-mode pause-loop) suspend BOTH ship-loop variants. The pause-loop continues to take precedence; p4-mode does not suppress the diagnose-first-then-confirm cycle.
+- **Pause-loop interaction** — debug-detective triggers (per [`docs/agent-rules/delegation.md`](../agent-rules/delegation.md) § Debug-mode pause-loop) suspend BOTH ship-loop variants. The pause-loop continues to take precedence; p4-mode does not suppress the diagnose-first-then-confirm cycle.
 - **No git-worktree-add in p4-mode** — subagent isolation uses `scripts/dev/p4-task-stream.sh` exclusively. Documented in AGENTS.md § P4-gated ship-loop § Key invariants. Doc-level rule, not script-level enforcement; the follow-up backlog item to add a runtime gate is flagged in the plan's § Out of scope.
 - **Stranded pending CLs persist across sessions** — if a session dies between `--prepare-review-cl` and `--promote-reviewed-cl`, the pending CL stays on the p4 server with its shelf attached. Resume via `--promote-reviewed-cl <CL>` is safe; the user is in the loop on cleanup decisions (the script prints the manual recipe and refuses to auto-clean).
 - **AskUserQuestion fires post-PR with option 3 pre-selected** — only goes away once [`docs/design/merge-gates-ci-coderabbit-comments.md`](../design/merge-gates-ci-coderabbit-comments.md) ships end-to-end. Dependency tracked in the plan's § Dependencies (sequencing).
@@ -84,6 +84,6 @@ This re-introduces the `agent/<id>` namespace deleted post-`ClaudeCodeLocalRunne
 - Rule body: [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop + § Force-push carve-out for Claude Code SDK-spawned recovery and p4 task-stream promotion.
 - Phase reference: [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop.
 - Withdrawn prior ADR (carries the original `claude/<id>` safety analysis): [ADR 0005](0005-force-push-carve-out-for-spawned-agent-recovery.md).
-- Recovery procedure (force-push only applies during this loop): [`docs/agent-rules/DELEGATION.md`](../agent-rules/DELEGATION.md) § API-500 mid-run recovery.
+- Recovery procedure (force-push only applies during this loop): [`docs/agent-rules/delegation.md`](../agent-rules/delegation.md) § API-500 mid-run recovery.
 - Script: [`scripts/dev/p4-task-stream-to-pr.sh`](../../scripts/dev/p4-task-stream-to-pr.sh) (added `--prepare-review-cl` + `--promote-reviewed-cl <CL>` modes).
 - Tests: [`scripts/dev/test-p4-dual-vcs.sh`](../../scripts/dev/test-p4-dual-vcs.sh) scenarios 4 (prepare-mode), 5 (promote refusal), 6 (lock-backend if-unset pattern).

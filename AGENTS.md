@@ -4,230 +4,48 @@ This is the canonical entry-point doc for any agentic harness (Claude Code, Code
 
 ## UX Pillars
 
-Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`), not a merge block, until the supporting infrastructure lands.
+Four north-star quality invariants. Pillars 1-3 are **enforceable** (auto-fail PRs that violate them); Pillar 4 is **aspirational** today (backlogged until automated checks land).
 
-### 1. Performance — sustain ≈ 144 Hz
+| # | Pillar | Hard invariant | Primary owner |
+|---|---|---|---|
+| 1 | Performance | Steady-state UI work ≤ **6.94 ms** (144 Hz); p99 ≤ 16.67 ms (60 Hz floor) | `perf-detective` (sustained), `spike-hunter` (p99) |
+| 2 | UI never freezes | No UI-thread block > 100 ms without visible cue; sync I/O on UI thread = code-review CRITICAL | `code-review`, `spike-hunter` |
+| 3 | Never crash | Sanitizer build clean; RAII + bounds-checked + no silent UB; graceful degradation in ship builds | `debug-detective`, `code-review`, `build-doctor` |
+| 4 | Accessibility | Keyboard nav, font scaling, WCAG AA contrast — flagged in backlog (no auto-fail yet) | none today (backlogged) |
 
-**Pillar 1**: sustained 144 Hz on the UI thread. Frame budget = **6.94 ms** (`1000 / 144`) under representative load.
+Visual-validation exception (Pillar 4 § Visual-validation acceptance): when no bucket-C/E coverage exists for a visual change, the orchestrator pauses the ship-loop and treats the user as the verifier — see [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md) § Visual-validation exception.
 
-**Enforceable invariants:**
-- Steady-state mean per-frame UI work `≤ 6.94 ms` measured by `perf.snapshot` over a representative scenario.
-- 60 Hz floor: no single frame > **16.67 ms** in normal operation; >16.67 ms outliers are spike-tracked at p99.
-- `perf-detective` regression-fails any commit that lifts steady-state mean above budget on the same scenario.
-- `spike-hunter` regression-fails any commit that introduces a new p99 > 16.67 ms on the UI thread under a previously-clean scenario.
-
-**Tools**: `SMATCHET_UI_PERF_SCOPE("perf_temp:...")` markers per `agents/perf-instrument.md`; `perf.reset` → `scenario.run` → `perf.snapshot` loop per `agents/perf-measure.md`; `docs/PERF_WORKFLOW.md` for full ladder. **Baseline registry + delta gate** (Slice 1 of `docs/design/pillar-1-2-perf-review-system.md`): `bash scripts/dev/perf-run.sh <scenario>` writes a fresh snapshot; `python scripts/dev/perf-compare.py <baseline> <fresh>` exits non-zero on regression beyond `docs/perf/regression-policy.json` thresholds. Baselines live at `docs/perf/baselines/<scenario>.<host>.json` (per-host per § D1 of the plan). Manage via `bash scripts/dev/perf-baseline.sh {list|init|bump}`.
-
-### 2. UI never freezes — predictable visual cue if it must
-
-**Pillar 2**: zero manual verification steps; the UI thread never blocks longer than 100 ms without a visible cue. Any operation estimated **> 100 ms** moves to a worker thread. Synchronous I/O (HTTP, SQLite, p4, filesystem, blocking lock) reaching the UI thread = **code-review CRITICAL**.
-
-**Visual cue contract** for the rare unavoidable blocking case:
-- Spinner or progress widget appears within **100 ms** of op start.
-- Cancelable when the underlying op supports it (HTTP, p4, long-running queries).
-- Modeless when possible; modal only when the result is required to proceed.
-- No silent waits — the user is never left guessing whether the app is alive.
-
-**Enforceable invariants:**
-- `code-review` flags any new synchronous call to `cpr`, `SQLite::Database`, `p4 …`, `std::ifstream`-on-disk, or `std::mutex::lock` from a function reachable from `ImGui::*`-frame as Critical.
-- `spike-hunter` enforces UI-thread p99 < 100 ms on the standard scenario; cue-less hitches above that line block merge.
-
-**Worker-thread hand-off**: post results back to the UI thread via `MainThreadDispatcher` (`Source_Core/include/MainThreadDispatcher.h`); never touch ImGui state directly from a worker.
-
-### 3. Never crash
-
-**Pillar 3**: Smatchet must terminate cleanly under all observed inputs. Crashes in dev block the next merge until fixed; crashes in shipped builds are P0 regressions.
-
-**Enforceable invariants:**
-- **Pre-merge sanitizer build** mandatory on any PR that touches `Source_Core/` C++: `cmake --build --preset ninja-test-msys2` runs the doctest rig under ASan / UBSan (when toolchain supports it). `debug-detective` runs the sanitizer build for every crash-suspect investigation.
-- **RAII enforced**: no raw `new` / `delete` outside the documented edge cases (sol2 user data, ImGui callback shims). Use `std::unique_ptr` + `make_unique`. `code-review` flags raw heap ops.
-- **Bounds-checked**: every container index goes through `at()` / explicit length check; `cppcheck` `boundsError` / `arrayIndexOutOfBounds` blocks merge.
-- **No silent UB**: dereferenced `nullptr`, unsigned wrap-around, signed overflow, use-after-free — all blocking. UBSan output during the regression gate is a fail.
-- **Graceful degradation in ship builds**: assertions fire in dev (`assert(...)`); in ship builds the same condition logs `LOG_ERROR` and the calling function returns a safe default. The app never aborts on a recoverable bad state.
-
-### 4. Accessibility — aspirational (locked scope)
-
-**Pillar 4**: keyboard nav, font-size / zoom, WCAG AA contrast. No auto-fail gates today. Agents flag missing a11y to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`) so it accumulates evidence; pillar hardens once the supporting infra lands.
-
-**Locked in-scope (work on these when adjacent to current task):**
-- **Keyboard navigation**: every actionable widget reachable without mouse. Tab order sane, focus indicators visible, `Ctrl+Shift+P` Command Palette as the keyboard entry point to every registered command.
-- **Font size / zoom**: user-controlled `ImGuiIO::FontGlobalScale`, persisted in `smatchet_config.json`. Affects grid row heights, cell renderers, and modal sizing.
-- **Color contrast**: WCAG AA minimum — 4.5:1 for body text, 3:1 for large text and UI components — on both default and dark themes. Theme audit before any palette change.
-- **Visual-validation acceptance**: when no automated check (bucket-C screenshot diff, bucket-E ImGui-Test-Engine scenario) covers a visual change, the user is the verifier. See § Autonomous ship-loop default § Exceptions § Visual-validation exception for the loop-pause contract — the orchestrator must NOT commit+push an unvalidated visual change.
-
-**Out of scope (deferred until a concrete user need):**
-- Screen-reader compatibility. ImGui has no native a11y tree; wiring one is a multi-week effort. Defer.
-- High-contrast / inverted-color themes beyond the WCAG AA floor.
-
-**Why aspirational, not enforceable**: there is no automated check for "is this widget keyboard-reachable" or "does this palette meet WCAG AA contrast" today. Adding such checks is its own work-stream; pillars 1-3 already block merges where they matter most.
-
-### Agent ownership
-
-| Pillar | Primary agent | Notes |
-|---|---|---|
-| 1. Performance | `perf-detective` (sustained), `spike-hunter` (intermittent), helpers: `perf-instrument`, `perf-measure` | See `docs/PERF_WORKFLOW.md`. |
-| 2. UI never freezes | `code-review` (sync-on-UI sniff), `spike-hunter` (p99 enforcement), `debug-detective` (root-cause when a freeze ships) | UI-thread budget: any call reachable from `ImGui::*`-frame stack. |
-| 3. Never crash | `debug-detective` (diagnose), `code-review` (RAII / bounds / nullptr review), `build-doctor` (sanitizer build gate) | Crashes block merge unconditionally. |
-| 4. Accessibility | none today | Flag in backlog; reassess pillar hardening when keyboard-nav / zoom / contrast checks have automated test support. |
+Full enforceable-invariant text + visual-cue contract + per-pillar tooling + agent-ownership detail: [`docs/agent-rules/ux-pillars.md`](docs/agent-rules/ux-pillars.md).
 
 ## Autonomous ship-loop default
 
-**Rule**: orchestrator runs each user task end-to-end in **one turn** without pausing for confirmation at each stage. The default sequence:
+Orchestrator runs each user task end-to-end in **one turn** without pausing per stage. Default sequence:
 
 ```
 diagnose → fix → build → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
 
-`[gate-check]` is the merge-gates poller (see § Merge gates) — polls CI + CodeRabbit + user-comments before squash-merge. Triggered only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher" or in-session "merge when green"). The `smatchet-merge-watcher` host daemon (per `docs/design/smatchet-merge-watcher.md`) takes over from this point when the user picks post-ship option 3; the orchestrator's in-session role ends at register-time. Halt + `AskUserQuestion` on block / timeout / `gh` API failure / PR closed-externally / pagination overflow.
+Clarifications batched **once at start** via `AskUserQuestion`. Loop pauses ONLY for: (1) debug-detective triggers — the pause-loop **overrides** the ship-loop (see [`docs/agent-rules/delegation.md`](docs/agent-rules/delegation.md) § Debug-mode pause-loop), (2) destructive ops outside scope, (3) cross-repo / external-service mutations, (4) anything not durably authorised, (5) **visual-validation exception** (touches `SmatchetTheme.cpp` / `Smatchet*Ui*.cpp` / `Locales/*.json` / `ImVec4` constants AND no bucket-C/E coverage — pause after build with launched exe, await user verdict).
 
-All clarifications that the orchestrator anticipates needing are batched **once at the start** via `AskUserQuestion`. Once the user answers, the loop proceeds without further prompts until completion (or until an exception below fires).
+`SMATCHET_AGENT_VCS=p4` flips the loop to the **P4-gated** variant: smoke build → shelve → user review in P4V → full tests → submit → git branch + push + PR. Git is touched **once**, at the end, after shelf approval AND test-pass. Sub-variants chosen via `AskUserQuestion`: small-change loop (single slice, `//smatchet/main`) or task-stream loop (multi-slice, `scripts/dev/p4-task-stream.sh`).
 
-**Why a default**: harnesses that drip-step every stage create N round-trips for a task that needs one. The user already chose the task; the loop is the cheapest way to deliver it. Other harnesses (Codex / Cursor / Aider) read AGENTS.md and need the rule too — user-private memory is not portable.
+After the loop completes, the orchestrator emits the **post-ship 4-option `AskUserQuestion`**: Manual verify / Review PR / Register with watcher (auto-merges when gates pass) / Done. Skip-condition: if the user already said "merge when green", enter option 3 directly.
 
-**Exceptions** (loop pauses or stops):
-
-1. **Debug-mode pause-loop** — user prompt matches the `debug-detective` trigger row (see § Delegation § Trigger auto-activation). The pause-loop in § Debug-mode pause-loop **overrides** the ship-loop for the duration of the investigation.
-2. **Destructive ops outside loop** — `git reset --hard`, `git push --force` to a shared branch, `git branch -D`, `gh pr merge` of a non-self PR, `rm -rf` outside the worktree, schema drops. These require explicit confirmation per § Project rules § Destructive git ops in shared worktrees.
-3. **Cross-repo or external-service mutations** — anything that writes outside the current repo or calls a third-party API with side effects (posting to Slack, sending email, modifying a Jira ticket the user didn't ask for). Confirm before acting.
-4. **Anything not previously authorised in a durable rule** — durable = recorded in AGENTS.md, CLAUDE.md, or this session's explicit user instructions. Verbal "ok in this conversation" doesn't bind future turns; encode it as a memory or doc edit if it should.
-5. **Visual-validation exception** — fires when **both** conditions hold:
-   1. Diff touches at least one of: `Source_Core/src/SmatchetTheme.cpp`, `Source_Core/src/Smatchet*Ui*.cpp`, `Source_Core/include/SmatchetTheme.h`, `Locales/*.json`, ImGui style constants (`ImVec4` / `ImGuiStyle` literals), dock-layout init paths.
-   2. AND no bucket-C screenshot diff or bucket-E ImGui-Test-Engine scenario covers the changed widget.
-
-   When both fire, the loop pauses after **build** with the launched exe. Orchestrator presents:
-   - the `build/<preset>/Smatchet.exe` path + a one-line run command,
-   - the `bash` background-task id of the launched exe (or "launched manually"),
-   - the specific visual change the user is asked to evaluate (one sentence).
-
-   Wait for the user's verdict before commit+push. On "looks good" → resume the loop and commit. On "no" → leave the working tree dirty; iterate in-place. The orchestrator does `git diff` between attempts to see what was tried. Clean-slate reset (`git checkout -- <files>`) only when the user explicitly asks for one. Never commit+push an unvalidated visual change.
-
-   Out-of-scope (NOT a visual-validation pause):
-   - A change with no test coverage but no visual-path touch — that's a Pillar-3 "needs test coverage" problem, route via the test backlog.
-   - A change that touches the visual paths AND has bucket-C/E coverage — coverage is the gate; ship-loop continues. If the user disagrees with the golden after merge, the bucket-C golden is re-bootstrapped per § Project rules.
-
-   Pillar anchor: see § UX Pillars § 4 § Visual-validation acceptance for the cross-link from the pillar side.
-
-### P4-gated ship-loop
-
-When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a **P4-gated ship-loop** instead of the default git ship-loop. The variant exists so the user reviews a Perforce shelf in P4V before any `git push` or `gh pr create` happens — git remains the ship-line, but git is touched **once**, at the end, after the change is known-good. The pause-loop in § Debug-mode pause-loop continues to **override** this loop for debug-detective triggers (same as it does for the default git loop).
-
-**Fires when** `SMATCHET_AGENT_VCS=p4` is set at session start AND `p4 info` confirms the local server is reachable. On `p4 info` failure → `LOG_ERROR "p4-mode requested but Perforce not bootstrapped"` + `AskUserQuestion`: (a) fall back to default git ship-loop for this session, (b) abort, (c) follow [`docs/perforce/SETUP.md`](docs/perforce/SETUP.md) and retry. Never silently downgrade.
-
-**Two sub-variants** — orchestrator asks once at task start via `AskUserQuestion` which to use:
-
-1. **Small-change loop** (default; single slice, single subsystem) — work directly on `//smatchet/main` via the canonical client. Iterate edits in a pending CL. Smoke build → shelve → user review → full tests → submit → git branch + push + PR.
-2. **Task-stream loop** (multi-slice OR write set spans multiple subsystems; only when user explicitly approves) — allocate `bash scripts/dev/p4-task-stream.sh <id>`. Each slice submits to the task stream's depot path. End-gate runs the full battery, then `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl` integrates into a pending main-stream CL + shelves. User reviews shelf. On approval, `--promote-reviewed-cl <CL>` submits + creates git branch + push + PR.
-
-**Key invariants (both sub-variants):**
-
-- `git push` / `gh pr create` happen **once**, after shelf approval AND full test-pass.
-- Shelf-review gate fires **exactly once** per task. Test failures post-approval → fix → re-test without re-review. Re-review only on explicit user request.
-- **No `git worktree add`** while `SMATCHET_AGENT_VCS=p4` — subagent isolation uses `scripts/dev/p4-task-stream.sh` exclusively. First git write is the `git checkout -b` inside the promote step.
-- **Smoke build precedes shelf** — user never sees a non-compiling change in P4V.
-- **`code-review` agent dispatched ONCE per task** at the end-gate / shelf step (cumulative diff). Not per slice.
-- Pure-docs slice skip still applies. Trivial-visual-only envelope still applies, with `p4 sync` + `p4 edit -t +l` substituting for `git stash` race-recovery.
-- Plan-lock backend auto-flips to `p4-counter` **only when unset** — `export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"` (no colon — empty-string setting is preserved per `scripts/dev/test-p4-dual-vcs.sh` scenario 2 line 149 + scenario 6 line 369).
-- Post-ship `AskUserQuestion` ALWAYS fires with option 3 ("Register with watcher") pre-selected; when `docs/design/merge-gates-ci-coderabbit-comments.md` ships end-to-end the `AskUserQuestion` goes away entirely in p4-mode.
-
-Full phase sequence + invariants + exception rules in [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/design/p4-gated-ship-loop.md`](docs/design/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](docs/adr/0008-p4-gated-ship-loop.md).
-
-### Post-ship turn-end protocol
-
-After the loop reaches PR-opened (or the equivalent terminal state for the task), end the turn with `AskUserQuestion` offering the four canonical next steps as discrete options:
-
-1. **Manual verify** — user wants to drive the change manually before merge.
-2. **Review PR** — user wants to read the diff / comment on GitHub.
-3. **Register with watcher** — orchestrator runs `merge-watch register <pr>` (per [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md)). The `smatchet-merge-watcher` host daemon's first step on register is `gh pr ready <n>` (idempotent — no-op if already non-draft) so CodeRabbit's `auto_review.drafts: false` doesn't skip the review (per `docs/backlog/agent-self-improvement/process.md` P1 — draft PRs silently bypassed CR for 15+ session PRs before this rule landed). Then it runs the gate-check loop + CodeRabbit-triage loop + REST-squash-merge per the watcher contract. Session can close immediately; watcher persists. Halt prompts surface as Smatchet notifications via `SmatchetToastManager` (watcher Phase 4), not back to this session.
-4. **Done** — no further action; PR stays draft for later.
-
-Do **not** emit a free-form bulleted next-steps list — `AskUserQuestion` is a single click; prose is N seconds of composition.
-
-**Skip-condition**: if the user has already said "no more changes coming" / "ship it and stop" / "merge when green" in the same turn, skip the question and enter option 3 directly (`git-janitor` invokes `merge-watch register` before walking away).
-
-Cross-link: ship-loop reference in § Delegation; pause-loop override in [`docs/agent-rules/DELEGATION.md`](docs/agent-rules/DELEGATION.md) § Debug-mode pause-loop; gate semantics + halt prompts in § Merge gates; watcher integration in [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md).
+Full sequence + per-exception detail + P4-gated phases + post-ship protocol: [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md).
 
 ## Merge gates
 
-Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` (the host daemon per [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md)) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`scripts/dev/merge-gates.graphql`):
+Before any squash-merge by the orchestrator, `git-janitor`, or `smatchet-merge-watcher`, the gate-poller (`scripts/dev/merge-gates.sh` + `scripts/dev/merge-gates.graphql`) checks three conditions via one `gh api graphql` call:
 
-1. **CI** — every required check (`isRequired(pullRequestNumber: $pr) == true`) on `pullRequest.commits(last:1).commit.statusCheckRollup.contexts` must reach a passing terminal state.
-   - **CheckRun**: pass = `status == "COMPLETED"` AND `conclusion in {SUCCESS, NEUTRAL, SKIPPED, STALE}`. Block = `conclusion in {FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE}`. Any non-COMPLETED status counts as pending.
-   - **StatusContext**: default rule — any required context with `state != "SUCCESS"` blocks. `FAILURE` / `ERROR` fail; `PENDING` / `EXPECTED` pending.
-   - Non-required checks ignored.
-2. **CodeRabbit** — identity match is `author.login in {"coderabbitai", "coderabbitai[bot]"}` (REST returns the `[bot]` suffix; GraphQL may strip it). State combines the latest CR review's `state`, its `commit.oid` (vs `headRefOid`), and its `body` (CR's `Actionable comments posted: N` first-line header) into one of these outcomes:
-   - `NONE` — no review ever submitted. The poller pre-detects whether CR is installed for this repo by probing for a checked-in `.coderabbit.yaml` / `.coderabbit.yml` (one-shot at gate start; override via `MERGE_GATES_CR_INSTALLED=true|false`). Behaviour splits:
-     - **CR not installed** (no config file) → **pass** immediately (legacy behaviour for repos that never integrated CR).
-     - **CR installed, head commit has a `CodeRabbit` StatusContext on the rollup with `state == "SUCCESS"`** → **pass** (status-only configs that skip writing a full review on clean diffs still count as a positive signal).
-     - **CR installed, no review yet, no SUCCESS status** → **block** until the configurable grace window (`MERGE_GATES_CR_GRACE_POLLS`, default 10 polls) expires. After the window, the poller logs a `WARN: CodeRabbit grace window ... expired` line and falls through to pass so a stuck integration never wedges the ship-loop indefinitely.
-   - **On-head review** (`commit.oid == headRefOid`):
-     - `APPROVED` → **pass** unconditionally (approval trumps body).
-     - `COMMENTED + body has "Actionable comments posted: N" with N > 0` → **block** (CR found real findings the user must address before merge). The previous "COMMENTED == pass" rule shipped 5 unaddressed CR findings to develop on PR #357 — see `docs/backlog/agent-self-improvement/process.md` P1 (2026-05-21) for the post-mortem.
-     - `COMMENTED + N == 0` → **pass** (CR explicitly said no findings).
-     - `COMMENTED + no Actionable header in body` → **pass** (placeholder review / older CR template; conservative).
-     - `CHANGES_REQUESTED` / `DISMISSED` → **block**.
-   - **Stale review** (CR reviewed a prior commit; force-push or post-review commit moved HEAD past the review):
-     - `STALE_WITH_FINDINGS` (prior body had `N > 0`) → **block** + DO NOT fall through to pass on timeout. The timeout-fallthrough path on stale-with-findings is what dropped #357's 5 findings; the prior review body must be surfaced + the user explicitly authorises any force-merge.
-     - `STALE_CLEAN` (prior body had `N == 0`) → **pass** (prior review was clean; on-head changes likely still clean modulo new edits).
-     - `STALE_UNKNOWN` (prior body absent or no `Actionable` header) → **block** as safe default (caller can't distinguish "0 actionable" from "no header", so the safer assumption is "could have findings").
-   - Additionally: zero unresolved non-outdated review threads contain a CodeRabbit comment (under the same login match).
-3. **User comments** — zero unresolved non-outdated review threads with any non-bot non-self comment, AND zero conversation-tab comments from a non-bot non-self author. Bot detection uses GraphQL `author.__typename == "Bot"` (covers all integrations). Self matched via `$ORCH_USER`, lower-cased on both sides.
+1. **CI** — every required check on the head commit reaches a passing terminal state (CheckRun: `conclusion ∈ {SUCCESS, NEUTRAL, SKIPPED, STALE}`; StatusContext: `state == SUCCESS`).
+2. **CodeRabbit** — `APPROVED` or `COMMENTED + Actionable comments posted: 0` passes; `COMMENTED + N > 0`, `CHANGES_REQUESTED`, `DISMISSED`, `STALE_WITH_FINDINGS`, `STALE_UNKNOWN` block. `NONE` falls through after `MERGE_GATES_CR_GRACE_POLLS` (default 10) expires when CR is installed.
+3. **User comments** — zero unresolved non-outdated review threads from non-bot non-self authors; zero conversation-tab comments from same.
 
-Additional pass conditions:
-- `pullRequest.state == "OPEN"` (early-exit on closed/merged-externally).
-- `pullRequest.reviewDecision in {"APPROVED", null}` (blocks on `REVIEW_REQUIRED` / `CHANGES_REQUESTED`).
-- **Pagination ceiling**: GitHub GraphQL caps connections at 100. The query also fetches `pageInfo.hasNextPage` for every connection (checks, reviews, reviewThreads, per-thread comments, conversation comments). Any `hasNextPage == true` → block with `PAGINATION_OVERFLOW`. Hard block, not silent truncation.
+Plus: PR is OPEN, `reviewDecision ∈ {APPROVED, null}`, no GraphQL `hasNextPage` overflow. **Auto-merge applies only when explicitly authorised** (post-ship "Register with watcher" or in-session "merge when green"). `SKIP_MERGE_GATES=true` at session init bypasses globally; per-PR label overrides (`tests-out-of-band`, `perf-out-of-band`) downgrade specific failing checks to WARN.
 
-`$ORCH_USER` resolved at session init via `gh api user --jq .login`.
+Halt prompts on block / timeout / API-error / closed-externally / pagination overflow route through `AskUserQuestion` with explicit return-code-keyed options. The REST squash-merge contract (`gh api -X PUT repos/.../pulls/N/merge -f merge_method=squash`) is the merge mechanism; conflicts + branch-protection are enforced by GitHub, not duplicated locally.
 
-**Override**: `SKIP_MERGE_GATES=true` at session init bypasses all gates. No per-merge skip. Subagent propagation: orchestrator must explicitly add `SKIP_MERGE_GATES` to any delegated `git-janitor` invocation's env (it does not auto-inherit through the subagent boundary).
-
-**Per-PR overrides (label-based)**:
-- `tests-out-of-band` — downgrades the test-delta gate from FAIL to WARN for that PR. Use when production code changes legitimately have no testable surface (e.g. perf optimisations that preserve behaviour but lack pure-logic seams).
-- `perf-out-of-band` — downgrades the `.github/workflows/perf-pr-fast.yml` regression gate (slice 3 of `docs/design/pillar-1-2-perf-review-system.md`) from FAIL to WARN. Use when a regression is intentional + the baseline-bump PR is queued. The label must NOT stay on the PR post-merge; the merge contract assumes the next PR clears the regression or bumps the baseline.
-
-**Status line per poll**:
-```
-Poll 3/60 — CI: 4/8 pass (1 fail, 2 pending, 1 warn-downgraded) | CodeRabbit: COMMENTED (3 actionable — block) (2 open) | User: 1 | reviewDecision: APPROVED
-```
-
-The `warn-downgraded` cell counts CheckRuns whose failing conclusion (`FAILURE`, `TIMED_OUT`, `CANCELLED`, `ACTION_REQUIRED`, `STARTUP_FAILURE`) was suppressed by a per-PR label override (`tests-out-of-band` / `perf-out-of-band`). Downgraded checks do NOT contribute to `fail` and do NOT block; an `WARN: out-of-band label(s) downgraded …` line on stderr names which checks were silenced for the operator's review.
-
-The CR cell encodes the seven outcomes verbatim — examples: `APPROVED`, `COMMENTED (3 actionable — block)`, `COMMENTED (0 actionable)`, `COMMENTED (no Actionable header)`, `STALE_WITH_FINDINGS (5 actionable on prior commit — block + surface review)`, `STALE_CLEAN (0 actionable on prior commit — pass)`, `STALE_UNKNOWN (no Actionable header — treat as block per safe-default policy)`, `CHANGES_REQUESTED`, `DISMISSED`, `NONE+pending (poll N/<grace>)`, `NONE+status-SUCCESS`, `NONE+grace-expired` (paired with `WARN` on stderr).
-
-**Halt prompts (per return code)**:
-
-| Code | Meaning | `AskUserQuestion` options |
-|---|---|---|
-| 1 | Gates still blocked at MAX_POLLS | "Skip gates and merge anyway" / "Keep waiting (extend poll)" / "Abandon" |
-| 2 | Wall-clock timeout (≥`MERGE_GATES_TIMEOUT_SECONDS`) | "Skip gates and merge anyway" / "Keep waiting" / "Abandon" |
-| 3 | `gh` API failed 3 consecutive polls | "Retry now" / "Skip gates and merge anyway" / "Abandon" |
-| 4 | PR `CLOSED` or `MERGED` externally | "Abandon (PR no longer mergeable)" — no skip option |
-| 5 | Pagination overflow (any `hasNextPage`) | "Abandon (manual review required)" / "Skip gates and merge anyway (acknowledge risk)" |
-| 6 | `gh pr ready` unknown failure | surface error to user; do not auto-merge |
-
-Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
-
-**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher", in-session "merge when green", OR any PR registered with `smatchet-merge-watcher`). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state. Use REST merge per `agents/git-janitor.md` § Hard refusals:
-
-```bash
-gh api -X PUT "repos/$owner/$repo/pulls/$prNumber/merge" -f merge_method=squash
-gh api -X DELETE "repos/$owner/$repo/git/refs/heads/$branch"
-```
-
-Conflicts, missing required checks, and branch-protection rules are enforced by GitHub on the REST merge call. We do not duplicate.
-
-**Env knobs**:
-- `MERGE_GATES_POLL_INTERVAL` — seconds between polls (default 60).
-- `MERGE_GATES_MAX_POLLS` — max poll count (default 60).
-- `MERGE_GATES_TIMEOUT_SECONDS` — wall-clock budget (default 3600).
-- `MERGE_GATES_QUERY_FILE` — override GraphQL document path (default `scripts/dev/merge-gates.graphql`).
-- `MERGE_GATES_CR_INSTALLED` — override the auto-detected CodeRabbit-installed flag (`true` / `false`). Auto-detection probes `repos/<owner>/<repo>/contents/.coderabbit.yaml` (and `.yml`); set explicitly when the config lives outside the repo or when running against a fork that has not yet enabled CR.
-- `MERGE_GATES_CR_GRACE_POLLS` — polls to wait for CR to start (a review or `CodeRabbit` SUCCESS status) before falling through `NONE` to pass (default 10). Only consulted when `MERGE_GATES_CR_INSTALLED` is true / auto-detected as installed.
-- `MERGE_GATES_TEST_ANSWER` — bats-only canned `ask_user_question` answer.
-
-**Scope boundary**: the auto-`gh pr ready` + auto-merge path applies to the orchestrator, `git-janitor`, and `smatchet-merge-watcher`. No other caller has merge authority. The deleted spawned-child agents (`handoff-implementer`, `pr-iterator`) are gone per v1 of `docs/design/github-tracker-backend.md`; the watcher runs as a host daemon, not a per-PR subprocess, so the spawned-child draft-only carve-out no longer applies.
-
-Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/merge-gates-prompt.sh` (`ask_user_question` shim), `scripts/dev/merge-gates.graphql`. Tests: `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json`.
+Full per-outcome semantics + halt-prompt return-code table + env-knob list + REST contract: [`docs/agent-rules/merge-gates.md`](docs/agent-rules/merge-gates.md). Tests: `tests/bats/merge_gates.bats`.
 
 ## Project rules
 
@@ -255,97 +73,18 @@ Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/me
 
 **Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/PERF_WORKFLOW.md`](docs/PERF_WORKFLOW.md) and follow it. Don't load it for unrelated tasks.
 
-**Plan location**: every plan / design doc lives under `docs/design/<slug>.md`. No plans in repo root, `backlog/`, `~/.claude/plans/`, or working-tree-only scratch. `backlog/` is for triage lists (CPPCHECK_PLAN, AGENT_SELF_IMPROVEMENT) — not new plans. Naming: kebab-case slug matching the feature (`vs-style-view-menu.md`, `remove-global-project-key.md`).
-
-**Plan-doc safety**: as soon as a plan is written to `docs/design/<slug>.md`, `git add` + commit it immediately with a `wip(plan): <slug>` prefix before any other work or branch operation. Working-tree-only files are silently lost on `git checkout`, `git reset --hard`, or GitHub Desktop branch switches. Recovery via `git fsck --lost-found` is expensive. Never leave a plan untracked across a session boundary.
-
-**Destructive git ops in shared worktrees**: before running any destructive git op (`reset --hard`, `checkout --`, `clean -f`, `branch -D`) against a worktree the orchestrator did not personally check out earlier in the same session, run a mandatory 5-step pre-flight via `git -C <path>` from the orchestrator's main worktree (do not `cd`). Parallel agents in other worktrees can — and do — switch the target worktree's HEAD to a different branch between sessions; a stale assumption about "the develop worktree" is what destroys uncommitted work.
-
-1. `git -C <path> branch --show-current` — verify the actual current branch matches the user-named target. If it doesn't, **stop**; the worktree has been reassigned.
-2. `git -C <path> status --short` — inventory tracked-modified + untracked files. Any non-empty result means the worktree is load-bearing for a parallel agent; treat as a refusal condition unless explicitly authorised.
-3. `git -C <path> stash push -m "<reason>" -- <modified-files>` for any tracked-modified files, regardless of apparent relevance to the asked task. Untracked files survive `reset --hard` but `clean -f` is fatal — pass `--include-untracked` when `clean -f` is part of the plan.
-4. Run the destructive op only after 1-3 succeed.
-5. Decide whether to `stash pop` (recovers the user's work), leave the stash for the human (when unrelated to current PR), or report the stash hash so the human can pop manually if conflicts arise.
-
-`reset --hard` permanently destroys uncommitted tracked-modified content; it is not in reflog. Branch pointers are reflog-recoverable; uncommitted changes are not. Cross-link: `agents/git-janitor.md` § Destructive-op pre-flight (authoritative checklist).
-
-**Destructive `p4` ops in p4-mode**: when `SMATCHET_AGENT_VCS=p4`, the same defensive principle applies to destructive Perforce verbs (`p4 revert -k`, `p4 obliterate`, `p4 unshelve -f`). Five-step pre-flight in [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md) § Destructive p4 ops pre-flight: confirm `p4 -ztag info` (client + user), inventory `p4 opened -c default //smatchet/...`, `p4 shelve -c <CL>` any pending unrelated CLs, run the destructive op, then `p4 changes -c <client>` to confirm state. `p4 revert` on a freshly-added file removes it from the workspace too — coordinate before running across shared depot paths.
-
-**Force-push carve-out for Claude Code SDK-spawned recovery and p4 task-stream promotion**: the global `git push --force` ban (and the harness's banned `--no-verify` / `--no-gpg-sign` flags) gets two narrow carve-outs — `git push --force-with-lease origin <branch>` is permitted **only** during API-500 recovery (see `docs/agent-rules/DELEGATION.md` § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on:
-
-1. A Claude Code SDK-spawned worktree branch matching `claude/<id>/*`, OR
-2. A Perforce-task-stream-promoted branch matching `agent/<task-stream-id>/*` (created by `scripts/dev/p4-task-stream-to-pr.sh`).
-
-The `agent/<id>` carve-out was deleted post-`ClaudeCodeLocalRunner` (per v1 of `docs/design/github-tracker-backend.md`) and is reinstated here for the p4-task-stream surface: those branches are recovery-style throwaways, created by the script after a successful shelf submit, and they should never carry non-self commits. The `smatchet-merge-watcher` host daemon (per `docs/design/smatchet-merge-watcher.md`) runs in-process, not as a spawned subprocess, so it has no worktree branch that would need this carve-out.
-
-**Exclusion list — top-level-prefix-only** (an exclusion triggers only at the first path segment): `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`. Branches under `claude/<id>/*` and `agent/<task-stream-id>/*` are permitted regardless of the nested slug prefix (a slug like `feat-perf-fix` under `agent/perf-detective-01/` is fine — the `feat-` prefix is below the protected first segment).
-
-Additional conditions for the carve-out to apply: ahead-range contains zero non-self commits; `--force-with-lease` (never bare `--force`). ADR [0005](docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md) (Withdrawn as historical) covers the `claude/<id>` rationale; ADR [0008](docs/adr/0008-p4-gated-ship-loop.md) records the `agent/<task-stream-id>` extension + exclusion-list rewrite.
-
-**Plan revision after implementation**: when work shipped from a plan lands (PR merged, scenario validated, or feature shipped), edit the originating `docs/design/<slug>.md` in the same or next commit to record what actually happened. Mandatory sections to append:
-
-- `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.
-- `## Deviations from plan` — what was changed, removed, or deferred relative to the original plan, with one-line rationale per item.
-- `## Verification` — what was actually tested + result (passed / failed / not-run).
-
-A plan that ships without revision is a stale plan. Future agents read these docs as truth; drift between plan and shipped reality is the main cost of multi-week feature work.
-
-**Plan stress-test — `grill-with-docs` skill**: before finalising `docs/design/<slug>.md`, invoke the skill to grill the plan against `docs/CONTEXT.md` (glossary) and `docs/adr/` (ADRs). Outputs: refined plan + glossary updates + new ADRs only when hard-to-reverse + surprising + real-trade-off all fire. Smatchet file mapping in `agents/_shared/skills/grill-with-docs/SMATCHET-NOTES.md`.
-
-**Plan template — start from `docs/design/_plan-template.md`**: every new plan-doc is copied from the template, not authored blank. The template stubs every section the project rules require (Context, Approach, Files, **Pillar 1-3 callouts**, **Perf-review-system gates**, Risks, Verification, Implementation log / Deviations placeholders). Sections that genuinely don't apply must be filled with `N/A — <one-line reason>`, not deleted — drives the "did you consider this?" forcing function.
-
-**Plan-doc perf-gate section — mandatory when diff touches `Source_Core/`**: every plan whose recommended-approach diff touches `Source_Core/` MUST include a § Perf-review-system gates section naming which gates from `docs/design/pillar-1-2-perf-review-system.md` fire on the PR (PR-fast scenario subset + which scenario directly exercises the changed path; Pillar 2 static scanner; dispatcher drain; visible-cue bucket-E; marker inventory) AND which don't apply with a one-line reason. The section also names the recommended pre-push local check (`scripts/dev/perf-run.sh <scenario>` + `perf-compare.py`) so the author catches regression before CI burns runner time. Orchestrator self-checks this section is present before `ExitPlanMode`; missing section = plan not ready.
-
-**Verification automation — zero manual steps**: `test-author` converts every manual verification step into a deterministic CLI / scenario / screenshot / sanitizer / ImGui-Test-Engine assertion. Three invocation points: (1) plan-time audit of `docs/design/<slug>.md` § Verification, (2) post-first-round sweep, (3) every agent handoff that mentions a manual step. Unified runner: `bash scripts/dev/test-all.sh` (auto-enrols `scripts/dev/test-*.sh`). Manual residue without a `docs/backlog/AGENT_SELF_IMPROVEMENT.md` entry (category `tooling`) is a fail. "Truly interactive" is never the final answer — bucket E (ImGui Test Engine) is wired (see `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; first test at `tests/ui/views_columns_reorder.test.cpp`; run via `cmake --build --preset ninja-ui-test-msys2`). Bucket details in `agents/test-author.md`.
-
-**Schema-version bumps**: when a feature requires a config / cache schema-version bump, hold the bump until the feature is verified end-to-end. Do not commit interim version bumps as the feature evolves — squash or amend. The shipped version should be exactly one higher than the previous shipped version, not N higher because of intermediate iterations.
-
-**Trivial-visual-only change envelope**: a change qualifies as **trivial-visual** when **every** condition holds — (a) write set is a strict subset of `{Source_Core/src/SmatchetTheme.cpp, Locales/*.json, ImGui style constants (`ImVec4` / `ImGuiStyle` literals)}`; (b) diff shape is literals-only (no API surface, no header touch, no schema, no control flow, no new symbols); (c) zero touch under `Source_Core/include/` / `Plugins/` / `cmake/` / `CMakePresets.json`. Under this envelope the orchestrator may ship after: (1) `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` builds, (2) `ninja-test-msys2` ctest passes **if** a pure-logic test touches the changed file, (3) **NO** `ninja-ui-test-msys2` bucket-E run, (4) **NO** isolated worktree — use the main worktree with `git stash` race-recovery if a concurrent agent appears. Bucket-E coverage gets deferred to a single post-batch run before merge, or to the test backlog. Saves ~10× wall-clock on visual-only PRs (palette retunes, locale string fixes). Any condition fails → fall back to the full build + test-all + bucket-E loop.
-
 **Golden-image approval contract**: any agent that writes or regenerates a checked-in reference artefact a regression gate diffs against (`tests/golden/*.png`, JSON snapshots, deterministic byte streams) MUST hand the file + launched-app handle to the user and wait for explicit approve-golden verdict before `git add`. Iterate the underlying fix on rejection; never amend the golden to match a buggy state. Full recipe + motivating incident + dual-capture-no-golden preference in [`docs/agent-rules/golden-image-approval.md`](docs/agent-rules/golden-image-approval.md).
 
-**Build / ctest cadence — slice-boundary only**: within a single agent turn (= one logical slice), invoke `cmake --build` and `scripts/dev/test-all.sh` **at most once each**, and only after the implementation is complete. Mid-slice rebuilds and mid-slice ctest runs are wasted work — Ninja is already incremental and the doctest rig is fast at the slice boundary but expensive when amortised across N edits.
+## Process rules
 
-**P4-gated loops carve-out**: when running the small-change variant of § P4-gated ship-loop, the loop sequence has a legitimate `[smoke build] → [shelf] → [full tests]` phase split. The shelf-review boundary is a real phase transition (user-in-the-loop), so the pre-shelf smoke build (`ninja-iter-msys2` target `SmatchetStandalone`) and the post-shelf test-rig build (`ninja-test-msys2`) count as **distinct gates within the slice** — at-most-once per gate, not at-most-once total. The "wasteful mid-implementation rebuilds" rule the cadence targets still applies; the user-review boundary is not "mid-implementation".
+Rules for **how agents move work through the pipeline** — plan-doc lifecycle, destructive-VCS-op discipline, cadence + verification, and the meta-rule for where future rules land. Companion files: [`docs/agent-rules/merge-gates.md`](docs/agent-rules/merge-gates.md), [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md), [`docs/agent-rules/delegation.md`](docs/agent-rules/delegation.md).
 
-**Perf slice-boundary auto-run — scenario-aware**: when a slice's write set touches files in the curated diff→scenario map at [`agents/perf-gatekeeper.md`](agents/perf-gatekeeper.md) § "Curated diff → scenario map", the orchestrator runs the affected scenario(s) at slice boundary (right after the build + ctest pass) and surfaces the top-N rows inline. No need for the user to ask "how is the performance" — Pillar 1 evidence shows up automatically next to the regular slice output. Mechanically:
+- **Plan-doc family** — every plan lives at `docs/design/<slug>.md`, committed immediately with `wip(plan): <slug>` (working-tree-only files are silently lost on checkout). Post-ship § Implementation log + § Deviations + § Verification update. Stress-test via `grill-with-docs` skill before finalising. Start from `docs/design/_plan-template.md`. **Perf-gate section mandatory** when diff touches `Source_Core/`.
+- **Git/p4 discipline** — 5-step pre-flight before any destructive git op (`reset --hard`, `clean -f`, `branch -D`) against a worktree this session didn't personally check out: branch-show, status-short, stash modified, op, decide-stash-fate. Same defensive principle for destructive p4 verbs in p4-mode. Force-push banned globally except a narrow `--force-with-lease` carve-out on `claude/<id>/*` and `agent/<task-stream-id>/*` branches during API-500 recovery (ahead-range zero non-self commits; never bare `--force`).
+- **Cadence + verification** — `cmake --build` and `scripts/dev/test-all.sh` run **at most once per slice**, after implementation is complete. Pure-docs slices skip both (`scripts/dev/is-pure-docs-diff.sh`). Trivial-visual envelope skips bucket-E + isolated worktree. Perf scenario auto-runs at slice boundary when the diff hits the curated map. **Stale-read recovery on `Edit`** = Re-Read → diff intended change → Re-Edit (never `replace_all` as force-write). Deferred lint drains once at end-of-turn; `clang-format -i` still runs inline.
+- **Where new rules go** — 1-liners stay in § Project rules above; rules that fit an extracted topic land in that file; > 30-line new topics get their own `docs/agent-rules/<topic>.md` + stub here; ≤ 30-line orphans go in `process-rules.md` (the catch-all) rather than fragmenting.
 
-```bash
-bash scripts/dev/perf-run.sh <scenario>  # writes build/perf-runs/<scenario>-<ts>.json
-# When docs/perf/baselines/<scenario>.dev.json exists, also:
-python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.dev.json \
-    build/perf-runs/<scenario>-<ts>.json --markdown-only
-```
-
-When no `dev`-host baseline exists yet (the common case during phase rollouts before bootstrap), the perf-run output is reported on its own as evidence and the orchestrator notes `MISSING_BASELINE` rather than silently passing — same contract as `agents/perf-gatekeeper.md` § Hard rules. The CI gate at `.github/workflows/perf-pr-fast.yml` handles the per-PR enforcement (auto-bootstraps the `ci-windows-latest` baseline on first run, fails subsequent PRs on regression beyond `docs/perf/regression-policy.json`). Local slice-boundary runs are for fast feedback; the CI gate is the merge-block. Skip the local run when the slice ALSO qualifies for the pure-docs skip above — there's no code to measure either way.
-
-**Pure-docs slice skip**: a slice whose write set is strictly within the pure-docs allow-list (`docs/**`, `backlog/**`, `AGENTS.md`, uppercase root `*.md`) skips **both** `cmake --build` and `scripts/dev/test-all.sh` entirely — there is no executable code to verify. Discriminator (mirrors the end-of-session FF-clean gate at `agents/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception):
-```bash
-bash scripts/dev/is-pure-docs-diff.sh develop && echo "pure-docs (skip build + test-all)" || echo "needs full gate"
-```
-Exit 0 → skip both gates. Exit 1 → falls back to the standard slice-boundary cadence above.
-
-The same allow-list governs both surfaces (in-session orchestrator + end-of-session `git-janitor`) so a slice that qualifies in-session also qualifies for the FF push without re-evaluation. Deny-list paths (`agents/**`, `scripts/**`, `tests/**`, `.gitignore`, `.github/**`, `CMakePresets.json`, `CMakeLists.txt`, any C++/Lua/Python/shell source) keep the full gate — even a single deny-list file in the diff disqualifies the slice. CI ([`.github/workflows/build-and-test.yml`](.github/workflows/build-and-test.yml) `paths-ignore`) and CodeRabbit ([`.coderabbit.yaml`](.coderabbit.yaml) `auto_review.enabled: true`) handle the same diff orthogonally — CI skips on doc-only paths via its own `paths-ignore`; CodeRabbit reviews every PR including doc-only ones.
-
-**Stale-read recovery on `Edit`**: `Edit` may error with `File has been modified since read, either by the user or by a linter` when (a) a concurrent orchestrator in a sibling worktree edited the same file, (b) a `PostToolUse` hook (e.g. `lint-cpp.sh`'s `clang-format -i`) rewrote the file between your `Read` and `Edit`, or (c) the user touched the file in their editor.
-
-Canonical recovery — always works, no manual conflict resolution:
-
-1. Re-`Read` the file at the same path (and same `offset` / `limit` if you used them).
-2. Diff your intended change against the new content — verify the `old_string` you were going to pass still exists verbatim. If a hook reformatted it (trailing whitespace stripped, line wrapped), update `old_string` to the new exact form.
-3. Re-`Edit` with the refreshed `old_string`.
-
-Hot files (high race rate; expect to re-Read at least once per edit):
-
-- `docs/design/_plan-locks.generated.md` (every orchestrator that takes / releases a plan-lock touches it)
-- `AGENTS.md` (multi-agent doc edits)
-- `docs/backlog/agent-self-improvement/*.md` (parallel self-improvement appends; concurrent agents shipping different slices in the same session)
-
-Do NOT use `replace_all: true` as a "force-write" — it amplifies race-collision risk by widening the rewrite surface. Stick to the targeted Re-Read + Re-Edit pattern.
-
-The harness maintains a `.claude/.tree-dirty` sentinel file written by `.claude/hooks/lint-cpp.sh` on every first-party `.cpp` / `.h` edit and cleared automatically by the `PreToolUse:Bash` hook (`clear-tree-dirty.sh`) the moment any `cmake --build …` invocation is about to run. Agents reading the sentinel know edits have happened since the last build — if your implementation isn't done yet, defer the build.
-
-The deferred lint pipeline (`.claude/hooks/lint-cpp.sh` PostToolUse → `.claude/hooks/lint-cpp-drain.sh` Stop) follows the same principle for `cppcheck` / `clang-tidy` / dual-target syntax: heavy passes drain once at end-of-turn against the dedup'd set of edited files, not after each Edit/Write. `clang-format -i` still runs inline. Escape hatches: `SMATCHET_LINT_INLINE=1` reverts to per-edit, `bash scripts/dev/lint-flush.sh` drains explicitly mid-turn. The trivial-visual-only envelope above is a special case of this rule.
+Full sub-rule text + canonical recipes + carve-out exclusion list + hot-files list + the deferred-lint pipeline: [`docs/agent-rules/process-rules.md`](docs/agent-rules/process-rules.md).
 
 ## Debug techniques
 
@@ -373,11 +112,11 @@ First-time setup or fresh clone? See [`docs/harness/SETUP.md`](docs/harness/SETU
 
 ## Delegation
 
-**Moved to** [`docs/agent-rules/DELEGATION.md`](docs/agent-rules/DELEGATION.md) (~230 lines lifted out for navigability — AGENTS.md is now ~320 lines instead of 549).
+**Moved to** [`docs/agent-rules/delegation.md`](docs/agent-rules/delegation.md) (~230 lines lifted out for navigability — AGENTS.md is now ~320 lines instead of 549).
 
 Default: stay in the orchestrator's primary model for routine work. Delegate to an agent in `agents/` when the task matches.
 
-Quick index of moved subsections — full content in `docs/agent-rules/DELEGATION.md`:
+Quick index of moved subsections — full content in `docs/agent-rules/delegation.md`:
 
 - **Orchestrator delegation packet** — plan-lock pre-flight, shared inventory, invariant decisions, output budget, plan revision contract, subagent progress markers reminder, pure-helper TU-split recipe.
 - **Parallel dispatch** — when to run multiple subagents in one tool-use block.
@@ -396,7 +135,7 @@ Quick index of moved subsections — full content in `docs/agent-rules/DELEGATIO
 - **`delegates-to:` frontmatter** — direct call vs orchestrator-routed.
 - **Why split** + **Complexity rationale** — design intent.
 
-External references to `AGENTS.md § <subsection>` continue to resolve via this index — agents who read AGENTS.md land here, see the cross-link, and follow it to the canonical text. Don't maintain parallel copies; edit the canonical at `docs/agent-rules/DELEGATION.md`.
+External references to `AGENTS.md § <subsection>` continue to resolve via this index — agents who read AGENTS.md land here, see the cross-link, and follow it to the canonical text. Don't maintain parallel copies; edit the canonical at `docs/agent-rules/delegation.md`.
 
 ## Self-improvement loop
 
@@ -406,26 +145,9 @@ Operational rules — format, categories (`bug` / `process` / `tooling` / `infra
 
 ## Dual-VCS topology (Perforce as opt-in local layer)
 
-Smatchet runs git/GitHub as the **ship-line** (canonical, PR review, CI, `smatchet-merge-watcher`) and Perforce as an **opt-in local layer** for agentic-WIP primitives that git doesn't express well — named server-side shelves, atomic counters as plan-locks, exclusive file locks via `+l`, task streams as a per-subagent isolation primitive parallel to `git worktree add`.
+Smatchet runs git/GitHub as the **ship-line** (PR review, CI, `smatchet-merge-watcher`) and Perforce as an **opt-in local layer** (`SMATCHET_AGENT_VCS=p4`; default `git`) for agentic-WIP primitives — named server-side shelves, atomic counters as plan-locks, exclusive `+l` file locks, task streams as parallel-isolation primitives. The Perforce layer is purely additive: never required, never authoritative, never on the ship-line.
 
-Sessions opt in via `SMATCHET_AGENT_VCS=p4` (default `git`). Agents that don't set the env see no behaviour change — every git-only flow keeps working.
-
-| Concern | git path | p4 path |
-|---|---|---|
-| Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash scripts/dev/p4-task-stream.sh <agent-id>` |
-| Plan-lock backend | `refs/locks/<slug>` (default) | `SMATCHET_LOCK_BACKEND=p4-counter` |
-| Submit subagent work as PR | (manual) | `bash scripts/dev/p4-task-stream-to-pr.sh <id> <title>` |
-| Stale-stream GC | (cron via `agents/git-janitor.md`) | `agents/p4-janitor.md` + `scripts/dev/p4-task-stream-gc.sh` |
-| Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
-| Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
-
-Cross-links:
-- **Bring-up**: [`docs/perforce/SETUP.md`](docs/perforce/SETUP.md) — one-time `p4d` server + client + typemap setup.
-- **Verb-choice playbook**: [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md) — when to reach for which side; lock discipline; shelf-vs-stash; cross-link reconciliation.
-- **Plan**: [`docs/design/git-to-perforce-migration.md`](docs/design/git-to-perforce-migration.md) — phase log + deviations.
-- **Janitor**: [`agents/p4-janitor.md`](agents/p4-janitor.md) — periodic maintenance.
-
-Existing git-centric sections (merge-gates, plan-locks default, force-push carve-out, destructive-git-op preflight, ship-loop) are unchanged. The Perforce layer is purely additive — never required, never authoritative, never on the ship-line.
+Concern-by-concern git ↔ p4 mapping + verb-level TL;DR + lock discipline + shelf-vs-stash + destructive-p4-op pre-flight: [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md). Bring-up: [`docs/perforce/SETUP.md`](docs/perforce/SETUP.md). Janitor: [`agents/p4-janitor.md`](agents/p4-janitor.md). Plan: [`docs/design/git-to-perforce-migration.md`](docs/design/git-to-perforce-migration.md).
 
 ## Harness adapter
 

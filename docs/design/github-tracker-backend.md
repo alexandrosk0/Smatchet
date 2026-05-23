@@ -109,7 +109,7 @@ Delete every `.h` / `.cpp` / `.test.cpp` added by `(agentic)`-titled PRs. Modify
 - `AGENTS.md` (Merge gates / Handoff envelope / Debug-mode pause-loop / API-500 mid-run recovery / Force-push carve-out / etc. all stay verbatim).
 - `docs/design/agentic-coding-handoff.md` + `agentic-flow-implementation.md` + `agentic-triage-flow.md` + `coderabbit-react-loop.md` + `agent-contract-alignment.md` — stay.
 - `docs/agentic/TRIAGE_MANUAL.md` + `USAGE.md` — stay.
-- `docs/agent-rules/DELEGATION.md` — stay.
+- `docs/agent-rules/delegation.md` — stay.
 - `agents/handoff-implementer.md` + `pr-iterator.md` + `coderabbit-triage.md` — stay.
 - All ADRs unchanged: `0003-github-as-itrackerclient.md` (Accepted), `0004-pluggable-coding-harness-runner.md` (Accepted), `0005-force-push-carve-out-for-spawned-agent-recovery.md` (Accepted), `0006-orchestrator-pr-stays-draft-by-default.md` (Accepted), `0007-audit-trail-actor-column.md` (Withdrawn — left at current Withdrawn state from prior session).
 - `scripts/dev/merge-gates.sh` + `.graphql` + `-prompt.sh` — stay.

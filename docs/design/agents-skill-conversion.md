@@ -2,7 +2,7 @@
 
 ## Context
 
-Smatchet ships **24 agents** (`agents/*.md`) and **3 skills** (`grill-with-docs`, `scratchpad-recall`, `token-tracking`). No documented decision framework for choosing agent vs skill — the only explicit choice in the tree is `docs/agent-rules/DELEGATION.md:128` flagging `grill-with-docs` as "skill, not agent" without rationale.
+Smatchet ships **24 agents** (`agents/*.md`) and **3 skills** (`grill-with-docs`, `scratchpad-recall`, `token-tracking`). No documented decision framework for choosing agent vs skill — the only explicit choice in the tree is `docs/agent-rules/delegation.md:128` flagging `grill-with-docs` as "skill, not agent" without rationale.
 
 This document was revised twice. v1 listed 5 conservative candidates; v2 reduced to 2 after fact-check; **v3 (this version)** keeps the same 2 candidates but switches from a **destructive conversion** (delete agent file, replace with skill) to a **non-destructive dual-publish** model (keep agent file as canonical content, add a Claude-Code-only SKILL.md alias that imports it) — because v2 broke cross-harness discovery on Codex / Cursor.
 
@@ -137,10 +137,10 @@ Effect:
 | `AGENTS.md:19` (Pillar 1 § Tools) | Direct link to `agents/perf-instrument.md` + `agents/perf-measure.md` | **No change** — files still exist; harness-aware reader can pick agent or skill form |
 | `AGENTS.md:67` (UX Pillar agent-ownership table) | `helpers: perf-instrument, perf-measure` | **No change** — they remain helpers in agent form for cross-harness |
 | `AGENTS.md:380` (Semantic-search exceptions) | "`perf-instrument` already use text-search" | **No change** — statement still true; agent prose unchanged |
-| `docs/agent-rules/DELEGATION.md` routing tables | Lists both as agents | **Add** a note that on Claude Code they have a skill form; the agent form is the cross-harness fallback. No row movement. |
+| `docs/agent-rules/delegation.md` routing tables | Lists both as agents | **Add** a note that on Claude Code they have a skill form; the agent form is the cross-harness fallback. No row movement. |
 | `docs/PERF_WORKFLOW.md` | References agent form | Verify references hold; update if any prose says "must spawn perf-instrument agent" rather than "invoke perf-instrument" |
 
-Net diff: 2 prose additions (perf-detective + spike-hunter) + 1 small note in DELEGATION.md + a verification pass on PERF_WORKFLOW.md. No frontmatter changes. No file deletions. AGENTS.md untouched in v3.
+Net diff: 2 prose additions (perf-detective + spike-hunter) + 1 small note in delegation.md + a verification pass on PERF_WORKFLOW.md. No frontmatter changes. No file deletions. AGENTS.md untouched in v3.
 
 ## Verification — bucket-classified (resolves P2#2)
 
@@ -154,7 +154,7 @@ Per `docs/CONTEXT.md:63`, each verification item classified into bucket A-E. Man
 | V4 | Build still passes after a `perf-instrument` skill insert + after a cleanup pass | **A** (`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone`) | Implicit in V3 fixture if the fixture includes a build step; otherwise a separate assertion |
 | V5 | `perf-detective` correctly invokes the skill form on Claude Code + the agent form on Codex; both produce the same actionable hot-row list | **Manual residue** | **Deferred-automation entry**: requires cross-harness CI rig (Codex + Claude Code in lockstep). Currently no Smatchet CI runs Codex. File entry under `docs/backlog/agent-self-improvement/tooling.md`. Until then, single-harness verify on Claude Code is sufficient gate. |
 | V6 | Token-cost delta — main-thread input-token cost per perf-round drops after conversion | **Manual residue** | **Deferred-automation entry**: the agent-token-log telemetry (`agents/_shared/token-tracking/`) tracks subagent invocations but does **not** currently track skill-invocation overhead. File entry under `docs/backlog/agent-self-improvement/tooling.md`: extend token telemetry to record skill loads. Until then, sample-measure on a known perf round + record one before/after pair in the PR description. |
-| V7 | DELEGATION.md + PERF_WORKFLOW.md references stay valid after edits | **A** (`rg 'perf-instrument' agents/ docs/` returns only matches consistent with dual-publish wording) | Add assertion to `scripts/dev/test-doc-consistency.sh` (existing or new) |
+| V7 | delegation.md + PERF_WORKFLOW.md references stay valid after edits | **A** (`rg 'perf-instrument' agents/ docs/` returns only matches consistent with dual-publish wording) | Add assertion to `scripts/dev/test-doc-consistency.sh` (existing or new) |
 
 **Manual residue summary**: V5 + V6 are deferred-automation. Both get explicit entries in `docs/backlog/agent-self-improvement/tooling.md` as part of the conversion PR — per `agents/test-author.md`, manual residue without a backlog entry is a `test-author` failure.
 
@@ -171,7 +171,7 @@ Per `docs/CONTEXT.md:63`, each verification item classified into bucket A-E. Man
 - `scripts/setup-harness.sh` — `setup_claude_code()` loop refactor
 - `agents/perf-detective.md` — add orchestrator-preference prose note
 - `agents/spike-hunter.md` — same
-- `docs/agent-rules/DELEGATION.md` — note skill-form availability on Claude Code
+- `docs/agent-rules/delegation.md` — note skill-form availability on Claude Code
 - `docs/PERF_WORKFLOW.md` — verify references; update prose if needed
 - `docs/backlog/agent-self-improvement/tooling.md` — add V5 + V6 deferred-automation entries
 
@@ -184,7 +184,7 @@ Per `docs/CONTEXT.md:63`, each verification item classified into bucket A-E. Man
 
 **Phase 0** — `setup-harness.sh` loop refactor. Single PR. No behavioral change for existing skills; unblocks Phase 1+2. Verified by V1.
 
-**Phase 1** — `perf-measure` skill alias + perf-detective/spike-hunter prose note + DELEGATION.md note + tooling-backlog entries V5/V6. Single PR. Verified by V2 + V5 + V6.
+**Phase 1** — `perf-measure` skill alias + perf-detective/spike-hunter prose note + delegation.md note + tooling-backlog entries V5/V6. Single PR. Verified by V2 + V5 + V6.
 
 **Phase 2** — `perf-instrument` skill alias + V3 fixture + V4 build verify + V7 doc-consistency assertion. Single PR. Gated on Phase 1 functional-parity verification.
 
