@@ -403,7 +403,22 @@ poll_merge_gates() {
                 # on timeout (the prior review was clean; current commit likely still
                 # clean modulo new edits). STALE_UNKNOWN treated as STALE_WITH_FINDINGS
                 # to be safe — caller can't distinguish "0 actionable" from "no header".
-                if [ "$cr_actionable" -gt 0 ]; then
+                #
+                # H16: STALE_RESOLVED — when CR's prior review found N>0 findings BUT
+                # all CR review threads are now resolved AND CR's StatusContext on the
+                # current head is SUCCESS, CR has re-evaluated the current commit
+                # (resolving threads is its accept signal) without re-issuing a fresh
+                # review body. This is the dominant case for small fixup commits where
+                # CR accepts the addressing change via thread-resolution rather than
+                # posting a new "Actionable comments posted: 0" review. The merge-gate
+                # used to wedge here forever; now we treat it as pass. Requires BOTH
+                # signals (open=0 AND status=SUCCESS) — open=0 alone could mean the
+                # user manually resolved (no CR judgement); status=SUCCESS alone could
+                # be a stale placeholder. Together they're a CR-driven accept.
+                if [ "$cr_actionable" -gt 0 ] && [ "$cr_open" -eq 0 ] && [ "$cr_status_state" = "SUCCESS" ]; then
+                    cr_pass=true
+                    cr_state_print="STALE_RESOLVED (${cr_actionable} actionable on prior commit, all threads resolved + status SUCCESS — pass)"
+                elif [ "$cr_actionable" -gt 0 ]; then
                     cr_pass=false
                     cr_state_print="STALE_WITH_FINDINGS (${cr_actionable} actionable on prior commit — block + surface review)"
                 elif [ "$cr_actionable" = "0" ]; then

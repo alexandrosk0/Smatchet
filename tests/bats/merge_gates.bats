@@ -235,6 +235,48 @@ set_fixture() {
     [[ "$output" == *"GATES_PASSED"* ]]
 }
 
+@test "H16: STALE CR with N>0 findings + all threads resolved + StatusContext SUCCESS → pass (CR-driven thread resolution)" {
+    # CR's "resolved threads + cleared StatusContext without re-posting a clean
+    # review body" path. The old review reported N>0 actionable; CR re-evaluated
+    # the current head, resolved each finding's thread (its accept signal), and
+    # the per-head StatusContext fired SUCCESS. merge-gates used to wedge here
+    # forever (STALE_WITH_FINDINGS). H16 treats this as STALE_RESOLVED → pass.
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_stale_resolved.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"STALE_RESOLVED (4 actionable on prior commit, all threads resolved + status SUCCESS"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+}
+
+@test "H16: STALE CR with N>0 findings + all threads resolved but StatusContext NOT SUCCESS → still block (need both signals)" {
+    # CR's StatusContext must be SUCCESS — open=0 alone could mean the user
+    # manually resolved threads without CR judgement. Without the SUCCESS
+    # signal we conservatively block.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_stale_resolved.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes.1.state" \
+        '"PENDING"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"STALE_WITH_FINDINGS (4 actionable"* ]]
+    rm -f "$f"
+}
+
+@test "H16: STALE CR with N>0 findings + StatusContext SUCCESS but an open thread → still block (need both signals)" {
+    # Status=SUCCESS alone could be a stale placeholder. With even one open
+    # CR thread, we conservatively block to surface the finding.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_stale_resolved.json" \
+        "data.repository.pullRequest.reviewThreads.nodes.0.isResolved" \
+        'false')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"STALE_WITH_FINDINGS (4 actionable"* ]]
+    rm -f "$f"
+}
+
 @test "STALE CR with no Actionable header in body → STALE_UNKNOWN block (safe default)" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_stale_clean.json" \
