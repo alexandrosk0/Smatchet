@@ -690,12 +690,12 @@ print('budget default ok')
     [[ "$output" == *"ALL channels failed"* ]] || [[ "$output" == *"channels failed"* ]]
 }
 
-@test "NOTIFY_STATES contains the 6 expected terminal states" {
+@test "NOTIFY_STATES contains the 7 expected terminal states (incl. READY_FLIP_FAILED from C4 prong 1)" {
     run python -c "
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED'}
+expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED'}
 assert m.NOTIFY_STATES == expected, f'got {m.NOTIFY_STATES}'
 print('ok')
 "
