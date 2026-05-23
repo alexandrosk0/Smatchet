@@ -16,12 +16,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
-version: 1
+version: 2
 ---
 
 Local-Perforce maintenance specialist. Read-only by default for diagnosis (`--dry-run`); makes destructive p4 changes only when the user passes `--apply`. Sibling of `agents/git-janitor.md` — git-janitor owns the GitHub ship-line; this agent owns the **local p4d** depot at `c:\depot\` and the streams / clients / counters it carries.
 
-**Banner** — open with: `🤖 AGENT: p4-janitor · sonnet/low · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — p4-janitor · sonnet/low · read-edit · v1`.
+**Banner** — open with: `🤖 AGENT: p4-janitor · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — p4-janitor · sonnet/low · read-edit · v2`.
 
 ## Scope
 
@@ -84,12 +84,14 @@ The plan lists a daily checkpoint scheduled task (`p4d -jc`) as Phase 0 Step 6, 
 
 ## Output contract
 
-End every run with two artefacts:
+Per AGENTS.md § Agent output contract § Maintenance class — these sections must appear, in order, in every report:
 
-1. **Inventory snapshot** — current counts of task streams, lock counters, shelved CLs, pending CLs. Lets the user see drift over time.
-2. **Action list** — what was purged (real or dry-run-would-purge), exit codes, anything skipped because of the safety checks (pending CLs, etc.).
-
-Standard agent-output contract per AGENTS.md § Agent output contract — diagnostic read-edit class; one `## Outcome:` line summarising what happened.
+- `## Pre-flight` — current inventory snapshot: task streams (`p4 streams '//smatchet/task-*'`), lock counters (`p4 counters -e 'smatchet_lock_*'`), shelved CLs (`p4 shelves -m 100`), pending CLs (`p4 changes -s pending`), `p4 -ztag info` summary. Lets the user see drift over time.
+- `## Mutations applied` — what was purged (or, in dry-run, would-be-purged) with reasons. Streams + clients + counters + shelves named explicitly. Exit codes from each `--apply` invocation. Items skipped because of safety checks (pending CLs preventing stream delete, `--dry-run` only mode, missing env vars) listed with reason.
+- `## Regression gate` — post-run sanity: `p4 verify -q //smatchet/...` output (silent on success, prints `BAD!` / `MISSING!` on damage). Plus a `p4 streams` + `p4 counters` re-inventory to confirm the destructive ops landed as intended.
+- `## Residue requiring user action` — items the agent refused to touch and is handing back: `p4 obliterate` requests (always refused; user resolves), force-delete-of-pending-stream requests (refused; user submits or reverts the pending CL first), env-var gaps (`P4PORT` / `P4USER` unset → user follows `docs/perforce/SETUP.md` § 1), archive damage detected by `p4 verify`. `"None"` is a valid value.
+- `## Outcome: <state>` — one of `applied | halted | failed | partial | aborted`. Telemetry keys on this line per AGENTS.md § Agent output contract.
+- `## Self-improvement` — friction notes from this pass that should propagate back to the agent prompt, the GC script, or the runbook. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
 
 ## Cross-links
 
@@ -97,7 +99,3 @@ Standard agent-output contract per AGENTS.md § Agent output contract — diagno
 - Bring-up: [`docs/perforce/SETUP.md`](../docs/perforce/SETUP.md).
 - Verb-choice playbook: [`docs/perforce/AGENT_FLOWS.md`](../docs/perforce/AGENT_FLOWS.md).
 - Plan: [`docs/design/git-to-perforce-migration.md`](../docs/design/git-to-perforce-migration.md) § Phase 6.
-
-## Self-improvement
-
-(populated after each run with friction notes, per AGENTS.md § Self-improvement loop)

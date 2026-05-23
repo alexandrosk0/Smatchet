@@ -45,7 +45,7 @@ done
 # -------------------------------------------------------------------------
 echo
 echo "[2/9] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
-MAINTENANCE=(build-doctor test-author git-janitor)
+MAINTENANCE=(build-doctor test-author git-janitor p4-janitor)
 for a in "${MAINTENANCE[@]}"; do
   f="agents/$a.md"
   miss=0

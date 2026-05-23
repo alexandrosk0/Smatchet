@@ -23,7 +23,7 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
-version: 1
+version: 2
 ---
 
 Unreal / dual-target specialist.

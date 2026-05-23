@@ -136,7 +136,7 @@ Agents fall into five classes by report shape. **Required section minimum** (ext
 | **Diagnostic read-edit** (instrumented diagnosis) | `debug-detective` | `## Hypotheses` → `## Evidence` → `## Cause` → `## Files changed (temp-debug)` → `## Cleanup verified` → `## Handoff` (target agent + allowed write set). Write set restricted to temporary instrumentation that must be stripped before the report. |
 | **Implementer** (read-edit subsystem) | `tracker-backend`, `grid-engine`, `offline-sync`, `command-system`, `lua-binder`, `mcp-toolsmith`, `p4-blame`, `unreal-bridge`, `mechanic` | `## Files changed` → `## Smoke-test result` → `## Manual residue` (must say "none" if none) |
 | **Helper** (terminal helper) | `perf-instrument`, `perf-measure` | `## Spec executed` → `## Result` (numbers / inserted-or-stripped count) |
-| **Maintenance** (workflow) | `build-doctor`, `test-author`, `git-janitor` | `## Pre-flight` → `## Mutations applied` → `## Regression gate` → `## Residue requiring user action` |
+| **Maintenance** (workflow) | `build-doctor`, `test-author`, `git-janitor`, `p4-janitor` | `## Pre-flight` → `## Mutations applied` → `## Regression gate` → `## Residue requiring user action` |
 
 All five classes also end with `## Outcome: <state>` + `## Session context append` (when relevant) + `## Self-improvement` (per AGENTS.md § Self-improvement loop). `## Outcome:` value is one of `applied | halted | failed | partial | aborted` and is what the telemetry hook keys on.
 

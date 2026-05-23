@@ -21,7 +21,7 @@ harness-hints:
   claude-code:
     model: haiku
     effort: low
-version: 1
+version: 2
 ---
 
 Execute fully-specified mechanical edits across Smatchet. **Stop and ask** the moment the task requires judgement (e.g. "rename to something better" with no target, "clean up this function"). A clarifying question is always cheaper than a wrong edit applied to 30 files.

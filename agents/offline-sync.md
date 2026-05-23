@@ -25,7 +25,7 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: low
-version: 1
+version: 2
 ---
 
 Offline-sync / cache specialist for Smatchet.

@@ -66,17 +66,23 @@ Smatchet.exe cmd perf.snapshot \
 
 **Sort by `lastTotalMs`, NEVER by `avgPerCallMs`.** A 200-call × 50 µs row (10 ms total) beats a 1-call × 5 ms row when you're trying to recover frame time. The calling agent will diagnose from the totals.
 
-## Report format
+## Output contract
 
-```
-Scenario: <name>, <N> frames
-Top rows by lastTotalMs:
-1. <name>  lastTotalMs=<ms>  callCount=<n>  avgPerCallMs=<µs>
-2. ...
+Per AGENTS.md § Agent output contract § Helper class — these sections must appear, in order, in every report:
 
-perf_temp:* rows: <list>  (markers the caller is tracking this round)
-Pre-existing dominant rows: <list>  (context — what perf_temp: markers are competing against)
-```
+- `## Spec executed` — scenario name, frame count, build preset, run path (A1 spawn / A2 ad-hoc / A3 new scenario registered). One line per parameter.
+- `## Result` — top rows by `lastTotalMs`, formatted as:
+  ```text
+  Scenario: <name>, <N> frames
+  Top rows by lastTotalMs:
+  1. <name>  lastTotalMs=<ms>  callCount=<n>  avgPerCallMs=<ms>
+  2. ...
+
+  perf_temp:* rows: <list>  (markers the caller is tracking this round)
+  Pre-existing dominant rows: <list>  (context — what perf_temp: markers are competing against)
+  ```
+- `## Outcome: <state>` — one of `applied | halted | failed | partial | aborted`. Telemetry keys on this line per AGENTS.md § Agent output contract.
+- `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
 
 ## Fallback — CLI unavailable
 
@@ -99,7 +105,3 @@ Do not attempt to read FPS visually — you can't observe the GUI, and the rule 
 ## Consistency rule
 
 For a before / after comparison, run the **same** scenario, same `--frames` value. Numbers from different scenarios are not comparable.
-
-Report: scenario + frame count + top-5 rows by `lastTotalMs` + which rows are `perf_temp:*` vs pre-existing + the raw `perf.snapshot --pretty` block for reference.
-
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if a scenario was missing, the CLI didn't expose a needed field, or the fallback path took multiple round-trips. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
