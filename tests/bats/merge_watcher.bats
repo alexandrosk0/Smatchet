@@ -399,6 +399,25 @@ print('all assertions passed')
     [[ "$output" == *"all assertions passed"* ]]
 }
 
+# ---------- Triage budget default (option C: fast notify on CR findings) ----------
+
+@test "MERGE_WATCH_TRIAGE_BUDGET default is 1 (was 3 — option C)" {
+    # Triage retries don't fix code; they re-classify. Default lowered so the
+    # notify surface fires on the next poll after CR posts findings, not three
+    # polls later. Test reads the literal default from the source so a stray
+    # bump back to 3 fails the gate.
+    run python -c "
+import re, pathlib
+src = pathlib.Path(r'$SCRIPTS_DIR/merge-watcher.py').read_text(encoding='utf-8')
+m = re.search(r'MERGE_WATCH_TRIAGE_BUDGET\", \"(\d+)\"', src)
+assert m, 'budget default literal not found'
+assert m.group(1) == '1', f'budget default is {m.group(1)}, expected 1'
+print('budget default ok')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"budget default ok"* ]]
+}
+
 # ---------- Phase 4a: notify dispatch ----------
 
 @test "smatchet-notify.sh --help prints inputs documentation" {

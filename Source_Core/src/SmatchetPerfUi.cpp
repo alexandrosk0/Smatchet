@@ -213,13 +213,22 @@ void SmatchetPerfUi::updateSmoothedFps() {
     }
 }
 
-void SmatchetPerfUi::DrawWindow(bool* pOpen) {
+void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
     if (!pOpen || !*pOpen) {
         return;
     }
     updateSmoothedFps();
     ImGui::SetNextWindowSize(ImVec2(580, 380), ImGuiCond_FirstUseEver);
+    // Always-reveal-on-menu-click contract (AGENTS.md): SetNextWindowFocus before Begin is the
+    // only path that activates a docked tab; post-Begin SetWindowFocus is belt-and-braces for
+    // floating-window state. Mirrors SmatchetViewsDashboardUi.cpp pattern.
+    if (wantFocus) {
+        ImGui::SetNextWindowFocus();
+    }
     if (ImGui::Begin("Performance", pOpen)) {
+        if (wantFocus) {
+            ImGui::SetWindowFocus();
+        }
         const double dt = static_cast<double>(ImGui::GetIO().DeltaTime);
         ImGui::Text("FPS: %.1f    Frame: %.2f ms (smoothed)", smoothFps_, smoothFrameMs_);
         ImGui::Separator();

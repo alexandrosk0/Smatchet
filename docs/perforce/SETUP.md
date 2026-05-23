@@ -20,9 +20,9 @@ The dev box already has an unrelated `p4d` on `Brick:1666` serving an Unreal pro
 |---|---|---|
 | Server version | P4D 2025.2 or later | Existing Brick install is 2025.2 — match. |
 | Port | `1666` on remote host | Default; no SSL on LAN. |
-| Case handling | `sensitive` (`-C0`) | Plan-mandated. **Must** be set at first server start; cannot be flipped later without depot rebuild. |
-| Unicode mode | on | `p4d -xi` after init; one-way. |
-| Charset | `utf8` | Client sets `P4CHARSET=utf8`. |
+| Case handling | match host filesystem; **don't pass any `-C` flag** for the typical install | p4d defaults to its platform's native case-mode — case-insensitive on Windows, case-sensitive on Linux. That's correct in both cases. The `-C` flags only OVERRIDE the platform default: `-C0` forces case-sensitive, `-C1` forces case-insensitive (per Perforce docs + CR's own web query). Only useful when crossing platforms (e.g. `-C1` to force insensitive on a case-sensitive APFS volume to match a Windows team). Forcing sensitive on Windows (`-C0`) is **wrong** for Smatchet's dual-VCS layout: a sensitive p4d on Windows would let `Foo.cpp` and `foo.cpp` coexist in the depot but the filesystem can hold only one, producing phantom drift + `p4 sync` failures. Locked at first server start; cannot be flipped later without depot rebuild. |
+| Unicode mode | optional, skip on the shipped instance | `p4d -xi` after init; one-way. Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8). Enable later if a real charset bug surfaces. |
+| Charset | n/a (server non-unicode) | Clients leave `P4CHARSET` unset (or `none`). |
 | Server root | `C:\depot-smatchet` | Holds `db.*` files + checkpoints. |
 | Service name | `p4d_smatchet` | Distinct from any other Perforce service. |
 
@@ -67,47 +67,64 @@ Set-Service -Name 'Perforce' -StartupType Disabled
 sc.exe delete Perforce   # removes the installer's default service
 ```
 
-### 2. Wipe the installer's db files (we re-init with the right flags)
+### 2. Stop the installer-default service (don't wipe db files on Windows)
 
-The installer may have started the server once during setup, which writes `db.*` files with case-**insensitive** flag (Windows default). Delete them so the next start locks in case-sensitive:
-
-```powershell
-Stop-Service -Name 'Perforce' -ErrorAction SilentlyContinue
-Remove-Item C:\depot-smatchet\db.* -Force -ErrorAction SilentlyContinue
-Remove-Item C:\depot-smatchet\journal -Force -ErrorAction SilentlyContinue
-Remove-Item C:\depot-smatchet\log -Force -ErrorAction SilentlyContinue
-```
-
-### 3. Initialize case-sensitive + unicode
+The installer auto-registers a `Perforce` Windows service and starts it once during setup, writing `db.*` files with case-**insensitive** flag (Windows default). On Windows, that's the **correct** setting — keep it. Do NOT delete `db.*` to force case-sensitive: a sensitive p4d on a case-insensitive Windows filesystem would let `Foo.cpp` and `foo.cpp` coexist in the depot but the filesystem can hold only one, producing `p4 sync` failures and phantom reconcile drift. The custom-named service we register in step 4 reuses the existing `db.*` files.
 
 ```powershell
-& 'C:\Program Files\Perforce\Server\p4d.exe' -r C:\depot-smatchet -C0 -xi
+# Idempotent — safe to re-run if installer service was already removed
+if (Get-Service -Name 'Perforce' -ErrorAction SilentlyContinue) {
+    Stop-Service -Name 'Perforce' -ErrorAction SilentlyContinue
+    Set-Service -Name 'Perforce' -StartupType Disabled
+    sc.exe delete Perforce   # removes the installer's default service entry; depot files stay
+}
 ```
 
-Expected output:
-```
-Perforce db files in 'C:\depot-smatchet' will be created if missing...
-Server switched to Unicode mode.
-```
+**Case-sensitive filesystem (Linux/ext4, case-sensitive APFS volume)**: nothing extra to do — the installer-default db will be case-sensitive (the platform default on those filesystems). No wipe needed; the db files from the installer's first run are correct. Skip to step 4.
 
-The `-C0` arg on first run locks the server into case-sensitive mode. The `-xi` flag flips unicode mode.
+**If you ever need to OVERRIDE the platform default** (rare — e.g. you're on case-sensitive APFS but want insensitive to match a Windows-majority team), pass `-C1` at first start:
+```bash
+rm -f /var/depot-smatchet/db.* /var/depot-smatchet/journal /var/depot-smatchet/log
+p4d -r /var/depot-smatchet -C1
+```
+Per Perforce docs: `-C0` forces case-sensitive (overrides platform default), `-C1` forces case-insensitive. **Don't pass `-C0` on Windows** for Smatchet — see Decisions table § Case handling above.
+
+### 3. (Both platforms) Optional unicode mode
+
+Unicode mode is optional + one-way; Smatchet's shipped instance skipped it (single-user, ASCII-safe UTF-8). To lock it on, run once after install:
+```bash
+p4d -r /var/depot-smatchet -xi
+```
 
 ### 4. Register Windows service `p4d_smatchet`
 
+Use `p4s.exe` (the Windows service wrapper that ships with Helix Core 2025.x), **not** `p4d.exe` directly. `p4d.exe` is the command-line server and has no SCM dispatcher — registering it as a Windows service produces a `[SC] StartService failed` error on start. `p4s.exe` reads its config from per-service Perforce env vars (`P4ROOT` / `P4PORT` / `P4LOG` / `P4JOURNAL`) set via `p4 set -S <service>`.
+
 ```powershell
-sc.exe create p4d_smatchet `
-  binPath= "\"C:\Program Files\Perforce\Server\p4d.exe\" -r C:\depot-smatchet -p 1666 -L C:\depot-smatchet\p4d.log" `
-  DisplayName= "Perforce Server (Smatchet)" `
-  start= auto
-sc.exe description p4d_smatchet "Helix Core server hosting //smatchet depot for the Smatchet project."
-sc.exe start p4d_smatchet
+# Create the service first (it WILL fail to start until the per-service env vars are set below).
+New-Service -Name 'p4d_smatchet' `
+  -BinaryPathName '"C:\Program Files\Perforce\Server\p4s.exe"' `
+  -DisplayName 'Perforce Server (Smatchet)' `
+  -Description 'Helix Core server hosting //smatchet depot for the Smatchet project.' `
+  -StartupType Automatic
+
+# Set per-service env vars (the service uses these to locate the depot, port, and logs).
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4ROOT=C:\depot-smatchet
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4PORT=1666
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4LOG=C:\depot-smatchet\p4d.log
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet P4JOURNAL=C:\depot-smatchet\journal
+
+Start-Service -Name 'p4d_smatchet'
 ```
 
 Verify:
 ```powershell
-sc.exe query p4d_smatchet                 # STATE: 4 RUNNING
+Get-Service p4d_smatchet                  # Status: Running
 Test-NetConnection -ComputerName localhost -Port 1666
+& 'C:\Program Files\Perforce\p4.exe' set -S p4d_smatchet   # should list P4ROOT/P4PORT/P4LOG/P4JOURNAL
 ```
+
+If `Start-Service` fails with "Cannot start service", double-check `p4 set -S p4d_smatchet` shows all four env vars. Per-service config lives in the registry under `HKLM\SOFTWARE\[Wow6432Node\]Perforce` and is **bound to the service name** — deleting the service drops its per-service config. If you need to rename the service later, re-add the four `p4 set -S <new-name> ...` lines before starting.
 
 ### 5. Configure user `alexk`
 
@@ -206,10 +223,14 @@ Expected:
 Server address: <REMOTE_HOST>:1666
 Server root: C:\depot-smatchet
 Server version: P4D/NTX64/2025.2/...
-Case Handling: sensitive
+Case Handling: insensitive    # on Windows; sensitive on case-sensitive OSes
 ```
 
-If `Case Handling` reads `insensitive` — STOP, the `-C0` flag did not take. Wipe `C:\depot-smatchet\db.*` on remote and redo step 3.
+The `Case Handling` line should match the **server host's filesystem**:
+- Windows → `insensitive` (correct; matches NTFS + matches git `core.ignorecase=true` default on Windows).
+- Linux / case-sensitive APFS → `sensitive` (correct; required to preserve filename case in the depot).
+
+If `Case Handling` doesn't match the host filesystem, the installer's first run got overridden with the wrong `-C` flag — wipe `db.*` on the server host and redo step 3 without any `-C` flag (the platform default is what you want). The `-C` flags exist to FORCE a non-default mode and only have legitimate use when crossing platforms (`-C1` to force insensitive on Linux, very rare). `-C2` is not a valid p4d flag.
 
 ## Phase 0 exit gate — throwaway CL roundtrip
 
@@ -218,8 +239,10 @@ Phase 0 closes when a throwaway client can submit + re-sync a file. This step ge
 ## Deviations from plan
 
 - **Two p4d hosts** instead of one — the dev box's existing `Brick:1666` (Unreal) is left untouched; Smatchet's depot lives on a remote LAN host. Plan § Approach assumed one combined `p4d`; the split is operationally cleaner and matches user preference.
-- **Case sensitivity**: server initialized case-sensitive per plan. Windows default would have been insensitive.
+- **Case sensitivity**: original runbook hard-prescribed `sensitive` (`-C0`) for all hosts. Revised in 2026-05-22 to match the host filesystem — Windows hosts get the installer-default `insensitive` (no `-C` flag needed), Linux hosts get the installer-default `sensitive` (no `-C` flag needed). The `-C` flags only OVERRIDE the platform default: `-C0` forces case-sensitive, `-C1` forces case-insensitive. Rationale per the plan's own analysis (`docs/design/git-to-perforce-migration.md:225`): case-sensitive p4d on a case-insensitive filesystem breaks the dual-VCS invariant because the filesystem cannot hold two files differing only in case while the depot can, producing phantom drift + `p4 sync` failures. Mainbot's shipped install runs `insensitive` and that is correct for a Windows host.
 - **Server version**: 2025.2 (latest LTS available 2026-05-21) instead of plan's `r24.2`.
+- **Service wrapper**: original runbook prescribed `sc.exe create … binPath= "…\p4d.exe -r … -p … -L …"` (direct `p4d.exe` invocation). On Helix Core 2025.2 that registration succeeds but `Start-Service` fails — `p4d.exe` has no SCM dispatcher. The runbook above is the corrected version using `p4s.exe` + per-service env vars (`p4 set -S p4d_smatchet …`).
+- **Existing Mainbot install (2026-05-22)**: actual server root is `C:\depot\` (Helix installer default) instead of the runbook's `C:\depot-smatchet\` — purely cosmetic, both paths work equivalently. Service was renamed from the installer-default `Perforce` to `p4d_smatchet` in-place; per-service env vars point at `C:\depot\`. Case handling is `insensitive`, which is the correct Windows setting per the revised guidance above. Doc keeps the original `C:\depot-smatchet\` path as the canonical fresh-install target so new installs don't accidentally collide with a future Helix re-install at `C:\depot`.
 
 ## Open items (post-Phase-0)
 

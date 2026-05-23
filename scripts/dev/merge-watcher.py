@@ -603,7 +603,7 @@ def maybe_notify(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
     if prior_notified_for == cur_state:
         return {"notify_action": "suppressed (same state as last notify)"}
     # Compose message + invoke notify script.
-    message = state.get("last_status_line", "(no status line)")[:200]
+    status_line = state.get("last_status_line", "(no status line)")
     pr = int(entry["pr"])
     # PR URL via gh from the clone path.
     pr_url = ""
@@ -611,6 +611,15 @@ def maybe_notify(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
     if or_meta:
         owner, repo = or_meta
         pr_url = f"https://github.com/{owner}/{repo}/pull/{pr}"
+    # When the terminal state is a CR-finding block, append the inline-files
+    # URL so the user lands on the diff view that shows CR's per-line markers
+    # — saves a second click hunting for the comments from the overview tab.
+    # Option C of the watcher-loop fix: faster, actionable notify.
+    cr_finding = cur_state == "TRIAGE_BUDGET_EXHAUSTED" or _looks_like_cr_finding_block(status_line)
+    if cr_finding and pr_url:
+        message = f"{status_line[:160]} — review inline: {pr_url}/files"
+    else:
+        message = status_line[:200]
     args = [
         BASH_BIN,
         str(NOTIFY_SCRIPT),
@@ -666,8 +675,12 @@ def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[st
     (CI fail, user comment, missing review) don't fire triage.
 
     Increments `triage_attempts` on the registry entry. When attempts >=
-    MERGE_WATCH_TRIAGE_BUDGET (default 3), marks the state as
+    MERGE_WATCH_TRIAGE_BUDGET (default 1), marks the state as
     TRIAGE_BUDGET_EXHAUSTED so Phase 4's notification surface picks it up.
+
+    Default budget lowered from 3 → 1 (option C of the watcher-loop fix):
+    triage retries don't fix code, they only re-classify. The loop's value
+    is the user notification — get it on the next poll, not 3 polls later.
     """
     extras: dict[str, Any] = {}
     if not _looks_like_cr_finding_block(status_line):
@@ -680,7 +693,7 @@ def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[st
         extras["triage_action"] = "skipped: gh repo view failed"
         return extras
     owner, repo = or_meta
-    budget = int(os.environ.get("MERGE_WATCH_TRIAGE_BUDGET", "3"))
+    budget = int(os.environ.get("MERGE_WATCH_TRIAGE_BUDGET", "1"))
     attempts_before = int(entry.get("triage_attempts", 0))
     attempts_after = attempts_before + 1
     # Bump the registry entry's triage_attempts (registry-locked).

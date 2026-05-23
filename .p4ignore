@@ -19,6 +19,13 @@
 .git/
 .gitignore.swp
 
+# ----- Per-clone p4 client config (host-specific; never committed) -----
+# .p4config files override P4PORT / P4USER / P4CLIENT / P4IGNORE per folder.
+# Used on machines like Brick that run multiple p4d contexts (e.g. an unrelated
+# local p4d for Unreal + Mainbot's depot for Smatchet) where global env vars
+# would collide. The file's content is per-clone and must NOT enter the depot.
+.p4config
+
 # ----- FetchContent clones / Lua tarball -----
 .fetchcontent-src/
 /.fetchcontent-msvc

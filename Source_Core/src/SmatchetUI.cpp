@@ -610,16 +610,54 @@ void SmatchetUI::Draw(AppController& app) {
             ConfigManager::Save(d.cfg);
         }
 #if defined(SMATCHET_WITH_AI)
-        // Ctrl+Shift+A toggles the Smatchet Assistant side panel. Persistence runs through
-        // the panel-draw path (PersistOpenStateImmediate) so we only flip the live flag
-        // here; the panel's first draw next frame picks up the new value.
+        // Ctrl+Shift+A always-reveals the Smatchet Assistant side panel. Persistence runs
+        // through the panel-draw path (PersistOpenStateImmediate). Always-reveal-on-shortcut
+        // contract (AGENTS.md): re-pressing while open must focus, not close. Closing happens
+        // via the X button only.
         if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_A, false)) {
-            d.assistantPanelOpen = !d.assistantPanelOpen;
-            if (d.assistantPanelOpen) {
-                d.requestAssistantFocus = true;
-            }
+            d.assistantPanelOpen = true;
+            d.requestAssistantFocus = true;
         }
-#else
+#endif
+        // View-menu global shortcuts — all always-reveal. Setting show* = true and raising the
+        // focus latch every press lets the consumer's wantFocus-driven SetNextWindowFocus
+        // before Begin activate the docked tab (the only path that does); the post-Begin
+        // SetWindowFocus is belt-and-braces for floating-window state.
+        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+            d.showPerformance = true;
+            d.requestPerformanceFocus = true;
+        }
+        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+            d.showPlanDocViewer = true;
+            d.requestPlanDocViewerFocus = true;
+        }
+        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_I, false)) {
+            d.showBulkImport = true;
+            d.requestBulkImportFocus = true;
+        }
+        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+            d.showBulkExport = true;
+            d.requestBulkExportFocus = true;
+        }
+        // Ctrl+, (no shift, no alt) — canonical IDE Preferences shortcut.
+        if (ctrlDown && !shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_Comma, false)) {
+            d.showPreferences = true;
+            d.requestPreferencesFocus = true;
+        }
+#if defined(SMATCHET_WITH_MCP)
+        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_K, false)) {
+            d.showMcpServerWindow = true;
+            d.requestMcpServerFocus = true;
+        }
+#endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+            d.showLuaAutomationWindow = true;
+            d.requestLuaAutomationFocus = true;
+            d.requestScriptingEditorTabFocus = true;
+        }
+#endif
+#if !defined(SMATCHET_WITH_AI)
         (void)shiftDown;
 #endif
     }
@@ -642,8 +680,18 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("SmatchetPerfUi::DrawWindow");
         if (g_ui.showPerformance) {
             prepareTopLevelWindow(g_ui, "performance", 580.0f, 380.0f);
+            // Unified focus path: hand wantFocus to DrawWindow which applies the
+            // SetNextWindowFocus-before-Begin + SetWindowFocus-after-Begin pattern internally.
+            const bool wantPerfFocus = g_ui.requestPerformanceFocus;
+            g_perfUi.DrawWindow(&g_ui.showPerformance, wantPerfFocus);
+            if (wantPerfFocus) {
+                g_ui.requestPerformanceFocus = false;
+                LOG_DEBUG("Performance window: focused via menu request");
+            }
+        } else if (g_ui.requestPerformanceFocus) {
+            // Defensive: clear the latch if the window is somehow disabled before consumption.
+            g_ui.requestPerformanceFocus = false;
         }
-        g_perfUi.DrawWindow(&g_ui.showPerformance);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");

@@ -9,7 +9,10 @@
 /// ImGui window: FPS, CPU scope timings (`UiPerfMonitor`), and `NetworkUsageTracker` stats.
 class SmatchetPerfUi {
   public:
-    void DrawWindow(bool* pOpen);
+    /// `wantFocus=true` makes Begin pop a docked tab to active and (re)focuses the floating
+    /// window — the always-reveal contract from menu-bar clicks (AGENTS.md). Defaults to false
+    /// so existing callers (no-arg path) compile unchanged.
+    void DrawWindow(bool* pOpen, bool wantFocus = false);
     /// Reads `io.Framerate` / delta; call after `DrawWindow` while the performance UI is open.
     void DrawFpsOverlay();
 

@@ -104,3 +104,9 @@ smatchet_config.json.lock
 # release-tag builds. Scoped to assets/fonts/ so other vendored .ttf elsewhere
 # in the tree (if any future plugin ships one) is unaffected.
 assets/fonts/*.ttf
+
+# Per-clone p4 client config (host-specific; never committed). .p4config
+# files override P4PORT / P4USER / P4CLIENT / P4IGNORE per folder and are
+# used on machines like Brick that run multiple p4d contexts (e.g. local
+# Unreal p4d + remote Mainbot p4d) where global env vars would collide.
+.p4config
