@@ -333,7 +333,16 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(
             stopLoop = true;
         } else if (endCursor.empty()) {
             // Defensive — hasNext=true but endCursor empty would loop forever.
-            reachedShortPage = true;
+            // Stop safely but do NOT mark reachedShortPage: FullSyncCompleted
+            // propagation (line ~360) treats reachedShortPage as the full-sync
+            // signal, and the caller's stale-prune fires on FullSyncCompleted.
+            // CR PR #399: marking inconsistent pagination metadata as full-sync
+            // pruned legitimate cached rows beyond the broken page boundary.
+            AppendOutWarning(outWarning,
+                             "GitHub GraphQL pageInfo.endCursor missing while hasNextPage=true; stopped early.");
+            LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: empty endCursor with hasNextPage=true; "
+                     "stopping page %d without claiming full sync",
+                     page);
             isLastPage = true;
             stopLoop = true;
         }

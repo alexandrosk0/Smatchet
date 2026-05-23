@@ -370,9 +370,25 @@ std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, 
         if (!node.is_object()) {
             continue;
         }
+        // Reject nodes missing required identity fields before mapping. Without
+        // these guards, GitHub objects lacking __typename or a positive integer
+        // `number` would produce bogus tickets (e.g. `#0`). CR PR #399.
         const auto tnIt = node.find("__typename");
-        const bool isPr = (tnIt != node.end() && tnIt->is_string() && tnIt->get<std::string>() == "PullRequest");
+        const bool hasType = (tnIt != node.end() && tnIt->is_string());
+        if (!hasType) {
+            continue;
+        }
+        const std::string typeName = tnIt->get<std::string>();
+        const bool isPr = (typeName == "PullRequest");
+        const bool isIssue = (typeName == "Issue");
+        if (!isPr && !isIssue) {
+            continue;
+        }
         if (isPr && !includePullRequests) {
+            continue;
+        }
+        const auto numIt = node.find("number");
+        if (numIt == node.end() || !numIt->is_number_integer() || numIt->get<long long>() <= 0) {
             continue;
         }
         try {
