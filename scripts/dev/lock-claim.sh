@@ -65,8 +65,15 @@ remote="${LOCK_REMOTE:-origin}"
 remote_url=$(git config --get "remote.${remote}.url" || true)
 [ -n "$remote_url" ] || { echo "lock-claim: remote '$remote' not configured" >&2; exit 2; }
 if [ "${SMATCHET_LOCK_BYPASS_REPO_CHECK:-0}" != "1" ]; then
+    # H15: anchor `Smatchet` at a path boundary (`/` for https, `:` for
+    # scp-style git@host:owner/repo). Previously `*[Ss]matchet*` matched
+    # anywhere in the URL — even mid-token like `foo-smatchet-bar` — so a
+    # non-Smatchet repo could pass the safety check just by having the
+    # substring in its path. The `[/:]` requirement narrows to actual
+    # path-or-host segments. Still permissive enough for legitimate forks
+    # (`Smatchet-fork`, `smatchet-experiment`).
     case "$remote_url" in
-        *[Ss]matchet*) : ;;
+        *[/:][Ss]matchet*) : ;;
         *) echo "lock-claim: remote URL '$remote_url' does not look like a Smatchet repo (set SMATCHET_LOCK_BYPASS_REPO_CHECK=1 to override)" >&2; exit 2 ;;
     esac
 fi
