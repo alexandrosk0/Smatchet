@@ -32,6 +32,9 @@ setup() {
 #   MERGE_GATES_TEST_FIXTURE       — path to fixture for `gh api graphql`
 #   MERGE_GATES_STUB_READY_STDERR  — stderr for `gh pr ready`
 #   MERGE_GATES_STUB_READY_EXIT    — exit code for `gh pr ready` (default 0)
+#   MERGE_GATES_STUB_VIEW_ISDRAFT  — value returned for `gh pr view --json isDraft`
+#                                   (default: false; "true" / "false" / "" )
+#   MERGE_GATES_STUB_VIEW_EXIT     — exit code for `gh pr view` (default 0)
 case "$1" in
     api)
         if [ "$2" = "graphql" ]; then
@@ -67,6 +70,16 @@ case "$1" in
                 echo "$MERGE_GATES_STUB_READY_STDERR" >&2
             fi
             exit "${MERGE_GATES_STUB_READY_EXIT:-0}"
+        fi
+        if [ "$2" = "view" ]; then
+            # gh pr view <pr> --json isDraft --jq .isDraft
+            # Stub only emits the `--jq .isDraft` path — emit the raw value.
+            if [ "${MERGE_GATES_STUB_VIEW_EXIT:-0}" -ne 0 ]; then
+                echo "stub-gh: pr view failure" >&2
+                exit "${MERGE_GATES_STUB_VIEW_EXIT}"
+            fi
+            echo "${MERGE_GATES_STUB_VIEW_ISDRAFT:-false}"
+            exit 0
         fi
         ;;
     user)
@@ -611,9 +624,35 @@ set_fixture() {
     [ "$status" -eq 0 ]
 }
 
-@test "gh_pr_ready_idempotent: unknown error returns 6" {
+@test "gh_pr_ready_idempotent: unknown error + PR still draft returns 6" {
+    # Genuine failure: gh pr ready can't promote AND isDraft=true confirms
+    # the PR is still draft. Positive-check fallback agrees with the failure.
     export MERGE_GATES_STUB_READY_STDERR="error: 403 forbidden"
     export MERGE_GATES_STUB_READY_EXIT=1
+    export MERGE_GATES_STUB_VIEW_ISDRAFT=true
+    run gh_pr_ready_idempotent 1
+    [ "$status" -eq 6 ]
+}
+
+@test "H2: gh_pr_ready_idempotent: unknown error + PR observably non-draft returns 0 (positive-check fallback)" {
+    # The PR is already ready (isDraft=false) even though `gh pr ready` failed
+    # with an unrecognised English message. The positive-check fallback agrees
+    # with the desired end-state (PR is non-draft) — return 0.
+    # This is the case the English-string match misses on `gh` wording changes
+    # or locale-overridden CLIs.
+    export MERGE_GATES_STUB_READY_STDERR="erreur : le PR n'est plus en brouillon"
+    export MERGE_GATES_STUB_READY_EXIT=1
+    export MERGE_GATES_STUB_VIEW_ISDRAFT=false
+    run gh_pr_ready_idempotent 1
+    [ "$status" -eq 0 ]
+}
+
+@test "H2: gh_pr_ready_idempotent: gh pr ready unknown error + gh pr view also fails returns 6" {
+    # Fallback API also fails (gh fully broken or PR truly inaccessible).
+    # Surface as exit 6 — caller halts auto-merge.
+    export MERGE_GATES_STUB_READY_STDERR="error: 500 internal server error"
+    export MERGE_GATES_STUB_READY_EXIT=1
+    export MERGE_GATES_STUB_VIEW_EXIT=1
     run gh_pr_ready_idempotent 1
     [ "$status" -eq 6 ]
 }

@@ -58,7 +58,7 @@ The CR cell encodes the outcomes verbatim — examples: `APPROVED`, `COMMENTED (
 | 3 | `gh` API failed 3 consecutive polls | "Retry now" / "Skip gates and merge anyway" / "Abandon" |
 | 4 | PR `CLOSED` or `MERGED` externally | "Abandon (PR no longer mergeable)" — no skip option |
 | 5 | Pagination overflow (any `hasNextPage`) | "Abandon (manual review required)" / "Skip gates and merge anyway (acknowledge risk)" |
-| 6 | `gh pr ready` unknown failure | surface error to user; do not auto-merge |
+| 6 | `gh pr ready` unknown failure (after positive-check fallback) | surface error to user; do not auto-merge |
 
 Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
 
