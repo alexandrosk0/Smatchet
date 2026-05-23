@@ -73,7 +73,8 @@ Run **before any new work**:
 # Refresh local develop to pick up any PRs the watcher merged overnight.
 git checkout develop && git pull --ff-only origin develop
 
-# Confirm watcher state on all 6 open PRs from session 1.
+# Confirm watcher state on all session-1 PRs still open (originally six;
+# session 2 may have merged several — surviving rows are what's left).
 python scripts/dev/merge-watcher-cli.py status
 ```
 
