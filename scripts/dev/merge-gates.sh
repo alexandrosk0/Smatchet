@@ -50,7 +50,7 @@
 #   6 — unknown failure (caller halts; do not auto-merge)
 # ----------------------------------------------------------------------------
 
-set -o pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
@@ -69,6 +69,19 @@ poll_merge_gates() {
     local owner="${1:?poll_merge_gates: owner required}"
     local repo="${2:?poll_merge_gates: repo required}"
     local prNumber="${3:?poll_merge_gates: pr_number required}"
+
+    # SKIP_MERGE_GATES=true at session init bypasses all gates. Documented in
+    # AGENTS.md § Merge gates and docs/agent-rules/merge-gates.md § Override.
+    # Until this guard landed (PR for C1 in docs/evaluation/agentic-infrastructure-2026-05-23.md),
+    # the override was a pure documentation contract — every caller was trusted
+    # to gate the call itself. A miswired delegated invocation could quietly
+    # poll regardless. Read FIRST (before ORCH_USER + every other prereq) so
+    # the bypass is unconditional — a skipped gate doesn't need ORCH_USER to
+    # be set, doesn't need the query file to exist, doesn't need anything.
+    if [ "${SKIP_MERGE_GATES:-}" = "true" ]; then
+        echo "GATES_SKIPPED (SKIP_MERGE_GATES=true)"
+        return 0
+    fi
 
     if [ -z "${ORCH_USER:-}" ]; then
         echo "poll_merge_gates: ORCH_USER not set (run: ORCH_USER=\$(gh api user --jq .login))" >&2
@@ -145,18 +158,27 @@ poll_merge_gates() {
         local pr
         pr=$(jq '.data.repository.pullRequest' <<<"$data")
 
-        # PR state early-exit
+        # PR state early-exit.
+        # C2 defensive default: a jq parse failure (malformed gh response,
+        # transient pipeline blip) would otherwise leave pr_state empty, and
+        # `[ "" != "OPEN" ]` is true → spurious return-4. UNKNOWN routes
+        # through the same return-4 path (treats jq failure as "PR no longer
+        # mergeable"), which is the safer outcome than silent pass-through.
         local pr_state
-        pr_state=$(jq -r '.state' <<<"$pr")
+        pr_state=$(jq -r '.state' <<<"$pr" 2>/dev/null || echo "UNKNOWN")
         if [ "$pr_state" != "OPEN" ]; then
             echo "PR_$pr_state"
             return 4
         fi
 
         local head_sha
-        head_sha=$(jq -r '.headRefOid' <<<"$pr")
+        head_sha=$(jq -r '.headRefOid' <<<"$pr" 2>/dev/null || echo "")
 
-        # Pagination overflow
+        # Pagination overflow.
+        # C2 defensive default: on jq failure assume overflow → fail closed.
+        # The cost of a false overflow is a halt prompt the user can override;
+        # the cost of a silent pass-through past unread later pages is a
+        # missed CR review or CI failure.
         local overflow
         overflow=$(jq '
             ((.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo.hasNextPage // false)
@@ -165,7 +187,7 @@ poll_merge_gates() {
              or (.comments.pageInfo.hasNextPage // false)
              or (.labels.pageInfo.hasNextPage // false)
              or (any(.reviewThreads.nodes[]?; .comments.pageInfo.hasNextPage // false)))
-        ' <<<"$pr")
+        ' <<<"$pr" 2>/dev/null || echo "true")
         if [ "$overflow" = "true" ]; then
             echo "PAGINATION_OVERFLOW"
             return 5
@@ -176,9 +198,11 @@ poll_merge_gates() {
         # `perf-out-of-band`   → downgrades `Perf PR-fast (...)` CheckRun FAIL → WARN.
         # WARN means the failure is logged but does NOT contribute to ci_fail; the
         # gate still requires every non-downgraded required check to pass.
+        # C2 defensive defaults: false on jq failure → labels treated as absent,
+        # which means no spurious downgrade of failing checks (fail closed).
         local has_tests_oob has_perf_oob
-        has_tests_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="tests-out-of-band")' <<<"$pr")
-        has_perf_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="perf-out-of-band")' <<<"$pr")
+        has_tests_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="tests-out-of-band")' <<<"$pr" 2>/dev/null || echo "false")
+        has_perf_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="perf-out-of-band")' <<<"$pr" 2>/dev/null || echo "false")
 
         # CI — required-only, with latest-per-name dedup.
         # GitHub's rollup keeps every historical run of a rerun job (old FAILURE
@@ -198,14 +222,22 @@ poll_merge_gates() {
               | group_by(._dedup_key)
               | map(sort_by(.startedAt // "") | .[-1])
               | map(del(._dedup_key)))'
+        # C2 defensive defaults: any jq failure (malformed pr JSON, missing
+        # fields after a GraphQL schema change, transient pipe blip) returns
+        # -1, which fails closed at the integer comparison below (the pass
+        # check requires == 0). Previously an empty assignment let the
+        # `[ "$ci_fail" -eq 0 ]` check error out and treat the iteration as
+        # not-passing, which is the right outcome under benign jq failure but
+        # also masks more sinister cases where the gate should explicitly
+        # surface the error.
         local ci_total ci_fail ci_pend ci_warn_downgraded
-        ci_total=$(jq "[$ctx | .[] | select(.isRequired==true)] | length" <<<"$pr")
+        ci_total=$(jq "[$ctx | .[] | select(.isRequired==true)] | length" <<<"$pr" 2>/dev/null || echo -1)
         # Failing contexts before label downgrades.
         local failing_json
         failing_json=$(jq -c "[$ctx | .[] | select(.isRequired==true) | select(
             (.__typename==\"CheckRun\"      and .status==\"COMPLETED\" and ((.conclusion // \"\") | IN(\"FAILURE\",\"TIMED_OUT\",\"CANCELLED\",\"ACTION_REQUIRED\",\"STARTUP_FAILURE\"))) or
             (.__typename==\"StatusContext\" and ((.state // \"\") | IN(\"FAILURE\",\"ERROR\")))
-        )]" <<<"$pr")
+        )]" <<<"$pr" 2>/dev/null || echo "[]")
         # Split failing contexts into downgraded (label-suppressed) + real-fail.
         # Downgrade rules — keep matchers narrow to avoid stomping unrelated checks
         # that happen to fail (e.g. a future `Test-engine bucket-E` should NOT be
@@ -215,16 +247,16 @@ poll_merge_gates() {
             map(select(
                 ($tests and .__typename=="CheckRun" and .name=="Test-delta gate") or
                 ($perf  and .__typename=="CheckRun" and (.name // "" | startswith("Perf PR-fast")))
-            ))' <<<"$failing_json")
-        ci_warn_downgraded=$(jq 'length' <<<"$downgraded_json")
+            ))' <<<"$failing_json" 2>/dev/null || echo "[]")
+        ci_warn_downgraded=$(jq 'length' <<<"$downgraded_json" 2>/dev/null || echo -1)
         ci_fail=$(jq --argjson dg "$downgraded_json" '
             map(select(
                 . as $f | ($dg | any(.name==$f.name and .__typename==$f.__typename)) | not
-            )) | length' <<<"$failing_json")
+            )) | length' <<<"$failing_json" 2>/dev/null || echo -1)
         ci_pend=$(jq "[$ctx | .[] | select(.isRequired==true) | select(
             (.__typename==\"CheckRun\"      and .status!=\"COMPLETED\") or
             (.__typename==\"StatusContext\" and ((.state // \"\") | IN(\"PENDING\",\"EXPECTED\")))
-        )] | length" <<<"$pr")
+        )] | length" <<<"$pr" 2>/dev/null || echo -1)
 
         # Surface every downgraded check on stderr so the operator sees what the
         # label hid. Mirrors the "Skip gates and merge anyway" LOG_WARN pattern.
@@ -278,11 +310,14 @@ poll_merge_gates() {
                 cr_actionable=$(printf '%s' "$match" | grep -oE '[0-9]+')
             fi
         fi
+        # C2 defensive default: -1 on jq failure fails the `cr_open -eq 0`
+        # check at the pass condition, blocking the merge until the next poll
+        # succeeds. Better than silently passing when jq couldn't extract.
         local cr_open
         cr_open=$(jq '[.reviewThreads.nodes[]
             | select(.isResolved==false and .isOutdated==false
                      and any(.comments.nodes[];
-                             .author.login=="coderabbitai" or .author.login=="coderabbitai[bot]"))] | length' <<<"$pr")
+                             .author.login=="coderabbitai" or .author.login=="coderabbitai[bot]"))] | length' <<<"$pr" 2>/dev/null || echo -1)
 
         # CR StatusContext on the head commit's rollup — some CR configs emit only a
         # status (no review) when a PR is clean. Treat SUCCESS as a positive signal so
@@ -293,7 +328,8 @@ poll_merge_gates() {
              | select(.__typename=="StatusContext" and .context=="CodeRabbit")
              | .state] | (.[0] // "ABSENT")' <<<"$pr")
 
-        # User comments — typename bot filter, login case-insensitive
+        # User comments — typename bot filter, login case-insensitive.
+        # C2 defensive default: -1 on jq failure fails the `user -eq 0` check.
         local user
         user=$(jq --arg self "$ORCH_USER" '
             ([.comments.nodes[]
@@ -304,7 +340,7 @@ poll_merge_gates() {
                        and any(.comments.nodes[];
                                .author.__typename != "Bot"
                                and ((.author.login // "") | ascii_downcase) != ($self | ascii_downcase)))] | length)
-        ' <<<"$pr")
+        ' <<<"$pr" 2>/dev/null || echo -1)
 
         # reviewDecision
         local review_decision

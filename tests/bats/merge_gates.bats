@@ -588,6 +588,42 @@ set_fixture() {
     [ "$status" -eq 3 ]
 }
 
+# ---------- C2 (fail-closed on jq error) ----------
+# docs/evaluation/agentic-infrastructure-2026-05-23.md § C2: jq failures
+# previously left integer counters empty; `[ "" -eq 0 ]` errored out and the
+# iteration kept polling, but a more sinister shape (jq parsing fine, returning
+# unexpected output) could silently feed 0 into the pass-check. Defensive
+# defaults of -1 on every jq-derived integer fail the pass-check explicitly.
+
+@test "C2 fail-closed: malformed contexts.nodes (string not array) → ci_* default -1 → block" {
+    # Break contexts.nodes shape so the ctx jq's `map(...)` crashes. Without
+    # the defensive `|| echo -1`, the integer assignments would become empty
+    # and the `[ "$ci_fail" -eq 0 ]` check would error-out into "not pass",
+    # which gets the right outcome by accident. With the defensive defaults,
+    # the failure is explicit: ci_fail=-1, the pass-check is structurally
+    # false, the gate blocks for the right reason.
+    local fixture
+    fixture=$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '"not-an-array"')
+    set_fixture "$fixture"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+}
+
+@test "C2 fail-closed: missing reviewThreads → cr_open / user default -1 → block" {
+    # Replace reviewThreads with a non-object so the jq queries against it
+    # crash. The cr_open + user assignments fall through to -1; pass-check
+    # blocks.
+    local fixture
+    fixture=$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.reviewThreads" \
+        '"not-an-object"')
+    set_fixture "$fixture"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+}
+
 # ---------- ask_user_question shim ----------
 
 @test "ask_user_question with MERGE_GATES_TEST_ANSWER returns canned answer" {
