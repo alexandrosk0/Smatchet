@@ -93,9 +93,13 @@ cleanup_pending_cl() {
     local cl="$1"
     [ -n "$cl" ] || return 0
     : "${P4_MAIN_CLIENT:=smatchet_main_${P4USER}}"
-    "$P4_BIN" shelve -d -c "$cl" >/dev/null 2>&1 || true
+    # Bind every p4 op to the main client so cleanup works regardless of
+    # the caller's default P4CLIENT. Without this, on a machine whose
+    # default client is anything other than smatchet_main_*, shelve -d
+    # and change -d would silently no-op (CR finding 2026-05-23 on #415).
+    P4CLIENT="$P4_MAIN_CLIENT" "$P4_BIN" shelve -d -c "$cl" >/dev/null 2>&1 || true
     P4CLIENT="$P4_MAIN_CLIENT" "$P4_BIN" revert -c "$cl" //smatchet/main/... >/dev/null 2>&1 || true
-    "$P4_BIN" change -d "$cl" >/dev/null 2>&1 || true
+    P4CLIENT="$P4_MAIN_CLIENT" "$P4_BIN" change -d "$cl" >/dev/null 2>&1 || true
 }
 
 trap 'cleanup_pending_cl "$PREP_CL"; cleanup_pending_cl "$STRANDED_CL"; cleanup_probe "$PROBE_AGENT_A"; cleanup_probe "$PROBE_AGENT_B"; cleanup_probe "$PROBE_AGENT_PREP"; cleanup_probe "$PROBE_PROMOTE_AGENT"' EXIT
@@ -339,8 +343,13 @@ else
     echo "  SKIP: could not create stranded probe CL — p4 change -i did not return a CL number" >&2
 fi
 
-# Also verify the non-existent-CL refusal path.
-nonexistent_cl=99999999
+# Also verify the non-existent-CL refusal path. Compute the CL id at
+# runtime as (latest depot CL + 100000) — guarantees a non-existent value
+# without hardcoding a literal that the depot will eventually reach (CR
+# finding 2026-05-23 on #415: a hardcoded `99999999` makes this test
+# flaky once the counter passes that mark).
+latest_cl=$("$P4_BIN" changes -m1 //smatchet/... 2>/dev/null | sed -nE 's/^Change ([0-9]+).*/\1/p' | head -1)
+nonexistent_cl=$(( ${latest_cl:-0} + 100000 ))
 if promote_missing_out=$(bash scripts/dev/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$nonexistent_cl" 2>&1); then
     promote_missing_exit=0
 else
