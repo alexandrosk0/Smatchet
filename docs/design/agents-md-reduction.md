@@ -26,21 +26,27 @@ After this reorg, **target AGENTS.md size: ≤ 200 lines** (~57% reduction from 
 
 ## Approach
 
-**Phased topical extraction**, mirroring the existing DELEGATION.md precedent. Each phase is one self-contained PR with its own doc-anchors validation surface; phases can ship serially or in parallel since they touch disjoint sections of AGENTS.md.
+**Single-PR topical extraction**, mirroring the existing DELEGATION.md precedent — which was itself a single big-bang ~230-line lift, not a phased reorg. All five topical extractions ship together in one PR, gated by `test-doc-anchors.sh` + `test-agent-contract.sh` + `is-pure-docs-diff.sh`.
 
-**Per-phase mechanics** (identical across all phases):
+**Why one PR, not five**: the extractions are mechanical (copy text, leave stub, update cross-refs); they touch disjoint sections of AGENTS.md (no in-PR ordering required); the merge gates run identically on a 5-extraction diff as on a 1-extraction diff; and reviewer attention is better spent on one cohesive change than amortised across five trivial follow-ups. The earlier 5-phase shape in an earlier draft of this plan was reflexive caution dressed up as risk management — examined under the actual constraints, the slice count had no leverage.
 
-1. Create `docs/agent-rules/<topic>.md` with a `# <Topic>` H1, a one-paragraph context preamble cross-linking back to `AGENTS.md`, then the lifted section content verbatim.
-2. Replace the original `AGENTS.md` section with a stub: H2/H3 anchor preserved (so existing `§ <name>` cross-references still resolve per `test-doc-anchors.sh`), one-paragraph summary, cross-link to the new file. Stub is 5-10 lines max.
-3. Search-and-replace inline cross-references in `agents/*.md` and other `docs/**.md` files that point at the moved sections, updating them to the new canonical location (the stub stays as a redirect for orphans).
-4. Run `bash scripts/dev/test-doc-anchors.sh` — must pass with zero broken anchors.
-5. Run `bash scripts/dev/test-agent-contract.sh` — must pass (no agent file lost a cross-reference).
+**Sequencing constraint (the one real ordering)**: PR #415 (`feat(p4-gated-ship-loop)`) must merge to `develop` first. Two of the five extractions (Git/p4 discipline, Ship-loops) touch sections #415 added (Force-push carve-out extension wording, P4-gated ship-loop subsection). Lifting those before #415 lands would conflict on those exact lines. Wait for #415 → then one PR for the whole reorg.
+
+**Mechanics** (executed once, covering all five extractions):
+
+1. Create the 5 `docs/agent-rules/<topic>.md` files. Each gets a `# <Topic>` H1, a one-paragraph context preamble cross-linking back to `AGENTS.md`, then the lifted section content verbatim.
+2. Replace each original `AGENTS.md` section with a stub: H2/H3 anchor preserved (so existing `§ <name>` cross-references still resolve per `test-doc-anchors.sh`), one-paragraph summary, cross-link to the new file. Stubs are 5-10 lines max.
+3. Search-and-replace inline cross-references across `agents/*.md` and other `docs/**.md` files that point at the moved sections, updating them to the new canonical location (the stub stays as a redirect for orphans).
+4. Run `bash scripts/dev/test-doc-anchors.sh` — must PASS with zero broken anchors.
+5. Run `bash scripts/dev/test-agent-contract.sh` — must PASS (no agent file lost a cross-reference).
+6. Run `bash scripts/dev/is-pure-docs-diff.sh develop` — must PASS (exit 0; qualifies for the build+test-all skip).
+7. Open PR (draft → ready) — CI's `paths-ignore` skip for docs-only diffs covers the build job; doc-anchors + agent-contract gate the change; CodeRabbit reviews the prose.
 
 **Anchor preservation contract**: every existing `AGENTS.md § <heading>` reference must continue to resolve. The stub in AGENTS.md keeps the heading text exactly as-is; the new file gets an `# <same heading text>` H1 OR an explicit `## <same heading text>` so the doc-anchors checker (which scans both `AGENTS.md` + `docs/agent-rules/*.md`) finds the anchor in either location.
 
-**Phases (5 slices, in suggested ship order)** — each phase's "Lines saved" is the inline content removed minus the ~10-line stub left behind:
+**Extractions (5 sections in one PR)** — "Lines saved" is the inline content removed minus the ~10-line stub left behind:
 
-| # | Phase | Target file | Lines saved | Risk |
+| # | Section | Target file | Lines saved | Risk |
 |---|---|---|---|---|
 | 1 | Merge gates → `MERGE_GATES.md` | `docs/agent-rules/MERGE_GATES.md` | ~70 | Low — section is self-contained; 6 explicit consumers (orchestrator, `git-janitor`, `smatchet-merge-watcher`, `merge-gates.sh`, `merge-gates.graphql`, the bats harness) follow cross-links already |
 | 2 | UX Pillars → `UX_PILLARS.md` | `docs/agent-rules/UX_PILLARS.md` | ~55 | Low — referenced by plan template + every plan doc's § UX Pillar callouts; replace inline pillar text with a 4-row index table |
@@ -48,7 +54,7 @@ After this reorg, **target AGENTS.md size: ≤ 200 lines** (~57% reduction from 
 | 4 | Project rules — Git/p4 discipline family → `GIT_DISCIPLINE.md` | `docs/agent-rules/GIT_DISCIPLINE.md` | ~30 | Medium — touches the force-push carve-out (security-relevant). Stub in AGENTS.md keeps the carve-out's one-line "what's allowed when" summary; detail moves out |
 | 5 | Autonomous ship-loop default → `SHIP_LOOPS.md` | `docs/agent-rules/SHIP_LOOPS.md` | ~65 | Medium — the most-referenced section in AGENTS.md (every "default ship-loop" + "P4-gated" + "post-ship turn-end" cross-link). Stub must remain self-contained enough that an agent reading it without following the link still knows: (a) default loop sequence, (b) when to pause, (c) post-ship 4-option menu |
 
-**Total projected reduction**: ~255 lines lifted, ~50 lines of stubs left behind → net **~205 lines saved**. Final AGENTS.md ≈ 264 lines. (Stretch goal: also lift `## Project rules` cadence/verification family in a sixth phase → final ≈ 200 lines.)
+**Total projected reduction in this PR**: ~255 lines lifted, ~50 lines of stubs left behind → net **~205 lines saved**. Final AGENTS.md ≈ 264 lines. (Stretch follow-up: a second PR could also lift `## Project rules` cadence/verification family into `docs/agent-rules/CADENCE.md` to take the final size to ~200 lines, but is explicitly out of scope here — see § Out of scope.)
 
 **What stays inline in AGENTS.md** (deliberately not extracted):
 
@@ -69,26 +75,26 @@ After this reorg, **target AGENTS.md size: ≤ 200 lines** (~57% reduction from 
 4. `docs/agent-rules/GIT_DISCIPLINE.md` — lifted from `AGENTS.md:262-283` (Destructive git ops, Destructive p4 ops, Force-push carve-out).
 5. `docs/agent-rules/SHIP_LOOPS.md` — lifted from `AGENTS.md:73-148` (Autonomous ship-loop default, P4-gated ship-loop, Post-ship turn-end protocol).
 
-**Modified files** (per phase):
+**Modified files** (all in the single PR):
 
-- `AGENTS.md` — replace each lifted section with a 5-10 line stub + cross-link to its new home.
-- `agents/*.md` files that reference moved sections by `§ <heading>` — text-search for each lifted heading title; update to point at new location (stub remains as a redirect). Scope per phase:
-  - Phase 1 (merge gates): `agents/git-janitor.md`, plus any agent that references "merge gates" / "MERGE_GATES_*" env vars.
-  - Phase 2 (UX Pillars): `agents/perf-detective.md`, `agents/spike-hunter.md`, `agents/code-review.md`, `agents/debug-detective.md`, `agents/build-doctor.md` (the 5 pillar-owning agents).
-  - Phase 3 (Plan-doc family): `docs/design/_plan-template.md`, every existing plan-doc that mentions plan-rules.
-  - Phase 4 (Git/p4 discipline): `agents/git-janitor.md`, `agents/p4-janitor.md`, `docs/perforce/AGENT_FLOWS.md`.
-  - Phase 5 (ship-loops): `agents/git-janitor.md`, `docs/perforce/AGENT_FLOWS.md`, `docs/agent-rules/DELEGATION.md` (Debug-mode pause-loop section already cross-references).
+- `AGENTS.md` — replace each of the 5 lifted sections with a 5-10 line stub + cross-link to its new home.
+- `agents/*.md` and `docs/**.md` files that reference moved sections by `§ <heading>` — text-search for each lifted heading title; update to point at new location (stub remains as a redirect for orphans). Files known to be touched:
+  - Merge-gates referrers: `agents/git-janitor.md` (+ any agent referencing `MERGE_GATES_*` env vars).
+  - UX-Pillars referrers: `agents/perf-detective.md`, `agents/spike-hunter.md`, `agents/code-review.md`, `agents/debug-detective.md`, `agents/build-doctor.md` (the 5 pillar-owning agents).
+  - Plan-doc family referrers: `docs/design/_plan-template.md` + every existing plan-doc that mentions plan-rules.
+  - Git/p4 discipline referrers: `agents/git-janitor.md`, `agents/p4-janitor.md`, `docs/perforce/AGENT_FLOWS.md`.
+  - Ship-loops referrers: `agents/git-janitor.md`, `docs/perforce/AGENT_FLOWS.md`, `docs/agent-rules/DELEGATION.md` (Debug-mode pause-loop section already cross-references).
 
-**Anchor compatibility surface** (per phase):
+**Anchor compatibility surface**:
 
 - `scripts/dev/test-doc-anchors.sh` — already scans both `AGENTS.md` + `docs/agent-rules/*.md`; no change needed. The script's "Fix options" list already documents the "Update AGENTS.md redirect stub to mention the moved name" recipe (option 3).
 - `scripts/dev/test-agent-contract.sh` — verifies agent files declare the required sections; no anchor-level surface; no change needed.
 
 ## Existing utilities reused
 
-- `bash scripts/dev/test-doc-anchors.sh` — already in place. Re-runs after each phase verify zero broken anchors.
-- `bash scripts/dev/test-agent-contract.sh` — already in place. Re-runs verify no agent-file regression.
-- `bash scripts/dev/is-pure-docs-diff.sh develop` — qualifies each phase as a pure-docs slice (write set is strictly `AGENTS.md` + `docs/**`), enabling the build+test-all skip per `AGENTS.md § Pure-docs slice skip`. Each phase's CI run gets the same `paths-ignore` skip currently applied to other docs-only PRs.
+- `bash scripts/dev/test-doc-anchors.sh` — already in place. Run before push verifies zero broken anchors across the whole reorg.
+- `bash scripts/dev/test-agent-contract.sh` — already in place. Run before push verifies no agent-file regression.
+- `bash scripts/dev/is-pure-docs-diff.sh develop` — qualifies the PR as a pure-docs slice (write set is strictly `AGENTS.md` + `docs/**`), enabling the build+test-all skip per `AGENTS.md § Pure-docs slice skip`. The PR's CI run gets the same `paths-ignore` skip currently applied to other docs-only PRs.
 - `docs/agent-rules/DELEGATION.md` — the original extraction's pattern is the reference for stub shape, cross-link convention, and the "## Delegation" quick-index style.
 
 ## UX Pillar callouts
@@ -108,11 +114,12 @@ N/A — diff is strictly `AGENTS.md` + `docs/**`. No `Source_Core/` touch in any
 
 **Risks:**
 
-- **Broken anchors at merge time** — a phase that lifts a section without updating every referrer drops `test-doc-anchors.sh` to FAIL. *Mitigation*: each phase's PR gate runs the doc-anchors checker. Phase author must run it pre-push.
+- **Broken anchors at merge time** — an extraction that lifts a section without updating every referrer drops `test-doc-anchors.sh` to FAIL. *Mitigation*: PR gate runs the doc-anchors checker; author must also run it pre-push. Same gate fires once for a 5-extraction diff as it would for a 1-extraction diff.
 - **Stub drift** — a future edit to the canonical text in `docs/agent-rules/<topic>.md` doesn't update the corresponding stub in AGENTS.md, producing stale guidance for agents that read only AGENTS.md. *Mitigation*: stubs are deliberately short (5-10 lines) and contain ONLY the rule's one-sentence essence — not enough to drift from canonical. Detail lives in one place by construction.
 - **Agent context regression** — an agent that previously read the full rule inline now sees only the stub and has to follow a cross-link. If the agent's harness doesn't follow links, behavior degrades. *Mitigation*: stubs include the rule's name + a one-sentence summary + the cross-link; agents that don't follow links still see the WHAT, just not the WHY/HOW. Compare with the DELEGATION.md split — no measurable degradation observed in the 6+ months since that extraction.
-- **PR review fatigue** — 5 sequential PRs is a lot of paperwork for a docs reorg. *Mitigation*: phases are independent; can ship in parallel (each touches disjoint sections of AGENTS.md). Alternatively, ship phases 1+2 first (highest line-savings + lowest risk) and pause to evaluate before the rest.
-- **`grill-with-docs` skill might recommend a different topology** — the skill grills plans against the project's glossary + ADRs. For a docs-reorg the glossary impact is null (no new terms) but the skill might surface a smarter grouping. *Mitigation*: run `grill-with-docs` before sealing this plan; treat it as advisory rather than blocking.
+- **Large CR review diff** — one PR carrying ~255 lines lifted + ~50 lines of stubs + cross-reference updates across 8-10 agent files is bigger than CR's per-PR sweet spot. *Mitigation*: the diff is structurally simple (text moves, not logic changes) so CR's noise is bounded; if CR flags too many cosmetic items, address inline rather than re-slicing. Compare with the DELEGATION.md PR which carried a similar lift size without CR issues.
+- **Merge conflict with PR #415** — if this reorg's PR opens before #415 merges, both touch the Force-push carve-out section + the P4-gated ship-loop subsection. *Mitigation*: explicit sequencing — wait for #415 to merge before opening the reorg PR. Encoded in § Dependencies.
+- **`grill-with-docs` skill might recommend a different topology** — the skill grills plans against the project's glossary + ADRs. For a docs-reorg the glossary impact is null (no new terms) but the skill might surface a smarter grouping (e.g. merge two of the five new files). *Mitigation*: run `grill-with-docs` before sealing this plan; treat it as advisory rather than blocking.
 
 **Non-goals:**
 
@@ -129,17 +136,16 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets per ph
 - **Bucket A (pure-logic ctest)**: N/A — no C++ in any phase.
 - **Bucket E (ImGui Test Engine)**: N/A — no UI in any phase.
 - **Bash-driver / doc validation**:
-  - `bash scripts/dev/test-doc-anchors.sh` — must PASS (0 broken anchors) after each phase.
-  - `bash scripts/dev/test-agent-contract.sh` — must PASS (19/19 sub-checks) after each phase.
-  - `bash scripts/dev/is-pure-docs-diff.sh develop` — must PASS each phase (qualifies for the build+test-all skip).
+  - `bash scripts/dev/test-doc-anchors.sh` — must PASS (0 broken anchors).
+  - `bash scripts/dev/test-agent-contract.sh` — must PASS (19/19 sub-checks).
+  - `bash scripts/dev/is-pure-docs-diff.sh develop` — must PASS (qualifies for the build+test-all skip).
 - **Build gate**: N/A — pure-docs slice per `is-pure-docs-diff.sh`. CI's `paths-ignore` skips the build job.
-- **Manual residue**: read the lifted content + the stub end-to-end before each phase's PR; confirm the stub captures the rule's WHAT in one sentence. No silent residue.
+- **Manual residue**: read each lifted section + its stub end-to-end before opening the PR; confirm the stub captures the rule's WHAT in one sentence. No silent residue.
 
-**Per-phase merge-readiness checklist** (also runs in CI):
+**Merge-readiness checklist** (also runs in CI):
 
 ```bash
-# Before each phase's PR
-wc -l AGENTS.md                          # report reduction
+wc -l AGENTS.md                          # report reduction (target ~264 lines)
 bash scripts/dev/test-doc-anchors.sh    # MUST PASS
 bash scripts/dev/test-agent-contract.sh  # MUST PASS
 bash scripts/dev/is-pure-docs-diff.sh develop  # MUST PASS (exit 0)
@@ -147,8 +153,8 @@ bash scripts/dev/is-pure-docs-diff.sh develop  # MUST PASS (exit 0)
 
 ## Out of scope (flagged, not designed)
 
-- **A sixth phase lifting `## Project rules` cadence/verification family** (Build/ctest cadence, Perf slice-boundary auto-run, Pure-docs slice skip, Trivial-visual-only envelope, Stale-read recovery on Edit, Schema-version bumps, Golden-image approval, Verification automation). These are ~50 lines of closely-coupled cadence rules that COULD form a `docs/agent-rules/CADENCE.md` 6th phase. Deferred because: (a) phases 1-5 already deliver the ~205-line reduction target, (b) cadence rules are read by every agent on every PR (more sensitive to the stub-drift risk than topic-scoped rules), (c) wait until phases 1-5 ship and stub-drift behavior is observed empirically before committing to a 6th phase.
-- **An ADR documenting the topical-extraction convention** — the precedent is already set by the DELEGATION.md extraction. Codifying it as an ADR would be useful but adds review burden; defer to the same retrospective decision as the 6th phase.
+- **A follow-up PR lifting `## Project rules` cadence/verification family** (Build/ctest cadence, Perf slice-boundary auto-run, Pure-docs slice skip, Trivial-visual-only envelope, Stale-read recovery on Edit, Schema-version bumps, Golden-image approval, Verification automation). These are ~50 lines of closely-coupled cadence rules that COULD form a `docs/agent-rules/CADENCE.md` second PR. Deferred because: (a) this PR already delivers the ~205-line reduction, (b) cadence rules are read by every agent on every PR (more sensitive to the stub-drift risk than topic-scoped rules), (c) wait until this PR ships and stub-drift behavior is observed empirically before committing to a second lift.
+- **An ADR documenting the topical-extraction convention** — the precedent is already set by the DELEGATION.md extraction. Codifying it as an ADR would be useful but adds review burden; defer.
 - **`docs/CONTEXT.md` glossary updates** — no new terms; existing terms unchanged. If `grill-with-docs` surfaces a glossary gap, address inline; otherwise skip.
 - **Renaming `docs/agent-rules/DELEGATION.md` to match a new convention** — keep as-is.
 - **Automated stub-drift detection** — a check that compares the stub's one-sentence summary in AGENTS.md against the H1 of the corresponding `docs/agent-rules/<topic>.md`. Would catch drift mechanically. Tooling-backlog candidate (`docs/backlog/agent-self-improvement/tooling.md`).
@@ -156,8 +162,8 @@ bash scripts/dev/is-pure-docs-diff.sh develop  # MUST PASS (exit 0)
 
 ## Dependencies (sequencing)
 
-- **`grill-with-docs` skill** — per `AGENTS.md § Plan stress-test`, run before sealing this plan. The skill grills against `docs/CONTEXT.md` + `docs/adr/`; for a docs-reorg the impact is likely null but worth confirming.
-- **PR #415** (`feat(p4-gated-ship-loop)`) must merge before this plan's phases land — phase 4 (Git/p4 discipline) and phase 5 (ship-loops) both touch sections that PR #415 added (Force-push carve-out extension, P4-gated ship-loop subsection). Sequencing these after #415 lands avoids merge conflicts on those exact lines.
+- **PR #415** (`feat(p4-gated-ship-loop)`) **must merge to `develop` before this PR opens**. Two of the five extractions (Git/p4 discipline, Ship-loops) touch sections #415 added — opening the reorg PR while #415 is still in CR-review state would conflict on those exact lines. Wait for #415 to merge → then open the reorg PR.
+- **`grill-with-docs` skill** — per `AGENTS.md § Plan stress-test`, advisable to run before sealing this plan. The skill grills against `docs/CONTEXT.md` + `docs/adr/`; for a docs-reorg the impact is likely null but worth confirming. Treat as advisory, not blocking.
 - **No code dependencies** — no script changes, no `Source_Core/` changes, no Lua binding changes.
 
 ## Implementation log
