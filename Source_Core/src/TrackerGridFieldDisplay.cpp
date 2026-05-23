@@ -840,6 +840,7 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
             } catch (...) {
                 d.watchSelfInProgress = false;
                 d.watchSelfError = "Watch failed.";
+                LOG_ERROR("TrackerGridFieldDisplay: watchSelf future unknown exception");
             }
         }
     }
