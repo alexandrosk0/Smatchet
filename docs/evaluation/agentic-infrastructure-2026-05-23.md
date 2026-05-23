@@ -60,6 +60,146 @@ Still on the punch list (highest-leverage first):
 
 ---
 
+## 1b. Next-session resume checklist
+
+**Session 1 (2026-05-23) shipped 8 PRs** (#419–#424 + CR-fix follow-ups on
+#421 and #423). Two merged (#419 C3, #420 C1+C2+eval-doc). Six waiting
+for the watcher to clear gates + auto-merge.
+
+### Step 1 — Drain the queue (do first, ~5 min)
+
+Run **before any new work**:
+
+```bash
+# Refresh local develop to pick up any PRs the watcher merged overnight.
+git checkout develop && git pull --ff-only origin develop
+
+# Confirm watcher state on all 6 open PRs from session 1.
+python scripts/dev/merge-watcher-cli.py status
+```
+
+Expected on resume: PRs #421 / #422 / #423 / #424 each show one of —
+`PR_CLOSED_OR_MERGED` (watcher merged them — good),
+`BLOCKED` (still polling — fine),
+`TRIAGE_BUDGET_EXHAUSTED` (watcher gave up again — see Step 2).
+
+For each PR that **didn't auto-merge** (`OPEN` + non-merged state):
+
+```bash
+gh pr view <N> --json state,mergeable,reviewDecision,statusCheckRollup
+gh api repos/alexandrosk0/Smatchet/pulls/<N>/reviews \
+  | python -c 'import json,sys; [print(r["state"], r["user"]["login"], r["body"][:140]) for r in json.load(sys.stdin) if "coderabbit" in r["user"]["login"].lower()]'
+```
+
+If CR found new actionable findings after the session-1 fix commits — triage
++ push another round (same pattern as session 1).
+
+If everything is green and CR is clean but watcher is stuck — re-register
+to reset triage budget (per session 1's pattern):
+
+```bash
+python scripts/dev/merge-watcher-cli.py unregister <N>
+python scripts/dev/merge-watcher-cli.py register <N>
+```
+
+### Step 2 — Update § 1a Implementation status
+
+After the queue drains, edit this doc's § 1a table to mark
+#421 / #422 / #423 / #424 as MERGED. Keep #422's row note about the
+sweep CR comment (CR'd `agents/perf-measure.md` on a PR that didn't touch
+it; resolved by #421's fix). Ship the eval-doc update via a small
+docs-only PR or direct-push to develop per the open backlog P2 about
+plan-revision direct-pushes.
+
+### Step 3 — Pick the next batch from the punch list
+
+Order by leverage (highest first):
+
+1. **C4** (P0, ~3 h) — draft-PR CR-bypass fix. The watcher's
+   `ensure_pr_ready_for_review` is only called in the merge path, not at
+   registration / first poll. Every PR in session 1 needed a manual
+   `gh pr ready` before CR would review. Three-pronged fix already designed
+   in [`docs/backlog/agent-self-improvement/process.md`](../backlog/agent-self-improvement/process.md)
+   2026-05-21 P0: (a) flip ready in `git-janitor` before merge-gates poll,
+   (b) require a non-empty CR review (not just SUCCESS StatusContext),
+   (c) route through `coderabbit-triage` automatically. Touches
+   `scripts/dev/merge-watcher.py` line ~782 + `scripts/dev/merge-gates.sh`
+   + `merge-gates.graphql` + `agents/git-janitor.md`. **Will conflict
+   with anything else touching merge-gates.sh** — sequence carefully.
+2. **H2** (~30 min) — `gh_pr_ready_idempotent` at
+   `scripts/dev/merge-gates.sh:411` matches English error strings only
+   (`*"not in draft state"*|*"already marked ready"*`). Real gh exit
+   strings vary by version + locale. Fix: probe `gh pr view --json isDraft`
+   as a positive check before falling back to the case-match. Add bats
+   coverage. **Touches merge-gates.sh** — coordinate with C4.
+3. **Eval-punch-list item 4** (~2 h) — extend
+   `scripts/dev/test-agent-contract.sh` to enforce pattern P2 (agent
+   definition entropy). Specifically: assert every agent's frontmatter
+   `version:` matches its banner; assert no trigger keyword is owned by
+   two agents; assert skill ↔ agent SKILL.md siblings have matching
+   `version:` + `triggers:`.
+4. **Eval-punch-list item 5** (~3 h) — bash-lint sweep. Add
+   `scripts/dev/lint-bash.sh` that runs `shellcheck` over
+   `scripts/dev/*.sh` and fails on `SC2086` / `SC2046` / `SC2155`. Fix
+   the residue findings in one batch (MEDIUM M2 trap cleanup, M3
+   multibyte truncation, M5 PS-incompatible cleanup hints, M6 jq
+   injection in `lock-staleness-sweep.sh`).
+5. **Eval-punch-list item 6** (~4 h) — bats coverage for lock primitives.
+   `tests/bats/lock_claim.bats`, `lock_release.bats`,
+   `lock_claim_update.bats`. Mirror the merge_gates.bats stub pattern.
+6. **H9** — `architect.md` Investigator-vs-Implementer drift. Needs a
+   **design decision before code**: add a new "Design" class to the
+   contract table (with `## Goal` / `## Affected components` / `## Interface
+   contracts` / `## Implementation handoff`), OR reshape architect's
+   output to match Investigator (`## Hypotheses` → `## Evidence` → ...).
+   Recommend grilling via `grill-with-docs` skill first.
+7. **H11** — trigger keyword collisions. Audit every agent's `triggers:`
+   frontmatter against `docs/agent-rules/delegation.md` § Trigger
+   auto-activation table. Disambiguate (drop dup keys, or add explicit
+   heuristic notes in the prompts).
+8. **Eval-punch-list item 7** (~1 h) — skill ↔ agent parity gate. Belongs
+   in `test-agent-contract.sh` extension above (item 3).
+
+### Step 4 — Update § 1a as each PR ships
+
+The eval doc's § 1a table is the canonical status ledger. Update it at
+every PR-merge boundary so future readers see the cumulative state.
+
+### Avoid in-flight rebases
+
+PRs #421 / #422 / #423 / #424 all branched from develop pre-session-1.
+If session 1's PRs are still open at session 2 start, rebasing them onto
+the new develop tip (which now has #419 + #420) costs nothing — they
+have disjoint write sets from the merged PRs. Don't try to bundle a
+session-2 fix into a session-1 PR's branch; ship as a new PR.
+
+### Helpful one-liners
+
+```bash
+# Survey all open PRs + their CR state in one shot.
+gh pr list --state open --json number,title,statusCheckRollup,reviewDecision \
+  --jq '.[] | "\(.number) \(.title) | review=\(.reviewDecision // "none")"'
+
+# Watcher state.
+python scripts/dev/merge-watcher-cli.py status
+
+# Drain merged PRs from develop into local checkout.
+git checkout develop && git pull --ff-only origin develop
+
+# Standard p4-gated small-change loop — quick reference:
+#   p4 reconcile -e <files>  # open files for edit
+#   p4 change -i             # create CL via stdin spec
+#   p4 shelve -c <N>         # shelve for shelf-review gate
+#   AskUserQuestion          # user reviews in P4V
+#   p4 shelve -d -c <N>      # delete shelf
+#   p4 submit -c <N>         # land on //smatchet/main
+#   git checkout -b <branch> && git add <files> && git commit && git push
+#   gh pr create --draft && python scripts/dev/merge-watcher-cli.py register <N>
+#   gh pr ready <N>          # C4 workaround until C4 ships
+```
+
+---
+
 ## 1. Executive summary
 
 The agentic infrastructure is **structurally sound and unusually thorough** —
