@@ -208,6 +208,20 @@ endif()
 
 
 
+# Slice 7 of autonomous-debugging-no-creds — header-only NDJSON helper test.
+# Gated under SMATCHET_BUILD_AGENT_DEBUG_TESTS (default ON when SMATCHET_BUILD_TESTS).
+# Forces SMATCHET_AGENT_DEBUG=1 only on the test TU (the production build's
+# OFF/ON state is independent — verified by the test's own `#ifndef` guard).
+if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
+    target_sources(SmatchetTests PRIVATE
+        Source_Core/SmatchetAgentDebug.test.cpp)
+    set_source_files_properties(
+        Source_Core/SmatchetAgentDebug.test.cpp
+        PROPERTIES COMPILE_DEFINITIONS "SMATCHET_AGENT_DEBUG=1")
+    target_include_directories(SmatchetTests PRIVATE
+        "${CMAKE_SOURCE_DIR}/tests/_debug")
+endif()
+
 target_include_directories(SmatchetTests PRIVATE _helpers)
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")

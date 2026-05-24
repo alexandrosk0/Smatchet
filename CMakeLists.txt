@@ -168,6 +168,16 @@ endif()
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source_Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
 option(SMATCHET_BUILD_LUA_TESTS "Build SmatchetLuaTests binary (sandbox + timeout + stubs-compile drift sentinel; requires SMATCHET_WITH_LUA_AUTOMATION=ON)" OFF)
+# Slice 7 of docs/design/autonomous-debugging-no-creds.md — production-resident
+# NDJSON helper at tests/_debug/SmatchetAgentDebug.h. OFF in iter/publish
+# (macro expands to ((void)0); zero overhead); ON in debug/asan/ui-test
+# presets so debug-detective can read structured boundary-crossing logs.
+option(SMATCHET_AGENT_DEBUG "Enable the production-resident SmatchetAgentDebug NDJSON helper (slice 7 of autonomous-debugging-no-creds)" OFF)
+if(SMATCHET_BUILD_TESTS)
+    option(SMATCHET_BUILD_AGENT_DEBUG_TESTS "Build the SmatchetAgentDebug NDJSON helper doctest" ON)
+else()
+    option(SMATCHET_BUILD_AGENT_DEBUG_TESTS "Build the SmatchetAgentDebug NDJSON helper doctest" OFF)
+endif()
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
@@ -1339,6 +1349,16 @@ if(SMATCHET_BUILD_UI_TESTS)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/CMakeLists.txt")
         add_subdirectory(tests/ui)
     endif()
+endif()
+
+# Slice 7 of autonomous-debugging-no-creds — wire SMATCHET_AGENT_DEBUG into
+# the Standalone target when ON so the Logger.cpp bridge compiles. DX12 stays
+# OFF unless explicitly opted in (header lives under tests/_debug/, kept out
+# of the Unreal build path). The macro itself expands to ((void)0) when this
+# define is absent — verified by V7 perf gate (no regression vs pre-slice-7).
+if(SMATCHET_AGENT_DEBUG)
+    target_compile_definitions(SmatchetStandalone PRIVATE SMATCHET_AGENT_DEBUG=1)
+    target_include_directories(SmatchetStandalone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/_debug")
 endif()
 
 # Pure-logic doctest rig for Source_Core helpers. Opt-in via SMATCHET_BUILD_TESTS.

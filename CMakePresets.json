@@ -72,7 +72,8 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "SMATCHET_BUILD_TESTS": "ON"
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_AGENT_DEBUG": "ON"
             }
         },
         {
@@ -102,7 +103,8 @@
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_BUILD_UI_TESTS": "ON",
-                "SMATCHET_DEBUG_VISIBLE_CUE_HARNESS": "ON"
+                "SMATCHET_DEBUG_VISIBLE_CUE_HARNESS": "ON",
+                "SMATCHET_AGENT_DEBUG": "ON"
             }
         },
         {
@@ -116,7 +118,8 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "SMATCHET_SANITIZER": "asan"
+                "SMATCHET_SANITIZER": "asan",
+                "SMATCHET_AGENT_DEBUG": "ON"
             }
         },
         {

@@ -196,6 +196,34 @@ When the user prompt matches the `debug-detective` trigger row above ("fix bug",
 
 **Pause-loop is not pause-everything.** Within a single round the agent freely edits instrumentation, builds, runs auto-repros, reads logs. The pause is at the **round boundary** — once `Read` + hypothesis-status update is done, the agent reports and stops.
 
+### NDJSON helper contract — `tests/_debug/SmatchetAgentDebug.h`
+
+Production-resident, header-only helper (shipped by slice 7 of [`docs/design/autonomous-debugging-no-creds.md`](../design/autonomous-debugging-no-creds.md)). Distinct from the **per-investigation template** at `agents/_shared/templates/SmatchetAgentDebug.h.tmpl` (the existing template stays as-is and remains the hypothesis-tracking workflow for `[temp-debug]` markers). Both helpers coexist; no migration.
+
+| Aspect | Per-investigation template (`agents/_shared/templates/...tmpl`) | Production helper (`tests/_debug/SmatchetAgentDebug.h`) |
+|---|---|---|
+| Lifetime | Ephemeral — instantiated for one bug, removed at investigation cleanup | Persistent — checked into the tree, compiled into ON-build presets |
+| Schema | `sessionId / location / hypothesisId / message / data / timestamp` | `ts / category / pid / tid / scope / payload` |
+| Path | `debug-<id>.log` at repo-root | `<userData>/agent-debug/<session-id>.ndjson` or `tests/_debug/scratch/<test-name>.ndjson` |
+| Trigger | `debug-detective` inserts `[temp-debug]` markers calling `SmatchetAgentNdjsonLog(...)` | Production code paths call `SMATCHET_AGENT_DEBUG_LOG(<category>, <payload>)` permanently |
+
+**Schema (one NDJSON object per line):**
+- `ts` — ISO-8601 UTC string (millisecond precision)
+- `category` — closed enum: `backend-call`, `ui-event`, `worker-handoff`, `lock-claim`, `scenario-phase`, `cli-command`, `temp-debug`
+- `pid` — int (`getpid()`)
+- `tid` — string (`std::this_thread::get_id()`)
+- `scope` — string `<file>:<line>` from `__FILE__`/`__LINE__`
+- `payload` — caller-supplied JSON object; per-category required keys (e.g. `backend-call` requires `{method, url, status}`)
+
+**Env vars:**
+- `SMATCHET_AGENT_DEBUG_SESSION_ID` — set by the helper at process start to `<unix-epoch>-<pid>`; exported so spawned subprocesses correlate. Agent's read path is this env var (no guessing); when unset, agent halts with `## Outcome: aborted — SMATCHET_AGENT_DEBUG_SESSION_ID not set; re-spawn the failing scenario with SMATCHET_AGENT_DEBUG=ON`.
+- `SMATCHET_AGENT_DEBUG_DIR` — override base directory (defaults to `%LOCALAPPDATA%\Smatchet\agent-debug` on Windows, `$HOME/.smatchet/agent-debug` elsewhere).
+- `SMATCHET_AGENT_DEBUG_FSYNC=true` — fsync per write for crash-debug runs; OFF by default.
+
+**Empty-file semantic:** an empty NDJSON file after a scenario run = **instrumentation didn't fire** (the scenario never reached any scope wrapped with `SMATCHET_AGENT_DEBUG_LOG`). Treat as an actionable signal, not a pass — phase 0.5 (existing-scenario reuse) must find a different scenario, or phase 1 (Reproduce) must add a new scope at the actual code path.
+
+**Off-build behaviour:** OFF in iter/publish (macro expands to `((void)0)`); ON in `ninja-debug-msys2`, `ninja-debug-msys2-asan`, `ninja-ui-test-msys2`. `LOG_AGENT_DEBUG(category, msg)` in `Source_Core/include/Logger.h` is always-callable — bridges to NDJSON when ON, routes to `LOG_DEBUG` when OFF (single resolution per the plan's debug-off contract).
+
 ## API-500 mid-run recovery
 
 When a delegated agent errors API-500 mid-run, the worktree state is usually complete — the agent shipped its file edits before the synthesis turn failed. Recovery procedure (orchestrator runs from the agent's worktree path; do not `cd`):
