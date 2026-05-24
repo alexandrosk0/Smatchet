@@ -77,10 +77,14 @@ skills-lock.json
 .triage-review-comments.json
 .triage-issue-comments.json
 
-# Per-investigation debug-detective artifacts (see agents/debug-detective.md)
+# Per-investigation debug-detective artifacts (see agents/debug-detective.md).
+# Directory contents gitignored EXCEPT the production-resident slice-7 helper.
+# (Distinct from the per-investigation template — see plan-doc § Coexistence.)
 debug-*.log
 Smatchet-debug-*.log
-tests/_debug/
+tests/_debug/*
+!tests/_debug/.gitkeep
+!tests/_debug/SmatchetAgentDebug.h
 *.cppcheck
 *.sln
 *.vcxproj

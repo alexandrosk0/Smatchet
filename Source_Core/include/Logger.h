@@ -127,6 +127,28 @@ class Logger {
 #define LOG_WARN(fmt, ...) Logger::Instance().Logf(LogLevel::Warn, (fmt), ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) Logger::Instance().Logf(LogLevel::Error, (fmt), ##__VA_ARGS__)
 
+// LOG_AGENT_DEBUG — bridge to the boundary-crossing NDJSON helper
+// (tests/_debug/SmatchetAgentDebug.h). Single resolution per debug-off
+// contract (plan slice 7): when SMATCHET_AGENT_DEBUG is ON, the call
+// routes to the NDJSON sink with `payload = {"msg": <msg>}`; when OFF,
+// the call routes to LOG_DEBUG so the message is still visible in the
+// in-process log. The macro itself is always-callable — only the
+// destination changes. `category` must be a closed-set string literal
+// (see kSmatchetAgentDebugCategories in SmatchetAgentDebug.h).
+#if defined(SMATCHET_AGENT_DEBUG)
+// Indirection through a helper function so callers don't have to pull
+// nlohmann/json + the SmatchetAgentDebug.h header into every TU. The
+// helper is defined in Logger.cpp when SMATCHET_AGENT_DEBUG is ON.
+void SmatchetAgentDebugLogBridge(const char* category,
+                                 const char* file,
+                                 int line,
+                                 const std::string& msg);
+#  define LOG_AGENT_DEBUG(category, msg) \
+      ::SmatchetAgentDebugLogBridge((category), __FILE__, __LINE__, (msg))
+#else
+#  define LOG_AGENT_DEBUG(category, msg) LOG_DEBUG("[agent-debug:%s] %s", (category), (msg).c_str())
+#endif
+
 
 
 

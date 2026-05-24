@@ -369,3 +369,20 @@ void Logger::FileSinkWorker() {
     }
     m_fileSinkAckCv.notify_all();
 }
+
+// LOG_AGENT_DEBUG bridge implementation. Only compiled when the helper is
+// active (SMATCHET_AGENT_DEBUG). Bridges from the always-callable
+// LOG_AGENT_DEBUG macro to the NDJSON Emit() sink so callers don't pull
+// nlohmann/json into every TU. See Logger.h and tests/_debug/SmatchetAgentDebug.h.
+#if defined(SMATCHET_AGENT_DEBUG)
+#include "../../tests/_debug/SmatchetAgentDebug.h"
+
+void SmatchetAgentDebugLogBridge(const char* category,
+                                 const char* file,
+                                 int line,
+                                 const std::string& msg) {
+    nlohmann::json payload;
+    payload["msg"] = msg;
+    ::smatchet_agent_debug::Emit(category, file, line, payload);
+}
+#endif
