@@ -1033,6 +1033,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                     MarkdownPreviewRender::Options opts;
                     opts.mode = MarkdownPreviewRender::Mode::Tooltip;
                     opts.clickableLinks = false;
+                    opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
                     MarkdownPreviewRender::Render(md, opts);
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
