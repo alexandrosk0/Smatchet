@@ -40,7 +40,7 @@ Three waves. Work inside each wave is parallel-eligible (disjoint write sets); w
 ### Wave A — Backend determinism + registry refactor + CI prerequisites (parallel; ship in any order)
 - **Slice 1** — GitHub fake backend (extends deterministic-jira pattern)
 - **Slice 2** — Plane fake backend (same pattern)
-- **Slice 3** — p4 stub driver (dual-VCS layer)
+- **Slice 3** — `P4Blame` C++-feature runner-seam fake (annotate + describe-cache; not the dual-VCS shell layer)
 - **Slice 4** — `AiHttpFixture` + per-AI-client cancel + AiSseParser coverage
 - **Slice 5** — `SmatchetScenarioRegistry` refactor (touches `AppController.cpp`; independent of slices 1-4)
 - **Slice 6** — Headless GL on CI (Mesa / ANGLE-D3D11)
@@ -75,17 +75,36 @@ Backlog closure: implicit — the deterministic-jira plan's pattern, repeated. N
 
 Same shape as slice 1 against `Source_Core/src/Plane*` files (the Plane backend lives in `PlaneClient.cpp` per existing factory registration). New files: `PlaneIssueMappingPure.{h,cpp}`, `tests/support/FakePlaneFixture.h`, `tests/Source_Core/PlaneIssueMappingPure.test.cpp`. Env hook: `SMATCHET_TEST_PLANE_BACKEND_FIXTURE=<path>`. Doctest cases mirror slice 1.
 
-### Slice 3 — Deterministic p4 backend layer
+### Slice 3 — Zero-credentials testing for `P4Blame` (annotate + describe-cache)
 
-p4 is special — it's an opt-in local-VCS layer (`SMATCHET_AGENT_VCS=p4` per `docs/perforce/AGENT_FLOWS.md`), not a tracker. The fake-backend pattern still applies but the seam is different.
+**Wave A.** Per user direction: the relevant p4 surface for autonomous debug is *not* the `scripts/dev/p4-*.sh` dual-VCS dev-environment layer (which is opt-in `SMATCHET_AGENT_VCS=p4` and exercised manually); it is the **C++ `P4Blame` feature** (the blame UI under `agents/p4-blame.md`'s territory). That code shells out exactly twice (`p4 annotate`, `p4 describe -s`) and routes through a single seam — `P4Blame.cpp:P4RunCommand` → `SubprocessCapture::Run`. Stubbing the binary on PATH is the wrong shape; injecting the runner seam is right.
 
-- New `tests/support/FakeP4Driver.h` — header-only, intercepts the `p4` CLI calls that `scripts/dev/p4-*.sh` shells out to. Implementation: a stub `p4` binary on `PATH` (mktemp dir prepended) that reads fixture JSON for `streams` / `change -o` / `shelve -d` / `submit` / `verify` / `counter` commands and returns canned responses.
-- Re-uses the existing `tests/bats/lock_claim.bats` sandbox-bare-repo + stub-bin pattern (per `tests/bats/lock_claim.bats:25-38`).
-- New `tests/bats/p4_dual_vcs_deterministic.bats` — bucket-A bats coverage for the p4 dual-VCS scripts with stub p4. Replaces the existing `scripts/dev/test-p4-dual-vcs.sh` integration test's reliance on a real local p4d.
-- Env hook: `SMATCHET_TEST_P4_FIXTURE_DIR=<dir>` instead of a single fixture file (p4 has many command shapes).
-- Defers the real-p4d integration test to a single bucket-A test under an explicit `SMATCHET_TEST_REAL_P4D=1` gate that's CI-skipped — same shape as `SMATCHET_WHISPER_LOCAL_BACKEND`.
+**Pre-existing baseline that slice 3 does NOT touch**:
+- `Source_Core/include/P4BlameParse.h` + `tests/Source_Core/P4BlameParse.test.cpp` already cover the pure `p4 annotate` / `p4 describe` text parsers (bucket-A; no process spawn). That stays as-is.
 
-Backlog closure: `docs/backlog/agent-self-improvement/infra.md` § Whisper Phase H residue documents the same pattern (gate the heavy integration test behind an env, default off).
+**What slice 3 adds**:
+- **Runner-seam injection** — extend `BlameAnalysisConfig` (per `Source_Core/include/ConfigManager.h:442` proximity) with a new field:
+  ```cpp
+  using P4RunCommandFn = std::function<bool(const std::vector<std::string>& args,
+                                            int& outExitCode,
+                                            std::string& outStdout,
+                                            std::string& outStderr)>;
+  P4RunCommandFn P4RunOverride; // empty → real SubprocessCapture::Run
+  ```
+  `P4Blame.cpp:P4RunCommand` checks the override first; falls back to the existing `SubprocessCapture::Run` path when unset. Default behaviour preserved for production; tests inject a lambda that returns canned text.
+- **Fixture loader** — new `tests/support/FakeP4Runner.h` (header-only). Constructed with a map of `{argv-prefix → (exit_code, stdout_text, stderr_text)}` from a fixture JSON file at `tests/fixtures/p4/<scenario>.json`. Provides a `P4RunCommandFn` lambda the test installs onto `BlameAnalysisConfig::P4RunOverride`. Argv-prefix match is whitespace-joined first-N-args (so `["annotate", "-q", "//depot/foo.cpp#42"]` matches an `annotate -q //depot/foo.cpp#42` fixture key).
+- **Two new bucket-A doctests** (drive the C++ surface end-to-end against the fake):
+  - `tests/Source_Core/P4BlameAnnotateE2E.test.cpp` — exercises `P4AnnotateFile(cfg, "//depot/foo.cpp", lines, ...)` against a fake that returns a canned `p4 annotate` multi-line response; asserts the returned `P4AnnotatedLine` vector matches the fixture. Covers happy path, empty file, `p4` exit code != 0, stdout-capped, timeout.
+  - `tests/Source_Core/P4DescribeCacheE2E.test.cpp` — exercises the `p4 describe -s`-fed LRU cache from `P4Blame.h:62`. Fake returns canned describe text for changelists 1-100; test verifies cache hit / miss / eviction / thread-safety (two threads asking for the same CL).
+- **Documentation cross-link** — `agents/p4-blame.md` § Test surface bullet pointing to `tests/support/FakeP4Runner.h` + the two new doctests as the zero-credentials test path. Future blame-feature changes get a clear test-recipe.
+
+**Why this is small** — `P4RunCommand` is the only spawn-site in `Source_Core/`; `Plugins/` doesn't shell out to p4. Two subcommands (`annotate`, `describe -s`) is the entire production p4 surface for autonomous debug. The `scripts/dev/p4-*.sh` dual-VCS scripts (30+ subcommand shapes, dev-environment opt-in) are explicitly out of scope per the user direction.
+
+**Out of scope (called out for honesty)** — moved from the previous slice 3 text:
+- Stub-`p4`-binary-on-PATH for the dual-VCS shell layer. Dev-environment, opt-in, manual.
+- The `SMATCHET_TEST_REAL_P4D=1` integration gate stays as the path for testing the dual-VCS scripts against a real p4d. Already in `scripts/dev/test-p4-dual-vcs.sh`; unchanged.
+
+Backlog closure: no explicit backlog entry; slice 3 preempts the "p4-blame feature can't be tested without a p4 server" entry that would otherwise file itself.
 
 ### Slice 4 — AiHttpFixture + per-AI-client tests
 
@@ -243,14 +262,15 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 **New (test):**
 - `tests/support/FakeGitHubFixture.h`
 - `tests/support/FakePlaneFixture.h`
-- `tests/support/FakeP4Driver.h`
+- `tests/support/FakeP4Runner.h` (slice 3 — runner-seam fake, NOT a stub binary)
 - `tests/support/AiHttpFixture.h`
 - `tests/Source_Core/GitHubIssueMappingPure.test.cpp`
 - `tests/Source_Core/PlaneIssueMappingPure.test.cpp`
+- `tests/Source_Core/P4BlameAnnotateE2E.test.cpp` (slice 3)
+- `tests/Source_Core/P4DescribeCacheE2E.test.cpp` (slice 3)
 - `tests/Source_Core/AiClientCancel.test.cpp`
 - `tests/Source_Core/SmatchetAgentDebug.test.cpp`
 - `tests/Source_Core/SmatchetScenarioRegistry.test.cpp` (slice 5 — snapshot test on the 14 existing names)
-- `tests/bats/p4_dual_vcs_deterministic.bats`
 - `tests/ui/AiAssistantPreferences{Docking,EnterSend,ValidationBanner,SaveDiscard,TestConnection,VerifyOnSave}_test.cpp` (6 files)
 - `tests/ui/DescriptionTooltipMarkdownRender_test.cpp`
 - `tests/ui/SpawnWarmupDeterministicGate_test.cpp`
@@ -260,8 +280,11 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 - `Source_Core/src/GitHubIssueSearch.cpp` (delegate to pure helper)
 - `Source_Core/src/PlaneIssueSearch.cpp` (delegate to pure helper)
 - `Source_Core/src/AppController.cpp` (env-hook fixture loaders; AiClientFactory test-override probe; **after slice 5: replace 14 `RegisterFactory` calls with one `RegisterAllScenarios(*scenarioRunner_)` invocation**)
+- `Source_Core/include/ConfigManager.h` (slice 3 — new `BlameAnalysisConfig::P4RunOverride` field)
+- `Source_Core/src/P4Blame.cpp` (slice 3 — `P4RunCommand` consults the override before falling through to `SubprocessCapture::Run`)
 - `Source_Core/include/Logger.h` (LOG_AGENT_DEBUG macro)
 - `agents/debug-detective.md` (reproducer-first contract; phase 0 concreteness check; phase 0.5 existing-scenario reuse; Self-improvement missing-scenario template)
+- `agents/p4-blame.md` (slice 3 — Test surface bullet pointing to `tests/support/FakeP4Runner.h` + the two new doctests)
 - `agents/git-janitor.md` (step 10.5 orphan-scenario sweep; step 10.6 agent-debug NDJSON 30-day prune)
 
 **Modified (test / scripts):**
@@ -308,7 +331,7 @@ Per `docs/design/pillar-1-2-perf-review-system.md`. This plan does touch `Source
 - **Mesa-on-CI flakiness** — software GL rasterisation on GitHub Actions Windows runners may produce subtle font-rendering differences vs the developer's GPU. Slice 6's bucket-C job starts in continue-on-error mode; bootstrap goldens captured by the CI runner once Mesa is wired, not the developer's machine.
 - **ASAN noise** — third-party libraries (cpr, ImGui, SQLite) may surface known false positives. Slice 11 ships an LSAN suppression file (`tests/_debug/lsan-suppressions.txt`) populated as-needed; suppressions are reviewed in `code-review` to avoid silencing real bugs.
 - **Reproducer-first contract may force scenario-add bloat** — slice 10's "agent's first task is to add a scenario" rule could spawn many low-value scenarios. Mitigation: the scenario-add must follow `Source_Core/src/Commands/Scenarios/` registration shape and be reviewed by `code-review` like any other code change; orphan-scenario sweep added to `git-janitor` end-of-session.
-- **p4 stub limitation** — `FakeP4Driver`'s stub binary doesn't cover every `p4` command shape. Mitigation: explicit allow-list of commands the dual-VCS scripts actually call (`p4 streams`, `p4 change`, `p4 shelve`, `p4 submit`, `p4 verify`, `p4 counter`, `p4 describe`); commands outside the allow-list error loudly so a new dual-VCS script can't silently work against the stub and break against real p4d.
+- **`P4RunOverride` seam discipline** — slice 3's runner-seam fake covers `P4Blame.cpp:P4RunCommand` only. If a future blame-feature change adds a *new* spawn-site (e.g. a hypothetical `p4 changes` query for the blame UI's history mode) outside `P4RunCommand`, the fake won't intercept it and the new path silently bypasses the override. Mitigation: a bucket-A grep gate in `scripts/dev/test-agent-contract.sh` (extending existing check 6 / 7b shape) verifies that `Source_Core/src/P4Blame.cpp` contains exactly one `SubprocessCapture::Run` call site, fails loudly when a second is added without a sibling `P4RunOverride` consultation.
 
 **Non-goals:**
 - Replacing real-p4d / real-Jira / real-GitHub integration testing entirely. The fakes are for *autonomous debug* — final-mile integration smoke against the real services stays as opt-in tests gated by `SMATCHET_TEST_REAL_<BACKEND>=1`.
@@ -342,7 +365,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 
 ## Out of scope (flagged, not designed)
 
-- **Real-p4d integration test** — slice 3 covers stub-p4 only. The real-p4d test stays as `scripts/dev/test-p4-dual-vcs.sh` gated by env knob; CI-skipped per existing pattern.
+- **Stub-`p4`-binary for the `scripts/dev/p4-*.sh` dual-VCS dev-environment layer** — per user direction, slice 3 covers only the C++ `P4Blame` feature surface (annotate + describe-cache), which has a single seam (`P4RunCommand`) and two subcommands. The dev-environment shell layer has 30+ subcommand shapes, is opt-in via `SMATCHET_AGENT_VCS=p4`, and is exercised manually — not part of the autonomous-debug loop. The `SMATCHET_TEST_REAL_P4D=1` integration gate at `scripts/dev/test-p4-dual-vcs.sh` stays as the path for testing those scripts against a real p4d.
 - **VCR-style replay over the real cpr / httplib HTTP layer** — slice 4 uses an in-process httplib server, not a recording proxy. A recording layer is more powerful (real responses captured from production traffic) but vastly more complex; defer.
 - **Pillar 4 (accessibility)** — backlogged per AGENTS.md § UX Pillars.
 - **C4 prong 4** (replacing the spawned-Claude session entirely with a deterministic CLI fixer) — out of scope; C4 prongs 1+2+3 (shipped via #428, #431, #437) plus this plan's slice 11 sanitizer routing close the C4 design space.
