@@ -10,7 +10,10 @@
 // under controlled scroll/interaction patterns without a human driver.
 //
 // Adding a new scenario = one new .cpp + one RegisterFactory line in
-// BuiltinCommands.cpp.
+// Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp (the
+// snapshot test in tests/Source_Core/SmatchetScenarioRegistry.test.cpp
+// pins the registered name set — also update the stub list in
+// tests/Source_Core/SmatchetScenarioRegistry.stubs.cpp).
 
 #include <functional>
 #include <memory>
