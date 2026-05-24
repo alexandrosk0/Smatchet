@@ -19,10 +19,8 @@
 #include "Commands/Scenarios/IScenario.h"
 
 namespace {
-std::unique_ptr<smatchet::cmd::IScenario> NullScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>();
-}
-}  // namespace
+std::unique_ptr<smatchet::cmd::IScenario> NullScenario() { return std::unique_ptr<smatchet::cmd::IScenario>(); }
+} // namespace
 
 std::unique_ptr<smatchet::cmd::IScenario> MakePriorityGridScrollScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario() { return NullScenario(); }
@@ -38,6 +36,14 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario() { return N
 std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario() { return NullScenario(); }
+// Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
+std::unique_ptr<smatchet::cmd::IScenario> MakeBlameOpenEntryTabScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario() { return NullScenario(); }
+#if defined(SMATCHET_WITH_AI)
+std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreaming401Scenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario() { return NullScenario(); }
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
 std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperDictationScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperAiAssistantAutosendScenario() { return NullScenario(); }
