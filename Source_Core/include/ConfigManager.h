@@ -15,6 +15,7 @@
 // this header and uses j["…"] = config.QuickCommentTemplates.
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -74,10 +75,10 @@ struct TrackerConfig {
     // Tracker-role only — independent from the deleted agentic flow's old GitHubPat.
     // PAT is DPAPI-encrypted on Win32 (same code path as AiApiKey); base URL defaults
     // to api.github.com; owner/repo carry the active repository the tracker views.
-    std::string GitHubPat;             // Personal Access Token (DPAPI-encrypted on Win32)
-    std::string GitHubBaseUrl;         // e.g. https://api.github.com or https://<enterprise>/api/v3
-    std::string GitHubOwner;           // e.g. "alexandrosk0"
-    std::string GitHubRepo;            // e.g. "Smatchet"
+    std::string GitHubPat;     // Personal Access Token (DPAPI-encrypted on Win32)
+    std::string GitHubBaseUrl; // e.g. https://api.github.com or https://<enterprise>/api/v3
+    std::string GitHubOwner;   // e.g. "alexandrosk0"
+    std::string GitHubRepo;    // e.g. "Smatchet"
 
     // JQL used when querying Jira; defaults to issues assigned to the current user.
     std::string JqlQuery = "assignee=currentUser()";
@@ -439,6 +440,16 @@ struct BlameUiThemeColors {
 
 /** Settings for the Blame Analysis tool (stored under `blame_analysis` in smatchet_config.json). */
 struct BlameAnalysisConfig {
+    /**
+     * Runner seam for `p4` invocations (slice 3 of autonomous-debugging-no-creds).
+     * Tests install a `tests/support/FakeP4Runner.h` lambda to drive
+     * `P4Blame.cpp:P4RunCommand` end-to-end without spawning the real binary.
+     * Empty (default) → real `SubprocessCapture::Run` path; production behaviour
+     * preserved.
+     */
+    using P4RunCommandFn = std::function<bool(const std::vector<std::string>& args, int& outExitCode,
+                                              std::string& outStdout, std::string& outStderr)>;
+    P4RunCommandFn P4RunOverride;
     std::string P4Executable = "p4";
     std::string P4VcExecutable = "p4vc";
     /** If non-empty, used instead of default `p4vc timelapse -l {line} {file}`. Placeholders: {file}, {line}, {cl}. */

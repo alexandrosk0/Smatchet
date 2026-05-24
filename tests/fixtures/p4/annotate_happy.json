@@ -1,0 +1,35 @@
+{
+  "_comment": "FakeP4Runner fixture — happy-path `p4 annotate -u -c -q //depot/foo.cpp` against a 3-line file. Argv-prefix key is the whitespace-joined args. Slice 3 of autonomous-debugging-no-creds.",
+  "responses": [
+    {
+      "argv_prefix": "annotate -u -c -q //depot/foo.cpp",
+      "exit_code": 0,
+      "stdout": "12345: alice 2026/01/15 #include <cstdio>\n12346: bob 2026/02/20 int main() {\n12347: carol 2026/03/30   return 0;\n",
+      "stderr": ""
+    },
+    {
+      "argv_prefix": "annotate -u -c -q //depot/empty.cpp",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv_prefix": "annotate -u -c -q //depot/missing.cpp",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "//depot/missing.cpp - no such file(s)."
+    },
+    {
+      "argv_prefix": "annotate -u -c -q //depot/capped.cpp",
+      "exit_code": 0,
+      "stdout": "12348: dave 2026/04/01 huge_line_capped\n",
+      "stderr": "stdout truncated at cap"
+    },
+    {
+      "argv_prefix": "annotate -u -c -q //depot/timeout.cpp",
+      "exit_code": -1,
+      "stdout": "",
+      "stderr": "p4 process timed out"
+    }
+  ]
+}
