@@ -207,13 +207,13 @@
   Status: open
   Last-reviewed: 2026-05-24
 
-- 2026-05-24 · tracker-backend · [process] · P3 — plan-doc drafts should grep-verify pre-named TUs don't already exist
+- 2026-05-24 · orchestrator · [process] · P3 — plan-doc drafts should grep-verify pre-named TUs don't already exist
   Details: Wave-A slice 1 of `autonomous-debugging-no-creds.md` directed the agent to create `Source_Core/{include,src}/GitHubIssueMappingPure.{h,cpp}`. Those names didn't exist, but the equivalent pure helpers had already shipped under different names from PR12 (`GitHubIssueSearchMapping.{h,cpp}` + `GitHubClientHelpers.{h,cpp}` + `GitHubQueryFromJql.{h,cpp}`). Agent caught the duplication via a 30-second sanity grep and reused the existing TUs — correct outcome, but the plan author shouldn't have to depend on per-agent rigour. Low friction this round; high cost the day an agent doesn't catch it and lands a parallel duplicate.
   Concrete next action: add a one-liner to `docs/design/_plan-template.md` § Files to modify: "Before listing a new `<Foo>.{h,cpp}` here, run `rg -l '<Foo>' Source_Core/` to confirm it doesn't already exist under that or a synonym name." 2-minute edit. Surfaces every time a plan author lists fresh TUs without first grepping the codebase.
   Status: open
   Last-reviewed: 2026-05-24
 
-- 2026-05-24 · tracker-backend · [process] · P3 — slice coordination paragraphs should call out the "if sibling slice hasn't landed yet" case
+- 2026-05-24 · orchestrator · [process] · P3 — slice coordination paragraphs should call out the "if sibling slice hasn't landed yet" case
   Details: Wave-A slice 2 of `autonomous-debugging-no-creds.md` § Coordination read "your env-hook addition adjacent to Jira's [from slice 1]". Slice 1 hadn't merged when slice 2's agent started; the agent had to design the hook shape from scratch rather than pattern-match. Friction was mild (the hook block is small) but a sibling slice that depended on a non-trivial slice-1 surface would have stalled.
   Concrete next action: add a one-liner to `docs/design/_plan-template.md` § Per-slice "Coordination" section template: "If your slice depends on or copies a pattern from a sibling slice that hasn't merged yet, include the pattern's intended shape (3-5 lines of code or a fixture-name list) inline in this slice's Coordination paragraph so the agent doesn't have to invent it." 2-minute edit; surfaces every parallel-dispatched plan.
   Status: open
