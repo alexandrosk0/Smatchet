@@ -4,7 +4,9 @@
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 >
-> **Grill-with-docs pass**: completed informally against the testing-infrastructure survey + backlog scan that motivated this plan (`docs/backlog/agent-self-improvement/test.md`, `process.md`, `tooling.md`, `bug.md`, `external-blockers.md`, `applied.md`). Each slice has a backlog entry it closes (or names "new" with rationale). No ADR needed: the plan is test-only and follows existing seams (`ITrackerBackendFactory::SetBackendFactory`, `AiClientFactory::SetTestOverride`, `ScenarioRunner` registration, ImGui Test Engine). No production architecture decision.
+> **Grill-with-docs pass**: completed against the testing-infrastructure survey + backlog scan + the existing seams (`ITrackerBackendFactory::SetBackendFactory`, `AiClientFactory::SetTestOverride`, `ScenarioRunner` registration, ImGui Test Engine). 9 grill rounds tightened the plan against the domain; per-round changes recorded in this branch's commit history (`wip/plan-autonomous-debugging-no-creds`). Each slice has a backlog entry it closes (or names "new" with rationale).
+>
+> **ADR**: [`docs/adr/0009-autonomous-debugging-no-creds.md`](../adr/0009-autonomous-debugging-no-creds.md). Three coupled load-bearing meta-decisions captured in one ADR — (a) three-pattern backend-fake recipe (tracker fixture / runner-seam fake / `SetTestOverride` stub — non-unification is deliberate), (b) `SmatchetAgentDebug.h` NDJSON helper as a parallel logging surface alongside `Logger.h` (closed-set category enum, per-session file, agent-read-optimised structure), (c) `agents/debug-detective.md` reproducer-first contract (hard refusal, not soft preference; phase 0 concreteness check is the only user-input point in the loop). The slices themselves are mechanical extensions of the existing seams; only these three decisions would surprise a future reader without the plan-doc to hand.
 
 ## Context
 
