@@ -11,37 +11,45 @@
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterDescriptionTooltipMarkdownRenderTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiPrefsAutosaveFlowTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantPreferencesDockingTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantPreferencesEnterSendTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantPreferencesValidationBannerTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantPreferencesSaveDiscardTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantPreferencesTestConnectionTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantPreferencesVerifyOnSaveTests(ImGuiTestEngine* engine);
 #endif
 #if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
 extern "C" void SmatchetRegisterWhisperAiAssistantAutosendTests(ImGuiTestEngine* engine);
 #endif
-#if defined(SMATCHET_WITH_AGENTIC)
-extern "C" void SmatchetRegisterAgentProposalsPanelTests(ImGuiTestEngine* engine);
-extern "C" void SmatchetRegisterAgentHandoffPanelTests(ImGuiTestEngine* engine);
-extern "C" void SmatchetRegisterAgentProposalsHandoffButtonTests(ImGuiTestEngine* engine);
-#endif
+extern "C" void SmatchetRegisterAgentProposalStoreSqliteTests(ImGuiTestEngine* engine);
 
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
     SmatchetRegisterCallstackTooltipHoverTests(engine);
     SmatchetRegisterSyncStallVisibleCueTests(engine);
+    SmatchetRegisterDescriptionTooltipMarkdownRenderTests(engine);
+    SmatchetRegisterSpawnWarmupDeterministicGateTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
     SmatchetRegisterAiPrefsAutosaveFlowTests(engine);
+    SmatchetRegisterAiAssistantPreferencesDockingTests(engine);
+    SmatchetRegisterAiAssistantPreferencesEnterSendTests(engine);
+    SmatchetRegisterAiAssistantPreferencesValidationBannerTests(engine);
+    SmatchetRegisterAiAssistantPreferencesSaveDiscardTests(engine);
+    SmatchetRegisterAiAssistantPreferencesTestConnectionTests(engine);
+    SmatchetRegisterAiAssistantPreferencesVerifyOnSaveTests(engine);
 #endif
 #if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
     SmatchetRegisterWhisperAiAssistantAutosendTests(engine);
 #endif
-#if defined(SMATCHET_WITH_AGENTIC)
-    SmatchetRegisterAgentProposalsPanelTests(engine);
-    SmatchetRegisterAgentHandoffPanelTests(engine);
-    SmatchetRegisterAgentProposalsHandoffButtonTests(engine);
-#endif
+    SmatchetRegisterAgentProposalStoreSqliteTests(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
