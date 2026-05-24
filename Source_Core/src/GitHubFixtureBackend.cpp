@@ -101,6 +101,7 @@ bool GitHubFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, cons
         outError = loadError_;
         return false;
     }
+    outError.clear();
     outTickets.clear();
     for (const auto& key : issueKeys) {
         for (const auto& t : tickets_) {

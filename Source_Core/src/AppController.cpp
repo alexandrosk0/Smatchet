@@ -1191,9 +1191,8 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                         std::unique_ptr<ITrackerClient> Create(const std::string& trackerType) override {
                             const std::string lower = ToLowerAsciiCopy(trackerType);
                             if (lower == "github") {
-                                return std::unique_ptr<ITrackerClient>(
-                                    new smatchet::github::GitHubFixtureBackend(path_, std::string(), std::string(),
-                                                                               /*includePullRequests=*/true));
+                                return std::make_unique<smatchet::github::GitHubFixtureBackend>(
+                                    path_, std::string(), std::string(), /*includePullRequests=*/true);
                             }
                             // Non-GitHub backends fall through to the default factory shape.
                             DefaultTrackerBackendFactory fallback;
@@ -1203,7 +1202,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                       private:
                         std::string path_;
                     };
-                    backendFactory_.reset(new FixtureGitHubFactory(fixturePath));
+                    backendFactory_ = std::make_unique<FixtureGitHubFactory>(fixturePath);
                 } else {
                     LOG_WARN("AppController: SMATCHET_TEST_GITHUB_BACKEND_FIXTURE set but active "
                              "tracker is '%s', not 'GitHub' — ignoring fixture override.",
@@ -1383,7 +1382,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // setup since the endpoint is independent of plugin state. Best-effort —
     // bind failure (port-in-use, no socket lib) logs WARN + Smatchet continues;
     // the daemon's shell bridge falls through to Windows native BurntToast.
-    mergeWatchNotifyServer_ = std::unique_ptr<SmatchetMergeWatchNotifyServer>(new SmatchetMergeWatchNotifyServer());
+    mergeWatchNotifyServer_ = std::make_unique<SmatchetMergeWatchNotifyServer>();
     mergeWatchNotifyServer_->Start(*this);
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
