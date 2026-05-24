@@ -49,6 +49,8 @@
 #  define SMATCHET_AGENT_DEBUG_FSYNC(_fd) _commit(_fd)
 #else
 #  include <unistd.h>
+#  include <sys/stat.h>
+#  include <sys/types.h>
 #  define SMATCHET_AGENT_DEBUG_GETPID() static_cast<long long>(getpid())
 #  define SMATCHET_AGENT_DEBUG_FSYNC(_fd) ::fsync(_fd)
 #endif
@@ -221,8 +223,14 @@ inline std::string ResolveDefaultPath() {
     CreateDirectoryA(base.c_str(), NULL);
     return base + "\\" + SessionId() + ".ndjson";
 #else
-    std::string mkcmd = "mkdir -p \"" + base + "\"";
-    (void)std::system(mkcmd.c_str());
+    // POSIX mkdir-p — walk each '/' prefix and mkdir(2) directly.
+    // Avoids std::system + shell-injection (CWE-78) for env-derived paths.
+    for (std::size_t i = 1; i < base.size(); ++i) {
+        if (base[i] == '/') {
+            (void)::mkdir(base.substr(0, i).c_str(), 0755);
+        }
+    }
+    (void)::mkdir(base.c_str(), 0755);
     return base + "/" + SessionId() + ".ndjson";
 #endif
 }
