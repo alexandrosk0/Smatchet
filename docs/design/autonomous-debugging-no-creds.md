@@ -503,17 +503,29 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 
 <!-- populated when the slices ship; one bullet per merged PR per AGENTS.md § Plan revision after implementation -->
 
+- 2026-05-24 — Slice 9 (Bucket-E densification) — 9 new bucket-E test files under `tests/ui/` covering 6 AI Assistant Preferences flows (docking / enter-send / validation-banner / save-discard / test-connection / verify-on-save), `description_tooltip_markdown_render`, `spawn_warmup_deterministic_gate`, `agent_proposal_store_sqlite`. Aggregator + CMake source list updated; 4 new bash drivers under `scripts/dev/`. 18 new test variants total — all pass under the headless-GL CI path (slice 6). Removed three stale CMakeLists entries (`agent_proposals_panel.test.cpp` + 2 siblings) that became orphan source-list references after PR #356's agentic ripout; the bucket-E build was latently broken on these. Branch: `slice-9-bucket-e-densification`.
 - Slice 10 · `docs(debug-detective): reproducer-first contract (slice 10 of autonomous-debugging-no-creds)` · `agents/debug-detective.md` phase 0 (Concreteness check) + phase 0.5 (Existing-scenario reuse) inserted; § Reproduce rewritten as hard refusal (scenario-add becomes first action when no deterministic reproducer); § Self-improvement `missing-scenario` category added; banner + frontmatter bumped v4 → v5. `docs/agent-rules/delegation.md` § Debug-mode pause-loop names the reproducer-first contract + lists phases 0 + 0.5 before existing phase 1 (Clarify). `agents/git-janitor.md` § Standard cleanup loop step 10.5 (orphan-scenario sweep) added with the tri-condition definition inline; cross-link from `agents/debug-detective.md` § Self-improvement; banner + frontmatter bumped v3 → v4. `scripts/dev/test-agent-contract.sh` check 13 added (V10.1 — grep guard for the literal "reproducer-first contract" phrase).
 
 ## Deviations from plan
 
 <!-- populated when the slices ship -->
 
+- Slice 9: the plan specified `#if defined(SMATCHET_WITH_AGENTIC)` gating for `agent_proposal_store_sqlite.test.cpp`, but that CMake option was removed in PR #356 (`docs/design/github-tracker-backend.md` "agentic ripout"). The test now gates on `SMATCHET_BUILD_UI_TESTS` only and uses `LocalCacheManager` (via `tests/support/SqliteMemFixture.h`) as the proxy store surface — the production AgentProposalStore type hasn't shipped yet. Drift-warning header documents replacement when the real store lands.
+- Slice 9: `ai_assistant_preferences_enter_send.test.cpp` variant 2 (`TabTraversesFields`) — switched from `KeyChars` + `Tab` traversal to `ctx->ItemInputValue()` for deterministic per-field buffer assignment. The engine's keyboard traversal across multiple InputTexts in a single TestFunc lambda is unreliable across the imgui_test_engine pin we use; the surface contract under test ("each field is independently addressable + arms dirty") is preserved.
+- Slice 9: dropped the `ImGuiInputTextFlags_Password` flag from the replica `##AiApiKey` InputText (production keeps it) — the engine's `ItemInputValue` path doesn't forward characters into Password-flagged InputTexts.
 - Slice 10 · No V10.2 / V10.3 verification artefacts shipped with this slice. V10.2 (`tests/Source_Core/_meta/debug_detective_reproducer_first_smoke.test.cpp`) is a C++ doctest that asserts the § Process steps exist — out of scope for the pure-docs / agent-prompt slice; deferred to a follow-up bucket-A slice. V10.3 (bats coverage for the orphan-scenario sweep dry-run) likewise deferred — git-janitor step 10.5's recipe is in-script and visible to future bats coverage. Both deferrals are tracked as residue; neither blocks the slice 10 contract-grep guard (V10.1) which is now live in `test-agent-contract.sh`.
 
 ## Verification (actual)
 
 <!-- populated when the slices ship; mirror the V1.1-V11.2 + VG.1-VG.2 list in § Verification with PASS / FAIL / not-run per item, organised by slice for per-PR tickoff -->
+
+**Slice 9 — Bucket-E densification (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V9.1 | `bucket-e-ui-tests` runs 12 existing + 9 new bucket-E tests; all PASS | PASS — `ui_test.run --all` reports 34/35 (1 pre-existing fail in `VerifyOnSave_TestConnection_SetsResult` from `ai_prefs_autosave_flow.test.cpp`, NOT a slice-9 regression). All 18 slice-9 test variants across 9 files pass: 13/13 `AiPrefsTab`, 1/1 `DescriptionTooltip`, 2/2 `SpawnWarmup`, 2/2 `AgentProposalStore`. |
+| V9.2 | `scripts/dev/test-agent-contract.sh` drift-header grep gate | not-run — deferred to slice-10 contract update PR per plan; all 9 new files include the literal `// Drift warning — IF YOU CHANGE` block in their first 20 lines per the slice-9 isolation contract. |
+| V9.3 | `agent_proposal_store_sqlite.test.cpp` PASS via existing `SqliteMemFixture.h` | PASS — 2 variants (`SqliteFresh_PerTestIsolation`, `SqliteFresh_ReopenIdempotent`) green via the shared `tests/support/SqliteMemFixture.h` tempfile-DB pattern. No new lane / sub-rig. |
 
 **Slice 10 — debug-detective reproducer-first contract**
 

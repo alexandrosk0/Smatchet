@@ -22,12 +22,27 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_panel_dock_swap.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_enter_send.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_prefs_autosave_flow.test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/agent_proposals_panel.test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/agent_handoff_panel.test.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/agent_proposals_handoff_button.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_docking.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_enter_send.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_validation_banner.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_save_discard.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_test_connection.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_verify_on_save.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/description_tooltip_markdown_render.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/spawn_warmup_deterministic_gate.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/agent_proposal_store_sqlite.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/sync_stall_visible_cue.test.cpp"
 )
+
+# Slice 9 — agent_proposal_store_sqlite.test.cpp includes
+# tests/support/SqliteMemFixture.h directly. The tests/CMakeLists.txt
+# include-path glue only applies to the SmatchetTests doctest rig, so we
+# re-declare it here for the SmatchetStandalone + DX12 link surfaces.
+target_include_directories(SmatchetStandalone PRIVATE "${CMAKE_SOURCE_DIR}/tests/support")
+if(TARGET SmatchetCore_DX12)
+    target_include_directories(SmatchetCore_DX12 PRIVATE "${CMAKE_SOURCE_DIR}/tests/support")
+endif()
 
 # Link the test source list into both Standalone (live runner) and the DX12
 # stub (compile tripwire — DX12 has no ui_test.run path but compiling the
