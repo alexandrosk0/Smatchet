@@ -42,7 +42,12 @@ TOL="${SCREENSHOT_TOLERANCE:-4}"
 GOLDEN_DIR="tests/golden"
 TMP_DIR="${TMPDIR:-/tmp}/smatchet-screenshot-diff-$$"
 mkdir -p "$TMP_DIR"
-trap 'rm -rf "$TMP_DIR"' EXIT
+# CI bucket-C job needs the captures to survive past script exit so upload-artifact
+# can find them — set SMATCHET_KEEP_SCREENSHOT_CAPTURES=1 in that job. Default
+# behaviour (developer / local) cleans up.
+if [ "${SMATCHET_KEEP_SCREENSHOT_CAPTURES:-0}" != "1" ]; then
+    trap 'rm -rf "$TMP_DIR"' EXIT
+fi
 
 BOOTSTRAP=0
 if [ "${1:-}" = "--bootstrap" ]; then
