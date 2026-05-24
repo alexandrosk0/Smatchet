@@ -48,3 +48,24 @@
   Concrete next action: add a fuzz test in `tests/Source_Core/GoldenImage.test.cpp` (new file) covering crafted PNG dims at / above 16384 and verify the cap rejects them. Estimated cost 30 min once a synthetic crafted-PNG fixture is in place.
   Status: open
   Last-reviewed: 2026-05-17
+
+- 2026-05-24 · coderabbit-triage · [security] · P3 — CI: pin all `uses:` action refs to commit SHAs + enable Dependabot
+  Source: CodeRabbit on PR #441 thread `PRRT_kwDORqx0G86EYIXI` (deferred — repo-wide sweep, not slice-6 scope).
+  Details: `.github/workflows/build-and-test.yml` has 9 `uses:` sites across 5 jobs using floating `@v*` tags (`actions/checkout@v4` ×3, `msys2/setup-msys2@v2` ×3, `actions/cache@v4` ×3, `actions/upload-artifact@v4` ×3, `actions/download-artifact@v4` ×1). Only ~half are slice-6-introduced; pinning a subset leaves the workflow inconsistent and breaks the zizmor `unpinned-uses` blanket policy.
+  Concrete next action: 1 small PR — pin all 9 sites to commit SHAs + add `.github/dependabot.yml` (`package-ecosystem: github-actions`, weekly cadence) so SHAs stay current. Audit any other workflows under `.github/workflows/` for the same pattern in the same PR. Estimated cost ~30 min.
+  Status: open
+  Last-reviewed: 2026-05-24
+
+- 2026-05-24 · coderabbit-triage · [security] · P3 — CI: workflow-level GITHUB_TOKEN `permissions: {}` + per-job least-privilege
+  Source: CodeRabbit on PR #441 thread `PRRT_kwDORqx0G86EYIXJ` (CR thread outdated; deferred to dedicated security PR).
+  Details: `.github/workflows/build-and-test.yml` has no `permissions:` block; `GITHUB_TOKEN` inherits the repo default (often `read-write-all` for forks → contents:write). `bucket-c-screenshot-diff` and `bucket-e-ui-tests` upload/download artefacts + curl external binaries — should be locked down.
+  Concrete next action: add workflow-root `permissions: contents: read`. Override per-job: `bucket-c-screenshot-diff` and `bucket-e-ui-tests` need `actions: write` (upload-artifact) + `contents: read`. `windows-msys2-ucrt64*` jobs only need `contents: read`. Pair with the action-SHA-pinning entry above — same file, same reviewer concern, batch as one security PR.
+  Status: open
+  Last-reviewed: 2026-05-24
+
+- 2026-05-24 · coderabbit-triage · [security] · P2 — CI: Mesa archive integrity verification (upstream publishes no checksum)
+  Source: CodeRabbit on PR #441 thread `PRRT_kwDORqx0G86EYIXK`. Live in `.github/workflows/build-and-test.yml:302,395` (slice-6 introduction).
+  Details: `bucket-c-screenshot-diff` + `bucket-e-ui-tests` jobs `curl` a 72 MB `mesa-3d-*.7z` from the `pal1000/mesa-dist-win` GitHub release with no SHA256 / signature check. Verified via `gh release view 24.2.5 --json assets` that upstream ships zero checksums: `digest: null` on every asset, no `.sha256` companion file, no checksum in the release body. CR's suggested `MESA_SHA256: "<published-sha256>"` literally cannot be filled with a publisher-attested value. Triage-mechanical-fix envelope insufficient.
+  Concrete next action: security PR must choose between (a) self-computed TOFU SHA256 pinned in workflow env (mitigates silent upstream tampering, not first-time-trust); (b) mirror the 7z to repo-controlled storage (release asset / LFS / private S3); (c) switch to a Mesa distribution that publishes signed artefacts (cosign-attested builds). Pair with the two entries above as one security PR. **P2** — supply-chain risk on every CI run, but exploit window narrow (public-repo CI, no secrets touched, output is a screenshot diff).
+  Status: open
+  Last-reviewed: 2026-05-24
