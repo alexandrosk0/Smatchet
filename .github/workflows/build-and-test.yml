@@ -317,11 +317,18 @@ jobs:
         # Follow-up PR will bootstrap the goldens per the golden-image-approval
         # contract in AGENTS.md.
         env:
+          # Route the script's TMPDIR-honouring capture dir (test-screenshot-diff.sh
+          # uses ${TMPDIR:-/tmp}) under the workspace so the failure-upload step
+          # below — which runs on the Windows host and cannot see MSYS2 /tmp —
+          # can actually find the PNGs to upload for golden bootstrap.
+          TMPDIR: ${{ github.workspace }}/build/tmp
           # Force the Mesa software ICD even if a runner happens to expose a
           # display GL context — keeps the diff reproducible.
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: bash scripts/dev/test-screenshot-diff.sh
+        run: |
+          mkdir -p "${TMPDIR}"
+          bash scripts/dev/test-screenshot-diff.sh
 
       - name: Upload captured PNGs on failure (for golden bootstrap)
         if: failure()
@@ -329,7 +336,7 @@ jobs:
         with:
           name: bucket-c-captures-${{ github.run_id }}
           path: |
-            /tmp/smatchet-screenshot-diff-*/*.png
+            build/tmp/smatchet-screenshot-diff-*/*.png
           if-no-files-found: ignore
 
   bucket-e-ui-tests:
