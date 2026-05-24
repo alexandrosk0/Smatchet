@@ -211,6 +211,7 @@ void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string&
                                              const std::string& richKind) {
     if (offlineQueue_) {
         offlineQueue_->ResolveFieldEditConflict(id, resolvedMarkdown, richKind);
+        offlineQueue_->RestartReplayTimersNow(std::chrono::steady_clock::now());
     }
 }
 
