@@ -87,6 +87,11 @@ add_executable(SmatchetTests
     # without HTTP.
     Source_Core/GitHubIssueSearchMapping.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubIssueSearchMapping.cpp"
+    # Slice 1 of docs/design/autonomous-debugging-no-creds.md — fixture-driven
+    # GitHub mapping coverage (basic mapping / PR-vs-issue filter / assignee +
+    # state + labels / pagination boundary). Reuses GitHubIssueSearchMapping.cpp
+    # (already linked above for GitHubIssueSearchMapping.test.cpp).
+    Source_Core/GitHubIssueMappingPure.test.cpp
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit

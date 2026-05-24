@@ -1,0 +1,66 @@
+{
+  "_comment": "captured-against: GitHub GraphQL API 2026-05-24 — synthetic fixture for slice 1 of docs/design/autonomous-debugging-no-creds.md. Mirrors the shape returned by the kGraphQlSearchQuery search() call in Source_Core/src/GitHubIssueSearch.cpp. Three nodes: one plain issue (open), one open PR with one assignee + two labels, one merged PR. Pagination boundary: hasNextPage=false + endCursor=null exercises the short-page exit path. Owner/repo embedded inline so the mapper hint args can stay empty.",
+  "data": {
+    "search": {
+      "issueCount": 3,
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+      },
+      "nodes": [
+        {
+          "__typename": "Issue",
+          "number": 101,
+          "title": "Grid scroll jitter at 144 Hz",
+          "state": "OPEN",
+          "body": "Dock-host scroll calls FrameSetup() twice per second when the priority view is active.",
+          "createdAt": "2026-05-20T09:00:00Z",
+          "updatedAt": "2026-05-22T11:30:00Z",
+          "author": { "login": "alexandrosk0" },
+          "assignees": { "nodes": [ { "login": "alice" } ] },
+          "labels": { "nodes": [ { "name": "bug" }, { "name": "perf" } ] },
+          "milestone": { "title": "0.9" },
+          "repository": { "name": "Smatchet", "owner": { "login": "alexandrosk0" } }
+        },
+        {
+          "__typename": "PullRequest",
+          "number": 207,
+          "title": "feat: deterministic GitHub backend",
+          "state": "OPEN",
+          "body": "Slice 1 of autonomous-debugging-no-creds. Adds GitHubFixtureBackend + env hook.",
+          "createdAt": "2026-05-23T14:00:00Z",
+          "updatedAt": "2026-05-24T08:15:00Z",
+          "mergedAt": null,
+          "headRefName": "slice-1-github-fake-backend",
+          "baseRefName": "develop",
+          "mergeable": "MERGEABLE",
+          "isDraft": false,
+          "author": { "login": "alexandrosk0" },
+          "assignees": { "nodes": [ { "login": "bob" } ] },
+          "labels": { "nodes": [ { "name": "tracker" } ] },
+          "milestone": null,
+          "repository": { "name": "Smatchet", "owner": { "login": "alexandrosk0" } }
+        },
+        {
+          "__typename": "PullRequest",
+          "number": 188,
+          "title": "fix: merge-watcher CR-NONE fallthrough",
+          "state": "MERGED",
+          "body": "Closes the silent-pass loophole when CodeRabbit hasn't posted yet.",
+          "createdAt": "2026-05-15T10:00:00Z",
+          "updatedAt": "2026-05-18T17:00:00Z",
+          "mergedAt": "2026-05-18T17:00:00Z",
+          "headRefName": "fix/cr-none-fallthrough",
+          "baseRefName": "develop",
+          "mergeable": "UNKNOWN",
+          "isDraft": false,
+          "author": { "login": "alice" },
+          "assignees": { "nodes": [] },
+          "labels": { "nodes": [ { "name": "bug" } ] },
+          "milestone": null,
+          "repository": { "name": "Smatchet", "owner": { "login": "alexandrosk0" } }
+        }
+      ]
+    }
+  }
+}
