@@ -364,7 +364,7 @@ TEST_CASE("AiSseParser: CRLF frame boundary split across Feed calls [high-risk]"
     }
 }
 
-TEST_CASE("AiSseParser: empty-payload data: line still emits with empty Data") {
+TEST_CASE("AiSseParser: empty-payload data: line with empty name is suppressed") {
     // OpenAI sometimes sends `data: \n\n` as keepalive-ish framing.
     // Per parser contract the event suppression rule is "name empty AND
     // data empty" — `data:` with no payload still produces an empty Data

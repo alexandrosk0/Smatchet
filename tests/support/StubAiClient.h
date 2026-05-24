@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace smatchet_tests {
@@ -102,9 +103,16 @@ class StubAiClient : public IAiClient {
             // Synthetic per-delta latency, broken into 1 ms ticks so cancel is
             // honoured promptly even when PerDeltaSleepMs is larger than the
             // configured cancel budget.
+            //
+            // `pollStartedAt` is captured BEFORE entering the polling loop so
+            // `ackMs` measures the true poll-to-detect latency (how long the
+            // stub kept sleeping after the test flipped the cancel token), not
+            // just callback/return overhead. Without this, the budget check is
+            // a no-op — the test would stay green even if polling drifted past
+            // the advertised budget.
+            const auto pollStartedAt = std::chrono::steady_clock::now();
             for (int slept = 0; slept < script_.PerDeltaSleepMs; ++slept) {
                 if (cancel && cancel->load()) {
-                    const auto cancelObservedAt = std::chrono::steady_clock::now();
                     CancelObserved = true;
                     if (onError) {
                         AiStreamError err;
@@ -112,9 +120,9 @@ class StubAiClient : public IAiClient {
                         err.Message = "stub: cancelled by token";
                         onError(err);
                     }
-                    const auto returnedAt = std::chrono::steady_clock::now();
+                    const auto cancelAckAt = std::chrono::steady_clock::now();
                     const auto ackMs =
-                        std::chrono::duration_cast<std::chrono::milliseconds>(returnedAt - cancelObservedAt).count();
+                        std::chrono::duration_cast<std::chrono::milliseconds>(cancelAckAt - pollStartedAt).count();
                     if (ackMs > script_.CancelAcknowledgedWithinMs)
                         CancelBudgetExceeded = true;
                     return;
