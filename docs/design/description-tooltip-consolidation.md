@@ -77,12 +77,18 @@ All four sites in `Source_Core/src/`:
 
 ## Implementation log
 
-*(populated post-ship)*
+- **PR #430** (squash-merged as `c77584f1`): Fixed `opts.wrapWidth` in `SmatchetOfflineQueueUi.cpp`; restructured `renderPlainText` with lazy ADF tooltip; added `LOG_DEBUG` to catch blocks; added `body`/`Body` to `isDescriptionField` predicate; added `test-tooltip-wrapwidth.sh` CI gate.
+- **This PR**: Extracted `IsDescriptionLikeFieldId` as a header-only inline in `Source_Core/include/TicketFieldEditorDescriptionPure.h`; replaced both inline predicates (`isDescriptionLike` in `RenderTextEditor`, `isDescriptionField` in `renderPlainText`) with calls to the helper; added safety-net comment to `SmatchetFieldRender.cpp`; added unit test `tests/Source_Core/IsDescriptionLikeFieldId.test.cpp`.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- **`renderPlainText` → `RenderTextEditor` routing not implemented.** PR #430 already fixed the structural defect (tooltip only firing on horizontal overflow) via a lazy inline `BeginTooltip` block in `renderPlainText`. Routing to `RenderTextEditor` would introduce `allowEdits == false` + double-click → edit-start risk without correcting anything new. Deviation recorded in backlog testing item #3.
+- **`IsDescriptionLikeFieldId` placed in a header-only inline** (`TicketFieldEditorDescriptionPure.h`) rather than an anonymous-namespace static. This makes it directly includable by the test rig without a separate pure TU, matching the pattern established by `TicketFieldEditorLongTextPure.h`.
+- **`SmatchetFieldRender.cpp` change is a comment only** (as planned) — no logic change.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- Dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) clean — 0 errors.
+- `test-tooltip-wrapwidth.sh` gate: 4 blocks checked, 0 violations.
+- `IsDescriptionLikeFieldId` unit test: 8 cases pass (body/Body/description/customDescription → true; environment/summary/status/"" → false).
+- Manual: offline queue payload tooltip renders multi-line with `opts.wrapWidth`.

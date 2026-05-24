@@ -41,6 +41,7 @@ add_executable(SmatchetTests
     Source_Core/TrackerLabelsPure.test.cpp
     Source_Core/TrackerDateTimePure.test.cpp
     Source_Core/TicketFieldEditorLongTextPure.test.cpp
+    Source_Core/IsDescriptionLikeFieldId.test.cpp
     Source_Core/TrackerFieldPayloadPure.test.cpp
     Source_Core/TrackerFieldCatalogPure.test.cpp
     Source_Core/TicketSyncService.test.cpp

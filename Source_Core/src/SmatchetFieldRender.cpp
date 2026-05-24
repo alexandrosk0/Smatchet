@@ -57,6 +57,9 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     ImGui::EndGroup();
 
     const std::string& tipSource = (rawForTooltip && !rawForTooltip->empty()) ? *rawForTooltip : displayValue;
+    // Safety net for non-ADF text fields only. ADF/description fields are handled
+    // by the lazy tooltip in TicketFieldEditor.cpp (renderPlainText + RenderTextEditor)
+    // and never reach this path with renderMarkdown=true.
     if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         if (isCallstack) {

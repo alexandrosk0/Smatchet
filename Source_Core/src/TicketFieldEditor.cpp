@@ -16,6 +16,7 @@
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
 #include "TicketFieldEditorLongTextPure.h"
+#include "TicketFieldEditorDescriptionPure.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -561,9 +562,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     // GitHub body + Jira description carry markdown — render preview tooltip on
     // hover even when the cell fits in one line (no clip / no newline). Other
     // text fields keep the clip-gate so plain values don't tooltip noisily.
-    const bool isDescriptionLike = !field.Id.empty() && (field.Id.find("description") != std::string::npos ||
-                                                         field.Id.find("Description") != std::string::npos ||
-                                                         field.Id == "body" || field.Id == "Body");
+    const bool isDescriptionLike = IsDescriptionLikeFieldId(field.Id);
     if (tooltipsEnabled && (hasNewlineInValue || horizontallyClipped || isDescriptionLike) && ImGui::IsItemHovered()) {
         const std::string* rawTip = IsTrackerDateOrDateTimeField(field.Id, &field) ? &currentValue : nullptr;
         // Convert ADF rich value → markdown so paragraph breaks (\n\n) render as
@@ -1069,12 +1068,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         if (disabled && display.empty()) {
             display = "-";
         }
-        // GitHub body + Jira/Plane description carry markdown — match the isDescriptionLike
-        // predicate in RenderTextEditor (includes body/Body for GitHub tracker).
-        const bool isDescriptionField =
-            !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
-                                        column.FieldId.find("Description") != std::string::npos ||
-                                        column.FieldId == "body" || column.FieldId == "Body");
+        const bool isDescriptionField = IsDescriptionLikeFieldId(column.FieldId);
         if (isDescriptionField) {
             // Lazy: parse ADF → markdown only on actual hover, not per-cell per-frame.
             RenderClippedFieldText(display, availWidth, false, disabled, nullptr, false, &column.FieldId);
