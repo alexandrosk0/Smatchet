@@ -575,7 +575,10 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
             if (!richVal.empty()) {
                 try {
                     descMd = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
+                } catch (const std::exception& e) {
+                    LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", field.Id.c_str(), e.what());
                 } catch (...) {
+                    LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", field.Id.c_str());
                 }
             }
             if (descMd.empty()) {
@@ -1066,35 +1069,46 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         if (disabled && display.empty()) {
             display = "-";
         }
+        // GitHub body + Jira/Plane description carry markdown — match the isDescriptionLike
+        // predicate in RenderTextEditor (includes body/Body for GitHub tracker).
         const bool isDescriptionField =
             !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
-                                        column.FieldId.find("Description") != std::string::npos);
-        // ADF rich value → markdown so tooltip renders paragraph breaks (single \n from
-        // ADF extraction is a soft break in markdown; AdfToMarkdown emits \n\n between
-        // paragraphs so the tooltip shows proper structure). Falls back to plain text
-        // with renderMarkdown=false if no rich value is cached yet.
-        static thread_local std::string s_descMarkdownTip;
-        const std::string* tip = nullptr;
-        bool useMarkdown = isDescriptionField;
+                                        column.FieldId.find("Description") != std::string::npos ||
+                                        column.FieldId == "body" || column.FieldId == "Body");
         if (isDescriptionField) {
-            const std::string richVal = ticket.GetFieldRichValue(column.FieldId);
-            if (!richVal.empty()) {
-                try {
-                    const auto j = nlohmann::json::parse(richVal);
-                    s_descMarkdownTip = MarkdownConvert::AdfToMarkdown(j);
-                    tip = &s_descMarkdownTip;
-                } catch (...) {
-                    tip = &currentValue;
-                    useMarkdown = false;
+            // Lazy: parse ADF → markdown only on actual hover, not per-cell per-frame.
+            RenderClippedFieldText(display, availWidth, false, disabled, nullptr, false, &column.FieldId);
+            if (tooltipsEnabled && ImGui::IsItemHovered()) {
+                const std::string richVal = ticket.GetFieldRichValue(column.FieldId);
+                std::string md;
+                if (!richVal.empty()) {
+                    try {
+                        md = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
+                    } catch (const std::exception& e) {
+                        LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", column.FieldId.c_str(), e.what());
+                    } catch (...) {
+                        LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", column.FieldId.c_str());
+                    }
                 }
-            } else {
-                tip = &currentValue;
-                useMarkdown = false;
+                if (md.empty()) {
+                    md = currentValue;
+                }
+                if (!md.empty()) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                    MarkdownPreviewRender::Options opts;
+                    opts.mode = MarkdownPreviewRender::Mode::Tooltip;
+                    opts.clickableLinks = false;
+                    opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
+                    MarkdownPreviewRender::Render(md, opts);
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
             }
-        } else if (column.IsDateLike) {
-            tip = &currentValue;
+        } else {
+            const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
+            RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, false, &column.FieldId);
         }
-        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, useMarkdown, &column.FieldId);
     };
 
     switch (column.Plan) {
