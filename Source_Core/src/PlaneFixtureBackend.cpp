@@ -110,8 +110,13 @@ std::vector<CachedTicket> PlaneFixtureBackend::FetchIssues(bool* outFullSyncComp
 
 bool PlaneFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
                                              const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
-                                             std::string& /*outError*/) {
+                                             std::string& outError) {
     outTickets.clear();
+    if (!loadError_.empty()) {
+        outError = loadError_;
+        return false;
+    }
+    outError.clear();
     for (const auto& key : issueKeys) {
         for (const auto& t : tickets_) {
             if (t.id == key) {
