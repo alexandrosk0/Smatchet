@@ -159,6 +159,22 @@ Backlog closure: `tooling.md` P2 headless-GL entry.
 
 **Wave A.** Currently referenced in `docs/agent-rules/delegation.md` § Debug-mode pause-loop but the file doesn't exist. This slice creates it with the operational contract below — load-bearing because slices 10 + 11 depend on the agent grep-ing a known schema from a known path.
 
+#### Coexistence with `agents/_shared/templates/SmatchetAgentDebug.h.tmpl`
+
+The existing template at `agents/_shared/templates/SmatchetAgentDebug.h.tmpl` is **deliberately untouched** by this slice. The two helpers serve distinct, non-overlapping purposes; both stay; no migration / no compatibility shim / no schema unification:
+
+| Aspect | Existing template (untouched) | New helper (this slice) |
+|---|---|---|
+| Lifetime | **Per-investigation, ephemeral** — `debug-detective` instantiates it for one bug, removes it at investigation cleanup, gitignored | **Production-resident, persistent** — checked into `tests/_debug/`, compiled into ON-build presets, used by every scenario run |
+| Schema | `sessionId / location / hypothesisId / message / data / timestamp` (fixed; hypothesis-tracking shape) | `ts / category / pid / tid / scope / payload` (closed-category enum; boundary-crossing-event shape) |
+| Path | `debug-<__SMATCHET_AGENT_DEBUG_ID__>.log` at repo-root (walks up to `.git`) | `<userData>/agent-debug/<session-id>.ndjson` or `tests/_debug/scratch/<test-name>.ndjson` |
+| Audience | Single investigation's debug-detective run | Any agent (debug-detective, perf-detective, code-review) reading a scenario's structured trace |
+| Trigger | `debug-detective` manually inserts `[temp-debug]` markers calling `SmatchetAgentNdjsonLog(...)` for a specific hypothesis | Production code paths call `SMATCHET_AGENT_DEBUG_LOG(<category>, <payload>)` permanently; closed-category enum is grep-able |
+
+**Downstream impact**: `debug-detective` already uses the existing template for its `[temp-debug]` workflow (per `agents/debug-detective.md` § Process). After slice 7 lands, debug-detective gains a second read source — the new helper's NDJSON file — for *production-resident* boundary-crossing events that don't require manual instrumentation. The agent prompt update in slice 10 documents both sources as the agent's input surface; nothing in the existing per-investigation flow changes.
+
+#### Operational contract
+
 - New `tests/_debug/SmatchetAgentDebug.h` — header-only. Provides `SMATCHET_AGENT_DEBUG_LOG(category, json_obj)` macro.
 - Header is `#include`-able from any TU; safe to leave in production code as a no-op when `SMATCHET_AGENT_DEBUG=OFF` (default in iter / publish presets, ON in debug / asan / ui-test presets).
 - New `Source_Core/include/Logger.h` macro `LOG_AGENT_DEBUG(category, msg)` that bridges: routes to NDJSON when debug-on, to `LOG_DEBUG` otherwise.
@@ -471,7 +487,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 | VG.1 | `bash scripts/dev/test-all.sh` exits 0 after every slice | A |
 | VG.2 | `ctest --output-on-failure` exits 0 with the new bucket-A tests included | A |
 
-**Manual residue**: **none**. Every verification item is bucketed; the plan does not require any "user opens window and observes" step. The single exception is the *bootstrap* of bucket-C goldens on first Mesa-CI run (V6.1), which is a one-time `cp build/<preset>/*.png tests/golden/` + manual `git add` step — covered by the golden-image-approval contract in AGENTS.md.
+**Manual residue**: **one-time golden bootstrap only**. Every recurring verification item is bucketed; the plan does not require any "user opens window and observes" step in the steady-state debug loop. The single exception is the *first-run bootstrap* of bucket-C goldens on the initial Mesa-CI run (V6.1) — a one-time `cp build/<preset>/*.png tests/golden/` + manual `git add` operation, performed exactly once when slice 6 first ships and covered by the golden-image-approval contract in [`AGENTS.md`](../../AGENTS.md) § Project rules § Golden-image approval contract.
 
 ## Out of scope (flagged, not designed)
 
