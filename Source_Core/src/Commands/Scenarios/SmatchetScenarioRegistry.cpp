@@ -36,6 +36,14 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario();
+// Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeBlameOpenEntryTabScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario();
+#if defined(SMATCHET_WITH_AI)
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreaming401Scenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario();
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperDictationScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperAiAssistantAutosendScenario();
@@ -74,6 +82,21 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     runner.RegisterFactory("preferences-slider-drag", []() { return ::MakePreferencesSliderDragScenario(); });
     runner.RegisterFactory("long-text-open-large-adf", []() { return ::MakeLongTextOpenLargeAdfScenario(); });
 
+    // Slice 8 of autonomous-debugging-no-creds — closes the missing-bug-path
+    // scenario backlog gaps (tooling.md P2 line 178; tooling.md P2 line 56;
+    // test.md P2 AI streaming S2/S4/S5; defensive cover for be2b1d9 wrapWidth
+    // tooltip regression).
+    runner.RegisterFactory("blame-open-entry-tab", []() { return ::MakeBlameOpenEntryTabScenario(); });
+    runner.RegisterFactory("description-tooltip-markdown-render",
+                           []() { return ::MakeDescriptionTooltipMarkdownRenderScenario(); });
+#if defined(SMATCHET_WITH_AI)
+    runner.RegisterFactory("ai-assistant-streaming-happy-path",
+                           []() { return ::MakeAiAssistantStreamingHappyPathScenario(); });
+    runner.RegisterFactory("ai-assistant-streaming-401", []() { return ::MakeAiAssistantStreaming401Scenario(); });
+    runner.RegisterFactory("ai-assistant-streaming-transport-down-within-5s",
+                           []() { return ::MakeAiAssistantStreamingTransportDownScenario(); });
+#endif
+
 #if defined(SMATCHET_WITH_WHISPER)
     // Phase G — end-to-end whisper-dictation regression gate. The scenario
     // TU is source-list-conditional (only added to CORE_SOURCES when the
@@ -85,9 +108,10 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // ReloadUserBufAndMoveToEnd half of the fix is exercised end-to-end.
     // Source-list conditional (CMakeLists.txt) + ifdef-wrapped here for the
     // same reason as the dictation-roundtrip factory.
-    runner.RegisterFactory("whisper-ai-assistant-autosend", []() { return ::MakeWhisperAiAssistantAutosendScenario(); });
+    runner.RegisterFactory("whisper-ai-assistant-autosend",
+                           []() { return ::MakeWhisperAiAssistantAutosendScenario(); });
 #endif
 }
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet

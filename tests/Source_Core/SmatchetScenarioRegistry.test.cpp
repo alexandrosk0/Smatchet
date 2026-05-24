@@ -41,6 +41,14 @@ std::set<std::string> ExpectedNames() {
     expected.insert("attachment-preview-open");
     expected.insert("preferences-slider-drag");
     expected.insert("long-text-open-large-adf");
+    // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
+    expected.insert("blame-open-entry-tab");
+    expected.insert("description-tooltip-markdown-render");
+#if defined(SMATCHET_WITH_AI)
+    expected.insert("ai-assistant-streaming-happy-path");
+    expected.insert("ai-assistant-streaming-401");
+    expected.insert("ai-assistant-streaming-transport-down-within-5s");
+#endif
 #if defined(SMATCHET_WITH_WHISPER)
     expected.insert("whisper-dictation-roundtrip");
     expected.insert("whisper-ai-assistant-autosend");
@@ -48,7 +56,7 @@ std::set<std::string> ExpectedNames() {
     return expected;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("RegisterAllScenarios populates the expected scenario set") {
     smatchet::cmd::ScenarioRunner runner;
@@ -77,6 +85,6 @@ TEST_CASE("RegisterAllScenarios is callable on a fresh runner without crash") {
     // throw or assert.
     smatchet::cmd::ScenarioRunner runner;
     smatchet::cmd::RegisterAllScenarios(runner);
-    smatchet::cmd::RegisterAllScenarios(runner);  // second call: tolerated.
-    CHECK(runner.ListNames().size() >= 6);  // lower bound — gated entries vary.
+    smatchet::cmd::RegisterAllScenarios(runner); // second call: tolerated.
+    CHECK(runner.ListNames().size() >= 6);       // lower bound — gated entries vary.
 }
