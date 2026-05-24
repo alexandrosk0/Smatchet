@@ -70,6 +70,8 @@
 
 #include "ITrackerBackendFactory.h"
 
+#include "PlaneFixtureBackend.h"
+
 #include "LuaAutomationHost.h"
 
 #include "OfflineQueueService.h"
@@ -1168,6 +1170,20 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     if (activeTracker.empty()) {
 
         activeTracker = "Jira";
+    }
+
+    // Slice 2 of docs/design/autonomous-debugging-no-creds.md — env-hook
+    // override for the Plane backend. When SMATCHET_TEST_PLANE_BACKEND_FIXTURE
+    // is set, swap in a fixture-driven backend factory before the default is
+    // constructed. Sibling Jira/GitHub hooks (slices 1, 4, 5) land adjacent.
+    if (!backendFactory_) {
+        const char* planeFixtureEnv = std::getenv("SMATCHET_TEST_PLANE_BACKEND_FIXTURE");
+        if (planeFixtureEnv && planeFixtureEnv[0] != '\0') {
+            LOG_INFO("AppController: SMATCHET_TEST_PLANE_BACKEND_FIXTURE=%s — installing PlaneFixtureBackend factory.",
+                     planeFixtureEnv);
+            backendFactory_ = smatchet::plane::MakePlaneFixtureBackendFactory(std::string(planeFixtureEnv));
+            activeTracker = "Plane";
+        }
     }
 
     if (!backendFactory_) {
