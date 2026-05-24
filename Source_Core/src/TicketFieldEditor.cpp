@@ -561,18 +561,29 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     // GitHub body + Jira description carry markdown — render preview tooltip on
     // hover even when the cell fits in one line (no clip / no newline). Other
     // text fields keep the clip-gate so plain values don't tooltip noisily.
-    const bool isDescriptionLike =
-        !field.Id.empty() && (field.Id.find("description") != std::string::npos ||
-                              field.Id.find("Description") != std::string::npos || field.Id == "body" ||
-                              field.Id == "Body");
-    if (tooltipsEnabled && (hasNewlineInValue || horizontallyClipped || isDescriptionLike) &&
-        ImGui::IsItemHovered()) {
+    const bool isDescriptionLike = !field.Id.empty() && (field.Id.find("description") != std::string::npos ||
+                                                         field.Id.find("Description") != std::string::npos ||
+                                                         field.Id == "body" || field.Id == "Body");
+    if (tooltipsEnabled && (hasNewlineInValue || horizontallyClipped || isDescriptionLike) && ImGui::IsItemHovered()) {
         const std::string* rawTip = IsTrackerDateOrDateTimeField(field.Id, &field) ? &currentValue : nullptr;
-        // Description tooltip needs the raw markdown source (currentValue), not the
-        // newline-stripped single-line display value.
-        const std::string& tipSource = isDescriptionLike
-                                           ? currentValue
-                                           : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
+        // Convert ADF rich value → markdown so paragraph breaks (\n\n) render as
+        // separate paragraphs. Plain text currentValue uses single \n (soft break in
+        // markdown) which would join paragraphs into one line.
+        std::string descMd;
+        if (isDescriptionLike) {
+            const std::string richVal = ticket.GetFieldRichValue(field.Id);
+            if (!richVal.empty()) {
+                try {
+                    descMd = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
+                } catch (...) {
+                }
+            }
+            if (descMd.empty()) {
+                descMd = currentValue;
+            }
+        }
+        const std::string& tipSource =
+            isDescriptionLike ? descMd : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
         if (!tipSource.empty()) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
@@ -580,6 +591,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
                 MarkdownPreviewRender::Options opts;
                 opts.mode = MarkdownPreviewRender::Mode::Tooltip;
                 opts.clickableLinks = false;
+                opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
                 MarkdownPreviewRender::Render(tipSource, opts);
             } else {
                 ImGui::TextUnformatted(tipSource.c_str());
@@ -1057,13 +1069,32 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         const bool isDescriptionField =
             !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
                                         column.FieldId.find("Description") != std::string::npos);
-        // For date-like + description fields, hover should show the raw value (full ISO
-        // timestamp / raw markdown source) rather than the formatted single-line display.
-        // The description path additionally renders the raw markdown through the preview
-        // pipeline (renderMarkdown=true), so the tooltip needs the full markdown source.
-        const std::string* tip = (column.IsDateLike || isDescriptionField) ? &currentValue : nullptr;
-        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, isDescriptionField,
-                               &column.FieldId);
+        // ADF rich value → markdown so tooltip renders paragraph breaks (single \n from
+        // ADF extraction is a soft break in markdown; AdfToMarkdown emits \n\n between
+        // paragraphs so the tooltip shows proper structure). Falls back to plain text
+        // with renderMarkdown=false if no rich value is cached yet.
+        static thread_local std::string s_descMarkdownTip;
+        const std::string* tip = nullptr;
+        bool useMarkdown = isDescriptionField;
+        if (isDescriptionField) {
+            const std::string richVal = ticket.GetFieldRichValue(column.FieldId);
+            if (!richVal.empty()) {
+                try {
+                    const auto j = nlohmann::json::parse(richVal);
+                    s_descMarkdownTip = MarkdownConvert::AdfToMarkdown(j);
+                    tip = &s_descMarkdownTip;
+                } catch (...) {
+                    tip = &currentValue;
+                    useMarkdown = false;
+                }
+            } else {
+                tip = &currentValue;
+                useMarkdown = false;
+            }
+        } else if (column.IsDateLike) {
+            tip = &currentValue;
+        }
+        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, useMarkdown, &column.FieldId);
     };
 
     switch (column.Plan) {

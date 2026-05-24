@@ -68,6 +68,7 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
                 MarkdownPreviewRender::Options opts;
                 opts.mode = MarkdownPreviewRender::Mode::Tooltip;
                 opts.clickableLinks = false;
+                opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
                 MarkdownPreviewRender::Render(tipSource, opts);
             } else {
                 ImGui::TextUnformatted(tipSource.c_str());
