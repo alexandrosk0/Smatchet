@@ -322,6 +322,9 @@ jobs:
           # below — which runs on the Windows host and cannot see MSYS2 /tmp —
           # can actually find the PNGs to upload for golden bootstrap.
           TMPDIR: ${{ github.workspace }}/build/tmp
+          # Suppress the trap that rms TMP_DIR on script exit — the upload-artifact
+          # step below needs the PNGs to survive past the script call.
+          SMATCHET_KEEP_SCREENSHOT_CAPTURES: "1"
           # Force the Mesa software ICD even if a runner happens to expose a
           # display GL context — keeps the diff reproducible.
           GALLIUM_DRIVER: llvmpipe
