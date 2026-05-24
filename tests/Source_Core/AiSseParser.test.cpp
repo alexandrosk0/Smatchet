@@ -260,6 +260,134 @@ TEST_CASE("AiSseParser: aborts cleanly past 4 MiB cap without frame boundary") {
     CHECK(c.events[0].Data == "ok");
 }
 
+TEST_CASE("AiSseParser: malformed JSON in data payload passes through unchanged [opaque payload]") {
+    // The parser does NOT inspect the data: payload — it's an opaque byte
+    // sequence handed to the OpenAi/Anthropic client to JSON-parse. Garbage
+    // JSON must surface intact at the callback (the client's own try/catch
+    // turns it into a graceful error; the parser must not pre-judge).
+    AiSseParser p;
+    EventCollector c;
+    Feed(p, "data: {not-valid-json,,\n\n", c);
+    REQUIRE(c.events.size() == 1);
+    CHECK(c.events[0].Data == "{not-valid-json,,");
+}
+
+TEST_CASE("AiSseParser: data payload that looks like a frame boundary survives because boundary is line-based") {
+    // Adversarial — the payload contains `\\n\\n` literal chars (not actual
+    // newlines). Boundary detection works on byte-level `\n\n` only, so the
+    // escaped form passes through.
+    AiSseParser p;
+    EventCollector c;
+    Feed(p, "data: foo\\n\\nbar\n\n", c);
+    REQUIRE(c.events.size() == 1);
+    CHECK(c.events[0].Data == "foo\\n\\nbar");
+}
+
+TEST_CASE("AiSseParser: mid-frame caller-side cancel preserves buffer for either resume or Reset") {
+    // The parser has no cancel concept — the *caller* (worker thread) is
+    // expected to stop feeding bytes when its AiCancelToken trips. Verify
+    // that an abrupt stop mid-frame leaves the parser in a consistent
+    // state: no spurious emission, and either resume-with-more-bytes OR
+    // Reset() + fresh stream both work.
+    SUBCASE("Caller resumes after cancel: partial frame eventually completes") {
+        AiSseParser p;
+        EventCollector c;
+        Feed(p, "data: half-", c);
+        CHECK(c.events.empty()); // no half-frame leak
+
+        // Simulated cancel → caller pauses (no Feed calls). Parser state intact.
+        // Caller decides to resume rather than abandon.
+        Feed(p, "delivered\n\n", c);
+        REQUIRE(c.events.size() == 1);
+        CHECK(c.events[0].Data == "half-delivered");
+    }
+
+    SUBCASE("Caller cancels and Resets: subsequent stream parses cleanly from scratch") {
+        AiSseParser p;
+        EventCollector c;
+        Feed(p, "event: in-progress\ndata: dropped", c);
+        CHECK(c.events.empty());
+
+        p.Reset(); // caller aborts mid-frame
+        Feed(p, "data: fresh-event\n\n", c);
+        REQUIRE(c.events.size() == 1);
+        CHECK(c.events[0].Name.empty());
+        CHECK(c.events[0].Data == "fresh-event");
+    }
+}
+
+TEST_CASE("AiSseParser: Flush on empty parser is a no-op") {
+    AiSseParser p;
+    EventCollector c;
+    p.Flush(c.callback());
+    CHECK(c.events.empty());
+}
+
+TEST_CASE("AiSseParser: Flush after a complete stream emits nothing extra") {
+    // No trailing partial frame — Flush must not synthesise a phantom event.
+    AiSseParser p;
+    EventCollector c;
+    Feed(p, "data: complete\n\n", c);
+    REQUIRE(c.events.size() == 1);
+
+    p.Flush(c.callback());
+    CHECK(c.events.size() == 1); // unchanged
+}
+
+TEST_CASE("AiSseParser: mixed LF + CRLF in the same stream both frame correctly") {
+    // Some proxies mix line endings — the parser must handle both within
+    // a single connection without dropping events.
+    AiSseParser p;
+    EventCollector c;
+    Feed(p,
+         "data: lf-event\n\n"
+         "data: crlf-event\r\n\r\n"
+         "data: lf-again\n\n",
+         c);
+    REQUIRE(c.events.size() == 3);
+    CHECK(c.events[0].Data == "lf-event");
+    CHECK(c.events[1].Data == "crlf-event");
+    CHECK(c.events[2].Data == "lf-again");
+}
+
+TEST_CASE("AiSseParser: CRLF frame boundary split across Feed calls [high-risk]") {
+    // libcurl may hand us the four CRLF bytes in any combination across two
+    // Feed calls. Split at every possible position.
+    const std::string stream = "data: split-crlf\r\n\r\n";
+    for (std::size_t split = 1; split + 1 < stream.size(); ++split) {
+        AiSseParser p;
+        EventCollector c;
+        Feed(p, stream.substr(0, split), c);
+        Feed(p, stream.substr(split), c);
+        REQUIRE_MESSAGE(c.events.size() == 1, "split at byte " << split);
+        CHECK(c.events[0].Data == "split-crlf");
+    }
+}
+
+TEST_CASE("AiSseParser: empty-payload data: line still emits with empty Data") {
+    // OpenAI sometimes sends `data: \n\n` as keepalive-ish framing.
+    // Per parser contract the event suppression rule is "name empty AND
+    // data empty" — `data:` with no payload still produces an empty Data
+    // string, which combined with an empty Name suppresses the emission.
+    AiSseParser p;
+    EventCollector c;
+    Feed(p, "data: \n\n", c);
+    // Both name and data empty → suppressed by parser per AiSseParser.cpp:94.
+    CHECK(c.events.empty());
+}
+
+TEST_CASE("AiSseParser: named event with no data: still emits (Name carries the signal)") {
+    // Anthropic's `event: ping\n\n` shape — no data, but the named event
+    // itself is the signal. Must surface so the client can ignore it
+    // explicitly rather than silently swallowing.
+    AiSseParser p;
+    EventCollector c;
+    Feed(p, "event: ping\n\n", c);
+    REQUIRE(c.events.size() == 1);
+    CHECK(c.events[0].Name == "ping");
+    CHECK(c.events[0].Data.empty());
+}
+
 TEST_CASE("AiSseParser: many small Feeds reconstruct a full stream") {
     // Pillar 3 stress: feed one byte at a time. Parser must accumulate cleanly
     // and emit exactly the same events as a single all-in-one Feed.

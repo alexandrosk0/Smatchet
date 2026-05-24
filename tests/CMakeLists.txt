@@ -50,6 +50,11 @@ add_executable(SmatchetTests
     Source_Core/ConfigMigration.test.cpp
     Source_Core/SingleClickEditConfig.test.cpp
     Source_Core/AiSseParser.test.cpp
+    # autonomous-debugging-no-creds § Slice 4 — verifies the StubAiClient
+    # test-infrastructure header (tests/support/StubAiClient.h) honours its
+    # AiCancelToken contract. Pure C++14 — no HTTP, no cpr, no production
+    # AI client. Header-only stub; no extra .cpp source.
+    Source_Core/StubAiClientCancel.test.cpp
     Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiClientFactory.test.cpp
     Source_Core/AiNdjsonParser.test.cpp
