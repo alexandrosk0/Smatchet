@@ -122,15 +122,56 @@ Backlog closure: `tooling.md` P2 headless-GL entry.
 
 ### Slice 7 — `SmatchetAgentDebug.h` NDJSON helper
 
-**Wave A.** Currently referenced in `docs/agent-rules/delegation.md` § Debug-mode pause-loop but the file doesn't exist. This slice creates it.
+**Wave A.** Currently referenced in `docs/agent-rules/delegation.md` § Debug-mode pause-loop but the file doesn't exist. This slice creates it with the operational contract below — load-bearing because slices 10 + 11 depend on the agent grep-ing a known schema from a known path.
 
-- New `tests/_debug/SmatchetAgentDebug.h` — header-only. Provides `SMATCHET_AGENT_DEBUG_LOG(category, json_obj)` macro that appends one NDJSON line per call to `<userData>/agent-debug/<session-id>.ndjson` (or `tests/_debug/scratch/<test-name>.ndjson` under doctest / bats). Category is a short string for log-grep filtering (`backend-call`, `ui-event`, `worker-handoff`, `lock-claim`, etc.).
+- New `tests/_debug/SmatchetAgentDebug.h` — header-only. Provides `SMATCHET_AGENT_DEBUG_LOG(category, json_obj)` macro.
 - Header is `#include`-able from any TU; safe to leave in production code as a no-op when `SMATCHET_AGENT_DEBUG=OFF` (default in iter / publish presets, ON in debug / asan / ui-test presets).
 - New `Source_Core/include/Logger.h` macro `LOG_AGENT_DEBUG(category, msg)` that bridges: routes to NDJSON when debug-on, to `LOG_DEBUG` otherwise.
-- New section in `docs/agent-rules/delegation.md` § Debug-mode pause-loop documenting the helper's contract (path, format, life-cycle).
-- Bucket-A doctest in `tests/Source_Core/SmatchetAgentDebug.test.cpp` — opens a tempfile output target, calls the macro 5 times with different categories, parses + asserts each line is valid JSON with the expected category.
+- New section in `docs/agent-rules/delegation.md` § Debug-mode pause-loop documenting the helper's contract.
+- Bucket-A doctest in `tests/Source_Core/SmatchetAgentDebug.test.cpp` — opens a tempfile output target, exercises every contract bullet below (schema validation, empty-file semantic, concurrency under 2 threads, fsync env knob).
 
-Backlog closure: no explicit backlog entry today; slice 7 closes the implicit gap that `delegation.md` references a non-existent helper.
+#### Per-line schema
+
+Every emitted line is one NDJSON object with these fields:
+
+| Field | Type | Required | Source |
+|---|---|---|---|
+| `ts` | ISO-8601 UTC string | yes | `std::chrono::system_clock::now()` |
+| `category` | enum string | yes | one of: `backend-call`, `ui-event`, `worker-handoff`, `lock-claim`, `scenario-phase`, `cli-command`, `temp-debug` (closed set; new categories require a slice-7 amendment + a `SmatchetAgentDebug.h` constant bump) |
+| `pid` | int | yes | `getpid()` |
+| `tid` | string | yes | `std::this_thread::get_id()` |
+| `scope` | string | optional | `<file>:<line>` of the caller (use `__FILE__` / `__LINE__` macros) |
+| `payload` | object | yes | caller-supplied JSON. Schema-by-category: `backend-call` requires `{method, url, status}`; `ui-event` requires `{widget_id, action}`; `worker-handoff` requires `{from_tid, to_tid, queue_depth}`; `lock-claim` requires `{slug, owner, started_unix}`; `scenario-phase` requires `{name, phase}` where `phase` ∈ {`start`, `tick`, `finish`, `cancel`}; `cli-command` requires `{cmd, args, exit_code}`; `temp-debug` requires nothing (free-form for the `[temp-debug]` workflow). |
+
+#### File-path resolution
+
+- **Production / user run**: `<userData>/agent-debug/<session-id>.ndjson` where `<session-id>` = `<unix-epoch>-<pid>` (set once at process start; exported as the `SMATCHET_AGENT_DEBUG_SESSION_ID` env var so spawned subprocesses can correlate without re-discovering).
+- **Doctest / bats**: `tests/_debug/scratch/<test-name>.ndjson` — `<test-name>` is the DOCTEST_CASE name or the bats test name.
+- **Agent read-path**: `debug-detective` reads the path from `SMATCHET_AGENT_DEBUG_SESSION_ID` (no guessing). When unset, agent halts with `## Outcome: aborted — SMATCHET_AGENT_DEBUG_SESSION_ID not set; re-spawn the failing scenario with SMATCHET_AGENT_DEBUG=ON`.
+
+#### Rotation
+
+- One file per session — never appended across sessions. The `<session-id>` suffix guarantees uniqueness.
+- `agents/git-janitor.md` end-of-session sweep prunes `<userData>/agent-debug/*.ndjson` older than 30 days (new step 10.6, sibling to the slice-10 orphan-scenario sweep).
+- Per-file size cap: 50 MB. On overflow, append one terminal line `{"ts": "...", "category": "scenario-phase", "payload": {"name": "_overflow", "phase": "abort"}}` and stop writing; further calls become no-ops for the rest of the session.
+
+#### Concurrency
+
+- Per-process `std::ofstream` guarded by a single `std::mutex` (`s_agent_debug_mutex`, function-local-static in the header's anon namespace).
+- Append-only; no read locks (debug-detective reads the file *after* the scenario completes, never concurrently).
+- `fsync` per write is OFF by default (perf); ON when `SMATCHET_AGENT_DEBUG_FSYNC=true` for crash-debug runs where the process may abort mid-frame.
+
+#### Empty-file semantic
+
+Empty NDJSON file after the scenario ran = **instrumentation didn't fire** (the scenario never reached any scope wrapped with `SMATCHET_AGENT_DEBUG_LOG`). `debug-detective` treats this as an **actionable signal**, not a pass: "the macro is wired in the codebase but the call site is unreachable from this scenario — phase 0.5 (existing-scenario reuse) must find a different scenario, or phase 1 (Reproduce) must add a new scope at the actual code path."
+
+#### Performance — ON-build hot-path budget
+
+- Per-`SMATCHET_AGENT_DEBUG_LOG` call: ≤ 500 ns on a 3 GHz x86_64 core (the cost of `system_clock::now()` + `to_string()` + mutex-guarded `<<` + flush). Verified by a new pillar-1 perf-gate scenario (`agent-debug-hot-path-stress`, ships in slice 8 if the budget needs enforcement; deferred until the first ON-build benchmark surfaces a regression).
+- Per-frame budget: caller-responsibility. `SMATCHET_AGENT_DEBUG_LOG` placed inside a > 1 kHz inner loop will dominate the frame; same discipline as `SMATCHET_UI_PERF_SCOPE` (string-literal categories only; no nesting in million-call loops; one outer scope per render path).
+- OFF-build (default): macro expands to `((void)0)`. Zero per-frame overhead — verified by the pillar-1 perf-pr-fast baseline scenario in the slice-7 CI run (no regression vs the pre-slice-7 baseline).
+
+Backlog closure: no explicit backlog entry today; slice 7 closes the implicit gap that `delegation.md` references a non-existent helper. Operational contract addresses the slice-7 grill follow-up (Q4) preventing downstream slices 10 + 11 from wedging on an underspec'd schema.
 
 ### Slice 8 — Missing scenarios for known-bug paths
 
@@ -221,7 +262,7 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 - `Source_Core/src/AppController.cpp` (env-hook fixture loaders; AiClientFactory test-override probe; **after slice 5: replace 14 `RegisterFactory` calls with one `RegisterAllScenarios(*scenarioRunner_)` invocation**)
 - `Source_Core/include/Logger.h` (LOG_AGENT_DEBUG macro)
 - `agents/debug-detective.md` (reproducer-first contract; phase 0 concreteness check; phase 0.5 existing-scenario reuse; Self-improvement missing-scenario template)
-- `agents/git-janitor.md` (step 10.5 orphan-scenario sweep)
+- `agents/git-janitor.md` (step 10.5 orphan-scenario sweep; step 10.6 agent-debug NDJSON 30-day prune)
 
 **Modified (test / scripts):**
 - `tests/CMakeLists.txt` (`SMATCHET_TESTS_SOURCES` append + new ui-test sources)
