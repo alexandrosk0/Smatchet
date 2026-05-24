@@ -200,3 +200,21 @@
   Concrete next action: small C++ refactor — bundle into the next PR that touches `SaveFieldCatalogSnapshot`. Don't open a standalone refactor PR; the win shows up only when adding the next per-axis arg, which is when the bundling decision gets reviewed in context.
   Status: deferred
   Last-reviewed: 2026-05-17
+
+- 2026-05-24 · orchestrator · [process] · P3 — slice→agent routing should reject test-rig for production-header slices
+  Details: Wave-A slice 7 of `autonomous-debugging-no-creds.md` was dispatched to `test-rig`. The agent correctly declined: scope was ~80% production code (new `tests/_debug/SmatchetAgentDebug.h` production-resident header, `Source_Core/include/Logger.h` macro edit, CMake option wiring, `docs/agent-rules/delegation.md` docs edit, branch/commit/push/PR ship authority) — all outside test-rig's "doctest files under `tests/Source_Core/`" charter. Re-dispatched to `general-purpose` and shipped (PR #445). Cost a clean abort + restart cycle; clean self-flag from test-rig (no half-shipped state).
+  Concrete next action: extend the orchestrator's slice→agent routing heuristic in `docs/agent-rules/delegation.md` § Subsystem specialists with: "if slice creates new production headers or edits `Source_Core/include/*.h`, do NOT route to test-rig — route to the closest subsystem specialist or `general-purpose`. test-rig stays scoped to tests/Source_Core/ doctest expansion against an already-shipped helper." 5-minute edit; surfaces only on the next slice that pre-mixes production + test surfaces.
+  Status: open
+  Last-reviewed: 2026-05-24
+
+- 2026-05-24 · orchestrator · [process] · P3 — plan-doc drafts should grep-verify pre-named TUs don't already exist
+  Details: Wave-A slice 1 of `autonomous-debugging-no-creds.md` directed the agent to create `Source_Core/{include,src}/GitHubIssueMappingPure.{h,cpp}`. Those names didn't exist, but the equivalent pure helpers had already shipped under different names from PR12 (`GitHubIssueSearchMapping.{h,cpp}` + `GitHubClientHelpers.{h,cpp}` + `GitHubQueryFromJql.{h,cpp}`). Agent caught the duplication via a 30-second sanity grep and reused the existing TUs — correct outcome, but the plan author shouldn't have to depend on per-agent rigour. Low friction this round; high cost the day an agent doesn't catch it and lands a parallel duplicate.
+  Concrete next action: add a one-liner to `docs/design/_plan-template.md` § Files to modify: "Before listing a new `<Foo>.{h,cpp}` here, run `rg -l '<Foo>' Source_Core/` to confirm it doesn't already exist under that or a synonym name." 2-minute edit. Surfaces every time a plan author lists fresh TUs without first grepping the codebase.
+  Status: open
+  Last-reviewed: 2026-05-24
+
+- 2026-05-24 · orchestrator · [process] · P3 — slice coordination paragraphs should call out the "if sibling slice hasn't landed yet" case
+  Details: Wave-A slice 2 of `autonomous-debugging-no-creds.md` § Coordination read "your env-hook addition adjacent to Jira's [from slice 1]". Slice 1 hadn't merged when slice 2's agent started; the agent had to design the hook shape from scratch rather than pattern-match. Friction was mild (the hook block is small) but a sibling slice that depended on a non-trivial slice-1 surface would have stalled.
+  Concrete next action: add a one-liner to `docs/design/_plan-template.md` § Per-slice "Coordination" section template: "If your slice depends on or copies a pattern from a sibling slice that hasn't merged yet, include the pattern's intended shape (3-5 lines of code or a fixture-name list) inline in this slice's Coordination paragraph so the agent doesn't have to invent it." 2-minute edit; surfaces every parallel-dispatched plan.
+  Status: open
+  Last-reviewed: 2026-05-24
