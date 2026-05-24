@@ -387,12 +387,90 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
 
 ## Implementation log
 
-<!-- populated when the slices ship -->
+**Plan status: complete** (all 6 slices shipped; backfilled 2026-05-23 per
+AGENTS.md § Plan revision after implementation — the original PR landed
+without updating this section).
+
+- **`bc93baf`** *(PR #309, merged 2026-05-19)* · `chore: tighten 6
+  process-backlog rules (items 1/2/3/9/11/12)` — single bundled PR
+  shipping every slice on this plan. Per the commit message:
+  - **Slice 3** (item 3, P2) · `scripts/git-hooks/pre-push` (executable
+    single-file hook — grill Q2=A collapse); `scripts/setup-harness.sh`
+    `install_git_hooks()` sets `git config --local core.hooksPath` only
+    when current path is unset or already equal (no trample);
+    `scripts/dev/test-pre-push-merged-pr-guard.sh` (bucket-A, 9 cases,
+    12/12 PASS); `SMATCHET_ALLOW_MERGED_PR_PUSH=1` override. Backlog
+    entry moved `process.md` → `applied.md` in the same commit.
+  - **Slice 1** (item 1, P1) · AGENTS.md § Autonomous ship-loop default
+    new exception #5 (Visual-validation exception) — two-part trigger
+    (visual-path touch AND no bucket-C/E coverage, per grill Q1=A).
+    Pillar 4 § Visual-validation acceptance docs the contract.
+  - **Slice 2** (item 2, P2) · `agents/git-janitor.md` § FF-clean
+    docs-batch exception § Pure-docs sub-exception relaxes precondition
+    4 (`test-all.sh`) for diffs strictly within `docs/**` / `backlog/**`
+    / `AGENTS.md` / uppercase root `*.md`. Discriminator helper
+    `scripts/dev/is-pure-docs-diff.sh` ships in the same commit.
+  - **Slice 4** (item 9, P3) · `docs/agent-rules/delegation.md` §
+    Orchestrator delegation packet § File-level table re-verify (before
+    sealing) — orchestrator runs `git grep <symbol-list>` +
+    `grep -n <cmake-variable> CMakeLists.txt` for every symbol / CMake
+    variable named in a plan's § File-level changes table at packet-seal
+    time. Mechanical shortcut: `scripts/dev/plan-doc-table-probe.sh
+    <plan-doc-path>` parses + probes for every named row, exit 0 if all
+    resolve / exit 1 on any miss; auto-enrolled into `test-all.sh` via
+    its own self-test `scripts/dev/test-plan-doc-table-probe.sh`.
+  - **Slice 5** (item 11, P3) · AGENTS.md § Delegation § API-500
+    mid-run recovery (5-step procedure) — later lifted to
+    `docs/agent-rules/delegation.md` § API-500 mid-run recovery by PR
+    #417's AGENTS.md reduction.
+  - **Slice 6** (item 12, P3 OBSERVATIONAL) · AGENTS.md (later
+    `docs/agent-rules/process-rules.md`) § Stale-read recovery on
+    `Edit` — canonical recovery pattern (Re-Read → diff intended change
+    → Re-Edit; never `replace_all` as force-write) for the concurrent-
+    orchestrator / linter-rewrite race. Backlog entry status flipped
+    `observational` → `applied` in the same commit.
+- **`96ab99f`** *(PR #417, merged 2026-05-23)* · `feat(agents-md-reduction):
+  lift 4 topical sections from AGENTS.md to docs/agent-rules/` — moved
+  the slice-1 / slice-5 / slice-6 prose blocks from AGENTS.md into the
+  new topic files (`ship-loops.md` / `delegation.md` / `process-rules.md`)
+  without behavioural change. AGENTS.md retains 1-line stubs that link
+  out so external `AGENTS.md § <subsection>` cross-references still
+  resolve.
 
 ## Deviations from plan
 
-<!-- populated when the slices ship -->
+- **Original ship order (3 → 1 → 2 → 11 → 9 → 12) collapsed into one PR.**
+  Plan prescribed one commit per slice on a single branch; the actual
+  PR #309 commit history follows the spec (one commit per slice in the
+  prescribed order — `pre-push` first, then visual-validation, then
+  pure-docs, then API-500, then plan-doc-table-probe, then stale-read).
+  Squash-merge collapsed all 6 into the single SHA above.
+- **No relocation deviations** in PR #417. The four lifted topical
+  sections (Merge gates / Ship-loops / Delegation / Process rules)
+  carried the slice-1 / slice-5 / slice-6 content unchanged.
 
 ## Verification
 
-<!-- populated when the slices ship -->
+All six slices verified live on develop tip 2026-05-23 (backfill
+walkthrough):
+
+| Slice | Live evidence on develop |
+|---|---|
+| 1 (Visual-validation) | `AGENTS.md` § Autonomous ship-loop default exception #5 + `docs/agent-rules/ship-loops.md` § Visual-validation exception |
+| 2 (Pure-docs sub-exception) | `agents/git-janitor.md` § FF-clean docs-batch § Pure-docs sub-exception + `docs/agent-rules/process-rules.md` § Pure-docs slice skip + `scripts/dev/is-pure-docs-diff.sh` |
+| 3 (pre-push hook) | `scripts/git-hooks/pre-push` + `scripts/dev/test-pre-push-merged-pr-guard.sh` (auto-enrolled by `test-all.sh` glob); `scripts/setup-harness.sh:install_git_hooks()` sets `core.hooksPath`. Git tracks both with mode `100644` (Windows quirk — `git config core.fileMode false` is default), so `scripts/dev/*.sh` runs via `bash <path>` and the exec bit is moot for the bats wrapper. The hook itself runs the same way on Windows via Git Bash's shebang dispatch; non-Windows operators wanting the hook to fire on plain `git push` may need to `chmod +x scripts/git-hooks/pre-push` once locally. |
+| 4 (plan-doc table re-verify) | `docs/agent-rules/delegation.md` § Orchestrator delegation packet § File-level table re-verify + `scripts/dev/plan-doc-table-probe.sh` + `scripts/dev/test-plan-doc-table-probe.sh` |
+| 5 (API-500 recovery) | `docs/agent-rules/delegation.md` § API-500 mid-run recovery (5-step procedure with `git add -A` gotcha called out) |
+| 6 (stale-read recovery) | `docs/agent-rules/process-rules.md` § Stale-read recovery on `Edit` (Re-Read → diff intended change → Re-Edit; never `replace_all` as force-write) |
+
+Backfill cross-walk command set (re-runnable):
+
+```bash
+grep -c 'Visual-validation exception' AGENTS.md docs/agent-rules/ship-loops.md
+grep -c 'Pure-docs sub-exception' agents/git-janitor.md docs/agent-rules/process-rules.md
+ls -la scripts/git-hooks/pre-push scripts/dev/test-pre-push-merged-pr-guard.sh
+ls -la scripts/dev/plan-doc-table-probe.sh
+grep -c 'File-level table re-verify' docs/agent-rules/delegation.md
+grep -c 'API-500 mid-run recovery' docs/agent-rules/delegation.md
+grep -c 'Stale-read recovery' docs/agent-rules/process-rules.md
+```
