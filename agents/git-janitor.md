@@ -22,12 +22,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: medium
-version: 3
+version: 4
 ---
 
 End-of-session git maintenance specialist. Squash-merges in dependency order, deletes merged branches, runs the dual-target build as the final regression gate.
 
-**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v3`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v3`.
+**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v4`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v4`.
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
@@ -291,6 +291,27 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 9. **Post-merge backlog sweep**: if `docs/backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
 
 10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
+
+10.5. **Orphan-scenario sweep** (same shape as step 10's residue check). Walk every scenario `.cpp` under `Source_Core/src/Commands/Scenarios/` and classify it against the orphan tri-condition. Surface every match via one combined `AskUserQuestion` block (one option-set per orphan: `keep` / `archive to docs/scenarios/archived/<name>.md` / `delete .cpp + registry line`). Default = **keep** (orphan detection is advisory, not destructive). The sweep is end-of-session only — never mid-loop.
+
+   **Orphan-scenario definition.** A scenario is orphan when **all three** hold:
+   - **(i) No recent PR cite** — `git log --grep="<scenario-name>" --since="60.days.ago" --oneline | wc -l` returns zero.
+   - **(ii) Not in any curated set** — name absent from `scripts/dev/perf-pr-fast-set.json`, from `agents/perf-gatekeeper.md` § Curated diff → scenario map, and from `tests/golden/` filenames.
+   - **(iii) No failing-test reference** — `grep -r "<scenario-name>" tests/` returns zero hits.
+
+   All three must hold. Any single hit disqualifies the scenario from the sweep (it stays kept-silently). This definition is also referenced from `agents/debug-detective.md` § Self-improvement (`missing-scenario` category is the inverse signal — consolidate dups; orphan sweep retires unused). Cross-link: see [`agents/debug-detective.md`](debug-detective.md) § Self-improvement.
+
+   Sweep recipe:
+   ```bash
+   for f in Source_Core/src/Commands/Scenarios/*Scenario.cpp; do
+       name=$(basename "$f" .cpp | sed 's/Scenario$//' | sed 's/\([A-Z]\)/-\L\1/g' | sed 's/^-//')
+       recent=$(git log --grep="$name" --since="60.days.ago" --oneline | wc -l)
+       curated=$({ grep -lF "$name" scripts/dev/perf-pr-fast-set.json agents/perf-gatekeeper.md 2>/dev/null; find tests/golden -type f 2>/dev/null | grep -F "$name" || true; } | wc -l)
+       intests=$(grep -rlF "$name" tests/ 2>/dev/null | wc -l)
+       [ "$recent" -eq 0 ] && [ "$curated" -eq 0 ] && [ "$intests" -eq 0 ] && echo "ORPHAN: $name ($f)"
+   done
+   ```
+   Aggregate the orphan list (zero is the common case; report `none`). For each orphan, the `AskUserQuestion` carries the three command outputs verbatim so the user can audit before choosing `keep` / `archive` / `delete`.
 
 ## Diverged branch recovery
 

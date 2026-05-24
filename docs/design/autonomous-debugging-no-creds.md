@@ -503,10 +503,22 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 
 <!-- populated when the slices ship; one bullet per merged PR per AGENTS.md § Plan revision after implementation -->
 
+- Slice 10 · `docs(debug-detective): reproducer-first contract (slice 10 of autonomous-debugging-no-creds)` · `agents/debug-detective.md` phase 0 (Concreteness check) + phase 0.5 (Existing-scenario reuse) inserted; § Reproduce rewritten as hard refusal (scenario-add becomes first action when no deterministic reproducer); § Self-improvement `missing-scenario` category added; banner + frontmatter bumped v4 → v5. `docs/agent-rules/delegation.md` § Debug-mode pause-loop names the reproducer-first contract + lists phases 0 + 0.5 before existing phase 1 (Clarify). `agents/git-janitor.md` § Standard cleanup loop step 10.5 (orphan-scenario sweep) added with the tri-condition definition inline; cross-link from `agents/debug-detective.md` § Self-improvement; banner + frontmatter bumped v3 → v4. `scripts/dev/test-agent-contract.sh` check 13 added (V10.1 — grep guard for the literal "reproducer-first contract" phrase).
+
 ## Deviations from plan
 
 <!-- populated when the slices ship -->
 
+- Slice 10 · No V10.2 / V10.3 verification artefacts shipped with this slice. V10.2 (`tests/Source_Core/_meta/debug_detective_reproducer_first_smoke.test.cpp`) is a C++ doctest that asserts the § Process steps exist — out of scope for the pure-docs / agent-prompt slice; deferred to a follow-up bucket-A slice. V10.3 (bats coverage for the orphan-scenario sweep dry-run) likewise deferred — git-janitor step 10.5's recipe is in-script and visible to future bats coverage. Both deferrals are tracked as residue; neither blocks the slice 10 contract-grep guard (V10.1) which is now live in `test-agent-contract.sh`.
+
 ## Verification (actual)
 
 <!-- populated when the slices ship; mirror the V1.1-V11.2 + VG.1-VG.2 list in § Verification with PASS / FAIL / not-run per item, organised by slice for per-PR tickoff -->
+
+**Slice 10 — debug-detective reproducer-first contract**
+
+| # | Status | Notes |
+|---|---|---|
+| V10.1 | PASS | `bash scripts/dev/test-agent-contract.sh` check 13/13 — `grep -qF "reproducer-first contract" agents/debug-detective.md` succeeds; 25/25 checks pass overall |
+| V10.2 | DEFERRED | C++ doctest meta-smoke test not authored in this pure-docs slice; flagged in § Deviations |
+| V10.3 | DEFERRED | Bats coverage for orphan-scenario sweep dry-run not authored in this pure-docs slice; flagged in § Deviations. Sweep recipe lives inline in `agents/git-janitor.md` step 10.5 and is bats-coverable from there |
