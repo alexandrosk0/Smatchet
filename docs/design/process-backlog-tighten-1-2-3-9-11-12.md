@@ -457,8 +457,8 @@ walkthrough):
 | Slice | Live evidence on develop |
 |---|---|
 | 1 (Visual-validation) | `AGENTS.md` § Autonomous ship-loop default exception #5 + `docs/agent-rules/ship-loops.md` § Visual-validation exception |
-| 2 (Pure-docs sub-exception) | `agents/git-janitor.md` § FF-clean docs-batch § Pure-docs sub-exception + `docs/agent-rules/process-rules.md` § Pure-docs slice skip + `scripts/dev/is-pure-docs-diff.sh` (executable) |
-| 3 (pre-push hook) | `scripts/git-hooks/pre-push` (executable) + `scripts/dev/test-pre-push-merged-pr-guard.sh` (auto-enrolled by `test-all.sh` glob) |
+| 2 (Pure-docs sub-exception) | `agents/git-janitor.md` § FF-clean docs-batch § Pure-docs sub-exception + `docs/agent-rules/process-rules.md` § Pure-docs slice skip + `scripts/dev/is-pure-docs-diff.sh` |
+| 3 (pre-push hook) | `scripts/git-hooks/pre-push` + `scripts/dev/test-pre-push-merged-pr-guard.sh` (auto-enrolled by `test-all.sh` glob); `scripts/setup-harness.sh:install_git_hooks()` sets `core.hooksPath`. Git tracks both with mode `100644` (Windows quirk — `git config core.fileMode false` is default), so `scripts/dev/*.sh` runs via `bash <path>` and the exec bit is moot for the bats wrapper. The hook itself runs the same way on Windows via Git Bash's shebang dispatch; non-Windows operators wanting the hook to fire on plain `git push` may need to `chmod +x scripts/git-hooks/pre-push` once locally. |
 | 4 (plan-doc table re-verify) | `docs/agent-rules/delegation.md` § Orchestrator delegation packet § File-level table re-verify + `scripts/dev/plan-doc-table-probe.sh` + `scripts/dev/test-plan-doc-table-probe.sh` |
 | 5 (API-500 recovery) | `docs/agent-rules/delegation.md` § API-500 mid-run recovery (5-step procedure with `git add -A` gotcha called out) |
 | 6 (stale-read recovery) | `docs/agent-rules/process-rules.md` § Stale-read recovery on `Edit` (Re-Read → diff intended change → Re-Edit; never `replace_all` as force-write) |
