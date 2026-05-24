@@ -12,11 +12,14 @@
 
 Smatchet's debug loop today requires three categories of human input that block end-to-end autonomy:
 
-1. **Credentials** — every tracker backend (Jira / GitHub / Plane / p4) calls live HTTP/RPC; reproducing a backend-touching bug needs real keys.
+1. **Credentials / live services** — backend-touching bugs cannot be reproduced without real keys or running services:
+   - **Tracker backends** (GitHub + Plane) call live HTTP; Jira is already handled by the sibling `deterministic-jira-test-backend.md`.
+   - **AI clients** (OpenAI / Anthropic / Ollama) call live HTTP via cpr.
+   - **`P4Blame` C++ feature** spawns the `p4` binary for `annotate` + `describe -s` — needs a real p4 server. (The opt-in `SMATCHET_AGENT_VCS=p4` dual-VCS shell layer is *not* in scope per the ADR rationale; only the production `P4Blame` C++ surface is.)
 2. **Interactive verification** — bucket-C screenshot diff + bucket-E ImGui Test Engine are wired but not gated in CI (Windows headless-GL gap). UI bugs require "user opens window and observes."
 3. **Reproducer hand-off** — `agents/debug-detective.md` accepts a CLI / scenario / Lua snippet as the *preferred* input but falls back to "user repro steps." Falls back too often.
 
-The deterministic-jira-test-backend plan (just landed on develop) names the shape for closing axis (1) for Jira: extract pure JSON mappers into header-only helpers; reuse `tests/support/FakeTrackerClient.h` as the scripted `ITrackerClient`; add a fixture loader + a `SMATCHET_TEST_JIRA_BACKEND_FIXTURE=<path>` env hook into `AppController::SetBackendFactory`. This plan extends that shape to GitHub + Plane + p4, then closes axes (2) and (3) so the whole loop becomes deterministic.
+The deterministic-jira-test-backend plan (just landed on develop) names the shape for closing the Jira tracker-backend axis: extract pure JSON mappers into header-only helpers; reuse `tests/support/FakeTrackerClient.h` as the scripted `ITrackerClient`; add a fixture loader + a `SMATCHET_TEST_JIRA_BACKEND_FIXTURE=<path>` env hook into `AppController::SetBackendFactory`. This plan extends that shape to GitHub + Plane, picks a **different** seam shape for the `P4Blame` feature (`P4RunOverride` runner-seam fake — see ADR 0009 decision a for the per-backend selection rationale) and the AI clients (existing `AiClientFactory::SetTestOverride` seam), then closes axes (2) and (3) so the whole loop becomes deterministic.
 
 **End-state**: a bug surfaces with a *concrete enough description to reproduce* — meaning the report names (a) the breaking surface (component / scenario / file), (b) an observable failure (assertion, log line, sanitizer report, screenshot diff, perf delta, user-described symptom with the file:line or feature path), and (c) the input shape that triggered it (CLI args, scenario name, fixture path, or a user click-path that maps to a registered bucket-E ImGui-Test-Engine action). The source can be CI (failing test, sanitizer report, perf regression, golden-image diff), the orchestrator's own observation during a session, an external bug report a human pastes in, or `coderabbit-triage`-routed PR feedback. The threshold is *reproducibility*, not provenance.
 
@@ -65,7 +68,7 @@ Three waves. Work inside each wave is parallel-eligible (disjoint write sets); w
 
 ### Slice 1 — Pure GitHub issue mapping + deterministic backend (mirrors deterministic-jira-test-backend slice 1-3)
 
-Per `docs/design/deterministic-jira-test-backend.md`, repeat for GitHub:
+**Wave A.** Per `docs/design/deterministic-jira-test-backend.md`, repeat for GitHub:
 
 - Extract pure helpers from `Source_Core/src/GitHubIssueSearch.cpp` (~22 KB, currently named anonymous-namespace functions) into `Source_Core/{include,src}/GitHubIssueMappingPure.{h,cpp}`. Targets — JSON-to-`CachedTicket` mapper, `BuildGitHubHeaders`, the query builder side that doesn't touch HTTP.
 - Add `tests/support/FakeGitHubFixture.h` — header-only, loads `tests/fixtures/github/<scenario>.json` (issue search response shape) and scripts `FakeTrackerClient("GitHub")` instances with the deserialised tickets.
@@ -78,7 +81,9 @@ Backlog closure: implicit — the deterministic-jira plan's pattern, repeated. N
 
 ### Slice 2 — Pure Plane issue mapping + deterministic backend
 
-Same shape as slice 1 against `Source_Core/src/Plane*` files (the Plane backend lives in `PlaneClient.cpp` per existing factory registration). New files: `PlaneIssueMappingPure.{h,cpp}`, `tests/support/FakePlaneFixture.h`, `tests/Source_Core/PlaneIssueMappingPure.test.cpp`. Env hook: `SMATCHET_TEST_PLANE_BACKEND_FIXTURE=<path>`. Doctest cases mirror slice 1.
+**Wave A.** Same shape as slice 1 against `Source_Core/src/Plane*` files (the Plane backend lives in `PlaneClient.cpp` per existing factory registration). New files: `PlaneIssueMappingPure.{h,cpp}`, `tests/support/FakePlaneFixture.h`, `tests/Source_Core/PlaneIssueMappingPure.test.cpp`. Env hook: `SMATCHET_TEST_PLANE_BACKEND_FIXTURE=<path>`. Doctest cases mirror slice 1.
+
+Backlog closure: implicit — same pattern repeat as slice 1 against the Plane backend; no standing backlog entry today, this slice prevents the entry from being filed.
 
 ### Slice 3 — Zero-credentials testing for `P4Blame` (annotate + describe-cache)
 
@@ -211,7 +216,9 @@ Backlog closure: no explicit backlog entry today; slice 7 closes the implicit ga
 - `ai-assistant-streaming-happy-path` / `ai-assistant-streaming-401` / `ai-assistant-streaming-transport-down-within-5s` — three scenarios that install a `StubAiClient` (slice 4) before invoking the AI panel. Each scenario configures the stub's `delta_sequence` / `error_at_index` / `cancel_acknowledged_within_ms` for its case. Drives the AI panel through SSE-shape callbacks + asserts the UI state transitions. (The HTTP layer is not exercised; that's the explicit-out-of-scope decision from slice 4.)
 - `description-tooltip-markdown-render` — scenario that opens a grid row whose description contains markdown, hovers the cell, asserts the tooltip's `wrapWidth` is honoured (per `tests/bats/...` regression that landed via `be2b1d9` / "wrapWidth grep gate" — defensive scenario).
 
-Each scenario follows the standard `IScenario` contract (`Source_Core/include/Commands/Scenarios/IScenario.h`) and emits `rows[]` so `perf-gatekeeper` can read it (closes `tooling.md` P2 about 8 perf scenarios missing `rows[]`).
+Each scenario follows the standard `IScenario` contract (`Source_Core/include/Commands/Scenarios/IScenario.h`) and emits `rows[]` so `perf-gatekeeper` can read it.
+
+Backlog closure: `tooling.md` P2 line 178 (`blame-open-entry-tab` missing scenario); `tooling.md` P2 line 56 (8-of-15 perf scenarios don't emit `rows[]` — closed for the new scenarios via the standard `OnFinish` pattern); `test.md` P2 (AI streaming S2/S4/S5); defensive cover for the `be2b1d9` wrapWidth-tooltip-render regression.
 
 ### Slice 9 — Bucket-E densification (mouse / keyboard emulation density)
 
@@ -232,6 +239,8 @@ The 9 new tests:
 
 - Aggregator addition: 9 new `extern "C" void SmatchetRegister<Feature>Tests(ImGuiTestEngine*)` declarations + 9 new aggregator calls in `tests/ui/ui_tests_registry.cpp`. Mechanical; one PR per logical group (AI Prefs flows as one PR, the others separately).
 - **Optional defensive add** (deferred to follow-up PR if friction surfaces): `tests/ui/bucket-e-test-conventions.md` one-pager codifying the Reset + Drift discipline. Skip-if-not-needed; the pattern is grep-able from existing tests today.
+
+Backlog closure: `test.md` P2 (AI Assistant Preferences 6 flows; description grid-cell tooltip render; bucket-E SQLite coverage gap); `infra.md` P2 (`--spawn` warmup deterministic gate). The "bucket-E SQLite lane sub-rig" backlog framing is *re-disposed*: the existing `SqliteMemFixture.h` covers it; no new sub-rig needed.
 
 ### Slice 10 — debug-detective reproducer-first contract update
 
@@ -294,10 +303,12 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 - `tests/Source_Core/StubAiClientCancel.test.cpp` (slice 4 — exercises StubAiClient cancel propagation; no real cpr)
 - `tests/Source_Core/SmatchetAgentDebug.test.cpp`
 - `tests/Source_Core/SmatchetScenarioRegistry.test.cpp` (slice 5 — snapshot test on the 14 existing names)
-- `tests/ui/AiAssistantPreferences{Docking,EnterSend,ValidationBanner,SaveDiscard,TestConnection,VerifyOnSave}_test.cpp` (6 files)
-- `tests/ui/DescriptionTooltipMarkdownRender_test.cpp`
-- `tests/ui/SpawnWarmupDeterministicGate_test.cpp`
-- `tests/ui/AgentProposalStoreSqlite_test.cpp`
+- `tests/ui/ai_assistant_preferences_{docking,enter_send,validation_banner,save_discard,test_connection,verify_on_save}.test.cpp` (6 files; snake_case matches existing `ai_prefs_autosave_flow.test.cpp` convention)
+- `tests/ui/description_tooltip_markdown_render.test.cpp`
+- `tests/ui/spawn_warmup_deterministic_gate.test.cpp`
+- `tests/ui/agent_proposal_store_sqlite.test.cpp`
+- `tests/Source_Core/_meta/debug_detective_reproducer_first_smoke.test.cpp` (slice 10 V10.2)
+- `tests/_debug/lsan-suppressions.txt` (slice 11 risk mitigation)
 
 **Modified (production):**
 - `Source_Core/src/GitHubIssueSearch.cpp` (delegate to pure helper)
@@ -313,24 +324,24 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 **Modified (test / scripts):**
 - `tests/CMakeLists.txt` (`SMATCHET_TESTS_SOURCES` append + new ui-test sources)
 - `scripts/dev/merge-watcher.py` (`_looks_like_cr_finding_block` extended; `AUTO_ACT_PROMPT` sanitizer branch; `MERGE_WATCH_AUTO_ACT_ON_SANITIZER` env knob)
-- `scripts/dev/test-agent-contract.sh` (new check for reproducer-first contract phrase)
-- `.github/workflows/build-and-test.yml` (Mesa/ANGLE install; new `bucket-c-screenshot-diff` job; new `bucket-e-ui-tests` job; new `sanitizer-asan-ubsan` job; opt-in `sanitizer-tsan` job)
-- `docs/agent-rules/delegation.md` (§ Debug-mode pause-loop reproducer-first contract; SmatchetAgentDebug.h cross-link)
-- `tests/fixtures/github/`, `tests/fixtures/plane/`, `tests/fixtures/p4/`, `tests/fixtures/ai/` (new fixture dirs)
+- `scripts/dev/test-agent-contract.sh` — **3 new checks** total: (a) slice 3 — `P4Blame.cpp` exactly-one-`SubprocessCapture::Run` grep gate (V3.3), (b) slice 9 — every `tests/ui/*.test.cpp` first 20 lines contain `// Drift warning — IF YOU CHANGE` (V9.2), (c) slice 10 — `agents/debug-detective.md` contains literal `reproducer-first contract` (V10.1)
+- `.github/workflows/build-and-test.yml` (slice 6 Mesa/ANGLE install + `bucket-c-screenshot-diff` + `bucket-e-ui-tests` jobs; slice 11 `sanitizer-asan-ubsan` + opt-in `sanitizer-tsan` jobs)
+- `docs/agent-rules/delegation.md` (§ Debug-mode pause-loop — slice 7 SmatchetAgentDebug.h contract + slice 10 phase 0 / 0.5 / reproducer-first contract documentation)
+- `tests/fixtures/github/`, `tests/fixtures/plane/`, `tests/fixtures/p4/` (new fixture dirs — no `tests/fixtures/ai/` since slice 4 sidesteps fixtures via `StubAiClient`)
 
 ## Existing utilities reused
 
-- `tests/support/FakeTrackerClient.h` (canonical scripted `ITrackerClient`)
-- `tests/support/FakeTicketSyncDeps.h`, `tests/support/FakeOfflineQueueDeps.h`
-- `Source_Core/include/ITrackerBackendFactory.h` + `AppController::SetBackendFactory` (production seam already wired)
-- `Source_Core/include/AiClientFactory.h::SetTestOverride` (shipped via `feat/ai-client-test-override`)
-- `Source_Core/include/Commands/Scenarios/IScenario.h` (scenario interface)
-- `Source_Core/src/Commands/Builtin/BuiltinCommands_Scenario.cpp` (`scenario.list` / `scenario.run` / `scenario.cancel`)
-- `AiClientFactory::SetTestOverride` (Source_Core/include/AiClientFactory.h:21 — already shipped; slice 4 reuses without modification)
-- `IAiClient` 3-virtual interface (Source_Core/include/IAiClient.h — already minimal; slice 4's `StubAiClient` implements it directly with no new virtuals)
-- `tests/bats/lock_claim.bats:25-38` stub-bin sandbox pattern (for `FakeP4Driver` stub `p4` binary)
-- `ImGuiTestContext::ItemClick/ItemInput/KeyPress/MouseMove/MouseClick` (mouse emulation already in ImGui Test Engine)
-- `CMakePresets.json:ninja-debug-msys2-asan` / `-tsan` / `-msan` (sanitizer presets already configured)
+- `tests/support/FakeTrackerClient.h` (canonical scripted `ITrackerClient`; slices 1 + 2 wrap with `Fake<Backend>Fixture.h` per-backend)
+- `tests/support/FakeTicketSyncDeps.h`, `tests/support/FakeOfflineQueueDeps.h` (existing test deps; not modified by this plan, but the new bucket-E tests in slice 9 may compose with them)
+- `tests/support/SqliteMemFixture.h` (existing tempfile DB lifecycle; slice 9's `agent_proposal_store_sqlite.test.cpp` uses it directly — no new SQLite-lane sub-rig)
+- `Source_Core/include/ITrackerBackendFactory.h` + `AppController::SetBackendFactory` (production seam already wired; slices 1 + 2 install fixture-loader factories through it)
+- `Source_Core/include/AiClientFactory.h::SetTestOverride` (Source_Core/include/AiClientFactory.h:21 — shipped via `feat/ai-client-test-override`; slice 4 reuses without modification)
+- `Source_Core/include/IAiClient.h` 3-virtual interface (already minimal; slice 4's `StubAiClient` implements it directly with no new virtuals)
+- `Source_Core/include/SubprocessCapture.h` (existing process-spawn helper; slice 3's `P4Blame.cpp` `P4RunCommand` falls through to `SubprocessCapture::Run` when `P4RunOverride` is unset — production path unchanged)
+- `Source_Core/include/Commands/Scenarios/IScenario.h` (scenario interface; slice 5's `SmatchetScenarioRegistry` table-driven registration uses the existing `ScenarioRunner::Factory` typedef)
+- `Source_Core/src/Commands/Builtin/BuiltinCommands_Scenario.cpp` (`scenario.list` / `scenario.run` / `scenario.cancel` — slice 8's new scenarios are reachable through the existing CLI commands)
+- `ImGuiTestContext::ItemClick/ItemInput/KeyPress/MouseMove/MouseClick` (mouse / keyboard emulation already in ImGui Test Engine; slice 9 densifies the test surface, not the harness)
+- `CMakePresets.json:ninja-debug-msys2-asan` / `-tsan` / `-msan` (sanitizer presets already configured; slice 11 wires `ninja-debug-msys2-asan` into a CI job)
 
 ## UX Pillar callouts
 
