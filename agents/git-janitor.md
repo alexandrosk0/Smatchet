@@ -306,7 +306,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    for f in Source_Core/src/Commands/Scenarios/*Scenario.cpp; do
        name=$(basename "$f" .cpp | sed 's/Scenario$//' | sed 's/\([A-Z]\)/-\L\1/g' | sed 's/^-//')
        recent=$(git log --grep="$name" --since="60.days.ago" --oneline | wc -l)
-       curated=$(grep -lF "$name" scripts/dev/perf-pr-fast-set.json agents/perf-gatekeeper.md tests/golden/ 2>/dev/null | wc -l)
+       curated=$({ grep -lF "$name" scripts/dev/perf-pr-fast-set.json agents/perf-gatekeeper.md 2>/dev/null; find tests/golden -type f 2>/dev/null | grep -F "$name" || true; } | wc -l)
        intests=$(grep -rlF "$name" tests/ 2>/dev/null | wc -l)
        [ "$recent" -eq 0 ] && [ "$curated" -eq 0 ] && [ "$intests" -eq 0 ] && echo "ORPHAN: $name ($f)"
    done

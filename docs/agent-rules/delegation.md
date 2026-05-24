@@ -190,7 +190,7 @@ When the user prompt matches the `debug-detective` trigger row above ("fix bug",
 1. **Clarify** — orchestrator (or `debug-detective`) batches every uncertainty into one `AskUserQuestion` before the first mutating tool call. Front-loaded; no drip-feed mid-loop.
 2. **Hypothesise** — write 2-4 falsifiable hypotheses ranked by distinguishing-evidence cost.
 3. **Instrument** — temporary `[temp-debug]` markers + the NDJSON helper (`tests/_debug/SmatchetAgentDebug.h`). Both sides of the suspect boundary.
-4. **Run** — auto-repro path when a CLI / scenario / Lua / doctest exists; otherwise **ask the user to reproduce** and supply the fresh-exe path + steps + log location.
+4. **Run** — auto-repro path (CLI / scenario / Lua / doctest). If none exists, phase 1 in `agents/debug-detective.md` § Reproduce required scenario-add; run that deterministic scenario here. **No ask-user-repro fallback** per the reproducer-first hard-refusal contract.
 5. **Read** — parse logs, mark each hypothesis confirmed / rejected / open.
 6. **Pause + report** — emit the mid-loop report shape from `agents/debug-detective.md` § Report Shape, ending with an `AWAITING USER FEEDBACK` line. **Stop.** Orchestrator does **not** auto-commit, auto-push, or open a PR while waiting.
 7. **Resume on user signal** — acceptable signals: "fixed", "still broken + here's the log", "try hypothesis N", "use this repro instead", "skip to handoff", "abort". Loop back to (2) for next-round or (3) directly when call sites are already chosen.

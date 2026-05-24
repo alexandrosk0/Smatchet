@@ -333,16 +333,9 @@ Smatchet.exe cmd tickets.get --id=<id>             2> debug.log
 ctest --preset ninja-test-msys2 -R <UnitName>                 # for pure-logic repros
 ```
 
-If `scenario.run` is missing for the bug, the auto-repro path **upgrades to a `test-author` handoff in parallel** so the next investigation has automation. Don't block this round on it — flag in `## Self-improvement` and continue down 6b.
+If `scenario.run` is missing for the bug, the auto-repro path **upgrades to a `test-author` handoff in parallel** so the next investigation has automation. Don't block this round on it — flag in `## Self-improvement` and continue.
 
-**6b. Ask-user-repro path (fallback).** When the bug only fires through real UI interaction (focus race, drag-reorder glitch, dock layout regression) and no deterministic CLI exists, **stop instrumenting and ask the user to reproduce**. Your report at this point must include:
-
-- Fresh-exe absolute path + mtime (so the user runs the patched binary).
-- Exact steps the user should perform.
-- Exact log file path to send back (`debug-<hex>.log` or `$LOCALAPPDATA/Smatchet/*.log`).
-- The metric to look for (§ 3).
-
-Then the agent **stops** — next turn requires the user's log / screenshot / description.
+**6b. No ask-user-repro fallback.** The legacy "stop instrumenting and ask the user to reproduce" path is **gone** (slice 10 reproducer-first contract). If no deterministic CLI / scenario / Lua / doctest exists, phase 1 must already have added or parametrized a scenario per § 1's hard-refusal rule. Run that scenario here. Do not request interactive user reproduction as a substitute for a checked-in deterministic repro.
 
 **Unified CLI reference** (auto-repro path):
 
@@ -612,7 +605,7 @@ Report cleanup status (zero `[temp-debug]` hits + helper deleted + log deleted) 
 
 - **Front-load clarification** (§ 0). One `AskUserQuestion` block before any mutating tool call; never drip-feed mid-loop.
 - **Pause at every cycle boundary** (§ 7.5). Report status + propose next step + emit `AWAITING USER FEEDBACK` line. Do not auto-progress to commit / push / PR while the investigation is in flight — ship-loop is suspended for debug-mode.
-- **Branch on repro type** (§ 6). Auto-repro (CLI / scenario / Lua / doctest) when available; ask the user to reproduce only when no deterministic path exists. If `scenario.run` is missing, flag a `test-author` handoff in `## Self-improvement`.
+- **Branch on repro type** (§ 6). Auto-repro (CLI / scenario / Lua / doctest) is the only allowed path; if none exists, phase 1's reproducer-first contract requires scenario-add (no ask-user fallback). If `scenario.run` is missing for the bug, flag a `test-author` handoff in `## Self-improvement` in parallel with the scenario-add.
 - **Promote up to 3 high-value logs to permanent** (§ 11.5) before § 12 strips the rest. Zero promotions is valid; > 3 escalates to a subsystem-owned logging slice.
 - Reproducer or concrete evidence first.
 - Semantic search before grep.
