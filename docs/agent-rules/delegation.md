@@ -128,17 +128,20 @@ Captured automatically — no agent burden. The `SubagentStop` hook counts `tool
 
 ## Agent output contract
 
-Agents fall into five classes by report shape. **Required section minimum** (extensions allowed):
+Agents fall into six classes by report shape. **Required section minimum** (extensions allowed):
 
 | Class | Members | Required sections |
 |---|---|---|
-| **Investigator** (read-only diagnosis) | `architect`, `perf-detective`, `spike-hunter`, `code-review`, `security-review` | `## Hypotheses` (or `## Findings` for review agents) → `## Evidence` → `## Cause` (or severity-bucketed list) → `## Handoff` (target agent + allowed write set) |
+| **Investigator** (read-only diagnosis) | `perf-detective`, `spike-hunter`, `code-review`, `security-review` | `## Hypotheses` (or `## Findings` for review agents) → `## Evidence` → `## Cause` (or severity-bucketed list) → `## Handoff` (target agent + allowed write set) |
+| **Design** (read-only planning) | `architect` | `## Goal` → `## Affected components` → `## Interface contracts` → `## Risks` → `## Implementation handoff` (target agent + allowed write set per slice) |
 | **Diagnostic read-edit** (instrumented diagnosis) | `debug-detective` | `## Hypotheses` → `## Evidence` → `## Cause` → `## Files changed (temp-debug)` → `## Cleanup verified` → `## Handoff` (target agent + allowed write set). Write set restricted to temporary instrumentation that must be stripped before the report. |
 | **Implementer** (read-edit subsystem) | `tracker-backend`, `grid-engine`, `offline-sync`, `command-system`, `lua-binder`, `mcp-toolsmith`, `p4-blame`, `unreal-bridge`, `mechanic` | `## Files changed` → `## Smoke-test result` → `## Manual residue` (must say "none" if none) |
 | **Helper** (terminal helper) | `perf-instrument`, `perf-measure` | `## Spec executed` → `## Result` (numbers / inserted-or-stripped count) |
 | **Maintenance** (workflow) | `build-doctor`, `test-author`, `git-janitor`, `p4-janitor` | `## Pre-flight` → `## Mutations applied` → `## Regression gate` → `## Residue requiring user action` |
 
-All five classes also end with `## Outcome: <state>` + `## Session context append` (when relevant) + `## Self-improvement` (per AGENTS.md § Self-improvement loop). `## Outcome:` value is one of `applied | halted | failed | partial | aborted` and is what the telemetry hook keys on.
+All six classes also end with `## Outcome: <state>` + `## Session context append` (when relevant) + `## Self-improvement` (per AGENTS.md § Self-improvement loop). `## Outcome:` value is one of `applied | halted | failed | partial | aborted` and is what the telemetry hook keys on.
+
+**Why Design is separate from Investigator** — `architect` produces *forward-looking plan-doc bodies* (interface deltas the implementer will land, risks the user must accept), not *evidence-bound investigation findings*. The Investigator shape (Hypotheses / Evidence / Cause) doesn't fit design choices: there's no hypothesis being tested, no evidence being weighed against falsifiers, no root cause. The Design shape's required sections map 1:1 to the structure architect's prompt already emits (and to `docs/design/_plan-template.md`'s § Goal / § Affected components / § Interface contracts / § Risks / § Implementation handoff), so an architect report can be persisted verbatim into `docs/design/<slug>.md` by the orchestrator. H9 from `docs/evaluation/agentic-infrastructure-2026-05-23.md` flagged the prior misclassification (architect was in Investigator but emitted neither Investigator nor Implementer sections — Design is the missing class).
 
 ## Trigger auto-activation
 
@@ -159,6 +162,18 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 | test, ctest, doctest, unit-test, SmatchetTests | `test-rig` |
 
 Each per-agent `triggers:` frontmatter list mirrors its row plus agent-specific synonyms.
+
+### Disambiguation rules
+
+Some user phrases match multiple agents on a literal-substring basis. The orchestrator picks the winner via these rules — codified to close the H11 finding in `docs/evaluation/agentic-infrastructure-2026-05-23.md` (trigger collisions across agents):
+
+- **"refactor" → `architect` vs `mechanic`** — both legitimately handle "refactor" requests. Pick **`mechanic`** when the refactor is pure mechanical text manipulation (symbol rename across files, clang-format pass, typo sweep, find-and-replace). Pick **`architect`** when the refactor touches design (interface shape, module boundaries, multi-subsystem coordination, anything that needs to be planned before edited). Heuristic: if the diff can be expressed as a single regex + replacement, `mechanic`; otherwise `architect`.
+- **"PR review" / "review comments" → `code-review` vs `coderabbit-triage`** — `code-review` is the general pre-merge correctness gate (runs cppcheck / clang-tidy / clang-format on the branch diff). `coderabbit-triage` specifically ingests CodeRabbit-bot output via `gh api`. Pick **`coderabbit-triage`** when the user says "address CR feedback", "triage rabbit findings", or names CR explicitly. Pick **`code-review`** otherwise (the default for `/review`, "review this PR", "pre-merge check").
+- **"regression" → `debug-detective` vs `perf-gatekeeper`** — `debug-detective` handles behavioural regressions (something that used to work no longer does — crash, wrong output, etc.). `perf-gatekeeper` handles **perf** regressions caught at PR time by the scenario gate. Pick **`perf-gatekeeper`** only when the user says "regression check", "perf regression", or names a scenario / baseline; pick **`debug-detective`** otherwise.
+
+### Helper-dispatched (no user-keyword routing)
+
+`perf-instrument` and `perf-measure` carry `triggers:` frontmatter for discoverability but are **never user-keyword-routed** — they're dispatched by `perf-detective` or `spike-hunter` after those agents have hypothesised + need instrumentation or numbers. If a user prompt matches their trigger words verbatim ("instrument the foo path", "measure scenario X"), route to the parent (`perf-detective` for generic perf asks; `spike-hunter` for intermittent-stall asks), which then sub-dispatches the helper.
 
 ## Debug-mode pause-loop (overrides ship-loop)
 

@@ -6,6 +6,7 @@ triggers:
   - snapshot
   - scenario
   - perf-run
+version: 2
 ---
 
 <!--

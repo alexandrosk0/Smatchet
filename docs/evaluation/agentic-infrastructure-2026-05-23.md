@@ -32,32 +32,39 @@ findings are addressed in which PR).
 | [#419](https://github.com/alexandrosk0/Smatchet/pull/419) | **C3** — `manual-locks-render-sync.sh` `--force` → `--force-with-lease` + sync-branch fetch | `fix/manual-locks-render-force-with-lease` | **MERGED** (squash `1cb370d`) |
 | [#420](https://github.com/alexandrosk0/Smatchet/pull/420) | **C1** + **C2** — `SKIP_MERGE_GATES` guard + `set -uo pipefail` + fail-closed jq defaults + 2 new bats tests + this eval doc | `fix/merge-gates-skip-and-fail-closed` | **MERGED** (squash, ~19:14 UTC) |
 | [#421](https://github.com/alexandrosk0/Smatchet/pull/421) | **H7** + **H8** + **H10** — 8 agent version bumps + perf-instrument/measure Helper-class sections + p4-janitor Maintenance-class sections + delegation.md table row | `chore/agent-contract-hygiene` | **MERGED** (squash `4a8772c`) |
-| [#422](https://github.com/alexandrosk0/Smatchet/pull/422) | **H6** + **H13** + **H15** — `lock-claim-p4.sh` CAS stream capture + `lock-release.sh` case-glob split + path-boundary anchor on `[Ss]matchet*` repo check | `fix/lock-primitives-hardening` | Open — rebased onto develop to clear cross-PR perf-measure.md CR thread |
+| [#422](https://github.com/alexandrosk0/Smatchet/pull/422) | **H6** + **H13** + **H15** — `lock-claim-p4.sh` CAS stream capture + `lock-release.sh` case-glob split + path-boundary anchor on `[Ss]matchet*` repo check | `fix/lock-primitives-hardening` | **MERGED** (squash `260c7d5`) |
 | [#423](https://github.com/alexandrosk0/Smatchet/pull/423) | **H4** + **H5** — `p4-task-stream-to-pr.sh` defensive awk env-pass + `p4-task-stream-gc.sh` subshell counter loss + Root-with-spaces parsing | `fix/p4-task-stream-hardening` | **MERGED** (squash `b6320e9`) |
 | [#424](https://github.com/alexandrosk0/Smatchet/pull/424) | **H1** + **H12** — APPROVED CR ignores `cr_open` per spec + `cr_installed` probe distinguishes 404 from auth/transient errors (fail safe) + 5 new bats tests | `fix/merge-gates-h1-h12` | **MERGED** (squash `37ab31b`) |
-| [#426](https://github.com/alexandrosk0/Smatchet/pull/426) | **H16** — STALE_RESOLVED — CR thread resolution counts as accept; addresses the real gate-vs-CR mismatch that wedged #421/#422/#423/#425 today | `fix/merge-gates-cr-thread-resolution` | In flight |
+| [#425](https://github.com/alexandrosk0/Smatchet/pull/425) | Next-session handoff doc (§ 1b resume checklist) | `docs/eval-next-session-handoff` | **MERGED** (squash `58f0e03`) |
+| [#426](https://github.com/alexandrosk0/Smatchet/pull/426) | **H16** — STALE_RESOLVED — CR thread resolution counts as accept; addresses the real gate-vs-CR mismatch that wedged #421/#422/#423/#425 on session 2 start | `fix/merge-gates-cr-thread-resolution` | **MERGED** (squash `f42450b`) |
+| [#427](https://github.com/alexandrosk0/Smatchet/pull/427) | **H2** — `gh_pr_ready_idempotent` positive-check fallback via `gh pr view --json isDraft` | `fix/gh-pr-ready-positive-check` | **MERGED** (squash `8f76bb7`) |
+| [#428](https://github.com/alexandrosk0/Smatchet/pull/428) | **C4 prong 1** — flip-ready BEFORE merge-gates poll; new `READY_FLIP_FAILED` transient state on flip failure | `fix/c4-watcher-flip-ready-on-poll` | In flight |
+| [#429](https://github.com/alexandrosk0/Smatchet/pull/429) | **Eval items 4 + 7 + M9** — `test-agent-contract.sh` extended with check 10 (frontmatter↔banner version) + check 11 (skill↔agent SKILL.md parity); + `version:` added to all SKILL.md files | `chore/agent-contract-test-extension` | **MERGED** (squash `783c197`) |
+| [#431](https://github.com/alexandrosk0/Smatchet/pull/431) | **C4 prong 2** — require non-empty CR review (inline comment on head) for `NONE+status-SUCCESS` pass; new `+inline-evidence` / `-waiting-for-inline` / `+no-inline-evidence` sub-states | `fix/c4-prong-2-non-empty-cr-review` | **MERGED** (squash `0448a3a`) |
+| [#432](https://github.com/alexandrosk0/Smatchet/pull/432) | **H11** — trigger keyword disambiguation rules (architect/mechanic on "refactor", code-review/coderabbit-triage on "PR review", debug-detective/perf-gatekeeper on "regression"); perf-instrument/perf-measure noted as helper-dispatched | `chore/h11-trigger-disambiguation` | **MERGED** (squash `ab43af6`) |
+| [#433](https://github.com/alexandrosk0/Smatchet/pull/433) | **Eval item 5** — `test-lint-bash.sh` shellcheck gate (SC2086/SC2046/SC2155 fail; rest WARN); + SC2155 fix in `test-config-migration.sh` | `chore/eval-item-5-bash-lint` | In flight |
+| [#434](https://github.com/alexandrosk0/Smatchet/pull/434) | **Eval item 6** — `lock_claim.bats` (14 cases) + `test-lock-primitives-bats.sh` wrapper; first slice of the per-primitive bats coverage | `chore/eval-item-6-lock-primitives-bats` | In flight |
 
 Still on the punch list (highest-leverage first):
 
-- **C4** (P0) — draft-PR CR-bypass. Watcher hasn't shipped the
-  `ensure_pr_ready_for_review` fix yet, so every PR in this session needed
-  a manual `gh pr ready` before CR would review. 3-pronged fix designed in
-  `docs/backlog/agent-self-improvement/process.md` (~3 h).
-- **CR-triage backlog** — PRs #421 / #422 / #423 have CR-actionable
-  findings (4 / 1 / 2 respectively). Watcher gave up after the configured
-  triage attempts. Needs manual triage / fix / push round before they
-  unblock. Captured here so it's not silently forgotten.
-- **H2** — `gh_pr_ready_idempotent` matches on English error strings only.
-- **H9** — `architect.md` Investigator-vs-Implementer output drift (needs
-  design decision on adding a new "Design" class).
-- **H11** — trigger keyword collisions across agents (needs
-  disambiguation rules).
-- **Eval-punch-list item 4** — agent-contract test extension to enforce
-  P2 systemic findings.
-- **Eval-punch-list item 5** — bash-lint sweep via `shellcheck` across
-  the rest of `scripts/dev/*.sh`.
-- **Eval-punch-list item 6** — bats coverage for lock primitives.
-- **Eval-punch-list item 7** — skill ↔ agent parity gate.
+- **C4 prong 3** — auto-route non-empty CR `COMMENTED` reviews through
+  `agents/coderabbit-triage.md`. Separate plan-doc needed; larger /
+  more controversial design decision than prongs 1 + 2. Prongs 1 + 2
+  close the bypass; prong 3 makes the recovery path automatic.
+- **H9** — `architect.md` Investigator-vs-Implementer output drift —
+  needs a design decision on whether to add a new "Design" class to
+  the contract table or reshape `architect`'s output to match the
+  Investigator class. Recommend grilling via `grill-with-docs` skill
+  before code.
+- **Eval item 6 residue** — `#434` ships `lock_claim.bats` only. The
+  remaining per-primitive bats files (`lock_release.bats`,
+  `lock_claim_update.bats`, `is_pure_docs_diff.bats`,
+  `p4_task_stream_to_pr.bats`) defer to follow-up PRs. The wrapper's
+  auto-discovery picks them up as they land.
+- **Eval item 5 residue** — 17 non-blocking shellcheck warnings under
+  `--severity=warning` (not in the fail-set `SC2086,SC2046,SC2155`).
+  Listed by `test-lint-bash.sh`'s summary line; can be picked off in
+  a follow-up sweep PR.
 
 ---
 

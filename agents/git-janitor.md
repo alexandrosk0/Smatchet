@@ -214,7 +214,13 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 1. **Verify merge state** via the poll-until-stable helper below — require `MERGEABLE` + `CLEAN`. `CONFLICTING` → halt (user resolves). `UNKNOWN` is transient; the helper waits it out.
 
-2. **Run merge gates** (per AGENTS.md § Merge gates) unless `SKIP_MERGE_GATES=true`:
+2. **Flip PR draft → ready BEFORE gates poll** (C4 prong 1, per `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4 + `docs/backlog/agent-self-improvement/process.md` 2026-05-21 P0). The CodeRabbit `auto_review.drafts: false` default means CR skips draft PRs entirely; flipping ready BEFORE the gates poll lets CR's real auto-review fire so the poll waits for it instead of passing on the placeholder StatusContext:
+   ```bash
+   gh_pr_ready_idempotent "$N" || { echo "gh pr ready failed (rc=6) — HALT" >&2; exit 1; }
+   ```
+   The same idempotent flip-ready was previously placed at step 3 (post-gates, pre-merge); it moves to step 2 so CR has a chance to review the non-draft PR before gates check CR state. Step 3 retains the call as a defence-in-depth no-op.
+
+3. **Run merge gates** (per AGENTS.md § Merge gates) unless `SKIP_MERGE_GATES=true`:
    ```bash
    if [ "${SKIP_MERGE_GATES:-false}" != "true" ]; then
        poll_merge_gates "$OWNER" "$REPO" "$N"
@@ -258,33 +264,33 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    fi
    ```
 
-3. **Flip PR draft → ready** when the user authorised merge for this PR (post-ship option 3 or "merge when green"):
+4. **Re-confirm PR draft state** (defence-in-depth — step 2 may have raced with a CR auto-flip-back, an external script, or a stale fetch). Idempotent no-op if step 2 already flipped:
    ```bash
    gh_pr_ready_idempotent "$N" || { echo "gh pr ready failed — HALT" >&2; exit 1; }
    ```
 
-4. **Squash-merge via API** (works regardless of which branch is checked out anywhere on disk):
+5. **Squash-merge via API** (works regardless of which branch is checked out anywhere on disk):
    ```bash
    gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash
    ```
    Capture the returned `sha` for the implementation-log entry.
 
-5. **Delete the remote branch**:
+6. **Delete the remote branch**:
    ```bash
    gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<headRefName>
    ```
 
-6. **Append to plan revision** if the PR shipped a slice from `docs/design/<slug>.md`. Locate the plan via PR title / body; add a bullet to `## Implementation log`:
+7. **Append to plan revision** if the PR shipped a slice from `docs/design/<slug>.md`. Locate the plan via PR title / body; add a bullet to `## Implementation log`:
    ```text
    - <sha-short> · <PR-title>
    ```
    Commit as `docs(plan): log <slug> #<N>` on a fresh small branch + its own PR (or batch with subsequent cleanup PRs to avoid PR-spam).
 
-7. **Re-check mergeability** of the next PR via the same poll-until-stable helper. Merging A may flip B from `MERGEABLE` to `CONFLICTING` if they touched the same file.
+8. **Re-check mergeability** of the next PR via the same poll-until-stable helper. Merging A may flip B from `MERGEABLE` to `CONFLICTING` if they touched the same file.
 
-8. **Post-merge backlog sweep**: if `docs/backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
+9. **Post-merge backlog sweep**: if `docs/backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
 
-9. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
+10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
 ## Diverged branch recovery
 

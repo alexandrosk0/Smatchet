@@ -6,6 +6,7 @@ triggers:
   - perf-scope
   - perf-marker
   - perf-cleanup
+version: 2
 ---
 
 <!--

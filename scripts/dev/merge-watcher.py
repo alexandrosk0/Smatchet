@@ -236,6 +236,39 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
             "last_state": "GH_PARSE_ERR",
             "last_status_line": f"gh repo view JSON parse: {exc}",
         }
+    # C4 prong 1 — flip draft → ready BEFORE the gates poll, not just before
+    # the merge call. CodeRabbit's `auto_review.drafts: false` default means
+    # PRs that stay draft skip CR review entirely; the merge-gates then
+    # passes via the "NONE + StatusContext=SUCCESS" branch on CR's placeholder
+    # status without ever seeing a real review. Documented as C4 in
+    # `docs/evaluation/agentic-infrastructure-2026-05-23.md` and as P0 in
+    # `docs/backlog/agent-self-improvement/process.md` (2026-05-21).
+    #
+    # Registering with the watcher = explicit authorization to flip-ready
+    # (per `docs/agent-rules/merge-gates.md` § Auto-`gh pr ready` + merge).
+    # The call is idempotent on already-non-draft PRs, so calling it every
+    # poll has no semantic effect beyond one extra `gh` API hop per minute.
+    #
+    # Per CR feedback on PR #428: if the flip-ready step returns False, the PR
+    # is still observably draft (or we couldn't confirm non-draft state). DO
+    # NOT proceed with the gates poll — that would re-introduce the C4 bypass
+    # this PR is fixing (gates pass via the placeholder StatusContext SUCCESS
+    # branch on a draft PR). Return a transient state the daemon retries on
+    # the next cycle; the underlying issue (auth failure, network blip, PR
+    # genuinely refusing the flip) will surface on a subsequent attempt.
+    if not ensure_pr_ready_for_review(owner, repo, pr):
+        return {
+            "pr": pr,
+            "clone_path": clone_path,
+            "last_poll_unix": int(time.time()),
+            "last_state": "READY_FLIP_FAILED",
+            "last_status_line": (
+                "ensure_pr_ready_for_review returned False — PR may still be draft; "
+                "skipping gates poll this cycle to avoid C4 bypass path. "
+                "Re-attempts on next poll. If persistent, surface to user via "
+                "`gh pr view <N> --json isDraft` + manual `gh pr ready <N>`."
+            ),
+        }
     # Invoke merge-gates.sh once (single poll iteration — MERGE_GATES_MAX_POLLS=1).
     env = os.environ.copy()
     env.setdefault("MERGE_GATES_MAX_POLLS", "1")
@@ -402,19 +435,18 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
     """Idempotent flip-draft-to-ready via `gh pr ready <pr>`.
 
     Per AGENTS.md § Post-ship turn-end protocol: the watcher's first step on
-    a `GATES_PASSED` PR is to make sure it's non-draft. Without this, the
-    subsequent REST squash-merge call returns HTTP 405 "Pull Request is
-    still a draft" and the PR stays stuck forever in `GATES_PASSED but
-    merge_failed` state.
+    a registered PR is to make sure it's non-draft. Without this, two failures:
+    1. CodeRabbit's `.coderabbit.yaml` ships `auto_review.drafts: false`, so
+       PRs that stay draft skip CR review entirely (C4 — see
+       `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4).
+    2. The eventual REST squash-merge returns HTTP 405 "Pull Request is still
+       a draft" if the PR somehow remains draft at merge time.
 
-    `gh pr ready` is idempotent — it's a no-op on a PR that's already
-    non-draft, so we don't need to gate on a prior `isDraft` check.
-
-    Returns True on success (PR is now non-draft), False on failure.
-    Failure here does NOT abort the merge attempt — the caller's
-    `squash_merge_pr` will surface the underlying problem if the PR
-    really is still a draft, and the registry entry stays for the next
-    poll cycle.
+    Per H2 (`scripts/dev/merge-gates.sh:gh_pr_ready_idempotent`): mirror the
+    bash positive-check fallback so the Python version is equally robust to
+    `gh` wording changes / locale variation. Returns True if the PR is
+    observably non-draft after the call (whether via successful flip OR
+    confirmed-already-non-draft).
     """
     args = [GH_BIN, "pr", "ready", str(pr), "--repo", f"{owner}/{repo}"]
     try:
@@ -428,9 +460,29 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
-    # gh exits 0 on success; also exits 0 with "already marked as ready" stderr
-    # if the PR was already non-draft (verified manually 2026-05-22).
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True
+    # Fast path — English phrase match (matches H2's bash fast path).
+    err = (result.stderr or "") + (result.stdout or "")
+    if "not in draft state" in err or "already marked ready" in err:
+        return True
+    # H2 positive-check fallback — probe observable state via `gh pr view`.
+    # Robust against `gh` wording changes + locale variation + CLI drift.
+    try:
+        probe = subprocess.run(
+            [GH_BIN, "pr", "view", str(pr), "--repo", f"{owner}/{repo}",
+             "--json", "isDraft", "--jq", ".isDraft"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    if probe.returncode == 0 and probe.stdout.strip() == "false":
+        return True
+    return False
 
 
 def squash_merge_pr(owner: str, repo: str, pr: int) -> str:
@@ -579,6 +631,7 @@ NOTIFY_STATES = {
     "PAGINATION_OVERFLOW",
     "TIMEOUT",
     "TRIAGE_BUDGET_EXHAUSTED",
+    "READY_FLIP_FAILED",
 }
 
 
@@ -863,19 +916,42 @@ def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: in
 # AGENTS.md + CLAUDE.md from the clone on its own. We only tell it WHAT to do
 # (address PR #N's CodeRabbit findings) and HOW to get a checkout (gh pr
 # checkout) so it doesn't waste tokens guessing the branch.
+#
+# C4 prong 3 (per docs/evaluation/agentic-infrastructure-2026-05-23.md): the
+# spawned session is explicitly instructed to use the `coderabbit-triage`
+# agent's classification framework (per `agents/coderabbit-triage.md`) — that
+# agent specialises in CR-finding triage with hard invariant-rejection
+# heuristics. The agent itself is `read-only:true` (classification only); the
+# spawned session does the *application* step after the agent has classified.
+# Result: a finding the triage agent rejects (e.g. suggesting C++17 features
+# in a C++14-hard codebase) never gets applied, even if the spawned session
+# would otherwise have been tempted to "just go with CR's suggestion."
 AUTO_ACT_PROMPT = (
     "You are the auto-act helper spawned by smatchet-merge-watcher because "
     "PR #{pr} is BLOCKED on CodeRabbit findings.\n\n"
     "Address every actionable CodeRabbit comment on this PR. Steps:\n"
     "  1. `gh pr checkout {pr}` to switch this clone to the PR's branch.\n"
-    "  2. `gh api repos/{owner}/{repo}/pulls/{pr}/comments` to read the inline findings.\n"
-    "  3. Apply the smallest possible fix per finding. Reject any finding that "
-    "violates the AGENTS.md invariants (C++14 hard, RAII, never-crash, etc).\n"
+    "  2. **Invoke the `coderabbit-triage` agent first** (per "
+    "`agents/coderabbit-triage.md`). Pass it PR #{pr}; it will fetch the "
+    "inline CR comments via `gh api`, classify each by severity + target "
+    "Smatchet subsystem, and reject suggestions that collide with the "
+    "AGENTS.md invariants (C++14 hard, dual-target, UI-thread non-blocking, "
+    "RAII, LOG_* logging, never-crash, etc.). The agent is read-only and "
+    "emits a per-finding handoff packet — VALID findings (with target "
+    "subsystem named) plus REJECT-INVARIANT / REJECT-AMBIGUOUS lists with "
+    "rationale.\n"
+    "  3. Apply the smallest possible fix per VALID finding. Use the "
+    "subsystem agents the triage packet names (`tracker-backend`, "
+    "`grid-engine`, `offline-sync`, `command-system`, `lua-binder`, "
+    "`mcp-toolsmith`, etc.) for the actual edits when the finding is in their "
+    "territory; otherwise edit directly. Skip every REJECT-INVARIANT finding "
+    "outright; surface the rationale in the commit body.\n"
     "  4. Build / test only when the diff actually warrants it (docs-only "
     "diffs skip both per the pure-docs slice rule).\n"
     "  5. `git commit` with a message of the form "
-    "`fix(merge-watcher auto-act): address CR findings on PR #{pr}` "
-    "and `git push`.\n\n"
+    "`fix(merge-watcher auto-act): address CR findings on PR #{pr}` (body "
+    "lists the triage classification: N VALID applied, M REJECT-INVARIANT "
+    "with one-line reason each) and `git push`.\n\n"
     "Auto-act head_sha at dispatch was {head_sha}. If the PR's head has moved "
     "since (user pushed manually), STOP — say so and exit without committing.\n"
     "Auto-act is gated to {budget} attempts per PR lifetime; this is attempt "
