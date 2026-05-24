@@ -503,6 +503,13 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 
 <!-- populated when the slices ship; one bullet per merged PR per AGENTS.md § Plan revision after implementation -->
 
+- 2026-05-24 — **Slice 1** (PR #446) — GitHub deterministic test backend. `GitHubFixtureBackend.{h,cpp}` implements `ITrackerClient` loading a GraphQL-search-shaped JSON fixture. Env hook `SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path>` in `AppController::Initialize`. `tests/support/FakeGitHubFixture.h` + `tests/Source_Core/GitHubIssueMappingPure.test.cpp` + `tests/fixtures/github/basic-search.json`. Branch: `slice-1-github-fake-backend`.
+- 2026-05-24 — **Slice 2** (PR #447) — Plane deterministic test backend. Pure-helper split `PlaneIssueMappingPure.{h,cpp}` + `PlaneFixtureBackend.{h,cpp}`. Env hook `SMATCHET_TEST_PLANE_BACKEND_FIXTURE=<path>`. `tests/support/FakePlaneFixture.h` + `tests/Source_Core/PlaneIssueMappingPure.test.cpp` + `tests/fixtures/plane/basic_two_issues.json`. Branch: `slice-2-plane-fake-backend`.
+- 2026-05-24 — **Slice 3** (PR #443) — P4Blame runner-seam fake. `BlameAnalysisConfig::P4RunOverride` injection seam + `tests/support/FakeP4Runner.h` (loads canned JSON from `tests/fixtures/p4/`). Two new E2E doctests: `P4BlameAnnotateE2E.test.cpp` (5 cases) + `P4DescribeCacheE2E.test.cpp` (4 cases). New `test-agent-contract.sh` check 12. Branch: `slice-3-p4-blame-runner-seam`.
+- 2026-05-24 — **Slice 4** (PR #442) — StubAiClient + AiSseParser coverage. `tests/support/StubAiClient.h` (header-only `IAiClient` impl with scripted delta_sequence / error_at_index / cancel). `StubAiClientCancel.test.cpp` (5 cases / 27 assertions) + 10 new `AiSseParser.test.cpp` cases (total 26 / 116 assertions). Branch: `slice-4-stub-ai-client`.
+- 2026-05-24 — **Slice 5** (PR #444) — SmatchetScenarioRegistry refactor. Extracted 14-entry `RegisterFactory` block from `AppController::Initialize` into `SmatchetScenarioRegistry.cpp`. One-line `RegisterAllScenarios(*scenarioRunner_)` call replaces ~90 lines. Snapshot doctest `SmatchetScenarioRegistry.test.cpp` pins the registered name set. Branch: `slice-5-scenario-registry`.
+- 2026-05-24 — **Slice 6** (PR #441) — Headless GL on CI (Mesa). Two new CI jobs: `bucket-c-screenshot-diff` + `bucket-e-ui-tests`. Mesa `opengl32sw.dll` (mesa-dist-win 24.2.5) provides software-rasterised GL. Branch: `slice-6-headless-gl-ci`.
+- 2026-05-24 — **Slice 7** (PR #445) — `tests/_debug/SmatchetAgentDebug.h` NDJSON helper. Header-only, closed-set category enum, 50 MB cap. `LOG_AGENT_DEBUG(category, msg)` bridge in `Logger.h`. `SMATCHET_AGENT_DEBUG` CMake option (OFF by default; ON in debug/asan/ui-test presets). 5-case doctest. Branch: `slice-7-agent-debug-ndjson`.
 - 2026-05-24 — Slice 9 (Bucket-E densification) — 9 new bucket-E test files under `tests/ui/` covering 6 AI Assistant Preferences flows (docking / enter-send / validation-banner / save-discard / test-connection / verify-on-save), `description_tooltip_markdown_render`, `spawn_warmup_deterministic_gate`, `agent_proposal_store_sqlite`. Aggregator + CMake source list updated; 4 new bash drivers under `scripts/dev/`. 18 new test variants total — all pass under the headless-GL CI path (slice 6). Removed three stale CMakeLists entries (`agent_proposals_panel.test.cpp` + 2 siblings) that became orphan source-list references after PR #356's agentic ripout; the bucket-E build was latently broken on these. Branch: `slice-9-bucket-e-densification`.
 - Slice 10 · `docs(debug-detective): reproducer-first contract (slice 10 of autonomous-debugging-no-creds)` · `agents/debug-detective.md` phase 0 (Concreteness check) + phase 0.5 (Existing-scenario reuse) inserted; § Reproduce rewritten as hard refusal (scenario-add becomes first action when no deterministic reproducer); § Self-improvement `missing-scenario` category added; banner + frontmatter bumped v4 → v5. `docs/agent-rules/delegation.md` § Debug-mode pause-loop names the reproducer-first contract + lists phases 0 + 0.5 before existing phase 1 (Clarify). `agents/git-janitor.md` § Standard cleanup loop step 10.5 (orphan-scenario sweep) added with the tri-condition definition inline; cross-link from `agents/debug-detective.md` § Self-improvement; banner + frontmatter bumped v3 → v4. `scripts/dev/test-agent-contract.sh` check 13 added (V10.1 — grep guard for the literal "reproducer-first contract" phrase).
 - **Slice 8** — 5 missing-bug-path scenarios shipped on branch `slice-8-missing-scenarios`:
@@ -516,6 +523,8 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 
 <!-- populated when the slices ship -->
 
+- **Slice 1** — No new `GitHubIssueMappingPure.{h,cpp}` TU created. The pure helpers already live in `GitHubIssueSearchMapping.{h,cpp}` / `GitHubClientHelpers.{h,cpp}` / `GitHubQueryFromJql.{h,cpp}` (extracted in PR12 of `github-tracker-backend.md`). The slice's intent — fixture-driven coverage of the pure mapper — is delivered by the new test file + `FakeGitHubFixture` loader reusing those existing extracted helpers.
+- **Slice 6** — Mesa bucket-C/E jobs fail immediately on develop post-merge (mesa `opengl32sw.dll` crashes on `wglMakeCurrent` under the windows-2022 runner). Jobs land with `continue-on-error: false` per plan; pre-existing failure labeled `tests-out-of-band` on dependent PRs until the Mesa-vs-runner issue is resolved.
 - Slice 9: the plan specified `#if defined(SMATCHET_WITH_AGENTIC)` gating for `agent_proposal_store_sqlite.test.cpp`, but that CMake option was removed in PR #356 (`docs/design/github-tracker-backend.md` "agentic ripout"). The test now gates on `SMATCHET_BUILD_UI_TESTS` only and uses `LocalCacheManager` (via `tests/support/SqliteMemFixture.h`) as the proxy store surface — the production AgentProposalStore type hasn't shipped yet. Drift-warning header documents replacement when the real store lands.
 - Slice 9: `ai_assistant_preferences_enter_send.test.cpp` variant 2 (`TabTraversesFields`) — switched from `KeyChars` + `Tab` traversal to `ctx->ItemInputValue()` for deterministic per-field buffer assignment. The engine's keyboard traversal across multiple InputTexts in a single TestFunc lambda is unreliable across the imgui_test_engine pin we use; the surface contract under test ("each field is independently addressable + arms dirty") is preserved.
 - Slice 9: dropped the `ImGuiInputTextFlags_Password` flag from the replica `##AiApiKey` InputText (production keeps it) — the engine's `ItemInputValue` path doesn't forward characters into Password-flagged InputTexts.
@@ -527,6 +536,67 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 ## Verification (actual)
 
 <!-- populated when the slices ship; mirror the V1.1-V11.2 + VG.1-VG.2 list in § Verification with PASS / FAIL / not-run per item, organised by slice for per-PR tickoff -->
+
+**Slice 1 — GitHub deterministic test backend (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V1.1 | `SmatchetTests.exe --test-case="Slice 1*"` → 7 cases / 50 assertions | PASS |
+
+**Slice 2 — Plane deterministic test backend (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V2.1 | `SmatchetTests.exe --test-case='*Plane*'` → 10 cases / 28 assertions | PASS |
+| V2.2 | Dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) | PASS |
+
+**Slice 3 — P4Blame runner-seam fake (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V3.1 | `P4BlameAnnotateE2E.test.cpp` — 5 cases | PASS |
+| V3.2 | `P4DescribeCacheE2E.test.cpp` — 4 cases | PASS |
+| V3.3 | `test-agent-contract.sh` check 12 (one `SubprocessCapture::Run` site + ≥1 `P4RunOverride` consult) | PASS |
+
+**Slice 4 — StubAiClient + AiSseParser (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V4.1 | `StubAiClientCancel` — 5 cases / 27 assertions | PASS |
+| V4.2 | `AiSseParser` — 26 cases / 116 assertions | PASS |
+
+**Slice 5 — SmatchetScenarioRegistry refactor (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V5.1 | Snapshot doctest pinning registered name set — 769/769 pass | PASS |
+| V5.2 | `scenario.list` text-diff (requires MCP) | DEFERRED — V5.1 snapshot is a stronger deterministic guarantee |
+
+**Slice 6 — Headless GL on CI (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V6.1 | `bucket-c-screenshot-diff` job runs on CI | FAIL — Mesa `opengl32sw.dll` crashes on `wglMakeCurrent`; pre-existing on develop post-merge |
+| V6.2 | `bucket-e-ui-tests` job runs on CI | FAIL — same Mesa issue; labeled `tests-out-of-band` |
+
+**Slice 7 — SmatchetAgentDebug.h NDJSON helper (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V7.1–V7.5 | `SmatchetAgentDebug.test.cpp` — 5 cases | PASS |
+| V7.6 | Perf probe (per-frame overhead with `SMATCHET_AGENT_DEBUG=ON`) | DEFERRED to follow-up |
+
+**Slice 8 — 5 missing-bug-path scenarios (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V8.1 | `blame-open-entry-tab` — `scenario.run` emits `rows[]` (count=33, ok=true) | PASS |
+| V8.2 | `description-tooltip-markdown-render` — `scenario.run` emits `rows[]` + `planBlockCount>0` | PASS |
+| V8.3 | `ai-assistant-streaming-happy-path` — deltasReceived=4, finalReceived=true, errorReceived=false | PASS |
+| V8.4 | `ai-assistant-streaming-401` — deltasReceived=0, errorReceived=true, httpStatus=401 | PASS |
+| V8.5 | `ai-assistant-streaming-transport-down-within-5s` — deltasReceived=3, errorReceived=true, elapsedMs≤5000 | PASS |
+| V8.6 | Dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) | PASS |
+| V8.7 | Scenario registry snapshot doctest (40 assertions after slice-8 additions) | PASS |
 
 **Slice 9 — Bucket-E densification (2026-05-24)**
 
