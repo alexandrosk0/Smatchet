@@ -69,6 +69,17 @@ add_executable(SmatchetTests
     # links it into the doctest rig.
     Source_Core/AiChatTimestamp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatTimestamp.cpp"
+    # Slice 5 of autonomous-debugging-no-creds — snapshot test pinning the set
+    # of scenario names registered by RegisterAllScenarios(). The test calls
+    # ListNames() only — never invokes the factory lambdas — so it does not
+    # need any scenario implementation TUs linked, only ScenarioRunner.cpp
+    # (for ListNames/RegisterFactory), Command.cpp (for CommandResult), and
+    # the registry TU itself.
+    Source_Core/SmatchetScenarioRegistry.test.cpp
+    Source_Core/SmatchetScenarioRegistry.stubs.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Command.cpp"
     # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.
     Source_Core/LabelEditDiffPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/LabelEditDiffPure.cpp"
