@@ -87,6 +87,11 @@ add_executable(SmatchetTests
     # without HTTP.
     Source_Core/GitHubIssueSearchMapping.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubIssueSearchMapping.cpp"
+    # Slice 2 of docs/design/autonomous-debugging-no-creds.md — pure Plane
+    # JSON → CachedTicket mapper extracted out of PlaneIssueSearch.cpp (which
+    # pulls cpr). Same shape as the GitHub PR12 split above.
+    Source_Core/PlaneIssueMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/PlaneIssueMappingPure.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
