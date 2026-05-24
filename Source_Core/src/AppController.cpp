@@ -59,6 +59,7 @@
 
 #include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/SmatchetScenarioRegistry.h"
 
 #include "FieldCatalogCache.h"
 
@@ -69,6 +70,8 @@
 #include "GitHubFixtureBackend.h"
 
 #include "ITrackerBackendFactory.h"
+
+#include "PlaneFixtureBackend.h"
 
 #include "LuaAutomationHost.h"
 
@@ -1169,13 +1172,25 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         activeTracker = "Jira";
     }
 
+    // Slice 2 of docs/design/autonomous-debugging-no-creds.md — env-hook
+    // override for the Plane backend. When SMATCHET_TEST_PLANE_BACKEND_FIXTURE
+    // is set, swap in a fixture-driven backend factory before the default is
+    // constructed. Sibling Jira/GitHub hooks land adjacent.
+    if (!backendFactory_) {
+        const char* planeFixtureEnv = std::getenv("SMATCHET_TEST_PLANE_BACKEND_FIXTURE");
+        if (planeFixtureEnv && planeFixtureEnv[0] != '\0') {
+            LOG_INFO("AppController: SMATCHET_TEST_PLANE_BACKEND_FIXTURE=%s — installing PlaneFixtureBackend factory.",
+                     planeFixtureEnv);
+            backendFactory_ = smatchet::plane::MakePlaneFixtureBackendFactory(std::string(planeFixtureEnv));
+            activeTracker = "Plane";
+        }
+    }
+
     // Slice 1 of docs/design/autonomous-debugging-no-creds.md — env-hook to
     // swap the default tracker factory for a fixture-backed GitHub backend
     // when SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path> is set AND the active
     // tracker is GitHub. Keeps the no-credentials debug loop able to drive
     // scenarios against a deterministic ticket set without consulting the PAT.
-    // Sibling slots (Jira / Plane / AI) will land next to this block in
-    // slices 2 + 4 + 5; merge conflicts at PR-merge time will be small.
     if (!backendFactory_) {
         if (const char* githubFixture = std::getenv("SMATCHET_TEST_GITHUB_BACKEND_FIXTURE")) {
             const std::string fixturePath(githubFixture);
@@ -1401,96 +1416,12 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // Scenario runner — constructed before the registry so scenario.* commands
     // can capture a reference to it in their handlers.
     scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner());
-    // Register built-in scenario factories. Additional scenarios are added by
-    // plugging a new .cpp + RegisterFactory call here.
-    scenarioRunner_->RegisterFactory("priority-grid-scroll", []() {
-        // Concrete type defined in PriorityGridScrollScenario.cpp.
-        // Use a forward-declared factory function declared in the same TU as the scenario.
-        // Because we cannot include the concrete .cpp type here, we use a free function
-        // defined in that file that returns a unique_ptr<IScenario>.
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakePriorityGridScrollScenario();
-        return MakePriorityGridScrollScenario();
-    });
-    scenarioRunner_->RegisterFactory("lua-recorder-fuzz", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario();
-        return MakeLuaRecorderFuzzScenario();
-    });
-    scenarioRunner_->RegisterFactory("ui-test", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeUiTestScenario();
-        return MakeUiTestScenario();
-    });
-    // Phase 7 bucket-C screenshot-diff scenarios (test-suite-expansion-
-    // completion plan). Each scenario drives the UI to a known steady state,
-    // then triggers debug.window.screenshot so the bash driver can diff the
-    // captured PPM against tests/golden/<name>.ppm.
-    scenarioRunner_->RegisterFactory("dock-gap-sentinel", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeDockGapSentinelScenario();
-        return MakeDockGapSentinelScenario();
-    });
-    scenarioRunner_->RegisterFactory("command-palette-fuzzy", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario();
-        return MakeCommandPaletteFuzzyScenario();
-    });
-    // theme-switch-roundtrip — bucket-C guard for the user-reported residual-
-    // colour bug on SmatchetDark <-> NortonCommander <-> SmatchetDark. See
-    // Source_Core/include/Commands/Scenarios/ThemeSwitchRoundtripScenario.h.
-    scenarioRunner_->RegisterFactory("theme-switch-roundtrip", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario();
-        return MakeThemeSwitchRoundtripScenario();
-    });
-#if defined(SMATCHET_WITH_AI)
-    // Phase 6.7 of ai-chat-claude-desktop-parity. Seeds N mock messages into
-    // g_ui.assistantHistory, runs N frames so the new DrawHistoryArea /
-    // DrawPinStripIfAny / renderTurn perf scopes accumulate measurable timings.
-    scenarioRunner_->RegisterFactory("ai-chat-history-render", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario();
-        return MakeAiChatHistoryRenderScenario();
-    });
-#endif
-    // perf-tooling-bundle scenarios — 5 perf scenarios surfaced by the
-    // perf-detective audit on develop@31e1893. Each verifies a previously-
-    // shipped pillar-1 / pillar-2 fix doesn't regress, or establishes the
-    // baseline floor against which other scenarios are compared.
-    scenarioRunner_->RegisterFactory("idle", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeIdleScenario();
-        return MakeIdleScenario();
-    });
-    scenarioRunner_->RegisterFactory("cell-edit-burst", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario();
-        return MakeCellEditBurstScenario();
-    });
-    scenarioRunner_->RegisterFactory("attachment-preview-open", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario();
-        return MakeAttachmentPreviewOpenScenario();
-    });
-    scenarioRunner_->RegisterFactory("preferences-slider-drag", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario();
-        return MakePreferencesSliderDragScenario();
-    });
-    scenarioRunner_->RegisterFactory("long-text-open-large-adf", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario();
-        return MakeLongTextOpenLargeAdfScenario();
-    });
-
-#if defined(SMATCHET_WITH_WHISPER)
-    // Phase G — end-to-end whisper-dictation regression gate. The scenario
-    // TU is source-list-conditional (only added to CORE_SOURCES when the
-    // CMake option is ON), so the factory call must be ifdef-wrapped too:
-    // the OFF build has no symbol for MakeWhisperDictationScenario.
-    scenarioRunner_->RegisterFactory("whisper-dictation-roundtrip", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperDictationScenario();
-        return MakeWhisperDictationScenario();
-    });
-    // PR #249 (bf9ce67f) regression gate — focuses the AI Assistant chat
-    // input via router registration + non-zero ItemId so the
-    // ReloadUserBufAndMoveToEnd half of the fix is exercised end-to-end.
-    // Source-list conditional (CMakeLists.txt) + ifdef-wrapped here for the
-    // same reason as the dictation-roundtrip factory.
-    scenarioRunner_->RegisterFactory("whisper-ai-assistant-autosend", []() {
-        extern std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperAiAssistantAutosendScenario();
-        return MakeWhisperAiAssistantAutosendScenario();
-    });
-#endif
+    // Slice 5 of docs/design/autonomous-debugging-no-creds.md — pure refactor.
+    // The 14-entry RegisterFactory block lives in SmatchetScenarioRegistry.cpp
+    // so adding/removing a scenario is one edit in a self-contained TU. The
+    // snapshot test tests/Source_Core/SmatchetScenarioRegistry.test.cpp pins
+    // the registered name set.
+    smatchet::cmd::RegisterAllScenarios(*scenarioRunner_);
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,

@@ -1,0 +1,50 @@
+{
+  "captured_against": "GET https://api.plane.so/api/v1/workspaces/smatchet-ws/projects/<id>/issues/?per_page=100 — synthetic fixture shaped after live Plane payloads observed during slice-2 bring-up (autonomous-debugging-no-creds). No live capture; fields chosen to exercise every branch of PlaneIssueMappingPure (state_detail vs state object vs flat, assignees+assignee_details, label_details vs labels, cycle_details vs cycle vs flat, type_detail vs type vs flat, description_html preservation).",
+  "project_identifier": "SMT",
+  "users": [
+    {"account_id": "user-alice", "display_name": "Alice Tester"},
+    {"account_id": "user-bob", "display_name": "Bob Reviewer"}
+  ],
+  "list_response": {
+    "results": [
+      {
+        "id": "11111111-aaaa-bbbb-cccc-000000000001",
+        "sequence_id": 1,
+        "name": "  First issue with state_detail + assignee_details + label_details ",
+        "state_detail": {"id": "state-backlog", "name": "Backlog"},
+        "assignees": [{"id": "user-alice"}],
+        "assignee_details": [{"id": "user-alice", "display_name": "Alice T."}],
+        "priority": "urgent",
+        "cycle_details": {"id": "cycle-42"},
+        "label_details": [
+          {"id": "lbl-1", "name": "bug"},
+          {"id": "lbl-2", "name": "critical"}
+        ],
+        "type_detail": {"id": "type-task", "name": "Task"},
+        "created_at": "2026-05-20T10:00:00Z",
+        "updated_at": "2026-05-22T11:30:00Z",
+        "description_stripped": "Plain text description",
+        "description_html": "<p>Plain text <strong>description</strong></p>"
+      },
+      {
+        "id": "22222222-aaaa-bbbb-cccc-000000000002",
+        "sequence_id": 2,
+        "name": "Second issue with fallback shapes",
+        "state": "state-inprog",
+        "assignees": ["user-bob"],
+        "priority": "low",
+        "cycle": "cycle-99",
+        "labels": [
+          {"id": "lbl-3", "name": "enhancement"},
+          "raw-string-label"
+        ],
+        "type": "Bug",
+        "created_at": "2026-05-21T09:00:00Z",
+        "updated_at": "2026-05-23T15:00:00Z",
+        "description_stripped": "Fallback text only"
+      }
+    ],
+    "next_page_results": false,
+    "next_cursor": ""
+  }
+}

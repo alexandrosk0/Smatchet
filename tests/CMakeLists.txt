@@ -38,6 +38,13 @@ add_executable(SmatchetTests
     Source_Core/BackendAuditTrail.test.cpp
     Source_Core/IssueCreatePipelineIntegration.test.cpp
     Source_Core/P4BlameParse.test.cpp
+    # Slice 3 of autonomous-debugging-no-creds — runner-seam fake exercises
+    # P4Blame.cpp's P4RunCommand path via BlameAnalysisConfig::P4RunOverride,
+    # without spawning the real `p4` binary. FakeP4Runner.h lives in
+    # tests/support/ (already on the include path).
+    Source_Core/P4BlameAnnotateE2E.test.cpp
+    Source_Core/P4DescribeCacheE2E.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/P4Blame.cpp"
     Source_Core/TrackerLabelsPure.test.cpp
     Source_Core/TrackerDateTimePure.test.cpp
     Source_Core/TicketFieldEditorLongTextPure.test.cpp
@@ -50,6 +57,11 @@ add_executable(SmatchetTests
     Source_Core/ConfigMigration.test.cpp
     Source_Core/SingleClickEditConfig.test.cpp
     Source_Core/AiSseParser.test.cpp
+    # autonomous-debugging-no-creds § Slice 4 — verifies the StubAiClient
+    # test-infrastructure header (tests/support/StubAiClient.h) honours its
+    # AiCancelToken contract. Pure C++14 — no HTTP, no cpr, no production
+    # AI client. Header-only stub; no extra .cpp source.
+    Source_Core/StubAiClientCancel.test.cpp
     Source_Core/AgentsMdLoader.test.cpp
     Source_Core/AiClientFactory.test.cpp
     Source_Core/AiNdjsonParser.test.cpp
@@ -69,6 +81,17 @@ add_executable(SmatchetTests
     # links it into the doctest rig.
     Source_Core/AiChatTimestamp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatTimestamp.cpp"
+    # Slice 5 of autonomous-debugging-no-creds — snapshot test pinning the set
+    # of scenario names registered by RegisterAllScenarios(). The test calls
+    # ListNames() only — never invokes the factory lambdas — so it does not
+    # need any scenario implementation TUs linked, only ScenarioRunner.cpp
+    # (for ListNames/RegisterFactory), Command.cpp (for CommandResult), and
+    # the registry TU itself.
+    Source_Core/SmatchetScenarioRegistry.test.cpp
+    Source_Core/SmatchetScenarioRegistry.stubs.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Command.cpp"
     # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.
     Source_Core/LabelEditDiffPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/LabelEditDiffPure.cpp"
@@ -92,6 +115,11 @@ add_executable(SmatchetTests
     # state + labels / pagination boundary). Reuses GitHubIssueSearchMapping.cpp
     # (already linked above for GitHubIssueSearchMapping.test.cpp).
     Source_Core/GitHubIssueMappingPure.test.cpp
+    # Slice 2 of docs/design/autonomous-debugging-no-creds.md — pure Plane
+    # JSON → CachedTicket mapper extracted out of PlaneIssueSearch.cpp (which
+    # pulls cpr). Same shape as the GitHub PR12 split above.
+    Source_Core/PlaneIssueMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/PlaneIssueMappingPure.cpp"
     Source_Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
@@ -194,6 +222,20 @@ else()
 endif()
 
 
+
+# Slice 7 of autonomous-debugging-no-creds — header-only NDJSON helper test.
+# Gated under SMATCHET_BUILD_AGENT_DEBUG_TESTS (default ON when SMATCHET_BUILD_TESTS).
+# Forces SMATCHET_AGENT_DEBUG=1 only on the test TU (the production build's
+# OFF/ON state is independent — verified by the test's own `#ifndef` guard).
+if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
+    target_sources(SmatchetTests PRIVATE
+        Source_Core/SmatchetAgentDebug.test.cpp)
+    set_source_files_properties(
+        Source_Core/SmatchetAgentDebug.test.cpp
+        PROPERTIES COMPILE_DEFINITIONS "SMATCHET_AGENT_DEBUG=1")
+    target_include_directories(SmatchetTests PRIVATE
+        "${CMAKE_SOURCE_DIR}/tests/_debug")
+endif()
 
 target_include_directories(SmatchetTests PRIVATE _helpers)
 target_compile_definitions(SmatchetTests PRIVATE
