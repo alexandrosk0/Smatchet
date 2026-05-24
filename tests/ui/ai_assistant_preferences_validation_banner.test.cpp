@@ -13,6 +13,7 @@
 #if defined(SMATCHET_BUILD_UI_TESTS) && defined(SMATCHET_WITH_AI)
 
 #include "AiPrefsValidator.h"
+#include "AiTypes.h"
 #include "ConfigManager.h"
 
 #include "imgui.h"
@@ -66,7 +67,7 @@ void RegisterErrorBannerVariant(ImGuiTestEngine* engine) {
         auto* s = static_cast<ValidationState*>(ctx->Test->UserData);
         ResetValidationState();
         // OpenAi provider but no API key → must error.
-        s->cfg.AiProviderKind = 0;
+        s->cfg.AiProviderKind = static_cast<int>(AiProvider::OpenAi);
         s->cfg.AiApiKey = "";
         s->cfg.AiModelOpenAi = "gpt-4o-mini";
         s->cfg.AiBaseUrl = "https://api.openai.com";
@@ -92,7 +93,7 @@ void RegisterNoBannerOnValidVariant(ImGuiTestEngine* engine) {
         auto* s = static_cast<ValidationState*>(ctx->Test->UserData);
         ResetValidationState();
         // OpenAi with all required fields populated → no errors (warnings tolerated).
-        s->cfg.AiProviderKind = 0;
+        s->cfg.AiProviderKind = static_cast<int>(AiProvider::OpenAi);
         s->cfg.AiApiKey = "sk-test-XXXXXXXX";
         s->cfg.AiModelOpenAi = "gpt-4o-mini";
         s->cfg.AiBaseUrl = "https://api.openai.com";

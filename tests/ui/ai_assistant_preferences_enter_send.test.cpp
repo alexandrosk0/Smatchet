@@ -106,8 +106,8 @@ void RegisterEnterArmsDirtyVariant(ImGuiTestEngine* engine) {
     };
 }
 
-void RegisterTabTraversesFieldsVariant(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiPrefsTab", "EnterSend_TabTraversesFields");
+void RegisterItemInputValueTraversesFieldsVariant(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiPrefsTab", "EnterSend_ItemInputValueTraversesFields");
     t->UserData = &g_prefsEnterSendState;
 
     t->GuiFunc = [](ImGuiTestContext* ctx) {
@@ -150,7 +150,7 @@ void RegisterTabTraversesFieldsVariant(ImGuiTestEngine* engine) {
 
 extern "C" void SmatchetRegisterAiAssistantPreferencesEnterSendTests(ImGuiTestEngine* engine) {
     RegisterEnterArmsDirtyVariant(engine);
-    RegisterTabTraversesFieldsVariant(engine);
+    RegisterItemInputValueTraversesFieldsVariant(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS && SMATCHET_WITH_AI

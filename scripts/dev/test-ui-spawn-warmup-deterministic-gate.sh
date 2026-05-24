@@ -21,7 +21,22 @@ RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
 
 echo "$RAW_OUTPUT" | tail -40
 
-JSON_LINE="$(echo "$RAW_OUTPUT" | grep -oE '\{.*\}' | tail -1 || true)"
+JSON_LINE="$(printf '%s\n' "$RAW_OUTPUT" | "$PY" -c '
+import json, sys
+last = ""
+for line in sys.stdin:
+    s = line.strip()
+    if not s.startswith("{"):
+        continue
+    try:
+        obj = json.loads(s)
+    except Exception:
+        continue
+    d = obj.get("data", {}) if isinstance(obj, dict) else {}
+    if "passed" in d and "failed" in d:
+        last = s
+print(last)
+' || true)"
 if [ -z "$JSON_LINE" ]; then
     echo "FAIL: could not extract JSON envelope from ui_test.run output" >&2
     echo "Passed: 0  Failed: 1"

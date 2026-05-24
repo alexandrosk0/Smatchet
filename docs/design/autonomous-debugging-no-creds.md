@@ -463,7 +463,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 |---|---|---|
 | V9.1 | `bucket-e-ui-tests` CI job (per V6.2) runs the 12 existing + 9 new bucket-E tests; all PASS | E |
 | V9.2 | New `scripts/dev/test-agent-contract.sh` check — grep gate verifying every `tests/ui/*.test.cpp` file's first 20 lines contain the literal `// Drift warning — IF YOU CHANGE` block. Fails loudly when a new test omits the drift header | A |
-| V9.3 | `AgentProposalStoreSqlite_test.cpp` exercises the SQLite-backed UI flow via the existing `tests/support/SqliteMemFixture.h` tempfile-DB pattern (no new lane / sub-rig); PASS | E |
+| V9.3 | `agent_proposal_store_sqlite.test.cpp` exercises the SQLite-backed UI flow via the existing `tests/support/SqliteMemFixture.h` tempfile-DB pattern (no new lane / sub-rig); PASS | E |
 
 **Slice 10 — debug-detective reproducer-first contract**
 
