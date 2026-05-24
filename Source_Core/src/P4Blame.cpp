@@ -31,6 +31,16 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>
     outExitCode = -1;
     outStdout.clear();
     outStderr.clear();
+    // Runner-seam override (slice 3 of autonomous-debugging-no-creds). When a test
+    // installs cfg.P4RunOverride, it short-circuits the real spawn path — the lambda
+    // returns canned exit code + stdout + stderr from a fixture. Production behaviour
+    // preserved when the override is empty (fall through to SubprocessCapture::Run).
+    if (cfg.P4RunOverride) {
+        const bool ok = cfg.P4RunOverride(args, outExitCode, outStdout, outStderr);
+        LOG_DEBUG("P4: ran via P4RunOverride args=%s exit=%d ok=%d", JoinStrings(args, " ").c_str(), outExitCode,
+                  static_cast<int>(ok));
+        return ok;
+    }
     const std::string exe = cfg.P4Executable.empty() ? "p4" : cfg.P4Executable;
     LOG_INFO("P4: spawn exe=\"%s\" args: %s", exe.c_str(), JoinStrings(args, " ").c_str());
 

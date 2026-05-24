@@ -38,6 +38,13 @@ add_executable(SmatchetTests
     Source_Core/BackendAuditTrail.test.cpp
     Source_Core/IssueCreatePipelineIntegration.test.cpp
     Source_Core/P4BlameParse.test.cpp
+    # Slice 3 of autonomous-debugging-no-creds — runner-seam fake exercises
+    # P4Blame.cpp's P4RunCommand path via BlameAnalysisConfig::P4RunOverride,
+    # without spawning the real `p4` binary. FakeP4Runner.h lives in
+    # tests/support/ (already on the include path).
+    Source_Core/P4BlameAnnotateE2E.test.cpp
+    Source_Core/P4DescribeCacheE2E.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/P4Blame.cpp"
     Source_Core/TrackerLabelsPure.test.cpp
     Source_Core/TrackerDateTimePure.test.cpp
     Source_Core/TicketFieldEditorLongTextPure.test.cpp
