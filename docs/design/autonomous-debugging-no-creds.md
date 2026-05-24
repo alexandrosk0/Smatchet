@@ -215,9 +215,21 @@ Each scenario follows the standard `IScenario` contract (`Source_Core/include/Co
 
 **Wave B.** Per the user's "user actions by mouse emulation" requirement. Bucket-E's `ImGuiTestContext` already provides `ItemClick("##Label")`, `ItemInput()`, `KeyPress(ImGuiKey_…)`, `MouseMove()`, `MouseClick()`. Slice 9's content is **densifying the test surface**, not adding the infrastructure (it exists). Benefits from slice 6's CI gating (Wave A); uses slice 5's registry for any new scenario surfaces it spawns.
 
-- New bucket-E tests in `tests/ui/`: AI Assistant Preferences (6 flows per `test.md` P2 backlog), description grid-cell tooltip render, `--spawn` warmup deterministic gate (per `infra.md` P2), AgentProposalStore SQLite lane (new SQLite-aware bucket-E test sub-rig per `test.md` P2).
-- Each test follows the existing `SmatchetRegister<Feature>Tests(ImGuiTestEngine*)` registration shape and aggregates into `SmatchetRegisterAllUiTests()`.
-- Bucket-E SQLite lane is the new sub-rig: a fresh tempfile DB per test case so write-set isolation is bucket-A-style, but execution happens inside the UI thread frame loop. Closes the missing-bucket-E-SQLite-lane backlog entry.
+Inspection findings (grill Q7) — the existing 12 bucket-E tests share an implicit discipline that this slice makes **explicit** so 9 new tests (and the slice-10 future growth) ship to the same bar:
+
+- **Per-test isolation contract.** Bucket-E tests run *serially* inside the single `UiTestScenario` invocation (not parallel `ctest -j`), so the real risk is state-leak between sequential tests. Every new file must declare a local `ResetXState()` function (same shape as `tests/ui/ai_prefs_autosave_flow.test.cpp:67` `ResetAutosaveState()` and `:199` `ResetPrefsTestState()`) and call it at the top of every `TestFunc` lambda. No global reset; per-test owns its own reset.
+- **Drift-warning header (mandatory).** Every new test file opens with a `// Drift warning — IF YOU CHANGE` block citing the specific `Source_Core/*.{h,cpp}:<line>` the test mirrors. Same shape as `tests/ui/ai_prefs_autosave_flow.test.cpp:1-15`. The orchestrator's bucket-E test-author packet must include this requirement verbatim.
+- **`#if defined(SMATCHET_WITH_*)` gating.** Slice 9's tests gate per their dependencies (AI-Prefs tests under `SMATCHET_WITH_AI`; SQLite-lane test under whatever `AgentProposalStore` is gated by). Aggregator additions in `tests/ui/ui_tests_registry.cpp` go inside the matching `#if` block.
+
+The 9 new tests:
+
+- **AI Assistant Preferences (6 flows per `test.md` P2 backlog)** — docking, Enter-send, validation banner, Save/Discard buttons, Test-connection async, verify-on-save. Each gets a separate `tests/ui/ai_assistant_preferences_<flow>.test.cpp`. Reuses `tests/support/StubAiClient.h` (slice 4) for the deterministic AI-response side.
+- **description grid-cell tooltip render** — opens a grid row whose description contains markdown, hovers, asserts `wrapWidth` honoured. New `tests/ui/description_tooltip_markdown_render.test.cpp`.
+- **`--spawn` warmup deterministic gate (per `infra.md` P2)** — asserts the spawn-ready handshake completes within N frames before the test accepts the spawned-app handle. New `tests/ui/spawn_warmup_deterministic_gate.test.cpp`.
+- **AgentProposalStore SQLite-backed UI flow** — fresh tempfile DB per `TestFunc` via the existing `tests/support/SqliteMemFixture.h` (no new lane sub-rig). New `tests/ui/agent_proposal_store_sqlite.test.cpp`. Closes the missing-bucket-E-SQLite-coverage backlog entry — the "lane" framing was wrong; it's a tempfile lifecycle inside an existing rig.
+
+- Aggregator addition: 9 new `extern "C" void SmatchetRegister<Feature>Tests(ImGuiTestEngine*)` declarations + 9 new aggregator calls in `tests/ui/ui_tests_registry.cpp`. Mechanical; one PR per logical group (AI Prefs flows as one PR, the others separately).
+- **Optional defensive add** (deferred to follow-up PR if friction surfaces): `tests/ui/bucket-e-test-conventions.md` one-pager codifying the Reset + Drift discipline. Skip-if-not-needed; the pattern is grep-able from existing tests today.
 
 ### Slice 10 — debug-detective reproducer-first contract update
 
