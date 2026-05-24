@@ -18,7 +18,6 @@
 #include "AppController.h"
 #include "AppControllerDepsAdapter.h"
 
-
 #include <algorithm>
 #include <array>
 
@@ -67,6 +66,8 @@
 #include <ghc/filesystem.hpp>
 
 #include "DefaultTrackerBackendFactory.h"
+
+#include "GitHubFixtureBackend.h"
 
 #include "ITrackerBackendFactory.h"
 
@@ -1103,7 +1104,6 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     });
 #endif
 
-
     // Construct the deps adapter eagerly so OfflineQueueService + TicketSyncService can capture
     // an interface reference at construction time. The adapter is owned by this AppController
     // and outlives both services (per the destructor ordering: ~AppController joins the
@@ -1175,7 +1175,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // Slice 2 of docs/design/autonomous-debugging-no-creds.md — env-hook
     // override for the Plane backend. When SMATCHET_TEST_PLANE_BACKEND_FIXTURE
     // is set, swap in a fixture-driven backend factory before the default is
-    // constructed. Sibling Jira/GitHub hooks (slices 1, 4, 5) land adjacent.
+    // constructed. Sibling Jira/GitHub hooks land adjacent.
     if (!backendFactory_) {
         const char* planeFixtureEnv = std::getenv("SMATCHET_TEST_PLANE_BACKEND_FIXTURE");
         if (planeFixtureEnv && planeFixtureEnv[0] != '\0') {
@@ -1183,6 +1183,48 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                      planeFixtureEnv);
             backendFactory_ = smatchet::plane::MakePlaneFixtureBackendFactory(std::string(planeFixtureEnv));
             activeTracker = "Plane";
+            cfg.TrackerType = activeTracker;
+        }
+    }
+
+    // Slice 1 of docs/design/autonomous-debugging-no-creds.md — env-hook to
+    // swap the default tracker factory for a fixture-backed GitHub backend
+    // when SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path> is set AND the active
+    // tracker is GitHub. Keeps the no-credentials debug loop able to drive
+    // scenarios against a deterministic ticket set without consulting the PAT.
+    if (!backendFactory_) {
+        if (const char* githubFixture = std::getenv("SMATCHET_TEST_GITHUB_BACKEND_FIXTURE")) {
+            const std::string fixturePath(githubFixture);
+            if (!fixturePath.empty()) {
+                const std::string lowerActive = ToLowerAsciiCopy(activeTracker);
+                if (lowerActive == "github") {
+                    LOG_INFO("AppController: SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=%s — installing "
+                             "fixture-backed GitHub factory (no HTTP, no PAT lookup).",
+                             fixturePath.c_str());
+                    class FixtureGitHubFactory : public ITrackerBackendFactory {
+                      public:
+                        explicit FixtureGitHubFactory(const std::string& path) : path_(path) {}
+                        std::unique_ptr<ITrackerClient> Create(const std::string& trackerType) override {
+                            const std::string lower = ToLowerAsciiCopy(trackerType);
+                            if (lower == "github") {
+                                return std::make_unique<smatchet::github::GitHubFixtureBackend>(
+                                    path_, std::string(), std::string(), /*includePullRequests=*/true);
+                            }
+                            // Non-GitHub backends fall through to the default factory shape.
+                            DefaultTrackerBackendFactory fallback;
+                            return fallback.Create(trackerType);
+                        }
+
+                      private:
+                        std::string path_;
+                    };
+                    backendFactory_ = std::make_unique<FixtureGitHubFactory>(fixturePath);
+                } else {
+                    LOG_WARN("AppController: SMATCHET_TEST_GITHUB_BACKEND_FIXTURE set but active "
+                             "tracker is '%s', not 'GitHub' — ignoring fixture override.",
+                             activeTracker.c_str());
+                }
+            }
         }
     }
 
@@ -1356,8 +1398,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // setup since the endpoint is independent of plugin state. Best-effort —
     // bind failure (port-in-use, no socket lib) logs WARN + Smatchet continues;
     // the daemon's shell bridge falls through to Windows native BurntToast.
-    mergeWatchNotifyServer_ = std::unique_ptr<SmatchetMergeWatchNotifyServer>(
-        new SmatchetMergeWatchNotifyServer());
+    mergeWatchNotifyServer_ = std::make_unique<SmatchetMergeWatchNotifyServer>();
     mergeWatchNotifyServer_->Start(*this);
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
@@ -1382,7 +1423,6 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // snapshot test tests/Source_Core/SmatchetScenarioRegistry.test.cpp pins
     // the registered name set.
     smatchet::cmd::RegisterAllScenarios(*scenarioRunner_);
-
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
@@ -1447,7 +1487,6 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         aiAssistant_.reset();
     }
 #endif
-
 }
 
 #if defined(SMATCHET_WITH_AI)
@@ -1509,8 +1548,6 @@ void AppController::PromptAi(const std::string& prompt) {
     (void)prompt;
 #endif
 }
-
-
 
 smatchet::cmd::CommandRegistry& AppController::Commands() {
     if (!commandRegistry_) {

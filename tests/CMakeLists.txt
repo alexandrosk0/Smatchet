@@ -110,6 +110,11 @@ add_executable(SmatchetTests
     # without HTTP.
     Source_Core/GitHubIssueSearchMapping.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/GitHubIssueSearchMapping.cpp"
+    # Slice 1 of docs/design/autonomous-debugging-no-creds.md — fixture-driven
+    # GitHub mapping coverage (basic mapping / PR-vs-issue filter / assignee +
+    # state + labels / pagination boundary). Reuses GitHubIssueSearchMapping.cpp
+    # (already linked above for GitHubIssueSearchMapping.test.cpp).
+    Source_Core/GitHubIssueMappingPure.test.cpp
     # Slice 2 of docs/design/autonomous-debugging-no-creds.md — pure Plane
     # JSON → CachedTicket mapper extracted out of PlaneIssueSearch.cpp (which
     # pulls cpr). Same shape as the GitHub PR12 split above.
