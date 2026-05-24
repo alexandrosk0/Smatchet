@@ -102,6 +102,7 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
 
         std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(AiProvider::OpenAi);
         if (!client) {
+            ClearOverride();
             outErr = "AiClientFactory::MakeAiClient returned null with test override installed";
             return;
         }
@@ -216,7 +217,8 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::AiAssistantStreamingTransportDownScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(
+        std::make_unique<smatchet::cmd::AiAssistantStreamingTransportDownScenario>());
 }
 
 #endif // SMATCHET_WITH_AI

@@ -42,16 +42,24 @@ namespace cmd {
 
 namespace {
 
-const char* SampleMarkdownBody() {
-    // Mixed inline marks + a code span + bullets — exercises the markdown
-    // plan cache's prose / inline-code / list-item branches without
-    // requiring the full md4c table path.
-    return "Issue summary: **render** fails when `wrapWidth=0` because the "
-           "tooltip window's `GetContentRegionAvail().x` is near-zero.\n\n"
-           "- repro 1: hover a description grid cell\n"
-           "- repro 2: observe vertical strip\n"
-           "- fix: pass `opts.wrapWidth` explicitly\n";
+// Static markdown body — built once at first call, then reused across every
+// frame so the perf row reflects only render cost (not per-frame string
+// construction). Mixed inline marks + a code span + bullets — exercises the
+// markdown plan cache's prose / inline-code / list-item branches without
+// requiring the full md4c table path.
+const std::string& SampleMarkdownBody() {
+    static const std::string kBody =
+        "Issue summary: **render** fails when `wrapWidth=0` because the "
+        "tooltip window's `GetContentRegionAvail().x` is near-zero.\n\n"
+        "- repro 1: hover a description grid cell\n"
+        "- repro 2: observe vertical strip\n"
+        "- fix: pass `opts.wrapWidth` explicitly\n";
+    return kBody;
 }
+
+// Minimum wrap width — anything smaller produces degenerate window sizing
+// and a non-representative perf row.
+const float kMinWrapWidth = 1.0f;
 
 } // namespace
 
@@ -61,10 +69,10 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         frames_ = (std::max)(1, args.value("frames", 300));
-        wrapWidth_ = args.value("wrapWidth", 480.0f);
+        wrapWidth_ = (std::max)(kMinWrapWidth, args.value("wrapWidth", 480.0f));
         rendersPerFrame_ = (std::max)(1, args.value("rendersPerFrame", 4));
 
-        const std::string md = SampleMarkdownBody();
+        const std::string& md = SampleMarkdownBody();
 
         // Sanity assertion — build a plan and verify it's non-empty. A
         // regression that empties the plan would silently zero the perf row;
@@ -88,7 +96,7 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
         // context (the runner ticks us from inside SmatchetUI::Draw, so an
         // outer frame exists; we open a child window for the render so
         // ImGui asserts about the wrap-width / cursor state don't trip).
-        const std::string md = SampleMarkdownBody();
+        const std::string& md = SampleMarkdownBody();
         MarkdownPreviewRender::Options opts;
         opts.mode = MarkdownPreviewRender::Mode::Tooltip;
         opts.wrapWidth = wrapWidth_;
@@ -144,5 +152,6 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::DescriptionTooltipMarkdownRenderScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(
+        std::make_unique<smatchet::cmd::DescriptionTooltipMarkdownRenderScenario>());
 }

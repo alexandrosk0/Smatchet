@@ -94,5 +94,6 @@ class BlameOpenEntryTabScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeBlameOpenEntryTabScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::BlameOpenEntryTabScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(
+        std::make_unique<smatchet::cmd::BlameOpenEntryTabScenario>());
 }

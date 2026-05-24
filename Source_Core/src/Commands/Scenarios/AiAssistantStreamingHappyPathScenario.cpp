@@ -108,7 +108,8 @@ std::unique_ptr<IAiClient> StubFactory(AiProvider /*provider*/) {
     if (!g_stubDeltas) {
         return std::unique_ptr<IAiClient>();
     }
-    return std::unique_ptr<IAiClient>(new StubAiClientStreaming(*g_stubDeltas, g_stubErrorAtIndex));
+    return std::unique_ptr<IAiClient>(
+        std::make_unique<StubAiClientStreaming>(*g_stubDeltas, g_stubErrorAtIndex));
 }
 
 } // namespace
@@ -133,6 +134,7 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
         // before falling through to the provider switch).
         std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(AiProvider::OpenAi);
         if (!client) {
+            ClearOverride();
             outErr = "AiClientFactory::MakeAiClient returned null with test override installed";
             return;
         }
@@ -247,7 +249,8 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::AiAssistantStreamingHappyPathScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(
+        std::make_unique<smatchet::cmd::AiAssistantStreamingHappyPathScenario>());
 }
 
 #endif // SMATCHET_WITH_AI
