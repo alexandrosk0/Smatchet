@@ -68,13 +68,13 @@ Per `docs/backlog/agent-self-improvement/test.md` P2 (open).
 - New `tests/Source_Core/AiClientCancel.test.cpp` — per-client cancel + error-redaction regression tests (`OpenAiClient`, `AnthropicClient`, `OllamaClient`). Verifies (a) cancel-mid-stream stops `OnDelta` callbacks within 100 ms, (b) error bodies don't contain the API key.
 - Extend `Source_Core/include/AiSseParser.h`'s pure-logic test coverage in `tests/Source_Core/AiSseParser.test.cpp` to fully cover the state machine: many-small-Feeds, partial-frame-on-Flush, malformed JSON branches, `\r\n\r\n` boundaries, mid-frame cancel (per backlog `bug.md` P2).
 
-Backlog closure: `test.md` P2 entries for AiHttpFixture + per-client cancel + AiSseParser coverage; `bug.md` P2 AiSseParser missing coverage entry.
+Backlog closure: `test.md` P2 entries for AiHttpFixture + per-client cancel + AiSseParser coverage (line 60 + line 64). The bug.md entries (P3 `AiSseParser::Flush()` synthesises `\n\n` boundary, line 41; P2 `partial_` + `emitIfReady` stub no-op, line 53) are caught by the same expanded coverage rather than fixed separately — slice 4 is the test-side prerequisite for the fix-side work those backlog entries name.
 
 ### Slice 5 — Missing scenarios for known-bug paths
 
 Closes 3 backlog gaps that each name a missing `scenario.run` reproducer:
 
-- `blame_open_entry_tab` — registered in the scenario list (per `test.md` P2). New file: `Source_Core/src/Scenarios/BlameOpenEntryTabScenario.cpp` + registration in `Source_Core/src/AppController.cpp`. Drives the blame tokenizer hot-path Pillar-1 perf regression gate already names.
+- `blame-open-entry-tab` (cited as `blame_open_entry_tab` in `tooling.md` P2 line 178 — the dash form follows the existing `priority-grid-scroll` / `dock-gap-sentinel` / `command-palette-fuzzy` kebab convention; update the citing plan in the same commit). New file: `Source_Core/src/Commands/Scenarios/BlameOpenEntryTabScenario.cpp` + one `scenarioRunner_->RegisterFactory("blame-open-entry-tab", ...)` line in `Source_Core/src/AppController.cpp` next to the existing registrations. Drives the blame tokenizer hot-path Pillar-1 perf regression gate already names.
 - `ai_assistant_streaming_happy_path` / `ai_assistant_streaming_401` / `ai_assistant_streaming_transport_down_within_5s` — three scenarios consuming `AiHttpFixture` (slice 4). Drives the AI panel through real SSE flows + asserts the UI state transitions.
 - `description_tooltip_markdown_render` — scenario that opens a grid row whose description contains markdown, hovers the cell, asserts the tooltip's `wrapWidth` is honoured (per `tests/bats/...` regression that landed via `be2b1d9` / "wrapWidth grep gate" — defensive scenario).
 
@@ -124,7 +124,7 @@ Backlog closure: no explicit backlog entry today; slice 9 closes the implicit ga
 
 Per user decision: reproducer-first contract (no fallback to "user repro steps").
 
-- Update `agents/debug-detective.md` § Process step 2 (Reproduce) — replace the "user repro steps fallback" with a hard refusal: if no deterministic reproducer (CLI command / `scenario.run --name=<x>` / Lua snippet / failing-doctest name) is supplied or discoverable, the agent's first task is to **add a scenario** that reproduces the bug (slice 5 pattern + new `Source_Core/src/Scenarios/<NewBugRepro>Scenario.cpp`).
+- Update `agents/debug-detective.md` § Process step 2 (Reproduce) — replace the "user repro steps fallback" with a hard refusal: if no deterministic reproducer (CLI command / `scenario.run --name=<x>` / Lua snippet / failing-doctest name) is supplied or discoverable, the agent's first task is to **add a scenario** that reproduces the bug (slice 5 pattern + new `Source_Core/src/Commands/Scenarios/<NewBugRepro>Scenario.cpp`).
 - Update `agents/debug-detective.md` § Self-improvement template to add a new optional category: "missing-scenario" — when the agent had to add a scenario before debugging, it records the scenario name so the orchestrator can learn the patterns.
 - Update `docs/agent-rules/delegation.md` § Debug-mode pause-loop to name the reproducer-first contract: phase 2 (Hypothesise) now lands AFTER phase 1.5 (Reproduce-or-Scenario-add).
 - Extend `scripts/dev/test-agent-contract.sh` with a new check (the same shape as check 7b for architect's Design sections) that verifies `agents/debug-detective.md` contains the literal phrase "reproducer-first contract" so future doc rewrites don't silently soften the contract.
@@ -138,11 +138,11 @@ Backlog closure: `process.md` doesn't have an explicit entry but the spirit line
 - `Source_Core/src/GitHubIssueMappingPure.cpp`
 - `Source_Core/include/PlaneIssueMappingPure.h`
 - `Source_Core/src/PlaneIssueMappingPure.cpp`
-- `Source_Core/src/Scenarios/BlameOpenEntryTabScenario.cpp`
-- `Source_Core/src/Scenarios/AiAssistantStreamingHappyPathScenario.cpp`
-- `Source_Core/src/Scenarios/AiAssistantStreaming401Scenario.cpp`
-- `Source_Core/src/Scenarios/AiAssistantStreamingTransportDownScenario.cpp`
-- `Source_Core/src/Scenarios/DescriptionTooltipMarkdownRenderScenario.cpp`
+- `Source_Core/src/Commands/Scenarios/BlameOpenEntryTabScenario.cpp`
+- `Source_Core/src/Commands/Scenarios/AiAssistantStreamingHappyPathScenario.cpp`
+- `Source_Core/src/Commands/Scenarios/AiAssistantStreaming401Scenario.cpp`
+- `Source_Core/src/Commands/Scenarios/AiAssistantStreamingTransportDownScenario.cpp`
+- `Source_Core/src/Commands/Scenarios/DescriptionTooltipMarkdownRenderScenario.cpp`
 - `tests/_debug/SmatchetAgentDebug.h`
 
 **New (test):**
@@ -209,7 +209,7 @@ Per `docs/design/pillar-1-2-perf-review-system.md`. This plan does touch `Source
 - **Fixture drift** — fixtures generated from real Jira / GitHub / Plane responses today will go stale as those APIs evolve. Mitigation: every fixture file ships with a `// captured-against: <api-version> <date>` header; a quarterly `scripts/dev/refresh-tracker-fixtures.sh` cron task pulls fresh captures and runs the diff against the existing pure mappers. Stale-fixture as a backlog signal, not a blocker.
 - **Mesa-on-CI flakiness** — software GL rasterisation on GitHub Actions Windows runners may produce subtle font-rendering differences vs the developer's GPU. Slice 7's bucket-C job starts in continue-on-error mode; bootstrap goldens captured by the CI runner once Mesa is wired, not the developer's machine.
 - **ASAN noise** — third-party libraries (cpr, ImGui, SQLite) may surface known false positives. Slice 8 ships an LSAN suppression file (`tests/_debug/lsan-suppressions.txt`) populated as-needed; suppressions are reviewed in `code-review` to avoid silencing real bugs.
-- **Reproducer-first contract may force scenario-add bloat** — slice 10's "agent's first task is to add a scenario" rule could spawn many low-value scenarios. Mitigation: the scenario-add must follow `Source_Core/src/Scenarios/` registration shape and be reviewed by `code-review` like any other code change; orphan-scenario sweep added to `git-janitor` end-of-session.
+- **Reproducer-first contract may force scenario-add bloat** — slice 10's "agent's first task is to add a scenario" rule could spawn many low-value scenarios. Mitigation: the scenario-add must follow `Source_Core/src/Commands/Scenarios/` registration shape and be reviewed by `code-review` like any other code change; orphan-scenario sweep added to `git-janitor` end-of-session.
 - **p4 stub limitation** — `FakeP4Driver`'s stub binary doesn't cover every `p4` command shape. Mitigation: explicit allow-list of commands the dual-VCS scripts actually call (`p4 streams`, `p4 change`, `p4 shelve`, `p4 submit`, `p4 verify`, `p4 counter`, `p4 describe`); commands outside the allow-list error loudly so a new dual-VCS script can't silently work against the stub and break against real p4d.
 
 **Non-goals:**
@@ -236,7 +236,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 | V11 | `sanitizer-asan-ubsan` CI job runs full `ctest` under ASAN+UBSAN; passes with the LSAN suppressions in place | D |
 | V12 | `MERGE_WATCH_AUTO_ACT=true MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true` watcher poll on a PR with a deliberate ASAN failure spawns `debug-detective` (not `coderabbit-triage`); spawned session reads the failing-test name from the CI log | A (bats-coverable via merge_watcher.bats) |
 | V13 | `scripts/dev/test-agent-contract.sh` new check verifies `agents/debug-detective.md` contains "reproducer-first contract" literal | A |
-| V14 | `agents/debug-detective.md` when invoked on a bug with no existing scenario, the agent's first emit is a new `Source_Core/src/Scenarios/<NewBugRepro>Scenario.cpp` file (verified by a `tests/Source_Core/_meta/debug_detective_reproducer_first_smoke.test.cpp` bucket-A meta-test that loads the agent prompt and asserts the literal "reproducer-first" appears in step 2) | A |
+| V14 | `agents/debug-detective.md` when invoked on a bug with no existing scenario, the agent's first emit is a new `Source_Core/src/Commands/Scenarios/<NewBugRepro>Scenario.cpp` file (verified by a `tests/Source_Core/_meta/debug_detective_reproducer_first_smoke.test.cpp` bucket-A meta-test that loads the agent prompt and asserts the literal "reproducer-first" appears in step 2) | A |
 
 **Bucket-E SQLite lane** verification: slice 6's `AgentProposalStoreSqlite_test.cpp` is the first test in the new sub-rig; its passing is the lane's gate.
 
