@@ -33,21 +33,15 @@
 
 namespace {
 
-// Path resolution — tests run from the build dir (e.g. build/ninja-iter-msys2/tests/),
-// so the fixture path is repo-relative. Doctest exposes the working directory
-// via `ghc::filesystem` but we keep this string literal so the rig is portable
-// to whichever cwd CTest happens to choose. The CMake step that adds this test
-// sets `WORKING_DIRECTORY` to the repo root for `add_test`; the fallback below
-// covers running the test binary directly from a build dir.
-const char* kBasicSearchFixture = "tests/fixtures/github/basic-search.json";
-const char* kBasicSearchFixtureFromBuild = "../../tests/fixtures/github/basic-search.json";
-
+// Path resolution — use the CMake-defined SMATCHET_TESTS_REPO_ROOT macro
+// (see tests/CMakeLists.txt ~line 200) so the fixture path is cwd-independent.
+// Same pattern as slice 3's P4Blame*E2E.test.cpp.
 std::string ResolveFixturePath() {
-    std::ifstream a(kBasicSearchFixture);
-    if (a.good()) {
-        return kBasicSearchFixture;
-    }
-    return kBasicSearchFixtureFromBuild;
+    return std::string(SMATCHET_TESTS_REPO_ROOT) + "/tests/fixtures/github/basic-search.json";
+}
+
+std::string ResolveMissingFixturePath() {
+    return std::string(SMATCHET_TESTS_REPO_ROOT) + "/tests/fixtures/github/does-not-exist.json";
 }
 
 std::string GetField(const CachedTicket& t, const std::string& key) {
@@ -163,7 +157,7 @@ TEST_CASE("Slice 1 V1.1 — pagination boundary: malformed / non-array input is 
 }
 
 TEST_CASE("Slice 1 V1.1 — fixture load failure surfaces a diagnostic instead of crashing") {
-    smatchet_tests::FakeGitHubFixture missing("tests/fixtures/github/does-not-exist.json");
+    smatchet_tests::FakeGitHubFixture missing(ResolveMissingFixturePath());
     CHECK_FALSE(missing.LoadError().empty());
     CHECK(missing.Tickets().empty());
     // ConfigureFakeClient() refuses to build a client when the fixture failed to load.
