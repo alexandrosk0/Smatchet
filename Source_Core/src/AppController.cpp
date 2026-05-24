@@ -1183,6 +1183,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                      planeFixtureEnv);
             backendFactory_ = smatchet::plane::MakePlaneFixtureBackendFactory(std::string(planeFixtureEnv));
             activeTracker = "Plane";
+            cfg.TrackerType = activeTracker;
         }
     }
 
