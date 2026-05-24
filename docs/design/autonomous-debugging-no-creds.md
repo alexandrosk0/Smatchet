@@ -362,28 +362,103 @@ Per `docs/design/pillar-1-2-perf-review-system.md`. This plan does touch `Source
 
 ## Verification
 
-Per AGENTS.md § Verification automation, every item classified into a bucket (A CLI / B scenario / C screenshot / D sanitizer / E ImGui Test Engine) — no manual residue.
+Per AGENTS.md § Verification automation, every item classified into a bucket (A CLI / B scenario / C screenshot / D sanitizer / E ImGui Test Engine) — no manual residue. Items organised by slice; the per-slice grouping makes the `## Verification (actual)` mirror-ledger easy to populate as each slice ships.
+
+**Slice 1 — GitHub fake backend**
 
 | # | Verification item | Bucket |
 |---|---|---|
-| V1 | `bash scripts/dev/test-all.sh` exits 0 after every slice | A |
-| V2 | `ctest --output-on-failure` exits 0 with the new bucket-A tests included | A |
-| V3 | New `GitHubIssueMappingPure.test.cpp` / `PlaneIssueMappingPure.test.cpp` / `StubAiClientCancel.test.cpp` / `P4BlameAnnotateE2E.test.cpp` / `P4DescribeCacheE2E.test.cpp` / `SmatchetAgentDebug.test.cpp` / `SmatchetScenarioRegistry.test.cpp` doctests all PASS | A |
-| V4 | `tests/bats/p4_dual_vcs_deterministic.bats` all cases PASS via the stub-p4 driver | A |
-| V5 | `SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<fixture> ./Smatchet.exe scenario.run --name=UiTestScenario` loads the fixture; agent-debug NDJSON contains a `backend-call` entry per fixture row | B |
-| V6 | `SMATCHET_TEST_PLANE_BACKEND_FIXTURE=<fixture> ./Smatchet.exe scenario.run --name=UiTestScenario` same as V5 for Plane | B |
-| V7 | `./Smatchet.exe scenario.run --name=blame_open_entry_tab --frames=600` emits a `rows[]` JSON output; `perf-compare.py` accepts it without baseline-missing error | B |
-| V8 | `./Smatchet.exe scenario.run --name=ai-assistant-streaming-happy-path` installs a `StubAiClient` via `AiClientFactory::SetTestOverride`, completes without instantiating any real cpr client; AI panel shows the final concatenated message | B |
-| V9 | Bucket-C screenshot diff job in `.github/workflows/build-and-test.yml` runs against Mesa-on-CI; first run bootstraps `tests/golden/<scenario>.png` from the CI capture; subsequent runs diff-PASS | C |
-| V10 | Bucket-E `ninja-ui-test-msys2` job runs 12 existing tests + 9 new tests (slice 9); all PASS | E |
-| V11 | `sanitizer-asan-ubsan` CI job runs full `ctest` under ASAN+UBSAN; passes with the LSAN suppressions in place | D |
-| V12 | `MERGE_WATCH_AUTO_ACT=true MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true` watcher poll on a PR with a deliberate ASAN failure spawns `debug-detective` (not `coderabbit-triage`); spawned session reads the failing-test name from the CI log | A (bats-coverable via merge_watcher.bats) |
-| V13 | `scripts/dev/test-agent-contract.sh` new check verifies `agents/debug-detective.md` contains "reproducer-first contract" literal | A |
-| V14 | `agents/debug-detective.md` when invoked on a bug with no existing scenario, the agent's first emit is a new `Source_Core/src/Commands/Scenarios/<NewBugRepro>Scenario.cpp` file (verified by a `tests/Source_Core/_meta/debug_detective_reproducer_first_smoke.test.cpp` bucket-A meta-test that loads the agent prompt and asserts the literal "reproducer-first" appears in step 2) | A |
+| V1.1 | `tests/Source_Core/GitHubIssueMappingPure.test.cpp` doctest cases PASS — basic field mapping, PR-vs-issue filter, assignee + state + labels coverage, pagination boundary | A |
+| V1.2 | `SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=tests/fixtures/github/<scen>.json ./Smatchet.exe scenario.run --name=ui-test` loads the fixture without HTTP, no GitHub PAT consulted; agent-debug NDJSON contains one `backend-call` entry per fixture row | B |
 
-**Bucket-E SQLite lane** verification: slice 9's `AgentProposalStoreSqlite_test.cpp` is the first test in the new sub-rig; its passing is the lane's gate.
+**Slice 2 — Plane fake backend**
 
-**Manual residue**: **none**. Every verification item is bucketed; the plan does not require any "user opens window and observes" step. The single exception is the *bootstrap* of bucket-C goldens on first Mesa-CI run, which is a one-time `cp build/<preset>/*.png tests/golden/` + manual `git add` step — covered by the golden-image-approval contract in AGENTS.md.
+| # | Verification item | Bucket |
+|---|---|---|
+| V2.1 | `tests/Source_Core/PlaneIssueMappingPure.test.cpp` doctest cases PASS — symmetric to V1.1 against Plane's JSON shape | A |
+| V2.2 | `SMATCHET_TEST_PLANE_BACKEND_FIXTURE=tests/fixtures/plane/<scen>.json ./Smatchet.exe scenario.run --name=ui-test` loads the fixture without HTTP; agent-debug NDJSON `backend-call` entries match | B |
+
+**Slice 3 — P4Blame runner-seam fake**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V3.1 | `tests/Source_Core/P4BlameAnnotateE2E.test.cpp` PASS — happy path + empty file + `p4` exit != 0 + stdout-capped + timeout cases | A |
+| V3.2 | `tests/Source_Core/P4DescribeCacheE2E.test.cpp` PASS — cache hit / miss / eviction / two-thread thread-safety | A |
+| V3.3 | New `scripts/dev/test-agent-contract.sh` check (same shape as check 7b for architect Design sections) asserts `Source_Core/src/P4Blame.cpp` contains exactly one `SubprocessCapture::Run` call site; fails loudly if a future change adds a second without sibling `P4RunOverride` consult | A |
+
+**Slice 4 — `StubAiClient` + `AiSseParser` coverage**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V4.1 | `tests/Source_Core/StubAiClientCancel.test.cpp` PASS — stub honours `CancelToken` within configured `cancel_acknowledged_within_ms` budget (100 ms default) | A |
+| V4.2 | `tests/Source_Core/AiSseParser.test.cpp` expanded state-machine cases PASS — many-small-Feeds, partial-frame-on-Flush, malformed JSON branches, `\r\n\r\n` boundaries, mid-frame cancel, `[DONE]` termination | A |
+
+**Slice 5 — `SmatchetScenarioRegistry` refactor**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V5.1 | `tests/Source_Core/SmatchetScenarioRegistry.test.cpp` snapshot test PASS — registry table contains exactly the 14 existing names (`priority-grid-scroll`, `lua-recorder-fuzz`, `ui-test`, `dock-gap-sentinel`, `command-palette-fuzzy`, `theme-switch-roundtrip`, `ai-chat-history-render`, `idle`, `cell-edit-burst`, `attachment-preview-open`, `preferences-slider-drag`, `long-text-open-large-adf`, `whisper-dictation-roundtrip`, `whisper-ai-assistant-autosend`) | A |
+| V5.2 | `./Smatchet.exe scenario.list` output unchanged before vs after the refactor (snapshot text-diff) | B |
+
+**Slice 6 — Headless GL on CI**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V6.1 | `bucket-c-screenshot-diff` CI job in `.github/workflows/build-and-test.yml` runs against the Mesa (or ANGLE-D3D11) install; first run bootstraps `tests/golden/<scenario>.png` from the CI capture; subsequent runs diff-PASS (L∞ ≤ 4) | C |
+| V6.2 | `bucket-e-ui-tests` CI job runs the `ninja-ui-test-msys2` preset + `scenario.run --name=ui-test`; the 12 existing tests + (after slice 9) 9 new tests all PASS. Initial 1-week soak runs `continue-on-error: true`; gate becomes hard-fail after | E |
+
+**Slice 7 — `SmatchetAgentDebug.h` NDJSON helper**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V7.1 | `tests/Source_Core/SmatchetAgentDebug.test.cpp` PASS — per-line schema validation: emitted line parses as JSON containing all 5 required fields (`ts`, `category`, `pid`, `tid`, `payload`) with the documented types | A |
+| V7.2 | Same test — closed-set `category` enum validation: writing an out-of-set category errors loudly at compile time (or runtime if compile-time check infeasible); writing an in-set category succeeds | A |
+| V7.3 | Same test — empty-file semantic: a tempfile target with zero `SMATCHET_AGENT_DEBUG_LOG` calls produces an empty file (not a file with a 0-byte JSON object). Agent's read path treats this as the documented actionable signal | A |
+| V7.4 | Same test — concurrency under 2 threads: 1000 interleaved log calls produce 1000 well-formed lines with no torn JSON (mutex-guarded ofstream) | A |
+| V7.5 | Same test — `SMATCHET_AGENT_DEBUG_FSYNC=true` env knob causes `fsync` after every write (verified via a counter probe in a mock fs hook); `false` skips fsync | A |
+| V7.6 | Hot-path budget probe: in a 1-second loop, ≤ 2 000 000 `SMATCHET_AGENT_DEBUG_LOG` calls complete (= ≤ 500 ns / call) on a 3 GHz core. Soft-fail (`continue-on-error`) for the first month; hard-fail after the baseline stabilises | A |
+
+**Slice 8 — Missing scenarios**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V8.1 | `./Smatchet.exe scenario.run --name=blame-open-entry-tab --frames=600` emits a `rows[]` JSON output; `perf-compare.py` accepts it without baseline-missing error | B |
+| V8.2 | `./Smatchet.exe scenario.run --name=ai-assistant-streaming-happy-path` installs a `StubAiClient` via `AiClientFactory::SetTestOverride`, completes without instantiating any real cpr client; AI panel shows the final concatenated message | B |
+| V8.3 | `./Smatchet.exe scenario.run --name=ai-assistant-streaming-401` injects the 401-shape stub; AI panel surfaces the expected unauthorised banner; no retry storm | B |
+| V8.4 | `./Smatchet.exe scenario.run --name=ai-assistant-streaming-transport-down-within-5s` injects the mid-stream-disconnect stub; AI panel shows transport-down state within 5 s; UI thread never blocks > 100 ms | B |
+| V8.5 | `./Smatchet.exe scenario.run --name=description-tooltip-markdown-render` opens the markdown-description row, hovers the cell, asserts the rendered tooltip's `wrapWidth` matches the configured value | B |
+
+**Slice 9 — Bucket-E densification**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V9.1 | `bucket-e-ui-tests` CI job (per V6.2) runs the 12 existing + 9 new bucket-E tests; all PASS | E |
+| V9.2 | New `scripts/dev/test-agent-contract.sh` check — grep gate verifying every `tests/ui/*.test.cpp` file's first 20 lines contain the literal `// Drift warning — IF YOU CHANGE` block. Fails loudly when a new test omits the drift header | A |
+| V9.3 | `AgentProposalStoreSqlite_test.cpp` exercises the SQLite-backed UI flow via the existing `tests/support/SqliteMemFixture.h` tempfile-DB pattern (no new lane / sub-rig); PASS | E |
+
+**Slice 10 — debug-detective reproducer-first contract**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V10.1 | New `scripts/dev/test-agent-contract.sh` check verifies `agents/debug-detective.md` contains the literal phrase "reproducer-first contract" | A |
+| V10.2 | New `tests/Source_Core/_meta/debug_detective_reproducer_first_smoke.test.cpp` — loads `agents/debug-detective.md`, asserts § Process step 0 (Concreteness check) + step 0.5 (Existing-scenario reuse) + step 2 (Reproduce) all exist and the "reproducer-first" phrase appears in step 2 | A |
+| V10.3 | Orphan-scenario sweep dry-run: `agents/git-janitor.md` § Standard cleanup loop step 10.5 invoked against a synthetic scenario added 61 days ago (`git commit --date=-61.days.ago`) with no PR cite + no curated-set membership + no failing-test reference surfaces it via `AskUserQuestion` with the [keep / archive / delete] options. Bats-coverable | A |
+
+**Slice 11 — Sanitizer CI gates + auto-act**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| V11.1 | `sanitizer-asan-ubsan` CI job runs full `ctest` under ASAN+UBSAN with the `ninja-debug-msys2-asan` preset; passes with `tests/_debug/lsan-suppressions.txt` in place | D |
+| V11.2 | `tests/bats/merge_watcher.bats` extended case — `MERGE_WATCH_AUTO_ACT=true MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true` watcher poll on a PR with a deliberate ASAN failure spawns `debug-detective` (not `coderabbit-triage`); the spawned `AUTO_ACT_PROMPT` body contains the failing-test name + sanitizer-stderr URL | A |
+
+**Global**
+
+| # | Verification item | Bucket |
+|---|---|---|
+| VG.1 | `bash scripts/dev/test-all.sh` exits 0 after every slice | A |
+| VG.2 | `ctest --output-on-failure` exits 0 with the new bucket-A tests included | A |
+
+**Manual residue**: **none**. Every verification item is bucketed; the plan does not require any "user opens window and observes" step. The single exception is the *bootstrap* of bucket-C goldens on first Mesa-CI run (V6.1), which is a one-time `cp build/<preset>/*.png tests/golden/` + manual `git add` step — covered by the golden-image-approval contract in AGENTS.md.
 
 ## Out of scope (flagged, not designed)
 
@@ -405,4 +480,4 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 
 ## Verification (actual)
 
-<!-- populated when the slices ship; mirror the V1-V14 list in § Verification with PASS / FAIL / not-run per item -->
+<!-- populated when the slices ship; mirror the V1.1-V11.2 + VG.1-VG.2 list in § Verification with PASS / FAIL / not-run per item, organised by slice for per-PR tickoff -->
