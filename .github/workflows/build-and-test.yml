@@ -250,15 +250,17 @@ jobs:
     # may produce subtle font-rendering differences vs developer GPUs; that
     # is why goldens must be bootstrapped from a CI run, not a dev machine.
     #
-    # Initial continue-on-error: false per plan § Slice 6 ("advisory window
-    # over"). First run after merge will FAIL on the diff because goldens
-    # don't exist yet — that is expected; the follow-up PR bootstraps the
-    # goldens per the golden-image-approval contract (AGENTS.md).
+    # Initial continue-on-error: true for a 1-week soak — first runs FAIL
+    # because goldens don't exist yet (slice 6 ships the jobs only; goldens
+    # bootstrap in a follow-up PR per the golden-image-approval contract).
+    # Once goldens land + soak passes cleanly, flip back to `false` for
+    # hard-fail gating, matching the plan § Slice 6 "advisory window over"
+    # end-state. Same stance as the sibling bucket-e-ui-tests job below.
     name: Bucket-C screenshot diff (Mesa headless GL)
     needs: windows-msys2-ucrt64
     runs-on: windows-2022
     timeout-minutes: 20
-    continue-on-error: false
+    continue-on-error: true
 
     defaults:
       run:
