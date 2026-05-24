@@ -26,7 +26,10 @@ The "concrete enough to reproduce" threshold is what slice 10 enforces — debug
 
 Reuse every existing seam — do not invent new architecture. The plan threads through five layers (referenced by *theme*, not slice number — see § Ship order for the topological mapping):
 
-1. **Backend fakes** — extend the `FakeTrackerClient` + fixture-loader pattern from deterministic-jira-test-backend.md to every backend that today requires credentials: GitHub, Plane, p4, AI HTTP. Each follows the same recipe — extract pure JSON mapper, add `tests/support/Fake<Backend>Driver.h` thin wrapper, add `SMATCHET_TEST_<BACKEND>_FIXTURE=<path>` env hook, add bucket-A doctests covering fixture parsing.
+1. **Backend fakes** — close the credential-required path for every backend that today blocks autonomous debug. Three patterns, picked per backend by the shape of its real-world seam:
+   - **Tracker backends (GitHub + Plane)** — extend the `FakeTrackerClient` + fixture-loader pattern from `deterministic-jira-test-backend.md`. Extract pure JSON mapper, add `tests/support/Fake<Backend>Fixture.h` thin wrapper, add `SMATCHET_TEST_<BACKEND>_FIXTURE=<path>` env hook into `AppController::SetBackendFactory`.
+   - **`P4Blame` (annotate + describe-cache)** — inject a runner-seam fake at `BlameAnalysisConfig::P4RunOverride`; tests install `tests/support/FakeP4Runner.h` (no stub binary, no PATH dance). The dev-environment `scripts/dev/p4-*.sh` shell layer is out of scope per the grill Q5 decision.
+   - **AI clients (OpenAI / Anthropic / Ollama)** — sidestep cpr entirely via the existing `AiClientFactory::SetTestOverride` seam; install `tests/support/StubAiClient.h` for SSE-shape callbacks. No httplib server, no env-var dance. The cpr layer's correctness is verified at PR time by `code-review` discipline (no auth-header leaks, no creds in logs), not by an automated test against a fake server.
 2. **Registry refactor** — extract `Source_Core/{include,src}/Commands/Scenarios/SmatchetScenarioRegistry.{h,cpp}` so new scenarios append one line to a table instead of adding a `RegisterFactory` call mid-`AppController::Initialize`. Prerequisite for the scenario-coverage track + the auto-add path.
 3. **Scenario coverage densification** — every known-but-uncovered bug class gets a CLI scenario that reproduces it deterministically. The backlog already names the gaps (`blame-open-entry-tab`, AI assistant streaming S2/S4/S5, description-grid-cell tooltip render); we close them as one slice with the same `ScenarioRunner` registration shape.
 4. **Headless GL on CI + mouse emulation** — Mesa-on-CI (or ANGLE-D3D11) unblocks bucket-C/E in GitHub Actions; bucket-E's ImGui Test Engine already emits mouse / keyboard events via its `ImGuiTestContext::ItemClick` / `ItemInput` API, so the "mouse emulation" axis is mostly wiring + scenario density on top of headless-GL.
@@ -41,13 +44,13 @@ Three waves. Work inside each wave is parallel-eligible (disjoint write sets); w
 - **Slice 1** — GitHub fake backend (extends deterministic-jira pattern)
 - **Slice 2** — Plane fake backend (same pattern)
 - **Slice 3** — `P4Blame` C++-feature runner-seam fake (annotate + describe-cache; not the dual-VCS shell layer)
-- **Slice 4** — `AiHttpFixture` + per-AI-client cancel + AiSseParser coverage
+- **Slice 4** — `StubAiClient` (injected via `AiClientFactory::SetTestOverride`) + `AiSseParser` pure-logic state-machine coverage. Sidesteps cpr / httplib entirely.
 - **Slice 5** — `SmatchetScenarioRegistry` refactor (touches `AppController.cpp`; independent of slices 1-4)
 - **Slice 6** — Headless GL on CI (Mesa / ANGLE-D3D11)
 - **Slice 7** — `tests/_debug/SmatchetAgentDebug.h` NDJSON helper
 
 ### Wave B — Scenarios + bucket-E densification + contract update (depends on Wave A complete)
-- **Slice 8** — Missing scenarios for known-bug paths (consumes slice 4's `AiHttpFixture` + slice 5's registry table)
+- **Slice 8** — Missing scenarios for known-bug paths (consumes slice 4's `StubAiClient` injection + slice 5's registry table)
 - **Slice 9** — Bucket-E densification (benefits from slice 6's CI gating; uses slice 5's registry)
 - **Slice 10** — debug-detective reproducer-first contract (references slice 5's auto-add path + slice 7's NDJSON)
 
@@ -106,16 +109,22 @@ Same shape as slice 1 against `Source_Core/src/Plane*` files (the Plane backend 
 
 Backlog closure: no explicit backlog entry; slice 3 preempts the "p4-blame feature can't be tested without a p4 server" entry that would otherwise file itself.
 
-### Slice 4 — AiHttpFixture + per-AI-client tests
+### Slice 4 — Stub `IAiClient` injection + `AiSseParser` state-machine coverage
 
-Per `docs/backlog/agent-self-improvement/test.md` P2 (open).
+**Wave A.** Per grill Q6: skip the in-process httplib-server approach (`AiHttpFixture`) and the per-client cancel + error-redaction regression tests against a real cpr layer — both depend on assumptions (env-var honour at construction time; loopback reachability under CI firewall; ctest -j port collision) that risk silent-hang flakes. Instead, sidestep the cpr layer entirely via the existing `AiClientFactory::SetTestOverride` seam (already shipped — `Source_Core/include/AiClientFactory.h:21`) to inject stub `IAiClient` instances that emit canned SSE chunks via `OnDelta` directly.
 
-- New `tests/support/AiHttpFixture.h` — in-process `httplib::Server` (cpp-httplib is already in the FetchContent set per AGENTS.md § Available libs) that serves canned SSE streams, 401 unauthorised, transient disconnects mid-frame, and `[DONE]` termination shapes per OpenAI's wire format.
-- Bind to `127.0.0.1:<dynamic-port>`; export `OPENAI_API_BASE=http://127.0.0.1:<port>` (and equivalent for Anthropic + Ollama) so `OpenAiClient` / `AnthropicClient` / `OllamaClient` hit the fixture without ever crossing the network.
-- New `tests/Source_Core/AiClientCancel.test.cpp` — per-client cancel + error-redaction regression tests (`OpenAiClient`, `AnthropicClient`, `OllamaClient`). Verifies (a) cancel-mid-stream stops `OnDelta` callbacks within 100 ms, (b) error bodies don't contain the API key.
-- Extend `Source_Core/include/AiSseParser.h`'s pure-logic test coverage in `tests/Source_Core/AiSseParser.test.cpp` to fully cover the state machine: many-small-Feeds, partial-frame-on-Flush, malformed JSON branches, `\r\n\r\n` boundaries, mid-frame cancel (per backlog `bug.md` P2).
+- New `tests/support/StubAiClient.h` — header-only `IAiClient` impl. Constructed with a script `{provider_name, delta_sequence, error_at_index?, cancel_acknowledged_within_ms?}`:
+  - `GetProviderName()` returns the configured provider name string.
+  - `ProbeReachability()` returns empty (success) or configured error string.
+  - `SendStreaming()` walks the `delta_sequence` invoking `onDelta` per chunk on a worker thread; honours `cancel.IsCancelled()` between deltas (asserts cancel propagates within the configured `cancel_acknowledged_within_ms` budget); calls `onError` once at the end of the configured error scenario.
+- New `tests/Source_Core/StubAiClientCancel.test.cpp` — exercises the stub directly: cancel-mid-stream stops `OnDelta` callbacks within 100 ms (asserts on the stub's own measurement, since the stub is what bucket-E tests inject via `SetTestOverride`). This verifies the test-infrastructure contract, not the concrete client's HTTP behaviour.
+- Extend `Source_Core/include/AiSseParser.h`'s pure-logic test coverage in `tests/Source_Core/AiSseParser.test.cpp` to fully cover the state machine: many-small-Feeds, partial-frame-on-Flush, malformed JSON branches, `\r\n\r\n` boundaries, mid-frame cancel. Pure logic — no HTTP, no stub, no cpr. (per backlog `bug.md` P2 / P3).
 
-Backlog closure: `test.md` P2 entries for AiHttpFixture + per-client cancel + AiSseParser coverage (line 60 + line 64). The bug.md entries (P3 `AiSseParser::Flush()` synthesises `\n\n` boundary, line 41; P2 `partial_` + `emitIfReady` stub no-op, line 53) are caught by the same expanded coverage rather than fixed separately — slice 4 is the test-side prerequisite for the fix-side work those backlog entries name.
+**What this does NOT cover** — explicit-out-of-scope:
+- The real `OpenAiClient` / `AnthropicClient` / `OllamaClient` HTTP wiring (auth-header building, retry logic, cpr error-body parsing). Bugs in these surfaces fail loudly in production on the first live call; they're not autonomous-debug-loop candidates because reproducing them requires real credentials. A separate opt-in integration test under `SMATCHET_TEST_REAL_AI_API=<provider>` could land later as a sibling to `SMATCHET_TEST_REAL_P4D`; not in this plan.
+- Per-client error-body redaction (the "API key doesn't leak into error logs" assertion). Verified by `code-review`'s grep-for-secret discipline at PR time, not by an automated test against a stub (the stub has no API key to potentially leak).
+
+Backlog closure: `test.md` P2 entry for AiSseParser coverage (line 64) — fully closed. The `AiHttpFixture` half of `test.md` P2 (line 60) is **explicitly deferred** with the rationale above; the slice-4 fix-side bug.md entries (P3 `AiSseParser::Flush()` synthesises `\n\n` boundary, line 41; P2 `partial_` + `emitIfReady` stub no-op, line 53) are caught by the expanded AiSseParser coverage independently of HTTP wiring.
 
 ### Slice 5 — `SmatchetScenarioRegistry` refactor (decouples scenario-add from `AppController::Initialize` bloat)
 
@@ -194,10 +203,10 @@ Backlog closure: no explicit backlog entry today; slice 7 closes the implicit ga
 
 ### Slice 8 — Missing scenarios for known-bug paths
 
-**Wave B.** Consumes slice 4's `AiHttpFixture` (for the AI streaming scenarios) and slice 5's `SmatchetScenarioRegistry` table (every new scenario lands one line in the table, not a mid-init call). Closes 3 backlog gaps that each name a missing `scenario.run` reproducer:
+**Wave B.** Consumes slice 4's `StubAiClient` injection (for the AI streaming scenarios — bucket-B tests install the stub via `AiClientFactory::SetTestOverride` before driving the scenario) and slice 5's `SmatchetScenarioRegistry` table (every new scenario lands one line in the table, not a mid-init call). Closes 3 backlog gaps that each name a missing `scenario.run` reproducer:
 
 - `blame-open-entry-tab` (cited as `blame_open_entry_tab` in `tooling.md` P2 line 178 — the dash form follows the existing `priority-grid-scroll` / `dock-gap-sentinel` / `command-palette-fuzzy` kebab convention; update the citing plan in the same commit). New file: `Source_Core/src/Commands/Scenarios/BlameOpenEntryTabScenario.cpp` + one row in `SmatchetScenarioRegistry.cpp`'s table. Drives the blame tokenizer hot-path Pillar-1 perf regression gate already names.
-- `ai-assistant-streaming-happy-path` / `ai-assistant-streaming-401` / `ai-assistant-streaming-transport-down-within-5s` — three scenarios consuming slice 4's `AiHttpFixture`. Drives the AI panel through real SSE flows + asserts the UI state transitions.
+- `ai-assistant-streaming-happy-path` / `ai-assistant-streaming-401` / `ai-assistant-streaming-transport-down-within-5s` — three scenarios that install a `StubAiClient` (slice 4) before invoking the AI panel. Each scenario configures the stub's `delta_sequence` / `error_at_index` / `cancel_acknowledged_within_ms` for its case. Drives the AI panel through SSE-shape callbacks + asserts the UI state transitions. (The HTTP layer is not exercised; that's the explicit-out-of-scope decision from slice 4.)
 - `description-tooltip-markdown-render` — scenario that opens a grid row whose description contains markdown, hovers the cell, asserts the tooltip's `wrapWidth` is honoured (per `tests/bats/...` regression that landed via `be2b1d9` / "wrapWidth grep gate" — defensive scenario).
 
 Each scenario follows the standard `IScenario` contract (`Source_Core/include/Commands/Scenarios/IScenario.h`) and emits `rows[]` so `perf-gatekeeper` can read it (closes `tooling.md` P2 about 8 perf scenarios missing `rows[]`).
@@ -263,12 +272,12 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 - `tests/support/FakeGitHubFixture.h`
 - `tests/support/FakePlaneFixture.h`
 - `tests/support/FakeP4Runner.h` (slice 3 — runner-seam fake, NOT a stub binary)
-- `tests/support/AiHttpFixture.h`
+- `tests/support/StubAiClient.h` (slice 4 — IAiClient stub injected via existing `AiClientFactory::SetTestOverride`, NOT an httplib server)
 - `tests/Source_Core/GitHubIssueMappingPure.test.cpp`
 - `tests/Source_Core/PlaneIssueMappingPure.test.cpp`
 - `tests/Source_Core/P4BlameAnnotateE2E.test.cpp` (slice 3)
 - `tests/Source_Core/P4DescribeCacheE2E.test.cpp` (slice 3)
-- `tests/Source_Core/AiClientCancel.test.cpp`
+- `tests/Source_Core/StubAiClientCancel.test.cpp` (slice 4 — exercises StubAiClient cancel propagation; no real cpr)
 - `tests/Source_Core/SmatchetAgentDebug.test.cpp`
 - `tests/Source_Core/SmatchetScenarioRegistry.test.cpp` (slice 5 — snapshot test on the 14 existing names)
 - `tests/ui/AiAssistantPreferences{Docking,EnterSend,ValidationBanner,SaveDiscard,TestConnection,VerifyOnSave}_test.cpp` (6 files)
@@ -303,7 +312,8 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 - `Source_Core/include/AiClientFactory.h::SetTestOverride` (shipped via `feat/ai-client-test-override`)
 - `Source_Core/include/Commands/Scenarios/IScenario.h` (scenario interface)
 - `Source_Core/src/Commands/Builtin/BuiltinCommands_Scenario.cpp` (`scenario.list` / `scenario.run` / `scenario.cancel`)
-- `cpp-httplib` (already in FetchContent set per AGENTS.md § Available libs) — for `AiHttpFixture` in-process server
+- `AiClientFactory::SetTestOverride` (Source_Core/include/AiClientFactory.h:21 — already shipped; slice 4 reuses without modification)
+- `IAiClient` 3-virtual interface (Source_Core/include/IAiClient.h — already minimal; slice 4's `StubAiClient` implements it directly with no new virtuals)
 - `tests/bats/lock_claim.bats:25-38` stub-bin sandbox pattern (for `FakeP4Driver` stub `p4` binary)
 - `ImGuiTestContext::ItemClick/ItemInput/KeyPress/MouseMove/MouseClick` (mouse emulation already in ImGui Test Engine)
 - `CMakePresets.json:ninja-debug-msys2-asan` / `-tsan` / `-msan` (sanitizer presets already configured)
@@ -311,7 +321,7 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 ## UX Pillar callouts
 
 - **Pillar 1 (Performance ≤ 6.94 ms)** — slice 8's `blame-open-entry-tab` scenario directly exercises the Pillar-1 perf regression gate already named in `docs/design/pillar-1-2-perf-review-system.md` § File-level table for the blame tokenizer hot-path. Other scenarios add `rows[]` emission so `perf-gatekeeper` can read them (closes the 8-of-15-scenarios-missing-`rows[]` gap).
-- **Pillar 2 (UI never freezes >100 ms)** — slice 4's `AiClientCancel.test.cpp` asserts cancel propagation < 100 ms on every AI client. Slice 9's bucket-E coverage densifies the visible-cue regression coverage.
+- **Pillar 2 (UI never freezes >100 ms)** — slice 4's `StubAiClientCancel.test.cpp` asserts cancel propagation < 100 ms against the stub (test-infrastructure contract). The concrete-client cancel propagation is verified by `code-review`'s cancel-token-discipline grep at PR time, not in this plan. Slice 9's bucket-E coverage densifies the visible-cue regression coverage.
 - **Pillar 3 (Never crash)** — slice 11's sanitizer CI gates catch ASAN / UBSAN failures *automatically*; this is the strongest single Pillar-3 strengthening currently feasible.
 - **Pillar 4 (Accessibility)** — out of scope; pillar 4 is backlogged per AGENTS.md § UX Pillars.
 
@@ -346,12 +356,12 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 |---|---|---|
 | V1 | `bash scripts/dev/test-all.sh` exits 0 after every slice | A |
 | V2 | `ctest --output-on-failure` exits 0 with the new bucket-A tests included | A |
-| V3 | New `GitHubIssueMappingPure.test.cpp` / `PlaneIssueMappingPure.test.cpp` / `AiClientCancel.test.cpp` / `SmatchetAgentDebug.test.cpp` doctests all PASS | A |
+| V3 | New `GitHubIssueMappingPure.test.cpp` / `PlaneIssueMappingPure.test.cpp` / `StubAiClientCancel.test.cpp` / `P4BlameAnnotateE2E.test.cpp` / `P4DescribeCacheE2E.test.cpp` / `SmatchetAgentDebug.test.cpp` / `SmatchetScenarioRegistry.test.cpp` doctests all PASS | A |
 | V4 | `tests/bats/p4_dual_vcs_deterministic.bats` all cases PASS via the stub-p4 driver | A |
 | V5 | `SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<fixture> ./Smatchet.exe scenario.run --name=UiTestScenario` loads the fixture; agent-debug NDJSON contains a `backend-call` entry per fixture row | B |
 | V6 | `SMATCHET_TEST_PLANE_BACKEND_FIXTURE=<fixture> ./Smatchet.exe scenario.run --name=UiTestScenario` same as V5 for Plane | B |
 | V7 | `./Smatchet.exe scenario.run --name=blame_open_entry_tab --frames=600` emits a `rows[]` JSON output; `perf-compare.py` accepts it without baseline-missing error | B |
-| V8 | `./Smatchet.exe scenario.run --name=ai_assistant_streaming_happy_path` against `AiHttpFixture` completes without hitting the network; AI panel shows the final concatenated message | B |
+| V8 | `./Smatchet.exe scenario.run --name=ai-assistant-streaming-happy-path` installs a `StubAiClient` via `AiClientFactory::SetTestOverride`, completes without instantiating any real cpr client; AI panel shows the final concatenated message | B |
 | V9 | Bucket-C screenshot diff job in `.github/workflows/build-and-test.yml` runs against Mesa-on-CI; first run bootstraps `tests/golden/<scenario>.png` from the CI capture; subsequent runs diff-PASS | C |
 | V10 | Bucket-E `ninja-ui-test-msys2` job runs 12 existing tests + 9 new tests (slice 9); all PASS | E |
 | V11 | `sanitizer-asan-ubsan` CI job runs full `ctest` under ASAN+UBSAN; passes with the LSAN suppressions in place | D |
@@ -366,7 +376,8 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 ## Out of scope (flagged, not designed)
 
 - **Stub-`p4`-binary for the `scripts/dev/p4-*.sh` dual-VCS dev-environment layer** — per user direction, slice 3 covers only the C++ `P4Blame` feature surface (annotate + describe-cache), which has a single seam (`P4RunCommand`) and two subcommands. The dev-environment shell layer has 30+ subcommand shapes, is opt-in via `SMATCHET_AGENT_VCS=p4`, and is exercised manually — not part of the autonomous-debug loop. The `SMATCHET_TEST_REAL_P4D=1` integration gate at `scripts/dev/test-p4-dual-vcs.sh` stays as the path for testing those scripts against a real p4d.
-- **VCR-style replay over the real cpr / httplib HTTP layer** — slice 4 uses an in-process httplib server, not a recording proxy. A recording layer is more powerful (real responses captured from production traffic) but vastly more complex; defer.
+- **In-process HTTP server (`AiHttpFixture`) for testing the real cpr layer** — per grill Q6 user direction, slice 4 sidesteps cpr / httplib entirely by injecting a stub `IAiClient` through the existing `AiClientFactory::SetTestOverride` seam. The cpr-layer bugs (auth-header building, retry logic, error-body parsing) are caught in production on the first live call rather than by an automated test against a fake server. A future opt-in `SMATCHET_TEST_REAL_AI_API=<provider>` integration test (sibling shape to `SMATCHET_TEST_REAL_P4D`) could land later; not in this plan.
+- **VCR-style replay over the real cpr / httplib HTTP layer** — much more powerful than the dropped `AiHttpFixture` approach (real responses captured from production traffic) but vastly more complex. Defer.
 - **Pillar 4 (accessibility)** — backlogged per AGENTS.md § UX Pillars.
 - **C4 prong 4** (replacing the spawned-Claude session entirely with a deterministic CLI fixer) — out of scope; C4 prongs 1+2+3 (shipped via #428, #431, #437) plus this plan's slice 11 sanitizer routing close the C4 design space.
 - **Replacing `code-review` with debug-detective on sanitizer failures** — the two agents stay distinct; slice 11 only adds the sanitizer-failure trigger for debug-detective, not for code-review.
