@@ -916,19 +916,42 @@ def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: in
 # AGENTS.md + CLAUDE.md from the clone on its own. We only tell it WHAT to do
 # (address PR #N's CodeRabbit findings) and HOW to get a checkout (gh pr
 # checkout) so it doesn't waste tokens guessing the branch.
+#
+# C4 prong 3 (per docs/evaluation/agentic-infrastructure-2026-05-23.md): the
+# spawned session is explicitly instructed to use the `coderabbit-triage`
+# agent's classification framework (per `agents/coderabbit-triage.md`) — that
+# agent specialises in CR-finding triage with hard invariant-rejection
+# heuristics. The agent itself is `read-only:true` (classification only); the
+# spawned session does the *application* step after the agent has classified.
+# Result: a finding the triage agent rejects (e.g. suggesting C++17 features
+# in a C++14-hard codebase) never gets applied, even if the spawned session
+# would otherwise have been tempted to "just go with CR's suggestion."
 AUTO_ACT_PROMPT = (
     "You are the auto-act helper spawned by smatchet-merge-watcher because "
     "PR #{pr} is BLOCKED on CodeRabbit findings.\n\n"
     "Address every actionable CodeRabbit comment on this PR. Steps:\n"
     "  1. `gh pr checkout {pr}` to switch this clone to the PR's branch.\n"
-    "  2. `gh api repos/{owner}/{repo}/pulls/{pr}/comments` to read the inline findings.\n"
-    "  3. Apply the smallest possible fix per finding. Reject any finding that "
-    "violates the AGENTS.md invariants (C++14 hard, RAII, never-crash, etc).\n"
+    "  2. **Invoke the `coderabbit-triage` agent first** (per "
+    "`agents/coderabbit-triage.md`). Pass it PR #{pr}; it will fetch the "
+    "inline CR comments via `gh api`, classify each by severity + target "
+    "Smatchet subsystem, and reject suggestions that collide with the "
+    "AGENTS.md invariants (C++14 hard, dual-target, UI-thread non-blocking, "
+    "RAII, LOG_* logging, never-crash, etc.). The agent is read-only and "
+    "emits a per-finding handoff packet — VALID findings (with target "
+    "subsystem named) plus REJECT-INVARIANT / REJECT-AMBIGUOUS lists with "
+    "rationale.\n"
+    "  3. Apply the smallest possible fix per VALID finding. Use the "
+    "subsystem agents the triage packet names (`tracker-backend`, "
+    "`grid-engine`, `offline-sync`, `command-system`, `lua-binder`, "
+    "`mcp-toolsmith`, etc.) for the actual edits when the finding is in their "
+    "territory; otherwise edit directly. Skip every REJECT-INVARIANT finding "
+    "outright; surface the rationale in the commit body.\n"
     "  4. Build / test only when the diff actually warrants it (docs-only "
     "diffs skip both per the pure-docs slice rule).\n"
     "  5. `git commit` with a message of the form "
-    "`fix(merge-watcher auto-act): address CR findings on PR #{pr}` "
-    "and `git push`.\n\n"
+    "`fix(merge-watcher auto-act): address CR findings on PR #{pr}` (body "
+    "lists the triage classification: N VALID applied, M REJECT-INVARIANT "
+    "with one-line reason each) and `git push`.\n\n"
     "Auto-act head_sha at dispatch was {head_sha}. If the PR's head has moved "
     "since (user pushed manually), STOP — say so and exit without committing.\n"
     "Auto-act is gated to {budget} attempts per PR lifetime; this is attempt "
