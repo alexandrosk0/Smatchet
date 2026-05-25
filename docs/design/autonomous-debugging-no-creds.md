@@ -285,7 +285,7 @@ Backlog closure: `process.md` doesn't have an explicit entry but the spirit line
 **Wave C.** Consumes slice 7's `SmatchetAgentDebug.h` NDJSON helper (the spawned debug-detective reads it without asking the user for log paths) and slice 10's reproducer-first contract (the agent the spawn invokes follows the contract from the moment it boots).
 
 - Add `sanitizer-asan-ubsan` job to `.github/workflows/build-and-test.yml` using the existing `ninja-debug-msys2-asan` preset. Runs full `ctest` under ASAN+UBSAN. Failure surfaces line + file + sanitizer report in the job summary.
-- Extend `scripts/dev/merge-watcher.py:_looks_like_cr_finding_block` to also recognise sanitizer-failure CI lines as auto-act triggers (currently only CR findings trigger auto-act). New env knob `MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true` (default off, same opt-in pattern as `MERGE_WATCH_AUTO_ACT`).
+- Add `scripts/dev/merge-watcher.py:_looks_like_sanitizer_failure` — a separate predicate that detects sanitizer-failure CI lines as auto-act triggers (distinct from `_looks_like_cr_finding_block` which handles CR findings). New env knob `MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true` (default off, same opt-in pattern as `MERGE_WATCH_AUTO_ACT`).
 - Extend `AUTO_ACT_PROMPT` (the prompt shipped via PR #437) with a sanitizer-failure branch: when the trigger is sanitizer-failure (not CR-finding), the spawned session invokes `debug-detective` directly with the failing-test name + the sanitizer stderr URL as the reproducer. Skips the `coderabbit-triage` step (no CR findings to triage).
 - Add `tsan`-mode as a separate opt-in job (data-race detection is noisier; gate behind `tsan-out-of-band` label per the existing `tests-out-of-band` / `perf-out-of-band` pattern).
 

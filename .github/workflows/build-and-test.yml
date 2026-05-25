@@ -441,6 +441,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup MSYS2 UCRT64
         uses: msys2/setup-msys2@v2
@@ -507,6 +509,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup MSYS2 UCRT64
         uses: msys2/setup-msys2@v2

@@ -852,9 +852,10 @@ def _looks_like_sanitizer_failure(status_line: str) -> bool:
     s = status_line.lower()
     return (
         "sanitizer" in s
-        and ("fail" in s or "error" in s or "block" in s or "conclusion" in s)
+        and ("fail" in s or "failed" in s or "error" in s or "blocked" in s)
     ) or (
         ("addresssanitizer" in s or "undefinedbehaviorsanitizer" in s or "threadsanitizer" in s)
+        and ("fail" in s or "failed" in s or "error" in s or "blocked" in s)
     )
 
 
@@ -1008,14 +1009,15 @@ AUTO_ACT_SANITIZER_PROMPT = (
     "  1. `gh pr checkout {pr}` to switch this clone to the PR's branch.\n"
     "  2. **Invoke `debug-detective`** (per `agents/debug-detective.md`) with:\n"
     "     - Failing test: {failing_test}\n"
-    "     - CI job log URL: https://github.com/{owner}/{repo}/actions/runs/"
-    "{{run_id}} (check the sanitizer job output)\n"
+    "     - CI job log: run `gh run list --branch $(gh pr view {pr} --json "
+    "headRefName -q .headRefName) --status failure --limit 5` to find the "
+    "sanitizer run URL.\n"
     "     - The sanitizer stderr constitutes the reproducer per slice 10's "
     "reproducer-first contract.\n"
     "  3. Do NOT invoke `coderabbit-triage` — this is a sanitizer failure, "
     "not a CR-finding block.\n"
     "  4. Apply the smallest fix that resolves the sanitizer error.\n"
-    "  5. Build with `cmake --build --preset ninja-debug-msys2-asan` and run "
+    "  5. Build with `cmake --build --preset {sanitizer_preset}` and run "
     "`ctest --output-on-failure` in the build dir to confirm the fix.\n"
     "  6. `git commit` with a message of the form "
     "`fix(sanitizer): resolve ASAN/UBSAN finding on PR #{pr}` and `git push`.\n\n"
@@ -1140,10 +1142,16 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         # Extract a rough failing-test name from the status line. The
         # merge-gates poller includes the check name; best-effort parse.
         failing_test = _extract_failing_test_from_status(status_line)
+        # Select preset based on which sanitizer triggered.
+        sanitizer_preset = (
+            "ninja-debug-msys2-tsan"
+            if "tsan" in status_line.lower() or "threadsanitizer" in status_line.lower()
+            else "ninja-debug-msys2-asan"
+        )
         prompt = AUTO_ACT_SANITIZER_PROMPT.format(
             pr=pr, owner=owner, repo=repo,
             head_sha=head_sha[:12], budget=budget, attempt=attempts_after,
-            failing_test=failing_test,
+            failing_test=failing_test, sanitizer_preset=sanitizer_preset,
         )
     else:
         prompt = AUTO_ACT_PROMPT.format(
