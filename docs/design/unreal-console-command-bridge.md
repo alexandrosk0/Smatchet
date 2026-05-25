@@ -68,12 +68,16 @@ Console arguments are intentionally JSON-first: everything after the command nam
 
 ## Implementation log
 
-*(populated post-ship)*
+- 2026-05-25: Added Unreal console command registration for `smartchat` / `smatchet`, bootstrap aliases, async result polling, and `commands.list` driven direct aliases such as `smartchat.app.version`.
+- 2026-05-25: Documented console usage, JSON args, `--yes`, `--dry-run`, and alias refresh in the Unreal plugin manual.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- Added `smatchet.` as a compatibility alias alongside the requested `smartchat.` prefix so users who type the product name still reach the same bridge.
+- Used polling instead of the existing Blueprint dynamic delegate path because the console registrar is not a `UObject` and does not need Blueprint binding semantics.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- `git diff --check` passes.
+- `clang-format -i` ran on the edited Unreal plugin C++ files.
+- `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release` passes end-to-end: CMake repackaged the native DX12 light profile, deployed the plugin to the local TestProject, UHT ran, and UBT compiled/linked `TestProject.exe` with `SmatchetImGuiConsoleCommands.cpp`.

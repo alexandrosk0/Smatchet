@@ -153,11 +153,14 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
             ViewExtensionRetryHandle = FTSTicker::GetCoreTicker().AddTicker(
                 FTickerDelegate::CreateLambda([this](float) { return TryCreateViewExtension() ? false : true; }));
         }
+
+        SmatchetImGuiConsoleCommands_StartupModule();
     }
 
     virtual void ShutdownModule() override {
         GSmatchetImGuiPluginModule = nullptr;
 
+        SmatchetImGuiConsoleCommands_ShutdownModule();
         SmatchetImGuiCommandBridge_ShutdownModule();
 
         if (InitOptionsRetryHandle.IsValid()) {
