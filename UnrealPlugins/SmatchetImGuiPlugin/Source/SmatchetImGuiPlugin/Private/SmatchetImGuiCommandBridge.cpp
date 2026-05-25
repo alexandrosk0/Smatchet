@@ -158,7 +158,7 @@ bool USmatchetImGuiCommandBridge::TakeSmatchetCommandResultJson(int64 RequestId,
 void SmatchetImGuiCommandBridge_ShutdownModule() {
     FScopeLock Lock(&GSmatchetCommandCallbackMutex);
     if (GSmatchetCommandCallbackTicker.IsValid()) {
-        FTSTicker::GetCoreTicker().RemoveTicker(GSatchetCommandCallbackTicker);
+        FTSTicker::GetCoreTicker().RemoveTicker(GSmatchetCommandCallbackTicker);
         GSmatchetCommandCallbackTicker = FTSTicker::FDelegateHandle();
     }
     GPendingSmatchetCommandCallbacks.Reset();
