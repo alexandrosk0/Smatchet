@@ -30,8 +30,8 @@ bool ArgvHasCmdSubcommand(int argc, char** argv);
 /// the window and signal they were launched by the CLI for automated scenario/testing use.
 bool IsEphemeralMode(int argc, char** argv);
 
-/// Run the `cmd` subcommand. Attaches to a running instance via MCP HTTP; if --spawn is
-/// passed and no instance is reachable, launches one automatically and waits for results.
+/// Run the `cmd` subcommand. When `SMATCHET_WITH_MCP=ON`, attaches via MCP HTTP (+ optional
+/// `--spawn`). When OFF (light builds), boots in-process and dispatches via CommandRegistry.
 /// Returns the process exit code. All stdout/stderr is written by this function.
 int RunCmdAttach(int argc, char** argv);
 

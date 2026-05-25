@@ -18,6 +18,8 @@ This file groups the rules that govern **how agents move work through the pipeli
 
 A plan that ships without revision is a stale plan. Future agents read these docs as truth; drift between plan and shipped reality is the main cost of multi-week feature work.
 
+**Deferred plan-file rows at ship boundary**: when the orchestrator labels a numbered row in `docs/design/<slug>.md` § Files to modify as "optional" or skips it at the ship boundary, it MUST in the **same turn** either (a) ship the row, or (b) record both: an entry under `## Deviations from plan` in that plan-doc (`Item N deferred — <one-line rationale>`), and an open row in `docs/backlog/agent-self-improvement/process.md` when the deferral is follow-up work (not a permanent non-goal). Silent "optional" without deviation + backlog is a process failure — the next session treats the feature as complete.
+
 **Plan stress-test — `grill-with-docs` skill**: before finalising `docs/design/<slug>.md`, invoke the skill to grill the plan against `docs/CONTEXT.md` (glossary) and `docs/adr/` (ADRs). Outputs: refined plan + glossary updates + new ADRs only when hard-to-reverse + surprising + real-trade-off all fire. Smatchet file mapping in `agents/_shared/skills/grill-with-docs/SMATCHET-NOTES.md`.
 
 **Plan template — start from `docs/design/_plan-template.md`**: every new plan-doc is copied from the template, not authored blank. The template stubs every section the project rules require (Context, Approach, Files, **Pillar 1-3 callouts**, **Perf-review-system gates**, Risks, Verification, Implementation log / Deviations placeholders). Sections that genuinely don't apply must be filled with `N/A — <one-line reason>`, not deleted — drives the "did you consider this?" forcing function.

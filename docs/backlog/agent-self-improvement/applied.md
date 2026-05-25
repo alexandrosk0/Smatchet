@@ -9,6 +9,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-25 · orchestrator · [process] · P2 — `light-release-unreal-default` plan item 10 (`main.cpp` → `StandaloneAppBootstrap`) deferred without a tracked follow-up slice
+  Resolution: Follow-up slice in P4 task stream `light-release-unreal-default` — `InitAppAndPlugins` / `ParseStandaloneCli` / `BootEphemeral` / `ShutdownApplication` in `StandaloneAppBootstrap.{h,cpp}`; GUI render loop uses `bootCtx` + shared plugin init; `--ephemeral` early-outs via `BootEphemeral` (hidden window + forced MCP + `RunRenderLoop`). Process rule added at `docs/agent-rules/process-rules.md` § Deferred plan-file rows at ship boundary. Plan § Deviations updated on task stream. Light build verified (`ninja-publish-light-msys2`).
+
 - 2026-05-23 · debug-detective · [tooling] · P1 — No CI gate prevents BeginTooltip+MarkdownPreviewRender::Render blocks missing opts.wrapWidth
   Resolution: Added `scripts/dev/test-tooltip-wrapwidth.sh` (PR #430). Scans all `Source_Core/src/*.cpp` files; for every `BeginTooltip...EndTooltip` block containing `MarkdownPreviewRender::Render`, asserts `opts.wrapWidth` is also present in that block. Exits 1 if any violation found; auto-discovered by `test-all.sh`. The check catches the exact class of bug that caused ~1.5 h of mis-navigation in session 2026-05-23: `MarkdownPreviewRender::Render` ignores `PushTextWrapPos` and samples `GetContentRegionAvail().x`, which is near-zero in a fresh tooltip window, producing an ultra-narrow vertical strip unless `opts.wrapWidth` is explicitly set. Backtest against the pre-fix codebase confirmed `SmatchetOfflineQueueUi.cpp` would have been flagged — that violation was fixed in the same PR.
 

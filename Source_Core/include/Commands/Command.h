@@ -3,11 +3,12 @@
 
 // Unified Command System core types — see docs/design/applied/command-system-plan.md.
 //
-// One Command struct = one operation. The same struct feeds four frontends:
+// One Command struct = one operation. The same struct feeds five frontends:
 //   - CLI subcommand (Target_Standalone/CliCommandRunner)
 //   - In-app Command Palette (Ctrl+Shift+P)
 //   - MCP tools/list + tools/call (Plugins/Mcp/McpPlugin)
 //   - Lua commands.invoke (Source_Core/src/AppController_LuaBindings.cpp)
+//   - Unreal in-process bridge (UnrealPlugins/SmatchetImGuiPlugin)
 //
 // This header is C++14-strict — no string_view / optional / variant / structured
 // bindings / if constexpr — because it compiles into both SmatchetStandalone
@@ -92,13 +93,14 @@ enum class CommandSource {
     Palette,
     Mcp,
     Lua,
+    Unreal,
     Internal
 };
 
 struct CommandContext {
     AppController* App = nullptr;
     CommandSource Source = CommandSource::Internal;
-    /// Set by `--yes` (CLI), `__confirm:true` (MCP), or palette Shift+Enter.
+    /// Set by `--yes` (CLI), `__confirm:true` (MCP/Unreal), or palette Shift+Enter.
     bool ConfirmedDestructive = false;
     /// Set by `--dry-run` / `__dry_run:true`. Handler must NOT mutate; returns a `wouldDo` payload.
     bool DryRun = false;

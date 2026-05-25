@@ -53,7 +53,6 @@
 #include "PluginHost.h"
 #endif
 
-
 #if defined(SMATCHET_WITH_WHISPER)
 #include "HotkeyParse.h"
 #include "MainThreadDispatcher.h"
@@ -91,7 +90,6 @@
 #endif
 
 namespace {
-
 
 #if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
 std::string GetCurrentExePath() {
@@ -205,15 +203,6 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
 }
 
 } // namespace
-
-#if defined(SMATCHET_WITH_AI)
-// `g_ui` lives in SmatchetUI.cpp. Header declares it `extern` only when
-// `SMATCHET_WITH_LUA_AUTOMATION` is defined, so we forward-declare it here
-// unconditionally (matches the pattern in AiAssistantController.cpp). The
-// Assistant Preferences async probe's MainThreadDispatcher callback reaches
-// the global to flip in-flight state + result strings.
-extern UiDrawSession g_ui;
-#endif
 
 void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
     static bool s_suggestionsLoaded = false;
@@ -361,11 +350,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                 ImGui::InputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf),
                                  ImGuiInputTextFlags_Password);
                 ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
-                ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf),
-                                 ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf), ImGuiInputTextFlags_CharsNoBlank);
                 ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
-                ImGui::InputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf),
-                                 ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::InputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf), ImGuiInputTextFlags_CharsNoBlank);
                 ImGui::SetItemTooltip(
                     "Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues from "
                     "github.com/<owner>/<repo>. Leave both empty for cross-repo /search/issues (PR4).");
@@ -1092,11 +1079,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
             }
             const auto& catalog = smatchet::whisper::catalog::All();
             int selIdx = 1; // default Recommended
-            for (std::size_t i = 0; i < catalog.size(); ++i) {
-                if (catalog[i].Id == d.cfg.WhisperModel) {
-                    selIdx = static_cast<int>(i);
-                    break;
-                }
+            const auto selectedModelIt =
+                std::find_if(catalog.begin(), catalog.end(), [&](const smatchet::whisper::catalog::Entry& entry) {
+                    return entry.Id == d.cfg.WhisperModel;
+                });
+            if (selectedModelIt != catalog.end()) {
+                selIdx = static_cast<int>(std::distance(catalog.begin(), selectedModelIt));
             }
             std::vector<std::string> labelStorage;
             std::vector<const char*> labelPtrs;
@@ -1191,10 +1179,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     } else {
                         // Walk the small set of supported non-modifier keys
                         // and grab the first one pressed this frame.
-                        struct CaptureKey {
-                            ImGuiKey imguiKey;
-                            unsigned int vk;
-                        };
                         const ImGuiIO& io = ImGui::GetIO();
                         unsigned int capturedVk = 0;
                         // Letters A..Z map ImGuiKey_A..ImGuiKey_Z to ASCII VKs.

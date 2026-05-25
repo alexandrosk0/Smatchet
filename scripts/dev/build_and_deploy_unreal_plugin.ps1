@@ -31,6 +31,26 @@ function Reset-CMakeBuildDirectory {
     }
 }
 
+function Get-CMakeCacheValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CachePath,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if (-not (Test-Path -LiteralPath $CachePath -PathType Leaf)) {
+        return $null
+    }
+
+    $pattern = "^$([System.Text.RegularExpressions.Regex]::Escape($Name)):[^=]*="
+    $line = Select-String -Path $CachePath -Pattern $pattern | Select-Object -First 1
+    if (-not $line) {
+        return $null
+    }
+    return ($line.Line -replace $pattern, '').Trim()
+}
+
 if (-not (Test-Path -Path $sourcePluginDir -PathType Container)) {
     throw "Source plugin directory not found: $sourcePluginDir"
 }
@@ -53,7 +73,15 @@ Write-Host "==> CMake configuration: $cmakeConfig"
 
 $cmakeCacheInPresetDir = Join-Path $presetBinaryDir "CMakeCache.txt"
 $expectedGenerator = "Visual Studio 17 2022"
+$expectedFeatureCache = [ordered]@{
+    "SMATCHET_WITH_LUA_AUTOMATION" = "ON"
+    "SMATCHET_WITH_MCP" = "OFF"
+    "SMATCHET_WITH_AI" = "OFF"
+    "SMATCHET_WITH_WHISPER" = "OFF"
+    "SMATCHET_WHISPER_LOCAL_BACKEND" = "OFF"
+}
 $generatorMismatch = $false
+$featureMismatch = $false
 if (Test-Path -LiteralPath $cmakeCacheInPresetDir -PathType Leaf) {
     $generatorLine = Select-String -Path $cmakeCacheInPresetDir -Pattern '^CMAKE_GENERATOR:INTERNAL=' -SimpleMatch:$false |
         Select-Object -First 1
@@ -64,11 +92,19 @@ if (Test-Path -LiteralPath $cmakeCacheInPresetDir -PathType Leaf) {
             Write-Host "==> Existing cache uses generator '$cachedGenerator'; expected '$expectedGenerator'."
         }
     }
+    foreach ($entry in $expectedFeatureCache.GetEnumerator()) {
+        $actual = Get-CMakeCacheValue -CachePath $cmakeCacheInPresetDir -Name $entry.Key
+        if ($actual -ne $entry.Value) {
+            $featureMismatch = $true
+            $actualText = if ($null -eq $actual) { "<missing>" } else { $actual }
+            Write-Host "==> Existing cache has $($entry.Key)=$actualText; expected $($entry.Value)."
+        }
+    }
 }
-if ($ForceConfigure -or $generatorMismatch) {
+if ($ForceConfigure -or $generatorMismatch -or $featureMismatch) {
     Reset-CMakeBuildDirectory -PathToReset $presetBinaryDir
 }
-$skipCMakePreset = (Test-Path -LiteralPath $cmakeCacheInPresetDir) -and (-not $ForceConfigure) -and (-not $generatorMismatch)
+$skipCMakePreset = (Test-Path -LiteralPath $cmakeCacheInPresetDir) -and (-not $ForceConfigure) -and (-not $generatorMismatch) -and (-not $featureMismatch)
 if (-not $skipCMakePreset) {
     Write-Host "==> Configuring CMake (Visual Studio 17 2022, x64)..."
     Push-Location $repoRoot
@@ -76,7 +112,10 @@ if (-not $skipCMakePreset) {
         & cmake -S $repoRoot -B $presetBinaryDir `
             -G $expectedGenerator -A x64 `
             "-DSMATCHET_WITH_LUA_AUTOMATION=ON" `
-            "-DSMATCHET_WITH_MCP=ON" `
+            "-DSMATCHET_WITH_MCP=OFF" `
+            "-DSMATCHET_WITH_AI=OFF" `
+            "-DSMATCHET_WITH_WHISPER=OFF" `
+            "-DSMATCHET_WHISPER_LOCAL_BACKEND=OFF" `
             "-DFETCHCONTENT_BASE_DIR=$fetchContentBaseDir" `
             "-DSMATCHET_UNREAL_THIRDPARTY_DIR=$($sourcePluginDir)\ThirdParty\Smatchet"
         if ($LASTEXITCODE -ne 0) {

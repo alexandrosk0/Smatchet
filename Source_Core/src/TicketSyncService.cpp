@@ -249,7 +249,7 @@ void TicketSyncService::TickStreamingApply() {
                 continue;
             }
 
-            size_t sliceSize = std::min(frontBatch.size(), size_t(20 - ticketsProcessedInFrame));
+            size_t sliceSize = (std::min)(frontBatch.size(), size_t(20 - ticketsProcessedInFrame));
             if (sliceSize == 0) {
                 break; // Frame limit
             }

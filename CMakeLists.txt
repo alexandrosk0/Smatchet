@@ -181,6 +181,13 @@ endif()
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
+set(SMATCHET_STANDALONE_OUTPUT_NAME "Smatchet" CACHE STRING
+    "Base filename for the standalone executable without extension")
+set(SMATCHET_STANDALONE_FILE_DESCRIPTION "Smatchet Standalone" CACHE STRING
+    "Windows VERSIONINFO FileDescription for the standalone executable")
+set(SMATCHET_STANDALONE_PRODUCT_NAME "Smatchet" CACHE STRING
+    "Windows VERSIONINFO ProductName for the standalone executable")
+set(SMATCHET_STANDALONE_ORIGINAL_FILENAME "${SMATCHET_STANDALONE_OUTPUT_NAME}.exe")
 # Unreal-packaged DX12 artifacts intentionally ship without MCP server support.
 set(SMATCHET_WITH_MCP_UNREAL OFF)
 
@@ -649,6 +656,43 @@ else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
 endif()
 
+# AI assistant implementation — same bindings/stubs split shape as Whisper. When OFF,
+# prune client/controller/UI TUs from CORE_SOURCES; call sites stay #if SMATCHET_WITH_AI.
+set(_SMATCHET_AI_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AgentsMdLoader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiAssistantController.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiChatTimestamp.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiClientFactory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiContextBuilder.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiEndpointSanitize.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiErrorRedact.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiModelCatalog.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiModelSignature.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiNdjsonParser.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiPrefsTestConnection.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AiSseParser.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AnthropicClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/OllamaClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/OpenAiClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetChatPersistWorker.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiAssistantStreaming401Scenario.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiAssistantStreamingHappyPathScenario.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiAssistantStreamingTransportDownScenario.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiChatHistoryRenderScenario.cpp"
+)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAiAssistantUi.cpp")
+    list(APPEND _SMATCHET_AI_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAiAssistantUi.cpp")
+endif()
+foreach(_smatchet_ai_src IN LISTS _SMATCHET_AI_SOURCES)
+    list(REMOVE_ITEM CORE_SOURCES "${_smatchet_ai_src}")
+endforeach()
+if(SMATCHET_WITH_AI)
+    list(APPEND CORE_SOURCES ${_SMATCHET_AI_SOURCES})
+endif()
+
 
 add_library(SmatchetCoreInterface INTERFACE)
 target_include_directories(SmatchetCoreInterface INTERFACE
@@ -1054,7 +1098,7 @@ if(WIN32)
 endif()
 
 add_executable(SmatchetStandalone ${STANDALONE_SOURCES} ${CORE_SOURCES})
-set_target_properties(SmatchetStandalone PROPERTIES OUTPUT_NAME "Smatchet")
+set_target_properties(SmatchetStandalone PROPERTIES OUTPUT_NAME "${SMATCHET_STANDALONE_OUTPUT_NAME}")
 if(WIN32)
     set_target_properties(SmatchetStandalone PROPERTIES WIN32_EXECUTABLE TRUE)
     # WIN32_EXECUTABLE -> /SUBSYSTEM:WINDOWS, whose default entry is WinMain. Standalone uses int main().

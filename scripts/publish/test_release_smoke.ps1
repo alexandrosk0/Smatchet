@@ -4,7 +4,8 @@ param(
     [string]$ExpectedVersion = "",
     [switch]$CheckInstallerSignatures,
     [switch]$ClearUserDataBeforeInstall,
-    [switch]$KeepUserDataAfterTest
+    [switch]$KeepUserDataAfterTest,
+    [switch]$SkipLightStandalone
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,6 +25,10 @@ if (-not (Test-Path -LiteralPath $assetsDir -PathType Container)) {
 }
 
 $portableZip = (Get-ChildItem -LiteralPath $assetsDir -Filter "*windows-portable.zip" -File | Select-Object -First 1).FullName
+$lightPortableZip = ""
+if (-not $SkipLightStandalone) {
+    $lightPortableZip = (Get-ChildItem -LiteralPath $assetsDir -Filter "*windows-light-portable.zip" -File | Select-Object -First 1).FullName
+}
 $installerExe = (Get-ChildItem -LiteralPath $assetsDir -Filter "*windows-setup.exe" -File | Select-Object -First 1).FullName
 $pluginZip = (Get-ChildItem -LiteralPath $assetsDir -Filter "*unreal-plugin.zip" -File | Select-Object -First 1).FullName
 $fabZip = (Get-ChildItem -LiteralPath $assetsDir -Filter "*fab-submission.zip" -File | Select-Object -First 1).FullName
@@ -32,18 +37,25 @@ $sourceZip = (Get-ChildItem -LiteralPath $assetsDir -Filter "*source.zip" -File 
 foreach ($required in @($portableZip, $installerExe, $pluginZip, $fabZip, $sourceZip)) {
     Require-File -Path $required
 }
+if (-not $SkipLightStandalone) {
+    Require-File -Path $lightPortableZip
+}
 
 $portableExtractDir = Join-Path $releaseRoot "smoke-portable"
+$lightPortableExtractDir = Join-Path $releaseRoot "smoke-portable-light"
 $pluginExtractDir = Join-Path $releaseRoot "smoke-plugin"
 $fabExtractDir = Join-Path $releaseRoot "smoke-fab"
 $sourceExtractDir = Join-Path $releaseRoot "smoke-source"
-foreach ($dir in @($portableExtractDir, $pluginExtractDir, $fabExtractDir, $sourceExtractDir)) {
+foreach ($dir in @($portableExtractDir, $lightPortableExtractDir, $pluginExtractDir, $fabExtractDir, $sourceExtractDir)) {
     if (Test-Path -LiteralPath $dir) {
         Remove-Item -LiteralPath $dir -Recurse -Force
     }
 }
 
 Expand-Archive -LiteralPath $portableZip -DestinationPath $portableExtractDir
+if (-not $SkipLightStandalone) {
+    Expand-Archive -LiteralPath $lightPortableZip -DestinationPath $lightPortableExtractDir
+}
 Expand-Archive -LiteralPath $pluginZip -DestinationPath $pluginExtractDir
 Expand-Archive -LiteralPath $fabZip -DestinationPath $fabExtractDir
 Expand-Archive -LiteralPath $sourceZip -DestinationPath $sourceExtractDir
@@ -56,6 +68,49 @@ if ($LASTEXITCODE -ne 0) {
     throw "Portable exe version-info validation failed."
 }
 $portableVersion = $portableVersionJson | ConvertFrom-Json
+$lightPortableVersion = $null
+$lightCliSmoke = $null
+if (-not $SkipLightStandalone) {
+    $lightPortableExe = Join-Path $lightPortableExtractDir "Smatchet-Light.exe"
+    $lightPortableVersionJson = & powershell -NoProfile -File (Join-Path $PSScriptRoot 'test_windows_version_info.ps1') `
+        -Path $lightPortableExe `
+        -ExpectedVersion $ExpectedVersion `
+        -ExpectedFileDescription "Smatchet Light Standalone"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Light portable exe version-info validation failed."
+    }
+    $lightPortableVersion = $lightPortableVersionJson | ConvertFrom-Json
+
+    $lightScriptsDir = Join-Path $lightPortableExtractDir "Scripts"
+    if (-not (Test-Path -LiteralPath $lightScriptsDir -PathType Container)) {
+        throw "Light portable zip must include Scripts/ (Lua automation)."
+    }
+
+    $listStdout = & $lightPortableExe cmd commands.list --pretty 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Smatchet-Light.exe cmd commands.list failed with exit $LASTEXITCODE."
+    }
+    $listEnvelope = $listStdout | ConvertFrom-Json
+    if (-not $listEnvelope.ok) {
+        throw "commands.list returned ok:false on light build."
+    }
+    foreach ($item in $listEnvelope.data.items) {
+        $name = [string]$item.name
+        if ($name -like "ai.*") {
+            throw "Light command catalog must not include AI commands; found '$name'."
+        }
+    }
+
+    $null = & $lightPortableExe cmd ai.send-once 2>&1
+    if ($LASTEXITCODE -ne 2) {
+        throw "Expected exit 2 (unknown-command) for ai.send-once on light build; got $LASTEXITCODE."
+    }
+    $lightCliSmoke = [ordered]@{
+        CommandsListExitCode = 0
+        AiSendOnceExitCode = 2
+        CommandCount = [int]$listEnvelope.data.items.Count
+    }
+}
 
 $pluginManifestPath = Join-Path $pluginExtractDir "SmatchetImGuiPlugin\SmatchetImGuiPlugin.uplugin"
 Require-File -Path $pluginManifestPath
@@ -106,6 +161,8 @@ $installerSmoke = $installerSmokeJson | ConvertFrom-Json
 [pscustomobject]@{
     ReleaseDir = $releaseRoot
     PortableVersionInfo = $portableVersion
+    LightPortableVersionInfo = $lightPortableVersion
+    LightCliSmoke = $lightCliSmoke
     PluginVersion = [string]$pluginManifest.VersionName
     PluginVersionNumber = [int]$pluginManifest.Version
     FabSubmissionVersion = [string]$fabMetadata.version

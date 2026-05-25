@@ -449,7 +449,11 @@ namespace smatchet_lua_init_detail {
 // dedicated UI key keeps the cast site straightforward.
 static AppController* ResolveApp(sol::this_state L) {
     sol::state_view lua(L);
-    return lua["__smatchet_app_ui"].get_or<AppController*>(nullptr);
+    const sol::object appObj = lua["__smatchet_app_ui"];
+    if (!appObj.valid() || appObj.get_type() == sol::type::lua_nil) {
+        return nullptr;
+    }
+    return appObj.as<AppController*>();
 }
 
 // TicketSetFieldGlue / TicketTransitionGlue lifted to AppController_LuaBindingsCore.cpp
@@ -1285,7 +1289,11 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
             // `__smatchet_app_ui` is the AppController* alias (see ResolveApp comment).
             // The Core `__smatchet_app` now holds an `ILuaBindingHost*`; resolving it
             // as AppController* would corrupt under multiple inheritance.
-            AppController* app = sv["__smatchet_app_ui"].get_or<AppController*>(nullptr);
+            const sol::object appObj = sv["__smatchet_app_ui"];
+            AppController* app = nullptr;
+            if (appObj.valid() && appObj.get_type() != sol::type::lua_nil) {
+                app = appObj.as<AppController*>();
+            }
             if (app && app->shuttingDown_.load()) {
                 luaL_error(L, "Script execution aborted (shutdown).");
             }

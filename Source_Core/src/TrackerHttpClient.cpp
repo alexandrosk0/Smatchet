@@ -75,7 +75,7 @@ TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpRes
                                                     std::to_string(attempt + 1));
                 return result;
             }
-            const long step = std::min(kPollIntervalMs, delayMs - waited);
+            const long step = (std::min)(kPollIntervalMs, delayMs - waited);
             std::this_thread::sleep_for(std::chrono::milliseconds(step));
             waited += step;
         }
