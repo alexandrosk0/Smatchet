@@ -615,9 +615,7 @@ inline void MarkPrefsDirty(UiDrawSession& d) {
     }
 }
 
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
 extern UiDrawSession g_ui;
-#endif
 
 /** Blocking join for audit file reload worker (no AppController capture). */
 void DrainAuditReloadFuture(UiDrawSession& d);

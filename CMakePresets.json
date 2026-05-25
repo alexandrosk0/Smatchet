@@ -113,7 +113,7 @@
                 "_smatchet-msys2-base"
             ],
             "displayName": "Ninja Debug + AddressSanitizer + UBSan (MSYS2 UCRT64)",
-            "description": "Debug build with -fsanitize=address,undefined for lifetime / bounds / UB bugs. ASan implies LSan on most platforms. Runtime overhead ~2-3x; libasan + libubsan must be on PATH at launch.",
+            "description": "Debug build with -fsanitize=address,undefined for lifetime / bounds / UB bugs. MSYS2 UCRT64 GCC/Clang do NOT ship the ASAN runtime — this preset works only if you have manually installed libasan. CI uses the ninja-msvc-asan preset (MSVC /fsanitize=address) instead.",
             "binaryDir": "${sourceDir}/build/ninja-debug-msys2-asan",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
@@ -128,7 +128,7 @@
                 "_smatchet-msys2-base"
             ],
             "displayName": "Ninja Debug + ThreadSanitizer (MSYS2 UCRT64)",
-            "description": "Debug build with -fsanitize=thread for data-race detection. MinGW-w64 GCC TSan support is partial / version-dependent on Windows; if symptoms surface, escalate to build-doctor. libtsan must be on PATH at launch.",
+            "description": "Debug build with -fsanitize=thread for data-race detection. MSYS2 UCRT64 GCC/Clang do NOT ship the TSAN runtime — this preset works only if you have manually installed libtsan. MSVC does not support TSAN; no CI coverage today.",
             "binaryDir": "${sourceDir}/build/ninja-debug-msys2-tsan",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
@@ -150,6 +150,24 @@
                 "SMATCHET_SANITIZER": "msan",
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "ninja-msvc-asan",
+            "hidden": false,
+            "displayName": "Ninja Debug + MSVC AddressSanitizer (CI)",
+            "description": "ASAN via MSVC /fsanitize=address. Used by CI because MSYS2 UCRT64 GCC/Clang do not ship the ASAN runtime. MSVC does not support UBSAN or TSAN. Run from a VS Developer Command Prompt.",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-msvc-asan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "asan",
+                "SMATCHET_AGENT_DEBUG": "ON",
+                "SMATCHET_WITH_LUA_AUTOMATION": "ON",
+                "SMATCHET_WITH_MCP": "ON"
             }
         },
         {
@@ -274,6 +292,14 @@
         {
             "name": "ninja-debug-msys2-msan",
             "configurePreset": "ninja-debug-msys2-msan",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-msvc-asan",
+            "configurePreset": "ninja-msvc-asan",
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"

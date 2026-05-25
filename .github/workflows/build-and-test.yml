@@ -424,19 +424,14 @@ jobs:
           path: build/ninja-ui-test-msys2/Smatchet.exe
           if-no-files-found: ignore
 
-  sanitizer-asan-ubsan:
-    # Slice 11 of docs/design/autonomous-debugging-no-creds.md — ASAN+UBSAN
-    # gate. Uses the existing `ninja-debug-msys2-asan` CMake preset which sets
-    # -fsanitize=address,undefined. Sanitizer failures are blocking (no
-    # continue-on-error) per UX Pillar 3 (Never crash / sanitizer-clean).
-    name: Sanitizer (ASAN + UBSAN)
+  sanitizer-asan:
+    # MSVC ASAN — MSYS2 UCRT64 GCC/Clang do NOT ship the ASAN runtime
+    # (no libasan.dll.a / libclang_rt.asan in compiler-rt). MSVC has built-in
+    # /fsanitize=address support. UBSAN is not available on MSVC.
+    name: Sanitizer (ASAN via MSVC)
     needs: windows-msys2-ucrt64
     runs-on: windows-2022
-    timeout-minutes: 40
-
-    defaults:
-      run:
-        shell: msys2 {0}
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -444,114 +439,44 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Cache FetchContent _deps (asan preset)
+      - name: Cache FetchContent _deps (msvc-asan)
         uses: actions/cache@v4
         with:
           path: |
-            build/ninja-debug-msys2-asan/_deps
-          key: ${{ runner.os }}-fetchcontent-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+            build/ninja-msvc-asan/_deps
+          key: ${{ runner.os }}-fetchcontent-msvc-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
 
-      - name: Configure ninja-debug-msys2-asan
-        run: cmake --preset ninja-debug-msys2-asan
+      - name: Configure ninja-msvc-asan
+        run: cmake --preset ninja-msvc-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF
 
-      - name: Build (ASAN + UBSAN)
-        run: cmake --build --preset ninja-debug-msys2-asan
+      - name: Build (ASAN via MSVC)
+        run: cmake --build --preset ninja-msvc-asan
 
-      - name: Run ctest under ASAN + UBSAN
-        working-directory: build/ninja-debug-msys2-asan
+      - name: Run ctest under ASAN
+        working-directory: build/ninja-msvc-asan
         run: ctest --output-on-failure
 
       - name: Surface sanitizer report in job summary
         if: failure()
+        shell: bash
         run: |
-          echo "## Sanitizer failure" >> "$GITHUB_STEP_SUMMARY"
+          echo "## ASAN failure (MSVC)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          # ctest logs are under Testing/Temporary/LastTest.log when available.
-          if [ -f build/ninja-debug-msys2-asan/Testing/Temporary/LastTest.log ]; then
-            grep -A 30 'ERROR: \(Address\|UndefinedBehavior\)Sanitizer' \
-              build/ninja-debug-msys2-asan/Testing/Temporary/LastTest.log \
+          if [ -f build/ninja-msvc-asan/Testing/Temporary/LastTest.log ]; then
+            grep -A 30 'ERROR: AddressSanitizer' \
+              build/ninja-msvc-asan/Testing/Temporary/LastTest.log \
               | head -80 >> "$GITHUB_STEP_SUMMARY" || true
           fi
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-  sanitizer-tsan:
-    # Slice 11 of docs/design/autonomous-debugging-no-creds.md — ThreadSanitizer
-    # data-race detection. Gated behind `tsan-out-of-band` label (same pattern as
-    # `tests-out-of-band` / `perf-out-of-band`). TSAN is noisier than ASAN on
-    # MinGW; ships with continue-on-error: true for a soak period.
-    name: Sanitizer (TSAN)
-    needs: windows-msys2-ucrt64
-    runs-on: windows-2022
-    timeout-minutes: 40
-    continue-on-error: true
-    if: >-
-      !contains(github.event.pull_request.labels.*.name, 'tsan-out-of-band')
-
-    defaults:
-      run:
-        shell: msys2 {0}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
-
-      - name: Cache FetchContent _deps (tsan preset)
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/ninja-debug-msys2-tsan/_deps
-          key: ${{ runner.os }}-fetchcontent-tsan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-fetchcontent-
-
-      - name: Configure ninja-debug-msys2-tsan
-        run: cmake --preset ninja-debug-msys2-tsan
-
-      - name: Build (TSAN)
-        run: cmake --build --preset ninja-debug-msys2-tsan
-
-      - name: Run ctest under TSAN
-        working-directory: build/ninja-debug-msys2-tsan
-        run: ctest --output-on-failure
-
-      - name: Surface TSAN report in job summary
-        if: failure()
-        run: |
-          echo "## ThreadSanitizer failure" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          if [ -f build/ninja-debug-msys2-tsan/Testing/Temporary/LastTest.log ]; then
-            grep -A 30 'WARNING: ThreadSanitizer' \
-              build/ninja-debug-msys2-tsan/Testing/Temporary/LastTest.log \
-              | head -80 >> "$GITHUB_STEP_SUMMARY" || true
-          fi
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+  # TSAN is not available on MSVC. MSYS2 UCRT64 GCC/Clang do NOT ship libtsan.
+  # This job is disabled until a Linux runner or a MinGW build with TSAN support
+  # becomes available. Kept as a commented template for future enablement.
+  # sanitizer-tsan:
+  #   name: Sanitizer (TSAN)
+  #   ...deferred — no runtime available on any Windows compiler...
