@@ -15,6 +15,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include "AppController.h"
+#include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 
@@ -69,22 +70,15 @@ class DockGapSentinelScenario : public IScenario {
         if (warmupFrames_ < 1) {
             warmupFrames_ = 1;
         }
-        captureWidth_ = IntArg(args, "windowWidth", 1920);
-        captureHeight_ = IntArg(args, "windowHeight", 1009);
-        if (captureWidth_ < 320) {
-            captureWidth_ = 320;
-        }
-        if (captureHeight_ < 240) {
-            captureHeight_ = 240;
-        }
+        captureSize_ = ParseScenarioCaptureSize(args);
         screenshotPath_ = StringArg(args, "screenshotPath", std::string());
         if (screenshotPath_.empty()) {
             outErr = "dock-gap-sentinel: screenshotPath is required";
             return;
         }
 
-        g_ui.requestWindowWidth = captureWidth_;
-        g_ui.requestWindowHeight = captureHeight_;
+        g_ui.requestWindowWidth = captureSize_.Width;
+        g_ui.requestWindowHeight = captureSize_.Height;
         g_ui.requestWindowResize = true;
     }
 
@@ -108,8 +102,8 @@ class DockGapSentinelScenario : public IScenario {
         nlohmann::json out;
         out["scenario"] = Name();
         out["warmupFrames"] = warmupFrames_;
-        out["windowWidth"] = captureWidth_;
-        out["windowHeight"] = captureHeight_;
+        out["windowWidth"] = captureSize_.Width;
+        out["windowHeight"] = captureSize_.Height;
         out["screenshotPath"] = screenshotPath_;
         out["captureRequested"] = true;
         return out;
@@ -117,8 +111,7 @@ class DockGapSentinelScenario : public IScenario {
 
   private:
     int warmupFrames_ = 8;
-    int captureWidth_ = 1920;
-    int captureHeight_ = 1009;
+    ScenarioCaptureSize captureSize_;
     std::string screenshotPath_;
 };
 

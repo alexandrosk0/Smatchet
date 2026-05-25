@@ -8,6 +8,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include "AppController.h"
+#include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 
@@ -65,14 +66,7 @@ class CommandPaletteFuzzyScenario : public IScenario {
             // screenshot is meaningful.
             warmupFrames_ = 2;
         }
-        captureWidth_ = IntArg(args, "windowWidth", 1920);
-        captureHeight_ = IntArg(args, "windowHeight", 1009);
-        if (captureWidth_ < 320) {
-            captureWidth_ = 320;
-        }
-        if (captureHeight_ < 240) {
-            captureHeight_ = 240;
-        }
+        captureSize_ = ParseScenarioCaptureSize(args);
         filter_ = StringArg(args, "filter", std::string("scenario."));
         screenshotPath_ = StringArg(args, "screenshotPath", std::string());
         if (screenshotPath_.empty()) {
@@ -92,8 +86,8 @@ class CommandPaletteFuzzyScenario : public IScenario {
         // persists for ephemeral spawns.
         savedBackendReachable_ = g_ui.cfg.BackendHasBeenReachable;
         g_ui.cfg.BackendHasBeenReachable = true;
-        g_ui.requestWindowWidth = captureWidth_;
-        g_ui.requestWindowHeight = captureHeight_;
+        g_ui.requestWindowWidth = captureSize_.Width;
+        g_ui.requestWindowHeight = captureSize_.Height;
         g_ui.requestWindowResize = true;
         // Stage the open + filter request now; SmatchetUI::Draw will consume
         // it on its next frame (which is also the scenario's first OnFrame).
@@ -129,8 +123,8 @@ class CommandPaletteFuzzyScenario : public IScenario {
         nlohmann::json out;
         out["scenario"] = Name();
         out["warmupFrames"] = warmupFrames_;
-        out["windowWidth"] = captureWidth_;
-        out["windowHeight"] = captureHeight_;
+        out["windowWidth"] = captureSize_.Width;
+        out["windowHeight"] = captureSize_.Height;
         out["filter"] = filter_;
         out["screenshotPath"] = screenshotPath_;
         out["captureRequested"] = true;
@@ -139,8 +133,7 @@ class CommandPaletteFuzzyScenario : public IScenario {
 
   private:
     int warmupFrames_ = 8;
-    int captureWidth_ = 1920;
-    int captureHeight_ = 1009;
+    ScenarioCaptureSize captureSize_;
     std::string filter_;
     std::string screenshotPath_;
     bool savedBackendReachable_ = false;

@@ -334,8 +334,8 @@ jobs:
           mkdir -p "${TMPDIR}"
           bash scripts/dev/test-screenshot-diff.sh
 
-      - name: Upload captured PNGs on failure (for golden bootstrap)
-        if: failure()
+      - name: Upload captured PNGs (for golden bootstrap)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bucket-c-captures-${{ github.run_id }}

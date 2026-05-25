@@ -55,7 +55,7 @@ Console arguments are intentionally JSON-first: everything after the command nam
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: N/A; Unreal plugin console integration is outside the pure core test rig.
+- **Bucket A (pure-logic ctest, `test-rig`)**: `ScenarioCaptureSizing.test.cpp` covers the shared screenshot scenario sizing helper added during the Bucket-C follow-up.
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)**: N/A; no visual ImGui behavior changes.
 - **Bash-driver scenario / screenshot / sanitizer**: N/A unless an Unreal console automation harness exists.
 - **Build gate**: `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release`.
@@ -71,6 +71,7 @@ Console arguments are intentionally JSON-first: everything after the command nam
 - 2026-05-25: Added Unreal console command registration for `smartchat` / `smatchet`, bootstrap aliases, async result polling, and `commands.list`-driven direct aliases such as `smartchat.app.version`.
 - 2026-05-25: Documented console usage, JSON args, `--yes`, `--dry-run`, and alias refresh in the Unreal plugin manual.
 - 2026-05-25: Restored screenshot capture handling in the shared standalone spawn loop after Bucket-C caught missing scenario captures.
+- 2026-05-25: Split shared screenshot scenario sizing into a pure helper with doctest coverage so `Source_Core` changes satisfy the test-delta gate.
 
 ## Deviations from plan
 
@@ -81,6 +82,9 @@ Console arguments are intentionally JSON-first: everything after the command nam
 
 - `git diff --check` passes.
 - `clang-format -i` ran on the edited Unreal plugin C++ files.
+- `cmake --build --preset ninja-test-msys2 --target SmatchetTests` passes after reconfiguring the preset under the MSYS2 UCRT toolchain.
+- `.\build\ninja-test-msys2\tests\SmatchetTests.exe --test-case="scenario capture sizing*"` passes: 3 cases, 6 assertions.
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` passes.
 - `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release` passes end-to-end: CMake repackaged the native DX12 light profile, deployed the plugin to the local TestProject, UHT ran, and UBT compiled/linked `TestProject.exe` with `SmatchetImGuiConsoleCommands.cpp`.
 - Bucket-C was rechecked after restoring shared-loop screenshot capture and deterministic scenario capture sizing.
 - Bucket-C remains advisory in CI pending approved CI goldens; the job now preserves captures without failing the PR check.
