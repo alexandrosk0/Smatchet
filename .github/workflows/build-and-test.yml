@@ -452,7 +452,7 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Configure ninja-msvc-asan
-        run: cmake --preset ninja-msvc-asan
+        run: cmake --preset ninja-msvc-asan -DSMATCHET_WITH_WHISPER=OFF
 
       - name: Build (ASAN via MSVC)
         run: cmake --build --preset ninja-msvc-asan
