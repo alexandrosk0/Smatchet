@@ -10,7 +10,14 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
+#include <cstdarg>
+#include <cstdio>
+#include <string>
+
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiConsole, Log, All);
+
+#define LOG_INFO(fmt, ...) SmatchetConsoleLogf(ELogVerbosity::Log, (fmt), ##__VA_ARGS__)
+#define LOG_WARN(fmt, ...) SmatchetConsoleLogf(ELogVerbosity::Warning, (fmt), ##__VA_ARGS__)
 
 namespace {
 
@@ -45,7 +52,23 @@ bool GDiscoveryQueued = false;
 
 bool TickSmatchetConsoleRequests(float);
 void ExecuteSmatchetConsoleCommand(const FString& CommandName, const TArray<FString>& Args);
-void RequestSmatchetConsoleDiscovery();
+bool RequestSmatchetConsoleDiscovery();
+
+void SmatchetConsoleLogf(ELogVerbosity::Type Verbosity, const char* Fmt, ...) {
+    char Buffer[4096];
+    va_list Args;
+    va_start(Args, Fmt);
+    std::vsnprintf(Buffer, sizeof(Buffer), Fmt, Args);
+    va_end(Args);
+    Buffer[sizeof(Buffer) - 1] = '\0';
+    FMsg::Logf(__FILE__, __LINE__, LogSmatchetImGuiConsole.GetCategoryName(), Verbosity, TEXT("%s"),
+               UTF8_TO_TCHAR(Buffer));
+}
+
+std::string ToLogString(const FString& Value) {
+    FTCHARToUTF8 Utf8(*Value);
+    return std::string(Utf8.Get(), Utf8.Length());
+}
 
 FString JoinConsoleJsonArgs(const TArray<FString>& Args, int32 StartIndex, bool& bConfirmedDestructive, bool& bDryRun) {
     TArray<FString> JsonParts;
@@ -99,9 +122,8 @@ void EnsureSmatchetConsoleTickerLocked() {
 
 void QueueSmatchetConsoleRequest(int64 RequestId, const FString& CommandName, ESmatchetConsoleRequestKind Kind) {
     if (RequestId <= 0) {
-        UE_LOG(LogSmatchetImGuiConsole, Warning,
-               TEXT("Smatchet console command '%s' could not be queued because the native host is unavailable."),
-               *CommandName);
+        LOG_WARN("Smatchet console command '%s' could not be queued because the native host is unavailable.",
+                 ToLogString(CommandName).c_str());
         return;
     }
 
@@ -114,15 +136,16 @@ void QueueSmatchetConsoleRequest(int64 RequestId, const FString& CommandName, ES
     EnsureSmatchetConsoleTickerLocked();
 }
 
-void EnqueueSmatchetConsoleCommand(const FString& CommandName, const FParsedSmatchetConsoleArgs& Parsed,
-                                   ESmatchetConsoleRequestKind Kind) {
+int64 EnqueueSmatchetConsoleCommand(const FString& CommandName, const FParsedSmatchetConsoleArgs& Parsed,
+                                    ESmatchetConsoleRequestKind Kind) {
     const int64 RequestId = USmatchetImGuiCommandBridge::EnqueueSmatchetCommand(
         CommandName, Parsed.ArgsJson, Parsed.bConfirmedDestructive, Parsed.bDryRun);
     if (RequestId > 0) {
-        UE_LOG(LogSmatchetImGuiConsole, Log, TEXT("Queued Smatchet command %s as request %lld."), *CommandName,
-               static_cast<long long>(RequestId));
+        LOG_INFO("Queued Smatchet command %s as request %lld.", ToLogString(CommandName).c_str(),
+                 static_cast<long long>(RequestId));
     }
     QueueSmatchetConsoleRequest(RequestId, CommandName, Kind);
+    return RequestId;
 }
 
 void ExecuteSmatchetConsoleCommand(const FString& CommandName, const TArray<FString>& Args) {
@@ -132,9 +155,8 @@ void ExecuteSmatchetConsoleCommand(const FString& CommandName, const TArray<FStr
 
 void ExecuteSmatchetGenericConsoleCommand(const TArray<FString>& Args) {
     if (Args.Num() == 0) {
-        UE_LOG(LogSmatchetImGuiConsole, Display,
-               TEXT("Usage: smartchat <command.name> [--yes] [--dry-run] [json-object]. Example: smartchat "
-                    "commands.list {\"full\":true}"));
+        LOG_INFO("Usage: smartchat <command.name> [--yes] [--dry-run] [json-object]. Example: smartchat "
+                 "commands.list {\"full\":true}");
         return;
     }
 
@@ -155,9 +177,8 @@ IConsoleObject* RegisterSmatchetConsoleObject(const FString& ConsoleName, const 
         return nullptr;
     }
     if (ConsoleManager.FindConsoleObject(*ConsoleName) != nullptr) {
-        UE_LOG(LogSmatchetImGuiConsole, Warning,
-               TEXT("Skipping Smatchet console command '%s' because another console object already owns that name."),
-               *ConsoleName);
+        LOG_WARN("Skipping Smatchet console command '%s' because another console object already owns that name.",
+                 ToLogString(ConsoleName).c_str());
         return nullptr;
     }
 
@@ -171,8 +192,7 @@ IConsoleObject* RegisterSmatchetConsoleObject(const FString& ConsoleName, const 
 
 void RegisterSmatchetNativeConsoleCommand(const FString& CommandName) {
     if (!IsSafeConsoleCommandName(CommandName)) {
-        UE_LOG(LogSmatchetImGuiConsole, Warning, TEXT("Skipping unsafe Smatchet console command name '%s'."),
-               *CommandName);
+        LOG_WARN("Skipping unsafe Smatchet console command name '%s'.", ToLogString(CommandName).c_str());
         return;
     }
 
@@ -218,28 +238,25 @@ void RegisterSmatchetDiscoveredConsoleCommands(const FString& ResultJson) {
     TSharedPtr<FJsonObject> Root;
     const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResultJson);
     if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid()) {
-        UE_LOG(LogSmatchetImGuiConsole, Warning, TEXT("Could not parse commands.list result: %s"), *ResultJson);
+        LOG_WARN("Could not parse commands.list result: %s", ToLogString(ResultJson).c_str());
         return;
     }
 
     bool bOk = false;
     if (!Root->TryGetBoolField(TEXT("ok"), bOk) || !bOk) {
-        UE_LOG(LogSmatchetImGuiConsole, Warning, TEXT("commands.list failed while refreshing console aliases: %s"),
-               *ResultJson);
+        LOG_WARN("commands.list failed while refreshing console aliases: %s", ToLogString(ResultJson).c_str());
         return;
     }
 
     const TSharedPtr<FJsonObject>* DataObject = nullptr;
     if (!Root->TryGetObjectField(TEXT("data"), DataObject) || !DataObject || !DataObject->IsValid()) {
-        UE_LOG(LogSmatchetImGuiConsole, Warning, TEXT("commands.list result did not include a data object: %s"),
-               *ResultJson);
+        LOG_WARN("commands.list result did not include a data object: %s", ToLogString(ResultJson).c_str());
         return;
     }
 
     const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
     if (!(*DataObject)->TryGetArrayField(TEXT("items"), Items) || !Items) {
-        UE_LOG(LogSmatchetImGuiConsole, Warning, TEXT("commands.list result did not include data.items: %s"),
-               *ResultJson);
+        LOG_WARN("commands.list result did not include data.items: %s", ToLogString(ResultJson).c_str());
         return;
     }
 
@@ -261,15 +278,16 @@ void RegisterSmatchetDiscoveredConsoleCommands(const FString& ResultJson) {
         RegisteredCount += GRegisteredSmatchetConsoleNames.Num() - BeforeCount;
     }
 
-    UE_LOG(LogSmatchetImGuiConsole, Log, TEXT("Smatchet console aliases refreshed from commands.list (%d aliases)."),
-           RegisteredCount);
+    LOG_INFO("Smatchet console aliases refreshed from commands.list (%d aliases).", RegisteredCount);
 }
 
-void RequestSmatchetConsoleDiscovery() {
+bool RequestSmatchetConsoleDiscovery() {
     FParsedSmatchetConsoleArgs Parsed;
     Parsed.ArgsJson = TEXT("{\"full\":true,\"limit\":500}");
-    EnqueueSmatchetConsoleCommand(TEXT("commands.list"), Parsed, ESmatchetConsoleRequestKind::Discovery);
-    GDiscoveryQueued = true;
+    const int64 RequestId =
+        EnqueueSmatchetConsoleCommand(TEXT("commands.list"), Parsed, ESmatchetConsoleRequestKind::Discovery);
+    GDiscoveryQueued = RequestId > 0;
+    return GDiscoveryQueued;
 }
 
 bool TickSmatchetConsoleRequests(float) {
@@ -308,8 +326,8 @@ bool TickSmatchetConsoleRequests(float) {
         if (Completed.Kind == ESmatchetConsoleRequestKind::Discovery) {
             RegisterSmatchetDiscoveredConsoleCommands(Completed.ResultJson);
         } else {
-            UE_LOG(LogSmatchetImGuiConsole, Display, TEXT("Smatchet command %s result: %s"), *Completed.CommandName,
-                   *Completed.ResultJson);
+            LOG_INFO("Smatchet command %s result: %s", ToLogString(Completed.CommandName).c_str(),
+                     ToLogString(Completed.ResultJson).c_str());
         }
     }
 

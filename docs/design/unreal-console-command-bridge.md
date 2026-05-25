@@ -68,7 +68,7 @@ Console arguments are intentionally JSON-first: everything after the command nam
 
 ## Implementation log
 
-- 2026-05-25: Added Unreal console command registration for `smartchat` / `smatchet`, bootstrap aliases, async result polling, and `commands.list` driven direct aliases such as `smartchat.app.version`.
+- 2026-05-25: Added Unreal console command registration for `smartchat` / `smatchet`, bootstrap aliases, async result polling, and `commands.list`-driven direct aliases such as `smartchat.app.version`.
 - 2026-05-25: Documented console usage, JSON args, `--yes`, `--dry-run`, and alias refresh in the Unreal plugin manual.
 
 ## Deviations from plan
