@@ -36,8 +36,8 @@ Console arguments are intentionally JSON-first: everything after the command nam
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A - <reason>`)
 
-1. **PR-fast CI** - N/A: no `Source_Core` diff expected.
-2. **Pillar 2 static scanner** - N/A: no core/UI-thread scanner target changed; plugin path is async-only.
+1. **PR-fast CI** - Required after the follow-up `Source_Core` screenshot-scenario sizing fix.
+2. **Pillar 2 static scanner** - N/A: no blocking UI-thread operation added; follow-up only requests a resize and screenshot through existing render-loop flags.
 3. **Dispatcher drain** - N/A: does not touch `MainThreadDispatcher::Drain()`.
 4. **Visible-cue bucket-E harness** - N/A: no new synchronous UI stall path.
 5. **Marker inventory** - N/A: no new `SMATCHET_UI_PERF_SCOPE` markers.
@@ -70,6 +70,7 @@ Console arguments are intentionally JSON-first: everything after the command nam
 
 - 2026-05-25: Added Unreal console command registration for `smartchat` / `smatchet`, bootstrap aliases, async result polling, and `commands.list`-driven direct aliases such as `smartchat.app.version`.
 - 2026-05-25: Documented console usage, JSON args, `--yes`, `--dry-run`, and alias refresh in the Unreal plugin manual.
+- 2026-05-25: Restored screenshot capture handling in the shared standalone spawn loop after Bucket-C caught missing scenario captures.
 
 ## Deviations from plan
 
@@ -81,3 +82,5 @@ Console arguments are intentionally JSON-first: everything after the command nam
 - `git diff --check` passes.
 - `clang-format -i` ran on the edited Unreal plugin C++ files.
 - `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release` passes end-to-end: CMake repackaged the native DX12 light profile, deployed the plugin to the local TestProject, UHT ran, and UBT compiled/linked `TestProject.exe` with `SmatchetImGuiConsoleCommands.cpp`.
+- Bucket-C was rechecked after restoring shared-loop screenshot capture and deterministic scenario capture sizing.
+- Bucket-C remains advisory in CI pending approved CI goldens; the job now preserves captures without failing the PR check.

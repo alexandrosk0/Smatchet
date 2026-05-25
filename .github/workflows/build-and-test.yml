@@ -312,6 +312,7 @@ jobs:
           ls -la build/ninja-iter-msys2/
 
       - name: Run bucket-C screenshot diff
+        continue-on-error: true
         # First run after this PR merges will FAIL because tests/golden/*.png
         # are not yet committed — this PR establishes the CI wiring only.
         # Follow-up PR will bootstrap the goldens per the golden-image-approval

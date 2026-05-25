@@ -30,6 +30,18 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+#include <stb/stb_image_write.h>
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 #include <GLFW/glfw3.h>
 
 #include <ghc/filesystem.hpp>
@@ -62,6 +74,12 @@
 #endif
 
 extern UiDrawSession g_ui;
+
+namespace smatchet {
+namespace standalone {
+BootstrapContext::~BootstrapContext() = default;
+} // namespace standalone
+} // namespace smatchet
 
 namespace smatchet {
 namespace standalone {
@@ -179,6 +197,61 @@ static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smat
 #else
     SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
 #endif
+}
+
+static void SmatchetWritePendingScreenshot(GLFWwindow* window) {
+    if (!g_ui.requestScreenshot) {
+        return;
+    }
+
+    g_ui.requestScreenshot = false;
+    const std::string screenshotPath = g_ui.requestScreenshotPath;
+    int fw = 0;
+    int fh = 0;
+    glfwGetFramebufferSize(window, &fw, &fh);
+    if (fw <= 0 || fh <= 0 || screenshotPath.empty()) {
+        LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
+        return;
+    }
+
+    std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
+    glReadBuffer(GL_FRONT);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+    const size_t rowBytesRgb = static_cast<size_t>(fw) * 3u;
+    std::vector<unsigned char> rgb(static_cast<size_t>(fh) * rowBytesRgb);
+    for (int y = 0; y < fh; ++y) {
+        const unsigned char* src = &pixels[static_cast<size_t>(fh - 1 - y) * static_cast<size_t>(fw) * 4u];
+        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
+        for (int x = 0; x < fw; ++x) {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst += 3;
+            src += 4;
+        }
+    }
+
+    stbi_write_png_compression_level = 8;
+    const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), static_cast<int>(rowBytesRgb));
+    if (rc == 0) {
+        LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
+    } else {
+        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PNG)", screenshotPath.c_str(), fw, fh);
+    }
+}
+
+static void SmatchetApplyPendingWindowResize(GLFWwindow* window) {
+    if (!g_ui.requestWindowResize) {
+        return;
+    }
+
+    g_ui.requestWindowResize = false;
+    const int w = std::max(320, g_ui.requestWindowWidth);
+    const int h = std::max(240, g_ui.requestWindowHeight);
+    glfwSetWindowSize(window, w, h);
+    LOG_INFO("debug.window.resize: %dx%d", w, h);
 }
 
 } // namespace
@@ -414,6 +487,8 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(ctx.window);
+        SmatchetApplyPendingWindowResize(ctx.window);
+        SmatchetWritePendingScreenshot(ctx.window);
 
         if (shouldStop && shouldStop()) {
             break;

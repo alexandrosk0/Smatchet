@@ -794,6 +794,13 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
                 std::fclose(f);
                 try {
                     const nlohmann::json fileData = nlohmann::json::parse(content);
+                    const bool captureRequested = SafeBool(fileData, "captureRequested", false);
+                    const std::string screenshotPath = SafeString(fileData, "screenshotPath");
+                    if (captureRequested && !screenshotPath.empty()) {
+                        std::fprintf(stderr, "[spawn] waiting for screenshot capture ...\n");
+                        WaitForFile(screenshotPath, 2000);
+                    }
+
                     nlohmann::json resultEnv;
                     resultEnv["ok"] = true;
                     resultEnv["command"] = commandName;
