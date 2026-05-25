@@ -519,6 +519,8 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
   - Registry: 5 new lines in `Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp` (AI trio gated under `#if defined(SMATCHET_WITH_AI)`); 5 new extern declarations at global scope above; matching stubs in `tests/Source_Core/SmatchetScenarioRegistry.stubs.cpp` + snapshot-set additions in `tests/Source_Core/SmatchetScenarioRegistry.test.cpp`.
   - `docs/backlog/agent-self-improvement/tooling.md` — `blame_open_entry_tab` snake-case citation renamed to `blame-open-entry-tab` kebab to match the convention.
 
+- 2026-05-24 — **Slice 11** — Sanitizer CI gates + merge-watcher auto-act on sanitizer fail. Two new CI jobs in `.github/workflows/build-and-test.yml`: `sanitizer-asan-ubsan` (blocking, `ninja-debug-msys2-asan` preset) + `sanitizer-tsan` (advisory, `continue-on-error: true`, gated behind `tsan-out-of-band` label). `scripts/dev/merge-watcher.py` extended: `_looks_like_sanitizer_failure` detection, `AUTO_ACT_SANITIZER_PROMPT` (invokes `debug-detective` directly, skips `coderabbit-triage`), `MERGE_WATCH_AUTO_ACT_ON_SANITIZER` env knob (default false). Branch: `slice-11-sanitizer-ci-auto-act`.
+
 ## Deviations from plan
 
 <!-- populated when the slices ship -->
@@ -613,3 +615,16 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 | V10.1 | PASS | `bash scripts/dev/test-agent-contract.sh` check 13/13 — `grep -qF "reproducer-first contract" agents/debug-detective.md` succeeds; 25/25 checks pass overall |
 | V10.2 | DEFERRED | C++ doctest meta-smoke test not authored in this pure-docs slice; flagged in § Deviations |
 | V10.3 | DEFERRED | Bats coverage for orphan-scenario sweep dry-run not authored in this pure-docs slice; flagged in § Deviations. Sweep recipe lives inline in `agents/git-janitor.md` step 10.5 and is bats-coverable from there |
+
+**Slice 11 — Sanitizer CI gates + merge-watcher auto-act on sanitizer fail (2026-05-24)**
+
+| # | Item | Status |
+|---|---|---|
+| V11.1 | YAML syntax validation (`yaml.safe_load`) | PASS |
+| V11.2 | Python syntax validation (`ast.parse`) | PASS |
+| V11.3 | `sanitizer-asan-ubsan` job added to workflow (blocking, `needs: windows-msys2-ucrt64`) | PASS |
+| V11.4 | `sanitizer-tsan` job added (advisory, `continue-on-error: true`, gated behind `tsan-out-of-band` label) | PASS |
+| V11.5 | `_looks_like_sanitizer_failure` detection function added | PASS |
+| V11.6 | `AUTO_ACT_SANITIZER_PROMPT` invokes `debug-detective` directly (skips `coderabbit-triage`) | PASS |
+| V11.7 | `MERGE_WATCH_AUTO_ACT_ON_SANITIZER` env knob (default false) | PASS |
+| V11.8 | Existing `merge_watcher.bats` — no regressions from slice 11 changes | PASS (1 pre-existing failure unrelated to slice 11) |

@@ -19,9 +19,12 @@ Usage:
   merge-watcher daemon --background   # detached (Phase 1 stub; for now defers to user using `&`)
 
 Env knobs:
-  MERGE_WATCH_POLL_INTERVAL — seconds between per-PR polls (default 60).
-  MERGE_GATES_*             — inherited by merge-gates.sh per its own contract.
-  ORCH_USER                 — required by merge-gates.sh.
+  MERGE_WATCH_POLL_INTERVAL         — seconds between per-PR polls (default 60).
+  MERGE_GATES_*                     — inherited by merge-gates.sh per its own contract.
+  ORCH_USER                         — required by merge-gates.sh.
+  MERGE_WATCH_AUTO_ACT_ON_SANITIZER — opt-in (default false). When true, sanitizer
+                                      CI failures trigger auto-act with debug-detective
+                                      (skips coderabbit-triage).
 """
 
 from __future__ import annotations
@@ -838,6 +841,44 @@ def _looks_like_cr_finding_block(status_line: str) -> bool:
     ) or "changes_requested" in s
 
 
+def _looks_like_sanitizer_failure(status_line: str) -> bool:
+    """Detect whether the merge-gates Poll line indicates a sanitizer CI failure.
+
+    Matches ASAN / UBSAN / TSAN failure signatures that appear in CI check
+    names or status lines when the `sanitizer-asan-ubsan` or `sanitizer-tsan`
+    jobs fail. The merge-gates poller surfaces the failing check name in the
+    Poll line; we match on the job name pattern.
+    """
+    s = status_line.lower()
+    return (
+        "sanitizer" in s
+        and ("fail" in s or "error" in s or "block" in s or "conclusion" in s)
+    ) or (
+        ("addresssanitizer" in s or "undefinedbehaviorsanitizer" in s or "threadsanitizer" in s)
+    )
+
+
+def _extract_failing_test_from_status(status_line: str) -> str:
+    """Best-effort extraction of the failing test name from a sanitizer status line.
+
+    The merge-gates poller emits check names like "Sanitizer (ASAN + UBSAN)" in
+    its Poll output. If a specific test name appears (e.g. from ctest output
+    forwarded into the status), extract it. Falls back to "(see CI log)" when
+    the line doesn't contain a recognizable test name.
+    """
+    import re
+    # Look for patterns like "test_name" or "TestSuite::TestCase" in the line.
+    # CTest output often has "The following tests FAILED: N - test_name (...)".
+    m = re.search(r'\d+\s*-\s*(\S+)', status_line)
+    if m:
+        return m.group(1)
+    # Fallback: look for anything that looks like a test identifier.
+    m = re.search(r'(?:test[_-]?\w+)', status_line, re.IGNORECASE)
+    if m:
+        return m.group(0)
+    return "(see CI log)"
+
+
 def _bump_triage_attempts(pr: int, clone_path: str, new_count: int, head_sha: str = "") -> None:
     """Update registry entry's triage_attempts (and triage_for_head_sha when given).
 
@@ -959,14 +1000,42 @@ AUTO_ACT_PROMPT = (
 )
 
 
+AUTO_ACT_SANITIZER_PROMPT = (
+    "You are the auto-act helper spawned by smatchet-merge-watcher because "
+    "PR #{pr} has a FAILING sanitizer CI job.\n\n"
+    "A sanitizer failure was detected. Invoke `debug-detective` directly to "
+    "diagnose and fix the issue. Steps:\n"
+    "  1. `gh pr checkout {pr}` to switch this clone to the PR's branch.\n"
+    "  2. **Invoke `debug-detective`** (per `agents/debug-detective.md`) with:\n"
+    "     - Failing test: {failing_test}\n"
+    "     - CI job log URL: https://github.com/{owner}/{repo}/actions/runs/"
+    "{{run_id}} (check the sanitizer job output)\n"
+    "     - The sanitizer stderr constitutes the reproducer per slice 10's "
+    "reproducer-first contract.\n"
+    "  3. Do NOT invoke `coderabbit-triage` — this is a sanitizer failure, "
+    "not a CR-finding block.\n"
+    "  4. Apply the smallest fix that resolves the sanitizer error.\n"
+    "  5. Build with `cmake --build --preset ninja-debug-msys2-asan` and run "
+    "`ctest --output-on-failure` in the build dir to confirm the fix.\n"
+    "  6. `git commit` with a message of the form "
+    "`fix(sanitizer): resolve ASAN/UBSAN finding on PR #{pr}` and `git push`.\n\n"
+    "Auto-act head_sha at dispatch was {head_sha}. If the PR's head has moved "
+    "since (user pushed manually), STOP — say so and exit without committing.\n"
+    "Auto-act is gated to {budget} attempts per PR lifetime; this is attempt "
+    "{attempt}/{budget}."
+)
+
+
 def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
     """Option-A loop closer — spawn `claude -p ...` in the background to
-    address CR findings when the watcher hits a CR-finding terminal state.
+    address CR findings OR sanitizer failures when the watcher detects them.
 
-    Opt-in via `MERGE_WATCH_AUTO_ACT=true`. Off by default — auto-spawning
-    a Claude session against a checked-in clone has real cost (token spend)
-    + runaway-loop risk (Claude's fix produces new CR findings → another
-    auto-act → repeat). Safeguards:
+    CR-finding path: Opt-in via `MERGE_WATCH_AUTO_ACT=true`.
+    Sanitizer path:  Opt-in via `MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true`
+                     (separate knob — sanitizer auto-act is independent).
+
+    Off by default — auto-spawning a Claude session against a checked-in
+    clone has real cost (token spend) + runaway-loop risk. Safeguards:
 
       - Single attempt per (PR, head_sha) pair. Dedup key persisted on the
         registry entry's `auto_act_for_head_sha` field. A push to the PR
@@ -981,13 +1050,31 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         Claude's session runtime; output captured to a per-(PR,sha) log
         file under the state dir for after-the-fact inspection.
 
+    When the trigger is a sanitizer failure (not CR-finding), the spawned
+    session invokes `debug-detective` directly — skips `coderabbit-triage`.
+
     Returns extras dict to merge into the state.
     """
-    if os.environ.get("MERGE_WATCH_AUTO_ACT", "").strip().lower() not in {"true", "1", "yes"}:
-        return {}
     cur_state = state.get("last_state", "")
     status_line = state.get("last_status_line", "")
-    if cur_state != "TRIAGE_BUDGET_EXHAUSTED" and not _looks_like_cr_finding_block(status_line):
+    # Determine which trigger path applies.
+    is_cr_trigger = (
+        cur_state == "TRIAGE_BUDGET_EXHAUSTED"
+        or _looks_like_cr_finding_block(status_line)
+    )
+    is_sanitizer_trigger = _looks_like_sanitizer_failure(status_line)
+    # Gate on the appropriate env knob.
+    auto_act_enabled = os.environ.get(
+        "MERGE_WATCH_AUTO_ACT", ""
+    ).strip().lower() in {"true", "1", "yes"}
+    sanitizer_auto_act_enabled = os.environ.get(
+        "MERGE_WATCH_AUTO_ACT_ON_SANITIZER", ""
+    ).strip().lower() in {"true", "1", "yes"}
+    if is_sanitizer_trigger and sanitizer_auto_act_enabled:
+        trigger_kind = "sanitizer"
+    elif is_cr_trigger and auto_act_enabled:
+        trigger_kind = "cr"
+    else:
         return {}
     pr = int(entry["pr"])
     clone_path = entry["clone_path"]
@@ -1048,10 +1135,21 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
     attempts_after = payload  # int — the reserved slot index
     # Spawn detached.
     log_path = state_dir() / f"{pr}-auto-act-{head_sha[:8]}.log"
-    prompt = AUTO_ACT_PROMPT.format(
-        pr=pr, owner=owner, repo=repo,
-        head_sha=head_sha[:12], budget=budget, attempt=attempts_after,
-    )
+    # Select the appropriate prompt template based on trigger kind.
+    if trigger_kind == "sanitizer":
+        # Extract a rough failing-test name from the status line. The
+        # merge-gates poller includes the check name; best-effort parse.
+        failing_test = _extract_failing_test_from_status(status_line)
+        prompt = AUTO_ACT_SANITIZER_PROMPT.format(
+            pr=pr, owner=owner, repo=repo,
+            head_sha=head_sha[:12], budget=budget, attempt=attempts_after,
+            failing_test=failing_test,
+        )
+    else:
+        prompt = AUTO_ACT_PROMPT.format(
+            pr=pr, owner=owner, repo=repo,
+            head_sha=head_sha[:12], budget=budget, attempt=attempts_after,
+        )
     try:
         # Context-manage the parent's log handle. The child inherits its
         # own copy via the OS dup-on-fork/spawn; the parent's close-after-
