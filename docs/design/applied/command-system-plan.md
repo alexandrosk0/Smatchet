@@ -29,7 +29,7 @@ The CLI must be agent-friendly first, human-friendly second. Every design decisi
 
 ### Feature-gated builds (`SMATCHET_WITH_*`)
 
-Per [`docs/adr/0010-light-profile-feature-gated-command-registry.md`](../adr/0010-light-profile-feature-gated-command-registry.md):
+Per [`docs/adr/0010-light-profile-feature-gated-command-registry.md`](../../adr/0010-light-profile-feature-gated-command-registry.md):
 
 - When an optional feature is **OFF** at compile time (AI, MCP, Whisper, …), its commands are **not registered** — no stub handlers that return “disabled in this build.”
 - `commands.list`, palette fuzzy search, and MCP `tools/call` only expose **present** features. Calling a disabled-feature name → **`unknown-command`** (+ fuzzy `suggestions` among registered names).

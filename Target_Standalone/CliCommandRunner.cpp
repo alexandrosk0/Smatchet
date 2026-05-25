@@ -919,7 +919,7 @@ int RunCmdInProcessImpl(int argc, char** argv) {
             argsToSend["__timeout_ms"] = pa.timeoutMs;
         }
 
-        const bool tier1 = IsTier1MetaCommand(toolName);
+        const bool tier1 = IsTier1MetaCommand(toolName) || pa.wantHelp;
         standalone::BootstrapContext boot;
         std::string bootErr;
         if (!standalone::Initialize(boot, argc, argv,
@@ -936,7 +936,7 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         }
 
         smatchet::cmd::CommandContext ctx;
-        ctx.App = boot.app;
+        ctx.App = boot.app.get();
         ctx.Source = smatchet::cmd::CommandSource::Cli;
         ctx.ConfirmedDestructive = pa.yes;
         ctx.DryRun = pa.dryRun;
@@ -965,8 +965,12 @@ int RunCmdInProcessImpl(int argc, char** argv) {
                 }
             }
             const int scenarioWaitMs = (pa.timeoutMs > 0) ? pa.timeoutMs : ((frames / 60 + 30) * 1000);
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
 
-            standalone::RunRenderLoop(boot, [&boot]() { return !boot.app->Scenarios().Active(); });
+            standalone::RunRenderLoop(boot, [&boot, deadline]() {
+                return !boot.app->Scenarios().Active() || std::chrono::steady_clock::now() >= deadline;
+            });
 
             const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
             if (fileReady) {

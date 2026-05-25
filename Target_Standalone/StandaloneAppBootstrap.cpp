@@ -25,6 +25,7 @@
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
 
+#include "Logger.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -87,7 +88,7 @@ static void SmatchetEnsureDirectoryExists(const std::string& path) {
 }
 
 static void glfw_error_callback(int error, const char* description) {
-    std::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+    LOG_ERROR("GLFW Error %d: %s", error, description);
 }
 
 static void SmatchetKeypadEnterBridgeCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -110,7 +111,7 @@ static std::string ResolveStandaloneUserDataDir(const std::string& exeDir) {
     return exeDir;
 }
 
-static void SetupRuntimePaths() {
+static void SetupRuntimePaths(const bool preserveUserDataDir) {
 #if defined(_WIN32)
     char buf[MAX_PATH];
     if (GetModuleFileNameA(NULL, buf, MAX_PATH)) {
@@ -119,9 +120,11 @@ static void SetupRuntimePaths() {
         if (last != std::string::npos) {
             const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
             ConfigManager::SetRuntimeAssetDirectory(exeDir);
-            const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
-            SmatchetEnsureDirectoryExists(userDataDir);
-            ConfigManager::SetUserDataDirectory(userDataDir);
+            if (!preserveUserDataDir) {
+                const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
+                SmatchetEnsureDirectoryExists(userDataDir);
+                ConfigManager::SetUserDataDirectory(userDataDir);
+            }
         }
     }
 #elif defined(__linux__)
@@ -134,9 +137,11 @@ static void SetupRuntimePaths() {
         if (last != std::string::npos) {
             const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
             ConfigManager::SetRuntimeAssetDirectory(exeDir);
-            const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
-            SmatchetEnsureDirectoryExists(userDataDir);
-            ConfigManager::SetUserDataDirectory(userDataDir);
+            if (!preserveUserDataDir) {
+                const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
+                SmatchetEnsureDirectoryExists(userDataDir);
+                ConfigManager::SetUserDataDirectory(userDataDir);
+            }
         }
     }
 #elif defined(__APPLE__)
@@ -148,9 +153,11 @@ static void SetupRuntimePaths() {
         if (last != std::string::npos) {
             const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
             ConfigManager::SetRuntimeAssetDirectory(exeDir);
-            const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
-            SmatchetEnsureDirectoryExists(userDataDir);
-            ConfigManager::SetUserDataDirectory(userDataDir);
+            if (!preserveUserDataDir) {
+                const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
+                SmatchetEnsureDirectoryExists(userDataDir);
+                ConfigManager::SetUserDataDirectory(userDataDir);
+            }
         }
     }
 #endif
@@ -166,7 +173,7 @@ static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smat
     __try {
         SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        std::fprintf(stderr, "SEH exception in SmatchetUI::Draw — aborting frame.\n");
+        LOG_ERROR("SEH exception in SmatchetUI::Draw — aborting frame.");
     }
 #else
     SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
@@ -226,14 +233,12 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
 
     try {
         if (!ctx.app) {
-            ctx.app = new AppController();
-            ctx.ownsApp = true;
+            ctx.app = std::make_unique<AppController>();
         }
         if (!ctx.pluginHost) {
-            ctx.pluginHost = new PluginHost();
-            ctx.ownsPluginHost = true;
+            ctx.pluginHost = std::make_unique<PluginHost>();
         }
-        ctx.app->SetRuntimePluginHost(ctx.pluginHost);
+        ctx.app->SetRuntimePluginHost(ctx.pluginHost.get());
         ctx.app->SetRequestAppQuitHandler([window = ctx.window]() {
             if (window) {
                 glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -287,7 +292,7 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
         return false;
     }
 
-    SetupRuntimePaths();
+    SetupRuntimePaths(!ConfigManager::GetUserDataDirectory().empty());
 
     const TrackerConfig windowStateCfg = ConfigManager::Load();
     const int initialWindowW = std::max(320, windowStateCfg.WindowWidth);
@@ -382,8 +387,7 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
     }
 
     if (!ctx.mainWindow) {
-        ctx.mainWindow = new SmatchetUI();
-        ctx.ownsMainWindow = true;
+        ctx.mainWindow = std::make_unique<SmatchetUI>();
     }
 
     while (!glfwWindowShouldClose(ctx.window)) {
@@ -424,21 +428,9 @@ void ShutdownApplication(BootstrapContext& ctx) {
         ctx.pluginHost->OnStop();
     }
 
-    if (ctx.ownsMainWindow && ctx.mainWindow) {
-        delete ctx.mainWindow;
-        ctx.mainWindow = nullptr;
-        ctx.ownsMainWindow = false;
-    }
-    if (ctx.ownsApp && ctx.app) {
-        delete ctx.app;
-        ctx.app = nullptr;
-        ctx.ownsApp = false;
-    }
-    if (ctx.ownsPluginHost && ctx.pluginHost) {
-        delete ctx.pluginHost;
-        ctx.pluginHost = nullptr;
-        ctx.ownsPluginHost = false;
-    }
+    ctx.mainWindow.reset();
+    ctx.app.reset();
+    ctx.pluginHost.reset();
 }
 
 bool BootEphemeral(int argc, char** argv, std::string& err) {

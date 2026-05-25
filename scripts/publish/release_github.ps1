@@ -681,7 +681,7 @@ if (-not $SkipBuild) {
         Pop-Location
     }
 
-    if (-not $SkipStandalone -and -not $SkipLightStandalone) {
+    if (-not $SkipLightStandalone) {
         Write-Stage "Configuring and building light standalone ($LightStandalonePreset)"
         Push-Location $repoRoot
         try {
@@ -725,20 +725,6 @@ if (-not $SkipStandalone) {
         -SigningConfig $signingConfig | Out-Null
     $assetPaths.Add($standaloneZip)
 
-    if (-not $SkipLightStandalone) {
-        Write-Stage "Staging light standalone artifact"
-        $lightStandaloneZip = Join-Path $assetsDir "Smatchet-$effectiveTag-windows-light-portable.zip"
-        New-StandalonePortableZip `
-            -BuildDir $lightStandaloneBuildDir `
-            -StageDir $lightStandaloneStage `
-            -ExeName "Smatchet-Light.exe" `
-            -ZipPath $lightStandaloneZip `
-            -LicensePath $licensePath `
-            -ReadmePath $readmePath `
-            -SigningConfig $signingConfig | Out-Null
-        $assetPaths.Add($lightStandaloneZip)
-    }
-
     if (-not $SkipInstaller) {
         Write-Stage "Building Windows installer"
         $installerBaseName = "Smatchet-$effectiveTag-windows-setup"
@@ -760,6 +746,20 @@ if (-not $SkipStandalone) {
         }
         $assetPaths.Add($installerPath)
     }
+}
+
+if (-not $SkipLightStandalone) {
+    Write-Stage "Staging light standalone artifact"
+    $lightStandaloneZip = Join-Path $assetsDir "Smatchet-$effectiveTag-windows-light-portable.zip"
+    New-StandalonePortableZip `
+        -BuildDir $lightStandaloneBuildDir `
+        -StageDir $lightStandaloneStage `
+        -ExeName "Smatchet-Light.exe" `
+        -ZipPath $lightStandaloneZip `
+        -LicensePath $licensePath `
+        -ReadmePath $readmePath `
+        -SigningConfig $signingConfig | Out-Null
+    $assetPaths.Add($lightStandaloneZip)
 }
 
 if (-not $SkipUnreal) {

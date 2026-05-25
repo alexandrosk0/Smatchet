@@ -27,3 +27,6 @@ class SMATCHETIMGUIPLUGIN_API USmatchetImGuiCommandBridge : public UBlueprintFun
     UFUNCTION(BlueprintCallable, Category = "Smatchet|Commands")
     static bool TakeSmatchetCommandResultJson(int64 RequestId, FString& ResultJson);
 };
+
+/// Stops pending async command callbacks (plugin module shutdown).
+SMATCHETIMGUIPLUGIN_API void SmatchetImGuiCommandBridge_ShutdownModule();

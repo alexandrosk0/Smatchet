@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <deque>
 #include <mutex>
 #include <unordered_map>
@@ -920,6 +921,11 @@ bool SmatchetImGuiHost::TakeCommandResultJson(std::uint64_t requestId, std::stri
     }
     outJson = std::move(it->second);
     ImplData->CompletedCommandResults.erase(it);
+    const auto orderIt =
+        std::find(ImplData->CompletedCommandOrder.begin(), ImplData->CompletedCommandOrder.end(), requestId);
+    if (orderIt != ImplData->CompletedCommandOrder.end()) {
+        ImplData->CompletedCommandOrder.erase(orderIt);
+    }
     return true;
 }
 

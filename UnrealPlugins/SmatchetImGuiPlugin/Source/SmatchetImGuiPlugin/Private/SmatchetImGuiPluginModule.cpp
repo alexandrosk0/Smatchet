@@ -19,6 +19,7 @@
 #include "Widgets/SWindow.h"
 
 #include "SmatchetImGuiHostC.h"
+#include "SmatchetImGuiCommandBridge.h"
 #include "SmatchetImGuiInputProcessor.h"
 #include "SmatchetImGuiRenderBackend.h"
 #include "SmatchetImGuiViewExtension.h"
@@ -156,6 +157,8 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
 
     virtual void ShutdownModule() override {
         GSmatchetImGuiPluginModule = nullptr;
+
+        SmatchetImGuiCommandBridge_ShutdownModule();
 
         if (InitOptionsRetryHandle.IsValid()) {
             FTSTicker::GetCoreTicker().RemoveTicker(InitOptionsRetryHandle);

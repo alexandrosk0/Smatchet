@@ -70,7 +70,8 @@ bool TickSmatchetCommandCallbacks(float) {
 
                 FString ResultJson;
                 if (!TakeNativeCommandResult(Host, RequestId, ResultJson)) {
-                    continue;
+                    ResultJson = TEXT("{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"result-unavailable\","
+                                      "\"message\":\"Command result was not available to consume.\"}}");
                 }
                 FCompletedSmatchetCommandCallback Completed;
                 Completed.OnComplete = GPendingSmatchetCommandCallbacks[Index].OnComplete;
@@ -152,4 +153,13 @@ bool USmatchetImGuiCommandBridge::TakeSmatchetCommandResultJson(int64 RequestId,
     }
     return TakeNativeCommandResult(SmatchetImGuiPlugin_GetNativeHostForCommands(), static_cast<uint64>(RequestId),
                                    ResultJson);
+}
+
+void SmatchetImGuiCommandBridge_ShutdownModule() {
+    FScopeLock Lock(&GSmatchetCommandCallbackMutex);
+    if (GSmatchetCommandCallbackTicker.IsValid()) {
+        FTSTicker::GetCoreTicker().RemoveTicker(GSatchetCommandCallbackTicker);
+        GSmatchetCommandCallbackTicker = FTSTicker::FDelegateHandle();
+    }
+    GPendingSmatchetCommandCallbacks.Reset();
 }

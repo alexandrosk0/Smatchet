@@ -492,7 +492,7 @@ int main(int argc, char** argv) {
     bootCtx.glslVersion = glsl_version;
     std::string bootErr;
     if (!smatchet::standalone::InitAppAndPlugins(bootCtx, cfg, false, bootErr)) {
-        std::fprintf(stderr, "%s\n", bootErr.c_str());
+        LOG_ERROR("App bootstrap failed: %s", bootErr.c_str());
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();

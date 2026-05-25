@@ -7,6 +7,7 @@
 #include "ConfigManager.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 
 struct GLFWwindow;
@@ -25,13 +26,10 @@ enum class HeadlessCliMode {
 
 struct BootstrapContext {
     GLFWwindow* window = nullptr;
-    AppController* app = nullptr;
-    PluginHost* pluginHost = nullptr;
-    SmatchetUI* mainWindow = nullptr;
+    std::unique_ptr<AppController> app;
+    std::unique_ptr<PluginHost> pluginHost;
+    std::unique_ptr<SmatchetUI> mainWindow;
     const char* glslVersion = nullptr;
-    bool ownsApp = false;
-    bool ownsPluginHost = false;
-    bool ownsMainWindow = false;
 };
 
 /// Parse standalone argv (`--db-path`, `--mcp-port`, `--help`, …). Returns false when `--help` was printed.
