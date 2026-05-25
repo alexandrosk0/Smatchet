@@ -24,7 +24,7 @@
 #endif
 
 #include <httplib.h>
-#endif  // SMATCHET_WITH_MCP
+#endif // SMATCHET_WITH_MCP
 
 #include <ghc/filesystem.hpp>
 
@@ -846,28 +846,27 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     }
 }
 
-#endif  // SMATCHET_WITH_MCP
+#endif // SMATCHET_WITH_MCP
 
 #if !defined(SMATCHET_WITH_MCP)
 
 void PrintCliHelpInProcess(std::FILE* out) {
-    std::fprintf(out,
-                 "Smatchet CLI — in-process Command System (light build).\n"
-                 "\n"
-                 "Usage:\n"
-                 "  Smatchet-Light.exe cmd <name> [--key=value ...] [flags]\n"
-                 "  Smatchet-Light.exe cmd commands.list        List registered commands.\n"
-                 "\n"
-                 "Output flags:\n"
-                 "  --pretty                Indent stdout JSON (2 spaces).\n"
-                 "  --quiet, -q             Bare scalar(s) on stdout.\n"
-                 "  --yes                   Confirm a destructive command.\n"
-                 "  --dry-run               Preview a mutation without applying it.\n"
-                 "\n"
-                 "Notes:\n"
-                 "  - Boots a hidden instance per invocation (no MCP attach).\n"
-                 "  - --spawn is ignored on light builds.\n"
-                 "  - Stdout is always JSON. Logs go to stderr.\n");
+    std::fprintf(out, "Smatchet CLI — in-process Command System (light build).\n"
+                      "\n"
+                      "Usage:\n"
+                      "  Smatchet-Light.exe cmd <name> [--key=value ...] [flags]\n"
+                      "  Smatchet-Light.exe cmd commands.list        List registered commands.\n"
+                      "\n"
+                      "Output flags:\n"
+                      "  --pretty                Indent stdout JSON (2 spaces).\n"
+                      "  --quiet, -q             Bare scalar(s) on stdout.\n"
+                      "  --yes                   Confirm a destructive command.\n"
+                      "  --dry-run               Preview a mutation without applying it.\n"
+                      "\n"
+                      "Notes:\n"
+                      "  - Boots a hidden instance per invocation (no MCP attach).\n"
+                      "  - --spawn is ignored on light builds.\n"
+                      "  - Stdout is always JSON. Logs go to stderr.\n");
 }
 
 bool IsTier1MetaCommand(const std::string& name) {
@@ -922,10 +921,9 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         const bool tier1 = IsTier1MetaCommand(toolName) || pa.wantHelp;
         standalone::BootstrapContext boot;
         std::string bootErr;
-        if (!standalone::Initialize(boot, argc, argv,
-                                    tier1 ? standalone::HeadlessCliMode::MetaCommand
-                                          : standalone::HeadlessCliMode::ScenarioRun,
-                                    bootErr)) {
+        if (!standalone::Initialize(
+                boot, argc, argv,
+                tier1 ? standalone::HeadlessCliMode::MetaCommand : standalone::HeadlessCliMode::ScenarioRun, bootErr)) {
             nlohmann::json env;
             env["ok"] = false;
             env["command"] = toolName;
@@ -942,8 +940,7 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         ctx.DryRun = pa.dryRun;
         ctx.TimeoutMs = pa.timeoutMs;
 
-        smatchet::cmd::CommandResult dispatchResult =
-            boot.app->Commands().Dispatch(toolName, argsToSend, ctx);
+        smatchet::cmd::CommandResult dispatchResult = boot.app->Commands().Dispatch(toolName, argsToSend, ctx);
 
         nlohmann::json envelope = dispatchResult.ToWireJson(toolName, pa.dryRun);
         const nlohmann::json envData = SafeObject(envelope, "data");
@@ -965,14 +962,16 @@ int RunCmdInProcessImpl(int argc, char** argv) {
                 }
             }
             const int scenarioWaitMs = (pa.timeoutMs > 0) ? pa.timeoutMs : ((frames / 60 + 30) * 1000);
-            const auto deadline =
-                std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
 
             standalone::RunRenderLoop(boot, [&boot, deadline]() {
                 return !boot.app->Scenarios().Active() || std::chrono::steady_clock::now() >= deadline;
             });
 
-            const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
+            const auto now = std::chrono::steady_clock::now();
+            const auto remainingMs =
+                (deadline > now) ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count() : 0;
+            const bool fileReady = WaitForFile(outPath, static_cast<int>(remainingMs));
             if (fileReady) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(150));
             }
@@ -980,8 +979,7 @@ int RunCmdInProcessImpl(int argc, char** argv) {
                 nlohmann::json errEnv;
                 errEnv["ok"] = false;
                 errEnv["command"] = toolName;
-                errEnv["error"] = {{"code", "timeout"},
-                                   {"message", "Scenario did not finish within expected time."}};
+                errEnv["error"] = {{"code", "timeout"}, {"message", "Scenario did not finish within expected time."}};
                 EmitErrorToStderr(errEnv);
                 standalone::Shutdown(boot);
                 return 8;
@@ -1042,7 +1040,7 @@ int RunCmdInProcessImpl(int argc, char** argv) {
     }
 }
 
-#endif  // !SMATCHET_WITH_MCP
+#endif // !SMATCHET_WITH_MCP
 
 } // namespace
 
@@ -1275,7 +1273,7 @@ int RunCmdAttach(int argc, char** argv) {
                              "\"message\":\"CLI internal error: unknown exception.\"}}\n");
         return kExitHandler;
     }
-#endif  // SMATCHET_WITH_MCP
+#endif // SMATCHET_WITH_MCP
 }
 
 } // namespace cli

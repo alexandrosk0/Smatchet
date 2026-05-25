@@ -173,28 +173,28 @@ static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smat
     __try {
         SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        LOG_ERROR("SEH exception in SmatchetUI::Draw — aborting frame.");
+        LOG_ERROR("SEH exception in SmatchetUI::Draw; terminating process.");
+        std::terminate();
     }
 #else
     SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
 #endif
 }
 
-}  // namespace
+} // namespace
 
 bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli) {
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
-            std::fprintf(stdout,
-                         "Smatchet Standalone Client\n"
-                         "Usage: Smatchet [options]\n"
-                         "Options:\n"
-                         "  -d, --db-path <path>         Path to sqlite database\n"
-                         "  -b, --backend-type <type>    Tracker type ('Jira' or 'Plane')\n"
-                         "  -p, --mcp-port <port>        MCP server port number\n"
-                         "      --mcp-allow-remote       Allow remote connections to MCP server\n"
-                         "  -h, --help                   Show help message\n");
+            std::fprintf(stdout, "Smatchet Standalone Client\n"
+                                 "Usage: Smatchet [options]\n"
+                                 "Options:\n"
+                                 "  -d, --db-path <path>         Path to sqlite database\n"
+                                 "  -b, --backend-type <type>    Tracker type ('Jira' or 'Plane')\n"
+                                 "  -p, --mcp-port <port>        MCP server port number\n"
+                                 "      --mcp-allow-remote       Allow remote connections to MCP server\n"
+                                 "  -h, --help                   Show help message\n");
             return false;
         }
         if ((arg == "--db-path" || arg == "-d") && i + 1 < argc) {
@@ -466,5 +466,5 @@ void Shutdown(BootstrapContext& ctx) {
     }
 }
 
-}  // namespace standalone
-}  // namespace smatchet
+} // namespace standalone
+} // namespace smatchet
