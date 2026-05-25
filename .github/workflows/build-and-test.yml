@@ -118,15 +118,22 @@ jobs:
           bash scripts/dev/test-build-warnings.sh
           bash scripts/dev/test-markdown-lang-tag.sh
 
-      - name: Run bucket-C screenshot diff (advisory)
-        # ADVISORY until 2026-05-30 — windows-2022 runners may not have a
-        # usable GL context for the spawn-mode UI, in which case the captured
-        # PPM is empty and the script reports FAIL on its own. continue-on-error
-        # keeps that from gating the PR while we collect two consecutive weeks
-        # of clean runs. Flip to false (blocking) after the soak period.
-        continue-on-error: true
-        run: |
-          bash scripts/dev/test-screenshot-diff.sh || echo "::warning::screenshot diff advisory step failed (acceptable during soak)"
+      # NOTE: bucket-C screenshot diff is no longer invoked inline here —
+      # slice 6 of docs/design/autonomous-debugging-no-creds.md extracted it
+      # into a dedicated job (`bucket-c-screenshot-diff`, below) that runs
+      # against a Mesa headless GL context. This job uploads the built
+      # Smatchet.exe + diff helper so the bucket-C / bucket-E jobs reuse the
+      # artefact rather than rebuilding from scratch.
+
+      - name: Upload Smatchet.exe artefact (for bucket-C / bucket-E jobs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: smatchet-exe-${{ github.run_id }}
+          path: |
+            build/ninja-iter-msys2/Smatchet.exe
+            build/ninja-iter-msys2/*.dll
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload Smatchet.exe on failure
         if: failure()
@@ -226,3 +233,321 @@ jobs:
 
       - name: Build SmatchetStandalone (no agentic)
         run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+
+  bucket-c-screenshot-diff:
+    # Slice 6 of docs/design/autonomous-debugging-no-creds.md — screenshot-diff
+    # gate running against a Mesa software OpenGL ICD. The windows-2022 runner
+    # has no GPU; Mesa's prebuilt `opengl32sw.dll` provides a deterministic
+    # software ICD that we drop next to Smatchet.exe as `opengl32.dll`. The
+    # Windows DLL search order picks the app-dir copy before %SystemRoot%, so
+    # GLFW gets a working GL context without any code changes.
+    #
+    # Mesa-vs-ANGLE rationale: MSYS2 UCRT64 does not package mesa, swiftshader,
+    # or ANGLE. ANGLE-D3D11 / SwiftShader would require building from source
+    # (heavy footprint). Mesa publishes a single prebuilt opengl32sw.dll per
+    # release that drops in next to the exe — zero compile, minimal footprint,
+    # classic Qt/CI pattern. Risk acknowledged: Mesa's software rasteriser
+    # may produce subtle font-rendering differences vs developer GPUs; that
+    # is why goldens must be bootstrapped from a CI run, not a dev machine.
+    #
+    # Initial continue-on-error: true for a 1-week soak — first runs FAIL
+    # because goldens don't exist yet (slice 6 ships the jobs only; goldens
+    # bootstrap in a follow-up PR per the golden-image-approval contract).
+    # Once goldens land + soak passes cleanly, flip back to `false` for
+    # hard-fail gating, matching the plan § Slice 6 "advisory window over"
+    # end-state. Same stance as the sibling bucket-e-ui-tests job below.
+    name: Bucket-C screenshot diff (Mesa headless GL)
+    needs: windows-msys2-ucrt64
+    runs-on: windows-2022
+    timeout-minutes: 20
+    continue-on-error: true
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-python
+            git
+            unzip
+
+      - name: Download Smatchet.exe artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: smatchet-exe-${{ github.run_id }}
+          path: build/ninja-iter-msys2/
+
+      - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+        # Mesa publishes prebuilt Windows binaries via mesa3d/mesa-dist-win on
+        # GitHub releases. We pin to a known release to keep CI deterministic.
+        # The zip contains x64/opengl32.dll (the software ICD renamed); we
+        # place it next to Smatchet.exe so the Windows DLL search order picks
+        # it before %SystemRoot%\System32\opengl32.dll.
+        env:
+          MESA_VERSION: "24.2.5"
+        run: |
+          set -euo pipefail
+          mkdir -p mesa-tmp
+          cd mesa-tmp
+          curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+          # mesa3d-*-release-msvc.7z requires 7z; install on the fly.
+          pacman -S --noconfirm --needed p7zip
+          7z x mesa.7z -o./extracted >/dev/null
+          ls -la extracted/x64/ | head -20
+          # Drop the software ICD next to the exe AS opengl32.dll so the app-dir
+          # search hit beats system32. Mesa ships it under x64/opengl32.dll.
+          cp extracted/x64/opengl32.dll ../build/ninja-iter-msys2/opengl32.dll
+          cd ..
+          rm -rf mesa-tmp
+          ls -la build/ninja-iter-msys2/
+
+      - name: Run bucket-C screenshot diff
+        # First run after this PR merges will FAIL because tests/golden/*.png
+        # are not yet committed — this PR establishes the CI wiring only.
+        # Follow-up PR will bootstrap the goldens per the golden-image-approval
+        # contract in AGENTS.md.
+        env:
+          # Route the script's TMPDIR-honouring capture dir (test-screenshot-diff.sh
+          # uses ${TMPDIR:-/tmp}) under the workspace so the failure-upload step
+          # below — which runs on the Windows host and cannot see MSYS2 /tmp —
+          # can actually find the PNGs to upload for golden bootstrap.
+          TMPDIR: ${{ github.workspace }}/build/tmp
+          # Suppress the trap that rms TMP_DIR on script exit — the upload-artifact
+          # step below needs the PNGs to survive past the script call.
+          SMATCHET_KEEP_SCREENSHOT_CAPTURES: "1"
+          # Force the Mesa software ICD even if a runner happens to expose a
+          # display GL context — keeps the diff reproducible.
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "${TMPDIR}"
+          bash scripts/dev/test-screenshot-diff.sh
+
+      - name: Upload captured PNGs on failure (for golden bootstrap)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bucket-c-captures-${{ github.run_id }}
+          path: |
+            build/tmp/smatchet-screenshot-diff-*/*.png
+          if-no-files-found: ignore
+
+  bucket-e-ui-tests:
+    # Slice 6 of docs/design/autonomous-debugging-no-creds.md — ImGui Test
+    # Engine surface (existing 12 bucket-E tests) running against Mesa
+    # software GL. Initial continue-on-error: true for a 1-week soak per
+    # plan § Slice 6; flip to false once stability is confirmed.
+    #
+    # Unlike bucket-C, this job cannot reuse the windows-msys2-ucrt64 build
+    # artefact — bucket-E needs SMATCHET_BUILD_UI_TESTS=ON which is a
+    # different CMake configure (ninja-ui-test-msys2 preset, separate binaryDir).
+    # We still `needs:` the build job for ordering + cache warmup.
+    name: Bucket-E UI tests (Mesa headless GL)
+    needs: windows-msys2-ucrt64
+    runs-on: windows-2022
+    timeout-minutes: 30
+    continue-on-error: true
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+            unzip
+
+      - name: Cache FetchContent _deps (ui-test preset)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-ui-test-msys2/_deps
+          key: ${{ runner.os }}-fetchcontent-ui-test-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-ui-test-msys2
+        run: cmake --preset ninja-ui-test-msys2
+
+      - name: Build SmatchetStandalone (UI tests on)
+        run: cmake --build --preset ninja-ui-test-msys2
+
+      - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+        env:
+          MESA_VERSION: "24.2.5"
+        run: |
+          set -euo pipefail
+          mkdir -p mesa-tmp
+          cd mesa-tmp
+          curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+          pacman -S --noconfirm --needed p7zip
+          7z x mesa.7z -o./extracted >/dev/null
+          cp extracted/x64/opengl32.dll ../build/ninja-ui-test-msys2/opengl32.dll
+          cd ..
+          rm -rf mesa-tmp
+
+      - name: Run bucket-E ImGui Test Engine scenario
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        working-directory: build/ninja-ui-test-msys2
+        run: ./Smatchet.exe scenario.run --name=ui-test --yes
+
+      - name: Upload bucket-E exe on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bucket-e-exe-${{ github.run_id }}
+          path: build/ninja-ui-test-msys2/Smatchet.exe
+          if-no-files-found: ignore
+
+  sanitizer-asan-ubsan:
+    # Slice 11 of docs/design/autonomous-debugging-no-creds.md — ASAN+UBSAN
+    # gate. Uses the existing `ninja-debug-msys2-asan` CMake preset which sets
+    # -fsanitize=address,undefined. Sanitizer failures are blocking (no
+    # continue-on-error) per UX Pillar 3 (Never crash / sanitizer-clean).
+    name: Sanitizer (ASAN + UBSAN)
+    needs: windows-msys2-ucrt64
+    runs-on: windows-2022
+    timeout-minutes: 40
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+
+      - name: Cache FetchContent _deps (asan preset)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-debug-msys2-asan/_deps
+          key: ${{ runner.os }}-fetchcontent-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-debug-msys2-asan
+        run: cmake --preset ninja-debug-msys2-asan
+
+      - name: Build (ASAN + UBSAN)
+        run: cmake --build --preset ninja-debug-msys2-asan
+
+      - name: Run ctest under ASAN + UBSAN
+        working-directory: build/ninja-debug-msys2-asan
+        run: ctest --output-on-failure
+
+      - name: Surface sanitizer report in job summary
+        if: failure()
+        run: |
+          echo "## Sanitizer failure" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # ctest logs are under Testing/Temporary/LastTest.log when available.
+          if [ -f build/ninja-debug-msys2-asan/Testing/Temporary/LastTest.log ]; then
+            grep -A 30 'ERROR: \(Address\|UndefinedBehavior\)Sanitizer' \
+              build/ninja-debug-msys2-asan/Testing/Temporary/LastTest.log \
+              | head -80 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  sanitizer-tsan:
+    # Slice 11 of docs/design/autonomous-debugging-no-creds.md — ThreadSanitizer
+    # data-race detection. Gated behind `tsan-out-of-band` label (same pattern as
+    # `tests-out-of-band` / `perf-out-of-band`). TSAN is noisier than ASAN on
+    # MinGW; ships with continue-on-error: true for a soak period.
+    name: Sanitizer (TSAN)
+    needs: windows-msys2-ucrt64
+    runs-on: windows-2022
+    timeout-minutes: 40
+    continue-on-error: true
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'tsan-out-of-band')
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-python
+            git
+
+      - name: Cache FetchContent _deps (tsan preset)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-debug-msys2-tsan/_deps
+          key: ${{ runner.os }}-fetchcontent-tsan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-debug-msys2-tsan
+        run: cmake --preset ninja-debug-msys2-tsan
+
+      - name: Build (TSAN)
+        run: cmake --build --preset ninja-debug-msys2-tsan
+
+      - name: Run ctest under TSAN
+        working-directory: build/ninja-debug-msys2-tsan
+        run: ctest --output-on-failure
+
+      - name: Surface TSAN report in job summary
+        if: failure()
+        run: |
+          echo "## ThreadSanitizer failure" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f build/ninja-debug-msys2-tsan/Testing/Temporary/LastTest.log ]; then
+            grep -A 30 'WARNING: ThreadSanitizer' \
+              build/ninja-debug-msys2-tsan/Testing/Temporary/LastTest.log \
+              | head -80 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
