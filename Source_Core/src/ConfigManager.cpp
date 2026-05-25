@@ -1032,19 +1032,18 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     migrateAny = migrateAny || migrateLegacyPlaintextWhisperApiKey;
 #endif
     if (migrateAny) {
+#if defined(SMATCHET_WITH_WHISPER)
         LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
-                 "(mcp=%d ai=%d anthropic=%d deepseek=%d"
-#if defined(SMATCHET_WITH_WHISPER)
-                 " whisper=%d"
-#endif
-                 ")",
+                 "(mcp=%d ai=%d anthropic=%d deepseek=%d whisper=%d)",
                  migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
-                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0, migrateLegacyPlaintextAiDeepSeekApiKey ? 1 : 0
-#if defined(SMATCHET_WITH_WHISPER)
-                 ,
-                 migrateLegacyPlaintextWhisperApiKey ? 1 : 0
+                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0, migrateLegacyPlaintextAiDeepSeekApiKey ? 1 : 0,
+                 migrateLegacyPlaintextWhisperApiKey ? 1 : 0);
+#else
+        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
+                 "(mcp=%d ai=%d anthropic=%d deepseek=%d)",
+                 migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
+                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0, migrateLegacyPlaintextAiDeepSeekApiKey ? 1 : 0);
 #endif
-        );
         Save(cfg);
     }
 #endif

@@ -46,7 +46,10 @@ function(smatchet_apply_sanitizers tgt)
 
     if("${SMATCHET_SANITIZER}" STREQUAL "asan")
         if(_msvc)
-            list(APPEND _flags /fsanitize=address)
+            list(APPEND _flags
+                /fsanitize=address
+                -D_DISABLE_STRING_ANNOTATION
+                -D_DISABLE_VECTOR_ANNOTATION)
         else()
             list(APPEND _flags
                 -fsanitize=address

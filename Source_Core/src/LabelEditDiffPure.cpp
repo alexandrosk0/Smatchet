@@ -1,6 +1,7 @@
 #include "LabelEditDiffPure.h"
 
 #include <algorithm>
+#include <iterator>
 #include <set>
 
 namespace smatchet {
