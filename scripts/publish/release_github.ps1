@@ -3,6 +3,7 @@
 
     Artifacts:
     - Standalone zip (Smatchet.exe + runtime files)
+    - Light standalone zip (Smatchet-Light.exe + runtime files, automation-facing features disabled)
     - Unreal plugin zip (UnrealPlugins/SmatchetImGuiPlugin packaged tree)
     - Source zip (git archive, filtered to exclude internal workflow folders)
 
@@ -21,11 +22,13 @@ param(
     [string]$Notes = "",
     [string]$NotesFile = "",
     [string]$StandalonePreset = "ninja-publish-msys2",
-    [string]$UnrealBuildPreset = "ninja-publish-msys2",
+    [string]$LightStandalonePreset = "ninja-publish-light-msys2",
+    [string]$UnrealBuildPreset = "ninja-publish-unreal-light-msys2",
     [string]$OutDir = "",
     [switch]$SkipBuild,
     [switch]$SkipInstaller,
     [switch]$SkipStandalone,
+    [switch]$SkipLightStandalone,
     [switch]$SkipUnreal,
     [switch]$SkipFabBundle,
     [switch]$SkipSourceZip,
@@ -422,24 +425,65 @@ function Get-PresetBinaryDir {
 
 function Get-StandaloneExePath {
     param(
-        [Parameter(Mandatory = $true)][string]$BuildDir
+        [Parameter(Mandatory = $true)][string]$BuildDir,
+        [string]$ExeName = "Smatchet.exe"
     )
     $candidates = @(
-        (Join-Path $BuildDir "Smatchet.exe"),
-        (Join-Path $BuildDir "Release/Smatchet.exe")
+        (Join-Path $BuildDir $ExeName),
+        (Join-Path $BuildDir "Release/$ExeName")
     )
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
             return $candidate
         }
     }
-    $found = Get-ChildItem -Path $BuildDir -Filter "Smatchet.exe" -Recurse -File -ErrorAction SilentlyContinue |
+    $found = Get-ChildItem -Path $BuildDir -Filter $ExeName -Recurse -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if (-not $found) {
-        throw "Could not find Smatchet.exe under $BuildDir"
+        throw "Could not find $ExeName under $BuildDir"
     }
     return $found.FullName
+}
+
+function New-StandalonePortableZip {
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildDir,
+        [Parameter(Mandatory = $true)][string]$StageDir,
+        [Parameter(Mandatory = $true)][string]$ExeName,
+        [Parameter(Mandatory = $true)][string]$ZipPath,
+        [Parameter(Mandatory = $true)][string]$LicensePath,
+        [Parameter(Mandatory = $true)][string]$ReadmePath,
+        [Parameter(Mandatory = $true)]$SigningConfig
+    )
+
+    New-CleanDirectory -Path $StageDir | Out-Null
+    $exePath = Get-StandaloneExePath -BuildDir $BuildDir -ExeName $ExeName
+    Copy-Item -LiteralPath $exePath -Destination (Join-Path $StageDir $ExeName)
+
+    $exeDir = Split-Path -Parent $exePath
+    $dlls = Get-ChildItem -Path $exeDir -Filter "*.dll" -File -ErrorAction SilentlyContinue
+    foreach ($dll in $dlls) {
+        Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $StageDir $dll.Name)
+    }
+
+    Copy-StandaloneRuntimePayload -SourceDir $exeDir -DestinationDir $StageDir
+    if (Test-Path -LiteralPath $LicensePath -PathType Leaf) {
+        Copy-Item -LiteralPath $LicensePath -Destination (Join-Path $StageDir "LICENSE")
+    }
+    if (Test-Path -LiteralPath $ReadmePath -PathType Leaf) {
+        Copy-Item -LiteralPath $ReadmePath -Destination (Join-Path $StageDir "README.md")
+    }
+
+    if ($SigningConfig.Enabled) {
+        $portableSignables = @(Get-SignablePortableFiles -Root $StageDir | ForEach-Object { $_.FullName })
+        if ($portableSignables.Count -gt 0) {
+            Invoke-Signing -Config $SigningConfig -Paths $portableSignables
+        }
+    }
+
+    Compress-Directory -SourceDir $StageDir -ZipPath $ZipPath
+    return $ZipPath
 }
 
 function Assert-CleanGitTree {
@@ -582,6 +626,7 @@ $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 $assetsDir = Join-Path $OutDir "assets"
 $stagingDir = Join-Path $OutDir "staging"
 $standaloneStage = Join-Path $stagingDir "standalone"
+$lightStandaloneStage = Join-Path $stagingDir "standalone-light"
 $pluginStage = Join-Path $stagingDir "plugin"
 $fabStage = Join-Path $stagingDir "fab-submission"
 $assetPaths = New-Object System.Collections.Generic.List[string]
@@ -619,6 +664,7 @@ New-CleanDirectory -Path $assetsDir | Out-Null
 New-CleanDirectory -Path $stagingDir | Out-Null
 
 $standaloneBuildDir = [System.IO.Path]::GetFullPath((Get-PresetBinaryDir -PresetFile $presetFile -PresetName $StandalonePreset -SourceDir $repoRoot))
+$lightStandaloneBuildDir = [System.IO.Path]::GetFullPath((Get-PresetBinaryDir -PresetFile $presetFile -PresetName $LightStandalonePreset -SourceDir $repoRoot))
 $unrealBuildDir = [System.IO.Path]::GetFullPath((Get-PresetBinaryDir -PresetFile $presetFile -PresetName $UnrealBuildPreset -SourceDir $repoRoot))
 
 if (-not $SkipBuild) {
@@ -633,6 +679,21 @@ if (-not $SkipBuild) {
     }
     finally {
         Pop-Location
+    }
+
+    if (-not $SkipStandalone -and -not $SkipLightStandalone) {
+        Write-Stage "Configuring and building light standalone ($LightStandalonePreset)"
+        Push-Location $repoRoot
+        try {
+            $lightStandaloneCache = Join-Path $lightStandaloneBuildDir "CMakeCache.txt"
+            if (-not ((Test-Path -LiteralPath $lightStandaloneCache) -and -not $ForceConfigure)) {
+                Invoke-Checked -FilePath $cmakeExe -Arguments @("--preset", $LightStandalonePreset)
+            }
+            Invoke-Checked -FilePath $cmakeExe -Arguments @("--build", "--preset", $LightStandalonePreset)
+        }
+        finally {
+            Pop-Location
+        }
     }
 
     if (-not $SkipUnreal -and $UnrealBuildPreset -ne $StandalonePreset) {
@@ -653,35 +714,30 @@ if (-not $SkipBuild) {
 
 if (-not $SkipStandalone) {
     Write-Stage "Staging standalone artifact"
-    New-CleanDirectory -Path $standaloneStage | Out-Null
-    $exePath = Get-StandaloneExePath -BuildDir $standaloneBuildDir
-    Copy-Item -LiteralPath $exePath -Destination (Join-Path $standaloneStage "Smatchet.exe")
-
-    $exeDir = Split-Path -Parent $exePath
-    $dlls = Get-ChildItem -Path $exeDir -Filter "*.dll" -File -ErrorAction SilentlyContinue
-    foreach ($dll in $dlls) {
-        Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $standaloneStage $dll.Name)
-    }
-
-    Copy-StandaloneRuntimePayload -SourceDir $exeDir -DestinationDir $standaloneStage
-    if (Test-Path -LiteralPath $licensePath -PathType Leaf) {
-        Copy-Item -LiteralPath $licensePath -Destination (Join-Path $standaloneStage "LICENSE")
-    }
-    if (Test-Path -LiteralPath $readmePath -PathType Leaf) {
-        Copy-Item -LiteralPath $readmePath -Destination (Join-Path $standaloneStage "README.md")
-    }
-
-    if ($signingConfig.Enabled) {
-        Write-Stage "Signing standalone payload"
-        $portableSignables = @(Get-SignablePortableFiles -Root $standaloneStage | ForEach-Object { $_.FullName })
-        if ($portableSignables.Count -gt 0) {
-            Invoke-Signing -Config $signingConfig -Paths $portableSignables
-        }
-    }
-
     $standaloneZip = Join-Path $assetsDir "Smatchet-$effectiveTag-windows-portable.zip"
-    Compress-Directory -SourceDir $standaloneStage -ZipPath $standaloneZip
+    New-StandalonePortableZip `
+        -BuildDir $standaloneBuildDir `
+        -StageDir $standaloneStage `
+        -ExeName "Smatchet.exe" `
+        -ZipPath $standaloneZip `
+        -LicensePath $licensePath `
+        -ReadmePath $readmePath `
+        -SigningConfig $signingConfig | Out-Null
     $assetPaths.Add($standaloneZip)
+
+    if (-not $SkipLightStandalone) {
+        Write-Stage "Staging light standalone artifact"
+        $lightStandaloneZip = Join-Path $assetsDir "Smatchet-$effectiveTag-windows-light-portable.zip"
+        New-StandalonePortableZip `
+            -BuildDir $lightStandaloneBuildDir `
+            -StageDir $lightStandaloneStage `
+            -ExeName "Smatchet-Light.exe" `
+            -ZipPath $lightStandaloneZip `
+            -LicensePath $licensePath `
+            -ReadmePath $readmePath `
+            -SigningConfig $signingConfig | Out-Null
+        $assetPaths.Add($lightStandaloneZip)
+    }
 
     if (-not $SkipInstaller) {
         Write-Stage "Building Windows installer"

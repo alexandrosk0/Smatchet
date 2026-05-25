@@ -34,6 +34,15 @@ Expose the Unreal-facing API as Blueprint plus C++. A subsystem or function libr
 - `commands.list` / `commands.help` in `Source_Core/src/Commands/Builtin/BuiltinCommands_Meta.cpp`: discovery and smoke-test commands for Unreal.
 - Lua global action command mirroring in `Source_Core/src/AppController_LuaBindings.cpp`: lets Unreal invoke `lua.<actionName>` after hooks register actions.
 
+## P4-gated execution protocol
+
+This slice is running with Git edits directly on `develop` in `C:\Dev\Smatchet`, while P4 opens are isolated in task stream `//smatchet/task-unreal-command-bridge` through client `task_unreal-command-bridge` rooted at the same checkout.
+
+- Open only command-bridge files with `P4CLIENT=task_unreal-command-bridge`.
+- Keep unrelated dirty `develop` files out of `p4 reconcile` and out of the task-stream CL.
+- Shelf the task-stream change for P4V review before integrating back to `//smatchet/main`.
+- After approval, run the task-stream promote flow, then mirror the submitted P4 content to Git/PR.
+
 ## UX Pillar callouts
 
 - **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: Queue draining must be bounded per tick or cheap for normal use; large command work remains inside existing command handlers.
@@ -80,12 +89,26 @@ Expose the Unreal-facing API as Blueprint plus C++. A subsystem or function libr
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` plan revision rules)*
+- 2026-05-25: Added native async command queue to `SmatchetImGuiHost`, C ABI enqueue/poll/take/release functions, `CommandSource::Unreal`, bounded completed-result storage, and a Blueprint/C++ wrapper surface with request-id polling plus optional completion callback.
+- 2026-05-25: Fixed MSVC Unreal packaging blockers exposed by `rebuild_testproject_plugin.ps1 -Release` and updated the MSVC packaging helpers to invalidate stale caches that keep MCP/AI/Whisper enabled for the Unreal light profile.
+- 2026-05-25: Added `UnrealPlugins/SmatchetImGuiPlugin/README.md` as the user-facing manual for overlay, Blueprint, C++, and native C ABI communication paths.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- `SmatchetImGuiPlugin.Build.cs` required no dependency change; existing `CoreUObject`, `Engine`, and `Slate` dependencies cover the wrapper surface.
+- The post-review rebuild exposed existing MSVC/light-profile drift in shared core files and scripts; those fixes were folded into this slice so the bridge can be rebuilt and linked by UBT.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetImGuiHost_DX12 -j 4` passes after prepending `C:\msys64\ucrt64\bin` to `PATH`; without that, `cc1plus.exe` exits `-1073741515` due missing runtime DLL lookup.
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone -j 4` passes.
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12 -j 4` passes/no work after the targeted builds.
+- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12 -j 4` passes again after the final polish pass; warnings are pre-existing unused-parameter warnings in scenario files.
+- `cppcheck` on the edited `Source_Core` command-bridge files passes.
+- `clang-tidy -p build\ninja-iter-msys2 --quiet Source_Core\src\SmatchetImGuiHost.cpp` passes.
+- `bash scripts/dev/pillar2-scan.sh ...` on the edited bridge files passes.
+- `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release` passes end-to-end: stale `build\vs-unreal-msvc` cache was invalidated, MSVC native DX12 libs were packaged with `SMATCHET_WITH_MCP=OFF`, `SMATCHET_WITH_AI=OFF`, and `SMATCHET_WITH_WHISPER=OFF`, the plugin was deployed to the TestProject, UHT ran, and UBT linked `TestProject.exe`.
+- `.\scripts\dev\package_unreal_plugin_msvc.ps1 -Configuration Release -PackageOnly` passes against the corrected MSVC cache.
+- `llvm-nm -C UnrealPlugins\SmatchetImGuiPlugin\ThirdParty\Smatchet\lib\Win64\Development\SmatchetImGuiHost_DX12.lib` confirms the packaged host exports `SmatchetHost_EnqueueCommand`, `SmatchetHost_IsCommandResultReady`, `SmatchetHost_TakeCommandResultJson`, and `SmatchetHost_ReleaseCommandResultJson`.
+- `cppcheck`, `clang-tidy -p build\ninja-iter-msys2 --quiet C:\Dev\Smatchet\Source_Core\src\SmatchetImGuiHost.cpp`, and `bash scripts/dev/pillar2-scan.sh Source_Core/src/SmatchetImGuiHost.cpp` pass after the final C ABI wrapper fix.
+- Post-review `bash scripts/dev/test-all.sh` was rerun under Git Bash with `/c/msys64/ucrt64/bin` prepended. It finished red (`Passed: 1084  Failed: 38`) on existing harness/visual/lock gate failures including token hook drift, callstack tooltip hover, lint-hook split, lock primitives, merge-gates cases, theme roundtrip, and columns reorder.

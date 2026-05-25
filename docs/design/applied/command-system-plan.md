@@ -27,6 +27,16 @@ The CLI must be agent-friendly first, human-friendly second. Every design decisi
 11. **Dry-run for destructive ops.** Every destructive command honors `--dry-run`: handler runs validation + computes the diff (`wouldDo`/`wouldChange`) but never mutates. Combined with `--yes` for real execution, this gives agents a safe two-phase loop (preview → confirm → execute). Commands advertise support via `Command.DryRunSupported`; commands without dry-run support return `dry-run-unsupported` if asked.
 12. **Env-vars for ambient config and secrets.** Sensitive values (tracker tokens) and ambient runtime config (port, user-data dir) read from a stable set of `SMATCHET_*` env vars. Argv is for per-call params only — never secrets. Env names are part of the API contract; see "Environment contract" below.
 
+### Feature-gated builds (`SMATCHET_WITH_*`)
+
+Per [`docs/adr/0010-light-profile-feature-gated-command-registry.md`](../adr/0010-light-profile-feature-gated-command-registry.md):
+
+- When an optional feature is **OFF** at compile time (AI, MCP, Whisper, …), its commands are **not registered** — no stub handlers that return “disabled in this build.”
+- `commands.list`, palette fuzzy search, and MCP `tools/call` only expose **present** features. Calling a disabled-feature name → **`unknown-command`** (+ fuzzy `suggestions` among registered names).
+- Agents/scripts that need `ai.*`, MCP tools, or `whisper.*` must use **full** `Smatchet.exe` (MCP ON), not light/Unreal embed builds.
+- **`Smatchet-Light.exe cmd …`** (MCP OFF): full CLI for **registered** light-profile commands via **in-process dispatch** — headless boot, `CommandRegistry::Dispatch`, JSON stdout. No MCP attach. Plan: [`light-release-unreal-default.md`](../light-release-unreal-default.md) grill Q1 revision (2026-05-24).
+- Lua may still call always-on `AppController` no-op stubs for AI context helpers when AI is OFF; that is **not** the same as registry-visible `ai.*` commands.
+
 ---
 
 ## Architecture (single mega-PR per user choice)

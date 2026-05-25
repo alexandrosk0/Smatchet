@@ -1,7 +1,18 @@
 #include "CliCommandRunner.h"
 
 #include "CliArgCoercion.h"
+#include "StandaloneAppBootstrap.h"
 
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
+#include "AppController.h"
+#include "Commands/Scenarios/IScenario.h"
+#include "ConfigManager.h"
+#include "SmatchetDefaults.h"
+
+#include <nlohmann/json.hpp>
+
+#if defined(SMATCHET_WITH_MCP)
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -13,10 +24,7 @@
 #endif
 
 #include <httplib.h>
-#include <nlohmann/json.hpp>
-
-#include "ConfigManager.h"
-#include "SmatchetDefaults.h"
+#endif  // SMATCHET_WITH_MCP
 
 #include <ghc/filesystem.hpp>
 
@@ -38,6 +46,12 @@ namespace smatchet {
 namespace cli {
 
 namespace {
+
+[[noreturn]] static void CliTerminateHandler() {
+    std::fprintf(stderr, "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+                         "\"message\":\"CLI hit std::terminate (uncaught exception). No state change occurred.\"}}\n");
+    std::_Exit(4);
+}
 
 // Exit code map (kept in sync with the plan / CliCommandRunner.h header).
 constexpr int kExitOk = 0;
@@ -261,9 +275,162 @@ int FindFreePort() {
 #endif
 }
 
-/// Launch the exe as a hidden/minimized background process with --ephemeral --mcp-port=<port>.
-/// Propagates SMATCHET_USER_DATA so the spawned instance shares the same data dir.
-/// Returns false on launch failure.
+/// Poll until the file at outPath exists and is non-empty, or timeoutMs elapses.
+bool WaitForFile(const std::string& outPath, int timeoutMs) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::error_code ec;
+        if (fs::exists(fs::path(outPath), ec) && fs::file_size(fs::path(outPath), ec) > 0) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    return false;
+}
+
+std::string EnvOr(const char* name, std::string fallback) {
+    const char* v = std::getenv(name);
+    return (v && *v) ? std::string(v) : std::move(fallback);
+}
+
+int EnvIntOr(const char* name, int fallback) {
+    const char* v = std::getenv(name);
+    if (!v || !*v)
+        return fallback;
+    try {
+        return std::stoi(std::string(v));
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
+    // argv[0]=exe, argv[1]=cmd, argv[2]=<name>...
+    int i = 2;
+    if (i >= argc) {
+        out.wantListHelp = true;
+        return true;
+    }
+    const std::string firstAfterCmd = argv[i];
+    if (firstAfterCmd == "--help" || firstAfterCmd == "-h") {
+        out.wantListHelp = true;
+        return true;
+    }
+    out.commandName = firstAfterCmd;
+    ++i;
+    for (; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--help" || a == "-h") {
+            out.wantHelp = true;
+            continue;
+        }
+        if (a == "--pretty") {
+            out.pretty = true;
+            continue;
+        }
+        if (a == "--quiet" || a == "-q") {
+            out.quiet = true;
+            continue;
+        }
+        if (a == "--yes") {
+            out.yes = true;
+            continue;
+        }
+        if (a == "--dry-run") {
+            out.dryRun = true;
+            continue;
+        }
+        if (a == "--tokens") {
+            out.tokens = true;
+            continue;
+        }
+        if (a == "--spawn") {
+            out.spawn = true;
+            continue;
+        }
+#if defined(SMATCHET_WITH_MCP)
+        if (a.rfind("--mcp-host=", 0) == 0) {
+            out.mcpHost = a.substr(11);
+            continue;
+        }
+        if (a.rfind("--mcp-port=", 0) == 0) {
+            try {
+                out.mcpPort = std::stoi(a.substr(11));
+            } catch (...) {
+                outError = "invalid --mcp-port value";
+                return false;
+            }
+            continue;
+        }
+#endif
+        if (a.rfind("--timeout=", 0) == 0) {
+            try {
+                out.timeoutMs = std::stoi(a.substr(10));
+            } catch (...) {
+                outError = "invalid --timeout value (expected integer ms)";
+                return false;
+            }
+            continue;
+        }
+        // --key=value or --flag
+        if (a.size() > 2 && a[0] == '-' && a[1] == '-') {
+            const std::string body = a.substr(2);
+            const auto eq = body.find('=');
+            if (eq == std::string::npos) {
+                out.args[body] = true;
+            } else {
+                out.args[body.substr(0, eq)] = CoerceCliArgValue(body.substr(eq + 1));
+            }
+            continue;
+        }
+        outError = "unexpected argument: " + a;
+        return false;
+    }
+    return true;
+}
+
+void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
+    if (!quiet) {
+        try {
+            std::fprintf(stdout, "%s\n", pretty ? envelope.dump(2).c_str() : envelope.dump().c_str());
+        } catch (...) {
+            std::fprintf(stdout, "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
+                                 "\"message\":\"failed to serialize envelope\"}}\n");
+        }
+        return;
+    }
+    if (!SafeBool(envelope, "ok", false)) {
+        return;
+    }
+    nlohmann::json data = SafeObject(envelope, "data");
+    if (data.contains("items") && data["items"].is_array()) {
+        for (const auto& it : data["items"]) {
+            if (it.is_string()) {
+                std::fprintf(stdout, "%s\n", it.get<std::string>().c_str());
+            } else if (it.is_object() && it.contains("id") && it["id"].is_string()) {
+                std::fprintf(stdout, "%s\n", it["id"].get<std::string>().c_str());
+            } else if (it.is_object() && it.contains("name") && it["name"].is_string()) {
+                std::fprintf(stdout, "%s\n", it["name"].get<std::string>().c_str());
+            } else {
+                std::fprintf(stdout, "%s\n", it.dump().c_str());
+            }
+        }
+        return;
+    }
+    if (data.is_string()) {
+        std::fprintf(stdout, "%s\n", data.get<std::string>().c_str());
+        return;
+    }
+    if (data.is_number() || data.is_boolean() || data.is_null()) {
+        std::fprintf(stdout, "%s\n", data.dump().c_str());
+        return;
+    }
+    std::fprintf(stdout, "%s\n", data.dump().c_str());
+}
+
+void EmitErrorToStderr(const nlohmann::json& envelope) { std::fprintf(stderr, "%s\n", envelope.dump().c_str()); }
+
+#if defined(SMATCHET_WITH_MCP)
 bool LaunchEphemeralInstance(const std::string& exePath, int port) {
     if (exePath.empty())
         return false;
@@ -314,35 +481,6 @@ bool WaitForMcpReady(const std::string& host, int port, int timeoutMs) {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
     return false;
-}
-
-/// Poll until the file at outPath exists and is non-empty, or timeoutMs elapses.
-bool WaitForFile(const std::string& outPath, int timeoutMs) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-    while (std::chrono::steady_clock::now() < deadline) {
-        std::error_code ec;
-        if (fs::exists(fs::path(outPath), ec) && fs::file_size(fs::path(outPath), ec) > 0) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
-    return false;
-}
-
-std::string EnvOr(const char* name, std::string fallback) {
-    const char* v = std::getenv(name);
-    return (v && *v) ? std::string(v) : std::move(fallback);
-}
-
-int EnvIntOr(const char* name, int fallback) {
-    const char* v = std::getenv(name);
-    if (!v || !*v)
-        return fallback;
-    try {
-        return std::stoi(std::string(v));
-    } catch (...) {
-        return fallback;
-    }
 }
 
 // Try to fetch the live catalog and print a categorised summary. Returns true on
@@ -430,142 +568,6 @@ void PrintCliHelp(std::FILE* out, const std::string& mcpHost, int mcpPort) {
                      mcpHost.c_str(), mcpPort);
     }
 }
-
-bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
-    // argv[0]=exe, argv[1]=cmd, argv[2]=<name>...
-    int i = 2;
-    if (i >= argc) {
-        out.wantListHelp = true;
-        return true;
-    }
-    const std::string firstAfterCmd = argv[i];
-    if (firstAfterCmd == "--help" || firstAfterCmd == "-h") {
-        out.wantListHelp = true;
-        return true;
-    }
-    out.commandName = firstAfterCmd;
-    ++i;
-    for (; i < argc; ++i) {
-        std::string a = argv[i];
-        if (a == "--help" || a == "-h") {
-            out.wantHelp = true;
-            continue;
-        }
-        if (a == "--pretty") {
-            out.pretty = true;
-            continue;
-        }
-        if (a == "--quiet" || a == "-q") {
-            out.quiet = true;
-            continue;
-        }
-        if (a == "--yes") {
-            out.yes = true;
-            continue;
-        }
-        if (a == "--dry-run") {
-            out.dryRun = true;
-            continue;
-        }
-        if (a == "--tokens") {
-            out.tokens = true;
-            continue;
-        }
-        if (a == "--spawn") {
-            out.spawn = true;
-            continue;
-        }
-        if (a.rfind("--mcp-host=", 0) == 0) {
-            out.mcpHost = a.substr(11);
-            continue;
-        }
-        if (a.rfind("--mcp-port=", 0) == 0) {
-            try {
-                out.mcpPort = std::stoi(a.substr(11));
-            } catch (...) {
-                outError = "invalid --mcp-port value";
-                return false;
-            }
-            continue;
-        }
-        if (a.rfind("--timeout=", 0) == 0) {
-            try {
-                out.timeoutMs = std::stoi(a.substr(10));
-            } catch (...) {
-                outError = "invalid --timeout value (expected integer ms)";
-                return false;
-            }
-            continue;
-        }
-        // --key=value or --flag
-        if (a.size() > 2 && a[0] == '-' && a[1] == '-') {
-            const std::string body = a.substr(2);
-            const auto eq = body.find('=');
-            if (eq == std::string::npos) {
-                out.args[body] = true;
-            } else {
-                // Coerce `true`/`false`/integers/floats to typed JSON so handlers
-                // can use `args.value("flag", false)` / `args.value("count", 8)`
-                // without hitting nlohmann's type_error.302. Anything else stays
-                // a string — the current behaviour for arbitrary text values.
-                out.args[body.substr(0, eq)] = CoerceCliArgValue(body.substr(eq + 1));
-            }
-            continue;
-        }
-        outError = "unexpected argument: " + a;
-        return false;
-    }
-    return true;
-}
-
-void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
-    if (!quiet) {
-        try {
-            std::fprintf(stdout, "%s\n", pretty ? envelope.dump(2).c_str() : envelope.dump().c_str());
-        } catch (...) {
-            std::fprintf(stdout, "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
-                                 "\"message\":\"failed to serialize envelope\"}}\n");
-        }
-        return;
-    }
-    // Quiet: extract a primary value for shell pipelines. Heuristic:
-    //   - if data.items[] is a list of strings: emit one-per-line
-    //   - else if data.items[] is a list of objects with `id`: emit id one-per-line
-    //   - else if data is a scalar: emit it bare
-    //   - else fall back to compact JSON (still parseable)
-    if (!SafeBool(envelope, "ok", false)) {
-        // Errors still go through stderr below; nothing to extract.
-        return;
-    }
-    nlohmann::json data = SafeObject(envelope, "data");
-    // If data wasn't an object, fall through using empty object — quiet output skips.
-    if (data.contains("items") && data["items"].is_array()) {
-        for (const auto& it : data["items"]) {
-            if (it.is_string()) {
-                std::fprintf(stdout, "%s\n", it.get<std::string>().c_str());
-            } else if (it.is_object() && it.contains("id") && it["id"].is_string()) {
-                std::fprintf(stdout, "%s\n", it["id"].get<std::string>().c_str());
-            } else if (it.is_object() && it.contains("name") && it["name"].is_string()) {
-                std::fprintf(stdout, "%s\n", it["name"].get<std::string>().c_str());
-            } else {
-                std::fprintf(stdout, "%s\n", it.dump().c_str());
-            }
-        }
-        return;
-    }
-    if (data.is_string()) {
-        std::fprintf(stdout, "%s\n", data.get<std::string>().c_str());
-        return;
-    }
-    if (data.is_number() || data.is_boolean() || data.is_null()) {
-        std::fprintf(stdout, "%s\n", data.dump().c_str());
-        return;
-    }
-    // Fallback — compact one-line JSON for `--quiet` so the contract (stdout is parseable) holds.
-    std::fprintf(stdout, "%s\n", data.dump().c_str());
-}
-
-void EmitErrorToStderr(const nlohmann::json& envelope) { std::fprintf(stderr, "%s\n", envelope.dump().c_str()); }
 
 // Parse the MCP JSON-RPC `result.content[0].text` field back into the envelope.
 nlohmann::json ExtractEnvelopeFromMcpResult(const nlohmann::json& body) {
@@ -844,7 +846,205 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     }
 }
 
+#endif  // SMATCHET_WITH_MCP
+
+#if !defined(SMATCHET_WITH_MCP)
+
+void PrintCliHelpInProcess(std::FILE* out) {
+    std::fprintf(out,
+                 "Smatchet CLI — in-process Command System (light build).\n"
+                 "\n"
+                 "Usage:\n"
+                 "  Smatchet-Light.exe cmd <name> [--key=value ...] [flags]\n"
+                 "  Smatchet-Light.exe cmd commands.list        List registered commands.\n"
+                 "\n"
+                 "Output flags:\n"
+                 "  --pretty                Indent stdout JSON (2 spaces).\n"
+                 "  --quiet, -q             Bare scalar(s) on stdout.\n"
+                 "  --yes                   Confirm a destructive command.\n"
+                 "  --dry-run               Preview a mutation without applying it.\n"
+                 "\n"
+                 "Notes:\n"
+                 "  - Boots a hidden instance per invocation (no MCP attach).\n"
+                 "  - --spawn is ignored on light builds.\n"
+                 "  - Stdout is always JSON. Logs go to stderr.\n");
+}
+
+bool IsTier1MetaCommand(const std::string& name) {
+    static const char* const kAllow[] = {"commands.list", "commands.help", "commands.search", "perf.reset",
+                                         "perf.snapshot"};
+    for (const char* allowed : kAllow) {
+        if (name == allowed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int RunCmdInProcessImpl(int argc, char** argv) {
+    std::set_terminate(&CliTerminateHandler);
+    try {
+        ParsedArgs pa;
+        std::string parseErr;
+        if (!ParseArgs(argc, argv, pa, parseErr)) {
+            nlohmann::json env;
+            env["ok"] = false;
+            env["command"] = "";
+            env["error"] = {{"code", "validation-error"}, {"message", parseErr}};
+            EmitErrorToStderr(env);
+            return kExitValidation;
+        }
+
+        (void)pa.spawn;
+
+        if (pa.wantListHelp) {
+            PrintCliHelpInProcess(stdout);
+            return kExitOk;
+        }
+
+        nlohmann::json argsToSend = pa.args;
+        std::string toolName = pa.commandName;
+        if (pa.wantHelp) {
+            toolName = "commands.help";
+            argsToSend = nlohmann::json::object();
+            argsToSend["name"] = pa.commandName;
+        }
+        if (pa.yes) {
+            argsToSend["__confirm"] = true;
+        }
+        if (pa.dryRun) {
+            argsToSend["__dry_run"] = true;
+        }
+        if (pa.timeoutMs > 0) {
+            argsToSend["__timeout_ms"] = pa.timeoutMs;
+        }
+
+        const bool tier1 = IsTier1MetaCommand(toolName);
+        standalone::BootstrapContext boot;
+        std::string bootErr;
+        if (!standalone::Initialize(boot, argc, argv,
+                                    tier1 ? standalone::HeadlessCliMode::MetaCommand
+                                          : standalone::HeadlessCliMode::ScenarioRun,
+                                    bootErr)) {
+            nlohmann::json env;
+            env["ok"] = false;
+            env["command"] = toolName;
+            env["error"] = {{"code", "handler-error"}, {"message", "In-process boot failed: " + bootErr}};
+            EmitErrorToStderr(env);
+            standalone::Shutdown(boot);
+            return kExitHandler;
+        }
+
+        smatchet::cmd::CommandContext ctx;
+        ctx.App = boot.app;
+        ctx.Source = smatchet::cmd::CommandSource::Cli;
+        ctx.ConfirmedDestructive = pa.yes;
+        ctx.DryRun = pa.dryRun;
+        ctx.TimeoutMs = pa.timeoutMs;
+
+        smatchet::cmd::CommandResult dispatchResult =
+            boot.app->Commands().Dispatch(toolName, argsToSend, ctx);
+
+        nlohmann::json envelope = dispatchResult.ToWireJson(toolName, pa.dryRun);
+        const nlohmann::json envData = SafeObject(envelope, "data");
+        const bool isAsyncScenario = !tier1 && SafeBool(envelope, "ok", false) && SafeBool(envData, "running", false) &&
+                                     envData.contains("outPath") && envData["outPath"].is_string();
+
+        if (isAsyncScenario) {
+            const std::string outPath = SafeString(envData, "outPath");
+            int frames = 600;
+            if (argsToSend.contains("frames")) {
+                const auto& v = argsToSend["frames"];
+                if (v.is_number()) {
+                    frames = v.get<int>();
+                } else if (v.is_string()) {
+                    try {
+                        frames = std::stoi(v.get<std::string>());
+                    } catch (...) {
+                    }
+                }
+            }
+            const int scenarioWaitMs = (pa.timeoutMs > 0) ? pa.timeoutMs : ((frames / 60 + 30) * 1000);
+
+            standalone::RunRenderLoop(boot, [&boot]() { return !boot.app->Scenarios().Active(); });
+
+            const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
+            if (fileReady) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            }
+            if (!fileReady) {
+                nlohmann::json errEnv;
+                errEnv["ok"] = false;
+                errEnv["command"] = toolName;
+                errEnv["error"] = {{"code", "timeout"},
+                                   {"message", "Scenario did not finish within expected time."}};
+                EmitErrorToStderr(errEnv);
+                standalone::Shutdown(boot);
+                return 8;
+            }
+
+            std::FILE* f = std::fopen(outPath.c_str(), "rb");
+            if (!f) {
+                nlohmann::json errEnv;
+                errEnv["ok"] = false;
+                errEnv["command"] = toolName;
+                errEnv["error"] = {{"code", "handler-error"},
+                                   {"message", "Could not read scenario result file: " + outPath}};
+                EmitErrorToStderr(errEnv);
+                standalone::Shutdown(boot);
+                return kExitHandler;
+            }
+            std::string content;
+            char buf[4096];
+            size_t n = 0;
+            while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
+                content.append(buf, n);
+            }
+            std::fclose(f);
+            try {
+                envelope["ok"] = true;
+                envelope["command"] = toolName;
+                envelope["data"] = nlohmann::json::parse(content);
+            } catch (...) {
+                nlohmann::json errEnv;
+                errEnv["ok"] = false;
+                errEnv["command"] = toolName;
+                errEnv["error"] = {{"code", "handler-error"},
+                                   {"message", "Scenario result file is not valid JSON: " + outPath}};
+                EmitErrorToStderr(errEnv);
+                standalone::Shutdown(boot);
+                return kExitHandler;
+            }
+        }
+
+        if (SafeBool(envelope, "ok", false)) {
+            EmitEnvelope(envelope, pa.pretty, pa.quiet);
+            standalone::Shutdown(boot);
+            return kExitOk;
+        }
+
+        EmitErrorToStderr(envelope);
+        const std::string code = SafeString(SafeObject(envelope, "error"), "code", "handler-error");
+        standalone::Shutdown(boot);
+        return ExitCodeForErrorCode(code);
+    } catch (const std::exception& e) {
+        nlohmann::json env = MakeErrorEnvelope("", "handler-error", std::string("CLI internal error: ") + e.what());
+        EmitErrorToStderr(env);
+        return kExitHandler;
+    } catch (...) {
+        std::fprintf(stderr, "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+                             "\"message\":\"CLI internal error: unknown exception.\"}}\n");
+        return kExitHandler;
+    }
+}
+
+#endif  // !SMATCHET_WITH_MCP
+
 } // namespace
+
+#if !defined(SMATCHET_WITH_MCP)
+int RunCmdInProcess(int argc, char** argv) { return RunCmdInProcessImpl(argc, argv); }
+#endif
 
 bool ArgvHasCmdSubcommand(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
@@ -862,19 +1062,10 @@ bool IsEphemeralMode(int argc, char** argv) {
     return false;
 }
 
-/// Last-resort terminate handler installed by RunCmdAttach. Emits a minimal canonical
-/// error envelope to stderr without invoking destructors (which themselves could throw).
-[[noreturn]] static void CliTerminateHandler() {
-    // Avoid nlohmann::json — could throw again. Use a fixed literal.
-    std::fprintf(stderr, "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
-                         "\"message\":\"CLI hit std::terminate (uncaught exception). No state change occurred.\"}}\n");
-    std::_Exit(4); // matches kExitHandler — bypass destructors.
-}
-
 int RunCmdAttach(int argc, char** argv) {
-    // Defense-in-depth: any uncaught throw inside this function is caught and converted
-    // to a canonical error envelope below. std::terminate handler catches the case where
-    // an exception escapes even that (double-throw, noexcept violation, stack corruption).
+#if !defined(SMATCHET_WITH_MCP)
+    return RunCmdInProcess(argc, argv);
+#else
     std::set_terminate(&CliTerminateHandler);
 
     try {
@@ -1080,6 +1271,7 @@ int RunCmdAttach(int argc, char** argv) {
                              "\"message\":\"CLI internal error: unknown exception.\"}}\n");
         return kExitHandler;
     }
+#endif  // SMATCHET_WITH_MCP
 }
 
 } // namespace cli

@@ -98,6 +98,8 @@ smatchet_field_catalog_cache.json
 .vexp/
 .worktrees/
 .claude/
+!.claude/streams/
+!.claude/streams/**
 .codex/
 .cursor/
 .agents/

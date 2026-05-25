@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -59,6 +60,11 @@ class SmatchetImGuiHost {
      *  host skips BeginFrame/DrawUI (e.g. Unreal overlay hidden) so tracker sync sessions still drain. */
     void TickApplicationWork();
 
+    std::uint64_t EnqueueCommand(const std::string& commandName, const std::string& argsJson, bool confirmedDestructive,
+                                 bool dryRun);
+    bool IsCommandResultReady(std::uint64_t requestId) const;
+    bool TakeCommandResultJson(std::uint64_t requestId, std::string& outJson);
+
     void SetMousePosition(float x, float y);
     void SetMouseButton(int button, bool isDown);
     void AddMouseWheel(float wheelX, float wheelY);
@@ -95,12 +101,8 @@ class SmatchetImGuiHost {
     void FormatCachedRendererDebugSummary(char* buf, std::size_t bufSize) const;
 
   private:
+    void DrainCommandQueue(std::size_t maxCount);
+
     struct Impl;
     std::unique_ptr<Impl> ImplData;
 };
-
-
-
-
-
-

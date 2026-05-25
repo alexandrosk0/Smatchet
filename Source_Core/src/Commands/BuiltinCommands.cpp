@@ -21,6 +21,19 @@
 
 #include "Logger.h"
 
+#if !defined(SMATCHET_WITH_AI)
+namespace smatchet {
+namespace cmd {
+
+void RegisterAiCommands(CommandRegistry& reg, AppController& app) {
+    (void)reg;
+    (void)app;
+}
+
+} // namespace cmd
+} // namespace smatchet
+#endif
+
 namespace smatchet {
 namespace cmd {
 

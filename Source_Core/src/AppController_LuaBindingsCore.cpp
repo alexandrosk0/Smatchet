@@ -46,7 +46,11 @@ namespace smatchet_lua_init_detail {
 // glue calls this; nothing else reaches across the binding/test boundary.
 static ILuaBindingHost* ResolveHost(sol::this_state L) {
     sol::state_view lua(L);
-    return lua["__smatchet_app"].get_or<ILuaBindingHost*>(nullptr);
+    const sol::object hostObj = lua["__smatchet_app"];
+    if (!hostObj.valid() || hostObj.get_type() == sol::type::lua_nil) {
+        return nullptr;
+    }
+    return hostObj.as<ILuaBindingHost*>();
 }
 
 // --- JSON <-> Lua marshalling -------------------------------------------------

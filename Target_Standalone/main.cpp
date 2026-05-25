@@ -85,6 +85,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "ConfigManager.h"
 #include "AppController.h"
 #include "CliCommandRunner.h"
+#include "StandaloneAppBootstrap.h"
 // AppController holds unique_ptr<> members of these service types; main.cpp's
 // stack instance triggers destructor / noexcept evaluation that requires the
 // complete types, so include them here (CODE_REVIEW items 11/12/13/14).
@@ -97,15 +98,6 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "Commands/Scenarios/IScenario.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
-#if defined(SMATCHET_WITH_MCP)
-#include "McpPlugin.h"
-#endif
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-#include "LuaConsolePlugin.h"
-#endif
-#if defined(SMATCHET_WITH_WHISPER)
-#include "WhisperPlugin.h"
-#endif
 
 #ifndef GL_SHADING_LANGUAGE_VERSION
 #define GL_SHADING_LANGUAGE_VERSION 0x8B8C
@@ -298,10 +290,16 @@ int main(int argc, char** argv) {
         return smatchet::cli::RunCmdAttach(argc, argv);
     }
 
-    // --ephemeral: launched by the CLI's --spawn mechanism for automated testing.
-    // Run normally (full app init, MCP server) but start with a hidden window so
-    // there is no visible UI. The CLI will send app.quit when it's done.
-    const bool ephemeralMode = smatchet::cli::IsEphemeralMode(argc, argv);
+    if (smatchet::cli::IsEphemeralMode(argc, argv)) {
+        std::string bootErr;
+        if (!smatchet::standalone::BootEphemeral(argc, argv, bootErr)) {
+            if (!bootErr.empty()) {
+                std::fprintf(stderr, "%s\n", bootErr.c_str());
+            }
+            return 1;
+        }
+        return 0;
+    }
 
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
@@ -397,10 +395,7 @@ int main(int argc, char** argv) {
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 #endif
-    if (ephemeralMode) {
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    }
-    if (restoreMaximized && !ephemeralMode) {
+    if (restoreMaximized) {
         glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
     }
 
@@ -412,7 +407,7 @@ int main(int argc, char** argv) {
 
     // Restore saved position if it still overlaps a connected monitor.
     // Skip when maximized — glfwSetWindowPos would un-maximize the window.
-    if (havePosHint && !ephemeralMode && !restoreMaximized) {
+    if (havePosHint && !restoreMaximized) {
         auto rectOverlapsAnyMonitor = [](int x, int y, int w, int h) -> bool {
             int count = 0;
             GLFWmonitor** mons = glfwGetMonitors(&count);
@@ -484,75 +479,32 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 3. Load merged configuration with command-line overrides
     ConfigManager::CliOverrides cli;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--help" || arg == "-h") {
-            ::printf("Smatchet Standalone Client\n");
-            ::printf("Usage: SmatchetStandalone [options]\n");
-            ::printf("Options:\n");
-            ::printf("  -d, --db-path <path>         Path to sqlite database\n");
-            ::printf("  -b, --backend-type <type>    Tracker type ('Jira' or 'Plane')\n");
-            ::printf("  -p, --mcp-port <port>        MCP server port number\n");
-            ::printf("      --mcp-allow-remote       Allow remote connections to MCP server\n");
-            ::printf("  -h, --help                   Show help message\n");
-            glfwTerminate();
-            return 0;
-        } else if ((arg == "--db-path" || arg == "-d") && i + 1 < argc) {
-            cli.HasDbPath = true;
-            cli.DbPath = argv[++i];
-        } else if ((arg == "--backend-type" || arg == "--tracker-type" || arg == "-b") && i + 1 < argc) {
-            cli.HasBackendType = true;
-            cli.BackendType = argv[++i];
-        } else if ((arg == "--mcp-port" || arg == "-p") && i + 1 < argc) {
-            try {
-                cli.HasMcpPort = true;
-                cli.McpPort = std::stoi(argv[++i]);
-            } catch (...) {
-            }
-        } else if (arg == "--mcp-allow-remote") {
-            cli.HasMcpAllowRemote = true;
-            cli.McpAllowRemote = true;
-        }
+    if (!smatchet::standalone::ParseStandaloneCli(argc, argv, cli)) {
+        glfwTerminate();
+        return 0;
     }
 
     const TrackerConfig cfg = ConfigManager::Load(cli);
 
+    smatchet::standalone::BootstrapContext bootCtx;
+    bootCtx.window = window;
+    bootCtx.glslVersion = glsl_version;
+    std::string bootErr;
+    if (!smatchet::standalone::InitAppAndPlugins(bootCtx, cfg, false, bootErr)) {
+        std::fprintf(stderr, "%s\n", bootErr.c_str());
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+    AppController& smatchetApp = *bootCtx.app;
+    PluginHost& pluginHost = *bootCtx.pluginHost;
+
     int exitCode = 0;
     try {
-        AppController smatchetApp;
-        PluginHost pluginHost;
-        smatchetApp.SetRuntimePluginHost(&pluginHost);
-        smatchetApp.SetRequestAppQuitHandler([window]() {
-            if (window) {
-                glfwSetWindowShouldClose(window, GLFW_TRUE);
-            }
-        });
-#if defined(SMATCHET_WITH_MCP)
-        {
-            // Ephemeral spawn mode forces MCP on regardless of user config, since the spawning
-            // CLI process needs the HTTP endpoint to dispatch commands and request app.quit.
-            const bool wantMcp = cfg.McpEnabled || ephemeralMode;
-            if (wantMcp) {
-                const int mcpPort =
-                    (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
-                pluginHost.Register(std::make_unique<McpPlugin>(mcpPort));
-            }
-        }
-#endif
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        pluginHost.Register(std::make_unique<LuaConsolePlugin>());
-#endif
-#if defined(SMATCHET_WITH_WHISPER)
-        // Phase A shell — registers whisper.status; no audio / network / model access.
-        pluginHost.Register(std::make_unique<WhisperPlugin>());
-#endif
-        pluginHost.OnEarlyInit(smatchetApp);
-
-        smatchetApp.Initialize(cfg.DbPath, cfg.TrackerType);
-        pluginHost.OnStart(smatchetApp);
-
         SmatchetUI mainWindow;
 
         // 4. The Main Render Loop
@@ -721,13 +673,13 @@ int main(int argc, char** argv) {
             ConfigManager::Save(saveCfg);
         }
 
-        smatchetApp.ClearAutomationLogSinks();
-        smatchetApp.SetRuntimePluginHost(nullptr);
-        pluginHost.OnStop();
+        smatchet::standalone::ShutdownApplication(bootCtx);
     } catch (const std::exception& ex) {
+        smatchet::standalone::ShutdownApplication(bootCtx);
         ::fprintf(stderr, "Exception caught in entry point: %s\n", ex.what());
         exitCode = 1;
     } catch (...) {
+        smatchet::standalone::ShutdownApplication(bootCtx);
         ::fprintf(stderr, "Unknown exception caught in entry point.\n");
         exitCode = 1;
     }

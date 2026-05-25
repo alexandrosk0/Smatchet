@@ -35,10 +35,22 @@
             }
         },
         {
+            "name": "_smatchet-light-features",
+            "hidden": true,
+            "description": "Light profile: Lua + command registry ON; MCP, AI assistant, and Whisper OFF.",
+            "cacheVariables": {
+                "SMATCHET_WITH_LUA_AUTOMATION": "ON",
+                "SMATCHET_WITH_MCP": "OFF",
+                "SMATCHET_WITH_AI": "OFF",
+                "SMATCHET_WITH_WHISPER": "OFF",
+                "SMATCHET_WHISPER_LOCAL_BACKEND": "OFF"
+            }
+        },
+        {
             "name": "vs-unreal-msvc",
             "hidden": true,
             "inherits": [
-                "_smatchet-native-features"
+                "_smatchet-light-features"
             ],
             "description": "Hidden MSVC preset for Win64 Unreal plugin packaging consumed by Unreal Build Tool.",
             "generator": "Visual Studio 17 2022",
@@ -219,6 +231,62 @@
                 "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet",
                 "SMATCHET_BUILD_TESTS": "ON"
             }
+        },
+        {
+            "name": "ninja-publish-light-msys2",
+            "inherits": [
+                "_smatchet-msys2-base",
+                "_smatchet-light-features"
+            ],
+            "displayName": "Ninja Publish Light (MSYS2 UCRT64, LTO)",
+            "description": "Distributable light standalone: Lua + command registry ON; MCP, AI, and Whisper OFF. In-process cmd CLI.",
+            "binaryDir": "${sourceDir}/build/ninja-publish-light-msys2",
+            "environment": {
+                "SMATCHET_NO_LLD": "1"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
+                "SMATCHET_USE_PCH": "OFF",
+                "SMATCHET_ENABLE_LTO": "ON",
+                "SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME": "ON",
+                "SMATCHET_STANDALONE_OUTPUT_NAME": "Smatchet-Light",
+                "SMATCHET_STANDALONE_FILE_DESCRIPTION": "Smatchet Light Standalone",
+                "SMATCHET_WITH_MCP": "OFF",
+                "SMATCHET_WITH_AI": "OFF",
+                "SMATCHET_WITH_WHISPER": "OFF",
+                "SMATCHET_BUILD_TESTS": "OFF",
+                "SMATCHET_BUILD_UI_TESTS": "OFF",
+                "SMATCHET_BUILD_LUA_TESTS": "OFF",
+                "SMATCHET_AGENT_DEBUG": "OFF",
+                "SMATCHET_BUILD_AGENT_DEBUG_TESTS": "OFF"
+            }
+        },
+        {
+            "name": "ninja-publish-unreal-light-msys2",
+            "inherits": [
+                "_smatchet-msys2-base",
+                "_smatchet-light-features"
+            ],
+            "displayName": "Ninja Publish Unreal Light (MSYS2 UCRT64, LTO)",
+            "description": "Default Unreal plugin packaging profile: Lua-capable DX12 libs without MCP, AI, or Whisper.",
+            "binaryDir": "${sourceDir}/build/ninja-publish-unreal-light-msys2",
+            "environment": {
+                "SMATCHET_NO_LLD": "1"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
+                "SMATCHET_USE_PCH": "OFF",
+                "SMATCHET_ENABLE_LTO": "ON",
+                "SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME": "ON",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet",
+                "SMATCHET_BUILD_TESTS": "OFF",
+                "SMATCHET_BUILD_UI_TESTS": "OFF",
+                "SMATCHET_BUILD_LUA_TESTS": "OFF",
+                "SMATCHET_AGENT_DEBUG": "OFF",
+                "SMATCHET_BUILD_AGENT_DEBUG_TESTS": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -310,6 +378,22 @@
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone",
+                "SmatchetPackageUnrealLibs_DX12"
+            ]
+        },
+        {
+            "name": "ninja-publish-light-msys2",
+            "configurePreset": "ninja-publish-light-msys2",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-publish-unreal-light-msys2",
+            "configurePreset": "ninja-publish-unreal-light-msys2",
+            "inheritConfigureEnvironment": true,
+            "targets": [
                 "SmatchetPackageUnrealLibs_DX12"
             ]
         }

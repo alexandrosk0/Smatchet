@@ -557,25 +557,6 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
     }
 }
 
-#else // !SMATCHET_WITH_AI
-
-void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
-    // Build is missing the AI surface entirely. Register stub commands so the
-    // CLI/MCP/Palette enumerate them and emit a coherent error rather than
-    // unknown-command from the registry.
-    static const char* const kNames[] = {"ai.list-models", "ai.dump-request", "ai.probe", "ai.send-once",
-                                         "ai.validate-prefs"};
-    for (const char* name : kNames) {
-        Command c = MakeCommand(name, "AI assistant disabled in this build (SMATCHET_WITH_AI=OFF).",
-                                [name](const nlohmann::json&, const CommandContext&) {
-                                    return CommandResult::Failure(ErrorCode::HandlerError,
-                                                                  std::string(name) + ": AI not built");
-                                });
-        c.Idempotent = true;
-        reg.Register(std::move(c));
-    }
-}
-
 #endif // SMATCHET_WITH_AI
 
 } // namespace cmd

@@ -9,6 +9,7 @@ extern "C" {
 
 // Opaque handle to the Smatchet ImGui host (created/destroyed by the plugin native lib).
 typedef void* SmatchetImGuiHostHandle;
+typedef uint64_t SmatchetCommandRequestId;
 
 typedef enum SmatchetRendererBackendC {
     SMATCHET_RENDERER_BACKEND_UNKNOWN = 0,
@@ -58,6 +59,24 @@ bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host);
 /** Drain offline replay + streamed ticket batches when not building an ImGui frame (overlay hidden). */
 void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host);
 
+/**
+ * Enqueue a unified Smatchet command for async dispatch on the host tick/frame path.
+ *
+ * Args must be a UTF-8 JSON object string; pass null/empty for `{}`. Returns 0 only when
+ * the host handle is invalid. Malformed JSON still returns a request id, with an error
+ * envelope available via SmatchetHost_TakeCommandResultJson.
+ */
+SmatchetCommandRequestId SmatchetHost_EnqueueCommand(SmatchetImGuiHostHandle host, const char* commandNameUtf8,
+                                                     const char* argsJsonUtf8, bool confirmedDestructive, bool dryRun);
+bool SmatchetHost_IsCommandResultReady(SmatchetImGuiHostHandle host, SmatchetCommandRequestId requestId);
+/**
+ * Returns a newly allocated UTF-8 JSON result envelope and removes it from the completed-result table.
+ * Returns null when the request is still pending, unknown, or the host handle is invalid.
+ * Free non-null returns with SmatchetHost_ReleaseCommandResultJson.
+ */
+char* SmatchetHost_TakeCommandResultJson(SmatchetImGuiHostHandle host, SmatchetCommandRequestId requestId);
+void SmatchetHost_ReleaseCommandResultJson(char* resultJsonUtf8);
+
 // Frame
 void SmatchetHost_BeginFrame(SmatchetImGuiHostHandle host, float deltaTimeSeconds, float viewportWidth,
                              float viewportHeight);
@@ -75,9 +94,3 @@ void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int c
 #ifdef __cplusplus
 } // extern "C"
 #endif
-
-
-
-
-
-

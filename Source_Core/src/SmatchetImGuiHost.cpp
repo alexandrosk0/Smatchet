@@ -15,8 +15,13 @@
 #include <cstdio>
 #include <cstdint>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "imgui.h"
@@ -27,9 +32,16 @@
 
 // Smatchet core components (needed for the pImpl state).
 #include "AppController.h"
+#include "AppControllerDepsAdapter.h"
+#include "Commands/CommandRegistry.h"
+#include "Commands/Scenarios/IScenario.h"
 #include "ConfigManager.h"
+#include "ITrackerBackendFactory.h"
+#include "LuaAutomationHost.h"
+#include "OfflineQueueService.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
+#include "TicketSyncService.h"
 #if defined(SMATCHET_WITH_MCP)
 #include "McpPlugin.h"
 #endif
@@ -38,6 +50,42 @@
 #endif
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetTheme.h"
+
+namespace {
+
+constexpr std::size_t kMaxPendingHostCommands = 128;
+constexpr std::size_t kMaxCompletedHostCommandResults = 128;
+constexpr std::size_t kMaxCommandsPerHostTick = 32;
+
+struct PendingHostCommand {
+    std::uint64_t RequestId = 0;
+    std::string CommandName;
+    std::string ArgsJson;
+    bool ConfirmedDestructive = false;
+    bool DryRun = false;
+};
+
+std::string MakeCommandFailureResultJson(const std::string& commandName, smatchet::cmd::ErrorCode code,
+                                         const std::string& message, const std::string& hint, bool dryRun) {
+    smatchet::cmd::CommandResult r = smatchet::cmd::CommandResult::Failure(code, message, hint);
+    return r.ToWireJson(commandName, dryRun).dump();
+}
+
+void StoreCompletedHostCommandResult(std::unordered_map<std::uint64_t, std::string>& completed,
+                                     std::deque<std::uint64_t>& order, std::uint64_t requestId,
+                                     std::string resultJson) {
+    if (completed.find(requestId) == completed.end()) {
+        order.push_back(requestId);
+    }
+    completed[requestId] = std::move(resultJson);
+    while (completed.size() > kMaxCompletedHostCommandResults && !order.empty()) {
+        const std::uint64_t oldId = order.front();
+        order.pop_front();
+        completed.erase(oldId);
+    }
+}
+
+} // namespace
 
 // Private implementation that keeps SmatchetImGuiHost.h lightweight for Unreal.
 // Unreal should not need to include AppController/PluginHost/SmatchetUI headers.
@@ -73,6 +121,12 @@ struct SmatchetImGuiHost::Impl {
 
     // Throttle failed init retries when UI is visible but DX resources aren't ready yet.
     std::atomic<std::uint64_t> LastInitAttemptMs{0};
+
+    std::atomic<std::uint64_t> NextCommandRequestId{1};
+    mutable std::mutex CommandMutex;
+    std::deque<PendingHostCommand> PendingCommands;
+    std::unordered_map<std::uint64_t, std::string> CompletedCommandResults;
+    std::deque<std::uint64_t> CompletedCommandOrder;
 
     std::string LastInitError;
 };
@@ -340,8 +394,7 @@ bool SmatchetImGuiHost::UpdateRendererColorFormat(int colorFormat, std::string& 
         // for the host's diagnostic accessors.
         ImplData->Initialized.store(false, std::memory_order_release);
         ImplData->LastInitError = outError;
-        LOG_ERROR("SmatchetImGuiHost::UpdateRendererColorFormat backend re-init failed: %s",
-                  outError.c_str());
+        LOG_ERROR("SmatchetImGuiHost::UpdateRendererColorFormat backend re-init failed: %s", outError.c_str());
         return false;
     }
 
@@ -496,7 +549,10 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
-    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered; Scripts & Actions window opens from Automation menu when SMATCHET_WITH_LUA_AUTOMATION is on.");
+    LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered.");
+#if !defined(SMATCHET_WITH_MCP)
+    LOG_INFO("SmatchetImGuiHost: light profile (Lua + command registry; MCP/AI/Whisper off).");
+#endif
 #else
     LOG_WARN("SmatchetImGuiHost: built without SMATCHET_WITH_LUA_AUTOMATION — LuaConsole not loaded.");
 #endif
@@ -639,6 +695,8 @@ void SmatchetImGuiHost::DrawUI() {
         !ImplData->FrameActive.load(std::memory_order_relaxed) || !IsUiVisible()) {
         return;
     }
+
+    DrainCommandQueue(kMaxCommandsPerHostTick);
 
     std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
     if (ImplData->ImGuiCtx) {
@@ -797,9 +855,129 @@ void SmatchetImGuiHost::TickApplicationWork() {
     if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
         return;
     }
+    DrainCommandQueue(kMaxCommandsPerHostTick);
     ImplData->App.TickOfflineCreates();
     ImplData->App.TickOfflineFieldEdits();
     ImplData->App.TickStreamingApply();
+}
+
+std::uint64_t SmatchetImGuiHost::EnqueueCommand(const std::string& commandName, const std::string& argsJson,
+                                                bool confirmedDestructive, bool dryRun) {
+    if (!ImplData) {
+        return 0;
+    }
+
+    std::uint64_t requestId = ImplData->NextCommandRequestId.fetch_add(1, std::memory_order_relaxed);
+    if (requestId == 0) {
+        requestId = ImplData->NextCommandRequestId.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    PendingHostCommand req;
+    req.RequestId = requestId;
+    req.CommandName = commandName;
+    req.ArgsJson = argsJson;
+    req.ConfirmedDestructive = confirmedDestructive;
+    req.DryRun = dryRun;
+
+    std::lock_guard<std::mutex> lock(ImplData->CommandMutex);
+    if (commandName.empty()) {
+        StoreCompletedHostCommandResult(
+            ImplData->CompletedCommandResults, ImplData->CompletedCommandOrder, requestId,
+            MakeCommandFailureResultJson(commandName, smatchet::cmd::ErrorCode::ValidationError,
+                                         "Command name is required.", std::string(), dryRun));
+        return requestId;
+    }
+    if (ImplData->PendingCommands.size() >= kMaxPendingHostCommands) {
+        StoreCompletedHostCommandResult(
+            ImplData->CompletedCommandResults, ImplData->CompletedCommandOrder, requestId,
+            MakeCommandFailureResultJson(commandName, smatchet::cmd::ErrorCode::Timeout,
+                                         "Unreal command queue is full.",
+                                         "Poll existing command results before enqueueing more requests.", dryRun));
+        return requestId;
+    }
+
+    ImplData->PendingCommands.push_back(std::move(req));
+    return requestId;
+}
+
+bool SmatchetImGuiHost::IsCommandResultReady(std::uint64_t requestId) const {
+    if (!ImplData || requestId == 0) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(ImplData->CommandMutex);
+    return ImplData->CompletedCommandResults.find(requestId) != ImplData->CompletedCommandResults.end();
+}
+
+bool SmatchetImGuiHost::TakeCommandResultJson(std::uint64_t requestId, std::string& outJson) {
+    outJson.clear();
+    if (!ImplData || requestId == 0) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(ImplData->CommandMutex);
+    const auto it = ImplData->CompletedCommandResults.find(requestId);
+    if (it == ImplData->CompletedCommandResults.end()) {
+        return false;
+    }
+    outJson = std::move(it->second);
+    ImplData->CompletedCommandResults.erase(it);
+    return true;
+}
+
+void SmatchetImGuiHost::DrainCommandQueue(std::size_t maxCount) {
+    if (!ImplData || maxCount == 0 || !ImplData->Initialized.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    for (std::size_t processed = 0; processed < maxCount; ++processed) {
+        PendingHostCommand req;
+        {
+            std::lock_guard<std::mutex> lock(ImplData->CommandMutex);
+            if (ImplData->PendingCommands.empty()) {
+                return;
+            }
+            req = std::move(ImplData->PendingCommands.front());
+            ImplData->PendingCommands.pop_front();
+        }
+
+        std::string resultJson;
+        try {
+            nlohmann::json args = nlohmann::json::object();
+            if (!req.ArgsJson.empty()) {
+                args = nlohmann::json::parse(req.ArgsJson);
+                if (!args.is_object()) {
+                    resultJson = MakeCommandFailureResultJson(
+                        req.CommandName, smatchet::cmd::ErrorCode::ValidationError,
+                        "Command arguments must be a JSON object.", std::string(), req.DryRun);
+                }
+            }
+
+            if (resultJson.empty()) {
+                smatchet::cmd::CommandContext ctx;
+                ctx.App = &ImplData->App;
+                ctx.Source = smatchet::cmd::CommandSource::Unreal;
+                ctx.ConfirmedDestructive = req.ConfirmedDestructive;
+                ctx.DryRun = req.DryRun;
+
+                const smatchet::cmd::CommandResult result =
+                    ImplData->App.Commands().Dispatch(req.CommandName, args, ctx);
+                resultJson = result.ToWireJson(req.CommandName, req.DryRun).dump();
+            }
+        } catch (const std::exception& ex) {
+            resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::ValidationError,
+                                                      std::string("Command arguments must be valid JSON: ") + ex.what(),
+                                                      std::string(), req.DryRun);
+        } catch (...) {
+            resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::HandlerError,
+                                                      "Command dispatch failed with an unknown exception.",
+                                                      std::string(), req.DryRun);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(ImplData->CommandMutex);
+            StoreCompletedHostCommandResult(ImplData->CompletedCommandResults, ImplData->CompletedCommandOrder,
+                                            req.RequestId, std::move(resultJson));
+        }
+    }
 }
 
 const char* SmatchetImGuiHost::PeekLastInitErrorUtf8() const {
@@ -835,7 +1013,8 @@ std::unordered_set<SmatchetImGuiHost*> gLiveHostHandles;
 /// Safe handle resolution: checks gLiveHostHandles so stale handles from Unreal hot-reload
 /// or use-after-Destroy return nullptr rather than dereferencing freed memory.
 SmatchetImGuiHost* LookupHost(SmatchetImGuiHostHandle handle) {
-    if (!handle) return nullptr;
+    if (!handle)
+        return nullptr;
     auto* h = reinterpret_cast<SmatchetImGuiHost*>(handle);
     std::lock_guard<std::mutex> lock(gHostHandleSetMutex);
     return gLiveHostHandles.count(h) ? h : nullptr;
@@ -925,6 +1104,44 @@ void SmatchetHost_SetNumSrvDescriptors(SmatchetImGuiHostHandle host, int numSrvD
         return;
     h->SetRendererNumSrvDescriptors(numSrvDescriptors);
 }
+
+SmatchetCommandRequestId SmatchetHost_EnqueueCommand(SmatchetImGuiHostHandle host, const char* commandNameUtf8,
+                                                     const char* argsJsonUtf8, bool confirmedDestructive, bool dryRun) {
+    auto* h = LookupHost(host);
+    if (!h) {
+        return 0;
+    }
+    return h->EnqueueCommand(commandNameUtf8 ? std::string(commandNameUtf8) : std::string(),
+                             argsJsonUtf8 ? std::string(argsJsonUtf8) : std::string(), confirmedDestructive, dryRun);
+}
+
+bool SmatchetHost_IsCommandResultReady(SmatchetImGuiHostHandle host, SmatchetCommandRequestId requestId) {
+    auto* h = LookupHost(host);
+    if (!h) {
+        return false;
+    }
+    return h->IsCommandResultReady(requestId);
+}
+
+char* SmatchetHost_TakeCommandResultJson(SmatchetImGuiHostHandle host, SmatchetCommandRequestId requestId) {
+    auto* h = LookupHost(host);
+    if (!h) {
+        return nullptr;
+    }
+    std::string resultJson;
+    if (!h->TakeCommandResultJson(requestId, resultJson)) {
+        return nullptr;
+    }
+    const std::size_t byteCount = resultJson.size() + 1;
+    char* out = static_cast<char*>(std::malloc(byteCount));
+    if (!out) {
+        return nullptr;
+    }
+    std::memcpy(out, resultJson.c_str(), byteCount);
+    return out;
+}
+
+void SmatchetHost_ReleaseCommandResultJson(char* resultJsonUtf8) { std::free(resultJsonUtf8); }
 
 void SmatchetHost_SetUiVisible(SmatchetImGuiHostHandle host, bool visible) {
     auto* h = LookupHost(host);
@@ -1048,5 +1265,3 @@ void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int c
 
 } // extern "C"
 #endif
-
-

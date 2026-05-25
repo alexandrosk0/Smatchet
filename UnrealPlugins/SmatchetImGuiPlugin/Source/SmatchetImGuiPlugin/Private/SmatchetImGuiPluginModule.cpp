@@ -68,7 +68,8 @@ void SmatchetAttachmentViewerCallback(const char* LocalPathUtf8, const char*, co
     FPlatformProcess::LaunchFileInDefaultExternalApplication(*Path);
 }
 
-/** Streaming sync + offline replay normally run inside ImGui Draw; when the overlay is hidden, Unreal skips DrawUI entirely, so drain work here (throttled — many Slate windows can present per frame). */
+/** Streaming sync + offline replay normally run inside ImGui Draw; when the overlay is hidden, Unreal skips DrawUI
+ * entirely, so drain work here (throttled — many Slate windows can present per frame). */
 void TickSmatchetApplicationIfHostReadyAndUiHidden(SmatchetImGuiHostHandle InHost) {
     if (!InHost || SmatchetHost_IsUiVisible(InHost) != 0) {
         return;
@@ -86,9 +87,13 @@ void TickSmatchetApplicationIfHostReadyAndUiHidden(SmatchetImGuiHostHandle InHos
 }
 } // namespace
 
+class FSmatchetImGuiPluginModule;
+static FSmatchetImGuiPluginModule* GSmatchetImGuiPluginModule = nullptr;
+
 class FSmatchetImGuiPluginModule : public IModuleInterface {
   public:
     virtual void StartupModule() override {
+        GSmatchetImGuiPluginModule = this;
         Host = SmatchetHost_Create();
         UE_LOG(LogSmatchetImGuiPlugin, Log, TEXT("Smatchet packaged native host tag: %s"),
                ANSI_TO_TCHAR(SmatchetHost_GetBuildTag()));
@@ -150,6 +155,8 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
     }
 
     virtual void ShutdownModule() override {
+        GSmatchetImGuiPluginModule = nullptr;
+
         if (InitOptionsRetryHandle.IsValid()) {
             FTSTicker::GetCoreTicker().RemoveTicker(InitOptionsRetryHandle);
             InitOptionsRetryHandle = {};
@@ -189,6 +196,8 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
         }
     }
 
+    SmatchetImGuiHostHandle GetNativeHostForCommands() const { return Host; }
+
   private:
     bool ApplyInitOptions(const FSmatchetRendererInitParams& Params) {
         if (!Host || !RenderBackend) {
@@ -197,15 +206,10 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
 
         FTCHARToUTF8 DbPathUtf8(*DbPath);
         SmatchetHost_SetInitOptions(
-            Host,
-            DbPathUtf8.Get(),
-            SmatchetDefaults::kDefaultBackendType,
-            SmatchetDefaults::Mcp::kDefaultPort,
-            Params.RendererBackend,
-            Params.NumFramesInFlight,
-            Params.ColorFormat,
-            Params.NativeDevice, Params.RendererResource0, Params.RendererResource1, Params.RendererResource2,
-            Params.NativeCommandQueue, &SmatchetOpenUrlCallback, nullptr, &SmatchetAttachmentViewerCallback, nullptr);
+            Host, DbPathUtf8.Get(), SmatchetDefaults::kDefaultBackendType, SmatchetDefaults::Mcp::kDefaultPort,
+            Params.RendererBackend, Params.NumFramesInFlight, Params.ColorFormat, Params.NativeDevice,
+            Params.RendererResource0, Params.RendererResource1, Params.RendererResource2, Params.NativeCommandQueue,
+            &SmatchetOpenUrlCallback, nullptr, &SmatchetAttachmentViewerCallback, nullptr);
         // DX12 dynamic-texture SRV allocator needs to know the heap capacity so it can hand out
         // slots 1..N-1 for attachment thumbnails (slot 0 stays reserved for the font atlas).
         SmatchetHost_SetNumSrvDescriptors(Host, Params.NumSrvDescriptors);
@@ -345,5 +349,9 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
     FTSTicker::FDelegateHandle InitOptionsRetryHandle{};
     FTSTicker::FDelegateHandle ViewExtensionRetryHandle{};
 };
+
+SmatchetImGuiHostHandle SmatchetImGuiPlugin_GetNativeHostForCommands() {
+    return GSmatchetImGuiPluginModule ? GSmatchetImGuiPluginModule->GetNativeHostForCommands() : nullptr;
+}
 
 IMPLEMENT_MODULE(FSmatchetImGuiPluginModule, SmatchetImGuiPlugin)

@@ -224,3 +224,4 @@
   Concrete next action: add a session-start self-check rule to AGENTS.md § Autonomous ship-loop default. Phrasing suggestion: "**Session-start self-check (mandatory, regardless of user-prompt flavour).** First non-comment action of every session is `echo $SMATCHET_AGENT_VCS` + `p4 info | head -3 || echo 'p4 unreachable'`. If `$SMATCHET_AGENT_VCS=p4` AND `p4 info` succeeds, the orchestrator MUST follow the P4-gated ship-loop (docs/agent-rules/ship-loops.md § P4-gated ship-loop) for ALL subsequent task-loops in this session — even when the user's prompt mentions PR numbers, gh URLs, or other git-flavoured terms. The user opted into p4-mode at the env-var; that overrides prompt-driven mode inference." Pair with the tooling-side SessionStart-hook entry above so the orchestrator gets the banner AND the rule.
   Status: open
   Last-reviewed: 2026-05-24
+

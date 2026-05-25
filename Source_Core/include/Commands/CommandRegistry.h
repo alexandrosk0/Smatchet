@@ -14,6 +14,10 @@ namespace cmd {
 
 /// Thread-safe central registry. One instance lives on `AppController`.
 ///
+/// **Feature-gated builds** (ADR 0010): optional surfaces (AI, MCP, Whisper) register
+/// commands only when their `SMATCHET_WITH_*` flag is ON. OFF builds omit those names;
+/// `Dispatch` returns `unknown-command` — no stub “disabled in this build” handlers.
+///
 /// **Reentrancy contract** (see plan): `Dispatch` copies the `Command` struct
 /// (including its `Handler` `std::function`) under the registry mutex, then
 /// releases the lock before invoking the handler. A Lua handler that recurses

@@ -78,12 +78,26 @@ Move Unreal release packaging to the same light feature profile by default. The 
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` plan revision rules)*
+- CMake: `_smatchet-light-features`, `ninja-publish-light-msys2` (`Smatchet-Light.exe`), `ninja-publish-unreal-light-msys2`, `vs-unreal-msvc` inherits light; AI TUs gated when `SMATCHET_WITH_AI=OFF`.
+- Standalone: `StandaloneAppBootstrap` (hidden boot + `InitAppAndPlugins` / `BootEphemeral`); `CliCommandRunner` in-process path when `!SMATCHET_WITH_MCP`; `main.cpp` DRY.
+- Core: empty `RegisterAiCommands` when AI OFF (ADR 0010); ImGuiHost command queue + Unreal bridge hooks.
+- Release: `release_github.ps1` light zip + default Unreal light preset; `test_release_smoke.ps1` light CLI checks; MSVC package scripts use `vs-unreal-msvc`.
+- MSVC/min macro: `(std::min)` / LOG fixes for light builds without Whisper.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- **Item 10 (main.cpp DRY)** — shipped in follow-up slice after initial CLI-only bootstrap: GUI uses `InitAppAndPlugins`; `--ephemeral` uses `BootEphemeral` (same plugin/MCP policy as before, including force-MCP when spawning).
+- **In-process light CLI** — plan draft mentioned disabling `cmd` on light; shipped in-process `CommandRegistry::Dispatch` instead (ADR 0010 + command-system-plan § Feature-gated builds).
 
 ## Verification (actual)
 
-*(populated post-ship)*
+| Gate | Result |
+|------|--------|
+| `ninja-iter-msys2` → `SmatchetStandalone` + `SmatchetCore_DX12` | PASS (warm iter build) |
+| `ninja-publish-light-msys2` → `Smatchet-Light.exe` | PASS |
+| Light CLI: `cmd commands.list --pretty` | exit 0 |
+| Light CLI: `cmd ai.send-once` | exit 2 `unknown-command`; no `ai.*` in list |
+| `vs-unreal-msvc` package + `build_deploy_and_open_unreal.ps1 -ForceConfigure` | PASS — `TestProjectEditor` + plugin DLL; Editor opened |
+| `ninja-test-msys2` + ctest | DEFER — not run this slice |
+| Bucket E `command-palette-fuzzy` | DEFER — not run this slice |
+| Full `release_github.ps1` + `test_release_smoke.ps1` zip path | DEFER — light CLI smoke only |
