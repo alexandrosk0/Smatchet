@@ -6,13 +6,14 @@
 # a preset per investigation type.
 #
 # Compiler matrix (verify if symptoms arise):
-#   asan / ubsan : MSYS2 UCRT64 GCC supported; clang supported.
-#                  JetBrains CLion "bundled MinGW" / other slim MinGW trees
-#                  often ship *without* libasan/libubsan — configure will fail
-#                  fast via smatchet_verify_mingw_gcc_sanitizer_runtimes().
-#   tsan         : MinGW-w64 GCC support is partial / version-dependent.
-#                  Linux clang/gcc reliable. Wire the preset; if it fails
-#                  hand off to build-doctor.
+#   asan / ubsan : MSVC /fsanitize=address (ASAN-only; UBSAN not available).
+#                  MSYS2 UCRT64 GCC/Clang do NOT ship ASAN/UBSAN runtimes
+#                  (confirmed 2026-05). CI uses MSVC for ASAN coverage.
+#                  smatchet_verify_mingw_gcc_sanitizer_runtimes() catches the
+#                  GCC case and fails fast with a helpful message.
+#   tsan         : MSVC does NOT support TSAN. MinGW GCC/Clang on MSYS2
+#                  do NOT ship libtsan. TSAN CI job is deferred until a
+#                  Linux runner is available.
 #   msan         : Clang-only. MSYS2 GCC does NOT ship libmsan; the
 #                  msan preset must select clang++/clang. We hard-fail
 #                  here if the active compiler is not Clang.
@@ -38,17 +39,31 @@ function(smatchet_apply_sanitizers tgt)
 
     set(_flags "")
     set(_link  "")
+    set(_msvc FALSE)
+    if(MSVC)
+        set(_msvc TRUE)
+    endif()
 
     if("${SMATCHET_SANITIZER}" STREQUAL "asan")
-        list(APPEND _flags
-            -fsanitize=address
-            -fsanitize=undefined
-            -fno-omit-frame-pointer
-            -fno-sanitize-recover=all)
-        list(APPEND _link
-            -fsanitize=address
-            -fsanitize=undefined)
+        if(_msvc)
+            list(APPEND _flags /fsanitize=address)
+        else()
+            list(APPEND _flags
+                -fsanitize=address
+                -fsanitize=undefined
+                -fno-omit-frame-pointer
+                -fno-sanitize-recover=all)
+            list(APPEND _link
+                -fsanitize=address
+                -fsanitize=undefined)
+        endif()
     elseif("${SMATCHET_SANITIZER}" STREQUAL "tsan")
+        if(_msvc)
+            message(WARNING
+                "SMATCHET_SANITIZER=tsan is not supported by MSVC. "
+                "Ignoring for target '${tgt}'.")
+            return()
+        endif()
         list(APPEND _flags
             -fsanitize=thread
             -fno-omit-frame-pointer)
@@ -81,7 +96,9 @@ function(smatchet_apply_sanitizers tgt)
         "(compiler=${CMAKE_CXX_COMPILER_ID})")
 
     target_compile_options(${tgt} PRIVATE ${_flags})
-    target_link_options(${tgt}    PRIVATE ${_link})
+    if(_link)
+        target_link_options(${tgt} PRIVATE ${_link})
+    endif()
 endfunction()
 
 # Fail configure (not link) when MinGW GCC cannot resolve sanitizer import
