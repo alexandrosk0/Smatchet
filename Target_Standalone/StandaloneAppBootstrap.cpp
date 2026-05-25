@@ -268,12 +268,10 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
 
 bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*mode*/, std::string& err,
                 const bool forceMcp) {
-    (void)argc;
-    (void)argv;
     err.clear();
 
     {
-        const char* envUserData = std::getenv("SMATCHET_USER_DATA");
+
         if (envUserData && envUserData[0] != '\0') {
             const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
             SmatchetEnsureDirectoryExists(userDataDir);

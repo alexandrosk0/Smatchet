@@ -252,6 +252,7 @@
                 "SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME": "ON",
                 "SMATCHET_STANDALONE_OUTPUT_NAME": "Smatchet-Light",
                 "SMATCHET_STANDALONE_FILE_DESCRIPTION": "Smatchet Light Standalone",
+                "SMATCHET_STANDALONE_PRODUCT_NAME": "Smatchet Light",
                 "SMATCHET_WITH_MCP": "OFF",
                 "SMATCHET_WITH_AI": "OFF",
                 "SMATCHET_WITH_WHISPER": "OFF",
