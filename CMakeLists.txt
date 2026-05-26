@@ -266,8 +266,21 @@ FetchContent_MakeAvailable(json)
 smatchet_fetch_status("Fetching cpr (C++ Requests)...")
 smatchet_prepare_cpr()
 FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG 1.9.2)
-FetchContent_MakeAvailable(cpr)
+FetchContent_GetProperties(cpr)
+if(NOT cpr_POPULATED)
+    FetchContent_Populate(cpr)
+endif()
 smatchet_patch_cpr_after_fetch("${cpr_SOURCE_DIR}")
+# cpr 1.9.2 appends -Wall -Wextra -Wpedantic -Werror to CMAKE_CXX_FLAGS
+# (line 76 of its CMakeLists.txt). clang-cl fires dozens of Clang-specific
+# warnings under -Wpedantic that GCC silently ignores. Patch the vendored
+# CMakeLists.txt to strip -Werror before add_subdirectory processes it.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    file(READ "${cpr_SOURCE_DIR}/CMakeLists.txt" _cpr_cml)
+    string(REPLACE "-Wpedantic -Werror" "-Wpedantic" _cpr_cml "${_cpr_cml}")
+    file(WRITE "${cpr_SOURCE_DIR}/CMakeLists.txt" "${_cpr_cml}")
+endif()
+add_subdirectory("${cpr_SOURCE_DIR}" "${cpr_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
 smatchet_fetch_status("Fetching SQLiteCpp...")
 smatchet_prepare_sqlitecpp()
