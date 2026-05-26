@@ -203,6 +203,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelSignature.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
     "${CMAKE_SOURCE_DIR}/Target_Standalone/CliArgCoercion.cpp"
+    # Natural-order key/issuekey sort — exercises CompareIssueKeyNatural
+    # (inline in StringUtil.h) which CompareFieldValuesForSort dispatches to.
+    Source_Core/TicketGridModelKeySort.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent
