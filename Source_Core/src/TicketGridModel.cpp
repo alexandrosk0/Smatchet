@@ -234,7 +234,7 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
             return -1;
         if (CompareIssueKeyNatural(bVal, aVal))
             return 1;
-        return 0;
+        return 0; // equal
     }
 
     if (kTimeTrackingFieldIds.count(fieldId)) {
