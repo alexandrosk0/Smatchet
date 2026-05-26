@@ -41,7 +41,6 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeBlameOpenEntryTabScenario() { retu
 std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario() { return NullScenario(); }
 #if defined(SMATCHET_WITH_AI)
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario() { return NullScenario(); }
-std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreaming401Scenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario() { return NullScenario(); }
 #endif
 #if defined(SMATCHET_WITH_WHISPER)

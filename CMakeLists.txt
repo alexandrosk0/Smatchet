@@ -682,7 +682,6 @@ set(_SMATCHET_AI_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/OpenAiClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetChatPersistWorker.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiAssistantStreaming401Scenario.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiAssistantStreamingHappyPathScenario.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiAssistantStreamingTransportDownScenario.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiChatHistoryRenderScenario.cpp"

@@ -41,7 +41,6 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeBlameOpenEntryTabScenario()
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario();
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario();
-extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreaming401Scenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario();
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
@@ -92,7 +91,6 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
 #if defined(SMATCHET_WITH_AI)
     runner.RegisterFactory("ai-assistant-streaming-happy-path",
                            []() { return ::MakeAiAssistantStreamingHappyPathScenario(); });
-    runner.RegisterFactory("ai-assistant-streaming-401", []() { return ::MakeAiAssistantStreaming401Scenario(); });
     runner.RegisterFactory("ai-assistant-streaming-transport-down-within-5s",
                            []() { return ::MakeAiAssistantStreamingTransportDownScenario(); });
 #endif
