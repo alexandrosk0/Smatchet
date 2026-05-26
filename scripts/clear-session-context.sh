@@ -74,4 +74,22 @@ rm -f "$PROJECT_DIR"/.claude/.lint-queue.* 2>/dev/null || true
 rm -f "$PROJECT_DIR/.claude/.lint-queue.lock" 2>/dev/null || true
 rm -f "$PROJECT_DIR/.claude/.tree-dirty" 2>/dev/null || true
 
+# --- Sync deployed hooks from canonical sources ----------------------------
+# .claude/ is gitignored and populated by setup-harness.sh, but a git pull or
+# cherry-pick can update docs/harness/claude-code/hooks/* without a follow-up
+# setup-harness.sh run. Silently copy on every SessionStart to prevent stale
+# deployed hooks from masking improvements to the canonical templates.
+HOOKS_SRC="$PROJECT_DIR/docs/harness/claude-code/hooks"
+HOOKS_DST="$PROJECT_DIR/.claude/hooks"
+if [ -d "$HOOKS_SRC" ] && [ -d "$HOOKS_DST" ]; then
+    for src_file in "$HOOKS_SRC"/*.sh "$HOOKS_SRC"/*.py; do
+        [ -f "$src_file" ] || continue
+        dst_file="$HOOKS_DST/$(basename "$src_file")"
+        # Only overwrite when the canonical differs to avoid spurious mtimes.
+        if ! cmp -s "$src_file" "$dst_file" 2>/dev/null; then
+            cp -f "$src_file" "$dst_file" 2>/dev/null || true
+        fi
+    done
+fi
+
 exit 0
