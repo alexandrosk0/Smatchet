@@ -29,8 +29,8 @@ usage() {
     cat >&2 <<'USAGE'
 Usage: bash scripts/dev/relaunch-smatchet.sh [--preset=<preset>] [--no-launch] [--args="..."]
 
-  --preset=<preset>  CMake preset for build. Default ninja-iter-msys2.
-                     Other valid options: ninja-debug-msys2, ninja-publish-msys2.
+  --preset=<preset>  CMake preset for build. Default ninja-iter-msvc.
+                     Other valid options: ninja-debug-msvc, ninja-publish-msys2.
   --no-launch        Build only; do not launch the exe.
   --args="<argv>"    Extra args passed verbatim to the launched exe.
                      Quote the whole list.

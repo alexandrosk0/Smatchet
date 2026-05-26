@@ -26,7 +26,7 @@
 # survived NortonCommander -> SmatchetDark which shouldn't have.
 #
 # Env overrides (same shape as test-screenshot-diff.sh):
-#   SMATCHET_EXE          path to Smatchet.exe (default build/ninja-iter-msys2/...)
+#   SMATCHET_EXE          path to Smatchet.exe (default build/ninja-iter-msvc/...)
 #   SMATCHET_TEST_PORT    base MCP port (we allocate two; default random)
 #   PYTHON                python interpreter (default `python`)
 #
@@ -48,7 +48,7 @@ mkdir -p "$TMP_DIR"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 if [ ! -f "$EXE" ]; then
-    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone" >&2
+    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone" >&2
     exit 2
 fi
 

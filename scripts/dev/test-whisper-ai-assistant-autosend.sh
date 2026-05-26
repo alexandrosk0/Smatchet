@@ -23,7 +23,7 @@
 # Self-guard: skips silently when the exe is missing or when SMATCHET_WITH_WHISPER=OFF.
 #
 # Env overrides:
-#   SMATCHET_EXE         path to Smatchet.exe (default build/ninja-iter-msys2/...)
+#   SMATCHET_EXE         path to Smatchet.exe (default build/ninja-iter-msvc/...)
 #   SMATCHET_TEST_PORT   MCP port for --spawn (default random in [40000, 60000))
 #
 # Exit codes:

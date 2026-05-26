@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-build-warnings.sh — asserts the ninja-iter-msys2 build emits zero `-Wunused-*`
+# test-build-warnings.sh — asserts the ninja-iter-msvc build emits zero `-Wunused-*`
 # warnings on Smatchet-owned translation units (Target_Standalone/, Source_Core/,
 # Plugins/). FetchContent dependencies under build/<preset>/_deps/ are excluded —
 # their warnings are upstream issues, not ours to gate on.

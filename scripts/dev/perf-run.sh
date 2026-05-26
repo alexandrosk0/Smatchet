@@ -37,7 +37,7 @@ Usage: bash scripts/dev/perf-run.sh <scenario-id> [--frames=N] [--out=<path>] [-
   --build           Force a rebuild of SmatchetStandalone before running.
                     Default: rebuild only when .claude/.tree-dirty exists.
   --exe=<path>      Override Smatchet.exe path. Default:
-                    build/ninja-iter-msys2/Smatchet.exe
+                    build/ninja-iter-msvc/Smatchet.exe
 USAGE
     exit 2
 }

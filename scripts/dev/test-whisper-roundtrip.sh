@@ -13,7 +13,7 @@
 # built with SMATCHET_WITH_WHISPER=OFF (the scenario is then not registered).
 #
 # Env overrides:
-#   SMATCHET_EXE         path to Smatchet.exe (default build/ninja-iter-msys2/...)
+#   SMATCHET_EXE         path to Smatchet.exe (default build/ninja-iter-msvc/...)
 #   SMATCHET_TEST_PORT   MCP port for --spawn (default random in [40000, 60000))
 #
 # Exit codes:

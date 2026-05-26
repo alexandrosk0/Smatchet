@@ -22,7 +22,7 @@ PY="${PYTHON:-python}"
 COUNT="${GRID_EDIT_BURST_COUNT:-200}"
 
 if [ ! -f "$EXE" ]; then
-    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone" >&2
+    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone" >&2
     echo "Passed: 0  Failed: 0"
     exit 2
 fi

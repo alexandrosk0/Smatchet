@@ -15,7 +15,7 @@
 # gate. Commit the new goldens by hand to make them authoritative.
 #
 # Env overrides:
-#   SMATCHET_EXE            path to Smatchet.exe (default build/ninja-iter-msys2/...)
+#   SMATCHET_EXE            path to Smatchet.exe (default build/ninja-iter-msvc/...)
 #   SMATCHET_TEST_PORT      MCP port for --spawn (default 58733; non-default forces fresh spawn)
 #   PYTHON                  python interpreter (default `python`)
 #   SCREENSHOT_TOLERANCE    per-channel L∞ tolerance (default 4)
@@ -56,7 +56,7 @@ if [ "${1:-}" = "--bootstrap" ]; then
 fi
 
 if [ ! -f "$EXE" ]; then
-    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone" >&2
+    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone" >&2
     exit 2
 fi
 

@@ -26,7 +26,7 @@ PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58731}"
 
 if [ ! -x "$EXE" ] && [ ! -f "$EXE" ]; then
-    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone" >&2
+    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone" >&2
     exit 2
 fi
 
