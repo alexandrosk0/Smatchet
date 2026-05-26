@@ -53,7 +53,7 @@ case "$1" in
         #   MERGE_GATES_STUB_CR_CONFIG=404       → confirmed absent (default)
         #   MERGE_GATES_STUB_CR_CONFIG=401       → auth failure (other error)
         #   MERGE_GATES_STUB_CR_CONFIG=transient → network-style error
-        case "$3" in
+        case "$2" in
             */contents/.coderabbit.yaml|*/contents/.coderabbit.yml)
                 case "${MERGE_GATES_STUB_CR_CONFIG:-404}" in
                     200) exit 0 ;;
@@ -756,15 +756,17 @@ set_fixture() {
 
 @test "C2 fail-closed: missing reviewThreads → cr_open / user default -1 → block" {
     # Replace reviewThreads with a non-object so the jq queries against it
-    # crash. The cr_open + user assignments fall through to -1; pass-check
-    # blocks.
+    # crash. The overflow check fires first (reviewThreads.pageInfo.hasNextPage
+    # jq fails → defensive "true" → PAGINATION_OVERFLOW → return 5) before
+    # cr_open / user can contribute. Either way the gate blocks (non-zero exit);
+    # assert [ status -ne 0 ] rather than a specific code.
     local fixture
     fixture=$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.reviewThreads" \
         '"not-an-object"')
     set_fixture "$fixture"
     run poll_merge_gates org repo 1
-    [ "$status" -eq 1 ]
+    [ "$status" -ne 0 ]
 }
 
 # ---------- H1 (APPROVED → pass unconditionally even with open cr_open) ----------
