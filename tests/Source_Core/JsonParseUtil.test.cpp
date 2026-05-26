@@ -17,7 +17,8 @@ TEST_CASE("TryParseJsonMaybeDoubleEncoded handles plain JSON") {
 
 TEST_CASE("TryParseJsonMaybeDoubleEncoded unwraps double-encoded JSON") {
     json out;
-    CHECK(TryParseJsonMaybeDoubleEncoded(R"("{\"a\":2}")", out));
+    std::string doubleEncoded = R"xx("{\"a\":2}")xx";
+    CHECK(TryParseJsonMaybeDoubleEncoded(doubleEncoded, out));
     REQUIRE(out.is_object());
     CHECK(out["a"].get<int>() == 2);
 }
