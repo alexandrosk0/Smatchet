@@ -60,7 +60,10 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     // Safety net for non-ADF text fields only. ADF/description fields are handled
     // by the lazy tooltip in TicketFieldEditor.cpp (renderPlainText + RenderTextEditor)
     // and never reach this path with renderMarkdown=true.
-    if (tooltipsEnabled && (hasNewline || horizontallyClipped) && ImGui::IsItemHovered()) {
+    // For callstack fields the cell always shows only the first line (singleLine);
+    // show the full-text tooltip on hover regardless of clipping so the user can
+    // read the complete stack even when the first line fits in the column width.
+    if (tooltipsEnabled && (hasNewline || horizontallyClipped || isCallstack) && ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         if (isCallstack) {
             // Slice 7 — semantic callstack tokenizer.
