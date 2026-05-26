@@ -55,7 +55,7 @@
 // LuaDrawList is declared at global scope (in the private header), so its method bodies
 // must also be at global scope — not inside an anonymous namespace.
 
-void LuaDrawList::RequireActive(const char* method) {
+void LuaDrawList::RequireActive(const char* method) const {
     if (!active_) {
         // sol2 catches std::exception thrown from C++ inside a Lua pcall frame and surfaces
         // it as a Lua error. The Lua-as-C++ build mode (CMakeLists.txt LANGUAGE CXX) makes

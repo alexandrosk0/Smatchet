@@ -392,6 +392,7 @@ static AppController* ResolveApp(sol::this_state L) {
 // event-time callbacks (`register_ticket_action`, `register_global_action`, MCP tools)
 // leave it true. luaL_error unwinds via C++ exceptions thanks to the Lua-as-C++ build mode.
 void ImGuiSameLineGlue(sol::this_state L) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return;
@@ -400,6 +401,7 @@ void ImGuiSameLineGlue(sol::this_state L) {
 }
 
 void ImGuiSeparatorGlue(sol::this_state L) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return;
@@ -408,6 +410,7 @@ void ImGuiSeparatorGlue(sol::this_state L) {
 }
 
 void ImGuiProgressBarGlue(sol::this_state L, float fraction, float width, float height) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return;
@@ -423,6 +426,7 @@ void ImGuiProgressBarGlue(sol::this_state L, float fraction, float width, float 
 }
 
 std::tuple<float, float> ImGuiGetContentRegionAvailGlue(sol::this_state L) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return std::make_tuple(0.0f, 0.0f);
@@ -432,6 +436,7 @@ std::tuple<float, float> ImGuiGetContentRegionAvailGlue(sol::this_state L) {
 }
 
 bool ImGuiButtonGlue(sol::this_state L, const std::string& label) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return false;
@@ -499,6 +504,7 @@ void LuaUnregisterFieldIconMapGlue(sol::this_state L, const std::string& fieldKe
 }
 
 void LuaImGuiTextGlue(sol::this_state L, const std::string& s) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return;
@@ -509,6 +515,7 @@ void LuaImGuiTextGlue(sol::this_state L, const std::string& s) {
 }
 
 void LuaImGuiTextUnformattedGlue(sol::this_state L, const std::string& s) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return;
@@ -519,6 +526,7 @@ void LuaImGuiTextUnformattedGlue(sol::this_state L, const std::string& s) {
 }
 
 bool LuaImGuiImageGlue(sol::this_state L, const std::string& path, float w, float h) {
+    // cppcheck-suppress knownConditionTrueFalse
     if (!g_luaImmediateModeAllowed) {
         luaL_error(L, kImmediateModeErrorMsg);
         return false;
@@ -1401,4 +1409,3 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
         LOG_TRACE("RunLuaSetupScript: ok path=%s", path.c_str());
     }
 }
-

@@ -106,7 +106,7 @@ class LuaDrawList {
     std::vector<AppController::ImCmd> Take() { return std::move(cmds_); }
 
   private:
-    void RequireActive(const char* method);
+    void RequireActive(const char* method) const;
     AppController::ImCmd* LastInteractive();
 
     std::vector<AppController::ImCmd> cmds_;
