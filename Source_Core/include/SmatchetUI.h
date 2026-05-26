@@ -7,6 +7,7 @@
 #include "TicketGridModel.h"
 #include "Views.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -65,14 +66,13 @@ class SmatchetUI {
                 return;
             }
             // Remove existing occurrence to avoid duplicates.
-            for (int i = 0; i < size_; ++i) {
-                if (entries_[i] == commandId) {
-                    for (int j = i; j < size_ - 1; ++j) {
-                        entries_[j] = entries_[j + 1];
-                    }
-                    --size_;
-                    break;
+            std::string* const end = entries_ + size_;
+            std::string* const pos = std::find(entries_, end, commandId);
+            if (pos != end) {
+                for (std::string* p = pos; p < end - 1; ++p) {
+                    *p = *(p + 1);
                 }
+                --size_;
             }
             // Evict oldest if at capacity.
             if (size_ == kCapacity) {
