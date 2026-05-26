@@ -4,68 +4,94 @@
 
 ## Context
 
-Smatchet's CMake entry point already has several portability guards, but the supported happy path is Windows + MSYS2 UCRT64. `CMakePresets.json:31` pins `gcc.exe` / `g++.exe` for the shared MSYS2 base, `.github/workflows/build-and-test.yml:37` gates CI on Windows/MSYS2, and `README.md:82` lists only MSYS2 presets as supported. The result is good iteration speed on the main developer machine, but not a generic host build that a contributor can configure with their platform's default generator and C++14 compiler.
+Smatchet's CMake entry point has several portability guards, but the only supported happy path is Windows + MSYS2 UCRT64. `CMakePresets.json:31` pins `gcc.exe` / `g++.exe` for the shared MSYS2 base, `.github/workflows/build-and-test.yml:37` gates CI on Windows/MSYS2, and `README.md:82` lists only MSYS2 presets as supported. MSYS2 brings dependency-management friction (pacman package universe, PATH gymnastics, `MSYSTEM` environment variable, MinGW-specific compiler workarounds) that makes onboarding harder than necessary on a project that already needs MSVC for the Unreal/DX12 target.
 
-After this lands, a contributor can run a neutral CMake configure/build on Windows, Linux, or macOS with a C++14-capable compiler from the MSVC, GNU, Clang, or AppleClang families, and CMake will either build the supported targets or skip platform-specific targets with explicit diagnostics. The existing MSYS2 presets remain the blessed fast path and must not regress.
+After this lands, **MSVC and Clang/LLVM are equal-citizen primary toolchains** on Windows, Linux, and macOS. A contributor installs either (or both) via standard system package managers — no MSYS2 required. CMake configures and builds using the system's native compiler, linker, and generator. The existing MSYS2 presets are deprecated and eventually removed once the new toolchains have proven stable in CI.
 
 ## Approach
 
-Refactor the build description around capability-gated targets instead of environment-specific assumptions. The generic path should detect host OS, compiler family, generator shape, OpenGL/GLFW availability, sanitizer support, linker support, and feature gates at configure time. It then exposes a small set of host-neutral presets that do not hardcode a compiler, and retains the existing MSYS2 and MSVC presets for repeatable CI and release workflows.
+Replace the MSYS2 UCRT64 dependency with two equal-citizen toolchains:
 
-"All platforms and any compiler" is bounded to "platforms where Smatchet's dependencies and source code are meant to build, with a C++14 compiler CMake can identify." Unknown compilers should not receive vendor flags; they should configure with conservative defaults or fail early with an actionable message when a required feature is missing. Windows-only products — DX12 / Unreal packaging and WASAPI capture — stay Windows-only targets rather than forcing non-Windows builds to emulate them.
+1. **MSVC** (Visual Studio 2022 Build Tools or full VS) — already partially supported via the `ninja-msvc-asan` preset at `CMakePresets.json:168`. Becomes the primary Windows toolchain. Uses Ninja generator from a VS Developer Command Prompt or via `vcvarsall.bat` integration in presets.
 
-Implement in slices so the first PR improves configure portability without destabilising release builds: introduce option/platform helpers, add neutral presets, wire cross-platform OpenGL/linking, split Windows-only targets behind explicit build options, then add CI matrix coverage. Each slice keeps `ninja-iter-msys2` green before broadening the matrix.
+2. **Clang/LLVM** (official LLVM installer, `winget install LLVM.LLVM`, or system package on Linux/macOS) — provides `lld-link` for fast iteration linking (replacing MSYS2's lld path), full sanitizer suite (`-fsanitize=address,undefined,thread,memory`), and cross-platform consistency. On Windows, `clang-cl` gives MSVC ABI compatibility; on Linux/macOS, standalone `clang`/`clang++`.
+
+The MSYS2 layer is **deprecated, not immediately deleted**: existing `ninja-*-msys2` presets are marked deprecated in `CMakePresets.json` and documented as legacy in `README.md`, but left functional for one release cycle. MinGW-specific workarounds in `CMakeLists.txt` and `cmake/SmatchetThirdParty.cmake` are gated behind `CMAKE_CXX_COMPILER_ID STREQUAL "GNU"` checks that remain until the presets are removed.
+
+Implement in slices: (1) add MSVC and Clang presets + fix compiler-family guards in CMakeLists.txt, (2) replace CI MSYS2 job with MSVC + Clang matrix, (3) update docs and scripts, (4) add Linux/macOS matrix rows, (5) deprecation-remove MSYS2 presets after one release cycle green.
 
 ## Files to modify
 
 **CMake core**
 
-1. `CMakeLists.txt:1` — keep the root entry point, but move option defaults, feature detection, target setup helpers, and platform-specific blocks into focused `cmake/` modules as they are touched.
-2. `CMakeLists.txt:112` — preserve the existing performance and release options while making defaults host-aware where needed, especially PCH, LTO, fully static Windows runtime, and strict warning flags.
-3. `CMakeLists.txt:151` — rework `SMATCHET_WITH_*` defaults so platform-specific features default off when their platform capability is absent, while explicit `-DSMATCHET_WITH_X=ON` still fails loudly if impossible.
-4. `CMakeLists.txt:541` — keep `ImGuiLib` as the OpenGL/GLFW variant, but link OpenGL through CMake targets (`OpenGL::GL` where available) so Linux/macOS/Windows do not need separate ad hoc link lists.
-5. `CMakeLists.txt:569` — keep `ImGuiLib_DX12` behind `WIN32`, and additionally gate it behind a new `SMATCHET_BUILD_UNREAL_DX12` option whose default is `ON` on Windows and `OFF` elsewhere.
-6. `CMakeLists.txt:697` — preserve `SmatchetCoreInterface` and the shim-link contract; do not force optional feature defines through the core interface in a way that violates `docs/adr/0002-plugin-shim-link-discipline.md`.
-7. `CMakeLists.txt:810` — update `smatchet_configure_opengl_core_impl_target` to use `find_package(OpenGL)` / `Threads::Threads` / target-based platform libraries rather than raw OS checks wherever CMake already models the dependency.
-8. `CMakeLists.txt:829` — keep `smatchet_configure_dx12_core_impl_target` Windows-only; non-Windows CMake runs skip DX12 targets without leaving dangling build presets.
-9. `CMakeLists.txt:1100` — wrap `SmatchetStandalone` creation in a `SMATCHET_BUILD_STANDALONE` option that defaults `ON` only when the OpenGL/GLFW prerequisites are available or fetchable.
+1. `CMakeLists.txt:1` — keep the root entry point; move option defaults, feature detection, and platform-specific blocks into focused `cmake/` modules as touched.
+2. `CMakeLists.txt:71` — rework lld linker detection: currently probes for lld on the MinGW PATH. Add a `lld-link` path for MSVC/clang-cl and a `ld.lld` path for standalone Clang on Linux/macOS, so fast-link iteration is available on all three toolchains.
+3. `CMakeLists.txt:112` — preserve PCH/LTO options; make defaults host-aware (PCH works on MSVC and Clang; LTO uses `/GL + /LTCG` on MSVC, `-flto=thin` on Clang).
+4. `CMakeLists.txt:124` — static runtime linking: currently MinGW-only (`-static -static-libgcc -static-libstdc++`). Add MSVC equivalent (`/MT` via `CMAKE_MSVC_RUNTIME_LIBRARY`) and Clang-cl equivalent. Guard MinGW path behind `CMAKE_CXX_COMPILER_ID STREQUAL "GNU"`.
+5. `CMakeLists.txt:151` — rework `SMATCHET_WITH_*` defaults so platform-specific features default off when their platform capability is absent, while explicit `-DSMATCHET_WITH_X=ON` still fails loudly if impossible.
+6. `CMakeLists.txt:195` — extend `smatchet_apply_strict_warnings` with MSVC (`/W4 /WX`) and Clang (`-Wall -Wextra -Werror`) branches alongside existing GCC branch.
+7. `CMakeLists.txt:282` — SQLite GCC-only `-Wno-stringop-overread` suppression: keep guarded behind `CMAKE_C_COMPILER_ID STREQUAL "GNU"`; no equivalent needed for MSVC/Clang.
+8. `CMakeLists.txt:541` — keep `ImGuiLib` as the OpenGL/GLFW variant; link OpenGL through CMake targets (`OpenGL::GL`) so all platforms use the same link list.
+9. `CMakeLists.txt:569` — keep `ImGuiLib_DX12` behind `WIN32`; additionally gate behind `SMATCHET_BUILD_UNREAL_DX12` option (default `ON` on Windows, `OFF` elsewhere).
+10. `CMakeLists.txt:697` — preserve `SmatchetCoreInterface` and the shim-link contract per `docs/adr/0002-plugin-shim-link-discipline.md`.
+11. `CMakeLists.txt:810` — update `smatchet_configure_opengl_core_impl_target` to use `find_package(OpenGL)` / `Threads::Threads` / target-based platform libraries.
+12. `CMakeLists.txt:829` — keep `smatchet_configure_dx12_core_impl_target` Windows-only; non-Windows runs skip DX12 without dangling presets.
+13. `CMakeLists.txt:1100` — wrap `SmatchetStandalone` in a `SMATCHET_BUILD_STANDALONE` option that defaults `ON` when OpenGL/GLFW prerequisites are available.
+14. `CMakeLists.txt:1202` — MinGW `-mcmodel=large` relocation fix: keep guarded behind `CMAKE_CXX_COMPILER_ID STREQUAL "GNU"`; MSVC/Clang do not need this.
+15. `CMakeLists.txt:1226` — MinGW `-Wa,-mbig-obj` fix: keep guarded behind `CMAKE_CXX_COMPILER_ID STREQUAL "GNU"`; MSVC uses `/bigobj` by default, Clang handles it natively.
 
 **Plugins**
 
-10. `Plugins/Whisper/CMakeLists.txt:10` — split platform-neutral Whisper pieces (API client, model helpers) from Win32/WASAPI/global-hotkey sources so `SMATCHET_WITH_WHISPER=ON` can still build those helpers on non-Windows while capture and hotkey sources stay Windows-only.
+16. `Plugins/Whisper/CMakeLists.txt:10` — split platform-neutral Whisper pieces (API client, model helpers) from Win32/WASAPI/global-hotkey sources so non-Windows can still build helpers.
 
 **cmake/ helpers**
 
-11. `cmake/SmatchetThirdParty.cmake:1` — keep third-party preparation helpers, but add missing platform/compiler guards around patches that are currently MinGW-specific.
-12. `cmake/Sanitizers.cmake:30` — broaden sanitizer support around compiler and OS capability checks, with Linux Clang/GCC support as the first non-Windows target.
+17. `cmake/SmatchetThirdParty.cmake:1` — rework MinGW-specific patches:
+    - Line 5: `HAVE_IOCTLSOCKET_FIONBIO` probe fix — guard behind `CMAKE_C_COMPILER_ID MATCHES "GNU"` only (not needed for MSVC/Clang-cl).
+    - Line 58: SQLiteCpp `<cstdint>` patch — keep for GCC; verify whether Clang/MSVC need it.
+    - Line 448 (in CMakeLists.txt): sol2 `<cstdint>` patch — same treatment.
+18. `cmake/Sanitizers.cmake:30` — broaden `smatchet_apply_sanitizers`: MSVC gets `/fsanitize=address` (already works); Clang gets full `-fsanitize=address,undefined` on all platforms; add Linux Clang/GCC support.
 
 **Presets and CI**
 
-13. `CMakePresets.json:1` — add host-neutral configure/build presets that do not set `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPILER`, `MSYSTEM`, or a Windows-only PATH.
-14. `.github/workflows/build-and-test.yml:37` — keep the existing Windows/MSYS2 job and add a matrix for host-neutral configure/build/test on Linux GCC, Linux Clang, macOS AppleClang, and Windows MSVC.
+19. `CMakePresets.json:1` — major rework:
+    - Add `_smatchet-msvc-base` hidden preset (Ninja generator, inherits `vcvarsall` environment).
+    - Add `_smatchet-clang-base` hidden preset (Ninja generator, `clang-cl.exe` / `clang.exe` depending on platform).
+    - Add iteration/debug/test/publish presets for both MSVC and Clang: `ninja-iter-msvc`, `ninja-debug-msvc`, `ninja-test-msvc`, `ninja-iter-clang`, `ninja-debug-clang`, `ninja-test-clang`.
+    - Mark all `ninja-*-msys2` presets with `"deprecated": true` (CMake 3.24+ presets v3 supports this field — verify).
+    - Remove `_smatchet-msys2-base` hidden preset's compiler pinning from the `_smatchet-native-features` flow.
+20. `.github/workflows/build-and-test.yml:37` — replace the Windows/MSYS2 job with a matrix:
+    - Windows + MSVC (Ninja, `ninja-test-msvc`).
+    - Windows + Clang (`ninja-test-clang`, uses official LLVM from `winget` or GitHub Actions LLVM setup).
+    - Keep MSYS2 job as non-required during deprecation period; remove after one release cycle.
+    - Linux + GCC and Linux + Clang rows (new).
+    - macOS + AppleClang row (new).
 
 **Docs and scripts**
 
-15. `README.md:82` — document the new neutral path separately from the existing MSYS2 fast path, including which targets are platform-specific.
-16. `docs/dev/offline-builds.md:1` — update FetchContent cache guidance so shared caches are keyed by platform, compiler family, generator, and preset rather than assuming MSYS2 UCRT64.
-17. `scripts/dev/test-all.sh:106` — fix the hardcoded `ninja-iter-msys2` preset name in the "build not found" error message; the script already respects `SMATCHET_EXE` for the exe path (line 10) but the error hint still names the MSYS2 preset.
+21. `README.md:82` — rewrite the "Getting Started" section: MSVC and Clang/LLVM as primary paths with `winget` install commands; MSYS2 moved to a "Legacy" subsection with deprecation notice.
+22. `README.md:60` — remove/replace the MSYS2 UCRT64 installation block that currently says `winget install MSYS2.MSYS2`.
+23. `docs/dev/offline-builds.md:1` — update FetchContent cache guidance: key caches by platform + compiler family + preset, not MSYS2 UCRT64.
+24. `scripts/dev/test-all.sh:106` — replace hardcoded `ninja-iter-msys2` preset name in error message with the new default preset name (e.g. `ninja-iter-msvc`).
+25. `AGENTS.md` — update `§ Project rules § Build` to list the new primary presets instead of `ninja-iter-msys2` / `ninja-debug-msys2` / `ninja-publish-msys2`.
 
 ## Existing utilities reused
 
-- `smatchet_apply_strict_warnings` — `CMakeLists.txt:195` — keep first-party warning policy in one place; extend with compiler-family branches only when CMake identifies the compiler.
+- `smatchet_apply_strict_warnings` — `CMakeLists.txt:195` — keep first-party warning policy in one place; extend with MSVC/Clang branches.
 - `smatchet_assert_plugin_shim_links` — `CMakeLists.txt:762` — preserve the configure-time guard that prevents optional-feature ABI drift across static plugins.
 - `smatchet_configure_core_impl_target` — `CMakeLists.txt:784` — reuse as the shared core target linker/includes hook, with only platform-neutral additions.
 - `smatchet_configure_opengl_core_impl_target` — `CMakeLists.txt:810` — reuse for standalone builds; make it the single home for OpenGL/GLFW/Threads platform links.
-- `smatchet_configure_dx12_core_impl_target` — `CMakeLists.txt:829` — reuse for Unreal/DX12 packaging; keep it deliberately Windows-only.
-- `smatchet_prepare_cpr`, `smatchet_prepare_sqlitecpp`, `smatchet_prepare_httplib` — `cmake/SmatchetThirdParty.cmake:1` — keep dependency patching centralised.
-- `smatchet_apply_sanitizers` — `cmake/Sanitizers.cmake:30` — extend rather than duplicating sanitizer flag logic in presets or workflows.
-- `SmatchetTests` — `tests/CMakeLists.txt:12` — use existing doctest coverage as the generic build smoke test before adding new tests.
+- `smatchet_configure_dx12_core_impl_target` — `CMakeLists.txt:829` — reuse for Unreal/DX12 packaging; keep deliberately Windows-only.
+- `smatchet_prepare_cpr`, `smatchet_prepare_sqlitecpp`, `smatchet_prepare_httplib` — `cmake/SmatchetThirdParty.cmake:1` — keep dependency patching centralised; tighten compiler-family guards.
+- `smatchet_apply_sanitizers` — `cmake/Sanitizers.cmake:30` — extend for MSVC `/fsanitize=address` and Clang full suite.
+- `SmatchetTests` — `tests/CMakeLists.txt:12` — use existing doctest coverage as the generic build smoke test.
+- `ninja-msvc-asan` preset — `CMakePresets.json:168` — already working MSVC ASAN preset; use as the template for new MSVC presets.
 
 ## UX Pillar callouts
 
-- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: no runtime behavior change planned; build-system changes must not enable slower runtime code paths by default.
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: no runtime behavior change planned; build-system changes must not enable slower runtime code paths by default. Clang's `lld-link` should match or beat MSYS2 lld iteration link times.
 - **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: no UI-thread behavior change planned; any new configure-time downloads remain CMake-time only.
-- **Pillar 3 (never crash)**: positive impact — broader compiler/sanitizer coverage should catch undefined behavior earlier, but feature-gate drift must be guarded by existing shim-link checks.
+- **Pillar 3 (never crash)**: positive impact — MSVC's `/fsanitize=address` plus Clang's full sanitizer suite gives broader UB coverage than MSYS2 GCC alone.
 - **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: no UI or accessibility behavior change.
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
@@ -84,31 +110,35 @@ Planned implementation does not touch `Source_Core/` C++ behavior. If portabilit
 
 ## Risks / non-goals
 
-- "Any compiler" can overpromise — supported set is C++14-capable MSVC/GNU/Clang-family; unknown compilers receive conservative flags and clear diagnostics.
-- Non-Windows source portability may reveal real C++ issues, not just CMake issues — keep those fixes small, update this plan if `Source_Core/` is touched, and verify with dual-target Windows builds plus the new host matrix.
-- Existing MSYS2 release flow could regress if neutral presets replace rather than supplement it — leave all `ninja-*-msys2` preset names and behavior intact.
-- FetchContent dependencies may have OS/compiler-specific failures — record dependency failures separately from first-party CMake issues and prefer upstream options or targeted patches in `cmake/SmatchetThirdParty.cmake`.
-- CI runtime may grow — add a lightweight matrix first (`SMATCHET_WITH_WHISPER=OFF`, tests enabled, standalone only), then expand coverage after the base generic path is stable.
+- MSVC and Clang may expose C++ portability issues that GCC silently accepted (different template instantiation rules, stricter `const` enforcement, MSVC two-phase lookup) — keep source fixes small, update this plan if `Source_Core/` is touched, and verify with both toolchains.
+- FetchContent dependencies may need different patches per compiler — record failures separately and prefer upstream options or targeted patches in `cmake/SmatchetThirdParty.cmake`.
+- Removing MSYS2 too early could break contributors mid-workflow — deprecate first (one release cycle), remove after CI proves stable on MSVC + Clang.
+- `lld-link` availability on Windows depends on LLVM installation — document the install path (`winget install LLVM.LLVM`) and fall back to MSVC's default `link.exe` if lld-link is not found.
+- Clang-cl on Windows vs standalone Clang: `clang-cl` is MSVC-ABI-compatible (links against MSVC CRT), standalone `clang` is not on Windows — presets must use `clang-cl` on Windows for library compatibility.
+- CI runtime may grow with the expanded matrix — start with MSVC + Clang on Windows only, then add Linux/macOS rows after the base is stable.
 - Non-goal: make DX12 / Unreal packaging work on non-Windows.
-- Non-goal: replace the publish/release presets with generic presets.
-- Non-goal: vendor or mirror all dependencies; existing FetchContent plus offline override docs remain the model.
-- Non-goal: rewrite C++ code to support compilers that do not provide C++14 well enough for the current dependency set.
+- Non-goal: vendor or mirror all dependencies; FetchContent plus offline override docs remain the model.
+- Non-goal: rewrite C++ code for compilers that do not provide C++14 well enough for the current dependency set.
+- Non-goal: support MinGW/GCC as a first-class toolchain going forward (deprecated with MSYS2).
 
 ## Verification
 
 Per `AGENTS.md` verification rules — zero manual steps.
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: configure/build `host-tests`, then run `ctest --output-on-failure` from the host test build directory.
-- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)**: unchanged for Windows/MSYS2; host-neutral UI-test coverage added only after base Linux/macOS OpenGL runners are reliable.
-- **Bash-driver scenario / screenshot / sanitizer**: run existing bash drivers through `scripts/dev/test-all.sh` with configurable `SMATCHET_EXE`; run sanitizer smoke on Windows MSVC and Linux Clang/GCC where supported.
-- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` (dual-target, must stay green).
+- **Bucket A (pure-logic ctest, `test-rig`)**: configure/build `ninja-test-msvc` and `ninja-test-clang`, then run `ctest --output-on-failure` from each build directory.
+- **Bucket E (ImGui Test Engine)**: update UI-test preset from `ninja-ui-test-msys2` to `ninja-ui-test-msvc` (or Clang equivalent); host-neutral UI-test coverage on Linux/macOS added only after OpenGL runners are reliable.
+- **Bash-driver scenario / screenshot / sanitizer**: run existing bash drivers through `scripts/dev/test-all.sh` with `SMATCHET_EXE` pointing at the MSVC or Clang build output; run sanitizer smoke on MSVC (`/fsanitize=address`) and Clang (`-fsanitize=address,undefined`).
+- **Build gate (MSVC)**: `cmake --preset ninja-iter-msvc && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
+- **Build gate (Clang)**: `cmake --preset ninja-iter-clang && cmake --build --preset ninja-iter-clang --target SmatchetStandalone`.
+- **Build gate (legacy MSYS2, during deprecation)**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — must stay green until removed.
 - **Generic configure/build gates**:
   - `cmake --preset host-debug && cmake --build --preset host-debug --target SmatchetStandalone`
   - `cmake --preset host-tests && cmake --build --preset host-tests`
   - `ctest --output-on-failure` from `build/host-tests`
 - **CI matrix gates**:
-  - Windows + MSYS2 UCRT64 (existing required job — must not regress).
-  - Windows + MSVC host-neutral configure/build/test.
+  - Windows + MSVC configure/build/test (required).
+  - Windows + Clang configure/build/test (required).
+  - Windows + MSYS2 UCRT64 (non-required during deprecation; removed after one cycle).
   - Linux + GCC host-neutral configure/build/test.
   - Linux + Clang host-neutral configure/build/test.
   - macOS + AppleClang host-neutral configure/build/test.
@@ -121,6 +151,7 @@ Per `AGENTS.md` verification rules — zero manual steps.
 - Linux/macOS app packaging, codesigning, installers, and desktop entries — separate release-engineering plan.
 - Replacing bash/PowerShell scripts with a single cross-platform runner — only fix scripts that block generic CMake verification in this slice.
 - Moving the repo to C++17 or newer — explicitly out of scope; project rules require C++14.
+- Maintaining MinGW/GCC as a first-class toolchain — deprecated with MSYS2; workarounds kept gated during deprecation, removed after.
 
 ## Implementation log
 

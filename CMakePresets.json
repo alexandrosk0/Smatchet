@@ -16,9 +16,34 @@
             }
         },
         {
+            "name": "_smatchet-msvc-base",
+            "hidden": true,
+            "description": "Shared MSVC defaults. Run from a VS Developer Command Prompt or with vcvarsall.bat sourced.",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "SMATCHET_WITH_LUA_AUTOMATION": "ON",
+                "SMATCHET_WITH_MCP": "ON",
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe",
+                "CMAKE_LINKER": "link.exe"
+            }
+        },
+        {
+            "name": "_smatchet-clang-base",
+            "hidden": true,
+            "description": "Shared Clang/LLVM defaults. Uses clang-cl on Windows for MSVC ABI compatibility. Install via: winget install LLVM.LLVM (Windows), apt install clang lld (Linux), or Xcode Command Line Tools (macOS).",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "SMATCHET_WITH_LUA_AUTOMATION": "ON",
+                "SMATCHET_WITH_MCP": "ON",
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl"
+            }
+        },
+        {
             "name": "_smatchet-msys2-base",
             "hidden": true,
-            "description": "Shared MSYS2 UCRT64 defaults for supported Smatchet workflows.",
+            "description": "[DEPRECATED — use ninja-iter-msvc or ninja-iter-clang] Shared MSYS2 UCRT64 defaults. Retained for one release cycle.",
             "generator": "Ninja",
             "environment": {
                 "MSYSTEM": "UCRT64",
@@ -65,8 +90,8 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Iteration (MSYS2 UCRT64)",
-            "description": "Recommended fast standalone developer build: RelWithDebInfo, compile_commands on, lld auto-detected when available.",
+            "displayName": "[DEPRECATED] Ninja Iteration (MSYS2 UCRT64)",
+            "description": "[DEPRECATED — use ninja-iter-msvc or ninja-iter-clang] Fast standalone developer build with MSYS2 GCC.",
             "binaryDir": "${sourceDir}/build/ninja-iter-msys2",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -78,8 +103,8 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Debug (MSYS2 UCRT64)",
-            "description": "Full standalone debug build with the MSYS2 UCRT64 toolchain. Builds SmatchetTests alongside SmatchetStandalone.",
+            "displayName": "[DEPRECATED] Ninja Debug (MSYS2 UCRT64)",
+            "description": "[DEPRECATED — use ninja-debug-msvc or ninja-debug-clang] Full standalone debug build with MSYS2 GCC.",
             "binaryDir": "${sourceDir}/build/ninja-debug-msys2",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
@@ -93,8 +118,8 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Tests (MSYS2 UCRT64)",
-            "description": "Dedicated preset for the doctest rig under tests/. RelWithDebInfo for fast configure + run; iter preset stays test-free to keep iteration as fast as possible.",
+            "displayName": "[DEPRECATED] Ninja Tests (MSYS2 UCRT64)",
+            "description": "[DEPRECATED — use ninja-test-msvc or ninja-test-clang] Doctest rig with MSYS2 GCC.",
             "binaryDir": "${sourceDir}/build/ninja-test-msys2",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -108,7 +133,7 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja UI Tests (MSYS2 UCRT64)",
+            "displayName": "[DEPRECATED] Ninja UI Tests (MSYS2 UCRT64)",
             "description": "ImGui Test Engine bucket-E surface. RelWithDebInfo, SMATCHET_BUILD_UI_TESTS=ON; builds Standalone + DX12 stub. Default presets stay engine-free.",
             "binaryDir": "${sourceDir}/build/ninja-ui-test-msys2",
             "cacheVariables": {
@@ -124,7 +149,7 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Debug + AddressSanitizer + UBSan (MSYS2 UCRT64)",
+            "displayName": "[DEPRECATED] Ninja Debug + AddressSanitizer + UBSan (MSYS2 UCRT64)",
             "description": "Debug build with -fsanitize=address,undefined for lifetime / bounds / UB bugs. MSYS2 UCRT64 GCC/Clang do NOT ship the ASAN runtime — this preset works only if you have manually installed libasan. CI uses the ninja-msvc-asan preset (MSVC /fsanitize=address) instead.",
             "binaryDir": "${sourceDir}/build/ninja-debug-msys2-asan",
             "cacheVariables": {
@@ -139,7 +164,7 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Debug + ThreadSanitizer (MSYS2 UCRT64)",
+            "displayName": "[DEPRECATED] Ninja Debug + ThreadSanitizer (MSYS2 UCRT64)",
             "description": "Debug build with -fsanitize=thread for data-race detection. MSYS2 UCRT64 GCC/Clang do NOT ship the TSAN runtime — this preset works only if you have manually installed libtsan. MSVC does not support TSAN; no CI coverage today.",
             "binaryDir": "${sourceDir}/build/ninja-debug-msys2-tsan",
             "cacheVariables": {
@@ -153,7 +178,7 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Debug + MemorySanitizer — Clang required (MSYS2)",
+            "displayName": "[DEPRECATED] Ninja Debug + MemorySanitizer — Clang required (MSYS2)",
             "description": "Debug build with -fsanitize=memory for uninit-read detection. MSan is Clang-only; MSYS2 GCC does NOT ship libmsan. Compilers are clang/clang++ resolved off PATH (no hardcoded paths). Install mingw-w64-clang-x86_64-clang in MSYS2 if missing. cmake/Sanitizers.cmake hard-fails at configure if the active compiler is not Clang.",
             "binaryDir": "${sourceDir}/build/ninja-debug-msys2-msan",
             "cacheVariables": {
@@ -183,11 +208,112 @@
             }
         },
         {
+            "name": "ninja-iter-msvc",
+            "inherits": [
+                "_smatchet-msvc-base"
+            ],
+            "displayName": "Ninja Iteration (MSVC)",
+            "description": "Fast standalone developer build with MSVC. RelWithDebInfo, compile_commands on. Run from a VS Developer Command Prompt.",
+            "binaryDir": "${sourceDir}/build/ninja-iter-msvc",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-debug-msvc",
+            "inherits": [
+                "_smatchet-msvc-base"
+            ],
+            "displayName": "Ninja Debug (MSVC)",
+            "description": "Full standalone debug build with MSVC. Builds SmatchetTests alongside SmatchetStandalone.",
+            "binaryDir": "${sourceDir}/build/ninja-debug-msvc",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_AGENT_DEBUG": "ON"
+            }
+        },
+        {
+            "name": "ninja-test-msvc",
+            "inherits": [
+                "_smatchet-msvc-base"
+            ],
+            "displayName": "Ninja Tests (MSVC)",
+            "description": "Dedicated doctest rig preset for MSVC. RelWithDebInfo for fast configure + run.",
+            "binaryDir": "${sourceDir}/build/ninja-test-msvc",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_BUILD_LUA_TESTS": "ON"
+            }
+        },
+        {
+            "name": "ninja-iter-clang",
+            "inherits": [
+                "_smatchet-clang-base"
+            ],
+            "displayName": "Ninja Iteration (Clang)",
+            "description": "Fast standalone developer build with Clang/LLVM. Uses clang-cl on Windows for MSVC ABI compat. Install: winget install LLVM.LLVM",
+            "binaryDir": "${sourceDir}/build/ninja-iter-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-debug-clang",
+            "inherits": [
+                "_smatchet-clang-base"
+            ],
+            "displayName": "Ninja Debug (Clang)",
+            "description": "Full standalone debug build with Clang/LLVM. Builds SmatchetTests alongside SmatchetStandalone.",
+            "binaryDir": "${sourceDir}/build/ninja-debug-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_AGENT_DEBUG": "ON"
+            }
+        },
+        {
+            "name": "ninja-test-clang",
+            "inherits": [
+                "_smatchet-clang-base"
+            ],
+            "displayName": "Ninja Tests (Clang)",
+            "description": "Dedicated doctest rig preset for Clang. RelWithDebInfo for fast configure + run.",
+            "binaryDir": "${sourceDir}/build/ninja-test-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_BUILD_LUA_TESTS": "ON"
+            }
+        },
+        {
+            "name": "ninja-clang-asan",
+            "inherits": [
+                "_smatchet-clang-base"
+            ],
+            "displayName": "Ninja Debug + Clang AddressSanitizer + UBSan",
+            "description": "ASAN + UBSan via Clang. Full sanitizer suite including UBSan (which MSVC lacks).",
+            "binaryDir": "${sourceDir}/build/ninja-clang-asan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "asan",
+                "SMATCHET_AGENT_DEBUG": "ON"
+            }
+        },
+        {
             "name": "ninja-coverage-msys2",
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Coverage (MSYS2 UCRT64, gcov-instrumented)",
+            "displayName": "[DEPRECATED] Ninja Coverage (MSYS2 UCRT64, gcov-instrumented)",
             "description": "Coverage build for OpenCppCoverage / lcov+gcov. RelWithDebInfo + --coverage adds gcov instrumentation; OpenCppCoverage works against uninstrumented PDBs too but the instrumented build yields more accurate branch coverage on conditionals. Used by scripts/dev/coverage.sh.",
             "binaryDir": "${sourceDir}/build/ninja-coverage-msys2",
             "cacheVariables": {
@@ -206,7 +332,7 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Unreal Iteration (MSYS2 UCRT64)",
+            "displayName": "[DEPRECATED] Ninja Unreal Iteration (MSYS2 UCRT64)",
             "description": "Fast Unreal plugin packaging iteration build: RelWithDebInfo, compile_commands on, Unreal third-party output enabled.",
             "binaryDir": "${sourceDir}/build/ninja-iter-unreal-msys2",
             "cacheVariables": {
@@ -220,7 +346,7 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Unreal Debug (MSYS2 UCRT64)",
+            "displayName": "[DEPRECATED] Ninja Unreal Debug (MSYS2 UCRT64)",
             "description": "Debug Unreal plugin packaging build for reproducing Unreal-specific integration issues.",
             "binaryDir": "${sourceDir}/build/ninja-debug-unreal-msys2",
             "cacheVariables": {
@@ -234,7 +360,7 @@
             "inherits": [
                 "_smatchet-msys2-base"
             ],
-            "displayName": "Ninja Publish (MSYS2 UCRT64, LTO)",
+            "displayName": "[DEPRECATED] Ninja Publish (MSYS2 UCRT64, LTO)",
             "description": "Distributable standalone plus Unreal packaging build using MSYS2 GCC LTO; forces BFD ld via SMATCHET_NO_LLD=1. Builds SmatchetTests so ctest can gate publish.",
             "binaryDir": "${sourceDir}/build/ninja-publish-msys2",
             "environment": {
@@ -256,7 +382,7 @@
                 "_smatchet-msys2-base",
                 "_smatchet-light-features"
             ],
-            "displayName": "Ninja Publish Light (MSYS2 UCRT64, LTO)",
+            "displayName": "[DEPRECATED] Ninja Publish Light (MSYS2 UCRT64, LTO)",
             "description": "Distributable light standalone: Lua + command registry ON; MCP, AI, and Whisper OFF. In-process cmd CLI.",
             "binaryDir": "${sourceDir}/build/ninja-publish-light-msys2",
             "environment": {
@@ -286,7 +412,7 @@
                 "_smatchet-msys2-base",
                 "_smatchet-light-features"
             ],
-            "displayName": "Ninja Publish Unreal Light (MSYS2 UCRT64, LTO)",
+            "displayName": "[DEPRECATED] Ninja Publish Unreal Light (MSYS2 UCRT64, LTO)",
             "description": "Default Unreal plugin packaging profile: Lua-capable DX12 libs without MCP, AI, or Whisper.",
             "binaryDir": "${sourceDir}/build/ninja-publish-unreal-light-msys2",
             "environment": {
@@ -368,6 +494,64 @@
         {
             "name": "ninja-msvc-asan",
             "configurePreset": "ninja-msvc-asan",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-iter-msvc",
+            "configurePreset": "ninja-iter-msvc",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-debug-msvc",
+            "configurePreset": "ninja-debug-msvc",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-test-msvc",
+            "configurePreset": "ninja-test-msvc",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetTests",
+                "SmatchetLuaTests"
+            ]
+        },
+        {
+            "name": "ninja-iter-clang",
+            "configurePreset": "ninja-iter-clang",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-debug-clang",
+            "configurePreset": "ninja-debug-clang",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-test-clang",
+            "configurePreset": "ninja-test-clang",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetTests",
+                "SmatchetLuaTests"
+            ]
+        },
+        {
+            "name": "ninja-clang-asan",
+            "configurePreset": "ninja-clang-asan",
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"

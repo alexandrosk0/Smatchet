@@ -103,7 +103,7 @@ echo "============================================================"
 if [ "$MISSING_BINARY" -eq 1 ]; then
     echo
     echo "Missing binary — rebuild and retry:"
-    echo "  cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone"
+    echo "  cmake --build --preset ninja-iter-msvc --target SmatchetStandalone"
     exit 2
 fi
 

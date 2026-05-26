@@ -78,8 +78,8 @@ function(smatchet_apply_sanitizers tgt)
                 "SMATCHET_SANITIZER=msan requires Clang. "
                 "Active C++ compiler is '${CMAKE_CXX_COMPILER_ID}' "
                 "(${CMAKE_CXX_COMPILER}). "
-                "Use the ninja-debug-msys2-msan preset (which selects "
-                "clang/clang++ off PATH) and confirm clang is installed.")
+                "Use a Clang preset (e.g. ninja-debug-clang with "
+                "-DSMATCHET_SANITIZER=msan) and confirm clang is installed.")
         endif()
         list(APPEND _flags
             -fsanitize=memory
@@ -153,9 +153,8 @@ function(smatchet_verify_mingw_gcc_sanitizer_runtimes)
                 "cannot locate ${_name} (print-file-name returned '${_path}', rc=${_rc}).\n"
                 "This MinGW install does not ship ${_what} import libraries next to g++. "
                 "JetBrains CLion's bundled MinGW is a common case.\n"
-                "Fix: point CLion CMake/toolchain at MSYS2 UCRT64 g++ (e.g. "
-                "C:/msys64/ucrt64/bin/g++.exe) and use CMake preset "
-                "'ninja-debug-msys2-${SMATCHET_SANITIZER}', or clear SMATCHET_SANITIZER / "
+                "Fix: use an MSVC or Clang preset for sanitizer builds "
+                "(e.g. ninja-msvc-asan, ninja-clang-asan), or clear SMATCHET_SANITIZER / "
                 "CMake cache if you did not intend a sanitizer build.\n"
                 "Emergency bypass (expect link/runtime failure): "
                 "-DSMATCHET_VERIFY_SANITIZER_RUNTIME=OFF")

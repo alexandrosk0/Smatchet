@@ -116,13 +116,18 @@ option(SMATCHET_USE_PCH
 # Link-time optimization for SmatchetStandalone. Slows configure+build
 # substantially (LTO has to defer codegen to link), but produces a smaller,
 # faster binary — worth it for shipping artifacts, not worth it for daily
-# iteration. Default OFF; the `ninja-publish-msys2` preset turns it on.
+# iteration. Default OFF; publish presets turn it on.
 option(SMATCHET_ENABLE_LTO
     "Enable link-time optimisation (LTO/IPO) on eligible targets"
     OFF)
 option(SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME
-    "Link MinGW standalone runtime fully static for one-file Windows publish artifacts"
+    "Link standalone runtime fully static for one-file Windows publish artifacts (MinGW: -static; MSVC/clang-cl: /MT)"
     OFF)
+
+if(SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME AND WIN32 AND MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING
+        "Static CRT for MSVC/clang-cl publish builds" FORCE)
+endif()
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Force static libraries" FORCE)
 set(CPR_FORCE_USE_SYSTEM_CURL OFF CACHE BOOL "Use internal cURL" FORCE)

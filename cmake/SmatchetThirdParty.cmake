@@ -2,7 +2,7 @@ function(smatchet_prepare_cpr)
     # Bundled libcurl CMake probes ioctlsocket(FIONBIO) with int*; GCC 14+
     # rejects int* vs u_long*. Winsock uses u_long, so force the successful
     # result for MinGW-family toolchains.
-    if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
         set(HAVE_IOCTLSOCKET_FIONBIO 1 CACHE INTERNAL "curl: ioctlsocket FIONBIO (MinGW GCC14+ probe fix)" FORCE)
     endif()
     # Smatchet uses libcurl for HTTPS transport but does not need zlib-backed
