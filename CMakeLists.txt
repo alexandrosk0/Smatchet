@@ -620,10 +620,14 @@ unset(_SMATCHET_CPP_SYNTAX)
 
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp")
+# AppController_LuaBindings_Draw.cpp is sol2-dependent (LuaDrawList + replay glue).
+# Its AppController:: methods are stubbed in AppController_LuaStubs.cpp for the OFF build.
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings_Draw.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
 if(SMATCHET_WITH_LUA_AUTOMATION)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaBindings_Draw.cpp")
 else()
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/AppController_LuaStubs.cpp")
 endif()

@@ -1,6 +1,12 @@
 #ifndef SMATCHET_ILUA_BINDING_HOST_H
 #define SMATCHET_ILUA_BINDING_HOST_H
 
+// This header is included by TUs that compile unconditionally (e.g. AppController.h
+// consumers). Guard all sol2 surface behind SMATCHET_WITH_LUA_AUTOMATION so the
+// header remains includable when Lua is disabled and sol2 headers are not present.
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+
 // Order matches AppController.h: limits + cstdint BEFORE sol/sol.hpp so GCC 13+
 // std::numeric_limits picks up the right specialisation under -mcmodel=large.
 #include <limits>
@@ -12,9 +18,9 @@
 #include <tuple>
 #include <vector>
 
-#include "CachedTicketTypes.h"      // POD: no SQLite, no HTTP, no ImGui
+#include "CachedTicketTypes.h" // POD: no SQLite, no HTTP, no ImGui
 #include "Commands/CommandRegistry.h"
-#include "TrackerFieldSchema.h"     // TrackerField — POD
+#include "TrackerFieldSchema.h" // TrackerField — POD
 
 // Forward-declared in Commands/Command.h. Re-declared here so callers of
 // `AppForCommandContext()` don't need to chase the include chain.
@@ -95,5 +101,7 @@ void InitLuaCore(sol::state& state, ILuaBindingHost* host);
 
 } // namespace lua
 } // namespace smatchet
+
+#endif // SMATCHET_WITH_LUA_AUTOMATION
 
 #endif // SMATCHET_ILUA_BINDING_HOST_H
