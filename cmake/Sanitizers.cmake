@@ -7,16 +7,14 @@
 #
 # Compiler matrix (verify if symptoms arise):
 #   asan / ubsan : MSVC /fsanitize=address (ASAN-only; UBSAN not available).
-#                  MSYS2 UCRT64 GCC/Clang do NOT ship ASAN/UBSAN runtimes
-#                  (confirmed 2026-05). CI uses MSVC for ASAN coverage.
-#                  smatchet_verify_mingw_gcc_sanitizer_runtimes() catches the
-#                  GCC case and fails fast with a helpful message.
-#   tsan         : MSVC does NOT support TSAN. MinGW GCC/Clang on MSYS2
-#                  do NOT ship libtsan. TSAN CI job is deferred until a
-#                  Linux runner is available.
-#   msan         : Clang-only. MSYS2 GCC does NOT ship libmsan; the
-#                  msan preset must select clang++/clang. We hard-fail
-#                  here if the active compiler is not Clang.
+#                  Clang -fsanitize=address,undefined (full suite).
+#                  CI uses both ninja-msvc-asan and ninja-clang-asan.
+#                  Legacy MinGW/MSYS2 GCC does NOT ship ASAN/UBSAN runtimes;
+#                  smatchet_verify_mingw_gcc_sanitizer_runtimes() catches that.
+#   tsan         : MSVC does NOT support TSAN. TSAN CI job deferred until
+#                  a Linux runner is available.
+#   msan         : Clang-only. We hard-fail here if the active compiler
+#                  is not Clang.
 #
 # Hard rules (mirrored in agents/build-doctor.md § Stack):
 #   * Two sanitizers must not coexist in one build (ASan + TSan, ASan + MSan

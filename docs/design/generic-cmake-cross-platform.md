@@ -155,7 +155,8 @@ Per `AGENTS.md` verification rules — zero manual steps.
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `4b8bde4` · Add MSVC + Clang presets, deprecate MSYS2 toolchain (CMakePresets.json, CMakeLists.txt, Sanitizers.cmake, SmatchetThirdParty.cmake, AGENTS.md, test-all.sh, plan doc rewrite)
+- *(this commit)* · Add MSVC CI jobs, update README/docs/scripts for MSVC+Clang primary path
 
 ## Deviations from plan
 

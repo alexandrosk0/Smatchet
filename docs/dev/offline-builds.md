@@ -35,19 +35,19 @@ When in doubt, the canonical answer is `grep -rE "FetchContent_Declare|GIT_REPOS
 If a teammate already has a clean build in the same preset, the cheapest path is to copy their populated `_deps/` directory:
 
 ```powershell
-# On the peer's machine, with build/ninja-iter-msys2/ populated:
-Compress-Archive -Path build\ninja-iter-msys2\_deps -DestinationPath smatchet-deps-iter.zip
+# On the peer's machine, with build/ninja-iter-msvc/ populated:
+Compress-Archive -Path build\ninja-iter-msvc\_deps -DestinationPath smatchet-deps-iter.zip
 
-# On yours, after `cmake --preset ninja-iter-msys2` has run far enough to create build/ninja-iter-msys2/:
-Expand-Archive -Path smatchet-deps-iter.zip -DestinationPath build\ninja-iter-msys2\
+# On yours, after `cmake --preset ninja-iter-msvc` has run far enough to create build/ninja-iter-msvc/:
+Expand-Archive -Path smatchet-deps-iter.zip -DestinationPath build\ninja-iter-msvc\
 ```
 
-Then re-run `cmake --preset ninja-iter-msys2`. FetchContent detects the existing populated state via the `_subbuild/` marker files and skips the download.
+Then re-run `cmake --preset ninja-iter-msvc`. FetchContent detects the existing populated state via the `_subbuild/` marker files and skips the download.
 
 **Cache hit semantics** — `_deps/` only re-uses across:
 
-- **Same preset name**: `build/ninja-iter-msys2/_deps` does not feed `build/ninja-debug-msys2/_deps`. Each preset has its own copy.
-- **Same compiler + same generator**: a `_deps/` built under MSYS2 UCRT64 will not reliably feed a Visual Studio MSVC preset; pre-built object files diverge. Header-only deps (`json`, `ghc_filesystem`, `httplib`, `sol2`, `doctest`) port; compiled deps (`cpr`, `sqlitecpp`, `glfw`, `imgui`, `md4c`, `imgui_test_engine`) do not.
+- **Same preset name**: `build/ninja-iter-msvc/_deps` does not feed `build/ninja-debug-msvc/_deps`. Each preset has its own copy.
+- **Same compiler + same generator**: a `_deps/` built under MSVC will not reliably feed a Clang preset or vice versa; pre-built object files diverge. Header-only deps (`json`, `ghc_filesystem`, `httplib`, `sol2`, `doctest`) port; compiled deps (`cpr`, `sqlitecpp`, `glfw`, `imgui`, `md4c`, `imgui_test_engine`) do not.
 - **Same `GIT_TAG`**: if the source tree bumps a pin (e.g. `v3.11.3` → `v3.11.4`), the stale `_deps/<name>-src/` will not match. Wipe that subdir and let FetchContent re-fetch.
 
 If a deps copy is large or stale, just delete it: `rm -rf build/<preset>/_deps && cmake --preset <preset>`.
@@ -78,7 +78,7 @@ git -C C:\offline-deps\imgui_test_engine checkout 8568767ad4c53d6ce02d65f01a09d3
 Then point CMake at the mirror at configure time:
 
 ```powershell
-cmake --preset ninja-iter-msys2 `
+cmake --preset ninja-iter-msvc `
     -DFETCHCONTENT_SOURCE_DIR_JSON="C:/offline-deps/json" `
     -DFETCHCONTENT_SOURCE_DIR_CPR="C:/offline-deps/cpr" `
     -DFETCHCONTENT_SOURCE_DIR_SQLITECPP="C:/offline-deps/sqlitecpp" `
@@ -101,8 +101,8 @@ This is the right option when the firewall lets you clone these repos once (e.g.
 If a team shares a network drive that holds a populated FetchContent layout, override the entire base directory once:
 
 ```powershell
-$env:FETCHCONTENT_BASE_DIR = "\\fileserver\smatchet-deps\ucrt64-iter"
-cmake --preset ninja-iter-msys2
+$env:FETCHCONTENT_BASE_DIR = "\\fileserver\smatchet-deps\msvc-iter"
+cmake --preset ninja-iter-msvc
 ```
 
 The base dir contains `<name>-src/` + `<name>-build/` + `<name>-subbuild/` for each FetchContent declaration. Same cache-hit semantics as Option 1 — compiler + generator must match.

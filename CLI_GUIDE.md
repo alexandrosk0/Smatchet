@@ -461,7 +461,7 @@ Measure UI performance without a human driver.
 ```bash
 # 1. Instrument hot paths (add SMATCHET_UI_PERF_SCOPE("temp:...") markers)
 # 2. Build
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
 # 3. With app running — reset, run scenario, read results
 Smatchet.exe cmd perf.reset

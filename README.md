@@ -53,75 +53,70 @@ Missing override keys fall back to the built-in strings, and missing translation
 
 Smatchet's build system uses CMake and is designed to require **zero manual dependency downloads**. All third-party libraries (ImGui, SQLiteCpp, cpr, nlohmann/json, etc.) are fetched and built automatically via `FetchContent`.
 
-MSYS2 for iteration (lld), publish explicitly uses BFD. Publish LTO and fast dev link.
-
-### Recommended Developer Path
-
-For developers who want both fast iteration and LTO publish builds, use MSYS2 UCRT64:
-
-```powershell
-winget install MSYS2.MSYS2
-```
-
-Then, in an MSYS2 terminal:
-
-```bash
-pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
-```
-
 ### Prerequisites
 
 - CMake 3.24 or higher
+- Ninja build system
 - Git
-- MSYS2 UCRT64 with:
-  - `mingw-w64-ucrt-x86_64-toolchain`
-  - `mingw-w64-ucrt-x86_64-lld`
+- One of:
+  - **MSVC** — Visual Studio 2022 (Community or Build Tools). Run from a VS Developer Command Prompt.
+  - **Clang/LLVM** — `winget install LLVM.LLVM` on Windows. Uses `clang-cl` for MSVC ABI compatibility.
 
 ### Supported Presets
 
-The supported shared presets are:
+**MSVC (primary):**
 
-- `ninja-iter-msys2`: fast standalone iteration (`RelWithDebInfo`)
-- `ninja-debug-msys2`: full standalone debug (`Debug`)
-- `ninja-iter-unreal-msys2`: fast Unreal plugin iteration (`RelWithDebInfo`)
-- `ninja-debug-unreal-msys2`: full Unreal-specific debug (`Debug`)
-- `ninja-publish-msys2`: LTO publish build for standalone plus Unreal packaging (`Release`)
+- `ninja-iter-msvc`: fast standalone iteration (`RelWithDebInfo`)
+- `ninja-debug-msvc`: full standalone debug (`Debug`)
+- `ninja-test-msvc`: doctest rig (`RelWithDebInfo`)
+- `ninja-msvc-asan`: ASAN via `/fsanitize=address`
+
+**Clang/LLVM (primary):**
+
+- `ninja-iter-clang`: fast standalone iteration (`RelWithDebInfo`)
+- `ninja-debug-clang`: full standalone debug (`Debug`)
+- `ninja-test-clang`: doctest rig (`RelWithDebInfo`)
+- `ninja-clang-asan`: ASAN + UBSan
+
+**Legacy MSYS2 (deprecated — will be removed):**
+
+- `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-publish-msys2`, etc.
 
 ### Build Workflows
 
-Standalone iteration:
+**MSVC** — run from a VS Developer Command Prompt:
 
-```bash
-cmake --preset ninja-iter-msys2
-cmake --build --preset ninja-iter-msys2
+```powershell
+cmake --preset ninja-iter-msvc
+cmake --build --preset ninja-iter-msvc
+```
+
+**Clang/LLVM** — ensure `clang-cl` is on PATH:
+
+```powershell
+cmake --preset ninja-iter-clang
+cmake --build --preset ninja-iter-clang
 ```
 
 Standalone debug:
 
-```bash
-cmake --preset ninja-debug-msys2
-cmake --build --preset ninja-debug-msys2
+```powershell
+cmake --preset ninja-debug-msvc
+cmake --build --preset ninja-debug-msvc
 ```
 
-Unreal plugin iteration:
+Tests:
 
-```bash
-cmake --preset ninja-iter-unreal-msys2
-cmake --build --preset ninja-iter-unreal-msys2
+```powershell
+cmake --preset ninja-test-msvc
+cmake --build --preset ninja-test-msvc
+ctest --test-dir build/ninja-test-msvc --output-on-failure
 ```
 
-Unreal plugin debug:
+Dual-target verification (Standalone + DX12):
 
-```bash
-cmake --preset ninja-debug-unreal-msys2
-cmake --build --preset ninja-debug-unreal-msys2
-```
-
-Publish with LTO:
-
-```bash
-cmake --preset ninja-publish-msys2
-cmake --build --preset ninja-publish-msys2
+```powershell
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12
 ```
 
 ### Configuration Options

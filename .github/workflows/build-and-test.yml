@@ -1,8 +1,8 @@
 name: Build and test
 
-# Slice 5 of docs/design/first-time-setup-hardening.md — canonical Windows + MSYS2
-# UCRT64 CI job. MSVC, lint (clang-format / cppcheck / clang-tidy), and Unreal DX12
-# verification are deferred to Slices 5b / 5c / 5d.
+# Primary CI: MSVC + Clang (equal-citizen toolchains).
+# Legacy: MSYS2 UCRT64 jobs kept during deprecation period.
+# See docs/design/generic-cmake-cross-platform.md.
 
 on:
   push:
@@ -233,6 +233,107 @@ jobs:
 
       - name: Build SmatchetStandalone (no agentic)
         run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+
+  windows-msvc:
+    name: Windows + MSVC
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache FetchContent _deps (msvc)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-test-msvc/_deps
+            build/ninja-iter-msvc/_deps
+          key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-test-msvc
+        run: cmake --preset ninja-test-msvc
+
+      - name: Build test binaries (MSVC)
+        run: cmake --build --preset ninja-test-msvc
+
+      - name: Run ctest (MSVC)
+        working-directory: build/ninja-test-msvc
+        run: ctest --output-on-failure
+
+      - name: Configure ninja-iter-msvc
+        run: cmake --preset ninja-iter-msvc
+
+      - name: Build SmatchetStandalone (MSVC)
+        run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+
+      - name: Build SmatchetCore_DX12 (MSVC dual-target)
+        run: cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
+
+  windows-msvc-no-whisper:
+    name: Windows + MSVC (SMATCHET_WITH_WHISPER=OFF)
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache FetchContent _deps (msvc-no-whisper)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-iter-msvc/_deps
+          key: ${{ runner.os }}-fetchcontent-msvc-no-whisper-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-iter-msvc with SMATCHET_WITH_WHISPER=OFF
+        run: cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF
+
+      - name: Build SmatchetStandalone (MSVC, no whisper)
+        run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+
+  windows-msvc-no-agentic:
+    name: Windows + MSVC (SMATCHET_WITH_AGENTIC=OFF)
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache FetchContent _deps (msvc-no-agentic)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-iter-msvc/_deps
+          key: ${{ runner.os }}-fetchcontent-msvc-no-agentic-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-iter-msvc with SMATCHET_WITH_AGENTIC=OFF
+        run: cmake --preset ninja-iter-msvc -DSMATCHET_WITH_AGENTIC=OFF
+
+      - name: Build SmatchetStandalone (MSVC, no agentic)
+        run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
   bucket-c-screenshot-diff:
     # Slice 6 of docs/design/autonomous-debugging-no-creds.md — screenshot-diff
