@@ -44,6 +44,10 @@ class SmatchetUI {
   public:
     void Draw(AppController& app);
 
+    // Forwarding shims for split-TU helpers in SmatchetPreferencesUi_*.cpp.
+    const ViewsStore& GetViewsStore() const { return ViewState.GetStore(); }
+    void DrawBlamePreferencesTabForwarded(const AppController& app) { blameAnalysisUi_.DrawBlamePreferencesTab(app); }
+
     /// Ring-buffer LRU of recently toggled view command ids (capacity 5, oldest-first on read).
     class RecentViewLru {
       public:
@@ -57,7 +61,9 @@ class SmatchetUI {
         /// accidentally dispatching arbitrary command names via the Recent Views submenu.
         void Touch(const std::string& commandId) {
             static const char kPrefix[] = "view.toggle.";
-            if (commandId.compare(0U, sizeof(kPrefix) - 1U, kPrefix) != 0) { return; }
+            if (commandId.compare(0U, sizeof(kPrefix) - 1U, kPrefix) != 0) {
+                return;
+            }
             // Remove existing occurrence to avoid duplicates.
             for (int i = 0; i < size_; ++i) {
                 if (entries_[i] == commandId) {
