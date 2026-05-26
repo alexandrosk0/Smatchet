@@ -46,7 +46,6 @@ std::set<std::string> ExpectedNames() {
     expected.insert("description-tooltip-markdown-render");
 #if defined(SMATCHET_WITH_AI)
     expected.insert("ai-assistant-streaming-happy-path");
-    expected.insert("ai-assistant-streaming-401");
     expected.insert("ai-assistant-streaming-transport-down-within-5s");
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
