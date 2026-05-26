@@ -89,7 +89,9 @@ add_executable(SmatchetTests
     # the registry TU itself.
     Source_Core/SmatchetScenarioRegistry.test.cpp
     Source_Core/SmatchetScenarioRegistry.stubs.cpp
+    Source_Core/ScenarioCaptureSizing.test.cpp
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Command.cpp"
     # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.

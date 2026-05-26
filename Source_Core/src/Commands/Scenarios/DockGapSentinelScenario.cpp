@@ -15,6 +15,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include "AppController.h"
+#include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 
@@ -26,7 +27,8 @@
 // re-declare it here (same shim BuiltinCommands_Debug.cpp uses).
 extern UiDrawSession g_ui;
 
-namespace smatchet { namespace cmd {
+namespace smatchet {
+namespace cmd {
 
 namespace {
 
@@ -34,19 +36,28 @@ namespace {
 // stores --key=value as `string`). Scenarios must coerce defensively or risk
 // nlohmann::json::type_error.302 when args.value<int>(...) hits a string.
 int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key)) return fallback;
+    if (!args.contains(key))
+        return fallback;
     const auto& v = args[key];
-    if (v.is_number()) return v.get<int>();
+    if (v.is_number())
+        return v.get<int>();
     if (v.is_string()) {
-        try { return std::stoi(v.get<std::string>()); } catch (...) { return fallback; }
+        try {
+            return std::stoi(v.get<std::string>());
+        } catch (...) {
+            return fallback;
+        }
     }
     return fallback;
 }
 std::string StringArg(const nlohmann::json& args, const char* key, const std::string& fallback) {
-    if (!args.contains(key)) return fallback;
+    if (!args.contains(key))
+        return fallback;
     const auto& v = args[key];
-    if (v.is_string()) return v.get<std::string>();
-    if (v.is_number()) return std::to_string(v.get<long long>());
+    if (v.is_string())
+        return v.get<std::string>();
+    if (v.is_number())
+        return std::to_string(v.get<long long>());
     return fallback;
 }
 
@@ -59,11 +70,16 @@ class DockGapSentinelScenario : public IScenario {
         if (warmupFrames_ < 1) {
             warmupFrames_ = 1;
         }
+        captureSize_ = ParseScenarioCaptureSize(args);
         screenshotPath_ = StringArg(args, "screenshotPath", std::string());
         if (screenshotPath_.empty()) {
             outErr = "dock-gap-sentinel: screenshotPath is required";
             return;
         }
+
+        g_ui.requestWindowWidth = captureSize_.Width;
+        g_ui.requestWindowHeight = captureSize_.Height;
+        g_ui.requestWindowResize = true;
     }
 
     void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
@@ -81,26 +97,29 @@ class DockGapSentinelScenario : public IScenario {
         // consumer; we still report what we asked for so the bash driver
         // can detect the platform gap.
         g_ui.requestScreenshotPath = screenshotPath_;
-        g_ui.requestScreenshot     = true;
+        g_ui.requestScreenshot = true;
 
         nlohmann::json out;
-        out["scenario"]       = Name();
-        out["warmupFrames"]   = warmupFrames_;
+        out["scenario"] = Name();
+        out["warmupFrames"] = warmupFrames_;
+        out["windowWidth"] = captureSize_.Width;
+        out["windowHeight"] = captureSize_.Height;
         out["screenshotPath"] = screenshotPath_;
         out["captureRequested"] = true;
         return out;
     }
 
   private:
-    int         warmupFrames_ = 8;
+    int warmupFrames_ = 8;
+    ScenarioCaptureSize captureSize_;
     std::string screenshotPath_;
 };
 
 } // namespace
 
-}} // namespace smatchet::cmd
+} // namespace cmd
+} // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeDockGapSentinelScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(
-        new smatchet::cmd::DockGapSentinelScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::DockGapSentinelScenario());
 }

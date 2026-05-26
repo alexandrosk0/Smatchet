@@ -36,7 +36,8 @@ public class SmatchetImGuiPlugin : ModuleRules
             new[]
             {
                 "ApplicationCore",
-                "InputCore"
+                "InputCore",
+                "Json"
             });
 
         string platformName = Target.Platform.ToString();

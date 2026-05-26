@@ -30,3 +30,7 @@ class SMATCHETIMGUIPLUGIN_API USmatchetImGuiCommandBridge : public UBlueprintFun
 
 /// Stops pending async command callbacks (plugin module shutdown).
 SMATCHETIMGUIPLUGIN_API void SmatchetImGuiCommandBridge_ShutdownModule();
+
+/// Registers/unregisters Unreal console commands that forward to the bridge.
+SMATCHETIMGUIPLUGIN_API void SmatchetImGuiConsoleCommands_StartupModule();
+SMATCHETIMGUIPLUGIN_API void SmatchetImGuiConsoleCommands_ShutdownModule();

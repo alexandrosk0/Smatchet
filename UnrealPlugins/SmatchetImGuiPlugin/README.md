@@ -8,7 +8,7 @@ editor utility code, automation, or Blueprint UI.
 
 ## Communication Paths
 
-There are two supported ways to communicate with the plugin.
+There are three supported ways to communicate with the plugin.
 
 1. Human UI: press `Ctrl+Shift+J` in Unreal to show or hide the Smatchet overlay.
    Once the overlay is visible, use Smatchet normally, including the command
@@ -16,6 +16,9 @@ There are two supported ways to communicate with the plugin.
 2. Programmatic command bridge: call `USmatchetImGuiCommandBridge` from
    Blueprint or C++. This sends commands to Smatchet in-process and returns JSON
    results asynchronously.
+3. Unreal console bridge: type `smartchat.<command>` or
+   `smartchat <command>` in the Unreal console. Results are logged to the Unreal
+   Output Log when the async command completes.
 
 `Ctrl+Alt+J` is only a cursor diagnostic toggle. It suppresses or restores
 Smatchet's software cursor in game viewports.
@@ -63,6 +66,47 @@ Failures use the same envelope shape:
 The Unreal bridge is asynchronous. Enqueueing a command returns immediately with
 a request id. The result becomes available on a later tick after the native
 Smatchet host drains its command queue.
+
+## Unreal Console API
+
+The plugin registers Smatchet commands under the Unreal console prefix:
+
+```text
+smartchat.
+```
+
+The `smatchet.` prefix is also registered as a compatibility alias.
+
+Generic form, available immediately:
+
+```text
+smartchat <command.name> [--yes] [--dry-run] [json-object]
+```
+
+Direct aliases, populated from `commands.list` when the native command catalog is
+available:
+
+```text
+smartchat.commands.list {"full":true,"limit":500}
+smartchat.commands.help {"name":"config.get"}
+smartchat.app.version
+smartchat.config.get {"key":"trackerType"}
+```
+
+Use `smartchat.refresh` to refresh the direct alias list after commands are added
+or Lua actions register more command names.
+
+Console arguments are JSON-first. If no JSON object is supplied, the bridge sends
+`{}`. `--yes` maps to destructive-command confirmation, and `--dry-run` maps to
+the command dry-run flag:
+
+```text
+smartchat.config.set --dry-run {"key":"readOnlyMode","value":"true"}
+smartchat.app.quit --yes
+```
+
+Console commands enqueue work and return immediately. The Unreal Output Log shows
+the request id first, then logs the JSON result envelope when it is ready.
 
 ## Blueprint API
 

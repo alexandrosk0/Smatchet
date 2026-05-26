@@ -20,8 +20,8 @@ namespace smatchet {
 namespace standalone {
 
 enum class HeadlessCliMode {
-    MetaCommand,  ///< tier-1: init → dispatch → exit (no render loop)
-    ScenarioRun   ///< tier-2: init → render loop until scenario/async work completes
+    MetaCommand, ///< tier-1: init → dispatch → exit (no render loop)
+    ScenarioRun  ///< tier-2: init → render loop until scenario/async work completes
 };
 
 struct BootstrapContext {
@@ -30,6 +30,7 @@ struct BootstrapContext {
     std::unique_ptr<PluginHost> pluginHost;
     std::unique_ptr<SmatchetUI> mainWindow;
     const char* glslVersion = nullptr;
+    ~BootstrapContext();
 };
 
 /// Parse standalone argv (`--db-path`, `--mcp-port`, `--help`, …). Returns false when `--help` was printed.
@@ -42,7 +43,7 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, bool for
 /// Boot a hidden standalone instance. `err` receives a human-readable failure reason.
 /// When `forceMcp` is true (`--ephemeral`), MCP plugin registers even if config has MCP disabled.
 bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode mode, std::string& err,
-                  bool forceMcp = false);
+                bool forceMcp = false);
 
 /// `--ephemeral` path: hidden window + forced MCP + render loop until the window closes.
 bool BootEphemeral(int argc, char** argv, std::string& err);
@@ -56,7 +57,7 @@ void ShutdownApplication(BootstrapContext& ctx);
 
 void Shutdown(BootstrapContext& ctx);
 
-}  // namespace standalone
-}  // namespace smatchet
+} // namespace standalone
+} // namespace smatchet
 
-#endif  // SMATCHET_TARGET_STANDALONE_APP_BOOTSTRAP_H
+#endif // SMATCHET_TARGET_STANDALONE_APP_BOOTSTRAP_H
