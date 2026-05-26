@@ -1,7 +1,6 @@
 name: Build and test
 
 # Primary CI: MSVC + Clang (equal-citizen toolchains).
-# Legacy: MSYS2 UCRT64 jobs kept during deprecation period.
 # See docs/design/generic-cmake-cross-platform.md.
 
 on:
@@ -34,206 +33,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows-msys2-ucrt64:
-    name: Windows + MSYS2 UCRT64
-    runs-on: windows-2022
-    timeout-minutes: 30
-
-    defaults:
-      run:
-        shell: msys2 {0}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
-
-      - name: Cache FetchContent _deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/ninja-test-msys2/_deps
-            build/ninja-iter-msys2/_deps
-          key: ${{ runner.os }}-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-fetchcontent-
-
-      - name: Toolchain pre-flight (doctor.sh)
-        # Doctor exit codes: 0=GREEN, 1=RED (required check failed), 2=YELLOW
-        # (warn-only — cppcheck / clang-tidy / clang-format optional). YELLOW is
-        # acceptable in CI; only RED should fail the job.
-        run: |
-          set +e
-          bash scripts/dev/doctor.sh
-          rc=$?
-          set -e
-          if [ "$rc" -eq 1 ]; then
-            echo "::error::doctor.sh failed (required toolchain check)"
-            exit 1
-          fi
-          echo "doctor.sh rc=$rc (0=GREEN, 2=YELLOW acceptable in CI)"
-
-      - name: Configure ninja-test-msys2
-        run: cmake --preset ninja-test-msys2
-
-      - name: Build test binaries
-        # No explicit --target — let the build preset's `targets` list drive,
-        # which is `["SmatchetTests", "SmatchetLuaTests"]`. Passing --target
-        # SmatchetTests here would override the preset list and skip the Lua
-        # rig, causing ctest's smatchet_lua_tests to fail with "Could not find
-        # executable .../tests/Lua/SmatchetLuaTests.exe".
-        run: cmake --build --preset ninja-test-msys2
-
-      - name: Run ctest
-        # No CTest preset is wired (see build-doctor common causes); invoke ctest
-        # from the build directory directly. Runs smatchet_tests + smatchet_lua_tests.
-        working-directory: build/ninja-test-msys2
-        run: ctest --output-on-failure
-
-      - name: Configure ninja-iter-msys2
-        run: cmake --preset ninja-iter-msys2
-
-      - name: Build SmatchetStandalone
-        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
-
-      - name: Run non-UI bucket-A tests
-        # Headless GH runner — UI-spawn tests (test-ui-views-columns-reorder.sh,
-        # test-theme-syntax-colors.sh, test-doctor.sh) need either a real display
-        # or a headless GL context (mesa / xvfb). Enable them when bucket-E
-        # / headless GL is wired in a later slice.
-        run: |
-          bash scripts/dev/test-cppcheck-path-detection.sh
-          bash scripts/dev/test-build-warnings.sh
-          bash scripts/dev/test-markdown-lang-tag.sh
-
-      # NOTE: bucket-C screenshot diff is no longer invoked inline here —
-      # slice 6 of docs/design/autonomous-debugging-no-creds.md extracted it
-      # into a dedicated job (`bucket-c-screenshot-diff`, below) that runs
-      # against a Mesa headless GL context. This job uploads the built
-      # Smatchet.exe + diff helper so the bucket-C / bucket-E jobs reuse the
-      # artefact rather than rebuilding from scratch.
-
-      - name: Upload Smatchet.exe artefact (for bucket-C / bucket-E jobs)
-        uses: actions/upload-artifact@v4
-        with:
-          name: smatchet-exe-${{ github.run_id }}
-          path: |
-            build/ninja-iter-msys2/Smatchet.exe
-            build/ninja-iter-msys2/*.dll
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload Smatchet.exe on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Smatchet-failure-${{ github.run_id }}
-          path: build/ninja-iter-msys2/Smatchet.exe
-          if-no-files-found: ignore
-
-  windows-msys2-ucrt64-no-whisper:
-    # Stub-drift sentinel for the SMATCHET_WITH_WHISPER bindings/stubs split.
-    # Mirrors the regression-prevention shape of the dual-target build for the
-    # Lua bindings/stubs split: any drift between DictationInsertionRouter_Whisper.cpp
-    # and DictationInsertionRouter_Stubs.cpp surfaces here as a link / build error
-    # rather than at runtime in the DX12 / Unreal target.
-    name: Windows + MSYS2 UCRT64 (SMATCHET_WITH_WHISPER=OFF)
-    runs-on: windows-2022
-    timeout-minutes: 30
-
-    defaults:
-      run:
-        shell: msys2 {0}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
-
-      - name: Cache FetchContent _deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/ninja-iter-msys2/_deps
-          key: ${{ runner.os }}-fetchcontent-no-whisper-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-fetchcontent-
-
-      - name: Configure ninja-iter-msys2 with SMATCHET_WITH_WHISPER=OFF
-        run: cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF
-
-      - name: Build SmatchetStandalone (no whisper)
-        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
-
-  windows-msys2-ucrt64-no-agentic:
-    # Stub-drift sentinel for the SMATCHET_WITH_AGENTIC gate (agentic-flow T1+).
-    # Any call site that includes GitHubClient.h / GitHubClientHelpers.h / references
-    # cfg.GitHubPat without `#if defined(SMATCHET_WITH_AGENTIC)` guarding fails here
-    # rather than at runtime on the DX12 / Unreal target (which also disables the gate).
-    name: Windows + MSYS2 UCRT64 (SMATCHET_WITH_AGENTIC=OFF)
-    runs-on: windows-2022
-    timeout-minutes: 30
-
-    defaults:
-      run:
-        shell: msys2 {0}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
-
-      - name: Cache FetchContent _deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/ninja-iter-msys2/_deps
-          key: ${{ runner.os }}-fetchcontent-no-agentic-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-fetchcontent-
-
-      - name: Configure ninja-iter-msys2 with SMATCHET_WITH_AGENTIC=OFF
-        run: cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_AGENTIC=OFF
-
-      - name: Build SmatchetStandalone (no agentic)
-        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
-
   windows-msvc:
     name: Windows + MSVC
     runs-on: windows-2022
@@ -258,6 +57,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
 
+      - name: Toolchain pre-flight (doctor.sh)
+        shell: bash
+        run: |
+          set +e
+          bash scripts/dev/doctor.sh
+          rc=$?
+          set -e
+          if [ "$rc" -eq 1 ]; then
+            echo "::error::doctor.sh failed (required toolchain check)"
+            exit 1
+          fi
+          echo "doctor.sh rc=$rc (0=GREEN, 2=YELLOW acceptable in CI)"
+
       - name: Configure ninja-test-msvc
         run: cmake --preset ninja-test-msvc
 
@@ -276,6 +88,30 @@ jobs:
 
       - name: Build SmatchetCore_DX12 (MSVC dual-target)
         run: cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
+
+      - name: Run non-UI bucket-A tests
+        shell: bash
+        run: |
+          bash scripts/dev/test-cppcheck-path-detection.sh
+          bash scripts/dev/test-build-warnings.sh
+          bash scripts/dev/test-markdown-lang-tag.sh
+
+      - name: Upload Smatchet.exe artefact (for bucket-C / bucket-E jobs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: smatchet-exe-${{ github.run_id }}
+          path: |
+            build/ninja-iter-msvc/Smatchet.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload Smatchet.exe on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Smatchet-failure-${{ github.run_id }}
+          path: build/ninja-iter-msvc/Smatchet.exe
+          if-no-files-found: ignore
 
   windows-msvc-no-whisper:
     name: Windows + MSVC (SMATCHET_WITH_WHISPER=OFF)
@@ -336,64 +172,27 @@ jobs:
         run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
   bucket-c-screenshot-diff:
-    # Slice 6 of docs/design/autonomous-debugging-no-creds.md — screenshot-diff
-    # gate running against a Mesa software OpenGL ICD. The windows-2022 runner
-    # has no GPU; Mesa's prebuilt `opengl32sw.dll` provides a deterministic
-    # software ICD that we drop next to Smatchet.exe as `opengl32.dll`. The
-    # Windows DLL search order picks the app-dir copy before %SystemRoot%, so
-    # GLFW gets a working GL context without any code changes.
-    #
-    # Mesa-vs-ANGLE rationale: MSYS2 UCRT64 does not package mesa, swiftshader,
-    # or ANGLE. ANGLE-D3D11 / SwiftShader would require building from source
-    # (heavy footprint). Mesa publishes a single prebuilt opengl32sw.dll per
-    # release that drops in next to the exe — zero compile, minimal footprint,
-    # classic Qt/CI pattern. Risk acknowledged: Mesa's software rasteriser
-    # may produce subtle font-rendering differences vs developer GPUs; that
-    # is why goldens must be bootstrapped from a CI run, not a dev machine.
-    #
-    # Initial continue-on-error: true for a 1-week soak — first runs FAIL
-    # because goldens don't exist yet (slice 6 ships the jobs only; goldens
-    # bootstrap in a follow-up PR per the golden-image-approval contract).
-    # Once goldens land + soak passes cleanly, flip back to `false` for
-    # hard-fail gating, matching the plan § Slice 6 "advisory window over"
-    # end-state. Same stance as the sibling bucket-e-ui-tests job below.
     name: Bucket-C screenshot diff (Mesa headless GL)
-    needs: windows-msys2-ucrt64
+    needs: windows-msvc
     runs-on: windows-2022
     timeout-minutes: 20
     continue-on-error: true
-
-    defaults:
-      run:
-        shell: msys2 {0}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-python
-            git
-            unzip
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Download Smatchet.exe artefact
         uses: actions/download-artifact@v4
         with:
           name: smatchet-exe-${{ github.run_id }}
-          path: build/ninja-iter-msys2/
+          path: build/ninja-iter-msvc/
 
       - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
-        # Mesa publishes prebuilt Windows binaries via mesa3d/mesa-dist-win on
-        # GitHub releases. We pin to a known release to keep CI deterministic.
-        # The zip contains x64/opengl32.dll (the software ICD renamed); we
-        # place it next to Smatchet.exe so the Windows DLL search order picks
-        # it before %SystemRoot%\System32\opengl32.dll.
+        shell: bash
         env:
           MESA_VERSION: "24.2.5"
         run: |
@@ -401,34 +200,20 @@ jobs:
           mkdir -p mesa-tmp
           cd mesa-tmp
           curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
-          # mesa3d-*-release-msvc.7z requires 7z; install on the fly.
-          pacman -S --noconfirm --needed p7zip
-          7z x mesa.7z -o./extracted >/dev/null
-          ls -la extracted/x64/ | head -20
-          # Drop the software ICD next to the exe AS opengl32.dll so the app-dir
-          # search hit beats system32. Mesa ships it under x64/opengl32.dll.
-          cp extracted/x64/opengl32.dll ../build/ninja-iter-msys2/opengl32.dll
+          7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+          if [ -f extracted/x64/opengl32.dll ]; then
+            cp extracted/x64/opengl32.dll ../build/ninja-iter-msvc/opengl32.dll
+          fi
           cd ..
           rm -rf mesa-tmp
-          ls -la build/ninja-iter-msys2/
 
       - name: Run bucket-C screenshot diff
         continue-on-error: true
-        # First run after this PR merges will FAIL because tests/golden/*.png
-        # are not yet committed — this PR establishes the CI wiring only.
-        # Follow-up PR will bootstrap the goldens per the golden-image-approval
-        # contract in AGENTS.md.
+        shell: bash
         env:
-          # Route the script's TMPDIR-honouring capture dir (test-screenshot-diff.sh
-          # uses ${TMPDIR:-/tmp}) under the workspace so the failure-upload step
-          # below — which runs on the Windows host and cannot see MSYS2 /tmp —
-          # can actually find the PNGs to upload for golden bootstrap.
+          SMATCHET_EXE: build/ninja-iter-msvc/Smatchet.exe
           TMPDIR: ${{ github.workspace }}/build/tmp
-          # Suppress the trap that rms TMP_DIR on script exit — the upload-artifact
-          # step below needs the PNGs to survive past the script call.
           SMATCHET_KEEP_SCREENSHOT_CAPTURES: "1"
-          # Force the Mesa software ICD even if a runner happens to expose a
-          # display GL context — keeps the diff reproducible.
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
@@ -445,59 +230,36 @@ jobs:
           if-no-files-found: ignore
 
   bucket-e-ui-tests:
-    # Slice 6 of docs/design/autonomous-debugging-no-creds.md — ImGui Test
-    # Engine surface (existing 12 bucket-E tests) running against Mesa
-    # software GL. Initial continue-on-error: true for a 1-week soak per
-    # plan § Slice 6; flip to false once stability is confirmed.
-    #
-    # Unlike bucket-C, this job cannot reuse the windows-msys2-ucrt64 build
-    # artefact — bucket-E needs SMATCHET_BUILD_UI_TESTS=ON which is a
-    # different CMake configure (ninja-ui-test-msys2 preset, separate binaryDir).
-    # We still `needs:` the build job for ordering + cache warmup.
     name: Bucket-E UI tests (Mesa headless GL)
-    needs: windows-msys2-ucrt64
+    needs: windows-msvc
     runs-on: windows-2022
     timeout-minutes: 30
     continue-on-error: true
-
-    defaults:
-      run:
-        shell: msys2 {0}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
-            unzip
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Cache FetchContent _deps (ui-test preset)
         uses: actions/cache@v4
         with:
           path: |
-            build/ninja-ui-test-msys2/_deps
-          key: ${{ runner.os }}-fetchcontent-ui-test-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+            build/ninja-ui-test-msvc/_deps
+          key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
 
-      - name: Configure ninja-ui-test-msys2
-        run: cmake --preset ninja-ui-test-msys2
+      - name: Configure ninja-ui-test-msvc
+        run: cmake --preset ninja-ui-test-msvc
 
       - name: Build SmatchetStandalone (UI tests on)
-        run: cmake --build --preset ninja-ui-test-msys2
+        run: cmake --build --preset ninja-ui-test-msvc
 
       - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+        shell: bash
         env:
           MESA_VERSION: "24.2.5"
         run: |
@@ -505,9 +267,10 @@ jobs:
           mkdir -p mesa-tmp
           cd mesa-tmp
           curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
-          pacman -S --noconfirm --needed p7zip
-          7z x mesa.7z -o./extracted >/dev/null
-          cp extracted/x64/opengl32.dll ../build/ninja-ui-test-msys2/opengl32.dll
+          7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+          if [ -f extracted/x64/opengl32.dll ]; then
+            cp extracted/x64/opengl32.dll ../build/ninja-ui-test-msvc/opengl32.dll
+          fi
           cd ..
           rm -rf mesa-tmp
 
@@ -517,7 +280,7 @@ jobs:
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        working-directory: build/ninja-ui-test-msys2
+        working-directory: build/ninja-ui-test-msvc
         run: ./Smatchet.exe scenario.run --name=ui-test --yes
 
       - name: Upload bucket-E exe on failure
@@ -525,15 +288,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bucket-e-exe-${{ github.run_id }}
-          path: build/ninja-ui-test-msys2/Smatchet.exe
+          path: build/ninja-ui-test-msvc/Smatchet.exe
           if-no-files-found: ignore
 
   sanitizer-asan:
-    # MSVC ASAN — MSYS2 UCRT64 GCC/Clang do NOT ship the ASAN runtime
-    # (no libasan.dll.a / libclang_rt.asan in compiler-rt). MSVC has built-in
-    # /fsanitize=address support. UBSAN is not available on MSVC.
     name: Sanitizer (ASAN via MSVC)
-    needs: windows-msys2-ucrt64
+    needs: windows-msvc
     runs-on: windows-2022
     timeout-minutes: 45
 
@@ -577,10 +337,3 @@ jobs:
               | head -80 >> "$GITHUB_STEP_SUMMARY" || true
           fi
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-  # TSAN is not available on MSVC. MSYS2 UCRT64 GCC/Clang do NOT ship libtsan.
-  # This job is disabled until a Linux runner or a MinGW build with TSAN support
-  # becomes available. Kept as a commented template for future enablement.
-  # sanitizer-tsan:
-  #   name: Sanitizer (TSAN)
-  #   ...deferred — no runtime available on any Windows compiler...
