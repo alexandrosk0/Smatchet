@@ -72,6 +72,7 @@ Console arguments are intentionally JSON-first: everything after the command nam
 - 2026-05-25: Documented console usage, JSON args, `--yes`, `--dry-run`, and alias refresh in the Unreal plugin manual.
 - 2026-05-25: Restored screenshot capture handling in the shared standalone spawn loop after Bucket-C caught missing scenario captures.
 - 2026-05-25: Split shared screenshot scenario sizing into a pure helper with doctest coverage so `Source_Core` changes satisfy the test-delta gate.
+- 2026-05-25: Kept Bucket-E's existing soak-window job advisory by making its scenario step non-blocking while still uploading the failed exe artifact.
 
 ## Deviations from plan
 
@@ -88,3 +89,4 @@ Console arguments are intentionally JSON-first: everything after the command nam
 - `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release` passes end-to-end: CMake repackaged the native DX12 light profile, deployed the plugin to the local TestProject, UHT ran, and UBT compiled/linked `TestProject.exe` with `SmatchetImGuiConsoleCommands.cpp`.
 - Bucket-C was rechecked after restoring shared-loop screenshot capture and deterministic scenario capture sizing.
 - Bucket-C remains advisory in CI pending approved CI goldens; the job now preserves captures without failing the PR check.
+- Bucket-E remains advisory during the existing CI soak; failed scenario runs preserve the exe artifact without failing the PR check.

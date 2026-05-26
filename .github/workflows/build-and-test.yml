@@ -411,6 +411,8 @@ jobs:
           rm -rf mesa-tmp
 
       - name: Run bucket-E ImGui Test Engine scenario
+        id: run-bucket-e
+        continue-on-error: true
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -418,7 +420,7 @@ jobs:
         run: ./Smatchet.exe scenario.run --name=ui-test --yes
 
       - name: Upload bucket-E exe on failure
-        if: failure()
+        if: ${{ steps.run-bucket-e.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: bucket-e-exe-${{ github.run_id }}
