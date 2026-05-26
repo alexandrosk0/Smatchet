@@ -1,6 +1,7 @@
 #include "TicketGridModel.h"
 
 #include "CompactDateFormat.h"
+#include "Logger.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerLabelsEditor.h"
@@ -229,6 +230,13 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
         return (sortDirection == 1) ? -1 : 1;
     }
 
+    if (fieldId == "key" || fieldId == "issuekey") {
+        const int result = CompareIssueKeyNatural(aVal, bVal) ? -1 : (CompareIssueKeyNatural(bVal, aVal) ? 1 : 0);
+        LOG_TRACE("CompareFieldValuesForSort: key field='%s' a='%s' b='%s' -> %d", fieldId.c_str(), aVal.c_str(),
+                  bVal.c_str(), result);
+        return result;
+    }
+
     if (kTimeTrackingFieldIds.count(fieldId)) {
         const long long sa = ParseDurationToSecondsForSort(aVal);
         const long long sb = ParseDurationToSecondsForSort(bVal);
@@ -288,33 +296,25 @@ bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField
     if (kDateFieldIds.count(fieldId)) {
         return true;
     }
-    if (field && (field->Type == "date" || field->Type == "datetime" ||
-                  field->Family == TrackerFieldFamily::Date || field->Family == TrackerFieldFamily::DateTime)) {
+    if (field && (field->Type == "date" || field->Type == "datetime" || field->Family == TrackerFieldFamily::Date ||
+                  field->Family == TrackerFieldFamily::DateTime)) {
         return true;
     }
     // Case-insensitive heuristics for auto-detection of date-like fields
     const std::string idLower = ToLowerAsciiCopy(fieldId);
-    if (idLower.find("date") != std::string::npos ||
-        idLower.find("time") != std::string::npos ||
-        idLower.find("created") != std::string::npos ||
-        idLower.find("updated") != std::string::npos ||
-        idLower.find("modified") != std::string::npos ||
-        idLower.find("viewed") != std::string::npos ||
-        idLower.find("changed") != std::string::npos ||
-        idLower.find("resolved") != std::string::npos ||
+    if (idLower.find("date") != std::string::npos || idLower.find("time") != std::string::npos ||
+        idLower.find("created") != std::string::npos || idLower.find("updated") != std::string::npos ||
+        idLower.find("modified") != std::string::npos || idLower.find("viewed") != std::string::npos ||
+        idLower.find("changed") != std::string::npos || idLower.find("resolved") != std::string::npos ||
         idLower.find("duedate") != std::string::npos) {
         return true;
     }
     if (field) {
         const std::string nameLower = ToLowerAsciiCopy(field->Name);
-        if (nameLower.find("date") != std::string::npos ||
-            nameLower.find("time") != std::string::npos ||
-            nameLower.find("created") != std::string::npos ||
-            nameLower.find("updated") != std::string::npos ||
-            nameLower.find("modified") != std::string::npos ||
-            nameLower.find("viewed") != std::string::npos ||
-            nameLower.find("changed") != std::string::npos ||
-            nameLower.find("resolved") != std::string::npos ||
+        if (nameLower.find("date") != std::string::npos || nameLower.find("time") != std::string::npos ||
+            nameLower.find("created") != std::string::npos || nameLower.find("updated") != std::string::npos ||
+            nameLower.find("modified") != std::string::npos || nameLower.find("viewed") != std::string::npos ||
+            nameLower.find("changed") != std::string::npos || nameLower.find("resolved") != std::string::npos ||
             nameLower.find("due date") != std::string::npos) {
             return true;
         }
@@ -328,8 +328,7 @@ bool IsAttachmentFieldId(const std::string& fieldId) {
 }
 
 std::string DisplayValueForTrackerDateField(const std::string& fieldId, const TrackerField* field,
-                                            const std::string& currentValue,
-                                            const std::string& dateFormatOption,
+                                            const std::string& currentValue, const std::string& dateFormatOption,
                                             int thresholdDays) {
     bool isDate = IsTrackerDateOrDateTimeField(fieldId, field);
     if (!isDate) {
@@ -346,8 +345,10 @@ std::string DisplayValueForTrackerDateField(const std::string& fieldId, const Tr
     int thresh = thresholdDays;
     if (fmt.empty() || thresh <= 0) {
         const auto cfg = ConfigManager::Load();
-        if (fmt.empty()) fmt = cfg.DateFormatOption;
-        if (thresh <= 0) thresh = cfg.DateCompactRelativeThresholdDays;
+        if (fmt.empty())
+            fmt = cfg.DateFormatOption;
+        if (thresh <= 0)
+            thresh = cfg.DateCompactRelativeThresholdDays;
     }
     const std::string compact = FormatCompactJiraDateForDisplay(currentValue, fmt, thresh);
     return compact.empty() ? currentValue : compact;
@@ -412,16 +413,8 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
         columns.push_back(it->second);
         usedKeys.insert(key);
     }
-    std::copy_if(allColumns.begin(), allColumns.end(), std::back_inserter(columns), [&](const TicketGridColumn& col) {
-        return usedKeys.find(col.Key) == usedKeys.end();
-    });
+    std::copy_if(allColumns.begin(), allColumns.end(), std::back_inserter(columns),
+                 [&](const TicketGridColumn& col) { return usedKeys.find(col.Key) == usedKeys.end(); });
 
     return columns;
 }
-
-
-
-
-
-
-
