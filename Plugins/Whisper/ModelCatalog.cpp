@@ -14,6 +14,7 @@
 
 #include <ghc/filesystem.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <system_error>
@@ -47,18 +48,18 @@ const std::vector<Entry>& BuildCatalog() {
         base.Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
         v.push_back(base);
 
-        Entry small;
-        small.Id = "ggml-small.en";
-        small.DisplayName = "Higher accuracy";
-        small.SizeBytes = 487614201ull; // matches X-Linked-Size at huggingface (Nov 2025)
+        Entry smallModel;
+        smallModel.Id = "ggml-small.en";
+        smallModel.DisplayName = "Higher accuracy";
+        smallModel.SizeBytes = 487614201ull; // matches X-Linked-Size at huggingface (Nov 2025)
         // Pinned to the X-Linked-ETag the huggingface CDN serves for the
         // resolve/main/ggml-small.en.bin pointer. The pre-Phase-F catalog
         // entry shipped a stale hash from an older upload that no longer
         // matches the bytes the mirror returns — every download verifies as
         // mismatch. Bump to the live value.
-        small.Sha256 = "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d";
-        small.Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin";
-        v.push_back(small);
+        smallModel.Sha256 = "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d";
+        smallModel.Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin";
+        v.push_back(smallModel);
 
         // Phase F addition — opt-in highest-accuracy model. CPU-heavy and ~1.5 GB on
         // disk; surfaced through Preferences only (the first-run banner sticks to
@@ -81,21 +82,16 @@ const std::vector<Entry>& BuildCatalog() {
 
 } // namespace
 
-const std::vector<Entry>& All() {
-    return BuildCatalog();
-}
+const std::vector<Entry>& All() { return BuildCatalog(); }
 
 const Entry* Find(const std::string& id) {
     if (id.empty()) {
         return nullptr;
     }
     const std::vector<Entry>& all = BuildCatalog();
-    for (std::size_t i = 0; i < all.size(); ++i) {
-        if (all[i].Id == id) {
-            return &all[i];
-        }
-    }
-    return nullptr;
+    const std::vector<Entry>::const_iterator it =
+        std::find_if(all.begin(), all.end(), [&id](const Entry& e) { return e.Id == id; });
+    return it != all.end() ? &*it : nullptr;
 }
 
 bool IsModelPresent(const std::string& id, const std::string& destDir) {
@@ -105,7 +101,7 @@ bool IsModelPresent(const std::string& id, const std::string& destDir) {
     // Compose `<destDir>/<id>.bin` without forcing the caller to strip a
     // trailing slash — both `<dir>/` and `<dir>` shapes are accepted.
     std::string path = destDir;
-    if (!path.empty() && path.back() != '/' && path.back() != '\\') {
+    if (path.back() != '/' && path.back() != '\\') {
         path.push_back('/');
     }
     path += id;
