@@ -54,6 +54,25 @@
 
 namespace {
 
+// #region agent log
+constexpr const char* kDbg8117a3HostLogPath = "c:\\Dev\\Smatchet\\debug-8117a3.log";
+
+void Dbg8117a3WriteHost(const char* hypothesisId, const char* location, const char* message, const char* dataJson) {
+    FILE* f = nullptr;
+    if (fopen_s(&f, kDbg8117a3HostLogPath, "ab") != 0 || !f) {
+        return;
+    }
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count();
+    fprintf(f,
+            "{\"sessionId\":\"8117a3\",\"hypothesisId\":\"%s\",\"location\":\"%s\",\"message\":\"%s\",\"data\":%s,"
+            "\"timestamp\":%lld,\"runId\":\"pre-fix\"}\n",
+            hypothesisId, location, message, dataJson ? dataJson : "{}", static_cast<long long>(ms));
+    fclose(f);
+}
+// #endregion
+
 constexpr std::size_t kMaxPendingHostCommands = 128;
 constexpr std::size_t kMaxCompletedHostCommandResults = 128;
 constexpr std::size_t kMaxCommandsPerHostTick = 32;
@@ -706,6 +725,24 @@ void SmatchetImGuiHost::DrawUI() {
 
     ImplData->Ui.Draw(ImplData->App);
     ImplData->Plugins.OnDraw(ImplData->App);
+
+    // #region agent log
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        const bool vDown = ImGui::IsKeyDown(ImGuiKey_V);
+        const bool vPressed = ImGui::IsKeyPressed(ImGuiKey_V);
+        if (vDown || vPressed || io.InputQueueCharacters.Size > 0) {
+            const char* clip = ImGui::GetClipboardText();
+            char buf[512];
+            snprintf(buf, sizeof(buf),
+                     "{\"keyCtrl\":%d,\"keyVDown\":%d,\"keyVPressed\":%d,\"queueChars\":%d,"
+                     "\"clipboardNull\":%d,\"clipLen\":%d}",
+                     io.KeyCtrl ? 1 : 0, vDown ? 1 : 0, vPressed ? 1 : 0, io.InputQueueCharacters.Size,
+                     clip ? 0 : 1, clip ? static_cast<int>(strlen(clip)) : 0);
+            Dbg8117a3WriteHost("A,C", "SmatchetImGuiHost.cpp:DrawUI", "frame_input_state", buf);
+        }
+    }
+    // #endregion
 }
 
 void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* nativeCommandList) {
@@ -814,6 +851,13 @@ void SmatchetImGuiHost::AddMouseWheel(float wheelX, float wheelY) {
 
 void SmatchetImGuiHost::SetKeyDown(int imguiKey, bool isDown) {
     if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
+        // #region agent log
+        if (imguiKey == ImGuiKey_V && isDown) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "{\"initialized\":0,\"imguiKey\":%d}", imguiKey);
+            Dbg8117a3WriteHost("D", "SmatchetImGuiHost.cpp:SetKeyDown", "key_down_dropped", buf);
+        }
+        // #endregion
         return;
     }
     std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
@@ -822,6 +866,14 @@ void SmatchetImGuiHost::SetKeyDown(int imguiKey, bool isDown) {
     }
     ImGuiIO& io = ImGui::GetIO();
     io.AddKeyEvent(static_cast<ImGuiKey>(imguiKey), isDown);
+    // #region agent log
+    if (imguiKey == ImGuiKey_V && isDown) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "{\"keyCtrlAfter\":%d,\"keyVDownAfter\":%d}", io.KeyCtrl ? 1 : 0,
+                 ImGui::IsKeyDown(ImGuiKey_V) ? 1 : 0);
+        Dbg8117a3WriteHost("A", "SmatchetImGuiHost.cpp:SetKeyDown", "key_v_applied", buf);
+    }
+    // #endregion
 }
 
 void SmatchetImGuiHost::SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey) {
@@ -844,11 +896,23 @@ void SmatchetImGuiHost::AddInputCharacter(unsigned int character) {
     if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
         return;
     }
+    // #region agent log
+    const bool logCharV =
+        (character == static_cast<unsigned int>('v') || character == static_cast<unsigned int>('V'));
+    // #endregion
     std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
     if (ImplData->ImGuiCtx) {
         ImGui::SetCurrentContext(ImplData->ImGuiCtx);
     }
     ImGuiIO& io = ImGui::GetIO();
+    // #region agent log
+    if (logCharV) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "{\"charVal\":%u,\"keyCtrl\":%d,\"queueBefore\":%d}", character, io.KeyCtrl ? 1 : 0,
+                 io.InputQueueCharacters.Size);
+        Dbg8117a3WriteHost("B", "SmatchetImGuiHost.cpp:AddInputCharacter", "char_v_injected", buf);
+    }
+    // #endregion
     io.AddInputCharacter(character);
 }
 

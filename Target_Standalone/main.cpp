@@ -59,7 +59,14 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996) // stb uses sprintf — third-party, cross-platform pragma suppression
+#endif
 #include <stb/stb_image_write.h>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
@@ -222,7 +229,10 @@ int main(int argc, char** argv) {
     // views, recents, and instance.json all resolve under the overridden path.
     // Stable API: see docs/design/applied/command-system-plan.md §"Environment contract".
     {
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
         const char* envUserData = std::getenv("SMATCHET_USER_DATA");
+#pragma warning(pop)
         if (envUserData && envUserData[0] != '\0') {
             const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
             SmatchetEnsureDirectoryExists(userDataDir);
@@ -246,12 +256,18 @@ int main(int argc, char** argv) {
     // of interleaving + corrupting a shared sink.
     {
         std::string logPath;
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
         const char* envLog = std::getenv("SMATCHET_DEBUG_LOG");
+#pragma warning(pop)
         if (envLog && envLog[0] != '\0') {
             logPath = envLog;
         } else {
 #if defined(_WIN32)
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
             const char* localAppData = std::getenv("LOCALAPPDATA");
+#pragma warning(pop)
             if (localAppData && localAppData[0] != '\0') {
                 const std::string dir = std::string(localAppData) + "\\Smatchet";
                 SmatchetEnsureDirectoryExists(dir);

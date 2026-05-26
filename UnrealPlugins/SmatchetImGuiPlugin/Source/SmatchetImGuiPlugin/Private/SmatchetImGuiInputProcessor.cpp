@@ -10,16 +10,50 @@
 #include "Logging/LogMacros.h"
 #include "Math/UnrealMathUtility.h"
 #include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 #include "Slate/SceneViewport.h"
 #include "SmatchetImGuiHostC.h"
 #include "Widgets/SWindow.h"
 #include "HAL/Platform.h"
+#include <chrono>
+#include <cstdio>
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <Windows.h>
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 #include "imgui.h"
+
+// #region agent log
+namespace {
+
+void Dbg8117a3WriteInput(const char* hypothesisId, const char* location, const char* message, const char* dataJson) {
+    const FString savedDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Smatchet"));
+    IFileManager::Get().MakeDirectory(*savedDir, true);
+    const FString logPath = FPaths::Combine(savedDir, TEXT("debug-8117a3.log"));
+    const FTCHARToUTF8 logPathUtf8(*logPath);
+    FILE* f = nullptr;
+#if PLATFORM_WINDOWS
+    if (fopen_s(&f, logPathUtf8.Get(), "ab") != 0 || !f) {
+        return;
+    }
+#else
+    f = fopen(logPathUtf8.Get(), "ab");
+    if (!f) {
+        return;
+    }
+#endif
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count();
+    fprintf(f,
+            "{\"sessionId\":\"8117a3\",\"hypothesisId\":\"%s\",\"location\":\"%s\",\"message\":\"%s\",\"data\":%s,"
+            "\"timestamp\":%lld,\"runId\":\"pre-fix\"}\n",
+            hypothesisId, location, message, dataJson ? dataJson : "{}", static_cast<long long>(ms));
+    fclose(f);
+}
+} // namespace
+// #endregion
 
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiInputProcessor, Log, All);
 
@@ -262,6 +296,28 @@ bool FSmatchetImGuiInputProcessor::HandleKeyDownEvent(FSlateApplication& SlateAp
             SmatchetHost_AddInputCharacter(Host, static_cast<unsigned int>(Character));
         }
     }
+
+    // #region agent log
+    if (InKeyEvent.GetKey() == EKeys::V || InKeyEvent.GetKey() == EKeys::C) {
+        const bool blocking = HasTextInputBlockingModifier(InKeyEvent);
+        const uint32 ch = InKeyEvent.GetCharacter();
+        char buf[640];
+        snprintf(buf, sizeof(buf),
+                 "{\"key\":\"%s\",\"ueCtrl\":%d,\"ueAlt\":%d,\"blockingMod\":%d,\"imguiKey\":%d,\"charVal\":%u,"
+                 "\"charForwarded\":%d,\"uiVisible\":%d,\"hostInit\":%d}",
+                 InKeyEvent.GetKey() == EKeys::V ? "V" : "C", InKeyEvent.IsControlDown() ? 1 : 0,
+                 InKeyEvent.IsAltDown() ? 1 : 0, blocking ? 1 : 0, ImGuiKey, ch,
+                 (!blocking && ch != 0) ? 1 : 0, SmatchetHost_IsUiVisible(Host) ? 1 : 0,
+                 SmatchetHost_IsInitialized(Host) ? 1 : 0);
+        Dbg8117a3WriteInput("A,B,D,E", "InputProcessor.cpp:HandleKeyDown", "shortcut_key_down", buf);
+        UE_LOG(LogSmatchetImGuiInputProcessor, Warning,
+               TEXT("[dbg8117a3] %s ueCtrl=%d blocking=%d charFwd=%d hostInit=%d log=%s"),
+               InKeyEvent.GetKey() == EKeys::V ? TEXT("V") : TEXT("C"), InKeyEvent.IsControlDown() ? 1 : 0,
+               blocking ? 1 : 0, (!blocking && ch != 0) ? 1 : 0, SmatchetHost_IsInitialized(Host) ? 1 : 0,
+               *FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Smatchet/debug-8117a3.log")));
+    }
+    // #endregion
+
     return true;
 }
 

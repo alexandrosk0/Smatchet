@@ -289,12 +289,18 @@ bool WaitForFile(const std::string& outPath, int timeoutMs) {
 }
 
 std::string EnvOr(const char* name, std::string fallback) {
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
     const char* v = std::getenv(name);
+#pragma warning(pop)
     return (v && *v) ? std::string(v) : std::move(fallback);
 }
 
 int EnvIntOr(const char* name, int fallback) {
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
     const char* v = std::getenv(name);
+#pragma warning(pop)
     if (!v || !*v)
         return fallback;
     try {
@@ -670,7 +676,10 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         // Lazy-loading AI clients is the architectural follow-up — entry remains open
         // in docs/backlog/agent-self-improvement/tooling.md.
         int readyTimeoutMs = 30000;
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
         if (const char* envOverride = std::getenv("SMATCHET_SPAWN_READY_MS")) {
+#pragma warning(pop)
             try {
                 int v = std::stoi(envOverride);
                 if (v > 0)
@@ -777,7 +786,10 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
             }
 
             // Read the result file and build an envelope around it.
+#pragma warning(push)
+#pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
             std::FILE* f = std::fopen(outPath.c_str(), "rb");
+#pragma warning(pop)
             if (!f) {
                 nlohmann::json errEnv;
                 errEnv["ok"] = false;
@@ -879,12 +891,7 @@ void PrintCliHelpInProcess(std::FILE* out) {
 bool IsTier1MetaCommand(const std::string& name) {
     static const char* const kAllow[] = {"commands.list", "commands.help", "commands.search", "perf.reset",
                                          "perf.snapshot"};
-    for (const char* allowed : kAllow) {
-        if (name == allowed) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(std::begin(kAllow), std::end(kAllow), [&name](const char* allowed) { return name == allowed; });
 }
 
 int RunCmdInProcessImpl(int argc, char** argv) {
@@ -1094,7 +1101,10 @@ int RunCmdAttach(int argc, char** argv) {
         int port = pa.mcpPort > 0 ? pa.mcpPort : EnvIntOr("SMATCHET_MCP_PORT", 0);
         if (port == 0) {
             const std::string instPath = ConfigManager::GetUserDataDirectory() + "instance.json";
+#pragma warning(push)
+#pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
             std::FILE* f = std::fopen(instPath.c_str(), "rb");
+#pragma warning(pop)
             if (f) {
                 std::string json;
                 char buf[512];

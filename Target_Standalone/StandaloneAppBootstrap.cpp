@@ -37,7 +37,14 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996) // stb uses sprintf — third-party, cross-platform pragma suppression
+#endif
 #include <stb/stb_image_write.h>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
@@ -351,7 +358,10 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     err.clear();
 
     {
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
         const char* envUserData = std::getenv("SMATCHET_USER_DATA");
+#pragma warning(pop)
         if (envUserData && envUserData[0] != '\0') {
             const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
             SmatchetEnsureDirectoryExists(userDataDir);
