@@ -48,9 +48,7 @@ std::string ScratchDir() {
     return dir;
 }
 
-std::string ScratchPath(const char* name) {
-    return ScratchDir() + kSep + name + ".ndjson";
-}
+std::string ScratchPath(const char* name) { return ScratchDir() + kSep + name + ".ndjson"; }
 
 std::vector<std::string> ReadLines(const std::string& path) {
     std::vector<std::string> out;
@@ -73,7 +71,7 @@ std::size_t FileBytes(const std::string& path) {
     return static_cast<std::size_t>(f.tellg());
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("V7.1 — per-line schema validation") {
     const std::string path = ScratchPath("v71_schema");
@@ -153,7 +151,7 @@ TEST_CASE("V7.4 — concurrency under 2 threads (1000 interleaved calls, no torn
     smatchet_agent_debug::SetTargetPath(path, /*fsync_enabled=*/false);
 
     const int kPerThread = 500;
-    auto worker = [](int tag) {
+    auto worker = [kPerThread](int tag) {
         for (int i = 0; i < kPerThread; ++i) {
             nlohmann::json payload;
             payload["tag"] = tag;

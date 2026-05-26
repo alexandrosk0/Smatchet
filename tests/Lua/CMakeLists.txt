@@ -96,6 +96,7 @@ target_compile_features(SmatchetLuaTests PRIVATE cxx_std_14)
 # and the test binary -- e.g. nil-checks on usertype accesses.
 target_compile_definitions(SmatchetLuaTests PRIVATE
     SOL_ALL_SAFETIES_ON=1
+    SMATCHET_WITH_LUA_AUTOMATION=1
 )
 
 # Static-link the C++ + GCC runtime so ctest can run SmatchetLuaTests.exe from
