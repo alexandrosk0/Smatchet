@@ -1569,6 +1569,14 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 s_LongTextEditor.SetLanguageDefinition(wantCallstackLd ? TextEditor::LanguageDefinition::CPlusPlus()
                                                                        : TextEditor::LanguageDefinition::Markdown());
                 s_LongTextEditorIsCallstackLd = wantCallstackLd;
+                // Explicitly re-arm the colorizer after an LD swap. SetLanguageDefinition
+                // calls Colorize() internally, but that runs against the mLines that were
+                // populated by the *previous* field's content. The SetText call below
+                // rebuilds mLines and calls Colorize() again, so this explicit call is a
+                // belt-and-suspenders guard for the case where SetText is skipped (buffer
+                // already matches editor text) yet the LD has just changed — without this
+                // the new LD's token regex list would not be applied to the visible glyphs.
+                s_LongTextEditor.Colorize(0, -1);
             }
             const std::string bufferAsStr(s_ActiveLongTextState.Buffer.data());
             const std::string editorAsStr = s_LongTextEditor.GetText();
@@ -1583,6 +1591,10 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 // or we are catching up to a Buffer mutation from a sibling
                 // path. Buffer wins.
                 s_LongTextEditor.SetText(bufferAsStr);
+                // SetText calls Colorize() internally; re-arm explicitly here
+                // so the colorizer range reflects the freshly rebuilt mLines
+                // even when the LD was swapped in the same frame.
+                s_LongTextEditor.Colorize(0, -1);
             }
             // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md —
             // apply the theme-aware palette per-frame. Without this the
@@ -1694,8 +1706,12 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             // the markdown-prose pipeline. Markdown would render the buffer
             // as plain wrapped prose (no syntax), losing the per-element
             // colours the user expects on call-stack content.
+            // Use the raw buffer (md) rather than LastRoundTripOutput: the
+            // ADF/HTML round-trip converter mangles callstack punctuation
+            // (Module!Class::Method, backslash paths) so the round-trip output
+            // would lose the exact tokens the colorizer needs to classify.
             if (IsCallstackFieldId(s_ActiveLongTextState.Field.Id)) {
-                DrawColoredCallstackText(s_ActiveLongTextState.LastRoundTripOutput.c_str());
+                DrawColoredCallstackText(md.c_str());
             } else {
                 MarkdownPreviewRender::Options previewOpts;
                 // Slice 4: enable drag-select + Ctrl+C on the description preview

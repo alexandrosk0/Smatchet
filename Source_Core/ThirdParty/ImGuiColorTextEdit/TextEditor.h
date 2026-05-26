@@ -253,6 +253,14 @@ class TextEditor {
     static const Palette& GetLightPalette();
     static const Palette& GetRetroBluePalette();
 
+    // Smatchet: promoted to public so call sites that swap the LanguageDefinition
+    // at runtime (e.g. TicketFieldEditor long-text callstack mode) can explicitly
+    // re-arm the colorizer when SetLanguageDefinition + SetText both fire in the
+    // same frame — the internal Colorize() call inside SetText uses the mLines
+    // size AFTER rebuild which is correct, but callers cannot call it directly
+    // without this promotion.
+    void Colorize(int aFromLine = 0, int aCount = -1);
+
   private:
     typedef std::vector<std::pair<std::regex, PaletteIndex>> RegexList;
 
@@ -293,7 +301,6 @@ class TextEditor {
     typedef std::vector<UndoRecord> UndoBuffer;
 
     void ProcessInputs();
-    void Colorize(int aFromLine = 0, int aCount = -1);
     void ColorizeRange(int aFromLine = 0, int aToLine = 0);
     void ColorizeInternal();
     float TextDistanceToLineStart(const Coordinates& aFrom) const;
