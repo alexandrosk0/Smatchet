@@ -1,7 +1,6 @@
 #include "TicketGridModel.h"
 
 #include "CompactDateFormat.h"
-#include "Logger.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerLabelsEditor.h"
@@ -231,10 +230,11 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
     }
 
     if (fieldId == "key" || fieldId == "issuekey") {
-        const int result = CompareIssueKeyNatural(aVal, bVal) ? -1 : (CompareIssueKeyNatural(bVal, aVal) ? 1 : 0);
-        LOG_TRACE("CompareFieldValuesForSort: key field='%s' a='%s' b='%s' -> %d", fieldId.c_str(), aVal.c_str(),
-                  bVal.c_str(), result);
-        return result;
+        if (CompareIssueKeyNatural(aVal, bVal))
+            return -1;
+        if (CompareIssueKeyNatural(bVal, aVal))
+            return 1;
+        return 0;
     }
 
     if (kTimeTrackingFieldIds.count(fieldId)) {

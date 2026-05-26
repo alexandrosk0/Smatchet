@@ -898,8 +898,8 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
             // moves LEFT of where SameLine() put it. Without the clamp, narrow tooltips / parent
             // columns (availW < btnW) push the button on top of the language badge.
             const float availW = ImGui::GetContentRegionAvail().x;
-            const float btnW = ImGui::CalcTextSize("Copy##codeblock", nullptr, true).x +
-                               ImGui::GetStyle().FramePadding.x * 2.0f;
+            const float btnW =
+                ImGui::CalcTextSize("Copy##codeblock", nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
             const float curX = ImGui::GetCursorPosX();
             const float targetX = curX + availW - btnW;
             ImGui::SetCursorPosX(targetX > curX ? targetX : curX);

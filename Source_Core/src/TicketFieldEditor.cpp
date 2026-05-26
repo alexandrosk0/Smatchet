@@ -1,5 +1,4 @@
 #include "TicketFieldEditor.h"
-#include "UiPerfMonitor.h"
 
 #include "AppController.h"
 #include "TrackerDateTimeFieldEditor.h"
@@ -1578,23 +1577,25 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 // the new LD's token regex list would not be applied to the visible glyphs.
                 s_LongTextEditor.Colorize(0, -1);
             }
-            const std::string bufferAsStr(s_ActiveLongTextState.Buffer.data());
-            const std::string editorAsStr = s_LongTextEditor.GetText();
-            // TextEditor::GetText() appends a trailing '\n'; strip it for
-            // round-trip comparison so we don't trigger spurious reseeds.
-            std::string editorTrimmed = editorAsStr;
-            if (!editorTrimmed.empty() && editorTrimmed.back() == '\n') {
-                editorTrimmed.pop_back();
-            }
-            if (bufferAsStr != editorTrimmed) {
-                // Either JustOpened, async seed post-back, dictation write,
-                // or we are catching up to a Buffer mutation from a sibling
-                // path. Buffer wins.
-                s_LongTextEditor.SetText(bufferAsStr);
-                // SetText calls Colorize() internally; re-arm explicitly here
-                // so the colorizer range reflects the freshly rebuilt mLines
-                // even when the LD was swapped in the same frame.
-                s_LongTextEditor.Colorize(0, -1);
+            {
+                const std::string bufferAsStr(s_ActiveLongTextState.Buffer.data());
+                const std::string editorAsStr = s_LongTextEditor.GetText();
+                // TextEditor::GetText() appends a trailing '\n'; strip it for
+                // round-trip comparison so we don't trigger spurious reseeds.
+                std::string editorTrimmed = editorAsStr;
+                if (!editorTrimmed.empty() && editorTrimmed.back() == '\n') {
+                    editorTrimmed.pop_back();
+                }
+                if (bufferAsStr != editorTrimmed) {
+                    // Either JustOpened, async seed post-back, dictation write,
+                    // or we are catching up to a Buffer mutation from a sibling
+                    // path. Buffer wins.
+                    s_LongTextEditor.SetText(bufferAsStr);
+                    // SetText calls Colorize() internally; re-arm explicitly here
+                    // so the colorizer range reflects the freshly rebuilt mLines
+                    // even when the LD was swapped in the same frame.
+                    s_LongTextEditor.Colorize(0, -1);
+                }
             }
             // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md —
             // apply the theme-aware palette per-frame. Without this the
