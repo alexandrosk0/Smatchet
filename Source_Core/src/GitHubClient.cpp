@@ -160,9 +160,9 @@ std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, 
 }
 
 TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& onBatch,
-                                                            const CancelCallback& shouldCancel,
-                                                            const TrackerConfig* configOverride,
-                                                            const ViewsStore* /*viewsOverride*/) {
+                                                           const CancelCallback& shouldCancel,
+                                                           const TrackerConfig* configOverride,
+                                                           const ViewsStore* /*viewsOverride*/) {
     // PR12 latency fix — per-page emission. Each GraphQL page's mapped tickets
     // are posted to `onBatch` immediately, so the UI grid populates
     // progressively instead of waiting for all 4 pages (~6s wall-clock).
@@ -293,7 +293,7 @@ std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std
     const std::string apiSuffix = "/api/v3";
     if (host.size() > apiSuffix.size() &&
         host.compare(host.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
-        host = host.substr(0, host.size() - apiSuffix.size());
+        host.resize(host.size() - apiSuffix.size());
     } else if (host == "https://api.github.com") {
         host = "https://github.com";
     }
