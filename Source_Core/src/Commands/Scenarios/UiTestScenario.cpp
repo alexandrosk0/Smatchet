@@ -112,6 +112,7 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
     startedQueue_ = true;
     LOG_INFO("ui_test.run: queued tests (filter='%s')", filterArg ? filterArg : "(all)");
 #else
+    (void)app;
     (void)outErr;
     disabled_ = true;
     disabledReason_ = "build had SMATCHET_BUILD_UI_TESTS=OFF";

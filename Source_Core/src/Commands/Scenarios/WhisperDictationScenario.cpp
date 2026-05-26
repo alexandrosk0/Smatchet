@@ -66,7 +66,7 @@ class WhisperDictationScenario : public IScenario {
   public:
     std::string Name() const override { return "whisper-dictation-roundtrip"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         expectedText_ = args.value("text", std::string(kDefaultMockText));
         delayMs_ = std::max(0, args.value("delayMs", 50));
         frameLimit_ = std::max(60, args.value("frames", 300));

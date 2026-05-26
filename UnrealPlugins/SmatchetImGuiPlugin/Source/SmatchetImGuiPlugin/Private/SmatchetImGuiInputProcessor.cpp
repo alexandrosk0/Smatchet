@@ -241,6 +241,11 @@ bool FSmatchetImGuiInputProcessor::HandleKeyDownEvent(FSlateApplication& SlateAp
         return false;
     }
 
+    // Modifiers must reach ImGui before the key event so Ctrl+V / Ctrl+C / Ctrl+A shortcuts
+    // see io.KeyCtrl on the same frame. UE often reports IsControlDown() on the V keydown
+    // without a prior Left-Control key event when the chord is pressed quickly.
+    PushModifierState(InKeyEvent);
+
     const int32 ImGuiKey = ToImGuiKey(InKeyEvent);
     if (ImGuiKey >= 0) {
         SmatchetHost_SetKeyDown(Host, ImGuiKey, true);
@@ -249,11 +254,14 @@ bool FSmatchetImGuiInputProcessor::HandleKeyDownEvent(FSlateApplication& SlateAp
     // UE's IInputProcessor has no character callback; use FKeyEvent's character value instead.
     // This helps ImGui `InputText` widgets without implementing a custom Slate text input path.
     // GetCharacter() is uint32; avoid TCHAR (may be 16-bit) to prevent C4244 narrowing warnings.
-    const uint32 Character = InKeyEvent.GetCharacter();
-    if (Character != 0) {
-        SmatchetHost_AddInputCharacter(Host, static_cast<unsigned int>(Character));
+    // Do not inject characters when modifiers are held — UE still returns 'v' for Ctrl+V and
+    // ImGui would type it instead of pasting from the clipboard.
+    if (!HasTextInputBlockingModifier(InKeyEvent)) {
+        const uint32 Character = InKeyEvent.GetCharacter();
+        if (Character != 0) {
+            SmatchetHost_AddInputCharacter(Host, static_cast<unsigned int>(Character));
+        }
     }
-    PushModifierState(InKeyEvent);
     return true;
 }
 
@@ -266,11 +274,12 @@ bool FSmatchetImGuiInputProcessor::HandleKeyUpEvent(FSlateApplication&, const FK
         return false;
     }
 
+    PushModifierState(InKeyEvent);
+
     const int32 ImGuiKey = ToImGuiKey(InKeyEvent);
     if (ImGuiKey >= 0) {
         SmatchetHost_SetKeyDown(Host, ImGuiKey, false);
     }
-    PushModifierState(InKeyEvent);
     return true;
 }
 
@@ -470,6 +479,20 @@ int32 FSmatchetImGuiInputProcessor::ToImGuiKey(const FKeyEvent& InKeyEvent) cons
         return ImGuiKey_Z;
 
     return -1;
+}
+
+bool FSmatchetImGuiInputProcessor::HasTextInputBlockingModifier(const FKeyEvent& InKeyEvent) const {
+#if PLATFORM_WINDOWS
+    const bool asyncCtrl =
+        ((::GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0) || ((::GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0);
+    const bool asyncAlt =
+        ((::GetAsyncKeyState(VK_LMENU) & 0x8000) != 0) || ((::GetAsyncKeyState(VK_RMENU) & 0x8000) != 0);
+#else
+    const bool asyncCtrl = false;
+    const bool asyncAlt = false;
+#endif
+    return InKeyEvent.IsControlDown() || InKeyEvent.IsAltDown() || InKeyEvent.IsCommandDown() || asyncCtrl ||
+           asyncAlt;
 }
 
 void FSmatchetImGuiInputProcessor::PushModifierState(const FInputEvent& InputEvent) const {

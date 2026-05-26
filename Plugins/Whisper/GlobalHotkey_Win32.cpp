@@ -30,7 +30,9 @@
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
@@ -115,13 +117,17 @@ struct GlobalHotkey_Win32::Impl {
             const bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
             const bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
             const bool shiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-            const bool winDown = ((GetAsyncKeyState(VK_LWIN) & 0x8000) != 0) ||
-                                 ((GetAsyncKeyState(VK_RWIN) & 0x8000) != 0);
+            const bool winDown =
+                ((GetAsyncKeyState(VK_LWIN) & 0x8000) != 0) || ((GetAsyncKeyState(VK_RWIN) & 0x8000) != 0);
 
-            if (needCtrl != ctrlDown) return false;
-            if (needAlt != altDown) return false;
-            if (needShift != shiftDown) return false;
-            if (needWin != winDown) return false;
+            if (needCtrl != ctrlDown)
+                return false;
+            if (needAlt != altDown)
+                return false;
+            if (needShift != shiftDown)
+                return false;
+            if (needWin != winDown)
+                return false;
             return true;
         }
         return false;
@@ -163,13 +169,11 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             struct GlobalHotkey_Win32::Impl* impl = OwnerSlot().Get();
             if (impl != nullptr) {
                 const DWORD vk = k->vkCode;
-                const bool autoRepeat = (k->flags & LLKHF_UP) == 0 &&
-                                        impl->pressed.load(std::memory_order_acquire);
+                const bool autoRepeat = (k->flags & LLKHF_UP) == 0 && impl->pressed.load(std::memory_order_acquire);
                 if (vk == impl->hk.vk) {
                     if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
                         if (!autoRepeat && impl->RequiredModsHeld(vk)) {
-                            const bool wasPressed =
-                                impl->pressed.exchange(true, std::memory_order_acq_rel);
+                            const bool wasPressed = impl->pressed.exchange(true, std::memory_order_acq_rel);
                             if (!wasPressed && impl->onPress) {
                                 try {
                                     impl->onPress();
@@ -197,8 +201,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                             swallow = true;
                         }
                     } else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
-                        const bool wasPressed =
-                            impl->pressed.exchange(false, std::memory_order_acq_rel);
+                        const bool wasPressed = impl->pressed.exchange(false, std::memory_order_acq_rel);
                         if (wasPressed && impl->onRelease) {
                             try {
                                 impl->onRelease();
@@ -277,8 +280,8 @@ void HookThreadMain(GlobalHotkey_Win32::Impl* impl) {
         return;
     }
 
-    const HWND msgWindow = CreateWindowExW(0, kMessageWindowClass, L"", 0, 0, 0, 0, 0,
-                                           HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+    const HWND msgWindow = CreateWindowExW(0, kMessageWindowClass, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                                           GetModuleHandleW(nullptr), nullptr);
     if (msgWindow == nullptr) {
         signalStartup("CreateWindowExW(HWND_MESSAGE) failed");
         return;
@@ -295,16 +298,14 @@ void HookThreadMain(GlobalHotkey_Win32::Impl* impl) {
     }
 
     OwnerSlot().Set(impl);
-    impl->hook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
-                                   GetModuleHandleW(nullptr), 0);
+    impl->hook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandleW(nullptr), 0);
     if (impl->hook == nullptr) {
         const DWORD lastErr = GetLastError();
         OwnerSlot().Set(nullptr);
         UnregisterHotKey(msgWindow, kRegisteredHotkeyId);
         DestroyWindow(msgWindow);
         impl->messageWindow = nullptr;
-        signalStartup(std::string("SetWindowsHookEx(WH_KEYBOARD_LL) failed — GetLastError=") +
-                      std::to_string(lastErr));
+        signalStartup(std::string("SetWindowsHookEx(WH_KEYBOARD_LL) failed — GetLastError=") + std::to_string(lastErr));
         return;
     }
 
@@ -335,13 +336,9 @@ void HookThreadMain(GlobalHotkey_Win32::Impl* impl) {
 
 GlobalHotkey_Win32::GlobalHotkey_Win32() : impl_(new Impl()) {}
 
-GlobalHotkey_Win32::~GlobalHotkey_Win32() {
-    Unregister();
-}
+GlobalHotkey_Win32::~GlobalHotkey_Win32() { Unregister(); }
 
-bool GlobalHotkey_Win32::Register(const hotkey::Hotkey& hk,
-                                  PressCallback onPress,
-                                  ReleaseCallback onRelease,
+bool GlobalHotkey_Win32::Register(const hotkey::Hotkey& hk, PressCallback onPress, ReleaseCallback onRelease,
                                   std::string& outError) {
     outError.clear();
     if (impl_->registered.load(std::memory_order_acquire) || impl_->thread.joinable()) {
@@ -383,8 +380,7 @@ bool GlobalHotkey_Win32::Register(const hotkey::Hotkey& hk,
     // install the hook. A 2-second ceiling is generous — Win32 SetWindowsHookEx
     // returns in microseconds in normal operation.
     std::unique_lock<std::mutex> lk(impl_->startupMutex);
-    if (!impl_->startupCv.wait_for(lk, std::chrono::seconds(2),
-                                   [this]() { return impl_->startupDone; })) {
+    if (!impl_->startupCv.wait_for(lk, std::chrono::seconds(2), [this]() { return impl_->startupDone; })) {
         outError = "hotkey worker thread did not initialise within 2s";
         // Force the worker to exit so the destructor doesn't deadlock on join.
         if (impl_->threadId != 0) {
@@ -441,19 +437,18 @@ struct GlobalHotkey_Win32::Impl {};
 GlobalHotkey_Win32::GlobalHotkey_Win32() : impl_(new Impl()) {}
 GlobalHotkey_Win32::~GlobalHotkey_Win32() = default;
 
-bool GlobalHotkey_Win32::Register(const hotkey::Hotkey& /*hk*/,
-                                  PressCallback /*onPress*/,
-                                  ReleaseCallback /*onRelease*/,
-                                  std::string& outError) {
+// cppcheck-suppress functionStatic
+bool GlobalHotkey_Win32::Register(const hotkey::Hotkey& /*hk*/, PressCallback /*onPress*/,
+                                  ReleaseCallback /*onRelease*/, std::string& outError) {
     outError = "GlobalHotkey_Win32 is Windows-only";
     return false;
 }
 
+// cppcheck-suppress functionStatic
 void GlobalHotkey_Win32::Unregister() {}
 
-bool GlobalHotkey_Win32::IsRegistered() const noexcept {
-    return false;
-}
+// cppcheck-suppress functionStatic
+bool GlobalHotkey_Win32::IsRegistered() const noexcept { return false; }
 
 #endif // _WIN32
 
