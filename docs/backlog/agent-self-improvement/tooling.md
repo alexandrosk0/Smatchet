@@ -16,6 +16,30 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
+  Details: After PR #460 merged, the `agents/git-janitor.md` workflow was executed manually: fetch/prune, switch to `develop`, fast-forward, delete the squash-merged topic branch, run the dual-target build, and report clean git/P4 state. The steps are deterministic but easy to partially skip or reorder.
+  Concrete next action: add `scripts/dev/git-janitor.sh --post-merge <pr>` that performs the safe local path: audit worktrees and uncommitted state, fetch/prune, switch/ff `develop`, delete the local merged branch when the remote is gone and PR is merged, run `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`, and print a concise report. Estimated cost 1-2 h.
+  Status: open
+  Last-reviewed: 2026-05-26
+
+- 2026-05-26 · orchestrator · [tooling] · P2 — Merge-gates should explain GitHub `mergeStateStatus=BLOCKED`
+  Details: PR #460 showed `mergeStateStatus: BLOCKED` in `gh pr view` while `scripts/dev/merge-gates.sh` passed and the REST squash merge succeeded. The gate result was correct, but the mismatch looked suspicious during merge handoff.
+  Concrete next action: add a diagnostic mode or final line to `merge-gates.sh` that prints the current GitHub mergeability summary plus the gate's own CI/CodeRabbit/user-comment decision, e.g. "merge-gates pass; GitHub mergeStateStatus=BLOCKED may be stale or branch-protection summary-only." Estimated cost 30 min.
+  Status: open
+  Last-reviewed: 2026-05-26
+
+- 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
+  Details: In the P4-backed PR #460 flow, follow-up edits made it easy to lose track of which changed files were opened in Perforce versus merely modified in git. Manual checks with `git status`, `git diff --name-only`, and `p4 opened` caught the mismatches, but this should be a one-command guard.
+  Concrete next action: add `scripts/dev/p4-git-sync-check.sh` that compares pending git paths against `p4 opened` paths, reports untracked files not opened for add, modified files not opened for edit, and opened P4 files with no git diff. Estimated cost 1 h.
+  Status: open
+  Last-reviewed: 2026-05-26
+
+- 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
+  Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
+  Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
+  Status: open
+  Last-reviewed: 2026-05-26
+
 - 2026-05-22 · orchestrator · [tooling] · P1 — `merge-watcher.py` triage loop latches `TRIAGE_BUDGET_EXHAUSTED` forever after auto-fixing CR findings; never re-evaluates gates so PRs that are objectively green sit blocked
   Details: Session 2026-05-22 PRs #408 and #410. User picked post-ship option 3 "Register with watcher" on both. Both PRs had 1–2 CodeRabbit Actionable findings at registration time. The watcher's agent-loop CR-triage path successfully pushed auto-fix commits to the PR branches that addressed CR's asks (verified by inspecting the fast-forwarded branch tip — closure markers / Get-Service idempotency guards present in the files). Net state on GitHub after the auto-fixes: `mergeable: MERGEABLE`, `Test-delta gate: SUCCESS`, `CodeRabbit: SUCCESS`, **0 unresolved non-outdated review threads**. The watcher SHOULD have moved to a green-and-merge state. Instead, registry persisted `LAST_STATE: TRIAGE_BUDGET_EXHAUSTED`, `triage_attempts: 119` (#408) and `93` (#410) — the counter keeps climbing on every poll. The PRs sat there for hours until the orchestrator manually unregistered + re-registered (which reset the budget to 0) AND then orchestrator REST-squash-merged manually because the watcher's polling cycle still hadn't acted on the now-green gates by session end. Net effect: the watcher's value proposition ("register and walk away") fails specifically for PRs that go through a successful auto-triage round — the path that's MOST likely to need the watcher's autonomy is exactly the path it fails on. PRs without CR findings work fine; PRs whose CR findings the orchestrator addresses by hand work fine; only the auto-fix-then-merge path is broken.
   Two distinct sub-bugs visible in this session:
