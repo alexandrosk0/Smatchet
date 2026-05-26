@@ -42,7 +42,7 @@
 #include <string>
 #include <vector>
 
-class ImFont;
+struct ImFont;
 
 namespace SelectableText {
 

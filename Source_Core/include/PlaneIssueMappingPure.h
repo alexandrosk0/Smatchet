@@ -32,7 +32,7 @@
 #include <unordered_map>
 #include <vector>
 
-class TrackerConfig;
+struct TrackerConfig;
 
 namespace smatchet {
 namespace plane {

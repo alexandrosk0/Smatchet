@@ -1177,7 +1177,14 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // is set, swap in a fixture-driven backend factory before the default is
     // constructed. Sibling Jira/GitHub hooks land adjacent.
     if (!backendFactory_) {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform read-only; _dupenv_s is MSVC-only
+#endif
         const char* planeFixtureEnv = std::getenv("SMATCHET_TEST_PLANE_BACKEND_FIXTURE");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
         if (planeFixtureEnv && planeFixtureEnv[0] != '\0') {
             LOG_INFO("AppController: SMATCHET_TEST_PLANE_BACKEND_FIXTURE=%s — installing PlaneFixtureBackend factory.",
                      planeFixtureEnv);
@@ -1193,7 +1200,14 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // tracker is GitHub. Keeps the no-credentials debug loop able to drive
     // scenarios against a deterministic ticket set without consulting the PAT.
     if (!backendFactory_) {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform read-only; _dupenv_s is MSVC-only
+#endif
         if (const char* githubFixture = std::getenv("SMATCHET_TEST_GITHUB_BACKEND_FIXTURE")) {
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
             const std::string fixturePath(githubFixture);
             if (!fixturePath.empty()) {
                 const std::string lowerActive = ToLowerAsciiCopy(activeTracker);

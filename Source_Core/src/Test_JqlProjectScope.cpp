@@ -37,6 +37,10 @@ bool RunJqlProjectScopeSelfTest_Unused() {
 struct ForceInstantiate {
     bool (*p)() = &RunJqlProjectScopeSelfTest_Unused;
 };
+#if defined(_MSC_VER)
+static ForceInstantiate s_forceInstantiate{};
+#else
 [[gnu::used]] static ForceInstantiate s_forceInstantiate{};
+#endif
 
 } // namespace
