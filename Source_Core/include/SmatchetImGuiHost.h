@@ -70,6 +70,10 @@ class SmatchetImGuiHost {
     void AddMouseWheel(float wheelX, float wheelY);
     void SetKeyDown(int imguiKey, bool isDown);
     void SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey);
+    /** Atomically apply modifier keys + key-down in one ImGui mutex hold (avoids render-thread NewFrame clearing modifiers). */
+    void ApplyKeyChordDown(int imguiKey, bool ctrl, bool shift, bool alt, bool superKey);
+    /** Atomically apply modifier keys + key-up in one ImGui mutex hold. */
+    void ApplyKeyChordUp(int imguiKey, bool ctrl, bool shift, bool alt, bool superKey);
     void AddInputCharacter(unsigned int character);
 
     bool IsUiVisible() const;

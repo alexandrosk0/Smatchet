@@ -54,6 +54,8 @@ class FSmatchetImGuiInputProcessor : public IInputProcessor {
 
     int32 ToImGuiMouseButton(const FPointerEvent& MouseEvent) const;
     int32 ToImGuiKey(const FKeyEvent& InKeyEvent) const;
+    void ComputeModifierState(const FInputEvent& InputEvent, bool& OutCtrl, bool& OutShift, bool& OutAlt,
+                              bool& OutSuperKey) const;
     void PushModifierState(const FInputEvent& InputEvent) const;
     /** True when Ctrl/Alt/Cmd are held — ImGui handles shortcuts; do not inject InputQueueCharacters. */
     bool HasTextInputBlockingModifier(const FKeyEvent& InKeyEvent) const;

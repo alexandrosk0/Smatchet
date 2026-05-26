@@ -89,6 +89,10 @@ void SmatchetHost_SetMouseButton(SmatchetImGuiHostHandle host, int button, bool 
 void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, float wheelY);
 void SmatchetHost_SetKeyDown(SmatchetImGuiHostHandle host, int imguiKey, bool isDown);
 void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey);
+void SmatchetHost_ApplyKeyChordDown(SmatchetImGuiHostHandle host, int imguiKey, bool ctrl, bool shift, bool alt,
+                                    bool superKey);
+void SmatchetHost_ApplyKeyChordUp(SmatchetImGuiHostHandle host, int imguiKey, bool ctrl, bool shift, bool alt,
+                                  bool superKey);
 void SmatchetHost_AddInputCharacter(SmatchetImGuiHostHandle host, unsigned int character);
 
 #ifdef __cplusplus
