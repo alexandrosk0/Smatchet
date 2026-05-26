@@ -171,10 +171,14 @@ void McpPlugin::OnStart(AppController& app) {
 #endif
             );
             inst["port"] = port_;
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
+#endif
             std::FILE* f = std::fopen(instancePath.c_str(), "wb");
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
             if (f) {
                 const std::string s = inst.dump();
                 std::fwrite(s.data(), 1, s.size(), f);

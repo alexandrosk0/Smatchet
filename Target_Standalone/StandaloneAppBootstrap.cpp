@@ -358,10 +358,14 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     err.clear();
 
     {
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
         const char* envUserData = std::getenv("SMATCHET_USER_DATA");
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
         if (envUserData && envUserData[0] != '\0') {
             const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
             SmatchetEnsureDirectoryExists(userDataDir);

@@ -229,10 +229,14 @@ int main(int argc, char** argv) {
     // views, recents, and instance.json all resolve under the overridden path.
     // Stable API: see docs/design/applied/command-system-plan.md §"Environment contract".
     {
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
         const char* envUserData = std::getenv("SMATCHET_USER_DATA");
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
         if (envUserData && envUserData[0] != '\0') {
             const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
             SmatchetEnsureDirectoryExists(userDataDir);
@@ -256,18 +260,26 @@ int main(int argc, char** argv) {
     // of interleaving + corrupting a shared sink.
     {
         std::string logPath;
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
         const char* envLog = std::getenv("SMATCHET_DEBUG_LOG");
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
         if (envLog && envLog[0] != '\0') {
             logPath = envLog;
         } else {
 #if defined(_WIN32)
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
             const char* localAppData = std::getenv("LOCALAPPDATA");
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
             if (localAppData && localAppData[0] != '\0') {
                 const std::string dir = std::string(localAppData) + "\\Smatchet";
                 SmatchetEnsureDirectoryExists(dir);
