@@ -2,12 +2,12 @@
 2026-05-10T14:00:10.500Z Syncing repository: smatchet/example
 2026-05-10T14:00:11.001Z ##[endgroup]
 2026-05-10T14:00:11.234Z ##[group]Build SmatchetStandalone
-2026-05-10T14:00:11.901Z cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+2026-05-10T14:00:11.901Z cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 2026-05-10T14:02:30.012Z [124/186] Building CXX object ... Source_Core/src/AppController.cpp.obj
-2026-05-10T14:03:45.567Z [186/186] Linking CXX executable build/ninja-iter-msys2/Smatchet.exe
+2026-05-10T14:03:45.567Z [186/186] Linking CXX executable build/ninja-iter-msvc/Smatchet.exe
 2026-05-10T14:03:45.998Z ##[endgroup]
 2026-05-10T14:03:46.012Z ##[group]Run ctest
-2026-05-10T14:03:46.301Z Test project C:/Development/Smatchet/build/ninja-iter-msys2
+2026-05-10T14:03:46.301Z Test project C:/Development/Smatchet/build/ninja-iter-msvc
 2026-05-10T14:08:12.111Z 1/8 Test #1: SmatchetTests/GitHubClient .................FAIL  0.42 sec
 2026-05-10T14:08:12.555Z FetchPrComments_HappyPath: expected 3 comments but got 2
 2026-05-10T14:09:00.000Z ##[error]Process completed with exit code 1.

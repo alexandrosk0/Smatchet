@@ -8,7 +8,7 @@ Goal: **collapse to bash + minimal cross-platform tool set**. Keep PS only where
 
 User decisions:
 - **Tool floor: Iter-speed-optimised** — drop `flock` only; **keep `jq`** (python-port adds +200ms per merge-gates poll, slows hot path); keep `gh`.
-- **PS shims: 4 thin shims kept** — `bootstrap-msys2.ps1` + `merge-watcher-install-autostart.ps1` + `merge-watcher-uninstall-autostart.ps1` + `smatchet-notify-windows.ps1` (BurntToast).
+- **PS shims: 3 thin shims kept** — `merge-watcher-install-autostart.ps1` + `merge-watcher-uninstall-autostart.ps1` + `smatchet-notify-windows.ps1` (BurntToast). (`bootstrap-msys2.ps1` was removed with the MSYS2 build preset layer in commit 6537dc3.)
 
 ## Final tool set after this change
 
@@ -98,7 +98,7 @@ Remove `flock` from `check-required-tools.sh`.
 
 ### Kept PS (4 files — deliberately)
 
-- `scripts/dev/bootstrap-msys2.ps1` — chicken-and-egg: installs bash itself via winget+MSYS2. Cannot be bash.
+- ~~`scripts/dev/bootstrap-msys2.ps1`~~ — removed with the MSYS2 build preset layer (commit 6537dc3).
 - `scripts/dev/merge-watcher-install-autostart.ps1` — Windows Scheduled Task install (`Register-ScheduledTask` cmdlet has no clean `schtasks.exe` equivalent for the XML config used).
 - `scripts/dev/merge-watcher-uninstall-autostart.ps1` — symmetric pair.
 - `scripts/dev/smatchet-notify-windows.ps1` — BurntToast OS-toast channel (called by `smatchet-notify.sh`).

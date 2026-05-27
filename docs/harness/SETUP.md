@@ -21,17 +21,17 @@ Windows users can substitute `pwsh scripts/setup-harness.ps1 <name>`.
 
 `setup-harness.sh` runs `scripts/dev/check-required-tools.sh` as its first step. The probe fails loudly if any of these isn't on `PATH`:
 
-| Tool | Why | Install (Windows + MSYS2 UCRT64) |
+| Tool | Why | Install (Windows) |
 |---|---|---|
 | `git` | table stakes | bundled with Git for Windows |
-| `cmake` | every build preset | `pacman -S mingw-w64-ucrt-x86_64-cmake` |
-| `ninja` | preset generator | `pacman -S mingw-w64-ucrt-x86_64-ninja` |
-| `gcc` / `g++` | C/C++ toolchain | `pacman -S mingw-w64-ucrt-x86_64-gcc` |
+| `cmake` | every build preset | `winget install Kitware.CMake` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-cmake`) |
+| `ninja` | preset generator | `winget install Ninja-build.Ninja` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-ninja`) |
+| `gcc` / `g++` | lint toolchain (clang-format/cppcheck invoke gcc for syntax checks) | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-gcc` — build itself uses MSVC or Clang |
 | `python` | dev scripts (perf-compare, etc.) | python.org installer (3.11+) or `pacman -S mingw-w64-ucrt-x86_64-python` |
-| `jq` | merge-gates poller + ad-hoc GraphQL parsing | `pacman -S mingw-w64-ucrt-x86_64-jq` *or* `winget install jqlang.jq` |
+| `jq` | merge-gates poller + ad-hoc GraphQL parsing | `winget install jqlang.jq` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-jq`) |
 | `gh` | PR ops + merge-gates poller | `winget install GitHub.cli` then add `C:/Program Files/GitHub CLI` to PATH |
-| `clang-format`, `clang-tidy` | lint hooks | `pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra` |
-| `cppcheck` | lint hooks | `pacman -S mingw-w64-ucrt-x86_64-cppcheck` |
+| `clang-format`, `clang-tidy` | lint hooks | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra` |
+| `cppcheck` | lint hooks | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-cppcheck` |
 | `flock` | `lint-cpp-drain.sh` queue serialisation | usually built-in (Linux/macOS); MSYS2 needs `pacman -S util-linux` |
 
 Optional (warn-only — not required for the standard ship-loop):

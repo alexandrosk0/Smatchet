@@ -9,7 +9,7 @@
 #      reachable without the binding TU.
 #
 # Gated by `SMATCHET_BUILD_LUA_TESTS=ON` from the root CMakeLists.txt; the
-# ninja-test-msys2 preset auto-enables it so `cmake --build && ctest`
+# ninja-test-msvc preset auto-enables it so `cmake --build && ctest`
 # exercises both SmatchetTests + SmatchetLuaTests in one shot.
 #
 # Requires SMATCHET_WITH_LUA_AUTOMATION (the production option that builds
@@ -41,7 +41,7 @@ add_executable(SmatchetLuaTests
 
 # AppController_LuaBindingsCore.cpp uses -mcmodel=large in the BFD-ld production
 # build (CMakeLists.txt:976-989) to reach symbols past 2 GB. Under lld -- which
-# the ninja-test-msys2 preset selects via SMATCHET_LLD_PROGRAM -- the flag
+# the ninja-test-msvc preset selects via SMATCHET_LLD_PROGRAM -- the flag
 # produces "unsupported relocation type 0xe" link errors and is explicitly
 # skipped (CMakeLists.txt:976 gate). Mirror that gate here so the test binary
 # links cleanly regardless of which linker is active. -Wa,-mbig-obj is still

@@ -283,7 +283,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 | Agent | Complexity · access | Use when |
 |---|---|---|
 | `architect` | high · read-only | Change spans `Source_Core` + `Plugins` (+ `UnrealPlugins`), or alters `ITrackerClient`, the command registry contract, per-backend view storage, or MCP schemas. Hand off **before** writing code — returns a design doc; the orchestrator implements. |
-| `build-doctor` | high · read-edit | CMake / Ninja / MSYS2 / lld / LTO / `SmatchetPackageUnrealLibs_DX12` failures. Pass the preset name and the failing output verbatim. |
+| `build-doctor` | high · read-edit | CMake / Ninja / MSVC / Clang / lld / LTO / `SmatchetPackageUnrealLibs_DX12` failures. Pass the preset name and the failing output verbatim. |
 | `perf-detective` | high · read-only | Steady-state perf — optimize / profile / FPS / sustained lag. Owns hypothesis + diagnose + validate over frame averages. Delegates to `perf-instrument` and `perf-measure`. Wraps `docs/PERF_WORKFLOW.md`. |
 | `spike-hunter` | high · read-only | Intermittent UI-thread stalls — spike / hitch / freeze / stutter / "occasionally slow". Looks at p99 / max outliers + blocking calls reaching the UI thread (HTTP, SQLite, p4, file I/O, locks). Delegates to `perf-instrument` and `perf-measure`. |
 | `debug-detective` | high · read-edit | Behavioural bugs — crash / wrong output / regression / "broken" / "doesn't work". Inserts temporary `LOG_DEBUG` / `LOG_TRACE` markers (prefixed `[temp-debug]`), builds, runs via the unified CLI (`Smatchet.exe cmd …`), reads logs, proposes the cause; hands the fix to the matching subsystem specialist. Cleans up every `[temp-debug]` before claiming done. NOT for perf — that's `perf-detective` / `spike-hunter`. |

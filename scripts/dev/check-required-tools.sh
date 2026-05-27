@@ -11,7 +11,7 @@
 # next high-stakes moment.
 #
 # Tools probed:
-#   - cmake, ninja, g++, gcc       — build toolchain (MSYS2 UCRT64)
+#   - cmake, ninja, g++, gcc       — build toolchain
 #   - python                       — dev scripts (perf-compare.py, etc.)
 #   - jq, gh                       — merge-gates poller + PR ops
 #   - clang-format, clang-tidy,    — lint hooks
@@ -52,12 +52,12 @@ esac
 SEP=$'\x1f'
 TOOLS=(
     "git${SEP}REQUIRED${SEP}any platform — table stakes"
-    "cmake${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-cmake (or system installer)"
-    "ninja${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-ninja"
-    "gcc${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-gcc"
-    "g++${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-gcc"
+    "cmake${SEP}REQUIRED${SEP}Windows: winget install Kitware.CMake | MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-cmake"
+    "ninja${SEP}REQUIRED${SEP}Windows: winget install Ninja-build.Ninja | MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-ninja"
+    "gcc${SEP}REQUIRED${SEP}MSYS2 UCRT64 (lint toolchain): pacman -S mingw-w64-ucrt-x86_64-gcc — build uses MSVC/Clang"
+    "g++${SEP}REQUIRED${SEP}MSYS2 UCRT64 (lint toolchain): pacman -S mingw-w64-ucrt-x86_64-gcc — build uses MSVC/Clang"
     "python${SEP}REQUIRED${SEP}Windows: python.org installer (3.11+) or pacman -S mingw-w64-ucrt-x86_64-python"
-    "jq${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-jq | winget install jqlang.jq"
+    "jq${SEP}REQUIRED${SEP}winget install jqlang.jq | MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-jq"
     "gh${SEP}REQUIRED${SEP}Windows: winget install GitHub.cli — then add 'C:/Program Files/GitHub CLI' to PATH"
     "clang-format${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra"
     "clang-tidy${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra"

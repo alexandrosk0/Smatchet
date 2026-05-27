@@ -466,7 +466,7 @@ cmake --preset ninja-msvc-asan
 cmake --build --preset ninja-msvc-asan --target SmatchetStandalone
 ```
 
-Sanitizer runtime DLLs (`libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll`) must be on `PATH` at launch — "DLL not found" on a sanitized exe is the runtime, not the build. If MSan preset errors `requires Clang`, install `mingw-w64-clang-x86_64-clang` in MSYS2. Wiring lives in `cmake/Sanitizers.cmake` — preset failures or new sanitizer requests go to `build-doctor`.
+Sanitizer runtime DLLs (`libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll`) must be on `PATH` at launch — "DLL not found" on a sanitized exe is the runtime, not the build. If MSan preset errors `requires Clang`, install LLVM via `winget install LLVM.LLVM` (or the Clang component via Visual Studio installer). Wiring lives in `cmake/Sanitizers.cmake` — preset failures or new sanitizer requests go to `build-doctor`.
 
 Do not treat the final crash frame as the root cause without checking ownership and earlier mutation paths.
 

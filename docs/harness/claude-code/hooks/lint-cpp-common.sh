@@ -11,11 +11,11 @@ if command -v cygpath >/dev/null 2>&1; then
     LINT_NORM_PROJ="$(cygpath -m "$LINT_NORM_PROJ" 2>/dev/null || printf '%s' "$LINT_NORM_PROJ")"
 fi
 
-# MSYS2 UCRT64 toolchain (clang-format / cppcheck / clang-tidy / gcc) lives at
-# C:\msys64\ucrt64\bin. Hook invocations inherit the shell PATH, which on this
-# project's hosts often does NOT include that directory (the build presets fix
-# PATH internally via MSYSTEM_PREFIX). Without this prepend the hooks silently
-# `command -v`-skip every tool. Idempotent across sessions.
+# Lint toolchain (clang-format / cppcheck / clang-tidy / gcc) is installed from
+# MSYS2 UCRT64 on this machine at C:\msys64\ucrt64\bin. Hook invocations
+# inherit the shell PATH, which often does NOT include that directory. Without
+# this prepend the hooks silently `command -v`-skip every tool. Idempotent.
+# Note: this is the LINT toolchain path — the build presets use MSVC/Clang.
 SMATCHET_TOOLCHAIN_BIN="${SMATCHET_TOOLCHAIN_BIN:-/c/msys64/ucrt64/bin}"
 if [[ -d "$SMATCHET_TOOLCHAIN_BIN" ]]; then
     case ":$PATH:" in

@@ -129,7 +129,7 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 | `Source_Core/**/*_DX12*` · `UnrealPlugins/**` · anything gated on `SMATCHET_EMBEDDED_IN_UNREAL` | `unreal-bridge` |
 | `tests/Source_Core/**` · `tests/CMakeLists.txt` · `tests/test_main.cpp` · `SMATCHET_BUILD_TESTS` mentions | `test-rig` |
 | `scripts/dev/test-*.sh` · `scripts/dev/test-all.sh` · scenario JSON / Lua under test harness | `test-author` |
-| `CMakeLists.txt` · `cmake/**` · `CMakePresets.json` · MSYS2 / Ninja / lld / LTO / packaging diffs | `build-doctor` |
+| `CMakeLists.txt` · `cmake/**` · `CMakePresets.json` · Ninja / lld / LTO / MSVC / Clang / packaging diffs | `build-doctor` |
 | Pure rename, typo, clang-format-only, copyright bump, `.gitignore`, `Locales/*.json` literal | `mechanic` |
 | Crash repro / "this used to work" / regression that needs `[temp-debug]` instrumentation before a fix is feasible | `debug-detective` |
 | Security finding (CWE, injection, secret leakage, deserialisation) | `security-review` |
