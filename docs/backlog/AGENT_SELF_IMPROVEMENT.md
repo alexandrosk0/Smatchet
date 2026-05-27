@@ -58,7 +58,7 @@ without movement.
 | Category | Live count | File |
 |---|---|---|
 | bug         | 6  | [agent-self-improvement/bug.md](agent-self-improvement/bug.md) |
-| process     | 19 | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
+| process     | 20 | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
 | tooling     | 29 | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
 | infra       | 10 | [agent-self-improvement/infra.md](agent-self-improvement/infra.md) |
 | test        | 9  | [agent-self-improvement/test.md](agent-self-improvement/test.md) |
