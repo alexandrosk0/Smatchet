@@ -267,7 +267,7 @@ bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
-            std::fprintf(stdout, "Smatchet Standalone Client\n"
+            std::fprintf(stdout, "Smatchet Standalone Client\n" // CLI stdout — product output, not logging
                                  "Usage: Smatchet [options]\n"
                                  "Options:\n"
                                  "  -d, --db-path <path>         Path to sqlite database\n"

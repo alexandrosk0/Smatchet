@@ -953,7 +953,7 @@ WhisperPlugin* g_whisperPluginInstance = nullptr;
 
 WhisperPlugin* WhisperPlugin::InstanceForUi() { return g_whisperPluginInstance; }
 
-WhisperPlugin::WhisperPlugin() : phaseE_(new PhaseEState()) {}
+WhisperPlugin::WhisperPlugin() : phaseE_(std::make_unique<PhaseEState>()) {}
 WhisperPlugin::~WhisperPlugin() = default;
 
 bool WhisperPlugin::ReregisterHotkey(const std::string& descriptor, std::string& outError) {
@@ -989,7 +989,7 @@ bool WhisperPlugin::ReregisterHotkey(const std::string& descriptor, std::string&
 
 void WhisperPlugin::OnStart(AppController& app) {
     if (!phaseE_) {
-        phaseE_.reset(new PhaseEState());
+        phaseE_ = std::make_unique<PhaseEState>();
     }
     phaseE_->app = &app;
     g_whisperPluginInstance = this;

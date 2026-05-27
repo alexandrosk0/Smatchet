@@ -6,7 +6,7 @@ Smatchet uses ImGui docking with four visible dock slots (Central, Views column,
 
 ## Dock slot layout
 
-```
+```text
 ┌──────────────────┬──────────┬────────────┐
 │                  │  Views   │  Primary   │
 │    Central       │  column  │  Sidebar   │
@@ -109,7 +109,7 @@ Note: bypass windows lack `UiDrawSession` access so they can't participate in th
 ### 7. Add missing ini entries (ConfigManager.cpp)
 
 Add to `kDefaultImGuiDockLayoutIni`:
-```
+```ini
 [Window][Annotate###BlameAnalysisModal]
 DockId=0x0000000A,8
 
