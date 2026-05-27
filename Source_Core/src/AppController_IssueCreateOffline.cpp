@@ -62,8 +62,8 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
     const std::vector<std::string>& inheritIds =
         (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
     // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
-    const std::string resolvedProject =
-        smatchet::ResolveProjectForDraft(Backend.get(), cfg.JqlQuery, lastTicket.id, /*legacyFallback*/ std::string());
+    const std::string resolvedProject = smatchet::ResolveProjectForDraft(
+        Backend ? &Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id, /*legacyFallback*/ std::string());
     return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
                                                cfg.DefaultIssueTypeName, inheritIds);
 }
@@ -112,7 +112,6 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         return future;
     }
 
-    ITrackerClient* backend = Backend.get();
     LocalCacheManager* cache = Cache.get();
     IssueDraft draftCopy = draft;
 
@@ -130,8 +129,16 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         }
     }
 
-    LaunchBackgroundTask([this, promise, backend, cache, draftCopy, catalogCopy, required]() {
-        IssueCreateResult result = IssueCreatePipeline::Run(*backend, cache, draftCopy, required, *catalogCopy);
+    ITrackerIssueMutations* const mutations = Backend->Mutations();
+    if (!mutations) {
+        IssueCreateResult err;
+        err.Error = "Tracker backend does not support issue mutations.";
+        promise->set_value(std::move(err));
+        return future;
+    }
+
+    LaunchBackgroundTask([this, promise, mutations, cache, draftCopy, catalogCopy, required]() {
+        IssueCreateResult result = IssueCreatePipeline::Run(*mutations, cache, draftCopy, required, *catalogCopy);
         if (result.Ok) {
             RefreshLocalData();
             requestDeferredLiveTrackerBackendSuccessNotify_();

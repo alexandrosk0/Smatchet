@@ -453,8 +453,9 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                     if (lastVisibleTicket) {
                         const std::string activeViewQuery = activeViewForGrid ? activeViewForGrid->Jql : std::string();
                         // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
+                        const ITrackerBackend* gb = app.GetTrackerBackend();
                         const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-                            app.GetTrackerBackend(), activeViewQuery, lastVisibleTicket->id, std::string());
+                            gb ? &gb->Connectivity() : nullptr, activeViewQuery, lastVisibleTicket->id, std::string());
                         d.newIssueDraft = IssueDraftHelpers::FromCachedTicket(
                             *lastVisibleTicket, app.GetAvailableFields(), resolvedProject, d.cfg.DefaultIssueTypeId,
                             d.cfg.DefaultIssueTypeName, inheritIds);

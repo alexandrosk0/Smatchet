@@ -2,11 +2,12 @@
 
 #include "ConfigManager.h"
 #include "GitHubClient.h"
+#include "ITrackerBackend.h"
 #include "JiraClient.h"
 #include "PlaneClient.h"
 #include "StringUtil.h"
 
-std::unique_ptr<ITrackerClient> DefaultTrackerBackendFactory::Create(const std::string& trackerType) {
+std::unique_ptr<ITrackerBackend> DefaultTrackerBackendFactory::Create(const std::string& trackerType) {
     // Case-insensitive match against the three shipped backends. Anything we don't recognise
     // falls back to Jira so existing configs with stale / empty TrackerType values keep
     // booting (this matches the pre-factory behaviour where `Initialize` defaulted to

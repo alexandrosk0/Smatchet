@@ -1,12 +1,17 @@
 #ifndef SMATCHET_GITHUB_CLIENT_H
 #define SMATCHET_GITHUB_CLIENT_H
 
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
+#include "ITrackerCollaboration.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerFieldCatalog.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 
 #include <string>
 #include <unordered_map>
 
-// GitHubClient — third `ITrackerClient` backend (PR2 of
+// GitHubClient — third tracker backend (PR2 of
 // docs/design/github-tracker-backend.md). Tracker-only — does NOT implement
 // the PR / check-run / GraphQL surface the deleted agentic flow used.
 //
@@ -15,12 +20,22 @@
 // snapshot at construction time; runtime PAT rotation requires a fresh
 // Create call.
 
-class GitHubClient : public ITrackerClient {
+class GitHubClient : public ITrackerBackend,
+                     public ITrackerIssueReader,
+                     public ITrackerConnectivity,
+                     public ITrackerFieldCatalog,
+                     public ITrackerIssueMutations,
+                     public ITrackerCollaboration {
   public:
+    ITrackerIssueReader& Reader() override;
+    ITrackerConnectivity& Connectivity() override;
+    ITrackerFieldCatalog* FieldCatalog() override;
+    ITrackerIssueMutations* Mutations() override;
+    ITrackerCollaboration* Collaboration() override;
     GitHubClient(const std::string& baseUrl, const std::string& pat);
     ~GitHubClient() override = default;
 
-    // === ITrackerClient overrides ===
+    // === interface overrides ===
     std::string GetTrackerType() const override;
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
@@ -32,8 +47,8 @@ class GitHubClient : public ITrackerClient {
     /// grid stays empty until all 4 pages complete (~6s wall-clock); with it,
     /// each page lands in ActiveTickets ~1.5s sooner.
     TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
-                                                  const TrackerConfig* configOverride = nullptr,
-                                                  const ViewsStore* viewsOverride = nullptr) override;
+                                                 const TrackerConfig* configOverride = nullptr,
+                                                 const ViewsStore* viewsOverride = nullptr) override;
     bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                             const ViewsStore& views, std::vector<CachedTicket>& outTickets,
                             std::string& outError) override;
@@ -57,8 +72,7 @@ class GitHubClient : public ITrackerClient {
     // repo write scope. Return an all-`true` map for the static catalog so AppController
     // caches a positive result and stops re-fetching per UI frame.
     bool FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
-                            std::unordered_map<std::string, bool>& outFieldIdCanEdit,
-                            std::string& outError) override;
+                            std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) override;
 
   private:
     std::string baseUrl_; // e.g. "https://api.github.com" or "https://<enterprise>/api/v3"

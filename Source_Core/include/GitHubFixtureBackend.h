@@ -17,10 +17,18 @@
 // fake don't crash. The fixture is read-only by design — debug-detective
 // scenarios that mutate are out-of-scope for slice 1.
 
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
+
+#include <nlohmann/json.hpp>
 
 #include <string>
 #include <vector>
+
+class ITrackerFieldCatalog;
+class ITrackerCollaboration;
 
 namespace smatchet {
 namespace github {
@@ -29,8 +37,16 @@ namespace github {
 /// once at construction; subsequent `FetchIssues` calls return the cached
 /// vector. Reachability probe always returns `AuthenticatedReachable` so the
 /// UI doesn't show a disconnect banner during fixture-driven scenarios.
-class GitHubFixtureBackend : public ITrackerClient {
+class GitHubFixtureBackend : public ITrackerBackend,
+                             public ITrackerIssueReader,
+                             public ITrackerConnectivity,
+                             public ITrackerIssueMutations {
   public:
+    ITrackerIssueReader& Reader() override;
+    ITrackerConnectivity& Connectivity() override;
+    ITrackerFieldCatalog* FieldCatalog() override;
+    ITrackerIssueMutations* Mutations() override;
+    ITrackerCollaboration* Collaboration() override;
     /// `fixturePath` must point to a JSON file shaped like the GraphQL search
     /// response — top-level `nodes[]` array of Issue/PullRequest objects.
     /// `ownerHint` / `repoHint` are used when nodes don't carry

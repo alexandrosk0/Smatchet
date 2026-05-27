@@ -4,7 +4,6 @@
 #include "ConfigManager.h"
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
-#include "ITrackerClient.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
 #include "SmatchetToast.h"
@@ -445,7 +444,7 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     if (newTracker.empty())
         newTracker = "Jira";
     const std::string trackerLower = ToLowerAsciiCopy(newTracker);
-    const std::string currentType = deps_.Backend() ? deps_.Backend()->GetTrackerType() : "";
+    const std::string currentType = deps_.BackendConnectivity() ? deps_.BackendConnectivity()->GetTrackerType() : "";
     // Normalize currentType to lowercase too — JiraClient/PlaneClient report mixed case
     // ("Jira" / "Plane") while GitHubClient reports lowercase ("github"). Compare in one
     // case to avoid silent miss on a GitHub→Plane switch (etc.).

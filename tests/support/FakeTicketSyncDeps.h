@@ -14,7 +14,7 @@
 #include "FakeTrackerClient.h"
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
-#include "ITrackerClient.h"
+#include "ITrackerConnectivity.h"
 #include "LocalCacheManager.h"
 
 #include <chrono>
@@ -31,16 +31,17 @@ namespace smatchet_tests {
 /// this with their own factory.
 class FakeTrackerBackendFactory : public ITrackerBackendFactory {
   public:
-    std::unique_ptr<ITrackerClient> Create(const std::string& /*trackerType*/) override {
-        return std::unique_ptr<ITrackerClient>(new FakeTrackerClient());
+    std::unique_ptr<ITrackerBackend> Create(const std::string& /*trackerType*/) override {
+        return std::unique_ptr<ITrackerBackend>(new FakeTrackerClient());
     }
 };
 
 class FakeTicketSyncDeps : public ITicketSyncDeps {
   public:
     std::unique_ptr<LocalCacheManager> CacheImpl{std::make_unique<LocalCacheManager>(":memory:")};
-    std::unique_ptr<ITrackerClient> BackendImpl{std::unique_ptr<ITrackerClient>(new FakeTrackerClient())};
-    std::unique_ptr<ITrackerBackendFactory> Factory{std::unique_ptr<ITrackerBackendFactory>(new FakeTrackerBackendFactory())};
+    std::unique_ptr<ITrackerBackend> BackendImpl{std::unique_ptr<ITrackerBackend>(new FakeTrackerClient())};
+    std::unique_ptr<ITrackerBackendFactory> Factory{
+        std::unique_ptr<ITrackerBackendFactory>(new FakeTrackerBackendFactory())};
 
     std::string LastTrackerTicketSyncWarning;
     ConnectivityState LastConnectivityState = ConnectivityState::Unknown;
@@ -60,17 +61,18 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     bool PendingLuaWindowBumpImpl = false;
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
-    ITrackerClient* Backend() override { return BackendImpl.get(); }
-    void SetBackend(std::unique_ptr<ITrackerClient> backend) override { BackendImpl = std::move(backend); }
+    ITrackerIssueReader* Backend() override { return BackendImpl ? &BackendImpl->Reader() : nullptr; }
+    ITrackerConnectivity* BackendConnectivity() override {
+        return BackendImpl ? &BackendImpl->Connectivity() : nullptr;
+    }
+    void SetBackend(std::unique_ptr<ITrackerBackend> backend) override { BackendImpl = std::move(backend); }
     ITrackerBackendFactory* BackendFactory() override { return Factory.get(); }
 
     void SetLastTrackerTicketSyncWarning(const std::string& message) override {
         LastTrackerTicketSyncWarning = message;
     }
     void SetLastTrackerConnectivityState(ConnectivityState state) override { LastConnectivityState = state; }
-    void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override {
-        NextProbeAt = at;
-    }
+    void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override { NextProbeAt = at; }
     void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) override {
         LastPushOutageAt = now;
         ++PushOutageCalls;

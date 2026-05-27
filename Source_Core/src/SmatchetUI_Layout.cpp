@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetToast.h"
 
 #include <algorithm>
@@ -105,29 +106,30 @@ void PersistWindowOpenPreferences(UiDrawSession& d) {
 } // namespace ui_detail
 } // namespace smatchet
 
-void SmatchetUI::prepareTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
+void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                        bool requestFocus) {
-    // With docking enabled, position is managed by the dock layout (imgui.ini DockId entries).
-    // SetNextWindowPos with ImGuiCond_Appearing or ImGuiCond_Always fights the dock engine:
-    // it forces windows to absolute pixel coordinates, kicking them out of their dock nodes
-    // on every toggle. Only set size on FirstUseEver as a fallback for windows with no ini entry.
+    const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
+    if (slot != 0) {
+        const bool needsForce = d.pendingReDockWindows.erase(layoutKey) > 0;
+        ImGui::SetNextWindowDockID(slot, needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+    }
     ImGui::SetNextWindowSize(ImVec2(defaultW, defaultH), ImGuiCond_FirstUseEver);
     if (requestFocus) {
         ImGui::SetNextWindowFocus();
     }
-    (void)layoutKey; // previously used for position lookup — no longer needed with docking
-    (void)d;
 }
 
-void SmatchetUI::repairTopLevelWindow(const UiDrawSession& d, const char* layoutKey, float minW, float minH) {
-    // Docked windows: size and position are fully managed by the dock node. Do not repair.
-    // (Used to special-case the Smatchet Assistant side panel here because it ran as a
-    // floating non-docked window with ImGuiCond_Always SetNextWindowPos; that layout was
-    // replaced with dock-system integration in 2026-05-17. The IsWindowDocked guard below
-    // already covers the new path.)
+void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH) {
     if (ImGui::IsWindowDocked()) {
         return;
     }
+    // Window is floating — schedule force-dock on next frame if it has a registered slot.
+    const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
+    if (slot != 0) {
+        d.pendingReDockWindows.insert(layoutKey);
+        return;
+    }
+
     const ImVec2 pos = ImGui::GetWindowPos();
     ImVec2 size = ImGui::GetWindowSize();
     if (!WindowNeedsRepair(pos, size, minW, minH) && d.layoutForceDefaultsFrames <= 0) {

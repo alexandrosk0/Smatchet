@@ -2,7 +2,7 @@
 
 #include <string>
 
-class ITrackerClient;
+class ITrackerConnectivity;
 
 namespace smatchet {
 
@@ -21,10 +21,8 @@ namespace smatchet {
  *
  *  Added in PR 2 of docs/design/applied/remove-global-project-key.md.
  */
-std::string ResolveProjectForDraft(const ITrackerClient* client,
-                                   const std::string& activeViewQuery,
-                                   const std::string& lastVisibleTicketId,
-                                   const std::string& legacyFallback);
+std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std::string& activeViewQuery,
+                                   const std::string& lastVisibleTicketId, const std::string& legacyFallback);
 
 /** PR 4b / OQ-6: when a draft is built from a known parent ticket (clone / child-of), the
  *  parent's own project — not the active view — should seed the picker. For Jira this is the
@@ -35,9 +33,7 @@ std::string ResolveProjectForDraft(const ITrackerClient* client,
  *    1. parentTicketId key prefix
  *    2. ResolveProjectForDraft(client, activeViewQuery, "", legacyFallback)
  *  (Plane skips step 1.) */
-std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId,
-                                             const ITrackerClient* client,
-                                             const std::string& activeViewQuery,
-                                             const std::string& legacyFallback);
+std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, const ITrackerConnectivity* client,
+                                             const std::string& activeViewQuery, const std::string& legacyFallback);
 
 } // namespace smatchet

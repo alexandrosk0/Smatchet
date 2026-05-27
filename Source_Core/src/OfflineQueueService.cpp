@@ -6,7 +6,8 @@
 #include "IOfflineQueueDeps.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
-#include "ITrackerClient.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
 #include "MarkdownConvert.h"
@@ -557,7 +558,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.Backend()) {
+    if (!deps_.Cache() || !deps_.Reader()) {
         return;
     }
     {
@@ -593,13 +594,14 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     }
 
     LocalCacheManager* cache = deps_.Cache();
-    ITrackerClient* backend = deps_.Backend();
-    if (!backend) {
+    ITrackerIssueReader* reader = deps_.Reader();
+    ITrackerIssueMutations* mutations = deps_.Mutations();
+    if (!reader || !mutations) {
         return;
     }
 
     IOfflineQueueDeps& depsRef = deps_;
-    deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, backend]() {
+    deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, reader, mutations]() {
         int successes = 0;
         int failures = 0;
         int archived = 0;
@@ -709,8 +711,8 @@ void OfflineQueueService::TickOfflineFieldEdits() {
                         std::vector<CachedTicket> freshTickets;
                         std::string fetchErr;
                         const std::vector<std::string> keysForFetch = {row.IssueKey};
-                        if (backend->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch, freshTickets,
-                                                        fetchErr) &&
+                        if (reader->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch, freshTickets,
+                                                       fetchErr) &&
                             !freshTickets.empty()) {
 
                             const CachedTicket& fresh = freshTickets.front();
@@ -773,7 +775,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
                 continue;
             }
             std::string err;
-            if (!backend->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
+            if (!mutations->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
                 if (IsTrackerTransportErrorText(err)) {
                     const int nextAttempts = row.Attempts + 1;
                     if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
@@ -847,7 +849,7 @@ void OfflineQueueService::TickOfflineCreates() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.Backend()) {
+    if (!deps_.Cache() || !deps_.Reader()) {
         return;
     }
     {
@@ -883,11 +885,11 @@ void OfflineQueueService::TickOfflineCreates() {
     }
 
     auto catalogCopy = std::make_shared<std::vector<TrackerField>>(deps_.AvailableFields());
-    ITrackerClient* backend = deps_.Backend();
+    ITrackerIssueMutations* mutations2 = deps_.Mutations();
     LocalCacheManager* cache = deps_.Cache();
 
     IOfflineQueueDeps& depsRef = deps_;
-    deps_.LaunchBackgroundTask([this, &depsRef, pending, backend, cache, catalogCopy]() {
+    deps_.LaunchBackgroundTask([this, &depsRef, pending, mutations2, cache, catalogCopy]() {
         const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
         int successes = 0;
         int failures = 0;
@@ -958,7 +960,7 @@ void OfflineQueueService::TickOfflineCreates() {
             const RequiredFieldSet required =
                 depsRef.GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
             ranCreate = true;
-            IssueCreateResult result = IssueCreatePipeline::Run(*backend, cache, draft, required, *catalogCopy);
+            IssueCreateResult result = IssueCreatePipeline::Run(*mutations2, cache, draft, required, *catalogCopy);
             if (result.Ok) {
                 if (tryCacheMutation("delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); })) {
                     ++successes;

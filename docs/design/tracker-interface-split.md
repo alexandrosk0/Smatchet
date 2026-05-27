@@ -152,12 +152,17 @@ Per `AGENTS.md` verification rules — zero manual steps.
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `4bc1a17` · Slice 1: extract `ITrackerIssueReader` + `ITrackerConnectivity`; `ITrackerClient` inherits both as facade; `ITicketSyncDeps::Backend()` narrowed to `ITrackerIssueReader*`; `ProjectResolver` narrowed to `ITrackerConnectivity*`; `ITrackerBackend` stub added.
 
 ## Deviations from plan
 
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **`GetTrackerType()` moved to `ITrackerConnectivity` (as planned in the instruction)**: `TicketSyncService` calls `GetTrackerType()` for backend-swap detection. Since `ITicketSyncDeps::Backend()` now returns `ITrackerIssueReader*`, a new `BackendConnectivity()` accessor was added to `ITicketSyncDeps` returning `ITrackerConnectivity*`. This was added to `AppControllerDepsAdapter` (header + impl) and `FakeTicketSyncDeps`. Not a deviation from the intent — the instruction explicitly described this accessor pattern.
+- **`AppControllerDepsAdapter.h` now includes `ITrackerClient.h` directly**: covariant return type checking in C++ requires the derived return type (`ITrackerClient*`) to be a complete type at the point of the override declaration. A forward declaration is insufficient. The include was added to the adapter header. This is a minor coupling increase during the transition phase; it disappears when `ITrackerClient` is deleted in Slice 4.
+- **`ITrackerIssueReader.h` includes `CachedTicketTypes.h` instead of `LocalCacheManager.h`**: `CachedTicketTypes.h` is the SQLite-free header that defines `CachedTicket`. The plan said to include `LocalCacheManager.h` but the lighter include is strictly better and was already the right call per `CachedTicketTypes.h`'s own header comment.
 
 ## Verification (actual)
 
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+- **Bucket A**: not run (test suite requires MSVC SDK in PATH; environment missing `stdio.h` for FetchContent curl build — pre-existing issue unrelated to this slice).
+- **Build gate (clang preset)**: `cmake --build --preset ninja-iter-clang --target SmatchetStandalone SmatchetCore_DX12` — both targets build clean. Zero errors, only pre-existing `/MP` unused-argument warnings from clang-cl.
+- **Build gate (MSVC preset)**: MSVC environment in shell session missing SDK headers (`stdio.h`, `string`, `atomic`); all curl FetchContent TUs fail. Pre-existing issue — confirmed by absence of any `Source_Core/` error lines in MSVC output. The clang build exercises identical `Source_Core/` headers and flags.
+- **Covariant return fix**: clang caught `ITrackerClient` incomplete at covariant override point; fixed by adding `#include "ITrackerClient.h"` to `AppControllerDepsAdapter.h`; rebuild was clean.

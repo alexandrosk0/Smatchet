@@ -496,7 +496,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
     }
 
     LaunchBackgroundTask([this, toFetch]() {
-        ITrackerClient* backend = Backend.get();
+        ITrackerBackend* backend = Backend.get();
 
         if (!backend) {
 
@@ -511,7 +511,7 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
 
         std::vector<CachedTicket> tickets;
 
-        const bool ok = backend->FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
+        const bool ok = backend->Reader().FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
 
         {
 
@@ -1218,7 +1218,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                     class FixtureGitHubFactory : public ITrackerBackendFactory {
                       public:
                         explicit FixtureGitHubFactory(const std::string& path) : path_(path) {}
-                        std::unique_ptr<ITrackerClient> Create(const std::string& trackerType) override {
+                        std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
                             const std::string lower = ToLowerAsciiCopy(trackerType);
                             if (lower == "github") {
                                 return std::make_unique<smatchet::github::GitHubFixtureBackend>(
@@ -1249,10 +1249,10 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     if (!Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {
-        LOG_INFO("AppController: %s backend initialized.", Backend->GetTrackerType().c_str());
+        LOG_INFO("AppController: %s backend initialized.", Backend->Connectivity().GetTrackerType().c_str());
     }
 
-    const std::string activeTrackerType = Backend ? Backend->GetTrackerType() : "Unknown";
+    const std::string activeTrackerType = Backend ? Backend->Connectivity().GetTrackerType() : "Unknown";
 
     // PR 5 of docs/design/applied/remove-global-project-key.md: one-shot legacy-project sweeps.
     // Drain legacy global project state into per-entity carriers (offline-queue payloads,
@@ -1278,7 +1278,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                 auto bucketIt = disk.Backends.find(backendKey);
                 if (bucketIt != disk.Backends.end()) {
                     for (const ViewDefinition& view : bucketIt->second.Views) {
-                        const std::string extracted = Backend->ExtractProjectFromQuery(view.Jql);
+                        const std::string extracted = Backend->Connectivity().ExtractProjectFromQuery(view.Jql);
                         if (!extracted.empty()) {
                             continue;
                         }
@@ -1944,8 +1944,8 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 
     std::lock_guard<std::mutex> lock(g_TrackerIssueFetchMutex);
 
-    pack.Tickets =
-        Backend->FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride, &pack.FetchError, &pack.Warning);
+    pack.Tickets = Backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
+                                                 &pack.FetchError, &pack.Warning);
 
     return pack;
 }

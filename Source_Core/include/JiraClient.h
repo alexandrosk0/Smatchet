@@ -1,7 +1,12 @@
 #ifndef TRACKER_JIRA_CLIENT_H
 #define TRACKER_JIRA_CLIENT_H
 
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
+#include "ITrackerCollaboration.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerFieldCatalog.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 #include "ConfigManager.h"
 
 #include <nlohmann/json.hpp>
@@ -15,8 +20,18 @@
 #include <vector>
 
 /** Result of GET /rest/api/3/myself with probe timeouts (periodic connectivity monitor). */
-class JiraClient : public ITrackerClient {
+class JiraClient : public ITrackerBackend,
+                   public ITrackerIssueReader,
+                   public ITrackerConnectivity,
+                   public ITrackerFieldCatalog,
+                   public ITrackerIssueMutations,
+                   public ITrackerCollaboration {
   public:
+    ITrackerIssueReader& Reader() override;
+    ITrackerConnectivity& Connectivity() override;
+    ITrackerFieldCatalog* FieldCatalog() override;
+    ITrackerIssueMutations* Mutations() override;
+    ITrackerCollaboration* Collaboration() override;
     std::string GetTrackerType() const override { return "Jira"; }
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
     bool FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& outUsers, std::string& outError);

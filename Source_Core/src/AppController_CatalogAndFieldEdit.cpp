@@ -100,7 +100,8 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     }
     TrackerFieldCatalogResult catalog;
     std::string error;
-    const bool ok = Backend->FetchFieldCatalog(cfg, projectKey, catalog, error);
+    const bool ok =
+        Backend->FieldCatalog() && Backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, catalog, error);
     if (!ok) {
         SetFieldCatalog({}, {}, error);
         LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
@@ -121,7 +122,9 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCata
     }
     // PR 6: project is per-operation. This convenience overload is called by config-time
     // probes that don't pin a project; backend returns the unscoped catalog.
-    return Backend->FetchFieldCatalog(cfg, std::string(), outCatalog, outError);
+    return Backend->FieldCatalog()
+               ? Backend->FieldCatalog()->FetchFieldCatalog(cfg, std::string(), outCatalog, outError)
+               : (outError = "FetchFieldCatalog is not supported by this backend.", false);
 }
 
 bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
@@ -132,11 +135,12 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::strin
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    return Backend->FetchFieldCatalog(cfg, projectKey, outCatalog, outError);
+    return Backend->FieldCatalog() ? Backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, outCatalog, outError)
+                                   : (outError = "FetchFieldCatalog is not supported by this backend.", false);
 }
 
 std::string AppController::BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
-    return Backend ? Backend->BuildBrowseUrl(cfg, issueKey) : std::string();
+    return Backend ? Backend->Reader().BuildBrowseUrl(cfg, issueKey) : std::string();
 }
 
 std::string AppController::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
@@ -144,7 +148,7 @@ std::string AppController::ResolveDisplayValue(const std::string& fieldId, const
     if (!Backend) {
         return value;
     }
-    return Backend->ResolveDisplayValue(fieldId, field, value);
+    return Backend->Reader().ResolveDisplayValue(fieldId, field, value);
 }
 
 std::string AppController::BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) {
@@ -367,7 +371,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
     }
 
     nlohmann::json valuePayload;
-    if (!Backend->BuildFieldPayload(field, rawValues, valuePayload, outError)) {
+    if (!Backend->Mutations() || !Backend->Mutations()->BuildFieldPayload(field, rawValues, valuePayload, outError)) {
         LOG_WARN("AppController::TryBuildFieldEditPayloadForNetwork build failed issue=%s field=%s err=%s",
                  issueId.c_str(), field.Id.c_str(), outError.c_str());
         return false;
@@ -381,7 +385,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
             if (i != 0) {
                 displayValue += ", ";
             }
-            displayValue += Backend->ResolveDisplayValue(field.Id, &field, values[i]);
+            displayValue += Backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
         }
     }
     outDisplayValues[field.Id] = std::move(displayValue);
@@ -534,7 +538,8 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
     const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     std::unordered_map<std::string, bool> meta;
     std::string fetchError;
-    const bool ok = Backend->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
+    const bool ok = Backend->FieldCatalog() != nullptr &&
+                    Backend->FieldCatalog()->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
 
     IssueEditMetaCache cache;
     // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made
@@ -668,7 +673,11 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         return false;
     }
 
-    ITrackerClient& backend = *Backend;
+    ITrackerIssueMutations* const mutations = Backend->Mutations();
+    if (!mutations) {
+        outError = "Tracker backend does not support issue mutations.";
+        return false;
+    }
 
     const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
     const char* const fieldEditAuditSource = FieldEditAuditSource::Current();
@@ -695,7 +704,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                                      [&](const CachedTicket& ticket) { return ticket.id == issueId; });
         BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                        nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
-        if (!backend.AddIssueToSprint(issueId, sprintId, outError)) {
+        if (!mutations->AddIssueToSprint(issueId, sprintId, outError)) {
             LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
                       issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
             BackendAuditTrail::AppendResult(
@@ -775,7 +784,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         fieldsPayload["timetracking"] = std::move(timetrackingPayload);
         BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                        nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
-        if (!backend.UpdateIssueFields(issueId, fieldsPayload, outError)) {
+        if (!mutations->UpdateIssueFields(issueId, fieldsPayload, outError)) {
             std::string payloadForLog;
             try {
                 payloadForLog = fieldsPayload.dump();
@@ -824,7 +833,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
     }
 
     nlohmann::json fieldsPayload;
-    if (!backend.BuildFieldPayload(field, rawValues, fieldsPayload, outError)) {
+    if (!mutations->BuildFieldPayload(field, rawValues, fieldsPayload, outError)) {
         LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", issueId.c_str(),
                  field.Id.c_str(), outError.c_str());
         return false;
@@ -832,7 +841,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
     BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
-    bool updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outError);
+    bool updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outError);
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outError, 400)) {
         didRetryAfter400 = true;
@@ -849,7 +858,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                     {"after", rawValues}});
             return false;
         }
-        updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outError);
+        updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outError);
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -880,7 +889,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                 if (i != 0) {
                     displayValue += ", ";
                 }
-                displayValue += backend.ResolveDisplayValue(field.Id, &field, values[i]);
+                displayValue += Backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
             }
         }
 
@@ -924,7 +933,11 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         outResult.Error = "No tracker backend initialized.";
         return false;
     }
-    ITrackerClient& backend = *Backend;
+    ITrackerIssueMutations* const mutations = Backend->Mutations();
+    if (!mutations) {
+        outResult.Error = "Tracker backend does not support issue mutations.";
+        return false;
+    }
     std::vector<std::string> values;
     values.reserve(rawValues.size());
     std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
@@ -936,7 +949,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
             return false;
         }
         const std::string sprintId = values.front();
-        if (!backend.AddIssueToSprint(issueId, sprintId, outResult.Error)) {
+        if (!mutations->AddIssueToSprint(issueId, sprintId, outResult.Error)) {
             return false;
         }
         std::string displayValue = sprintId;
@@ -984,7 +997,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
 
         nlohmann::json fieldsPayload = nlohmann::json::object();
         fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-        if (!backend.UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
+        if (!mutations->UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
             return false;
         }
         outResult.Ok = true;
@@ -1004,7 +1017,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         return false;
     }
 
-    bool updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+    bool updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
@@ -1016,7 +1029,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                      issueId.c_str(), field.Id.c_str());
             return false;
         }
-        updateOk = backend.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+        updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -1113,8 +1126,12 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
         outError = "Tracker backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
+    const bool ok = Backend->Collaboration()->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1134,8 +1151,12 @@ bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& ou
         outError = "Tracker backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->AddIssueWatcher(cfg, issueKey, outError);
+    const bool ok = Backend->Collaboration()->AddIssueWatcher(cfg, issueKey, outError);
     if (!ok) {
         LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1153,9 +1174,13 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
         outError = "Tracker backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok =
-        Backend->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount, outHasVoted, outVotersInResponse);
+    const bool ok = Backend->Collaboration()->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount,
+                                                              outHasVoted, outVotersInResponse);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueVotes failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1172,8 +1197,12 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
         outError = "Jira backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->SearchUsersByQuery(cfg, query, outUsers, outError);
+    const bool ok = Backend->Collaboration()->SearchUsersByQuery(cfg, query, outUsers, outError);
     if (!ok) {
         LOG_ERROR("AppController::SearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
                   outError.c_str());
@@ -1195,8 +1224,12 @@ bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std:
         outError = "Jira backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
+    const bool ok = Backend->Collaboration()->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
     if (!ok) {
         LOG_ERROR("AppController::AddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1219,9 +1252,13 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
         outError = "Jira backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate, workDescription,
-                                        startedDate, outError);
+    const bool ok = Backend->Collaboration()->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate,
+                                                         workDescription, startedDate, outError);
     if (!ok) {
         LOG_ERROR("AppController::SubmitWorklog failed issue=%s err=%s", issueId.c_str(), outError.c_str());
     } else {
@@ -1246,9 +1283,14 @@ bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, con
         outError = "Jira backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
-                                                         changelist, date, approximated, codeSnippet, outError);
+    const bool ok =
+        Backend->Collaboration()->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
+                                                              changelist, date, approximated, codeSnippet, outError);
     if (!ok) {
         LOG_ERROR("AppController::AddIssueCommentBlameContext failed issue=%s err=%s", issueKey.c_str(),
                   outError.c_str());
@@ -1266,8 +1308,12 @@ bool AppController::FetchUserGroupNames(const std::string& accountId, std::vecto
         outError = "Jira backend is not initialized.";
         return false;
     }
+    if (!Backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
+    const bool ok = Backend->Collaboration()->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
     if (!ok) {
         LOG_ERROR("AppController::FetchUserGroupNames failed account=%s err=%s", TruncateForLog(accountId, 40).c_str(),
                   outError.c_str());

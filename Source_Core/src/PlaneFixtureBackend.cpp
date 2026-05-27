@@ -21,7 +21,7 @@ class PlaneFixtureBackendFactory : public ITrackerBackendFactory {
   public:
     explicit PlaneFixtureBackendFactory(std::string fixturePath) : fixturePath_(std::move(fixturePath)) {}
 
-    std::unique_ptr<ITrackerClient> Create(const std::string& trackerType) override {
+    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
         if (!trackerType.empty() && trackerType != "Plane") {
             LOG_WARN("PlaneFixtureBackendFactory: requested type '%s' but serving 'Plane' fixture from %s",
                      trackerType.c_str(), fixturePath_.c_str());
@@ -33,7 +33,7 @@ class PlaneFixtureBackendFactory : public ITrackerBackendFactory {
         } else {
             LOG_INFO("PlaneFixtureBackend: loaded fixture '%s'", fixturePath_.c_str());
         }
-        return std::unique_ptr<ITrackerClient>(backend.release());
+        return std::unique_ptr<ITrackerBackend>(backend.release());
     }
 
   private:
@@ -41,6 +41,12 @@ class PlaneFixtureBackendFactory : public ITrackerBackendFactory {
 };
 
 } // namespace
+
+ITrackerIssueReader& PlaneFixtureBackend::Reader() { return *this; }
+ITrackerConnectivity& PlaneFixtureBackend::Connectivity() { return *this; }
+ITrackerFieldCatalog* PlaneFixtureBackend::FieldCatalog() { return nullptr; }
+ITrackerIssueMutations* PlaneFixtureBackend::Mutations() { return this; }
+ITrackerCollaboration* PlaneFixtureBackend::Collaboration() { return nullptr; }
 
 PlaneFixtureBackend::PlaneFixtureBackend(const std::string& fixturePath) : fixturePath_(fixturePath) {
     std::ifstream in(fixturePath);

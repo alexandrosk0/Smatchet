@@ -1,6 +1,6 @@
 #include "ProjectResolver.h"
 
-#include "ITrackerClient.h"
+#include "ITrackerConnectivity.h"
 
 #include <cctype>
 
@@ -30,10 +30,8 @@ std::string ExtractKeyPrefix(const std::string& id) {
 
 } // namespace
 
-std::string ResolveProjectForDraft(const ITrackerClient* client,
-                                   const std::string& activeViewQuery,
-                                   const std::string& lastVisibleTicketId,
-                                   const std::string& legacyFallback) {
+std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std::string& activeViewQuery,
+                                   const std::string& lastVisibleTicketId, const std::string& legacyFallback) {
     // (1) JQL / structured-query scope (backend-specific parse lives inside the concrete client).
     if (client != nullptr && !activeViewQuery.empty()) {
         const std::string fromQuery = client->ExtractProjectFromQuery(activeViewQuery);
@@ -56,10 +54,8 @@ std::string ResolveProjectForDraft(const ITrackerClient* client,
     return legacyFallback;
 }
 
-std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId,
-                                             const ITrackerClient* client,
-                                             const std::string& activeViewQuery,
-                                             const std::string& legacyFallback) {
+std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, const ITrackerConnectivity* client,
+                                             const std::string& activeViewQuery, const std::string& legacyFallback) {
     const bool isPlane = (client != nullptr && client->GetTrackerType() == "Plane");
     if (!isPlane && !parentTicketId.empty()) {
         const std::string prefix = ExtractKeyPrefix(parentTicketId);

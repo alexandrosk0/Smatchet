@@ -12,6 +12,7 @@
 
 #include "Logger.h"
 #include "MarkdownPreviewRender.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -207,6 +208,7 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         }
     }
 
+    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(720.0f, 540.0f), ImGuiCond_FirstUseEver);
     const bool wantFocus = d.requestPlanDocViewerFocus;
     if (wantFocus) {

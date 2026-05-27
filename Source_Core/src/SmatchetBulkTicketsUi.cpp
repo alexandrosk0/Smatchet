@@ -4,7 +4,7 @@
 #include "TrackerHttpUtils.h"
 #include "IssueDraft.h"
 #include "IssueTableSerializer.h"
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
 #include "Logger.h"
 #include "ProjectResolver.h"
 #include "SmatchetLocalization.h"
@@ -229,8 +229,9 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     if (ImGui::Button("Parse preview")) {
         // PR 4b: if the active view has no project scope, ask the user before parsing — the parser
         // needs a fallbackProjectKey for "create" rows that don't carry their own project column.
-        const ITrackerClient* backend = app.GetTrackerBackend();
-        const std::string scopeProj = backend ? backend->ExtractProjectFromQuery(d.cfg.JqlQuery) : std::string();
+        const ITrackerBackend* backend = app.GetTrackerBackend();
+        const std::string scopeProj =
+            backend ? backend->Connectivity().ExtractProjectFromQuery(d.cfg.JqlQuery) : std::string();
         if (scopeProj.empty()) {
             d.bulkImportProjectModalOpen = true;
             d.bulkImportProjectModalChosenKey.clear();
@@ -254,7 +255,8 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
                                          ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
                                          : d.cfg.Domain;
         ImGui::SetNextItemWidth(360.0f);
-        SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, app.GetTrackerBackendMutable(),
+        ITrackerBackend* bm = app.GetTrackerBackendMutable();
+        SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, bm ? &bm->Connectivity() : nullptr,
                                     backendKind, endpoint, d.bulkImportProjectModalChosenKey);
         ImGui::Separator();
         if (ImGui::Button(SmatchetLocalization::T("bulkImport.chooseProject.cancel", "Cancel"))) {

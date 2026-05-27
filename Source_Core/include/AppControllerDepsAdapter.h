@@ -22,9 +22,13 @@
 #include <string>
 #include <vector>
 
+#include "ITrackerBackend.h"
+
 class AppController;
 class LocalCacheManager;
-class ITrackerClient;
+class ITrackerConnectivity;
+class ITrackerIssueMutations;
+class ITrackerIssueReader;
 class ITrackerBackendFactory;
 struct TrackerConfig;
 
@@ -34,19 +38,19 @@ class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDep
 
     // ---- IOfflineQueueDeps ------------------------------------------------------------
     LocalCacheManager* Cache() override;
-    ITrackerClient* Backend() override;
+    ITrackerIssueReader* Reader() override;
+    ITrackerIssueMutations* Mutations() override;
     const std::vector<TrackerField>& AvailableFields() const override;
-    RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey,
-                                          const std::string& issueTypeId,
-                                          const std::string& issueTypeName) const override;
+    RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
+                                         const std::string& issueTypeName) const override;
     void LaunchBackgroundTask(std::function<void()> task) override;
     void RefreshLocalData() override;
     void RequestDeferredLiveTrackerBackendSuccessNotify() override;
 
     // ---- ITicketSyncDeps --------------------------------------------------------------
-    // `Cache()` and `Backend()` are already declared above; they're shared between the two
-    // interfaces. The compiler resolves the diamond via the single overriding method.
-    void SetBackend(std::unique_ptr<ITrackerClient> backend) override;
+    ITrackerIssueReader* Backend() override;
+    ITrackerConnectivity* BackendConnectivity() override;
+    void SetBackend(std::unique_ptr<ITrackerBackend> backend) override;
     ITrackerBackendFactory* BackendFactory() override;
     void SetLastTrackerTicketSyncWarning(const std::string& message) override;
     void SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) override;

@@ -31,6 +31,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct AttachmentCollectionRequest {
@@ -163,6 +164,7 @@ struct UiDrawSession {
     /// One-frame focus latch for the Log window. See `requestPreferencesFocus`.
     bool requestLogFocus = false;
     int layoutForceDefaultsFrames = 0;
+    std::unordered_set<std::string> pendingReDockWindows;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */

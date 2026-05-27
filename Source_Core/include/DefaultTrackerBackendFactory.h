@@ -10,5 +10,5 @@
 /// the factory exists.
 class DefaultTrackerBackendFactory : public ITrackerBackendFactory {
   public:
-    std::unique_ptr<ITrackerClient> Create(const std::string& trackerType) override;
+    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override;
 };

@@ -2,6 +2,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetThemedTextEditorPalette.h"
 #include "SmatchetUiSession.h"
 #include "imgui.h"
@@ -50,6 +51,7 @@ ImVec2 ClampLuaWindowPos(const ImVec2& pos, const ImVec2& size) {
 }
 
 void PrepareLuaWindowLayout() {
+    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         ImGui::SetNextWindowSize(ImVec2(650.0f, 720.0f), ImGuiCond_FirstUseEver);
