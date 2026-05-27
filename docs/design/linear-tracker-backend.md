@@ -120,7 +120,7 @@ Tests and build:
 
 ## Non-goals
 
-- **Linear OAuth app flow**: future plan if Smatchet needs shared/team installs rather than local personal tokens. Personal API key only for the first version.
+- **Linear OAuth app flow**: future plan if Smatchet needs shared/team installs to be supported rather than local personal tokens. Personal API key only for the first version.
 - **Webhook-driven incremental sync**: future plan; not needed for parity with Jira/Plane polling.
 - **Attachment upload/download**: future plan because Linear's file storage auth is its own flow.
 - **Linear customer objects, initiatives, documents, relations, estimates, and roadmap-specific UX**: out of scope for the tracker surface.
