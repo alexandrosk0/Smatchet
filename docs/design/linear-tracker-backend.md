@@ -117,16 +117,16 @@ Tests and build:
 - **Option display names are not stable IDs**: states, labels, users, projects, and cycles need UUIDs. Mitigation: field catalog stores UUIDs in `TrackerFieldOption::Id` and uses display names only for UI.
 - **Pagination and rate limits**: Linear is rate-limited and cursor-paginated. Mitigation: cap pages, surface a soft warning at cap, and log/use rate-limit headers in diagnostics.
 - **Field catalog can grow large on big teams**: users, labels, and projects may be numerous. Mitigation: cap/search where Linear supports it; keep initial catalog to fields needed by create/update.
-- **Existing GitHub comments mention "six fields" while PR fields expanded later**: avoid copying stale comments into Linear; keep Linear field catalog comments accurate.
 
-Non-goals:
+## Non-goals
 
-- OAuth2 and OAuth Actor Authorization. Personal API key only for the first version.
-- Webhooks or push sync. Polling remains the sync model.
-- Attachments and file uploads. Linear file auth/upload flow is separate and can be a follow-up.
-- Linear customer objects, initiatives, documents, relations, estimates, and roadmap-specific UX.
-- Full GraphQL schema introspection at runtime.
-- Replacing the view editor with a Linear-native filter builder.
+- **Linear OAuth app flow**: future plan if Smatchet needs shared/team installs rather than local personal tokens. Personal API key only for the first version.
+- **Webhook-driven incremental sync**: future plan; not needed for parity with Jira/Plane polling.
+- **Attachment upload/download**: future plan because Linear's file storage auth is its own flow.
+- **Linear customer objects, initiatives, documents, relations, estimates, and roadmap-specific UX**: out of scope for the tracker surface.
+- **Full GraphQL schema introspection at runtime**: hand-written queries are smaller and adequate for the narrow tracker surface.
+- **Linear-native query UI**: follow-up only if the JQL-subset translator proves too limiting.
+- **Multi-team aggregation**: single active team first; multi-team views need a separate UX decision and more pagination/rate-limit work.
 
 ## Verification
 
@@ -135,15 +135,6 @@ Non-goals:
 - **Bash-driver scenario / screenshot / sanitizer**: no screenshot/golden expected. Run sanitizer build after mutation slice because payload building touches user-entered JSON-like data and offline replay.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Manual residue**: one live Linear smoke remains unavoidable unless CI has test credentials: configure a personal API key, fetch one team, sync issues, update a throwaway issue title/label, add a comment, and create a test issue. Track automation follow-up in `docs/backlog/agent-self-improvement/tooling.md` if this remains manual at ship time.
-
-## Out of scope (flagged, not designed)
-
-- **Linear OAuth app flow**: future plan if Smatchet needs shared/team installs rather than local personal tokens.
-- **Webhook-driven incremental sync**: future plan; not needed for parity with Jira/Plane polling.
-- **Attachment upload/download**: future plan because Linear's file storage auth is its own flow.
-- **GraphQL schema generation**: no action; hand-written queries are smaller and adequate for the narrow tracker surface.
-- **Linear-native query UI**: follow-up only if the JQL-subset translator proves too limiting.
-- **Multi-team aggregation**: single active team first; multi-team views need a separate UX decision and more pagination/rate-limit work.
 
 ## Implementation log
 
