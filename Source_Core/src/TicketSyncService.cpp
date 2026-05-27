@@ -441,6 +441,9 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     if (activeStreamingSync_.WorkerThread.joinable()) {
         activeStreamingSync_.WorkerThread.join();
     }
+    // Reset per-session empty-sync counter so stale state from a previous run
+    // doesn't carry over and trigger an unexpected wipe on the very first batch.
+    consecutiveEmptyFullSyncs_ = 0;
 
     SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
 
