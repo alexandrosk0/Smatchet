@@ -20,22 +20,22 @@ check() {
     fi
 }
 
-# Unexempted printf/fprintf/cerr/cout in Source_Core or Plugins
-check "no unexempted printf/fprintf/cerr in Source_Core+Plugins" \
+# Unexempted printf/fprintf/cerr/cout in Source_Core, Plugins, or Target_Standalone
+check "no unexempted printf/fprintf/cerr in Source_Core+Plugins+Target_Standalone" \
     "grep -rn --include='*.cpp' --include='*.h' \
         '\bprintf\b\|\bfprintf\b\|\bstd::cerr\b\|\bstd::cout\b' \
-        Source_Core/ Plugins/ \
+        Source_Core/ Plugins/ Target_Standalone/ \
     | grep -v '// CLI stdout\|// pre-logger-init\|// C-ABI\|// custom-deleter\|// pimpl\|ThirdParty/\|#include\|//.*printf'"
 
-# Unexempted raw new in Source_Core or Plugins:
+# Unexempted raw new in Source_Core, Plugins, or Target_Standalone:
 # - exclude known-exempt comment markers
 # - exclude lines where 'new' only appears inside a string literal or doc comment
 # - exclude lines that are pure doc/comments (* prefix or // prefix)
 # - exclude keyword/string arrays and string comparisons
-check "no unexempted raw new in Source_Core+Plugins" \
+check "no unexempted raw new in Source_Core+Plugins+Target_Standalone" \
     "grep -rn --include='*.cpp' --include='*.h' \
         '\bnew\b' \
-        Source_Core/ Plugins/ \
+        Source_Core/ Plugins/ Target_Standalone/ \
     | grep -v '// C-ABI\|// custom-deleter\|// pimpl\|NOLINT\|ThirdParty/\|//.*new\|#\|_new\|new_\|renewed' \
     | grep -v '^\s*\*\|^\s*//' \
     | grep -v '\"[^\"]*new[^\"]*\"' \
