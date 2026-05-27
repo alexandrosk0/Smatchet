@@ -1,7 +1,7 @@
 #pragma once
 
 // Depend on the small POD-types header rather than the heavyweight
-// JiraClient.h → ITrackerClient.h → LocalCacheManager.h (SQLite) cascade.
+// JiraClient.h → ITrackerBackend.h → LocalCacheManager.h (SQLite) cascade.
 // Lets the doctest rig under tests/ link this parser without dragging SQLite
 // / cpr / ConfigManager into SmatchetTests.
 #include "TrackerFieldSchema.h"

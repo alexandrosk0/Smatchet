@@ -30,7 +30,7 @@ class Logger {
     void SetMinLevel(LogLevel minLevel);
     LogLevel GetMinLevel() const;
 
-    /** When true, ITrackerClient may log truncated HTTP response bodies at Trace. */
+    /** When true, tracker backends may log truncated HTTP response bodies at Trace. */
     void SetLogTrackerHttpBodies(bool enabled);
     bool GetLogTrackerHttpBodies() const;
 
@@ -105,8 +105,8 @@ class Logger {
     // taken: lifecycle FIRST, then m_fileSinkMutex.
     mutable std::mutex m_fileSinkLifecycleMutex;
     mutable std::mutex m_fileSinkMutex;
-    std::condition_variable m_fileSinkCv;     // worker wakes on queue/shutdown/flush request
-    std::condition_variable m_fileSinkAckCv;  // FlushFileSink waits on this for ack publish
+    std::condition_variable m_fileSinkCv;    // worker wakes on queue/shutdown/flush request
+    std::condition_variable m_fileSinkAckCv; // FlushFileSink waits on this for ack publish
     std::deque<LogEntry> m_fileSinkQueue;
     std::string m_fileSinkPath;
     std::thread m_fileSinkThread;
@@ -139,18 +139,8 @@ class Logger {
 // Indirection through a helper function so callers don't have to pull
 // nlohmann/json + the SmatchetAgentDebug.h header into every TU. The
 // helper is defined in Logger.cpp when SMATCHET_AGENT_DEBUG is ON.
-void SmatchetAgentDebugLogBridge(const char* category,
-                                 const char* file,
-                                 int line,
-                                 const std::string& msg);
-#  define LOG_AGENT_DEBUG(category, msg) \
-      ::SmatchetAgentDebugLogBridge((category), __FILE__, __LINE__, (msg))
+void SmatchetAgentDebugLogBridge(const char* category, const char* file, int line, const std::string& msg);
+#define LOG_AGENT_DEBUG(category, msg) ::SmatchetAgentDebugLogBridge((category), __FILE__, __LINE__, (msg))
 #else
-#  define LOG_AGENT_DEBUG(category, msg) LOG_DEBUG("[agent-debug:%s] %s", (category), (msg).c_str())
+#define LOG_AGENT_DEBUG(category, msg) LOG_DEBUG("[agent-debug:%s] %s", (category), (msg).c_str())
 #endif
-
-
-
-
-
-

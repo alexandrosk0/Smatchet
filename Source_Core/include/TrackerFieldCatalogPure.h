@@ -1,7 +1,7 @@
 #pragma once
 
 // Pure JSON / vector helpers extracted from TrackerFieldCatalog.cpp.
-// Zero ImGui / cpr / SQLite / JiraClient / ITrackerClient / ConfigManager
+// Zero ImGui / cpr / SQLite / JiraClient / ITrackerBackend / ConfigManager
 // includes — safe to link from the doctest rig under tests/.
 //
 // Production callers (`Source_Core/src/TrackerFieldCatalog.cpp`) keep their

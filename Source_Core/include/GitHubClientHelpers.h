@@ -24,7 +24,7 @@ struct ParsedIssueKey {
 /// `alexandrosk0/Smatchet#42`). Strict — exactly one `/` separates owner from
 /// repo, exactly one `#` separates repo from number, the number is a positive
 /// integer. Returns false + leaves `out` unchanged on any mismatch.
-/// Used by `ITrackerClient::UpdateField` + every URL-building path; the
+/// Used by `ITrackerIssueMutations::UpdateField` + every URL-building path; the
 /// CONTEXT.md glossary § TrackerIssueKey cross-link is the contract anchor.
 bool ParseGitHubIssueKey(const std::string& issueKey, ParsedIssueKey& out);
 

@@ -66,9 +66,15 @@ def main() -> int:
         return 0  # headers are checked indirectly via dependent .cpp edits
 
     project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
-    cc_path = project / "build" / "ninja-iter-msvc" / "compile_commands.json"
-    if not cc_path.is_file():
-        return 0  # build not configured yet — degrade silently
+    # Prefer ninja-iter-clang: clang-cl knows its own system headers and supports
+    # -fsyntax-only natively. ninja-iter-msvc requires a VS Developer Environment
+    # for cl.exe to resolve standard headers, which hook processes don't have.
+    for preset in ("ninja-iter-clang", "ninja-iter-msvc"):
+        cc_path = project / "build" / preset / "compile_commands.json"
+        if cc_path.is_file():
+            break
+    else:
+        return 0  # no build configured yet — degrade silently
 
     try:
         entries = json.loads(cc_path.read_text(encoding="utf-8"))
@@ -82,12 +88,39 @@ def main() -> int:
 
     env = _ensure_toolchain_on_path(os.environ.copy())
 
+    # Lines matching these patterns are always false positives in the hook
+    # environment: PCH built by a different toolchain / not present, or system
+    # headers unreachable without the VS Developer shell. cmake --build catches
+    # real compile errors; this hook only surfaces first-party diagnostics.
+    _FP_PATTERNS = re.compile(
+        r"(Cannot open precompiled header|"
+        r"PCH file .* not found|"
+        r"PCH file .* built from a different branch|"
+        r"Cannot open include file: '(?:cstdint|algorithm|string|vector|memory|"
+        r"functional|utility|type_traits|cassert|cstring|cstdlib|cstdio|cmath|"
+        r"climits|cwchar|stdexcept|iostream|sstream|fstream|chrono|mutex|thread|"
+        r"atomic|tuple|array|map|set|unordered_map|unordered_set|deque|list|"
+        r"iterator|numeric|bitset|locale|codecvt|regex|random|complex|valarray)')"
+    )
+
     failures: list[tuple[str, str]] = []
     for entry in matches:
         cmd = entry["command"]
-        # Strip `-o <obj>` so -fsyntax-only doesn't try to write an output.
+        # Strip output flags so syntax-only doesn't write object files.
         cmd = re.sub(r"-o\s+\S+\.obj", "", cmd)
-        cmd += " -fsyntax-only"
+        cmd = re.sub(r"/Fo\S+", "", cmd)
+        cmd = re.sub(r"/Fd\S+", "", cmd)
+        # MSVC cl.exe uses /Zs (appended); clang-cl uses -fsyntax-only inserted
+        # before the `--` separator (if present) so it is not mistaken for a
+        # filename. Remove -c as well since -fsyntax-only implies no codegen.
+        exe_lower = cmd.split()[0].lower().replace("\\", "/")
+        if exe_lower.endswith("cl.exe") and "clang" not in exe_lower:
+            cmd += " /Zs"
+        elif " -- " in cmd:
+            cmd = re.sub(r"\s+-c\b", "", cmd)
+            cmd = cmd.replace(" -- ", " -fsyntax-only -- ", 1)
+        else:
+            cmd += " -fsyntax-only"
         target = _target_name(entry["command"])
         result = subprocess.run(
             cmd,
@@ -99,7 +132,10 @@ def main() -> int:
         )
         if result.returncode != 0:
             diag = (result.stderr or result.stdout).strip()
-            failures.append((target, diag))
+            # Filter false-positive lines; only report if real diagnostics remain.
+            real_lines = [ln for ln in diag.splitlines() if not _FP_PATTERNS.search(ln)]
+            if real_lines:
+                failures.append((target, "\n".join(real_lines)))
 
     if failures:
         for target, diag in failures:

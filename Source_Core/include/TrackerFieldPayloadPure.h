@@ -12,7 +12,7 @@
  * Pure per-family payload builders for Jira REST `fields` map construction.
  *
  * Lifted from TrackerFieldPayload.cpp to break the transitive include chain
- * (TrackerFieldPayload.h -> JiraClient.h -> ITrackerClient.h -> LocalCacheManager.h
+ * (TrackerFieldPayload.h -> JiraClient.h -> ITrackerBackend.h -> LocalCacheManager.h
  * -> SQLite/cpr) so the per-family logic can be unit-tested under the doctest
  * rig without bringing the HTTP / cache / config stack along.
  *
@@ -30,8 +30,7 @@ namespace TrackerFieldPayloadPure {
 void DecodeCascadingSelection(const std::string& encoded, std::string& outParentId, std::string& outChildId);
 
 /** Depth-first lookup of TrackerFieldOption by Id only (used for label resolution). */
-const TrackerFieldOption* FindOptionById(const std::vector<TrackerFieldOption>& options,
-                                         const std::string& id);
+const TrackerFieldOption* FindOptionById(const std::vector<TrackerFieldOption>& options, const std::string& id);
 
 /** Depth-first lookup of TrackerFieldOption by Id or display Value (grid often stores labels). */
 const TrackerFieldOption* FindOptionByIdOrValue(const std::vector<TrackerFieldOption>& options,

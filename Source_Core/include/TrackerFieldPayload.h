@@ -16,7 +16,7 @@
  * Callers are responsible for:
  *   - Sprint fields: never put them in REST v3 `fields` for create (Jira expects
  *     numeric sprint ids on Agile only). Use `IsSprintField` to skip, then
- *     `ResolveSprintIdForAgile` + `ITrackerClient::AddIssueToSprint` after create.
+ *     `ResolveSprintIdForAgile` + `ITrackerCollaboration::AddIssueToSprint` after create.
  *   - Timetracking containers (merge originalEstimate/remainingEstimate).
  */
 namespace TrackerFieldPayload {

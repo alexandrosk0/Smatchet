@@ -180,7 +180,7 @@ namespace IssueCreatePipeline {
 bool BuildFieldsPayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
                         nlohmann::json& /*outFields*/, std::string& outError) {
     // This method is now just a wrapper for compatibility, but the pipeline should use the client directly.
-    // However, ITrackerClient doesn't have a way to call BuildCreatePayload without an instance.
+    // However, ITrackerBackend doesn't have a way to call BuildCreatePayload without an instance.
     // So we'll keep the signature for now but it's deprecated for polymorphic use.
     outError = "BuildFieldsPayload(draft, catalog, ...) is deprecated; use client.BuildCreatePayload instead.";
     return false;
