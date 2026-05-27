@@ -14,6 +14,16 @@ diagnose → fix → build → commit → push → open PR → [gate-check] → 
 
 All clarifications that the orchestrator anticipates needing are batched **once at the start** via `AskUserQuestion`. Once the user answers, the loop proceeds without further prompts until completion (or until an exception below fires).
 
+**Do-not-pause checklist** — stages where the model is most likely to incorrectly pause for confirmation. At each of these, proceed automatically unless a defined exception applies:
+
+1. **After opening the PR**: start `scripts/dev/merge-gates.sh` polling immediately. DO NOT ask "should I poll?" or "will you check manually?"
+2. **After CodeRabbit posts actionable findings**: fetch the CR comments, assess each finding, fix valid ones, push, and resume polling. DO NOT ask the user whether to address CR findings.
+3. **After `GATES_PASSED`**: squash-merge immediately (when authorised). DO NOT ask "should I merge now?"
+4. **After merge conflicts on rebase**: resolve conflicts autonomously (prefer the semantically correct version), force-push the rebased branch, and resume polling. DO NOT ask which side to keep unless both sides are substantive and ambiguous.
+5. **After squash-merge succeeds**: proceed to git-janitor cleanup and backlog entry. DO NOT ask "anything else?"
+
+The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt after the initial clarification batch.
+
 **Why a default**: harnesses that drip-step every stage create N round-trips for a task that needs one. The user already chose the task; the loop is the cheapest way to deliver it. Other harnesses (Codex / Cursor / Aider) read AGENTS.md and need the rule too — user-private memory is not portable.
 
 **Exceptions** (loop pauses or stops):
