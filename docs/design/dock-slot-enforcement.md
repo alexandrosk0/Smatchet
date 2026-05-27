@@ -138,3 +138,7 @@ DockId=0x0000000A,9
 2. Launch Smatchet, open every content window via menu — verify all dock into slots, none float
 3. Delete `imgui.ini`, restart — verify all windows still dock correctly on fresh start
 4. Try to drag a window out of its dock slot — verify `NoUndocking` prevents it
+
+## Implementation log
+
+Implemented in `f081d80` (2026-05-27). All planned changes landed as described — no deviations.
