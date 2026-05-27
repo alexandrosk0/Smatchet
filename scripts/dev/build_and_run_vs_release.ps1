@@ -1,6 +1,6 @@
 <#.
-    Configure, build, and run SmatchetStandalone using the ninja-publish-msys2 preset.
-    Thin shim over build_and_run.ps1 -Preset ninja-publish-msys2.
+    Configure, build, and run SmatchetStandalone using the ninja-publish-msvc preset.
+    Thin shim over build_and_run.ps1 -Preset ninja-publish-msvc.
 
     Examples:
       .\scripts\dev\build_and_run_vs_release.ps1
@@ -15,4 +15,4 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $buildAndRun = Join-Path $PSScriptRoot "build_and_run.ps1"
-& $buildAndRun -Preset "ninja-publish-msys2" -StandaloneArgs $StandaloneArgs
+& $buildAndRun -Preset "ninja-publish-msvc" -StandaloneArgs $StandaloneArgs

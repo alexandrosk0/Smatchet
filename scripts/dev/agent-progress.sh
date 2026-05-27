@@ -8,7 +8,7 @@
 # Usage:
 #   bash scripts/dev/agent-progress.sh "<phase>: <one-line message>"
 #   bash scripts/dev/agent-progress.sh start "cutting feat/foo branch off develop"
-#   bash scripts/dev/agent-progress.sh gate "ninja-test-msys2 building"
+#   bash scripts/dev/agent-progress.sh gate "ninja-test-msvc building"
 #
 # Phase conventions (suggested, not enforced):
 #   start | lock | design | code | test | gate | commit | push | pr | end

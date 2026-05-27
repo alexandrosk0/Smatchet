@@ -11,14 +11,14 @@
 
 set -euo pipefail
 
-EXE="${SMATCHET_EXE:-build/ninja-ui-test-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58741}"
 # Substring filter matches _EnterSubmits / _CtrlEnterNewline / _EmptySubmitGuarded.
 FILTER="${UI_TEST_FILTER:-AssistantInput}"
 
 if [ ! -f "$EXE" ]; then
-    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone" >&2
+    echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2
     exit 2
 fi
 
@@ -43,7 +43,7 @@ echo
 echo "Result: passed=$PASSED failed=$FAILED log=$LOG"
 
 if [ "$LOG" = "build had SMATCHET_BUILD_UI_TESTS=OFF" ]; then
-    echo "FAIL: build had SMATCHET_BUILD_UI_TESTS=OFF — rebuild with ninja-ui-test-msys2." >&2
+    echo "FAIL: build had SMATCHET_BUILD_UI_TESTS=OFF — rebuild with ninja-ui-test-msvc." >&2
     echo "Passed: 0  Failed: 0"
     exit 2
 fi

@@ -222,7 +222,7 @@ fi
 
 # Env-prefix variant: `MSYS2_PATH_TYPE=inherit cmake --build …` must still match.
 : > "$CLAUDE_DIR/.tree-dirty"
-echo '{"tool_input": {"command": "MSYS2_PATH_TYPE=inherit cmake --build --preset ninja-test-msys2"}}' \
+echo '{"tool_input": {"command": "MSYS2_PATH_TYPE=inherit cmake --build --preset ninja-test-msvc"}}' \
     | bash "$HOOKS_DIR/clear-tree-dirty.sh"
 if [[ ! -e "$CLAUDE_DIR/.tree-dirty" ]]; then
     ok ".tree-dirty cleared with env-var prefix"

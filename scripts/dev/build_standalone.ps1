@@ -7,7 +7,7 @@
     Examples:
       .\scripts\dev\build_standalone.ps1
       .\scripts\dev\build_standalone.ps1 -Preset ninja-iter-msvc
-      .\scripts\dev\build_standalone.ps1 -Preset ninja-debug-unreal-msys2 -Target SmatchetPackageUnrealLibs_DX12
+      .\scripts\dev\build_standalone.ps1 -Preset ninja-iter-unreal-msvc -Target SmatchetPackageUnrealLibs_DX12
       .\scripts\dev\build_standalone.ps1 -ForceConfigure
       .\scripts\dev\build_standalone.ps1 -Preset ninja-publish-msvc -CleanFirst
 #>

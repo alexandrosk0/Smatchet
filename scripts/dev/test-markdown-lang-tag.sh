@@ -20,12 +20,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-TESTS_EXE="${SMATCHET_TESTS_EXE:-build/ninja-test-msys2/tests/SmatchetTests.exe}"
+TESTS_EXE="${SMATCHET_TESTS_EXE:-build/ninja-test-msvc/tests/SmatchetTests.exe}"
 
 if [ ! -x "$TESTS_EXE" ]; then
     echo "SmatchetTests.exe missing at $TESTS_EXE — configuring + building..."
-    cmake --preset ninja-test-msys2 >/dev/null 2>&1 || { echo "cmake preset failed"; exit 2; }
-    cmake --build --preset ninja-test-msys2 --target SmatchetTests 2>&1 | tail -5 || {
+    cmake --preset ninja-test-msvc >/dev/null 2>&1 || { echo "cmake preset failed"; exit 2; }
+    cmake --build --preset ninja-test-msvc --target SmatchetTests 2>&1 | tail -5 || {
         echo "build failed"
         exit 2
     }

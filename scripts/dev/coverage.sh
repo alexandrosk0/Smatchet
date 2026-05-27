@@ -13,8 +13,8 @@
 #
 # Env overrides:
 #   SMATCHET_COVERAGE_BUILD_DIR   build dir to read tests from. Default: pick the
-#                                 first existing of build/ninja-coverage-msys2/,
-#                                 build/ninja-test-msys2/.
+#                                 first existing of build/ninja-test-msvc/,
+#                                 build/ninja-test-msvc/.
 #   SMATCHET_COVERAGE_OUTPUT_DIR  output dir for coverage artifacts. Default: coverage/
 #   OPENCPPCOVERAGE_EXE           path to OpenCppCoverage.exe. Default: `OpenCppCoverage`
 #                                 from PATH (Chocolatey install lands at
@@ -30,7 +30,7 @@
 #
 # POSIX fallback recipe (DOCUMENTED, NOT WIRED HERE):
 #   apt-get install -y lcov          # gcov ships with gcc
-#   cmake -B build/cov --preset ninja-coverage-msys2  # gcov flags already in preset
+#   cmake -B build/cov --preset ninja-test-msvc  # gcov flags already in preset
 #   cmake --build build/cov --target SmatchetTests SmatchetLuaTests
 #   (cd build/cov && ctest --output-on-failure)
 #   lcov --capture --directory build/cov --output-file coverage/coverage.info \
@@ -65,7 +65,7 @@ done
 # Resolve the build dir holding the test binaries.
 BUILD_DIR="${SMATCHET_COVERAGE_BUILD_DIR:-}"
 if [ -z "$BUILD_DIR" ]; then
-    for candidate in build/ninja-coverage-msys2 build/ninja-test-msys2; do
+    for candidate in build/ninja-test-msvc build/ninja-test-msvc; do
         if [ -d "$candidate" ]; then
             BUILD_DIR="$candidate"
             break
@@ -74,8 +74,8 @@ if [ -z "$BUILD_DIR" ]; then
 fi
 if [ -z "$BUILD_DIR" ] || [ ! -d "$BUILD_DIR" ]; then
     echo "FAIL: no usable build directory. Configure + build a tests preset first:" >&2
-    echo "  cmake -B build/ninja-coverage-msys2 --preset ninja-coverage-msys2" >&2
-    echo "  cmake --build --preset ninja-coverage-msys2 --target SmatchetTests SmatchetLuaTests" >&2
+    echo "  cmake -B build/ninja-test-msvc --preset ninja-test-msvc" >&2
+    echo "  cmake --build --preset ninja-test-msvc --target SmatchetTests SmatchetLuaTests" >&2
     exit 2
 fi
 

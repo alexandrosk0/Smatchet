@@ -4,7 +4,7 @@
     Examples:
       .\scripts\dev\build_and_run.ps1
       .\scripts\dev\build_and_run.ps1 -Preset ninja-iter-msvc
-      .\scripts\dev\build_and_run.ps1 -Preset ninja-debug-unreal-msys2 -Target SmatchetPackageUnrealLibs_DX12
+      .\scripts\dev\build_and_run.ps1 -Preset ninja-iter-unreal-msvc -Target SmatchetPackageUnrealLibs_DX12
       .\scripts\dev\build_and_run.ps1 -BuildOnly
       .\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','C:\tmp\config.json'
 
