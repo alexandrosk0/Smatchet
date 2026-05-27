@@ -137,9 +137,11 @@ void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
             } catch (const std::exception& ex) {
                 r.Kind = TrackerReachabilityProbeKind::TransportDown;
                 r.Diagnostic = std::string("probe future exception: ") + ex.what();
+                LOG_WARN("TrackerConnectivityProbe: future get failed: %s", ex.what());
             } catch (...) {
                 r.Kind = TrackerReachabilityProbeKind::TransportDown;
                 r.Diagnostic = "probe future exception: unknown";
+                LOG_WARN("TrackerConnectivityProbe: future get failed: unknown exception");
             }
             trackerConnectivityProbeInFlight_ = false;
             ApplyTrackerConnectivityProbeResult(now, r);

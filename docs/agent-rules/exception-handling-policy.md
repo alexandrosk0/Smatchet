@@ -43,7 +43,7 @@ Mark these with `// catch-all-ok: <reason>` so the lint check skips them.
 
 ## Lint enforcement
 
-`docs/harness/claude-code/hooks/lint-syntax-both.py` flags:
+`docs/harness/claude-code/hooks/lint-catch-all.py` flags:
 - `catch (...) {}` or `catch (...) { }` (empty body) as **ERROR**
 - `catch (...)` with no `LOG_` call in the body as **WARNING**
 - Suppressed by `// catch-all-ok:` on the catch line or in the body

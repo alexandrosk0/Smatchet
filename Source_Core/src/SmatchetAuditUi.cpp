@@ -1,5 +1,6 @@
 #include "SmatchetUI.h"
 #include "BackendAuditTrail.h"
+#include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
 #include "imgui.h"
@@ -23,7 +24,7 @@ void DrainAuditReloadFuture(UiDrawSession& d) {
     d.auditReloadFuture.wait();
     try {
         (void)d.auditReloadFuture.get();
-    } catch (...) {
+    } catch (...) { // catch-all-ok: swallow future exception on audit reload drain
     }
     d.auditReloadInFlight = false;
     d.auditReloadPending = false;
@@ -122,7 +123,7 @@ constexpr auto kAuditFilePollInterval = std::chrono::milliseconds(750);
 static std::string AuditJsonDump(const nlohmann::json& j) {
     try {
         return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    } catch (...) {
+    } catch (...) { // catch-all-ok: dump for display
         return "[serialization failed]";
     }
 }
@@ -183,6 +184,7 @@ bool TryCompleteAuditReload(UiDrawSession& d) {
         d.auditCachedDataJson.clear();
         d.auditCachedSearchLower.clear();
     } catch (...) {
+        LOG_WARN("SmatchetAuditUi: audit reload failed: unknown exception");
         d.auditReloadInFlight = false;
         d.auditCachedReadError = "Audit reload failed: unknown exception.";
         d.auditCachedEvents.clear();
@@ -379,7 +381,3 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
                         "1000+ events.");
     ImGui::End();
 }
-
-
-
-
