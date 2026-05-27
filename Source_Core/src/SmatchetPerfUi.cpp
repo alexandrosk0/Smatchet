@@ -229,7 +229,7 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
         ImGui::SetNextWindowFocus();
     }
     if (ImGui::Begin("Performance", pOpen)) {
-        if (!ImGui::IsWindowDocked()) {
+        if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0)) {
             s_needsReDock = true;
         }
         if (wantFocus) {

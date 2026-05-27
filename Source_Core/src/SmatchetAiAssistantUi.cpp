@@ -1016,7 +1016,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         ImGui::SetWindowFocus();
         d.requestAssistantFocus = false;
     }
-    if (!ImGui::IsWindowDocked()) {
+    if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0)) {
         s_assistantNeedsReDock = true;
     }
 

@@ -125,7 +125,7 @@ void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, f
     }
     // Window is floating — schedule force-dock on next frame if it has a registered slot.
     const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
-    if (slot != 0) {
+    if (slot != 0 && !ImGui::IsMouseDown(0)) {
         d.pendingReDockWindows.insert(layoutKey);
         return;
     }
