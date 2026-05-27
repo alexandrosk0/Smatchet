@@ -74,7 +74,7 @@ void AppController::PushOfflineReplayTimersDuringTransportOutage(std::chrono::st
 }
 
 void AppController::ApplyTrackerConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
-                                                     const TrackerReachabilityProbeResult& r) {
+                                                        const TrackerReachabilityProbeResult& r) {
     const TrackerConnectivityState prev = lastTrackerConnectivityState_;
     const TrackerConnectivityState next = MapReachabilityProbeKind(r.Kind);
     lastTrackerConnectivityState_ = next;
@@ -91,8 +91,8 @@ void AppController::ApplyTrackerConnectivityProbeResult(const std::chrono::stead
          prev == TrackerConnectivityState::ReachableAuthOrConfigError);
     // First successful probe after startup can be Unknown -> AuthenticatedReachable while we still show
     // an offline/snapshot catalog banner from cache or a failed fetch; nudge a live catalog refresh.
-    const bool coldStartCatalogBanner =
-        (prev == TrackerConnectivityState::Unknown && nowAuthenticatedReachable && !LastTrackerFieldCatalogWarning.empty());
+    const bool coldStartCatalogBanner = (prev == TrackerConnectivityState::Unknown && nowAuthenticatedReachable &&
+                                         !LastTrackerFieldCatalogWarning.empty());
     if (nowAuthenticatedReachable && (wasConnectivityDegraded || coldStartCatalogBanner)) {
         if (!trackerConnectivityRecoveryPending_) {
             trackerConnectivityRecoveryPending_ = true;
@@ -147,11 +147,10 @@ void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
 
     // No explicit auth check here; each backend handles its own config validation in ProbeReachability.
 
-
     try {
-        ITrackerClient* backend = Backend.get();
+        ITrackerBackend* backend = Backend.get();
         trackerConnectivityProbeFuture_ =
-            std::async(std::launch::async, [backend, cfg]() { return backend->ProbeReachability(cfg); });
+            std::async(std::launch::async, [backend, cfg]() { return backend->Connectivity().ProbeReachability(cfg); });
         trackerConnectivityProbeInFlight_ = true;
     } catch (...) {
         nextTrackerConnectivityProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
@@ -258,7 +257,8 @@ void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessi
 
 } // namespace
 
-TrackerConnectivityBannerForUi AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote) const {
+TrackerConnectivityBannerForUi
+AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote) const {
     TrackerConnectivityBannerForUi out;
     const std::string& ce = LastTrackerFieldCatalogError;
     const std::string& cw = LastTrackerFieldCatalogWarning;
@@ -343,9 +343,3 @@ bool AppController::ConsumeTrackerConnectivityRecovery() {
     LOG_INFO("AppController: consumed tracker connectivity recovery latch.");
     return true;
 }
-
-
-
-
-
-

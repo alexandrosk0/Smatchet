@@ -2,7 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
 #include "JqlProjectScope.h"
 #include "FieldCatalogCache.h"
 #include "SmatchetAutocompleteUi.h"
@@ -309,8 +309,9 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
     // Plane: PR 4 Plane pill UX TBD — queries are structured JSON and warrant a distinct UX.
     if (d.cfg.TrackerType != "Plane") {
         const std::string currentJql(d.viewJqlBuf);
-        const ITrackerClient* backend = app.GetTrackerBackend();
-        const std::string scopeProj = backend ? backend->ExtractProjectFromQuery(currentJql) : std::string();
+        const ITrackerBackend* backend = app.GetTrackerBackend();
+        const std::string scopeProj =
+            backend ? backend->Connectivity().ExtractProjectFromQuery(currentJql) : std::string();
         const bool single = !scopeProj.empty();
         const char* pillLabel = nullptr;
         std::string pillBuf;
@@ -335,11 +336,10 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s",
-                              SmatchetLocalization::T(single ? "view.projectPill.tooltip.single"
-                                                             : "view.projectPill.tooltip.multi",
-                                                      single
-                                                          ? "Active view is scoped to a single project. Click to switch project."
-                                                          : "Active view spans multiple projects. Click to pick a single project."));
+                              SmatchetLocalization::T(
+                                  single ? "view.projectPill.tooltip.single" : "view.projectPill.tooltip.multi",
+                                  single ? "Active view is scoped to a single project. Click to switch project."
+                                         : "Active view spans multiple projects. Click to pick a single project."));
         }
         if (ImGui::BeginPopup("##ProjectPillPopup")) {
             std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
@@ -365,8 +365,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
                 ++shown;
             }
             if (shown == 0) {
-                ImGui::TextDisabled("%s",
-                                    SmatchetLocalization::T("view.projectPill.empty", "(no cached projects)"));
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("view.projectPill.empty", "(no cached projects)"));
             }
             ImGui::EndPopup();
         }

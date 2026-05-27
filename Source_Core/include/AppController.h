@@ -33,7 +33,7 @@
 #include <unordered_set>
 #include <future>
 #include "LocalCacheManager.h"
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
 #include "MainThreadDispatcher.h"
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
@@ -612,10 +612,10 @@ class AppController
     /** Read-only accessor used by UI sites (e.g. `ResolveProjectForDraft`) to call
      *  `ITrackerClient::ExtractProjectFromQuery` / `GetTrackerType`. May be null before
      *  `Initialize` has wired up the factory. Do not retain the pointer past the current frame. */
-    const ITrackerClient* GetTrackerBackend() const { return Backend.get(); }
+    const ITrackerBackend* GetTrackerBackend() const { return Backend.get(); }
     // PR 4b: non-const accessor for callers that invoke mutating client methods (e.g.
     // ListProjects() which populates a per-client in-memory cache).
-    ITrackerClient* GetTrackerBackendMutable() { return Backend.get(); }
+    ITrackerBackend* GetTrackerBackendMutable() { return Backend.get(); }
 
     // ---- Create issue flow -------------------------------------------------
 
@@ -800,7 +800,7 @@ class AppController
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory>
         backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
-    std::unique_ptr<ITrackerClient> Backend;
+    std::unique_ptr<ITrackerBackend> Backend;
     /// Implements `IOfflineQueueDeps` + `ITicketSyncDeps`. Constructed eagerly in `Initialize`
     /// before `offlineQueue_` / `ticketSync_` so they can capture an interface reference at
     /// construction time. The adapter never outlives this AppController (owned by it), so the
@@ -1059,7 +1059,6 @@ class AppController
     // still post to the dispatcher during its shutdown drain.
     std::unique_ptr<AiAssistantController> aiAssistant_;
 #endif
-
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     struct AutomationJob {

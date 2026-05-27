@@ -1,7 +1,7 @@
 #include "SmatchetProjectPicker.h"
 
 #include "FieldCatalogCache.h"
-#include "ITrackerClient.h"
+#include "ITrackerConnectivity.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "StringUtil.h"
@@ -40,7 +40,7 @@ std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind)
 
 namespace SmatchetProjectPicker {
 
-bool Draw(const char* idScope, State& state, ITrackerClient* client, const std::string& backendKind,
+bool Draw(const char* idScope, State& state, ITrackerConnectivity* client, const std::string& backendKind,
           const std::string& endpoint, std::string& selectedKey) {
     ImGui::PushID(idScope);
     bool changed = false;
@@ -89,8 +89,7 @@ bool Draw(const char* idScope, State& state, ITrackerClient* client, const std::
 
         // --- All projects (collapsible, lazy). ---
         ImGui::Separator();
-        const char* allLabel =
-            SmatchetLocalization::T("draft.project.section.all", "All projects");
+        const char* allLabel = SmatchetLocalization::T("draft.project.section.all", "All projects");
         if (ImGui::TreeNodeEx(allLabel, state.allExpanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
             state.allExpanded = true;
 
@@ -98,7 +97,7 @@ bool Draw(const char* idScope, State& state, ITrackerClient* client, const std::
             if (!state.fetchDone.load() && !state.fetchInFlight.load() && client != nullptr) {
                 state.fetchInFlight.store(true);
                 State* statePtr = &state;
-                ITrackerClient* clientPtr = client;
+                ITrackerConnectivity* clientPtr = client;
                 std::thread([statePtr, clientPtr]() {
                     std::vector<RemoteProject> projects;
                     std::string err;
@@ -120,8 +119,7 @@ bool Draw(const char* idScope, State& state, ITrackerClient* client, const std::
             }
 
             if (state.fetchInFlight.load() && !state.fetchDone.load()) {
-                ImGui::TextDisabled("  %s",
-                                    SmatchetLocalization::T("draft.project.loading", "Loading..."));
+                ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.loading", "Loading..."));
             } else {
                 std::vector<RemoteProject> snapshot;
                 {

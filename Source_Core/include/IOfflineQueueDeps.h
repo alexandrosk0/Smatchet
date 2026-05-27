@@ -26,7 +26,6 @@
 #include "TrackerFieldSchema.h" // for TrackerField
 
 class LocalCacheManager;
-class ITrackerClient;
 class ITrackerIssueReader;
 class ITrackerIssueMutations;
 
@@ -38,11 +37,7 @@ class IOfflineQueueDeps {
     /// `RecreateLocalCacheDatabase` has torn it down. Callers must null-check.
     virtual LocalCacheManager* Cache() = 0;
 
-    /// Active tracker backend (Jira / Plane / fake). May be null in the same windows as
-    /// `Cache()`. Replay tick guards on both before issuing live requests.
-    virtual ITrackerClient* Backend() = 0;
-
-    /// Narrow read accessor — use instead of Backend() when only fetch operations are needed.
+    /// Narrow read accessor — used by replay paths that need to fetch issue data.
     virtual ITrackerIssueReader* Reader() = 0;
 
     /// Narrow mutation accessor — use instead of Backend() when only mutation operations are needed.

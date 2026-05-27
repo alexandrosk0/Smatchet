@@ -1,6 +1,11 @@
 #pragma once
 
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
+#include "ITrackerCollaboration.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerFieldCatalog.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 #include "ConfigManager.h"
 #include <string>
 #include <vector>
@@ -8,8 +13,18 @@
 #include <unordered_map>
 #include <mutex>
 
-class PlaneClient : public ITrackerClient {
+class PlaneClient : public ITrackerBackend,
+                    public ITrackerIssueReader,
+                    public ITrackerConnectivity,
+                    public ITrackerFieldCatalog,
+                    public ITrackerIssueMutations,
+                    public ITrackerCollaboration {
   public:
+    ITrackerIssueReader& Reader() override;
+    ITrackerConnectivity& Connectivity() override;
+    ITrackerFieldCatalog* FieldCatalog() override;
+    ITrackerIssueMutations* Mutations() override;
+    ITrackerCollaboration* Collaboration() override;
     PlaneClient();
     ~PlaneClient() override;
     std::string GetTrackerType() const override { return "Plane"; }

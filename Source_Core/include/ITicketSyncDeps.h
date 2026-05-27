@@ -27,7 +27,7 @@
 
 #include "LocalCacheManager.h" // for CachedTicket (in vector & shared_ptr returns)
 
-class ITrackerClient;
+class ITrackerBackend;
 class ITrackerIssueReader;
 class ITrackerConnectivity;
 class ITrackerBackendFactory;
@@ -57,7 +57,7 @@ class ITicketSyncDeps {
     virtual ITrackerConnectivity* BackendConnectivity() = 0;
     /// Swap the active backend (e.g. when the user changes tracker type from Jira to Plane).
     /// Takes ownership; passing `nullptr` clears the backend.
-    virtual void SetBackend(std::unique_ptr<ITrackerClient> backend) = 0;
+    virtual void SetBackend(std::unique_ptr<ITrackerBackend> backend) = 0;
     /// Factory for creating fresh `ITrackerClient` instances when the tracker type changes.
     /// May be null if `Initialize` has not yet wired the default factory.
     virtual ITrackerBackendFactory* BackendFactory() = 0;

@@ -205,8 +205,9 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                 const std::vector<std::string>& inheritIds =
                     (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
                 // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
+                const ITrackerBackend* b = app.GetTrackerBackend();
                 const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-                    app.GetTrackerBackend(), cfg.JqlQuery, lastVisibleTicket->id, std::string());
+                    b ? &b->Connectivity() : nullptr, cfg.JqlQuery, lastVisibleTicket->id, std::string());
                 d.newIssueDraft =
                     IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, app.GetAvailableFields(), resolvedProject,
                                                         cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
@@ -442,8 +443,9 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             const std::string endpoint =
                 (cfg.TrackerType == "Plane") ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug) : cfg.Domain;
             std::string sel = d.newIssueDraft.ProjectKey;
+            ITrackerBackend* bm = app.GetTrackerBackendMutable();
             if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState,
-                                            app.GetTrackerBackendMutable(), backendKind, endpoint, sel)) {
+                                            bm ? &bm->Connectivity() : nullptr, backendKind, endpoint, sel)) {
                 d.newIssueDraft.ProjectKey = sel;
                 d.newIssueDraft.FieldValues[fieldId] = sel;
                 d.newIssueQueueFallbackVisible = false;

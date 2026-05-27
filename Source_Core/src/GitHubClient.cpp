@@ -62,6 +62,12 @@ cpr::Header BuildGitHubHeaders(const std::string& pat) {
 
 using smatchet::github::BuildGitHubHeaders;
 
+ITrackerIssueReader& GitHubClient::Reader() { return *this; }
+ITrackerConnectivity& GitHubClient::Connectivity() { return *this; }
+ITrackerFieldCatalog* GitHubClient::FieldCatalog() { return this; }
+ITrackerIssueMutations* GitHubClient::Mutations() { return this; }
+ITrackerCollaboration* GitHubClient::Collaboration() { return nullptr; }
+
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
     : baseUrl_(baseUrl.empty() ? std::string("https://api.github.com") : baseUrl), pat_(pat) {
     LOG_INFO("GitHubClient: ctor baseUrl='%s' pat_bytes=%zu", baseUrl_.c_str(), pat_.size());

@@ -859,8 +859,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         d.fieldCatalogFetchStarted = true;
         const ViewDefinition* activeView = ViewState.GetActiveView();
         const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
+        const ITrackerBackend* pb = app.GetTrackerBackend();
         const std::string projectKey =
-            smatchet::ResolveProjectForDraft(app.GetTrackerBackend(), jql, std::string(), std::string());
+            smatchet::ResolveProjectForDraft(pb ? &pb->Connectivity() : nullptr, jql, std::string(), std::string());
         d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, projectKey);
     };
 

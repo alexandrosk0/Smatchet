@@ -142,6 +142,12 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
 } // namespace plane_detail
 } // namespace smatchet
 
+ITrackerIssueReader& PlaneClient::Reader() { return *this; }
+ITrackerConnectivity& PlaneClient::Connectivity() { return *this; }
+ITrackerFieldCatalog* PlaneClient::FieldCatalog() { return this; }
+ITrackerIssueMutations* PlaneClient::Mutations() { return this; }
+ITrackerCollaboration* PlaneClient::Collaboration() { return nullptr; }
+
 PlaneClient::PlaneClient() : planeProjectId_(""), planeProjectIdentifier_("") {}
 
 PlaneClient::~PlaneClient() {}

@@ -51,7 +51,6 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     };
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
-    ITrackerClient* Backend() override { return BackendImpl.get(); }
     ITrackerIssueReader* Reader() override { return BackendImpl.get(); }
     ITrackerIssueMutations* Mutations() override { return BackendImpl.get(); }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }

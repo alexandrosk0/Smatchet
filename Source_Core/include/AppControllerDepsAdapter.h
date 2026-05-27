@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
 
 class AppController;
 class LocalCacheManager;
@@ -38,7 +38,6 @@ class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDep
 
     // ---- IOfflineQueueDeps ------------------------------------------------------------
     LocalCacheManager* Cache() override;
-    ITrackerClient* Backend() override;
     ITrackerIssueReader* Reader() override;
     ITrackerIssueMutations* Mutations() override;
     const std::vector<TrackerField>& AvailableFields() const override;
@@ -49,10 +48,9 @@ class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDep
     void RequestDeferredLiveTrackerBackendSuccessNotify() override;
 
     // ---- ITicketSyncDeps --------------------------------------------------------------
-    // `Cache()` and `Backend()` are already declared above; they're shared between the two
-    // interfaces. The compiler resolves the diamond via the single overriding method.
+    ITrackerIssueReader* Backend() override;
     ITrackerConnectivity* BackendConnectivity() override;
-    void SetBackend(std::unique_ptr<ITrackerClient> backend) override;
+    void SetBackend(std::unique_ptr<ITrackerBackend> backend) override;
     ITrackerBackendFactory* BackendFactory() override;
     void SetLastTrackerTicketSyncWarning(const std::string& message) override;
     void SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) override;

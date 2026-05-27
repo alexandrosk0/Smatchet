@@ -3,9 +3,9 @@
 #include <memory>
 #include <string>
 
-class ITrackerClient;
+class ITrackerBackend;
 
-/// Abstraction that creates concrete `ITrackerClient` instances by tracker-type name.
+/// Abstraction that creates concrete `ITrackerBackend` instances by tracker-type name.
 ///
 /// `AppController` owns one of these and asks it for a backend whenever the active tracker
 /// type changes. `main.cpp` (or an embedding host such as Unreal) may inject a custom
@@ -25,5 +25,5 @@ class ITrackerBackendFactory {
     /// should fall back to a sensible default (`JiraClient` in the default impl) rather
     /// than returning `nullptr` for unknown input — `AppController` treats a null return
     /// as a hard error and aborts initialization.
-    virtual std::unique_ptr<ITrackerClient> Create(const std::string& trackerType) = 0;
+    virtual std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) = 0;
 };

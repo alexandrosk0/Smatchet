@@ -6,7 +6,6 @@
 #include "IOfflineQueueDeps.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
-#include "ITrackerClient.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "LocalCacheManager.h"
@@ -559,7 +558,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.Backend()) {
+    if (!deps_.Cache() || !deps_.Reader()) {
         return;
     }
     {
@@ -850,7 +849,7 @@ void OfflineQueueService::TickOfflineCreates() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.Backend()) {
+    if (!deps_.Cache() || !deps_.Reader()) {
         return;
     }
     {

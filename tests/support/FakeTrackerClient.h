@@ -13,7 +13,12 @@
 // The class lives in tests/support/ and is header-only so test TUs can include it without
 // CMake glue beyond `target_include_directories(... tests/support)`.
 
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
+#include "ITrackerCollaboration.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerFieldCatalog.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 
 #include <nlohmann/json.hpp>
 
@@ -66,12 +71,24 @@ struct UpdateFieldCall {
     std::vector<std::string> Values;
 };
 
-class FakeTrackerClient : public ITrackerClient {
+class FakeTrackerClient : public ITrackerBackend,
+                          public ITrackerIssueReader,
+                          public ITrackerConnectivity,
+                          public ITrackerIssueMutations,
+                          public ITrackerFieldCatalog,
+                          public ITrackerCollaboration {
   public:
     FakeTrackerClient() = default;
     explicit FakeTrackerClient(std::string trackerType) : trackerType_(std::move(trackerType)) {}
 
-    // --- ITrackerClient surface --------------------------------------------------------------
+    // --- ITrackerBackend accessors -----------------------------------------------------------
+    ITrackerIssueReader& Reader() override { return *this; }
+    ITrackerConnectivity& Connectivity() override { return *this; }
+    ITrackerFieldCatalog* FieldCatalog() override { return nullptr; }
+    ITrackerIssueMutations* Mutations() override { return this; }
+    ITrackerCollaboration* Collaboration() override { return nullptr; }
+
+    // --- Capability interface surface --------------------------------------------------------
 
     std::string GetTrackerType() const override { return trackerType_; }
 

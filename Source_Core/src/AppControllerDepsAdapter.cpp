@@ -2,7 +2,7 @@
 
 #include "AppController.h"
 #include "ITrackerBackendFactory.h"
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
 #include "ITrackerConnectivity.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
@@ -22,13 +22,15 @@ AppControllerDepsAdapter::AppControllerDepsAdapter(AppController& app) : app_(ap
 
 LocalCacheManager* AppControllerDepsAdapter::Cache() { return app_.Cache.get(); }
 
-ITrackerClient* AppControllerDepsAdapter::Backend() { return app_.Backend.get(); }
+ITrackerIssueReader* AppControllerDepsAdapter::Reader() { return app_.Backend ? &app_.Backend->Reader() : nullptr; }
 
-ITrackerIssueReader* AppControllerDepsAdapter::Reader() { return app_.Backend.get(); }
+ITrackerIssueMutations* AppControllerDepsAdapter::Mutations() {
+    return app_.Backend ? app_.Backend->Mutations() : nullptr;
+}
 
-ITrackerIssueMutations* AppControllerDepsAdapter::Mutations() { return app_.Backend.get(); }
-
-ITrackerConnectivity* AppControllerDepsAdapter::BackendConnectivity() { return app_.Backend.get(); }
+ITrackerConnectivity* AppControllerDepsAdapter::BackendConnectivity() {
+    return app_.Backend ? &app_.Backend->Connectivity() : nullptr;
+}
 
 const std::vector<TrackerField>& AppControllerDepsAdapter::AvailableFields() const { return app_.AvailableFields; }
 
@@ -50,7 +52,9 @@ void AppControllerDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() 
 
 // ---- ITicketSyncDeps ------------------------------------------------------------------
 
-void AppControllerDepsAdapter::SetBackend(std::unique_ptr<ITrackerClient> backend) {
+ITrackerIssueReader* AppControllerDepsAdapter::Backend() { return app_.Backend ? &app_.Backend->Reader() : nullptr; }
+
+void AppControllerDepsAdapter::SetBackend(std::unique_ptr<ITrackerBackend> backend) {
     app_.Backend = std::move(backend);
 }
 

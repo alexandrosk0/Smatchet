@@ -12,6 +12,12 @@
 #include <sstream>
 #include <string>
 
+ITrackerIssueReader& JiraClient::Reader() { return *this; }
+ITrackerConnectivity& JiraClient::Connectivity() { return *this; }
+ITrackerFieldCatalog* JiraClient::FieldCatalog() { return this; }
+ITrackerIssueMutations* JiraClient::Mutations() { return this; }
+ITrackerCollaboration* JiraClient::Collaboration() { return this; }
+
 std::string JiraClient::ExtractProjectFromQuery(const std::string& query) const {
     return JqlProjectScope::ExtractSingleProject(query);
 }
@@ -28,7 +34,8 @@ TrackerReachabilityProbeResult JiraClient::ProbeReachability(const TrackerConfig
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const std::string url = base + "/rest/api/3/myself";
     const cpr::Header headers = BuildTrackerHeaders(cfg, false);
-    const cpr::Response resp = TrackerGetLogged("JiraClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
+    const cpr::Response resp =
+        TrackerGetLogged("JiraClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
 
     const long sc = resp.status_code;
     if (sc == 200) {
@@ -72,8 +79,7 @@ constexpr std::int64_t kJiraListProjectsTtlSeconds = 300; // 5 minutes
 constexpr size_t kJiraListProjectsCap = 200;
 
 std::int64_t NowUnixSeconds() {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::system_clock::now().time_since_epoch())
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 
@@ -167,10 +173,3 @@ std::string JiraClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::stri
     }
     return NormalizeBaseUrl(cfg.Domain) + "/browse/" + issueKey;
 }
-
-
-
-
-
-
-

@@ -14,7 +14,10 @@
 // equivalent test-only fixture loader for the doctest rig lives at
 // `tests/support/FakePlaneFixture.h` and shares the same JSON schema.
 
-#include "ITrackerClient.h"
+#include "ITrackerBackend.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 #include "PlaneIssueMappingPure.h"
 
 #include <memory>
@@ -22,17 +25,28 @@
 #include <vector>
 
 class ITrackerBackendFactory;
+class ITrackerFieldCatalog;
+class ITrackerCollaboration;
 
 namespace smatchet {
 namespace plane {
 
 /// Read-only backend backed by a fixture JSON file.
-class PlaneFixtureBackend : public ITrackerClient {
+class PlaneFixtureBackend : public ITrackerBackend,
+                            public ITrackerIssueReader,
+                            public ITrackerConnectivity,
+                            public ITrackerIssueMutations {
   public:
     /// Construct from a fixture file path. On any I/O or JSON-parse error the
     /// constructor leaves the backend empty (`FetchIssues` returns no rows + a
     /// diagnostic in `outFetchError`). The detailed error message is also
     /// surfaced via `LoadError()` for one-time logging by the caller.
+    ITrackerIssueReader& Reader() override;
+    ITrackerConnectivity& Connectivity() override;
+    ITrackerFieldCatalog* FieldCatalog() override;
+    ITrackerIssueMutations* Mutations() override;
+    ITrackerCollaboration* Collaboration() override;
+
     explicit PlaneFixtureBackend(const std::string& fixturePath);
 
     std::string GetTrackerType() const override { return "Plane"; }

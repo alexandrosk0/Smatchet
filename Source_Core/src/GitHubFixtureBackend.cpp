@@ -29,6 +29,12 @@ bool ReadFileToString(const std::string& path, std::string& out) {
 
 } // namespace
 
+ITrackerIssueReader& GitHubFixtureBackend::Reader() { return *this; }
+ITrackerConnectivity& GitHubFixtureBackend::Connectivity() { return *this; }
+ITrackerFieldCatalog* GitHubFixtureBackend::FieldCatalog() { return nullptr; }
+ITrackerIssueMutations* GitHubFixtureBackend::Mutations() { return this; }
+ITrackerCollaboration* GitHubFixtureBackend::Collaboration() { return nullptr; }
+
 GitHubFixtureBackend::GitHubFixtureBackend(const std::string& fixturePath, const std::string& ownerHint,
                                            const std::string& repoHint, bool includePullRequests)
     : fixturePath_(fixturePath), ownerHint_(ownerHint), repoHint_(repoHint), includePullRequests_(includePullRequests) {

@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-class ITrackerClient;
+class ITrackerConnectivity;
 
 namespace SmatchetProjectPicker {
 
@@ -50,7 +50,7 @@ struct State {
  *                        current connection (Jira: domain; Plane: planeUrl + "|" + workspaceSlug).
  *  @param selectedKey    In/out: the currently selected project key. Empty == "(pick one)".
  *  @returns true iff the user picked / changed the selection this frame. */
-bool Draw(const char* idScope, State& state, ITrackerClient* client, const std::string& backendKind,
+bool Draw(const char* idScope, State& state, ITrackerConnectivity* client, const std::string& backendKind,
           const std::string& endpoint, std::string& selectedKey);
 
 } // namespace SmatchetProjectPicker
