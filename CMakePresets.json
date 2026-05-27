@@ -180,10 +180,10 @@
                 "_smatchet-clang-base"
             ],
             "displayName": "Ninja Debug + Clang AddressSanitizer + UBSan",
-            "description": "ASAN + UBSan via Clang. Full sanitizer suite including UBSan (which MSVC lacks).",
+            "description": "ASAN + UBSan via Clang. Full sanitizer suite including UBSan (which MSVC lacks). Uses RelWithDebInfo — clang-cl ASAN requires release CRT (/MD); Debug (/MDd) is incompatible.",
             "binaryDir": "${sourceDir}/build/ninja-clang-asan",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_SANITIZER": "asan",
                 "SMATCHET_AGENT_DEBUG": "ON"

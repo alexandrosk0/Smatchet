@@ -38,8 +38,12 @@ function(smatchet_apply_sanitizers tgt)
     set(_flags "")
     set(_link  "")
     set(_msvc FALSE)
+    set(_clang_cl FALSE)
     if(MSVC)
         set(_msvc TRUE)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            set(_clang_cl TRUE)
+        endif()
     endif()
 
     if("${SMATCHET_SANITIZER}" STREQUAL "asan")
@@ -48,6 +52,27 @@ function(smatchet_apply_sanitizers tgt)
                 /fsanitize=address
                 -D_DISABLE_STRING_ANNOTATION
                 -D_DISABLE_VECTOR_ANNOTATION)
+            if(_clang_cl)
+                # clang-cl needs the ASAN dynamic runtime linked explicitly.
+                cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH _clang_bin)
+                find_library(_clang_asan_lib
+                    NAMES clang_rt.asan_dynamic-x86_64
+                    HINTS "${_clang_bin}/../lib/clang/22/lib/windows"
+                          "${_clang_bin}/../lib/clang/21/lib/windows"
+                          "${_clang_bin}/../lib/clang/20/lib/windows"
+                    NO_DEFAULT_PATH)
+                find_library(_clang_asan_thunk
+                    NAMES clang_rt.asan_dynamic_runtime_thunk-x86_64
+                    HINTS "${_clang_bin}/../lib/clang/22/lib/windows"
+                          "${_clang_bin}/../lib/clang/21/lib/windows"
+                          "${_clang_bin}/../lib/clang/20/lib/windows"
+                    NO_DEFAULT_PATH)
+                if(_clang_asan_lib AND _clang_asan_thunk)
+                    list(APPEND _link "${_clang_asan_lib}" "${_clang_asan_thunk}")
+                else()
+                    message(WARNING "clang-cl ASAN: could not find clang_rt.asan_dynamic libs; link may fail.")
+                endif()
+            endif()
         else()
             list(APPEND _flags
                 -fsanitize=address
