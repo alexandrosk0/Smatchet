@@ -503,6 +503,9 @@ class ConfigManager {
     // the bump just guarantees the new dock ID picks up cleanly on first launch
     // after the feature lands. All Ai* TrackerConfig fields default-load via
     // `j.value(..., default)` so v4 / v5 configs continue to load unchanged.
+    // Bumped to 7: drag-and-snap — removed NoUndocking, cached ini needs reset.
+    // Bumped to 10: freely dockable windows — NoTabBar→HiddenTabBar on central
+    // node, Annotate promoted from embedded grid tab to standalone window.
     static const int kCurrentLayoutSchemaVersion = 10;
 
     struct CliOverrides {

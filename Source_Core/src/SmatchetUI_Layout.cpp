@@ -1,7 +1,3 @@
-// imgui_internal.h must come before SmatchetUI_Internal.h (which #defines ImGui as
-// SmatchetLocalizedImGui — that macro rewrite breaks imgui_internal.h if included after).
-#include "imgui_internal.h"
-
 #include "SmatchetUI_Internal.h"
 
 #include "AppController.h"
@@ -109,18 +105,6 @@ void PersistWindowOpenPreferences(UiDrawSession& d) {
 
 } // namespace ui_detail
 } // namespace smatchet
-
-void SmatchetUI::enforceDockNodePersistence(UiDrawSession& d) {
-    using namespace SmatchetDockNodeIds;
-    if (ImGui::DockBuilderGetNode(kCentralNode) && ImGui::DockBuilderGetNode(kViewsColumn) &&
-        ImGui::DockBuilderGetNode(kPrimarySideBar) && ImGui::DockBuilderGetNode(kBottomPanel)) {
-        return;
-    }
-    LOG_INFO("SmatchetUI: a fixed dock node was GC'd — reloading default layout.");
-    const char* ini = ConfigManager::GetDefaultImGuiDockLayoutIni();
-    ImGui::LoadIniSettingsFromMemory(ini, strlen(ini));
-    d.layoutForceDefaultsFrames = 8;
-}
 
 void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                        bool requestFocus) {

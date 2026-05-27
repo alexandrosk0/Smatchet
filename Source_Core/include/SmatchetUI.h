@@ -126,7 +126,6 @@ class SmatchetUI {
     static void drawLogWindow(UiDrawSession& d);
     static void drawBulkImportWindow(AppController& app, UiDrawSession& d);
     static void drawBulkExportWindow(AppController& app, UiDrawSession& d);
-    static void enforceDockNodePersistence(UiDrawSession& d);
     static void prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                       bool requestFocus = false);
     static void repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH);
