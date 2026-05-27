@@ -145,5 +145,5 @@ class CommandPaletteFuzzyScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::CommandPaletteFuzzyScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::CommandPaletteFuzzyScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
 }

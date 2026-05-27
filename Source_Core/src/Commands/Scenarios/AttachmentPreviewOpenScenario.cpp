@@ -84,5 +84,5 @@ class AttachmentPreviewOpenScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::AttachmentPreviewOpenScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::AttachmentPreviewOpenScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
 }

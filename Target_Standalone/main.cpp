@@ -117,7 +117,7 @@ extern UiDrawSession g_ui;
 
 // GLFW Error Callback
 static void glfw_error_callback(int error, const char* description) {
-    ::fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+    ::fprintf(stderr, "GLFW Error %d: %s\n", error, description); // pre-logger-init — LOG_* unavailable
 }
 
 // GLFW Key Callback wrapper to bridge Keypad Enter to standard Enter key
@@ -151,9 +151,9 @@ static void SmatchetApplyWindowIcon(GLFWwindow* window) {
         // This is only for debugging the icon issue.
         HRSRC groupRes = FindResourceA(hModule, MAKEINTRESOURCE(kIconResourceId), RT_GROUP_ICON);
         if (!groupRes) {
-            ::fprintf(stderr, "Icon not found in resources (RT_GROUP_ICON) id=%u\n", (unsigned)kIconResourceId);
+            ::fprintf(stderr, "Icon not found in resources (RT_GROUP_ICON) id=%u\n", (unsigned)kIconResourceId); // pre-logger-init — LOG_* unavailable
         } else {
-            ::fprintf(stderr, "Icon resource exists but LoadIcon/LoadImage failed id=%u\n", (unsigned)kIconResourceId);
+            ::fprintf(stderr, "Icon resource exists but LoadIcon/LoadImage failed id=%u\n", (unsigned)kIconResourceId); // pre-logger-init — LOG_* unavailable
         }
         return;
     }
@@ -197,10 +197,10 @@ static void SmatchetLogOpenGLInfo() {
     const GLubyte* renderer = glGetString(GL_RENDERER);
     const GLubyte* version = glGetString(GL_VERSION);
     const GLubyte* shading = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    ::fprintf(stderr, "OpenGL vendor: %s\n", vendor ? reinterpret_cast<const char*>(vendor) : "(null)");
-    ::fprintf(stderr, "OpenGL renderer: %s\n", renderer ? reinterpret_cast<const char*>(renderer) : "(null)");
-    ::fprintf(stderr, "OpenGL version: %s\n", version ? reinterpret_cast<const char*>(version) : "(null)");
-    ::fprintf(stderr, "OpenGL GLSL: %s\n", shading ? reinterpret_cast<const char*>(shading) : "(null)");
+    ::fprintf(stderr, "OpenGL vendor: %s\n", vendor ? reinterpret_cast<const char*>(vendor) : "(null)"); // pre-logger-init — LOG_* unavailable
+    ::fprintf(stderr, "OpenGL renderer: %s\n", renderer ? reinterpret_cast<const char*>(renderer) : "(null)"); // pre-logger-init — LOG_* unavailable
+    ::fprintf(stderr, "OpenGL version: %s\n", version ? reinterpret_cast<const char*>(version) : "(null)"); // pre-logger-init — LOG_* unavailable
+    ::fprintf(stderr, "OpenGL GLSL: %s\n", shading ? reinterpret_cast<const char*>(shading) : "(null)"); // pre-logger-init — LOG_* unavailable
 }
 
 static std::string SmatchetNormalizeDirectory(std::string path) {
@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
         std::string bootErr;
         if (!smatchet::standalone::BootEphemeral(argc, argv, bootErr)) {
             if (!bootErr.empty()) {
-                std::fprintf(stderr, "%s\n", bootErr.c_str());
+                std::fprintf(stderr, "%s\n", bootErr.c_str()); // pre-logger-init — LOG_* unavailable
             }
             return 1;
         }
@@ -503,7 +503,7 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_Init(glsl_version);
     SmatchetLogOpenGLInfo();
     if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
-        ::fprintf(stderr, "Failed to create ImGui OpenGL device objects.\n");
+        ::fprintf(stderr, "Failed to create ImGui OpenGL device objects.\n"); // pre-logger-init — LOG_* unavailable
         return 1;
     }
 
@@ -704,11 +704,11 @@ int main(int argc, char** argv) {
         smatchet::standalone::ShutdownApplication(bootCtx);
     } catch (const std::exception& ex) {
         smatchet::standalone::ShutdownApplication(bootCtx);
-        ::fprintf(stderr, "Exception caught in entry point: %s\n", ex.what());
+        ::fprintf(stderr, "Exception caught in entry point: %s\n", ex.what()); // pre-logger-init — LOG_* unavailable
         exitCode = 1;
     } catch (...) {
         smatchet::standalone::ShutdownApplication(bootCtx);
-        ::fprintf(stderr, "Unknown exception caught in entry point.\n");
+        ::fprintf(stderr, "Unknown exception caught in entry point.\n"); // pre-logger-init — LOG_* unavailable
         exitCode = 1;
     }
 

@@ -723,7 +723,7 @@ void AppController::LuaLogInfoBind(const std::string& msg) {
             sink(clean);
         }
     } else {
-        std::printf("[LUA] %s\n", clean.c_str());
+        std::printf("[LUA] %s\n", clean.c_str()); // CLI stdout — product output, not logging
     }
 }
 
@@ -1355,7 +1355,7 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
                 sink(decorated);
             }
         } else {
-            std::printf("%s\n", decorated.c_str());
+            std::printf("%s\n", decorated.c_str()); // CLI stdout — product output, not logging
         }
         for (const auto& sink : errorSinks_) {
             sink(bare);

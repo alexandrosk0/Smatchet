@@ -98,5 +98,5 @@ private:
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario() {
     return std::unique_ptr<smatchet::cmd::IScenario>(
-        new smatchet::cmd::LuaRecorderFuzzScenario());
+        new smatchet::cmd::LuaRecorderFuzzScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
 }

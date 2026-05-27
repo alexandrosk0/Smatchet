@@ -153,5 +153,5 @@ class LongTextOpenLargeAdfScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::LongTextOpenLargeAdfScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::LongTextOpenLargeAdfScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
 }

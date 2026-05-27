@@ -101,7 +101,7 @@ void StartWorker(std::vector<BlameRow> rows, BlameAnalysisConfig cfg, std::strin
     State().worker.AtChangelist = std::move(atCl);
     const int cap =
         State().worker.Cfg.ChangelistCacheMaxEntries > 0 ? State().worker.Cfg.ChangelistCacheMaxEntries : 512;
-    State().worker.Cache.reset(new P4ChangelistDescribeCache(cap));
+    State().worker.Cache.reset(new P4ChangelistDescribeCache(cap)); // custom-deleter — make_unique inapplicable (unique_ptr reset)
     const size_t n = rows.size();
     State().worker.Total = n;
     {

@@ -958,7 +958,7 @@ namespace MarkdownPreviewRender {
 
 void PreviewPlanDeleter::operator()(PreviewPlan* p) const noexcept { delete p; }
 
-PreviewPlanPtr MakePlan() { return PreviewPlanPtr(new PreviewPlan(), PreviewPlanDeleter{}); }
+PreviewPlanPtr MakePlan() { return PreviewPlanPtr(new PreviewPlan(), PreviewPlanDeleter{}); } // custom-deleter — make_unique inapplicable
 
 // FNV-1a 64-bit. Stable cross-run; fine for in-process cache keying.
 std::uint64_t HashContent(const char* bytes, std::size_t len) {

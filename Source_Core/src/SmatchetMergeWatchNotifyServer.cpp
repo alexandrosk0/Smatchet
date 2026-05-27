@@ -78,7 +78,7 @@ bool SmatchetMergeWatchNotifyServer::Start(AppController& app, std::uint16_t por
         LOG_WARN("SmatchetMergeWatchNotifyServer::Start: already running");
         return false;
     }
-    server_ = std::unique_ptr<httplib::Server>(new httplib::Server());
+    server_ = std::unique_ptr<httplib::Server>(new httplib::Server()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
 
     // Capture dispatcher by reference — outlives the server per AppController's
     // dtor ordering (Stop() runs before mainThreadDispatcher.BeginShutdown).
@@ -156,7 +156,7 @@ bool SmatchetMergeWatchNotifyServer::Start(AppController& app, std::uint16_t por
 
     running_.store(true, std::memory_order_release);
     // Spawn listen-loop thread. listen_after_bind blocks until Stop().
-    listenThread_.reset(new std::thread([this]() {
+    listenThread_.reset(new std::thread([this]() { // custom-deleter — make_unique inapplicable (unique_ptr reset)
         if (server_) {
             server_->listen_after_bind();
         }

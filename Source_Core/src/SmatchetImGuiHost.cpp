@@ -218,7 +218,7 @@ static void Smatchet_ImplDX12_SrvAllocCb(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DES
         // overflow slot so extra thumbnails may alias each other but cannot corrupt text/icons.
         slot = (a.OverflowSlot > 0) ? a.OverflowSlot : 0;
         if (!a.bLoggedExhausted) {
-            std::fprintf(
+            std::fprintf( // pre-logger-init — LOG_* unavailable
                 stderr,
                 "[Smatchet] DX12 SRV heap exhausted (capacity=%d, overflowSlot=%d). Extra thumbnails may alias.\n",
                 a.Capacity, a.OverflowSlot);
@@ -280,7 +280,7 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
         a.FreeList.clear();
         a.bLoggedExhausted = false;
         if (a.Capacity <= 1) {
-            std::fprintf(stderr,
+            std::fprintf(stderr, // pre-logger-init — LOG_* unavailable
                          "[Smatchet] DX12 SRV heap has %d slot(s); attachment thumbnails and other dynamic "
                          "textures will not render. Pass NumSrvDescriptors>=2 in SmatchetRendererInitInfo.\n",
                          a.Capacity);
@@ -321,7 +321,7 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
 }
 #endif
 
-SmatchetImGuiHost::SmatchetImGuiHost() : ImplData(new Impl()) {}
+SmatchetImGuiHost::SmatchetImGuiHost() : ImplData(new Impl()) {} // pimpl — make_unique inapplicable (type incomplete at call site)
 
 SmatchetImGuiHost::~SmatchetImGuiHost() { Shutdown(); }
 
@@ -511,7 +511,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 
     IMGUI_CHECKVERSION();
     // Diagnostics: if these are invalid/dangling, ImGui's font atlas upload can crash in NewFrame.
-    std::fprintf(stderr, "SmatchetImGuiHost::Initialize: device=%p queue=%p heap=%p cpu.ptr=%llu gpu.ptr=%llu\n",
+    std::fprintf(stderr, "SmatchetImGuiHost::Initialize: device=%p queue=%p heap=%p cpu.ptr=%llu gpu.ptr=%llu\n", // pre-logger-init — LOG_* unavailable
                  static_cast<void*>(device), options.Renderer.NativeCommandQueue,
                  static_cast<void*>(fontSrvDescriptorHeap), static_cast<unsigned long long>(fontSrvCpuHandle.ptr),
                  static_cast<unsigned long long>(fontSrvGpuHandle.ptr));
@@ -581,7 +581,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     {
         const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
         if (cfg.McpEnabled) {
-            ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort)));
+            ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort))); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
             LOG_INFO("SmatchetImGuiHost: MCP plugin enabled on port %d", mcpPort);
         } else {
             LOG_INFO("SmatchetImGuiHost: MCP plugin disabled by config.");
@@ -589,7 +589,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     }
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin()));
+    ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin())); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
     LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered.");
 #if !defined(SMATCHET_WITH_MCP)
     LOG_INFO("SmatchetImGuiHost: light profile (Lua + command registry; MCP/AI/Whisper off).");
@@ -664,7 +664,7 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
                     const bool ok = Initialize(ImplData->CachedOptions, err);
                     if (!ok) {
                         // Keep UI visible; we'll retry until resources are ready and Initialize succeeds.
-                        std::fprintf(stderr, "SmatchetImGuiHost: Initialize() retry failed: %s\n", err.c_str());
+                        std::fprintf(stderr, "SmatchetImGuiHost: Initialize() retry failed: %s\n", err.c_str()); // pre-logger-init — LOG_* unavailable
                         LOG_ERROR("SmatchetImGuiHost: Initialize() retry failed: %s", err.c_str());
 #if defined(_WIN32)
                         {
@@ -789,12 +789,12 @@ void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* na
         if (nowSeconds - LastDrawStatsLogSeconds > 1.0) {
             LastDrawStatsLogSeconds = nowSeconds;
             if (drawData) {
-                std::fprintf(
+                std::fprintf( // pre-logger-init — LOG_* unavailable
                     stderr, "SmatchetImGuiHost::RenderDrawData: display=(%f,%f) totalVtx=%d cmds=%d ui=%d init=%d\n",
                     drawData->DisplaySize.x, drawData->DisplaySize.y, drawData->TotalVtxCount, drawData->CmdListsCount,
                     IsUiVisible() ? 1 : 0, ImplData->Initialized.load(std::memory_order_relaxed) ? 1 : 0);
             } else {
-                std::fprintf(stderr, "SmatchetImGuiHost::RenderDrawData: drawData=null\n");
+                std::fprintf(stderr, "SmatchetImGuiHost::RenderDrawData: drawData=null\n"); // pre-logger-init — LOG_* unavailable
             }
         }
     }
@@ -1102,7 +1102,7 @@ SmatchetImGuiHost* LookupHost(SmatchetImGuiHostHandle handle) {
 extern "C" {
 
 SmatchetImGuiHostHandle SmatchetHost_Create() {
-    auto* host = new SmatchetImGuiHost();
+    auto* host = new SmatchetImGuiHost(); // C-ABI handle — raw pointer is the public contract
     {
         std::lock_guard<std::mutex> lock(gHostHandleSetMutex);
         gLiveHostHandles.insert(host);

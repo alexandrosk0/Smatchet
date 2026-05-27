@@ -1430,7 +1430,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     // Scenario runner — constructed before the registry so scenario.* commands
     // can capture a reference to it in their handlers.
-    scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner());
+    scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner()); // custom-deleter — make_unique inapplicable (unique_ptr reset with derived type)
     // Slice 5 of docs/design/autonomous-debugging-no-creds.md — pure refactor.
     // The 14-entry RegisterFactory block lives in SmatchetScenarioRegistry.cpp
     // so adding/removing a scenario is one edit in a self-contained TU. The
@@ -1442,7 +1442,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // references to AppController state that's now fully wired (tracker backend,
     // Lua host, offline queue, etc.). See docs/design/applied/command-system-plan.md.
     try {
-        commandRegistry_.reset(new smatchet::cmd::CommandRegistry());
+        commandRegistry_.reset(new smatchet::cmd::CommandRegistry()); // custom-deleter — make_unique inapplicable (unique_ptr reset)
         commandRegistry_->LoadRecents();
         smatchet::cmd::RegisterBuiltinCommands(*commandRegistry_, *this);
     } catch (const std::exception& ex) {
@@ -1492,7 +1492,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // controller spawns its worker thread in its own constructor — no further wiring
     // needed. Lifetime contract: destroyed at the top of ~AppController.
     try {
-        aiAssistant_ = std::unique_ptr<AiAssistantController>(new AiAssistantController(*this));
+        aiAssistant_ = std::unique_ptr<AiAssistantController>(new AiAssistantController(*this)); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
     } catch (const std::exception& ex) {
         LOG_ERROR("AppController::Initialize: AiAssistantController init failed: %s", ex.what());
         aiAssistant_.reset();
@@ -1566,28 +1566,28 @@ void AppController::PromptAi(const std::string& prompt) {
 smatchet::cmd::CommandRegistry& AppController::Commands() {
     if (!commandRegistry_) {
         // Lazy fallback — caller invoked us before Initialize (tests, embedded hosts).
-        commandRegistry_.reset(new smatchet::cmd::CommandRegistry());
+        commandRegistry_.reset(new smatchet::cmd::CommandRegistry()); // custom-deleter — make_unique inapplicable (unique_ptr reset)
     }
     return *commandRegistry_;
 }
 
 const smatchet::cmd::CommandRegistry& AppController::Commands() const {
     if (!commandRegistry_) {
-        const_cast<AppController*>(this)->commandRegistry_.reset(new smatchet::cmd::CommandRegistry());
+        const_cast<AppController*>(this)->commandRegistry_.reset(new smatchet::cmd::CommandRegistry()); // custom-deleter — make_unique inapplicable (unique_ptr reset)
     }
     return *commandRegistry_;
 }
 
 smatchet::cmd::ScenarioRunner& AppController::Scenarios() {
     if (!scenarioRunner_) {
-        scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner());
+        scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner()); // custom-deleter — make_unique inapplicable (unique_ptr reset)
     }
     return *scenarioRunner_;
 }
 
 const smatchet::cmd::ScenarioRunner& AppController::Scenarios() const {
     if (!scenarioRunner_) {
-        const_cast<AppController*>(this)->scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner());
+        const_cast<AppController*>(this)->scenarioRunner_.reset(new smatchet::cmd::ScenarioRunner()); // custom-deleter — make_unique inapplicable (unique_ptr reset)
     }
     return *scenarioRunner_;
 }
@@ -1907,7 +1907,7 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     }
 
     try {
-        Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(localCacheDbPath_));
+        Cache = std::unique_ptr<LocalCacheManager>(new LocalCacheManager(localCacheDbPath_)); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
     } catch (const std::exception& ex) {
         outError = std::string("Failed to open new database: ") + ex.what();
         return false;

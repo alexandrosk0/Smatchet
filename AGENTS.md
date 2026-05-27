@@ -57,7 +57,7 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 
 **Available libs** (FetchContent, linked): nlohmann/json, cpr, SQLiteCpp, cpp-httplib, md4c, ImGui (docking), GLFW, Lua + sol2, ghc::filesystem.
 
-**Logging**: `LOG_{DEBUG,INFO,WARN,ERROR,TRACE}` from `Logger.h` — never `printf` / `std::cerr`.
+**Logging**: `LOG_{DEBUG,INFO,WARN,ERROR,TRACE}` from `Logger.h` — never `printf` / `std::cerr`. Named exceptions (must have matching inline comment): `Target_Standalone/` pre-logger-init fatal paths (`// pre-logger-init — LOG_* unavailable`) and CLI stdout product output (`// CLI stdout — product output, not logging`).
 
 **nlohmann json**: `obj["k"] = v`, not `obj = {...}` (reassignment with brace-list won't compile).
 
@@ -67,7 +67,7 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 
 **Dual-target**: `Source_Core/` compiles into both `SmatchetStandalone` (OpenGL+GLFW) and `SmatchetCore_DX12` (Unreal). Diverging macros: `SMATCHET_EMBEDDED_IN_UNREAL=1` (DX12 only); `SMATCHET_WITH_MCP=1` (Standalone only — `SMATCHET_WITH_MCP_UNREAL` is OFF). Full verify: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`.
 
-**Quality**: RAII (no raw `new`/`delete` — use `std::unique_ptr` + `make_unique`); `const&` for non-trivial params; `std::move` on last use; small focused functions; `LOG_TRACE`/`LOG_DEBUG` in non-trivial branches.
+**Quality**: RAII (no raw `new`/`delete` — use `std::unique_ptr` + `make_unique`; named exceptions must have inline comment: C ABI ownership boundaries `// C-ABI handle`, custom-deleter wraps `// custom-deleter — make_unique inapplicable`, third-party adapter seams); `const&` for non-trivial params; `std::move` on last use; small focused functions; `LOG_TRACE`/`LOG_DEBUG` in non-trivial branches.
 
 **Lint**: your harness may run an automatic lint pass after C++ edits. Claude Code does so via a `PostToolUse` hook wired by `bash scripts/setup-harness.sh claude-code` — `clang-format -i` applies in place; `cppcheck` + `clang-tidy` report to stderr. If your harness lacks hook automation, run those three tools manually on every edited `.cpp` / `.h` in `Source_Core` / `Plugins` / `Target_Standalone` and fix all reported issues before responding.
 

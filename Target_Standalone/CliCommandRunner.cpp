@@ -48,8 +48,9 @@ namespace cli {
 namespace {
 
 [[noreturn]] static void CliTerminateHandler() {
-    std::fprintf(stderr, "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
-                         "\"message\":\"CLI hit std::terminate (uncaught exception). No state change occurred.\"}}\n");
+    std::fprintf(stderr, // pre-logger-init — LOG_* unavailable
+                 "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+                 "\"message\":\"CLI hit std::terminate (uncaught exception). No state change occurred.\"}}\n");
     std::_Exit(4);
 }
 
@@ -406,10 +407,11 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
 void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     if (!quiet) {
         try {
-            std::fprintf(stdout, "%s\n", pretty ? envelope.dump(2).c_str() : envelope.dump().c_str());
+            std::fprintf(stdout, "%s\n", pretty ? envelope.dump(2).c_str() : envelope.dump().c_str()); // CLI stdout — product output, not logging
         } catch (...) {
-            std::fprintf(stdout, "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
-                                 "\"message\":\"failed to serialize envelope\"}}\n");
+            std::fprintf(stdout, // CLI stdout — product output, not logging
+                         "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
+                         "\"message\":\"failed to serialize envelope\"}}\n");
         }
         return;
     }
@@ -420,29 +422,29 @@ void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     if (data.contains("items") && data["items"].is_array()) {
         for (const auto& it : data["items"]) {
             if (it.is_string()) {
-                std::fprintf(stdout, "%s\n", it.get<std::string>().c_str());
+                std::fprintf(stdout, "%s\n", it.get<std::string>().c_str()); // CLI stdout — product output, not logging
             } else if (it.is_object() && it.contains("id") && it["id"].is_string()) {
-                std::fprintf(stdout, "%s\n", it["id"].get<std::string>().c_str());
+                std::fprintf(stdout, "%s\n", it["id"].get<std::string>().c_str()); // CLI stdout — product output, not logging
             } else if (it.is_object() && it.contains("name") && it["name"].is_string()) {
-                std::fprintf(stdout, "%s\n", it["name"].get<std::string>().c_str());
+                std::fprintf(stdout, "%s\n", it["name"].get<std::string>().c_str()); // CLI stdout — product output, not logging
             } else {
-                std::fprintf(stdout, "%s\n", it.dump().c_str());
+                std::fprintf(stdout, "%s\n", it.dump().c_str()); // CLI stdout — product output, not logging
             }
         }
         return;
     }
     if (data.is_string()) {
-        std::fprintf(stdout, "%s\n", data.get<std::string>().c_str());
+        std::fprintf(stdout, "%s\n", data.get<std::string>().c_str()); // CLI stdout — product output, not logging
         return;
     }
     if (data.is_number() || data.is_boolean() || data.is_null()) {
-        std::fprintf(stdout, "%s\n", data.dump().c_str());
+        std::fprintf(stdout, "%s\n", data.dump().c_str()); // CLI stdout — product output, not logging
         return;
     }
-    std::fprintf(stdout, "%s\n", data.dump().c_str());
+    std::fprintf(stdout, "%s\n", data.dump().c_str()); // CLI stdout — product output, not logging
 }
 
-void EmitErrorToStderr(const nlohmann::json& envelope) { std::fprintf(stderr, "%s\n", envelope.dump().c_str()); }
+void EmitErrorToStderr(const nlohmann::json& envelope) { std::fprintf(stderr, "%s\n", envelope.dump().c_str()); } // CLI stdout — product output, not logging
 
 #if defined(SMATCHET_WITH_MCP)
 bool LaunchEphemeralInstance(const std::string& exePath, int port) {
@@ -524,7 +526,8 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
 
         // Group by category, preserving sort order from the registry (alphabetical).
         std::string lastCategory;
-        std::fprintf(out, "\nAvailable commands (%d total — fetched from running instance):\n",
+        std::fprintf(out, // CLI stdout — product output, not logging
+                     "\nAvailable commands (%d total — fetched from running instance):\n",
                      envelope["data"].value("total", static_cast<int>(items.size())));
         for (const auto& item : items) {
             const std::string category = item.value("category", "?");
@@ -532,13 +535,14 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
             const std::string summary = item.value("summary", "");
             const bool destructive = item.value("destructive", false);
             if (category != lastCategory) {
-                std::fprintf(out, "\n  [%s]\n", category.c_str());
+                std::fprintf(out, "\n  [%s]\n", category.c_str()); // CLI stdout — product output, not logging
                 lastCategory = category;
             }
-            std::fprintf(out, "    %-32s %s%s\n", name.c_str(), destructive ? "(destructive) " : "", summary.c_str());
+            std::fprintf(out, "    %-32s %s%s\n", name.c_str(), destructive ? "(destructive) " : "", summary.c_str()); // CLI stdout — product output, not logging
         }
-        std::fprintf(out, "\nFor full schema:    Smatchet.exe cmd commands.help --name=<name>\n"
-                          "All commands + schema: Smatchet.exe cmd commands.list --full --pretty\n");
+        std::fprintf(out, // CLI stdout — product output, not logging
+                     "\nFor full schema:    Smatchet.exe cmd commands.help --name=<name>\n"
+                     "All commands + schema: Smatchet.exe cmd commands.list --full --pretty\n");
         return true;
     } catch (...) {
         return false;
@@ -546,7 +550,7 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
 }
 
 void PrintCliHelp(std::FILE* out, const std::string& mcpHost, int mcpPort) {
-    std::fprintf(out,
+    std::fprintf(out, // CLI stdout — product output, not logging
                  "Smatchet CLI — unified Command System front-end.\n"
                  "\n"
                  "Usage:\n"
@@ -576,7 +580,7 @@ void PrintCliHelp(std::FILE* out, const std::string& mcpHost, int mcpPort) {
 
     // Try to fetch a live command summary so the help is informative on first run.
     if (!TryAppendLiveCatalogToHelp(out, mcpHost, mcpPort)) {
-        std::fprintf(out,
+        std::fprintf(out, // CLI stdout — product output, not logging
                      "\n(No running instance detected at %s:%d — start Smatchet with mcp_enabled\n"
                      " to see the live command catalog here. See CLI_GUIDE.md for the full reference.)\n",
                      mcpHost.c_str(), mcpPort);
@@ -666,7 +670,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
             return kExitNotConnected;
         }
 
-        std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n", port);
+        std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n", port); // CLI stdout — product output, not logging
         if (!LaunchEphemeralInstance(exePath, port)) {
             nlohmann::json env;
             env["ok"] = false;
@@ -700,7 +704,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
                 // Ignore malformed override; fall through to default.
             }
         }
-        std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n", readyTimeoutMs / 1000);
+        std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n", readyTimeoutMs / 1000); // CLI stdout — product output, not logging
         if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
             nlohmann::json env;
             env["ok"] = false;
@@ -774,7 +778,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         // If scenario.run returned {running:true, outPath:...}, wait for the file then emit it.
         if (isAsync) {
             const std::string outPath = SafeString(envData, "outPath");
-            std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames, frames / 60);
+            std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames, frames / 60); // CLI stdout — product output, not logging
             const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
             // Small delay to ensure fwrite+fclose has fully flushed before we read.
             // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
@@ -825,7 +829,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
                     const bool captureRequested = SafeBool(fileData, "captureRequested", false);
                     const std::string screenshotPath = SafeString(fileData, "screenshotPath");
                     if (captureRequested && !screenshotPath.empty()) {
-                        std::fprintf(stderr, "[spawn] waiting for screenshot capture ...\n");
+                        std::fprintf(stderr, "[spawn] waiting for screenshot capture ...\n"); // CLI stdout — product output, not logging
                         WaitForFile(screenshotPath, 2000);
                     }
 
@@ -858,7 +862,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         }
 
         // Quit the spawned instance (app.quit is Destructive → __confirm:true).
-        std::fprintf(stderr, "[spawn] sending app.quit ...\n");
+        std::fprintf(stderr, "[spawn] sending app.quit ...\n"); // CLI stdout — product output, not logging
         nlohmann::json quitBody;
         quitBody["name"] = "app.quit";
         quitBody["arguments"] = {{"__confirm", true}};
@@ -873,7 +877,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         }
         return kExitHandler;
     } catch (...) {
-        std::fprintf(stderr,
+        std::fprintf(stderr, // CLI stdout — product output, not logging
                      "{\"ok\":false,\"command\":\"%s\",\"error\":{\"code\":\"handler-error\","
                      "\"message\":\"--spawn: unknown internal exception.\"}}\n",
                      commandName.c_str());
@@ -886,7 +890,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
 #if !defined(SMATCHET_WITH_MCP)
 
 void PrintCliHelpInProcess(std::FILE* out) {
-    std::fprintf(out, "Smatchet CLI — in-process Command System (light build).\n"
+    std::fprintf(out, "Smatchet CLI — in-process Command System (light build).\n" // CLI stdout — product output, not logging
                       "\n"
                       "Usage:\n"
                       "  Smatchet-Light.exe cmd <name> [--key=value ...] [flags]\n"
@@ -1064,8 +1068,9 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         EmitErrorToStderr(env);
         return kExitHandler;
     } catch (...) {
-        std::fprintf(stderr, "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
-                             "\"message\":\"CLI internal error: unknown exception.\"}}\n");
+        std::fprintf(stderr, // pre-logger-init — LOG_* unavailable
+                     "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+                     "\"message\":\"CLI internal error: unknown exception.\"}}\n");
         return kExitHandler;
     }
 }
@@ -1280,7 +1285,7 @@ int RunCmdAttach(int argc, char** argv) {
             nlohmann::json estimate;
             estimate["tokens_estimate"] = tokens;
             estimate["bytes"] = bytes;
-            std::fprintf(stderr, "%s\n", estimate.dump().c_str());
+            std::fprintf(stderr, "%s\n", estimate.dump().c_str()); // CLI stdout — product output, not logging
             return kExitOk;
         }
 
@@ -1306,8 +1311,9 @@ int RunCmdAttach(int argc, char** argv) {
         }
         return kExitHandler;
     } catch (...) {
-        std::fprintf(stderr, "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
-                             "\"message\":\"CLI internal error: unknown exception.\"}}\n");
+        std::fprintf(stderr, // pre-logger-init — LOG_* unavailable
+                     "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
+                     "\"message\":\"CLI internal error: unknown exception.\"}}\n");
         return kExitHandler;
     }
 #endif // SMATCHET_WITH_MCP

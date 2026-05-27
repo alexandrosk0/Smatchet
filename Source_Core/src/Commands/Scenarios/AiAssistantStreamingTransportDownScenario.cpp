@@ -82,7 +82,7 @@ int g_partialDeltas = 3;
 int g_perDeltaSleepMs = 10;
 
 std::unique_ptr<IAiClient> StubTransportDownFactory(AiProvider /*provider*/) {
-    return std::unique_ptr<IAiClient>(new StubTransportDownClient(g_partialDeltas, g_perDeltaSleepMs));
+    return std::unique_ptr<IAiClient>(new StubTransportDownClient(g_partialDeltas, g_perDeltaSleepMs)); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
 }
 
 } // namespace

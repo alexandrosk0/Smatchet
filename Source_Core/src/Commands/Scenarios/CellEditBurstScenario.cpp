@@ -95,5 +95,5 @@ class CellEditBurstScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::CellEditBurstScenario());
+    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::CellEditBurstScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
 }
