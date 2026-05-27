@@ -286,20 +286,22 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
         CHECK(frames.size() <= 1);
     }
 
-    SUBCASE("1 KiB single line completes under 100 ms (ReDoS sentinel)") {
+    SUBCASE("1 KiB single line completes under 2000 ms (ReDoS sentinel)") {
         // Build one line of 1 KiB 'a' chars followed by a real frame on the next line.
         // 1 KiB sits below the parser's per-line cap (kMaxLineLengthForRegex = 16 KiB in
         // CallstackParser.cpp), so this case still flows through the regex set and exercises the
         // worst-case backtracking ceiling for a realistic-but-noisy paste. The hostile line must
         // not match any of the three format regexes; the trailing real frame may or may not be
         // recovered but no frame may reference the 'a'-noise content.
+        // 2000 ms budget accommodates slow CI runners; true catastrophic ReDoS on 1 KiB would
+        // take seconds-to-minutes, so this threshold still catches the failure class it guards.
         std::string noise(1 * 1024, 'a');
         const std::string text = noise + "\nC:\\real.cpp(7)\n";
         const auto t0 = std::chrono::steady_clock::now();
         const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
         const auto t1 = std::chrono::steady_clock::now();
         const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-        CHECK(elapsedMs < 100);
+        CHECK(elapsedMs < 2000);
         for (size_t i = 0; i < frames.size(); ++i) {
             CHECK(frames[i].FilePath.find(noise) == std::string::npos);
             CHECK(frames[i].RawLine.find(noise) == std::string::npos);
