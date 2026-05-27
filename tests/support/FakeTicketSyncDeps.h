@@ -15,6 +15,7 @@
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerClient.h"
+#include "ITrackerConnectivity.h"
 #include "LocalCacheManager.h"
 
 #include <chrono>
@@ -40,7 +41,8 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
   public:
     std::unique_ptr<LocalCacheManager> CacheImpl{std::make_unique<LocalCacheManager>(":memory:")};
     std::unique_ptr<ITrackerClient> BackendImpl{std::unique_ptr<ITrackerClient>(new FakeTrackerClient())};
-    std::unique_ptr<ITrackerBackendFactory> Factory{std::unique_ptr<ITrackerBackendFactory>(new FakeTrackerBackendFactory())};
+    std::unique_ptr<ITrackerBackendFactory> Factory{
+        std::unique_ptr<ITrackerBackendFactory>(new FakeTrackerBackendFactory())};
 
     std::string LastTrackerTicketSyncWarning;
     ConnectivityState LastConnectivityState = ConnectivityState::Unknown;
@@ -61,6 +63,7 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
     ITrackerClient* Backend() override { return BackendImpl.get(); }
+    ITrackerConnectivity* BackendConnectivity() override { return BackendImpl.get(); }
     void SetBackend(std::unique_ptr<ITrackerClient> backend) override { BackendImpl = std::move(backend); }
     ITrackerBackendFactory* BackendFactory() override { return Factory.get(); }
 
@@ -68,9 +71,7 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
         LastTrackerTicketSyncWarning = message;
     }
     void SetLastTrackerConnectivityState(ConnectivityState state) override { LastConnectivityState = state; }
-    void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override {
-        NextProbeAt = at;
-    }
+    void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override { NextProbeAt = at; }
     void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) override {
         LastPushOutageAt = now;
         ++PushOutageCalls;

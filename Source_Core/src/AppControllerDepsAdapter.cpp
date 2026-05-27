@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerClient.h"
+#include "ITrackerConnectivity.h"
 #include "LocalCacheManager.h"
 
 #include <chrono>
@@ -21,13 +22,13 @@ LocalCacheManager* AppControllerDepsAdapter::Cache() { return app_.Cache.get(); 
 
 ITrackerClient* AppControllerDepsAdapter::Backend() { return app_.Backend.get(); }
 
-const std::vector<TrackerField>& AppControllerDepsAdapter::AvailableFields() const {
-    return app_.AvailableFields;
-}
+ITrackerConnectivity* AppControllerDepsAdapter::BackendConnectivity() { return app_.Backend.get(); }
+
+const std::vector<TrackerField>& AppControllerDepsAdapter::AvailableFields() const { return app_.AvailableFields; }
 
 RequiredFieldSet AppControllerDepsAdapter::GetRequiredFieldSet(const std::string& projectKey,
-                                                                 const std::string& issueTypeId,
-                                                                 const std::string& issueTypeName) const {
+                                                               const std::string& issueTypeId,
+                                                               const std::string& issueTypeName) const {
     return app_.GetRequiredFieldSet(projectKey, issueTypeId, issueTypeName);
 }
 
@@ -61,8 +62,7 @@ void AppControllerDepsAdapter::SetNextTrackerConnectivityProbeAt(std::chrono::st
     app_.nextTrackerConnectivityProbeAt_ = at;
 }
 
-void AppControllerDepsAdapter::PushOfflineReplayTimersDuringTransportOutage(
-    std::chrono::steady_clock::time_point now) {
+void AppControllerDepsAdapter::PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) {
     app_.PushOfflineReplayTimersDuringTransportOutage(now);
 }
 
@@ -70,16 +70,13 @@ std::mutex& AppControllerDepsAdapter::ActiveTicketsMutex() { return app_.activeT
 
 std::vector<CachedTicket>& AppControllerDepsAdapter::ActiveTickets() { return app_.ActiveTickets; }
 
-void AppControllerDepsAdapter::SetActiveTicketsPublished(
-    std::shared_ptr<const std::vector<CachedTicket>> snap) {
+void AppControllerDepsAdapter::SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) {
     app_.activeTicketsPublished_ = std::move(snap);
 }
 
 void AppControllerDepsAdapter::BumpActiveTicketsRevision() { app_.ActiveTicketsRevision.fetch_add(1); }
 
-void AppControllerDepsAdapter::PruneEditMetaCacheToActiveTickets() {
-    app_.PruneEditMetaCacheToActiveTickets();
-}
+void AppControllerDepsAdapter::PruneEditMetaCacheToActiveTickets() { app_.PruneEditMetaCacheToActiveTickets(); }
 
 void AppControllerDepsAdapter::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig cfg) {
     app_.WarmIssueTypeEditMetaAtStartAsync(std::move(cfg));
@@ -89,6 +86,4 @@ void AppControllerDepsAdapter::NotifyLuaTicketDataChanged() { app_.NotifyLuaTick
 
 bool AppControllerDepsAdapter::GetPendingLuaWindowBump() const { return app_.pendingLuaWindowBump_; }
 
-void AppControllerDepsAdapter::SetPendingLuaWindowBump(bool value) {
-    app_.pendingLuaWindowBump_ = value;
-}
+void AppControllerDepsAdapter::SetPendingLuaWindowBump(bool value) { app_.pendingLuaWindowBump_ = value; }

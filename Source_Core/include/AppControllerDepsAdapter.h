@@ -22,9 +22,11 @@
 #include <string>
 #include <vector>
 
+#include "ITrackerClient.h"
+
 class AppController;
 class LocalCacheManager;
-class ITrackerClient;
+class ITrackerConnectivity;
 class ITrackerBackendFactory;
 struct TrackerConfig;
 
@@ -36,9 +38,8 @@ class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDep
     LocalCacheManager* Cache() override;
     ITrackerClient* Backend() override;
     const std::vector<TrackerField>& AvailableFields() const override;
-    RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey,
-                                          const std::string& issueTypeId,
-                                          const std::string& issueTypeName) const override;
+    RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
+                                         const std::string& issueTypeName) const override;
     void LaunchBackgroundTask(std::function<void()> task) override;
     void RefreshLocalData() override;
     void RequestDeferredLiveTrackerBackendSuccessNotify() override;
@@ -46,6 +47,7 @@ class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDep
     // ---- ITicketSyncDeps --------------------------------------------------------------
     // `Cache()` and `Backend()` are already declared above; they're shared between the two
     // interfaces. The compiler resolves the diamond via the single overriding method.
+    ITrackerConnectivity* BackendConnectivity() override;
     void SetBackend(std::unique_ptr<ITrackerClient> backend) override;
     ITrackerBackendFactory* BackendFactory() override;
     void SetLastTrackerTicketSyncWarning(const std::string& message) override;
