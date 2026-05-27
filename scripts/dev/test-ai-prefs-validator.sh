@@ -16,13 +16,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-EXE="${SMATCHET_EXE:-./build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-./build/ninja-iter-msvc/Smatchet.exe}"
 if [ ! -x "$EXE" ]; then
     # Fallback: look at common alternative locations a developer may have.
     for alt in \
-        ./build/ninja-publish-msys2/Smatchet.exe \
-        ./build/ninja-debug-msys2/Smatchet.exe \
-        ./build/ninja-test-msys2/Smatchet.exe ; do
+        ./build/ninja-publish-msvc/Smatchet.exe \
+        ./build/ninja-debug-msvc/Smatchet.exe \
+        ./build/ninja-test-msvc/Smatchet.exe ; do
         if [ -x "$alt" ]; then
             EXE="$alt"
             break

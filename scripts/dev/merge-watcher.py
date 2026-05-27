@@ -1144,9 +1144,9 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         failing_test = _extract_failing_test_from_status(status_line)
         # Select preset based on which sanitizer triggered.
         sanitizer_preset = (
-            "ninja-debug-msys2-tsan"
+            "ninja-clang-asan"
             if "tsan" in status_line.lower() or "threadsanitizer" in status_line.lower()
-            else "ninja-debug-msys2-asan"
+            else "ninja-msvc-asan"
         )
         prompt = AUTO_ACT_SANITIZER_PROMPT.format(
             pr=pr, owner=owner, repo=repo,

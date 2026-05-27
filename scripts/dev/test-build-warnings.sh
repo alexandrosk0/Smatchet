@@ -20,7 +20,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-PRESET="${SMATCHET_WARN_PRESET:-ninja-iter-msys2}"
+PRESET="${SMATCHET_WARN_PRESET:-ninja-iter-msvc}"
 BUILD_DIR="build/${PRESET}"
 LOG="${BUILD_DIR}/_warn-build.log"
 

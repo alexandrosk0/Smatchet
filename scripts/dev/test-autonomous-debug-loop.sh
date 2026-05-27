@@ -64,7 +64,7 @@ if cl.exe /? >/dev/null 2>&1; then
     BUILD_DIR="$REPO_ROOT/build/$PRESET"
     echo "MSVC detected — using preset: $PRESET"
 elif g++ -print-file-name=libasan.dll.a 2>/dev/null | grep -q "/"; then
-    PRESET="ninja-debug-msys2-asan"
+    PRESET="ninja-msvc-asan"
     CONFIGURE_EXTRA=""
     BUILD_DIR="$REPO_ROOT/build/$PRESET"
     echo "GCC with ASAN detected — using preset: $PRESET"

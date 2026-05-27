@@ -53,44 +53,31 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
 
-    defaults:
-      run:
-        shell: msys2 {0}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Cache FetchContent _deps
         uses: actions/cache@v4
         with:
           path: |
-            build/ninja-iter-msys2/_deps
-          key: ${{ runner.os }}-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+            build/ninja-iter-msvc/_deps
+          key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
 
-      - name: Configure ninja-iter-msys2
-        run: cmake --preset ninja-iter-msys2
+      - name: Configure ninja-iter-msvc
+        run: cmake --preset ninja-iter-msvc
 
       - name: Build SmatchetStandalone
-        run: cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+        run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
       - name: Run PR-fast scenarios + compare against baselines
         id: perf
+        shell: bash
         run: |
           set +e
           mkdir -p build/perf-runs
@@ -156,6 +143,7 @@ jobs:
 
       - name: Comment perf report on PR
         if: always() && github.event_name == 'pull_request'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -164,6 +152,7 @@ jobs:
           fi
 
       - name: Gate decision
+        shell: bash
         env:
           REGRESSION_COUNT: ${{ steps.perf.outputs.regression_count }}
           RUN_FAILURE_COUNT: ${{ steps.perf.outputs.run_failure_count }}

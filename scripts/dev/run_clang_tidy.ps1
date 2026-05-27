@@ -4,11 +4,11 @@
 
     Prerequisites:
     - LLVM clang-tidy on PATH (same major version as clang++ used for the build is ideal)
-    - Configured build: cmake --preset ninja-debug-msys2 (default)
+    - Configured build: cmake --preset ninja-debug-msvc (default)
 
     Examples:
       .\scripts\dev\run_clang_tidy.ps1
-      .\scripts\dev\run_clang_tidy.ps1 -BuildDir build/ninja-debug-msys2
+      .\scripts\dev\run_clang_tidy.ps1 -BuildDir build/ninja-debug-msvc
       .\scripts\dev\run_clang_tidy.ps1 -Checks "-*,clang-analyzer-deadcode.*"
       .\scripts\dev\run_clang_tidy.ps1 -Fix
 #>
@@ -26,7 +26,7 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if (-not $BuildDir) {
-    $BuildDir = Join-Path $repoRoot "build/ninja-debug-msys2"
+    $BuildDir = Join-Path $repoRoot "build/ninja-debug-msvc"
 }
 elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
     $BuildDir = Join-Path $repoRoot $BuildDir
@@ -34,7 +34,7 @@ elseif (-not [System.IO.Path]::IsPathRooted($BuildDir)) {
 
 $db = Join-Path $BuildDir "compile_commands.json"
 if (-not (Test-Path -LiteralPath $db -PathType Leaf)) {
-    throw "Missing compile_commands.json at '$db'. From repo root run: cmake --preset ninja-debug-msys2"
+    throw "Missing compile_commands.json at '$db'. From repo root run: cmake --preset ninja-debug-msvc"
 }
 
 $null = Get-Command $ClangTidy -ErrorAction Stop

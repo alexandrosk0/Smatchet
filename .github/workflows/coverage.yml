@@ -31,28 +31,14 @@ jobs:
     timeout-minutes: 40
     continue-on-error: true  # advisory soak until 2026-05-30; flip to false after
 
-    defaults:
-      run:
-        shell: msys2 {0}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # delta gate needs full history for merge-base
 
-      - name: Setup MSYS2 UCRT64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-lld
-            mingw-w64-ucrt-x86_64-python
-            git
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install OpenCppCoverage
         shell: powershell
@@ -63,23 +49,24 @@ jobs:
       - name: Cache FetchContent _deps
         uses: actions/cache@v4
         with:
-          path: build/ninja-coverage-msys2/_deps
-          key: ${{ runner.os }}-fetchcontent-coverage-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          path: build/ninja-test-msvc/_deps
+          key: ${{ runner.os }}-fetchcontent-msvc-coverage-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-fetchcontent-coverage-
+            ${{ runner.os }}-fetchcontent-msvc-coverage-
             ${{ runner.os }}-fetchcontent-
 
-      - name: Configure ninja-coverage-msys2
-        run: cmake --preset ninja-coverage-msys2
+      - name: Configure ninja-test-msvc
+        run: cmake --preset ninja-test-msvc
 
       - name: Build SmatchetTests + SmatchetLuaTests
-        run: cmake --build --preset ninja-coverage-msys2 --target SmatchetTests SmatchetLuaTests
+        run: cmake --build --preset ninja-test-msvc
 
-      - name: Run ctest (sanity — must pass under instrumentation)
-        working-directory: build/ninja-coverage-msys2
+      - name: Run ctest (sanity — must pass before coverage capture)
+        working-directory: build/ninja-test-msvc
         run: ctest --output-on-failure
 
       - name: Capture coverage (advisory; --threshold 0)
+        shell: bash
         run: bash scripts/dev/coverage.sh --xml-only --threshold 0
 
       - name: Upload coverage.xml artifact

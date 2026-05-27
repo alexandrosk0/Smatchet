@@ -34,7 +34,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 TEST_PORT="${SMATCHET_TEST_PORT:-$((40000 + RANDOM % 20000))}"
 
 if [ ! -x "$EXE" ] && [ ! -f "$EXE" ]; then

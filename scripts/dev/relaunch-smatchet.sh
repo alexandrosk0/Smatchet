@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-PRESET="ninja-iter-msys2"
+PRESET="ninja-iter-msvc"
 NO_LAUNCH=0
 EXTRA_ARGS=""
 

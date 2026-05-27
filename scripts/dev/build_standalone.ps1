@@ -6,13 +6,13 @@
 
     Examples:
       .\scripts\dev\build_standalone.ps1
-      .\scripts\dev\build_standalone.ps1 -Preset ninja-iter-msys2
+      .\scripts\dev\build_standalone.ps1 -Preset ninja-iter-msvc
       .\scripts\dev\build_standalone.ps1 -Preset ninja-debug-unreal-msys2 -Target SmatchetPackageUnrealLibs_DX12
       .\scripts\dev\build_standalone.ps1 -ForceConfigure
-      .\scripts\dev\build_standalone.ps1 -Preset ninja-publish-msys2 -CleanFirst
+      .\scripts\dev\build_standalone.ps1 -Preset ninja-publish-msvc -CleanFirst
 #>
 param(
-    [string]$Preset = "ninja-debug-msys2",
+    [string]$Preset = "ninja-debug-msvc",
     [string]$Target = "SmatchetStandalone",
     [switch]$ForceConfigure,
     [switch]$CleanFirst

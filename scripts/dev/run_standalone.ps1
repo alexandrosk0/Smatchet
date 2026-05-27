@@ -3,13 +3,13 @@
 
     Examples:
       .\scripts\dev\run_standalone.ps1
-      .\scripts\dev\run_standalone.ps1 -Preset ninja-debug-msys2
-      .\scripts\dev\run_standalone.ps1 -BuildDir build/ninja-debug-msys2
+      .\scripts\dev\run_standalone.ps1 -Preset ninja-debug-msvc
+      .\scripts\dev\run_standalone.ps1 -BuildDir build/ninja-debug-msvc
       .\scripts\dev\run_standalone.ps1 -Target MyStandaloneTarget -ExeName MyCustomExe.exe
       .\scripts\dev\run_standalone.ps1 -StandaloneArgs '--config','C:\tmp\smatchet_config.json'
 #>
 param(
-    [string]$Preset = "ninja-debug-msys2",
+    [string]$Preset = "ninja-debug-msvc",
     [string]$Target = "SmatchetStandalone",
     [string]$ExeName = "",
     [string]$BuildDir = "",

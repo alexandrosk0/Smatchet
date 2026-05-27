@@ -23,7 +23,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-EXE="${SMATCHET_EXE:-./build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-./build/ninja-iter-msvc/Smatchet.exe}"
 if [ ! -x "$EXE" ]; then
     echo "manual-ai-lmstudio-send: $EXE not built (override with SMATCHET_EXE=...)"
     exit 2

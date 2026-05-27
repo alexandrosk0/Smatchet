@@ -202,7 +202,7 @@ cleanup
 [[ -e "$CLAUDE_DIR/.tree-dirty" ]] || { nope "could not pre-stage .tree-dirty"; }
 
 # Synthesize a PreToolUse:Bash JSON payload.
-echo '{"tool_input": {"command": "cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone"}}' \
+echo '{"tool_input": {"command": "cmake --build --preset ninja-iter-msvc --target SmatchetStandalone"}}' \
     | bash "$HOOKS_DIR/clear-tree-dirty.sh"
 if [[ ! -e "$CLAUDE_DIR/.tree-dirty" ]]; then
     ok ".tree-dirty cleared on cmake --build invocation"

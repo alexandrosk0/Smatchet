@@ -34,7 +34,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 # Ephemeral port keeps parallel runs from colliding on the default.
 TEST_PORT="${SMATCHET_TEST_PORT:-$((40000 + RANDOM % 20000))}"
@@ -65,7 +65,7 @@ mkdir -p "$GOLDEN_DIR"
 # Build the diff helper once (TU-local; no CMake side-effects).
 DIFF_BIN="${SCREENSHOT_DIFF_BIN:-$TMP_DIR/screenshot_diff}"
 if [ -z "${SCREENSHOT_DIFF_BIN:-}" ]; then
-    # g++ is mandatory on the MSYS2/UCRT64 dev env — same toolchain as ninja-iter-msys2.
+    # g++ is mandatory on the MSYS2/UCRT64 dev env — same toolchain as ninja-iter-msvc.
     GXX="${CXX:-g++}"
     if ! command -v "$GXX" >/dev/null 2>&1; then
         echo "FAIL: $GXX not found. Set SCREENSHOT_DIFF_BIN to a prebuilt helper or install g++." >&2

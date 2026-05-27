@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,7 +17,7 @@ def main() -> int:
     p.add_argument(
         "--compile-db",
         type=Path,
-        default=Path("build/ninja-debug-msys2/compile_commands.json"),
+        default=Path("build/ninja-debug-msvc/compile_commands.json"),
         help="Path to compile_commands.json from CMake (CMAKE_EXPORT_COMPILE_COMMANDS=ON)",
     )
     p.add_argument(
@@ -35,7 +36,7 @@ def main() -> int:
     p.add_argument("--no-run", action="store_true", help="Only write filtered DB, skip cppcheck")
     args = p.parse_args()
 
-    root = Path(__file__).resolve().parents[2]
+    root = Path(os.path.realpath(Path(__file__).resolve().parents[2]))
     src_db = root / args.compile_db if not args.compile_db.is_absolute() else args.compile_db
     out_db = root / args.out_db if not args.out_db.is_absolute() else args.out_db
     cache_dir = root / args.cache_dir if not args.cache_dir.is_absolute() else args.cache_dir
@@ -48,7 +49,7 @@ def main() -> int:
         j = json.load(f)
 
     def keep(entry: dict) -> bool:
-        abs_path = Path(entry["file"]).resolve()
+        abs_path = Path(os.path.realpath(entry["file"]))
         try:
             rel = abs_path.relative_to(root)
         except ValueError:
@@ -62,7 +63,11 @@ def main() -> int:
     out_db.parent.mkdir(parents=True, exist_ok=True)
     with out_db.open("w", encoding="utf-8") as f:
         json.dump(filt, f, indent=2)
-    print(f"wrote {len(filt)} entries -> {out_db.relative_to(root)}")
+    try:
+        display = out_db.relative_to(root)
+    except ValueError:
+        display = out_db
+    print(f"wrote {len(filt)} entries -> {display}")
 
     if args.no_run:
         return 0

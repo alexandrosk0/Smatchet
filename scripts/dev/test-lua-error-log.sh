@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 # Use a non-default MCP port so the CLI cannot short-circuit to an already-running Smatchet
 # instance (which would still be on the old binary if the user is testing in the UI). With

@@ -39,7 +39,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 PORT_FRESH="${SMATCHET_TEST_PORT_FRESH:-$((40000 + RANDOM % 10000))}"
 PORT_RT="${SMATCHET_TEST_PORT_RT:-$((50000 + RANDOM % 10000))}"

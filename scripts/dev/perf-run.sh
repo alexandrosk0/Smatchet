@@ -47,7 +47,7 @@ SCENARIO_ID=""
 FRAMES=600
 OUT_PATH=""
 FORCE_BUILD=0
-EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -95,7 +95,7 @@ esac
 TREE_DIRTY_FILE="$REPO_ROOT/.claude/.tree-dirty"
 if [[ $FORCE_BUILD -eq 1 ]] || [[ -f "$TREE_DIRTY_FILE" ]] || [[ ! -f "$EXE" ]]; then
     echo "[perf-run] building SmatchetStandalone (force=$FORCE_BUILD, dirty=$([ -f "$TREE_DIRTY_FILE" ] && echo y || echo n), exe-present=$([ -f "$EXE" ] && echo y || echo n))..."
-    cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+    cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 fi
 
 if [[ ! -f "$EXE" ]]; then

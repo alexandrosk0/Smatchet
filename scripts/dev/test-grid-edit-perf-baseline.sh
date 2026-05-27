@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 COUNT="${GRID_EDIT_BURST_COUNT:-200}"
 

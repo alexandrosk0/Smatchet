@@ -112,7 +112,7 @@ reviews:
     - path: 'tests/**'
       instructions: |
         Pure-logic doctest rig only (`SMATCHET_BUILD_TESTS`,
-        `ninja-test-msys2` preset). No UI / HTTP / SQLite / ImGui / cpr
+        `ninja-test-msvc` preset). No UI / HTTP / SQLite / ImGui / cpr
         surfaces — those route to bucket-E (ImGui Test Engine) or stay
         deferred.
     - path: '{CMakeLists.txt,cmake/**,CMakePresets.json,Source_Core/CMakeLists.txt,Plugins/**/CMakeLists.txt,UnrealPlugins/**/CMakeLists.txt}'
