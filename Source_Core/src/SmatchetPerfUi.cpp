@@ -1,6 +1,7 @@
 #include "SmatchetPerfUi.h"
 
 #include "NetworkUsageTracker.h"
+#include "SmatchetDockNodeIds.h"
 #include "UiPerfMonitor.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -218,14 +219,19 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
         return;
     }
     updateSmoothedFps();
+    static bool s_needsReDock = false;
+    if (s_needsReDock) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
+        s_needsReDock = false;
+    }
     ImGui::SetNextWindowSize(ImVec2(580, 380), ImGuiCond_FirstUseEver);
-    // Always-reveal-on-menu-click contract (AGENTS.md): SetNextWindowFocus before Begin is the
-    // only path that activates a docked tab; post-Begin SetWindowFocus is belt-and-braces for
-    // floating-window state. Mirrors SmatchetViewsDashboardUi.cpp pattern.
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
     }
     if (ImGui::Begin("Performance", pOpen)) {
+        if (!ImGui::IsWindowDocked()) {
+            s_needsReDock = true;
+        }
         if (wantFocus) {
             ImGui::SetWindowFocus();
         }
@@ -330,9 +336,3 @@ void SmatchetPerfUi::DrawFpsOverlay() {
     }
     ImGui::End();
 }
-
-
-
-
-
-

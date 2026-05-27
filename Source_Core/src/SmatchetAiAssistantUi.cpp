@@ -978,9 +978,11 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     const ImGuiID primaryDockId = SmatchetDockNodeIds::kPrimarySideBar;
     const ImGuiID secondaryDockId = SmatchetDockNodeIds::kSecondarySideBar;
     const ImGuiID targetDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
-    if (d.assistantPendingSideSwap) {
+    static bool s_assistantNeedsReDock = false;
+    if (d.assistantPendingSideSwap || s_assistantNeedsReDock) {
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
         d.assistantPendingSideSwap = false;
+        s_assistantNeedsReDock = false;
     } else {
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
     }
@@ -1013,6 +1015,9 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     if (d.requestAssistantFocus) {
         ImGui::SetWindowFocus();
         d.requestAssistantFocus = false;
+    }
+    if (!ImGui::IsWindowDocked()) {
+        s_assistantNeedsReDock = true;
     }
 
     // Header strip: provider + swap-side toggle.

@@ -90,31 +90,28 @@ ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
                   (std::max)(vp->WorkPos.y, (std::min)(pos.y, maxY)));
 }
 
-void PrepareMcpWindowLayout(const UiDrawSession& d) {
+void PrepareMcpWindowLayout(UiDrawSession& d) {
+    const bool needsForce = d.pendingReDockWindows.erase("mcp") > 0 || d.layoutForceDefaultsFrames > 0;
+    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel,
+                               needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
         return;
     }
     const ImVec2 size((std::min)(520.0f, (std::max)(420.0f, vp->WorkSize.x * 0.34f)),
                       (std::min)(640.0f, (std::max)(420.0f, vp->WorkSize.y * 0.70f)));
     const ImVec2 pos(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f, vp->WorkPos.y + 48.0f);
-    if (d.layoutForceDefaultsFrames > 0) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
-        ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    } else {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
-    }
+    const ImGuiCond cond = needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+    ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), cond);
+    ImGui::SetNextWindowSize(size, cond);
 }
 
-void RepairMcpWindowLayout(const UiDrawSession& d) {
-    if (ImGui::IsWindowDocked() && d.layoutForceDefaultsFrames <= 0) {
+void RepairMcpWindowLayout(UiDrawSession& d) {
+    if (ImGui::IsWindowDocked()) {
         return;
     }
+    d.pendingReDockWindows.insert("mcp");
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         return;
