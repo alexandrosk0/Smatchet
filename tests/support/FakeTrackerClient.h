@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TESTS_FAKE_TRACKER_CLIENT_H
 #define SMATCHET_TESTS_FAKE_TRACKER_CLIENT_H
 
-// FakeTrackerClient — scripted in-memory implementation of ITrackerClient for the doctest rig.
+// FakeTrackerClient — scripted in-memory implementation of ITrackerBackend for the doctest rig.
 // No HTTP, no SQLite, no threads — every method either:
 //   * returns a pre-scripted response (`OnCreateIssue(...).ReturnKey("ABC-1")`), or
 //   * fails with a pre-scripted error (`OnUpdateIssueFields(...).Fail("Server error 500")`), or
@@ -36,7 +36,7 @@ namespace smatchet_tests {
 
 /// One scripted result for an arbitrary call. Either succeeds with `Value` or fails by
 /// setting `Error` (non-empty). Number-keyed (status_code) ignored for the high-level
-/// ITrackerClient surface — used only by call recordings to drive richer tests.
+/// ITrackerBackend surface — used only by call recordings to drive richer tests.
 struct ScriptedReply {
     bool Ok = true;
     std::string Error;
@@ -161,7 +161,7 @@ class FakeTrackerClient : public ITrackerBackend,
             return false;
         }
         // Default: stuff values as an array under "values" — tests rarely care about the exact
-        // shape here because the production ITrackerClient impls own the wire format.
+        // shape here because the production ITrackerBackend impls own the wire format.
         nlohmann::json arr = nlohmann::json::array();
         std::copy(values.begin(), values.end(), std::back_inserter(arr));
         outPayload = nlohmann::json{{"values", arr}};

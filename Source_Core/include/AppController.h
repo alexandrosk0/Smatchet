@@ -610,7 +610,7 @@ class AppController
     }
 
     /** Read-only accessor used by UI sites (e.g. `ResolveProjectForDraft`) to call
-     *  `ITrackerClient::ExtractProjectFromQuery` / `GetTrackerType`. May be null before
+     *  `ITrackerConnectivity::ExtractProjectFromQuery` / `GetTrackerType`. May be null before
      *  `Initialize` has wired up the factory. Do not retain the pointer past the current frame. */
     const ITrackerBackend* GetTrackerBackend() const { return Backend.get(); }
     // PR 4b: non-const accessor for callers that invoke mutating client methods (e.g.

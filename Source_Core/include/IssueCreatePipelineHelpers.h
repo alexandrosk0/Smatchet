@@ -9,7 +9,7 @@
 
 /**
  * Pure-logic helpers extracted from IssueCreatePipeline.cpp so they can be unit-tested
- * without standing up an ITrackerClient or LocalCacheManager. These are the deterministic
+ * without standing up an ITrackerBackend or LocalCacheManager. These are the deterministic
  * cache-merge decisions that run after a successful PUT — no I/O, no network, no DB.
  *
  * The matching `.cpp` definitions live in IssueCreatePipeline.cpp.

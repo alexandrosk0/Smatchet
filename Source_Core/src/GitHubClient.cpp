@@ -270,7 +270,7 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
     // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly
     // editable when the PAT has repo write scope. Return success with all-true so
     // AppController caches the result and doesn't refetch every UI frame (the
-    // default `ITrackerClient::FetchIssueEditMeta` returns false + an "unsupported"
+    // default `ITrackerIssueReader::FetchIssueEditMeta` returns false + an "unsupported"
     // error, which AppController treats as a transient failure and retries forever).
     outError.clear();
     outFieldIdCanEdit.clear();

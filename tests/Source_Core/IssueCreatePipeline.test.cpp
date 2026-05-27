@@ -136,6 +136,6 @@ TEST_CASE("IssueCreatePipelineHelpers::MergeDraftIntoCachedTicketForUpdate does 
 }
 
 // ApplyPostIssueSteps decision-logic is exercised through integration tests where an
-// ITrackerClient mock is available — not a pure-logic unit. It invokes
-// ITrackerClient::UpdateIssueFields / AddIssueToSprint / AttachFilesToIssue, so it
+// ITrackerBackend mock is available — not a pure-logic unit. It invokes
+// ITrackerIssueMutations::UpdateIssueFields / ITrackerCollaboration::AddIssueToSprint / AttachFilesToIssue, so it
 // cannot be linked here without dragging the HTTP path into the doctest rig.

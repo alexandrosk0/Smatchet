@@ -121,7 +121,7 @@ struct TrackerConfig {
 #endif
     // Minimum log level: trace, debug, info, warn, error (see Logger::ParseLogLevelString).
     std::string LogMinLevel = "info";
-    // When true, ITrackerClient logs truncated HTTP response bodies at Trace.
+    // When true, tracker backends log truncated HTTP response bodies at Trace.
     bool LogTrackerHttpBodies = false;
     // When true, P4Blame logs truncated p4 stdout at Trace (plus stderr on non-zero exit).
     bool LogP4Io = false;
