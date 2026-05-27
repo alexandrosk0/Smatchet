@@ -6,6 +6,7 @@
 #include "ConfigManager.h"
 #include "McpServerStatus.h"
 #include "PluginHost.h"
+#include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -92,18 +93,22 @@ ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
 void PrepareMcpWindowLayout(const UiDrawSession& d) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
         return;
     }
     const ImVec2 size((std::min)(520.0f, (std::max)(420.0f, vp->WorkSize.x * 0.34f)),
                       (std::min)(640.0f, (std::max)(420.0f, vp->WorkSize.y * 0.70f)));
     const ImVec2 pos(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f, vp->WorkPos.y + 48.0f);
-    const ImGuiCond cond = (d.layoutForceDefaultsFrames > 0) ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
     if (d.layoutForceDefaultsFrames > 0) {
-        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    } else {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
     }
-    ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), cond);
-    ImGui::SetNextWindowSize(size, cond);
 }
 
 void RepairMcpWindowLayout(const UiDrawSession& d) {
@@ -124,10 +129,9 @@ void RepairMcpWindowLayout(const UiDrawSession& d) {
     }
     size.x = (std::min)((std::max)(size.x, 420.0f), vp->WorkSize.x * 0.92f);
     size.y = (std::min)((std::max)(size.y, 420.0f), vp->WorkSize.y * 0.88f);
-    ImGui::SetWindowPos(ClampMcpWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f,
-                                                 vp->WorkPos.y + 48.0f),
-                                         size),
-                        ImGuiCond_Always);
+    ImGui::SetWindowPos(
+        ClampMcpWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f, vp->WorkPos.y + 48.0f), size),
+        ImGuiCond_Always);
     ImGui::SetWindowSize(size, ImGuiCond_Always);
 }
 
@@ -322,8 +326,3 @@ void SmatchetDrawMcpServerWindow(const AppController& app, UiDrawSession& d) {
 }
 
 #endif // SMATCHET_WITH_MCP
-
-
-
-
-
