@@ -18,7 +18,7 @@
 
 - 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
   Details: After PR #460 merged, the `agents/git-janitor.md` workflow was executed manually: fetch/prune, switch to `develop`, fast-forward, delete the squash-merged topic branch, run the dual-target build, and report clean git/P4 state. The steps are deterministic but easy to partially skip or reorder.
-  Concrete next action: add `scripts/dev/git-janitor.sh --post-merge <pr>` that performs the safe local path: audit worktrees and uncommitted state, fetch/prune, switch/ff `develop`, delete the local merged branch when the remote is gone and PR is merged, run `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`, and print a concise report. Estimated cost 1-2 h.
+  Concrete next action: add `scripts/dev/git-janitor.sh --post-merge <pr>` that performs the safe local path: audit worktrees and uncommitted state, fetch/prune, switch/ff `develop`, delete the local merged branch when the remote is gone and PR is merged, run `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`, and print a concise report. Estimated cost 1-2 h.
   Status: open
   Last-reviewed: 2026-05-26
 

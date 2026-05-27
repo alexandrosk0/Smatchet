@@ -379,8 +379,8 @@ After all merges + cleanup but before declaring done:
 
 ```bash
 # Dual-target build is the minimum.
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
-cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
 
 # Lua-off variant catches stub-build drift. cmake -B is idempotent — safe to always run.
 cmake -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF -G Ninja

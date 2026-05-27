@@ -45,7 +45,7 @@ Tracker backend specialist (Jira + Plane.so).
 2. Identify the change as backend-shared, Jira-specific, or Plane-specific. Wrong placement is the #1 mistake here.
 3. Field value flow: catalog → parser → payload → wire format. Touch in order.
 4. New endpoints: add to `ITrackerClient` only if both backends will implement it. Otherwise it's a concrete-client extension.
-5. Build `ninja-iter-msys2` before responding. The lint hook also syntax-checks DX12.
+5. Build `ninja-iter-msvc` before responding. The lint hook also syntax-checks DX12.
 
 ## Files changed
 
@@ -53,7 +53,7 @@ Bullet list of relative paths touched, with one-line per file naming the change 
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+`cmake --build --preset ninja-iter-msvc` → PASS|FAIL.  
 Scenario or CLI command exercised (e.g. `Smatchet.exe cmd jira.search --jql='project=TEST'`): result.  
 `OfflineQueueService` + `BackendAuditTrail` (or `FieldEditAuditSource`) call-sites verified on every new write path.
 

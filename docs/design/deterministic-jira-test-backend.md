@@ -155,7 +155,7 @@ Add fixtures under `tests/fixtures/jira_backend/`:
 
 Add `scripts/dev/test-ui-jira-deterministic-backend.sh`, mirroring [`scripts/dev/test-ui-views-columns-reorder.sh`](../../scripts/dev/test-ui-views-columns-reorder.sh:1):
 
-- uses `build/ninja-ui-test-msys2/Smatchet.exe` by default
+- uses `build/ninja-ui-test-msvc/Smatchet.exe` by default
 - sets an isolated `SMATCHET_USER_DATA`
 - sets `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`
 - invokes `Smatchet.exe cmd ui_test.run --name=JiraDeterministic --spawn --yes`
@@ -236,15 +236,15 @@ Non-goals:
 - **Bucket A (pure-logic ctest, `test-rig`)**:
   - `JiraIssueMappingPure.test.cpp`
   - `JiraFakeTrackerFixture.test.cpp`
-  - targeted run: `ctest --test-dir build/ninja-test-msys2 --output-on-failure -R "smatchet_tests"`
-- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)**:
+  - targeted run: `ctest --test-dir build/ninja-test-msvc --output-on-failure -R "smatchet_tests"`
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**:
   - `tests/ui/jira_deterministic_backend.test.cpp`
   - targeted driver: `bash scripts/dev/test-ui-jira-deterministic-backend.sh`
 - **Bash-driver scenario / screenshot / sanitizer**:
   - new bash driver uses isolated `SMATCHET_USER_DATA`
   - no screenshot/golden output
-  - sanitizer remains the standard `ninja-test-msys2` gate for Source_Core changes
-- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
+  - sanitizer remains the standard `ninja-test-msvc` gate for Source_Core changes
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Manual residue**: none expected. If a stable grid cell cannot be asserted through ImGui Test Engine, add a `docs/backlog/agent-self-improvement/tooling.md` entry and keep the app-state assertion as the temporary automated guard.
 
 ## Out of scope (flagged, not designed)

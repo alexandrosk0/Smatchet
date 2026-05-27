@@ -69,8 +69,8 @@ Because the actual HTTP commit requires a live tracker, when `--no-network` is p
 
 ## Verification
 
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green.
-- `cmake --build --preset ninja-test-msys2 && ctest --output-on-failure` — green.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green.
+- `cmake --build --preset ninja-test-msvc && ctest --output-on-failure` — green.
 - `cmake -B build/ninja-ai-off-check -DSMATCHET_WITH_AI=OFF && cmake --build build/ninja-ai-off-check --target SmatchetStandalone` — AI-OFF green.
 - `bash scripts/dev/test-all.sh` — includes new `test-grid-edit-perf-postfix.sh`.
 - Burst command on a `--spawn` instance: per-event mean ≤ 6.94 ms, p99 ≤ 16.67 ms, no UI-thread `perf_temp:grid.cell_edit_commit` scope > 6.94 ms.
@@ -92,11 +92,11 @@ Because the actual HTTP commit requires a live tracker, when `--no-network` is p
 
 ## Verification
 
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — **PASS** (dual-target green).
-- `cmake --build --preset ninja-test-msys2 && ctest --output-on-failure` — **PASS** (2/2, 1.11 s).
-- `cmake -B build/ninja-ai-off-check --preset ninja-iter-msys2 -DSMATCHET_WITH_AI=OFF && cmake --build … --target SmatchetStandalone` — **PASS** (AI-OFF green, build dir discarded).
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — **PASS** (dual-target green).
+- `cmake --build --preset ninja-test-msvc && ctest --output-on-failure` — **PASS** (2/2, 1.11 s).
+- `cmake -B build/ninja-ai-off-check --preset ninja-iter-msvc -DSMATCHET_WITH_AI=OFF && cmake --build … --target SmatchetStandalone` — **PASS** (AI-OFF green, build dir discarded).
 - `bash scripts/dev/test-grid-edit-perf-postfix.sh` — **PASS** (mean = 0.001 ms ≤ 6.94 ms; p99 = 0.0008 ms ≤ 16.67 ms; 200-iteration burst).
-- `bash scripts/dev/test-all.sh` — new `test-grid-edit-perf-*.sh` PASS. Pre-existing unrelated failures: `test-lint-hook-split.sh` (lint hook plumbing — env-sensitive), `test-screenshot-diff.sh` (pixel diff over scenarios — Windows display state), `test-callstack-tooltip-hover.sh` + `test-ui-views-columns-reorder.sh` (require `ninja-ui-test-msys2` preset, not built). These were failing before my changes too — confirmed by re-running them after a `git stash`.
+- `bash scripts/dev/test-all.sh` — new `test-grid-edit-perf-*.sh` PASS. Pre-existing unrelated failures: `test-lint-hook-split.sh` (lint hook plumbing — env-sensitive), `test-screenshot-diff.sh` (pixel diff over scenarios — Windows display state), `test-callstack-tooltip-hover.sh` + `test-ui-views-columns-reorder.sh` (require `ninja-ui-test-msvc` preset, not built). These were failing before my changes too — confirmed by re-running them after a `git stash`.
 - `grep -rn 'perf_temp:' Source_Core/` — **0 hits** (no temporary instrumentation left behind).
 
 ## Follow-ups (out of scope for slice 1)

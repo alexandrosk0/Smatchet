@@ -8,8 +8,8 @@
 
 <!-- Reviewer-runnable checks. Bias toward automation; flag any manual residue. -->
 
-- [ ] `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` (dual-target)
-- [ ] `cmake --build --preset ninja-test-msys2 && ctest --output-on-failure` from `build/ninja-test-msys2/`
+- [ ] `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target)
+- [ ] `cmake --build --preset ninja-test-msvc && ctest --output-on-failure` from `build/ninja-test-msvc/`
 - [ ] `bash scripts/dev/test-all.sh` (sidecar suite)
 - [ ] Manual residue: <!-- "none" if every check is automated -->
 

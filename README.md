@@ -78,9 +78,6 @@ Smatchet's build system uses CMake and is designed to require **zero manual depe
 - `ninja-test-clang`: doctest rig (`RelWithDebInfo`)
 - `ninja-clang-asan`: ASAN + UBSan
 
-**Legacy MSYS2 (deprecated — will be removed):**
-
-- `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-publish-msys2`, etc.
 
 ### Build Workflows
 

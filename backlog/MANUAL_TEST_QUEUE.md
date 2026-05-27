@@ -20,12 +20,12 @@
 The build hook only fires on individual file edits; PR merges don't trigger a full target build. After the cascade of P1-cleanup + cppcheck-cleanup PRs lands, re-verify both targets.
 
 - ⏳ **B1 — Standalone + DX12 core both compile clean.**
-  - **Command**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`
+  - **Command**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
   - **Expected**: 0 errors, 0 new warnings vs the develop tip pre-cleanup (last clean baseline: `93f561b`).
   - **Why it matters**: PRs #12 / #15 / #16 each rebased against a moving develop; the post-merge tip was never validated as a single unit.
 
 - ⏳ **B2 — DX12 ImGui host links clean** (only if #12's item 22 is being smoked).
-  - **Command**: `cmake --build --preset ninja-iter-msys2 --target SmatchetImGuiHost_DX12`
+  - **Command**: `cmake --build --preset ninja-iter-msvc --target SmatchetImGuiHost_DX12`
   - **Expected**: clean build of the DX12 host static lib.
 
 ---

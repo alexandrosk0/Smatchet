@@ -281,7 +281,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
       Confirm the expected files are modified / created.
 
    2. **Run local gates** (the agent didn't get to):
-      - `cmake --build --preset ninja-iter-msys2` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target).
+      - `cmake --build --preset ninja-iter-msvc` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target).
       - `bash scripts/dev/test-all.sh` if the diff touches anything under § FF-clean docs-batch precondition 4's gate set.
 
    3. **Stage everything** — this is the gotcha. The agent may have created new files that aren't staged. Use `git add -A`, not `git add <list>`:

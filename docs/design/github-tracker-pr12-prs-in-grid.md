@@ -115,8 +115,8 @@ N/A — diff touches `Source_Core/` but the changed code paths are not in any PR
 
 ## Verification (actual)
 
-- **Bucket A — pure-logic ctest**: `cmake --build --preset ninja-test-msys2` then `ctest --test-dir build/ninja-test-msys2 --output-on-failure` — passes (44 GitHub-* doctest cases pass total, including 7 new JQL translator, 3 new fetch plan, 9 new mapping/enrichment).
-- **Dual-target build**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — both link clean.
+- **Bucket A — pure-logic ctest**: `cmake --build --preset ninja-test-msvc` then `ctest --test-dir build/ninja-test-msvc --output-on-failure` — passes (44 GitHub-* doctest cases pass total, including 7 new JQL translator, 3 new fetch plan, 9 new mapping/enrichment).
+- **Dual-target build**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — both link clean.
 - **Lint**: `clang-format -i` applied to all 8 edited source + 3 edited test files. Build is warning-clean on the touched files.
 - **Bucket E (ImGui Test Engine)**: deferred to umbrella PR10 (bucket-E for tracker switch) per the parent plan; no new UI shape change beyond column population (the 4 `pr.*` columns render via the existing field-catalog rendering path).
 - **Manual residue**: setting view JQL to `type:pr` and observing PR rows in the running exe — to be exercised post-merge by the user; no test-author backlog entry needed because the verifiable surface (translator → plan → mapping → enrichment) is fully bucket-A covered.

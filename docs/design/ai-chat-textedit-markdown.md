@@ -232,7 +232,7 @@ Single squash commit on `claude/amazing-hamilton-3e1618`, on top of `c6084855`.
 |---|---|
 | A — doctest | Tokenizer covers: empty input, single heading, paragraph with bold + italic + inline code, fenced code with lang tag (verify fence state machine), bullet + ordered list, blockquote, mixed sequence, link, horizontal rule, streaming-partial **unclosed** fence (fence-open persists to EOF, body bytes coloured as code), italic-vs-bold disambiguation (`*x*` vs `**x**` vs `***x***`), backtick pairs not greedy. |
 | B — manual | Run `Smatchet.exe`; ask DeepSeek a multi-block prompt; verify (a) cursor blinks + can be placed anywhere via mouse; (b) drag-select within and across messages; (c) Ctrl+C pastes byte-identical content; (d) heading / bold / code coloured distinctly; (e) Lua editor still works the same as before the move. |
-| D — sanitizer | Standard `ninja-test-msys2` ctest under ASan/UBSan. |
+| D — sanitizer | Standard `ninja-test-msvc` ctest under ASan/UBSan. |
 | E — ImGui Test Engine | Deferred to a backlog entry under `docs/backlog/agent-self-improvement/tooling.md` — the existing E bucket isn't wired yet. |
 
 ## Open questions
@@ -265,8 +265,8 @@ Single squash commit on `claude/amazing-hamilton-3e1618`, on top of `c6084855`.
 
 ## Verification
 
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — **passed** (174/174 targets, no warnings in new files).
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12` — new TUs (`AiChatMarkdownTokens.cpp`, `AiChatTextEditorRender.cpp`, vendored `TextEditor.cpp`) all compiled successfully under DX12. A pre-existing `WhisperAiAssistantAutosendScenario.cpp` failure (references `assistantPanelOpen` which is `#if defined(SMATCHET_WITH_AI)` gated; DX12 build does not define `SMATCHET_WITH_AI`) stopped the chain at 376/383 — unrelated to this slice, predates by commit `4c56b83b`.
-- `cmake --build --preset ninja-test-msys2` — built; ran `SmatchetTests.exe --test-case="*AiChatMarkdownTokens*"` — **17/17 passed, 63/63 assertions**. Targeted AI regression `*Provider*,*DeepSeek*,*ModelSignature*,*AiClient*,*Model*` — **65/65 passed, 579/579 assertions**.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — **passed** (174/174 targets, no warnings in new files).
+- `cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12` — new TUs (`AiChatMarkdownTokens.cpp`, `AiChatTextEditorRender.cpp`, vendored `TextEditor.cpp`) all compiled successfully under DX12. A pre-existing `WhisperAiAssistantAutosendScenario.cpp` failure (references `assistantPanelOpen` which is `#if defined(SMATCHET_WITH_AI)` gated; DX12 build does not define `SMATCHET_WITH_AI`) stopped the chain at 376/383 — unrelated to this slice, predates by commit `4c56b83b`.
+- `cmake --build --preset ninja-test-msvc` — built; ran `SmatchetTests.exe --test-case="*AiChatMarkdownTokens*"` — **17/17 passed, 63/63 assertions**. Targeted AI regression `*Provider*,*DeepSeek*,*ModelSignature*,*AiClient*,*Model*` — **65/65 passed, 579/579 assertions**.
 - Full `SmatchetTests.exe` — 776/783 passed; the 7 failures are pre-existing `AgentProposalStore` "unable to open database file" errors unrelated to this slice (concurrent worktree SQLite file collisions).
 - Bucket E (ImGui Test Engine) — rig is wired (`docs/design/applied/imgui-test-engine-bucket-e-execution.md`); coverage of this slice's rendered colorizer per-glyph palette stays deferred to a future targeted test pass, no live backlog entry yet.

@@ -67,10 +67,6 @@ Exits 0 when every required tool resolves; fails loudly with install hints for a
 - `ninja-test-clang`: doctest rig (`RelWithDebInfo`)
 - `ninja-clang-asan`: ASAN + UBSan
 
-**Legacy MSYS2 (deprecated — will be removed after one release cycle):**
-
-- `ninja-iter-msys2`, `ninja-debug-msys2`, `ninja-publish-msys2`, etc.
-
 ## Common Workflows
 
 **MSVC** — run from a VS Developer Command Prompt:
@@ -97,15 +93,15 @@ cmake --build --preset ninja-debug-msvc
 Unreal plugin iteration:
 
 ```powershell
-cmake --preset ninja-iter-unreal-msys2
-cmake --build --preset ninja-iter-unreal-msys2
+cmake --preset ninja-iter-unreal-msvc
+cmake --build --preset ninja-iter-unreal-msvc
 ```
 
 Unreal plugin debug:
 
 ```powershell
-cmake --preset ninja-debug-unreal-msys2
-cmake --build --preset ninja-debug-unreal-msys2
+cmake --preset ninja-iter-unreal-msvc
+cmake --build --preset ninja-iter-unreal-msvc
 ```
 
 Wrapper shortcuts are still available:

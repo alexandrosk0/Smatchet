@@ -49,7 +49,7 @@ Bullet list of relative paths touched + per-file occurrence count (e.g. `Source_
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2` → PASS|FAIL (only when the rename touches C++).  
+`cmake --build --preset ninja-iter-msvc` → PASS|FAIL (only when the rename touches C++).  
 `grep -n '<old-symbol>' -r` returns zero hits across the documented scope (C++, Lua, docs, localization, CMake) — confirms exhaustive rename.
 
 ## Manual residue

@@ -41,7 +41,7 @@ void RenderFooCell(...) {
 ### 2. Build & measure
 
 ```
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 ```
 
 The CLI is available. Use the highest path that applies:
@@ -54,10 +54,10 @@ The CLI is available. Use the highest path that applies:
 
 ```bash
 # Check available scenarios (optional — also uses --spawn if no instance running)
-build/ninja-iter-msys2/Smatchet.exe cmd scenario.list --spawn
+build/ninja-iter-msvc/Smatchet.exe cmd scenario.list --spawn
 
 # Run the scenario end-to-end. Claude executes this alone.
-build/ninja-iter-msys2/Smatchet.exe cmd scenario.run \
+build/ninja-iter-msvc/Smatchet.exe cmd scenario.run \
   --name=priority-grid-scroll --frames=600 --outPath=perf_before.json --spawn --yes
 ```
 
@@ -78,25 +78,25 @@ Read("perf_before.json")
 
 ```bash
 # Reset so stale data from prior frames doesn't pollute the snapshot
-build/ninja-iter-msys2/Smatchet.exe cmd perf.reset
+build/ninja-iter-msvc/Smatchet.exe cmd perf.reset
 
 # ← user navigates to the slow screen and reproduces for ~5 s (only manual step)
 
 # Pull rows directly into context — no panel, no paste
-build/ninja-iter-msys2/Smatchet.exe cmd perf.snapshot --pretty
+build/ninja-iter-msvc/Smatchet.exe cmd perf.snapshot --pretty
 ```
 
 Filter to `perf_temp:*` rows only:
 
 ```bash
-build/ninja-iter-msys2/Smatchet.exe cmd perf.snapshot \
+build/ninja-iter-msvc/Smatchet.exe cmd perf.snapshot \
   | jq '[.data.rows[] | select(.name | startswith("perf_temp:"))]'
 ```
 
 Top rows for frame-budget context:
 
 ```bash
-build/ninja-iter-msys2/Smatchet.exe cmd perf.snapshot \
+build/ninja-iter-msvc/Smatchet.exe cmd perf.snapshot \
   | jq '.data.rows[:10]'
 ```
 
@@ -225,7 +225,7 @@ Repeat for `Plugins/` and `Target_Standalone/`. All three must return zero match
 
 3. Reset the monitor so stale rows don't appear in the next session:
 ```bash
-build/ninja-iter-msys2/Smatchet.exe cmd perf.reset
+build/ninja-iter-msvc/Smatchet.exe cmd perf.reset
 ```
 
 4. Delete `perf_before.json` / `perf_after.json` scratch files (not committed).

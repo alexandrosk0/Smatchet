@@ -55,7 +55,7 @@ Bullet list of relative paths touched, with one-line per file naming the change 
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+`cmake --build --preset ninja-iter-msvc` → PASS|FAIL.  
 Command exercised via at least one surface (e.g. `Smatchet.exe cmd <name>` → result; or palette / MCP / Lua call → result).  
 Surfaces the command appears on: CLI / palette / MCP / Lua / scenario.
 

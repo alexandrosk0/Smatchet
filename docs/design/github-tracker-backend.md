@@ -215,7 +215,7 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 **Risks**:
 
 - **Doc / script / AGENTS.md bit-rot** — per decision 1, all docs + AGENTS.md sections + scripts + ADRs + agent files stay verbatim. They describe deleted behaviour. Future readers must understand "this section describes shipped code that was ripped out 2026-05-21; see git log on `Source_Core/src/Agentic*` for the reference impl." Accepted; user-confirmed bit-rot.
-- **Deletion blast radius (PR1)** — ~5000-10000 LOC removed across ~80 files. Risk: a hidden non-agentic consumer of a deleted symbol breaks the build. Mitigation: dual-target build gate after every batch (`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`); incremental commits within PR1 keep bisection cheap; sanitizer build (`ninja-test-msys2`) confirms no UB.
+- **Deletion blast radius (PR1)** — ~5000-10000 LOC removed across ~80 files. Risk: a hidden non-agentic consumer of a deleted symbol breaks the build. Mitigation: dual-target build gate after every batch (`cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`); incremental commits within PR1 keep bisection cheap; sanitizer build (`ninja-test-msvc`) confirms no UB.
 - **Lost feature** — auto-triage, coderabbit-react, ci-react, claude-spawn handoff, merge-gates poller (the C++ side of it) are deleted at runtime. Bash side of merge-gates stays (no C++ deps). User-confirmed; recovery path is git history.
 - **ADR 0004 (pluggable coding harness runner) + 0005 (force-push carve-out) document removed C++ surface** — left Accepted per decision 1. Future ADR-readers must triangulate "Accepted but C++ impl is gone — historical decision, not current."
 - **`SMATCHET_WITH_AGENTIC` retired in CMake but referenced in `AGENTS.md` / `docs/` / `agents/*.md`** — stale references; bit-rot accepted.
@@ -241,8 +241,8 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 ## Verification
 
 **PR1 (ripout)**:
-- **Build gate**: dual-target build pass: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. Must compile with zero agentic C++ symbols.
-- **Sanitizer gate**: `cmake --build --preset ninja-test-msys2` — ASan/UBSan clean post-deletion.
+- **Build gate**: dual-target build pass: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. Must compile with zero agentic C++ symbols.
+- **Sanitizer gate**: `cmake --build --preset ninja-test-msvc` — ASan/UBSan clean post-deletion.
 - **Test gate**: `bash scripts/dev/test-all.sh` — all surviving (non-agentic) tests pass.
 - **Boot-smoke gate (mandatory; added 2026-05-21 grill)**: `Smatchet.exe --help` exits 0 within 5s + `Smatchet.exe --ephemeral` reaches the first ImGui frame + cleanly exits on `app.quit`. Catches missed UI-mount deletions (e.g. SmatchetUI.cpp ghost `Render(app, d)` calls referencing deleted panels) that compile-pass but crash on first draw. Script: extend `scripts/dev/test-boot-smoke.sh` (if absent, ship as part of PR1) — wraps both spawn checks + a 5s watchdog. Exit-0 required to merge.
 - **NOT a gate**: doc cross-ref grep over `docs/` / `AGENTS.md` / `agents/`. Stale references are intentional (decision 1).
@@ -292,9 +292,9 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 
 ## Verification (actual)
 
-- PR3 dual-target build: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — passed. `libSmatchetCore_DX12.a` linked (step 194/198), `Smatchet.exe` linked (step 195/198).
-- PR3 ctest: `ctest --test-dir build/ninja-test-msys2` — 2/2 pass (`smatchet_tests` 1.89 s, `smatchet_lua_tests` 0.01 s).
-- PR3 visual verify: user-driven against `build/ninja-iter-msys2/Smatchet.exe` from worktree `.claude/worktrees/agent-a42ad27499adf9969/`. Log evidence:
+- PR3 dual-target build: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — passed. `libSmatchetCore_DX12.a` linked (step 194/198), `Smatchet.exe` linked (step 195/198).
+- PR3 ctest: `ctest --test-dir build/ninja-test-msvc` — 2/2 pass (`smatchet_tests` 1.89 s, `smatchet_lua_tests` 0.01 s).
+- PR3 visual verify: user-driven against `build/ninja-iter-msvc/Smatchet.exe` from worktree `.claude/worktrees/agent-a42ad27499adf9969/`. Log evidence:
   ```text
   [INFO] Updated tracker config (GitHub). BaseUrl='https://api.github.com' (PAT length=93)
   [INFO] GitHubClient: ctor baseUrl='https://api.github.com' pat_bytes=93
@@ -303,8 +303,8 @@ Pure helpers are net-new; no code reuse from the agentic surface.
   [INFO] TickStreamingApply finished sync session. saved_or_kept=0 total_stale=0 fullSync=0 err=FetchIssues: GitHubClient HTTP impl deferred to a follow-up slice of docs/design/github-tracker-backend.md PR2
   ```
 - Dropdown shows three options; GitHub config inputs render with correct tooltips; switching tracker kind clears the grid (in-memory `ActiveTickets`). Stub error surfaces as designed.
-- PR4/PR5 dual-target build: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — passed clean. Both `Smatchet.exe` and `libSmatchetCore_DX12.a` linked.
-- PR4/PR5 ctest: `ctest --test-dir build/ninja-test-msys2 --output-on-failure` — 2/2 pass (`smatchet_tests` 1.99 s, `smatchet_lua_tests` 0.04 s). `SmatchetTests --test-case="*Translate*"` reports 19 / 19 PR5 translator cases pass; `--test-case="*GitHub*"` reports 26 / 26 GitHub-related cases pass overall (PR2 helpers + PR5 translator).
+- PR4/PR5 dual-target build: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — passed clean. Both `Smatchet.exe` and `libSmatchetCore_DX12.a` linked.
+- PR4/PR5 ctest: `ctest --test-dir build/ninja-test-msvc --output-on-failure` — 2/2 pass (`smatchet_tests` 1.99 s, `smatchet_lua_tests` 0.04 s). `SmatchetTests --test-case="*Translate*"` reports 19 / 19 PR5 translator cases pass; `--test-case="*GitHub*"` reports 26 / 26 GitHub-related cases pass overall (PR2 helpers + PR5 translator).
 
 ## Remaining for GitHub issues to work
 

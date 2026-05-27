@@ -17,7 +17,7 @@ Move Unreal release packaging to the same light feature profile by default. The 
 ## Files to modify
 
 1. `CMakeLists.txt`: add `SMATCHET_WITH_STANDALONE_CMD_RUNNER`, prune inactive AI implementation sources when AI is OFF, and keep Lua/command registry sources in light builds.
-2. `CMakePresets.json`: update `ninja-publish-light-msys2`, add a default light Unreal packaging preset, and keep full publish behavior unchanged for full standalone.
+2. `CMakePresets.json`: update `ninja-publish-light-msvc`, add a default light Unreal packaging preset, and keep full publish behavior unchanged for full standalone.
 3. `Target_Standalone/main.cpp`: gate `CliCommandRunner` include/use and return a clear unsupported error for `Smatchet-Light.exe cmd ...`.
 4. `Target_Standalone/CliCommandRunner.cpp` / `.h`: compile only when the standalone command runner option is ON.
 5. `scripts/publish/release_github.ps1`: default Unreal packaging to the light Unreal preset while still producing both full and light standalone zips.
@@ -64,9 +64,9 @@ Move Unreal release packaging to the same light feature profile by default. The 
 ## Verification
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: run if tests are built for the full preset; light preset keeps tests OFF by design.
-- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)**: run command-palette scenario coverage if available because palette registration remains a release requirement.
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: run command-palette scenario coverage if available because palette registration remains a release requirement.
 - **Bash-driver scenario / screenshot / sanitizer**: run release smoke and inspect packaged payload; no screenshot expected unless UI files change visually.
-- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` and `cmake --build --preset ninja-publish-light-msys2 --target SmatchetStandalone`.
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` and `cmake --build --preset ninja-publish-light-msvc --target SmatchetStandalone`.
 - **Unreal package gate**: build the new light Unreal preset and, when MSVC is available, `scripts/dev/package_unreal_plugin_msvc.ps1 -PackageOnly -ForceConfigure -Configuration Release`.
 - **Manual residue**: if an Unreal Editor install cannot be automated in the slice, record the exact deferred automation item in `docs/backlog/agent-self-improvement/tooling.md`.
 
@@ -78,7 +78,7 @@ Move Unreal release packaging to the same light feature profile by default. The 
 
 ## Implementation log
 
-- CMake: `_smatchet-light-features`, `ninja-publish-light-msys2` (`Smatchet-Light.exe`), `ninja-publish-unreal-light-msys2`, `vs-unreal-msvc` inherits light; AI TUs gated when `SMATCHET_WITH_AI=OFF`.
+- CMake: `_smatchet-light-features`, `ninja-publish-light-msvc` (`Smatchet-Light.exe`), `ninja-iter-unreal-msvc`, `vs-unreal-msvc` inherits light; AI TUs gated when `SMATCHET_WITH_AI=OFF`.
 - Standalone: `StandaloneAppBootstrap` (hidden boot + `InitAppAndPlugins` / `BootEphemeral`); `CliCommandRunner` in-process path when `!SMATCHET_WITH_MCP`; `main.cpp` DRY.
 - Core: empty `RegisterAiCommands` when AI OFF (ADR 0010); ImGuiHost command queue + Unreal bridge hooks.
 - Release: `release_github.ps1` light zip + default Unreal light preset; `test_release_smoke.ps1` light CLI checks; MSVC package scripts use `vs-unreal-msvc`.
@@ -93,11 +93,11 @@ Move Unreal release packaging to the same light feature profile by default. The 
 
 | Gate | Result |
 |------|--------|
-| `ninja-iter-msys2` → `SmatchetStandalone` + `SmatchetCore_DX12` | PASS (warm iter build) |
-| `ninja-publish-light-msys2` → `Smatchet-Light.exe` | PASS |
+| `ninja-iter-msvc` → `SmatchetStandalone` + `SmatchetCore_DX12` | PASS (warm iter build) |
+| `ninja-publish-light-msvc` → `Smatchet-Light.exe` | PASS |
 | Light CLI: `cmd commands.list --pretty` | exit 0 |
 | Light CLI: `cmd ai.send-once` | exit 2 `unknown-command`; no `ai.*` in list |
 | `vs-unreal-msvc` package + `build_deploy_and_open_unreal.ps1 -ForceConfigure` | PASS — `TestProjectEditor` + plugin DLL; Editor opened |
-| `ninja-test-msys2` + ctest | DEFER — not run this slice |
+| `ninja-test-msvc` + ctest | DEFER — not run this slice |
 | Bucket E `command-palette-fuzzy` | DEFER — not run this slice |
 | Full `release_github.ps1` + `test_release_smoke.ps1` zip path | DEFER — light CLI smoke only |

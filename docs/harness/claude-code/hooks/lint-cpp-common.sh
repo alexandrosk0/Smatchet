@@ -123,9 +123,9 @@ lint_run_clang_tidy() {
     command -v clang-tidy >/dev/null 2>&1 || return 0
     local build_dir
     if [[ "$rel" == tests/* ]]; then
-        build_dir="$LINT_NORM_PROJ/build/ninja-test-msys2"
+        build_dir="$LINT_NORM_PROJ/build/ninja-test-msvc"
     else
-        build_dir="$LINT_NORM_PROJ/build/ninja-iter-msys2"
+        build_dir="$LINT_NORM_PROJ/build/ninja-iter-msvc"
     fi
     [[ -f "$build_dir/compile_commands.json" ]] || return 0
     local out

@@ -150,7 +150,7 @@ Backlog closure: no current entry; preempts the bloat backlog entry that would o
 
 - Add `mesa` (or `swiftshader` / `ANGLE-D3D11`) install step to `.github/workflows/build-and-test.yml`'s `windows-msys2-ucrt64` job.
 - Wire a new job `bucket-c-screenshot-diff` that runs `scripts/dev/test-screenshot-diff.sh` against the now-available headless GL context. Continue-on-error stays `false` (advisory window over).
-- Wire a new job `bucket-e-ui-tests` that runs the `ninja-ui-test-msys2` preset + the ImGui-Test-Engine-driven scenario via `scenario.run --name=ui-test`. Continue-on-error initially `true` for a 1-week soak.
+- Wire a new job `bucket-e-ui-tests` that runs the `ninja-ui-test-msvc` preset + the ImGui-Test-Engine-driven scenario via `scenario.run --name=ui-test`. Continue-on-error initially `true` for a 1-week soak.
 - The two new jobs benefit from slice 9's denser bucket-E coverage when it lands in Wave B; until then, the jobs surface only the existing 12 tests' status — still useful.
 
 Backlog closure: `tooling.md` P2 headless-GL entry.
@@ -284,7 +284,7 @@ Backlog closure: `process.md` doesn't have an explicit entry but the spirit line
 
 **Wave C.** Consumes slice 7's `SmatchetAgentDebug.h` NDJSON helper (the spawned debug-detective reads it without asking the user for log paths) and slice 10's reproducer-first contract (the agent the spawn invokes follows the contract from the moment it boots).
 
-- Add `sanitizer-asan-ubsan` job to `.github/workflows/build-and-test.yml` using the existing `ninja-debug-msys2-asan` preset. Runs full `ctest` under ASAN+UBSAN. Failure surfaces line + file + sanitizer report in the job summary.
+- Add `sanitizer-asan-ubsan` job to `.github/workflows/build-and-test.yml` using the existing `ninja-msvc-asan` preset. Runs full `ctest` under ASAN+UBSAN. Failure surfaces line + file + sanitizer report in the job summary.
 - Add `scripts/dev/merge-watcher.py:_looks_like_sanitizer_failure` — a separate predicate that detects sanitizer-failure CI lines as auto-act triggers (distinct from `_looks_like_cr_finding_block` which handles CR findings). New env knob `MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true` (default off, same opt-in pattern as `MERGE_WATCH_AUTO_ACT`).
 - Extend `AUTO_ACT_PROMPT` (the prompt shipped via PR #437) with a sanitizer-failure branch: when the trigger is sanitizer-failure (not CR-finding), the spawned session invokes `debug-detective` directly with the failing-test name + the sanitizer stderr URL as the reproducer. Skips the `coderabbit-triage` step (no CR findings to triage).
 - Add `tsan`-mode as a separate opt-in job (data-race detection is noisier; gate behind `tsan-out-of-band` label per the existing `tests-out-of-band` / `perf-out-of-band` pattern).
@@ -357,7 +357,7 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 - `Source_Core/include/Commands/Scenarios/IScenario.h` (scenario interface; slice 5's `SmatchetScenarioRegistry` table-driven registration uses the existing `ScenarioRunner::Factory` typedef)
 - `Source_Core/src/Commands/Builtin/BuiltinCommands_Scenario.cpp` (`scenario.list` / `scenario.run` / `scenario.cancel` — slice 8's new scenarios are reachable through the existing CLI commands)
 - `ImGuiTestContext::ItemClick/ItemInput/KeyPress/MouseMove/MouseClick` (mouse / keyboard emulation already in ImGui Test Engine; slice 9 densifies the test surface, not the harness)
-- `CMakePresets.json:ninja-debug-msys2-asan` / `-tsan` / `-msan` (sanitizer presets already configured; slice 11 wires `ninja-debug-msys2-asan` into a CI job)
+- `CMakePresets.json:ninja-msvc-asan` / `-tsan` / `-msan` (sanitizer presets already configured; slice 11 wires `ninja-msvc-asan` into a CI job)
 
 ## UX Pillar callouts
 
@@ -434,7 +434,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 | # | Verification item | Bucket |
 |---|---|---|
 | V6.1 | `bucket-c-screenshot-diff` CI job in `.github/workflows/build-and-test.yml` runs against the Mesa (or ANGLE-D3D11) install; first run bootstraps `tests/golden/<scenario>.png` from the CI capture; subsequent runs diff-PASS (L∞ ≤ 4) | C |
-| V6.2 | `bucket-e-ui-tests` CI job runs the `ninja-ui-test-msys2` preset + `scenario.run --name=ui-test`; the 12 existing tests + (after slice 9) 9 new tests all PASS. Initial 1-week soak runs `continue-on-error: true`; gate becomes hard-fail after | E |
+| V6.2 | `bucket-e-ui-tests` CI job runs the `ninja-ui-test-msvc` preset + `scenario.run --name=ui-test`; the 12 existing tests + (after slice 9) 9 new tests all PASS. Initial 1-week soak runs `continue-on-error: true`; gate becomes hard-fail after | E |
 
 **Slice 7 — `SmatchetAgentDebug.h` NDJSON helper**
 
@@ -477,7 +477,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 
 | # | Verification item | Bucket |
 |---|---|---|
-| V11.1 | `sanitizer-asan-ubsan` CI job runs full `ctest` under ASAN+UBSAN with the `ninja-debug-msys2-asan` preset; passes with `tests/_debug/lsan-suppressions.txt` in place | D |
+| V11.1 | `sanitizer-asan-ubsan` CI job runs full `ctest` under ASAN+UBSAN with the `ninja-msvc-asan` preset; passes with `tests/_debug/lsan-suppressions.txt` in place | D |
 | V11.2 | `tests/bats/merge_watcher.bats` extended case — `MERGE_WATCH_AUTO_ACT=true MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true` watcher poll on a PR with a deliberate ASAN failure spawns `debug-detective` (not `coderabbit-triage`); the spawned `AUTO_ACT_PROMPT` body contains the failing-test name + sanitizer-stderr URL | A |
 
 **Global**
@@ -519,7 +519,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
   - Registry: 5 new lines in `Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp` (AI trio gated under `#if defined(SMATCHET_WITH_AI)`); 5 new extern declarations at global scope above; matching stubs in `tests/Source_Core/SmatchetScenarioRegistry.stubs.cpp` + snapshot-set additions in `tests/Source_Core/SmatchetScenarioRegistry.test.cpp`.
   - `docs/backlog/agent-self-improvement/tooling.md` — `blame_open_entry_tab` snake-case citation renamed to `blame-open-entry-tab` kebab to match the convention.
 
-- 2026-05-24 — **Slice 11** — Sanitizer CI gates + merge-watcher auto-act on sanitizer fail. Two new CI jobs in `.github/workflows/build-and-test.yml`: `sanitizer-asan-ubsan` (blocking, `ninja-debug-msys2-asan` preset) + `sanitizer-tsan` (advisory, `continue-on-error: true`, gated behind `tsan-out-of-band` label). `scripts/dev/merge-watcher.py` extended: `_looks_like_sanitizer_failure` detection, `AUTO_ACT_SANITIZER_PROMPT` (invokes `debug-detective` directly, skips `coderabbit-triage`), `MERGE_WATCH_AUTO_ACT_ON_SANITIZER` env knob (default false). Branch: `slice-11-sanitizer-ci-auto-act`.
+- 2026-05-24 — **Slice 11** — Sanitizer CI gates + merge-watcher auto-act on sanitizer fail. Two new CI jobs in `.github/workflows/build-and-test.yml`: `sanitizer-asan-ubsan` (blocking, `ninja-msvc-asan` preset) + `sanitizer-tsan` (advisory, `continue-on-error: true`, gated behind `tsan-out-of-band` label). `scripts/dev/merge-watcher.py` extended: `_looks_like_sanitizer_failure` detection, `AUTO_ACT_SANITIZER_PROMPT` (invokes `debug-detective` directly, skips `coderabbit-triage`), `MERGE_WATCH_AUTO_ACT_ON_SANITIZER` env knob (default false). Branch: `slice-11-sanitizer-ci-auto-act`.
 
 ## Deviations from plan
 

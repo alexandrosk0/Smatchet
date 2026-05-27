@@ -54,14 +54,14 @@ Per AGENTS.md § Verification automation: plan-time / first-round / every-agent-
 | **A. Headless CLI probe** | "Function X exists / returns Y" / "Lua snippet outputs Z" | `debug.lua_eval` or new `debug.<feature>_test` returning JSON; bash asserts on fields |
 | **B. Scenario + perf.snapshot** | "Frame budget under N ms" / "Cache hit rate = 100% in steady state" | New `IScenario` subclass that drives N frames, returns rows; bash asserts on row values |
 | **C. Screenshot diff** | "Cell renders red text" / "Icon visible" | `debug.window.screenshot` PPM + pixel scan for a sentinel colour |
-| **D. Sanitizer build** | "No UAF on shutdown" / "No leak after N runs" | Run the scenario under ASan / UBSan via `ninja-debug-msys2-asan`; exit code is the assertion |
+| **D. Sanitizer build** | "No UAF on shutdown" / "No leak after N runs" | Run the scenario under ASan / UBSan via `ninja-msvc-asan`; exit code is the assertion |
 | **E. ImGui Test Engine** | "Drag column to position X" / "Type into editor and see autocomplete" / "Click menu item and observe state" | `ImGuiTestEngine` integration drives the actual ImGui widget tree — clicks, types, drags become recorded test cases. **No item escapes automation under this bucket — it just costs more setup.** |
 
 **Every plan §Verification item maps to A, B, C, D, or E.** If you cannot place an item in one of these buckets, the gap is in the **test infrastructure**, not in the item — flag the missing piece (e.g. "needs new CLI probe `debug.dock.layout_dump`", "needs ImGui Test Engine harness in tests/ui_test_main.cpp"). Treat infrastructure gaps as bucket-E follow-ups, **never** as "manual forever".
 
 ### Bucket E — ImGui Test Engine (wired)
 
-**Status**: WIRED (per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`). First test landed at `tests/ui/views_columns_reorder.test.cpp`; bash driver at `scripts/dev/test-ui-views-columns-reorder.sh`. Run via `cmake --build --preset ninja-ui-test-msys2`.
+**Status**: WIRED (per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`). First test landed at `tests/ui/views_columns_reorder.test.cpp`; bash driver at `scripts/dev/test-ui-views-columns-reorder.sh`. Run via `cmake --build --preset ninja-ui-test-msvc`.
 
 How the surface works today:
 
@@ -118,7 +118,7 @@ If the command runs Lua / requires the automation host, gate the body in `#if de
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-EXE="${SMATCHET_EXE:-build/ninja-iter-msys2/Smatchet.exe}"
+EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 # Non-default port forces --spawn to start a fresh child against the rebuilt exe
 # (default port may be a stale running UI instance).

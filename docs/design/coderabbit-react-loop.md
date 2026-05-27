@@ -311,7 +311,7 @@ Hard dependencies: `agentic-triage-flow` phases 0–2 (`GitHubClient` read+write
 
 Per AGENTS.md § "Verification automation — zero manual steps", `test-author` is invoked at plan-time (here), post-first-round (after phase 4), post-CI-classifier-round (after phase 6), and after every handoff that ends with a manual step.
 
-- **Pure-logic doctest** (`SMATCHET_BUILD_TESTS=ON`, `ninja-test-msys2`):
+- **Pure-logic doctest** (`SMATCHET_BUILD_TESTS=ON`, `ninja-test-msvc`):
   - `OpenPrRegistrar.test.cpp` — upsert idempotency, cancellation, row dedupe on re-run.
   - `CoderabbitCommentClassifierPure.test.cpp` — icon parser (`🛠️ ⚠️ 💡 🧹`), suggestion-block extractor, actionable-header parser. Round-trips against `tests/fixtures/coderabbit_comments_sample.json`.
   - `CoderabbitCommentClassifier.test.cpp` — every override rule (18 positive + 18 negative cases) + at least 3 dispatch survivors covering distinct subsystem targets.
@@ -333,9 +333,9 @@ Per AGENTS.md § "Verification automation — zero manual steps", `test-author` 
   - **CodeRabbit smoke** — start react loop with fixture config, inject 3 synthetic CodeRabbit comments (1 short-circuit-reject, 1 mechanic-dispatch, 1 tracker-backend-dispatch), assert: 1 reply posted (via mock `gh api`), 2 spawns happened, 2 commits pushed, 0 architect-class dispatches (would halt).
   - **CI smoke** — start CI react loop with fixture config, inject 5 synthetic failed check-runs (1 cmake → build-doctor, 1 ctest → debug-detective auto-spawn flag off, no spawn, 1 coverage-gate → test-rig, 1 transient-cpr → rerun, 1 unknown → skip), assert: 1 build-doctor spawn + commit, 0 debug-detective spawns (flag-off path), 1 test-rig spawn + commit, 1 `gh workflow run` invocation, 1 skip with `Self-improvement` log entry.
 
-- **Sanitizer build** — ASan/UBSan via `ninja-test-msys2`. Required because phase 1+ adds threading + subprocess + SQLite mutation paths to the new watchers + registrar.
+- **Sanitizer build** — ASan/UBSan via `ninja-test-msvc`. Required because phase 1+ adds threading + subprocess + SQLite mutation paths to the new watchers + registrar.
 
-- **Dual-target compile** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. The whole `coderabbit_react` + `ci_react` surface is gated `#if SMATCHET_WITH_AGENTIC` (Standalone only); DX12 must compile cleanly without it.
+- **Dual-target compile** — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. The whole `coderabbit_react` + `ci_react` surface is gated `#if SMATCHET_WITH_AGENTIC` (Standalone only); DX12 must compile cleanly without it.
 
 - **End-to-end happy-path probe** (phase 9, after automation passes):
   1. Configure both `coderabbit_react.enabled` + `ci_react.enabled = true`, intervals at 60 s for the probe.
@@ -422,7 +422,7 @@ Phase 5 verification: `CiFailureClassifierPure.test.cpp` ctest green covering ch
 | Subprocess doctest (`gh` stubs) | green | `OpenPrRegistrar.test.cpp`, `PrCheckRunWatcher.test.cpp` |
 | Stub-runner end-to-end | green | phase 9 (this PR): `tests/fixtures/stub-coderabbit-claude.sh`, `stub-ci-claude.sh` + bucket-A smoke scripts |
 | CLI smoke (`test-coderabbit-react.sh`, `test-ci-react.sh`) | green | phase 9 (this PR) — 20 assertions across the two scripts; auto-enrolled by `scripts/dev/test-all.sh` |
-| Sanitizer build | partial / inherited | each phase's ctest pass implies green under `ninja-test-msys2` which enables `SMATCHET_BUILD_TESTS=ON`; full sanitizer preset not explicitly run per phase. Backlog entry below. |
+| Sanitizer build | partial / inherited | each phase's ctest pass implies green under `ninja-test-msvc` which enables `SMATCHET_BUILD_TESTS=ON`; full sanitizer preset not explicitly run per phase. Backlog entry below. |
 | Dual-target compile | green | every phase's PR body cites "dual-target build clean" |
 | End-to-end live-PR probe | pending | bucket-E (ImGui Test Engine) is wired (`docs/design/applied/imgui-test-engine-bucket-e-execution.md`); promoted to live P2 in `docs/backlog/agent-self-improvement/tooling.md` (2026-05-20 — coderabbit-react-loop probe) per AGENTS.md § Verification automation |
 

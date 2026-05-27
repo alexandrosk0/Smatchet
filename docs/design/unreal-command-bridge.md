@@ -75,9 +75,9 @@ This slice is running with Git edits directly on `develop` in `C:\Dev\Smatchet`,
 ## Verification
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: add pure tests for request id lifecycle, invalid JSON, unknown command, and result envelope formatting if the queue logic can be isolated.
-- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)**: run command-palette coverage as regression coverage for command registration.
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: run command-palette coverage as regression coverage for command registration.
 - **Bash-driver scenario / screenshot / sanitizer**: add a smoke that calls `commands.list` through the native host bridge when possible; no screenshot expected.
-- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`.
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`.
 - **Unreal package gate**: build the default light Unreal package and the MSVC package when MSVC is available.
 - **Manual residue**: if Blueprint delegate behavior cannot be automated in the slice, add a deferred automation entry with the exact Blueprint/C++ smoke needed.
 
@@ -100,15 +100,15 @@ This slice is running with Git edits directly on `develop` in `C:\Dev\Smatchet`,
 
 ## Verification (actual)
 
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetImGuiHost_DX12 -j 4` passes after prepending `C:\msys64\ucrt64\bin` to `PATH`; without that, `cc1plus.exe` exits `-1073741515` due missing runtime DLL lookup.
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone -j 4` passes.
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12 -j 4` passes/no work after the targeted builds.
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12 -j 4` passes again after the final polish pass; warnings are pre-existing unused-parameter warnings in scenario files.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetImGuiHost_DX12 -j 4` passes after prepending `C:\msys64\ucrt64\bin` to `PATH`; without that, `cc1plus.exe` exits `-1073741515` due missing runtime DLL lookup.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone -j 4` passes.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12 -j 4` passes/no work after the targeted builds.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12 -j 4` passes again after the final polish pass; warnings are pre-existing unused-parameter warnings in scenario files.
 - `cppcheck` on the edited `Source_Core` command-bridge files passes.
-- `clang-tidy -p build\ninja-iter-msys2 --quiet Source_Core\src\SmatchetImGuiHost.cpp` passes.
+- `clang-tidy -p build\ninja-iter-msvc --quiet Source_Core\src\SmatchetImGuiHost.cpp` passes.
 - `bash scripts/dev/pillar2-scan.sh ...` on the edited bridge files passes.
 - `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release` passes end-to-end: stale `build\vs-unreal-msvc` cache was invalidated, MSVC native DX12 libs were packaged with `SMATCHET_WITH_MCP=OFF`, `SMATCHET_WITH_AI=OFF`, and `SMATCHET_WITH_WHISPER=OFF`, the plugin was deployed to the TestProject, UHT ran, and UBT linked `TestProject.exe`.
 - `.\scripts\dev\package_unreal_plugin_msvc.ps1 -Configuration Release -PackageOnly` passes against the corrected MSVC cache.
 - `llvm-nm -C UnrealPlugins\SmatchetImGuiPlugin\ThirdParty\Smatchet\lib\Win64\Development\SmatchetImGuiHost_DX12.lib` confirms the packaged host exports `SmatchetHost_EnqueueCommand`, `SmatchetHost_IsCommandResultReady`, `SmatchetHost_TakeCommandResultJson`, and `SmatchetHost_ReleaseCommandResultJson`.
-- `cppcheck`, `clang-tidy -p build\ninja-iter-msys2 --quiet C:\Dev\Smatchet\Source_Core\src\SmatchetImGuiHost.cpp`, and `bash scripts/dev/pillar2-scan.sh Source_Core/src/SmatchetImGuiHost.cpp` pass after the final C ABI wrapper fix.
+- `cppcheck`, `clang-tidy -p build\ninja-iter-msvc --quiet C:\Dev\Smatchet\Source_Core\src\SmatchetImGuiHost.cpp`, and `bash scripts/dev/pillar2-scan.sh Source_Core/src/SmatchetImGuiHost.cpp` pass after the final C ABI wrapper fix.
 - Post-review `bash scripts/dev/test-all.sh` was rerun under Git Bash with `/c/msys64/ucrt64/bin` prepended. It finished red (`Passed: 1084  Failed: 38`) on existing harness/visual/lock gate failures including token hook drift, callstack tooltip hover, lint-hook split, lock primitives, merge-gates cases, theme roundtrip, and columns reorder.

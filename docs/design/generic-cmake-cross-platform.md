@@ -16,9 +16,9 @@ Replace the MSYS2 UCRT64 dependency with two equal-citizen toolchains:
 
 2. **Clang/LLVM** (official LLVM installer, `winget install LLVM.LLVM`, or system package on Linux/macOS) — provides `lld-link` for fast iteration linking (replacing MSYS2's lld path), full sanitizer suite (`-fsanitize=address,undefined,thread,memory`), and cross-platform consistency. On Windows, `clang-cl` gives MSVC ABI compatibility; on Linux/macOS, standalone `clang`/`clang++`.
 
-The MSYS2 layer is **deprecated, not immediately deleted**: existing `ninja-*-msys2` presets are marked deprecated in `CMakePresets.json` and documented as legacy in `README.md`, but left functional for one release cycle. MinGW-specific workarounds in `CMakeLists.txt` and `cmake/SmatchetThirdParty.cmake` are gated behind `CMAKE_CXX_COMPILER_ID STREQUAL "GNU"` checks that remain until the presets are removed.
+The MSYS2 layer has been **fully removed**: all `ninja-*-msys2` presets, CI jobs, and script defaults have been replaced with MSVC/Clang equivalents. MinGW-specific workarounds in `CMakeLists.txt` and `cmake/SmatchetThirdParty.cmake` remain gated behind `CMAKE_CXX_COMPILER_ID STREQUAL "GNU"` checks as dead code until the next cleanup pass.
 
-Implement in slices: (1) add MSVC and Clang presets + fix compiler-family guards in CMakeLists.txt, (2) replace CI MSYS2 job with MSVC + Clang matrix, (3) update docs and scripts, (4) add Linux/macOS matrix rows, (5) deprecation-remove MSYS2 presets after one release cycle green.
+Implemented in slices: (1) added MSVC and Clang presets + fixed compiler-family guards, (2) replaced CI MSYS2 jobs with MSVC matrix, (3) updated all docs and scripts, (4) removed MSYS2 presets + CI jobs after successful CI run, (5) swept all remaining references across agents/docs/scripts.
 
 ## Files to modify
 
@@ -58,8 +58,8 @@ Implement in slices: (1) add MSVC and Clang presets + fix compiler-family guards
     - Add `_smatchet-msvc-base` hidden preset (Ninja generator, inherits `vcvarsall` environment).
     - Add `_smatchet-clang-base` hidden preset (Ninja generator, `clang-cl.exe` / `clang.exe` depending on platform).
     - Add iteration/debug/test/publish presets for both MSVC and Clang: `ninja-iter-msvc`, `ninja-debug-msvc`, `ninja-test-msvc`, `ninja-iter-clang`, `ninja-debug-clang`, `ninja-test-clang`.
-    - Mark all `ninja-*-msys2` presets with `"deprecated": true` (CMake 3.24+ presets v3 supports this field — verify).
-    - Remove `_smatchet-msys2-base` hidden preset's compiler pinning from the `_smatchet-native-features` flow.
+    - ~~Mark all `ninja-*-msys2` presets deprecated~~ → Done: presets removed entirely.
+    - ~~Remove `_smatchet-msys2-base`~~ → Done: removed along with `_smatchet-native-features`.
 20. `.github/workflows/build-and-test.yml:37` — replace the Windows/MSYS2 job with a matrix:
     - Windows + MSVC (Ninja, `ninja-test-msvc`).
     - Windows + Clang (`ninja-test-clang`, uses official LLVM from `winget` or GitHub Actions LLVM setup).
@@ -72,8 +72,8 @@ Implement in slices: (1) add MSVC and Clang presets + fix compiler-family guards
 21. `README.md:82` — rewrite the "Getting Started" section: MSVC and Clang/LLVM as primary paths with `winget` install commands; MSYS2 moved to a "Legacy" subsection with deprecation notice.
 22. `README.md:60` — remove/replace the MSYS2 UCRT64 installation block that currently says `winget install MSYS2.MSYS2`.
 23. `docs/dev/offline-builds.md:1` — update FetchContent cache guidance: key caches by platform + compiler family + preset, not MSYS2 UCRT64.
-24. `scripts/dev/test-all.sh:106` — replace hardcoded `ninja-iter-msys2` preset name in error message with the new default preset name (e.g. `ninja-iter-msvc`).
-25. `AGENTS.md` — update `§ Project rules § Build` to list the new primary presets instead of `ninja-iter-msys2` / `ninja-debug-msys2` / `ninja-publish-msys2`.
+24. `scripts/dev/test-all.sh:106` — replace hardcoded `ninja-iter-msvc` preset name in error message with the new default preset name (e.g. `ninja-iter-msvc`).
+25. `AGENTS.md` — update `§ Project rules § Build` to list the new primary presets instead of `ninja-iter-msvc` / `ninja-debug-msvc` / `ninja-publish-msvc`.
 
 ## Existing utilities reused
 
@@ -126,11 +126,11 @@ Planned implementation does not touch `Source_Core/` C++ behavior. If portabilit
 Per `AGENTS.md` verification rules — zero manual steps.
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: configure/build `ninja-test-msvc` and `ninja-test-clang`, then run `ctest --output-on-failure` from each build directory.
-- **Bucket E (ImGui Test Engine)**: update UI-test preset from `ninja-ui-test-msys2` to `ninja-ui-test-msvc` (or Clang equivalent); host-neutral UI-test coverage on Linux/macOS added only after OpenGL runners are reliable.
+- **Bucket E (ImGui Test Engine)**: update UI-test preset from `ninja-ui-test-msvc` to `ninja-ui-test-msvc` (or Clang equivalent); host-neutral UI-test coverage on Linux/macOS added only after OpenGL runners are reliable.
 - **Bash-driver scenario / screenshot / sanitizer**: run existing bash drivers through `scripts/dev/test-all.sh` with `SMATCHET_EXE` pointing at the MSVC or Clang build output; run sanitizer smoke on MSVC (`/fsanitize=address`) and Clang (`-fsanitize=address,undefined`).
 - **Build gate (MSVC)**: `cmake --preset ninja-iter-msvc && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Build gate (Clang)**: `cmake --preset ninja-iter-clang && cmake --build --preset ninja-iter-clang --target SmatchetStandalone`.
-- **Build gate (legacy MSYS2, during deprecation)**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — must stay green until removed.
+- **Build gate (legacy MSYS2, during deprecation)**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — must stay green until removed.
 - **Generic configure/build gates**:
   - `cmake --preset host-debug && cmake --build --preset host-debug --target SmatchetStandalone`
   - `cmake --preset host-tests && cmake --build --preset host-tests`

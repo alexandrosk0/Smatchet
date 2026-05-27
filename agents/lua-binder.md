@@ -53,7 +53,7 @@ Bullet list of relative paths touched, with one-line per file naming the change 
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → PASS|FAIL on both targets (stubs path must compile for DX12).  
+`cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` → PASS|FAIL on both targets (stubs path must compile for DX12).  
 Binding name + signature + stub parity confirmed.  
 If per-frame hot: perf trade-off documented inline.
 

@@ -44,7 +44,7 @@ Perforce blame specialist.
 1. New blame data field → add to `P4LineBlame` / `P4AnnotatedLine` / `P4ChangelistDetails` in the header; populate in the corresponding parse step in `P4Blame.cpp`.
 2. New `p4` invocation → route through the existing thread-safe path (mutex in `P4Blame`); never call `system()` / `cpr` for `p4` work.
 3. New callstack format → add a parser case in `CallstackParser.cpp` driven by `RawLine`. Don't pre-filter in the UI.
-4. Build `ninja-iter-msys2`; smoke-test against a real depot file before claiming done — p4 environment issues only show up against a live server.
+4. Build `ninja-iter-msvc`; smoke-test against a real depot file before claiming done — p4 environment issues only show up against a live server.
 
 ## Test surface
 
@@ -58,7 +58,7 @@ Bullet list of relative paths touched, with one-line per file naming the change 
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+`cmake --build --preset ninja-iter-msvc` → PASS|FAIL.  
 Smoke-tested against a real depot file: result.  
 `p4` commands invoked (if new) + cache discipline confirmed (no per-line re-`describe`).
 

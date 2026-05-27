@@ -193,7 +193,7 @@ Per AGENTS.md § Verification automation — zero manual steps, every check belo
 - `tests/Source_Core/LocalCacheManagerChat.test.cpp` (new) — in-memory SQLite fixture round-trips Append + Load + UpdatePin + Trim + ClearAll. Pins the "pinned rows exempt from trim" invariant.
 
 **Bucket B — dual-target build gate** (mandatory):
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` clean. All changes are non-graphics structs + `.cpp`, no GLFW/OpenGL leakage into headers.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` clean. All changes are non-graphics structs + `.cpp`, no GLFW/OpenGL leakage into headers.
 - `clang-format -i` + `cppcheck` + `clang-tidy` clean. PostToolUse hook runs format inline; deferred pipeline runs heavy passes at Stop.
 
 **Bucket E — ImGui Test Engine scenarios** (mandatory; the user's nine manual click steps from the original draft map 1:1 here):

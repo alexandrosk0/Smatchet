@@ -41,7 +41,7 @@ The underlying tooling already exists and is production-grade — scenario runne
 - G2.4 No estimated-latency comment lint. → Slice 2.
 - G2.5 No call-graph reachability check (text-search heuristic, not full AST). → Slice 2.
 
-**Bucket-E (ImGui Test Engine) is wired** — per `docs/design/applied/imgui-test-engine-bucket-e-execution.md` (landed 2026-05-19). First test at `tests/ui/views_columns_reorder.test.cpp`; preset `ninja-ui-test-msys2`; tests registered via `IM_REGISTER_TEST`; bash drivers at `scripts/dev/test-ui-<area>.sh`. Slice 5 of this plan uses bucket-E directly rather than the earlier scenario-polling workaround.
+**Bucket-E (ImGui Test Engine) is wired** — per `docs/design/applied/imgui-test-engine-bucket-e-execution.md` (landed 2026-05-19). First test at `tests/ui/views_columns_reorder.test.cpp`; preset `ninja-ui-test-msvc`; tests registered via `IM_REGISTER_TEST`; bash drivers at `scripts/dev/test-ui-<area>.sh`. Slice 5 of this plan uses bucket-E directly rather than the earlier scenario-polling workaround.
 
 **Gaps deferred** (out of scope):
 - G1.3 Scenario authoring friction / Lua DSL — tracked as XL; defer to follow-up plan.
@@ -110,7 +110,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 | C6 | Full-suite scheduled workflow | P1 | S | `.github/workflows/perf-full.yml` | C5 driver scripts; `gh issue create` / `gh pr create` |
 | C7 | `perf-gatekeeper` agent + skill alias | P1 | M | `agents/perf-gatekeeper.md` (canonical, agents.md spec); `agents/_shared/skills/perf-gatekeeper/SKILL.md` (Claude-Code skill alias — generated path; the canonical agents/ file is what Codex / Cursor read) | `perf-measure` measurement loop; `perf-detective` heuristics for diff → affected-scenario classification |
 | C8 | Subsystem marker inventory | P2 | S | `scripts/dev/perf-marker-inventory.sh`, `docs/perf/MARKER_INVENTORY.md` | text-search only |
-| C9 | Visible-cue assertion harness (bucket-E) | P2 | L | `tests/ui/sync_stall_visible_cue.test.cpp` (`IM_REGISTER_TEST`), `scripts/dev/test-ui-sync-stall-visible-cue.sh`, `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`-gated stall hook in one chosen sync path (icon fetch is the simplest target); `ninja-ui-test-msys2` preset gains `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` | bucket-E ImGui Test Engine rig (see `docs/design/applied/imgui-test-engine-bucket-e-execution.md`); pattern from `tests/ui/views_columns_reorder.test.cpp` |
+| C9 | Visible-cue assertion harness (bucket-E) | P2 | L | `tests/ui/sync_stall_visible_cue.test.cpp` (`IM_REGISTER_TEST`), `scripts/dev/test-ui-sync-stall-visible-cue.sh`, `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`-gated stall hook in one chosen sync path (icon fetch is the simplest target); `ninja-ui-test-msvc` preset gains `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` | bucket-E ImGui Test Engine rig (see `docs/design/applied/imgui-test-engine-bucket-e-execution.md`); pattern from `tests/ui/views_columns_reorder.test.cpp` |
 | C10 | Sync-call latency comment lint | P2 | S | extends C2's scanner — same script | shared with Pillar 2 lint pass |
 | C11 | Process mandate update | P0 | S | `AGENTS.md` (§ UX Pillars cross-link to the registry + workflows), `docs/PERF_WORKFLOW.md` (add § "Step 7: gate-check vs baseline"); close + archive existing § Perf process/P2 backlog entry from 2026-05-20 in `docs/backlog/agent-self-improvement/process.md` → `applied.md` | existing backlog format |
 | C12 | Pillar 2 site annotation migration | P0 | L | bulk-add `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` annotations to existing safe sync-I/O sites; scope ~25-35 lines across ~10-15 files (audit doc as ground truth + fresh scanner output as the working list) | the audit doc lists the confirmed-safe sites |
@@ -124,7 +124,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 
 **Steps**:
 1. Define `scripts/dev/perf-baseline-schema.json` and `docs/perf/regression-policy.json`. Per-scenario file shape: `{schemaVersion: 1, scenarioId, captureCommit, captureDate, captureHost, captureRunnerOs, target: {meanMs, p99Ms, maxMs}, rows: [{name, lastTotalMs, p99Ms, calls}], hardwareNote, perScenarioPolicyOverride: nullable}`.
-2. Implement `scripts/dev/perf-run.sh` — pure bash. Builds `ninja-iter-msys2` if `.claude/.tree-dirty` exists (or always when `--clean`); spawns ephemeral instance via `Smatchet.exe --spawn`; calls `perf.reset` + `scenario.run --id X --outPath <tmp>`; parses JSON. Bash-only, runs identically under Codex / Cursor.
+2. Implement `scripts/dev/perf-run.sh` — pure bash. Builds `ninja-iter-msvc` if `.claude/.tree-dirty` exists (or always when `--clean`); spawns ephemeral instance via `Smatchet.exe --spawn`; calls `perf.reset` + `scenario.run --id X --outPath <tmp>`; parses JSON. Bash-only, runs identically under Codex / Cursor.
 3. Implement `scripts/dev/perf-compare.py` — Python 3 (Python is already required per the recent tooling/P2 backlog entry). Loads baseline JSON + new snapshot, computes mean / p99 / max delta percentages, emits markdown table to stdout, exit code 1 on regression > thresholds from `regression-policy.json`. Tolerance band: default `mean_delta_pct: 10`, `p99_abs_ceiling_ms: 16.67`, `consecutive_run_required: 2`.
 4. Implement `scripts/dev/perf-baseline.sh` — `init <scenario>` captures fresh baseline; `bump <scenario>` diffs vs current baseline, asks confirmation (non-interactive `--yes` flag for CI use), writes update; `list` shows current baseline inventory.
 5. Capture initial `dev`-host baselines for all 14 scenarios on current `develop` HEAD locally. Commit JSON files to `docs/perf/baselines/`. (CI-runner baselines populate themselves on Slice 3's first run via a one-shot `bump` step.)
@@ -163,7 +163,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 
 **Steps**:
 1. Declare PR-fast subset in `scripts/dev/perf-pr-fast-set.json`: `["idle", "priority-grid-scroll", "command-palette-fuzzy", "cell-edit-burst"]`. Four scenarios chosen for coverage breadth across the most active code paths. Estimated wall-clock: < 90 s combined post-build (verify in slice — if it overruns, drop one).
-2. Implement `.github/workflows/perf-pr-fast.yml`. Triggers: `pull_request` (with `paths-ignore` for pure-docs diffs that match the existing pure-docs-skip envelope). Steps: setup MSYS2 UCRT64 (mirror `build-and-test.yml`); build `ninja-iter-msys2`; for each scenario in the subset, run `scripts/dev/perf-run.sh <id>`; assemble snapshots into one markdown table via `scripts/dev/perf-compare.py --all-from <dir>`; upload JSON artefacts; `gh pr comment $PR --body @perf-report.md`.
+2. Implement `.github/workflows/perf-pr-fast.yml`. Triggers: `pull_request` (with `paths-ignore` for pure-docs diffs that match the existing pure-docs-skip envelope). Steps: setup MSYS2 UCRT64 (mirror `build-and-test.yml`); build `ninja-iter-msvc`; for each scenario in the subset, run `scripts/dev/perf-run.sh <id>`; assemble snapshots into one markdown table via `scripts/dev/perf-compare.py --all-from <dir>`; upload JSON artefacts; `gh pr comment $PR --body @perf-report.md`.
 3. First-run bootstrap: when no `<scenario>.ci-windows-latest.json` baseline exists yet, the workflow runs in "capture mode" — it writes the baseline to a workflow-artefact + opens a PR that adds it under `docs/perf/baselines/`. After human review + merge, the gate becomes active. This handles the chicken-and-egg of "need a baseline before you can compare."
 4. Add `perf-out-of-band` PR label that downgrades regression failures to warnings (mirrors the existing `tests-out-of-band` label pattern from AGENTS.md § Merge gates).
 5. Document the override path + the bootstrap flow in `AGENTS.md` § Merge gates as a new sub-section.
@@ -187,7 +187,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 
 **Outcome**: a bucket-E ImGui Test Engine assertion verifies the < 100 ms visible-cue invariant under a synthetic 250 ms sync stall on one chosen sync path.
 
-**Builds on bucket-E** — wired 2026-05-19 per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`. Pattern (mirroring `tests/ui/views_columns_reorder.test.cpp`): test source at `tests/ui/<name>.test.cpp` with `IM_REGISTER_TEST(...)`; bash driver at `scripts/dev/test-ui-<name>.sh`; build + run via `cmake --build --preset ninja-ui-test-msys2`; auto-enrolled by `scripts/dev/test-all.sh` per the existing `test-ui-*.sh` convention.
+**Builds on bucket-E** — wired 2026-05-19 per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`. Pattern (mirroring `tests/ui/views_columns_reorder.test.cpp`): test source at `tests/ui/<name>.test.cpp` with `IM_REGISTER_TEST(...)`; bash driver at `scripts/dev/test-ui-<name>.sh`; build + run via `cmake --build --preset ninja-ui-test-msvc`; auto-enrolled by `scripts/dev/test-all.sh` per the existing `test-ui-*.sh` convention.
 
 **Steps**:
 1. Add a debug-flag-gated stall hook in **one** chosen sync path. Recommended target: icon fetch in `Source_Core/src/SmatchetFieldIconRender.cpp` (single call site; spinner cue already implemented). Wrap the relevant block in `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`: if `g_smatchetSyncStallActive` (extern atom), call `std::this_thread::sleep_for(std::chrono::milliseconds(250))` and clear the flag. Production builds never compile the sleep.
@@ -196,8 +196,8 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
    - Invoke the icon-fetch code path that contains the gated stall.
    - Sample frames for ≤ 300 ms wall-clock; on each sampled frame use `ImGui::FindWindowByName` / per-frame `ImDrawData` walk (or the bucket-E `ImGuiTestContext` window-query helpers) to detect the spinner widget.
    - `IM_CHECK(cueAppearedWithinMs <= 100)`.
-3. Add the bash driver `scripts/dev/test-ui-sync-stall-visible-cue.sh` — builds `ninja-ui-test-msys2`, runs the registered test, exits non-zero on `IM_CHECK` failure. Auto-enrols via `scripts/dev/test-all.sh` per the existing `test-ui-*.sh` pattern.
-4. Define `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` in the `ninja-ui-test-msys2` preset so only UI-test builds compile the stall hook. Production / iter / publish builds remain untouched.
+3. Add the bash driver `scripts/dev/test-ui-sync-stall-visible-cue.sh` — builds `ninja-ui-test-msvc`, runs the registered test, exits non-zero on `IM_CHECK` failure. Auto-enrols via `scripts/dev/test-all.sh` per the existing `test-ui-*.sh` pattern.
+4. Define `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` in the `ninja-ui-test-msvc` preset so only UI-test builds compile the stall hook. Production / iter / publish builds remain untouched.
 5. Wire into the full-suite workflow (C6) as an optional final-stage step that runs `bash scripts/dev/test-ui-sync-stall-visible-cue.sh`; don't add to PR-fast (would slow the gate + needs the UI-test build).
 
 **Verification**: `bash scripts/dev/test-ui-sync-stall-visible-cue.sh` exits 0 against the unchanged build. Synthetic break: comment out the spinner widget in the icon-fetch path → re-run → `IM_CHECK` fails with the "cue did not appear within 100 ms" message → exit 1.
@@ -211,7 +211,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 - `Source_Core/include/MainThreadDispatcher.h` (Slice 2; dispatcher.drain scope + LastDrainTaskCount accessor)
 - `Source_Core/src/Commands/Builtin/BuiltinCommands_Perf.cpp` (optional — Slice 2, if exposing LastDrainTaskCount via `perf.snapshot`)
 - `Source_Core/src/SmatchetFieldIconRender.cpp` or chosen sync-path file (Slice 5 stall-hook insertion, `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`-gated)
-- `CMakePresets.json` (Slice 5 — add `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` to the existing `ninja-ui-test-msys2` preset's cache variables)
+- `CMakePresets.json` (Slice 5 — add `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` to the existing `ninja-ui-test-msvc` preset's cache variables)
 - `tests/ui/CMakeLists.txt` (Slice 5 — register `sync_stall_visible_cue.test.cpp` alongside the existing bucket-E test entries)
 - `docs/backlog/agent-self-improvement/process.md` + `applied.md` (close + archive 2026-05-20 § Perf entry — Slice 1)
 - `scripts/dev/test-all.sh` (Slice 4 marker-inventory advisory hook)
@@ -254,7 +254,7 @@ After all 5 slices land:
 4. **PR-fast CI**: draft PR with deliberate regression in any of the 4 PR-fast scenarios → CI auto-comments delta + fails; remove regression → green; apply `perf-out-of-band` label → regression downgrades to WARN.
 5. **Full-suite scheduled run**: `gh workflow run perf-full.yml` → completes; on synthetic regression posts an issue; on synthetic improvement opens a baseline-bump PR.
 6. **perf-gatekeeper agent**: invoke against a real PR diff (any harness) → picks affected scenarios from the curated map → runs them via `perf-run.sh` → posts delta comment.
-7. **Visible-cue harness (bucket-E)**: `bash scripts/dev/test-ui-sync-stall-visible-cue.sh` (builds `ninja-ui-test-msys2`, runs the `IM_REGISTER_TEST`-registered test) exits 0 against the unchanged build; comment out the spinner widget in the icon-fetch path → re-run → `IM_CHECK` fails → exit 1.
+7. **Visible-cue harness (bucket-E)**: `bash scripts/dev/test-ui-sync-stall-visible-cue.sh` (builds `ninja-ui-test-msvc`, runs the `IM_REGISTER_TEST`-registered test) exits 0 against the unchanged build; comment out the spinner widget in the icon-fetch path → re-run → `IM_CHECK` fails → exit 1.
 8. **Marker inventory**: `bash scripts/dev/perf-marker-inventory.sh` regenerates `docs/perf/MARKER_INVENTORY.md`; advisory WARN if the live tree contains uncommitted `perf_temp:*` markers (perf-detective sessions in flight).
 9. **Dispatcher visibility**: `dispatcher.drain` row appears in `perf.snapshot` under every scenario; baseline files include it under `rows[]`.
 
@@ -273,14 +273,14 @@ After all 5 slices land:
 - Slice 2 (PR #322) · Pillar 2 static gate (`scripts/dev/pillar2-scan.sh`) + dispatcher.drain marker + `LastDrainTaskCount()` accessor + 7-site PILLAR2_WORKER_ONLY annotation migration + 3 TODO(pillar2): tracked sites.
 - Slice 3 (PR #323) · `.github/workflows/perf-pr-fast.yml` + PR-fast 4-scenario subset + `perf-out-of-band` override label + first-run baseline bootstrap.
 - Slice 4 (PR #324) · `.github/workflows/perf-full.yml` (cron + workflow_dispatch) + `agents/perf-gatekeeper.md` (+ Claude Code skill alias) + `scripts/dev/perf-marker-inventory.sh` regenerating `docs/perf/MARKER_INVENTORY.md`.
-- Slice 5 (PR #325) · `tests/ui/sync_stall_visible_cue.test.cpp` (bucket-E IM_REGISTER_TEST GoodOrder + BadOrder variants) + `scripts/dev/test-ui-sync-stall-visible-cue.sh` + `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` cache var on `ninja-ui-test-msys2` preset + optional final-stage step in `.github/workflows/perf-full.yml`.
+- Slice 5 (PR #325) · `tests/ui/sync_stall_visible_cue.test.cpp` (bucket-E IM_REGISTER_TEST GoodOrder + BadOrder variants) + `scripts/dev/test-ui-sync-stall-visible-cue.sh` + `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` cache var on `ninja-ui-test-msvc` preset + optional final-stage step in `.github/workflows/perf-full.yml`.
 
 ## Deviations from plan
 
 - **Slice 5 stall hook lives in the test source, not in `SmatchetFieldIconRender.cpp`** — the icon-fetch HTTP / file paths already run on a worker thread (both call sites are inside `app.LaunchBackgroundTask(...)` lambdas at `Source_Core/src/SmatchetFieldIconRender.cpp:309` and `:344`). Injecting `std::this_thread::sleep_for(...)` there would stall the worker, not the UI thread, and would not test the visible-cue invariant. The stall hook moved into `tests/ui/sync_stall_visible_cue.test.cpp` itself, which mirrors the production cue-before-block call-site shape in a test-engine-owned window (same pattern as `views_columns_reorder.test.cpp` / `callstack_tooltip_hover.test.cpp`). The bucket-E test still validates the architectural invariant — submission order of cue vs block — without touching production code.
 - **Order-of-submission assertion, not wall-clock measurement** — the original plan asked for `IM_CHECK(cueAppearedWithinMs <= 100)`. ImGui Test Engine drives frames in stepped mode, so wall-clock measurements are unreliable. Replaced with an atomic ordering sentinel (`g_cueOrder` ∈ {kUnobserved, kCueBeforeStall, kStallBeforeCue}) — same architectural invariant, deterministic in stepped frames. The Good variant asserts kCueBeforeStall; the Bad variant asserts kStallBeforeCue (documents what the regression looks like; protects against future inversion of cue/block order).
 - **Stall duration 50 ms, not 250 ms** — sleep duration trimmed to keep the bucket-E run quick. The invariant under test is ordering, not duration; 50 ms is enough to be humanly observable in real UI under the same pattern.
-- **Compile-definition wired via `set_source_files_properties`** — the `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` flag is scoped to `sync_stall_visible_cue.test.cpp` only (via `set_source_files_properties` in `tests/ui/CMakeLists.txt`), gated on a `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` CMake option that the `ninja-ui-test-msys2` preset turns ON. Production / iter / publish builds never compile the synthetic sleep.
+- **Compile-definition wired via `set_source_files_properties`** — the `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` flag is scoped to `sync_stall_visible_cue.test.cpp` only (via `set_source_files_properties` in `tests/ui/CMakeLists.txt`), gated on a `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS` CMake option that the `ninja-ui-test-msvc` preset turns ON. Production / iter / publish builds never compile the synthetic sleep.
 
 ## Verification
 
@@ -288,4 +288,4 @@ After all 5 slices land:
 - Slice 2 — `bash scripts/dev/pillar2-scan.sh` returns zero CRITICAL after the 7-site annotation migration. `dispatcher.drain` row appears in `perf.snapshot` output. Synthetic CRITICAL injection (`cpr::Get` in a `*Ui*.cpp`) caught by the scanner. **passed**.
 - Slice 3 — `.github/workflows/perf-pr-fast.yml` validated by YAML lint + workflow syntax checks; live behaviour verifies on the merge of PR #323 itself. **pending CI**.
 - Slice 4 — `bash scripts/dev/perf-marker-inventory.sh` regenerates `docs/perf/MARKER_INVENTORY.md` cleanly (52 committed, 0 perf_temp:*). `agents/perf-gatekeeper.md` reviewed; skill alias mirrors content. Full-suite workflow validated by YAML + script-shape inspection; full live run pending first scheduled cron tick. **pending CI**.
-- Slice 5 — `tests/ui/sync_stall_visible_cue.test.cpp` compiles under `ninja-ui-test-msys2` preset; bash driver exits 0 against the GoodOrder + BadOrder variants. Synthetic break (invert cue/block order in the Good variant) caught by the IM_CHECK. **pending CI build**.
+- Slice 5 — `tests/ui/sync_stall_visible_cue.test.cpp` compiles under `ninja-ui-test-msvc` preset; bash driver exits 0 against the GoodOrder + BadOrder variants. Synthetic break (invert cue/block order in the Good variant) caught by the IM_CHECK. **pending CI build**.

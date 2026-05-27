@@ -33,10 +33,10 @@ Config must have `mcp_enabled: true`. **No running instance required** — `--sp
 
 ```bash
 # 1. Build (skip if perf-detective already built this round).
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
 # 2. Run scenario end-to-end. --spawn handles launch + MCP wait + result file + app.quit.
-build/ninja-iter-msys2/Smatchet.exe cmd scenario.run \
+build/ninja-iter-msvc/Smatchet.exe cmd scenario.run \
   --name=<scenario> --frames=<N> --outPath=perf_<round>.json --spawn --yes
 
 # 3. Read the result file directly — perf.snapshot rows are already inside .data.rows.

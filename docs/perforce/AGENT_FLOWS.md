@@ -211,9 +211,9 @@ export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
 ### Phase sequence — small-change loop (single slice, main stream)
 
 1. **`p4 iterate` on `//smatchet/main`** — `p4 edit` / `p4 add` / `p4 reconcile` into a pending CL. Keep the final review candidate **pending**; do not submit yet.
-2. **Smoke build** (`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone`) — confirm compilable BEFORE shelf. Failure → fix → re-build, no shelf yet. Pass → continue.
+2. **Smoke build** (`cmake --build --preset ninja-iter-msvc --target SmatchetStandalone`) — confirm compilable BEFORE shelf. Failure → fix → re-build, no shelf yet. Pass → continue.
 3. **Shelf for review** (`p4 shelve -c <pending-CL>`) — present shelf to user via `AskUserQuestion`. Rejected → iterate → re-shelve with `p4 shelve -f -c <pending-CL>`. Approved → continue.
-4. **Full tests** — `doctor.sh`, `ninja-test-msys2` + `ctest`, dual-target sentinels, `lint-flush.sh`, coverage-delta (Source_Core touch), doc-anchors / agent-contract (AGENTS.md / agents/** touch), `test-all.sh`, `ninja-ui-test-msys2` (visual touch), `perf-run.sh` + `perf-compare.py` (scenario-map hit). Failure → fix → re-test (no re-review). Pass → continue.
+4. **Full tests** — `doctor.sh`, `ninja-test-msvc` + `ctest`, dual-target sentinels, `lint-flush.sh`, coverage-delta (Source_Core touch), doc-anchors / agent-contract (AGENTS.md / agents/** touch), `test-all.sh`, `ninja-ui-test-msvc` (visual touch), `perf-run.sh` + `perf-compare.py` (scenario-map hit). Failure → fix → re-test (no re-review). Pass → continue.
 5. **Promote to PR** — `p4 submit -c <approved-CL>` lands on `//smatchet/main`. Then `git add -A && git commit -m "<title>" && git push -u origin <branch> && gh pr create --draft`. Post-ship `AskUserQuestion` fires with option 3 pre-selected.
 
 ### Phase sequence — multi-slice loop (task stream, user-approved)
@@ -221,7 +221,7 @@ export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
 For each slice (repeat until all slices done):
 
 - **Iterate in task stream** — edit → `p4 submit` to `//smatchet/task-<id>/...`.
-- **Inter-slice slice-boundary gate** — at-most-once per [`AGENTS.md`](../../AGENTS.md) § Build / ctest cadence: `ninja-test-msys2` + `ctest` + `lint-flush.sh` + `test-all.sh`. `code-review` agent NOT dispatched here. Failure → fix in p4 → re-gate (still one slice; cadence respected within the retry loop).
+- **Inter-slice slice-boundary gate** — at-most-once per [`AGENTS.md`](../../AGENTS.md) § Build / ctest cadence: `ninja-test-msvc` + `ctest` + `lint-flush.sh` + `test-all.sh`. `code-review` agent NOT dispatched here. Failure → fix in p4 → re-gate (still one slice; cadence respected within the retry loop).
 
 After all slices pass slice-boundary gates:
 

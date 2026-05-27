@@ -80,7 +80,7 @@ Every item bucketed per `test-author` taxonomy (`AGENTS.md` § Verification auto
 | `_infer_outcome` returns `halted` when halt keyword present | A · CLI | Same test file. |
 | `_infer_outcome` returns the explicit tag when `## Outcome: failed` is present | A · CLI | Same test file. |
 | `scripts/dev/test-all.sh` exits 0 after the new test rig is wired in | A · CLI | Unified runner. Part of CI gate. |
-| No `Source_Core/` build break (paranoia check — should be a no-op since plan is prompt-only) | A · CLI | `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`. |
+| No `Source_Core/` build break (paranoia check — should be a no-op since plan is prompt-only) | A · CLI | `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. |
 
 Bucket E (ImGui Test Engine) not needed — no UI surface touched. Bucket D (sanitizer) not needed — no C++ touched. Bucket B (scenario) not needed — no command-registry change. Bucket C (screenshot) not needed — no theme / locale change.
 

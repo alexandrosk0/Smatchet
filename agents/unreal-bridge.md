@@ -45,7 +45,7 @@ Unreal / dual-target specialist.
 **Workflow:**
 
 1. Before changing a `Source_Core/` header: think about the DX12 side. The lint hook syntax-checks both targets, but the full local verify is:
-   `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`
+   `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
 2. Standalone-only feature → gate at the call site, not in the shared header.
 3. Packaging issue → read `SmatchetPackageUnrealLibs_DX12` in CMake before changing inputs. `build-doctor` owns CMake; you own the abstraction shape.
 4. Never include `glfw.h` / `glad.h` / `GL/gl.h` from `Source_Core/` — push platform code into `Target_Standalone/` or the Unreal plugin source.
@@ -56,7 +56,7 @@ Bullet list of relative paths touched, with one-line per file naming the change 
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` → both PASS|FAIL.  
+`cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` → both PASS|FAIL.  
 Packaging dir verified (if applicable): `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` contents match `.uplugin` `AdditionalDependencies`.
 
 ## Manual residue

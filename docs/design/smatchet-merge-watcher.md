@@ -152,7 +152,7 @@ Per [`AGENTS.md`](../../AGENTS.md) § Verification automation — zero manual st
 - **Bucket A (pure-logic ctest, `test-rig`)**: **N/A** for phases 1-5; the watcher is a Python script, not C++. Phase 3's classifier may have a Python doctest equivalent — `pytest scripts/dev/test_coderabbit_triage.py` covering the 18-rule override table + Smatchet-invariant rejection cases.
 - **Bucket E (ImGui Test Engine)**: **N/A for phases 1-3 + 5**. Phase 4 only — `tests/ui/merge_watcher_toast_arrives.test.cpp` mirrors `tests/ui/views_columns_reorder.test.cpp`'s shape; posts a synthesised `{pr:999, state:CI_FAIL, message:"..."}` to the local endpoint, asserts toast appears in `SmatchetToastManager` within 1s, asserts toast text matches the message.
 - **Bash-driver scenario / screenshot / sanitizer**: **bats** for phases 1-3 + 5 via `tests/bats/merge_watcher.bats`. Sanitizer build mandatory for Phase 4 (Pillar 3 requirement; HTTP endpoint is C++).
-- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` (dual-target) — only Phase 4 touches `Source_Core/`; other phases skip this gate (Python + bash only).
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target) — only Phase 4 touches `Source_Core/`; other phases skip this gate (Python + bash only).
 - **Manual residue**: zero expected. The watcher CLI is a user-driven interactive surface, but `merge-watch register` / `unregister` / `status` / `list` are all bats-coverable (CRUD + state-transition assertions); `daemon` mode is exercised by the bats integration test against `gh api`-mocked fixtures.
 
 ## Out of scope (flagged, not designed)

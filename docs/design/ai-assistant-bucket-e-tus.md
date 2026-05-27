@@ -194,7 +194,7 @@ Append the following to `docs/backlog/agent-self-improvement/`:
 ### Per-TU automated gate (CI + local)
 
 ```bash
-cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone
+cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone
 bash scripts/dev/test-ui-ai-assistant-panel-dock-swap.sh    # exit 0, Passed=2 Failed=0
 bash scripts/dev/test-ui-ai-assistant-enter-send.sh         # exit 0, Passed=3 Failed=0
 bash scripts/dev/test-ui-ai-prefs-autosave-flow.sh          # exit 0, Passed=3 Failed=0
@@ -209,10 +209,10 @@ bash scripts/dev/test-all.sh    # picks up the three new runners; expected delta
 ### Dual-target compile tripwire
 
 ```bash
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12
 ```
 
-Expectation: DX12 build compiles with the new sources enrolled but `SMATCHET_BUILD_UI_TESTS=OFF` (default for `ninja-iter-msys2`), so the TUs compile to empty. No DX12 packaging touched.
+Expectation: DX12 build compiles with the new sources enrolled but `SMATCHET_BUILD_UI_TESTS=OFF` (default for `ninja-iter-msvc`), so the TUs compile to empty. No DX12 packaging touched.
 
 ### Manual residue inventory
 
@@ -288,12 +288,12 @@ Plus the progress-marker sentence:
 
 | Gate | Command | Result |
 |---|---|---|
-| 1. Build | `cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone` | PASS (linked clean, all three new TUs compiled) |
+| 1. Build | `cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone` | PASS (linked clean, all three new TUs compiled) |
 | 2a. TU#1 runner | `bash scripts/dev/test-ui-ai-assistant-panel-dock-swap.sh` | PASS — `Passed: 2  Failed: 0` (state-replica + live-host probe; the live-host probe takes the LogInfo-and-return path when dock nodes aren't reachable) |
 | 2b. TU#2 runner | `bash scripts/dev/test-ui-ai-assistant-enter-send.sh` | PASS — `Passed: 3  Failed: 0` (EnterSubmits, CtrlEnterNewline, EmptySubmitGuarded) |
 | 2c. TU#3 runner | `bash scripts/dev/test-ui-ai-prefs-autosave-flow.sh` | PASS — `Passed: 3  Failed: 0` (Autosave_DebouncesThenSaves live; V2/V3 emit deferred-coverage LogInfo + IM_CHECK(true)) |
 | 3. Global gate | `bash scripts/dev/test-all.sh` | PARTIAL — `AGGREGATE Passed: 115  Failed: 14  Scripts: 18`. The 14 failures are pre-existing flakes unrelated to this PR: `test-lint-deferred.sh` (env-var-prefix tree-dirty hook scaffolding, fails outside a normal session), `test-dock-gap-sentinel.sh` + `test-command-palette-fuzzy.sh` (screenshot-diff reference drift, `L_inf >> 4`), and the bucket-E spawn-runner intermittent flake documented in `docs/backlog/agent-self-improvement/infra.md` (P2). The three new runners pass on isolated/fresh ports. |
-| 4. Dual-target | `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` | PASS (both targets linked; DX12 compiles new sources to empty because `SMATCHET_BUILD_UI_TESTS=OFF` is the default for `ninja-iter-msys2`) |
+| 4. Dual-target | `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` | PASS (both targets linked; DX12 compiles new sources to empty because `SMATCHET_BUILD_UI_TESTS=OFF` is the default for `ninja-iter-msvc`) |
 
 ### Manual residue inventory
 

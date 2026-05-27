@@ -10,20 +10,12 @@
 #   - cmake >= 3.24
 #   - ninja present
 #   - git present
-#   - MSYS2 UCRT64 gcc (>= 13)  -- "toolchain reachable": `which gcc`
-#                                  resolving under /ucrt64/ or $MSYSTEM ==
-#                                  UCRT64 on MSYS2.
-#   - g++ present
-#   - lld / ld.lld present
+#   - cl.exe OR clang-cl reachable (MSVC or Clang/LLVM compiler)
+#   - link.exe reachable (MSVC linker — needed for both cl.exe and clang-cl)
 #   - python >= 3.10
 #   - >= 4 GB free under <repo>/build
 #
 # Warn-only checks:
-#   - PATH contains the MSYS2 UCRT64 toolchain dir -- "on PATH at shell
-#     time". Required by scripts/dev/ bash wrappers that resolve gcc via
-#     $PATH directly. NOT required for `cmake --preset` (presets prepend
-#     UCRT64 bin via MSYSTEM_PREFIX). False-failed on JetBrains-bundled-
-#     MinGW hosts where a working gcc resolves outside /ucrt64/.
 #   - cppcheck
 #   - clang-tidy
 #   - clang-format
@@ -37,8 +29,7 @@
 #
 # Verification: scripts/dev/test-doctor.sh.
 # Windows callers (PowerShell): invoke via `bash scripts/dev/doctor.sh`
-# from Git Bash, MSYS2, or `wsl bash scripts/dev/doctor.sh`. The
-# `bootstrap-msys2.ps1` cold-start script wires this up automatically.
+# from Git Bash or `wsl bash scripts/dev/doctor.sh`.
 
 set -uo pipefail
 
@@ -114,7 +105,7 @@ fi
 # ninja present
 ninja_line=$(tool_version ninja --version)
 if [ -z "$ninja_line" ]; then
-    write_fail 'ninja' 'install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-ninja (ships with mingw-w64-ucrt-x86_64-toolchain)'
+    write_fail 'ninja' 'install: included with Visual Studio, or winget install Ninja-build.Ninja'
 else
     write_pass 'ninja' "ninja $ninja_line"
 fi
@@ -127,51 +118,39 @@ else
     write_pass 'git' "$git_line"
 fi
 
-# gcc (>= 13) -- "toolchain reachable". A gcc resolving outside /ucrt64/
-# (e.g. JetBrains-bundled MinGW) is acceptable because `cmake --preset
-# ninja-iter-msys2` prepends the UCRT64 prefix via MSYSTEM_PREFIX before
-# invoking the compiler. The "MSYS2 UCRT64 bin on PATH" check is warn-only
-# below.
-gcc_path=$(command -v gcc 2>/dev/null || true)
-gcc_line=$(tool_version gcc --version)
-if [ -z "$gcc_line" ]; then
-    write_fail 'gcc' 'install: winget install MSYS2.MSYS2 then pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld'
-else
-    gcc_ver=$(parse_version "$gcc_line")
-    if [ -z "$gcc_ver" ]; then
-        write_fail 'gcc' "could not parse version from: $gcc_line"
-    else
-        gcc_major=$(echo "$gcc_ver" | awk '{print $1}')
-        if [ "$gcc_major" -lt 13 ]; then
-            write_fail 'gcc' "found gcc $gcc_ver, need >= 13 -- update: pacman -Syu then pacman -S mingw-w64-ucrt-x86_64-toolchain"
-        else
-            origin=""
-            case "$gcc_path" in
-                */ucrt64/*) origin=" (under /ucrt64/)" ;;
-                *) origin=" (resolves to $gcc_path)" ;;
-            esac
-            write_pass 'gcc' "$gcc_line$origin"
-        fi
-    fi
+# C++ compiler: cl.exe (MSVC) or clang-cl (Clang/LLVM). At least one required.
+# cl.exe needs a VS Developer Command Prompt; clang-cl needs LLVM on PATH.
+cl_found=0
+clangcl_found=0
+cl_line=$(tool_version cl 2>&1 | head -n 1 || true)
+if command -v cl.exe >/dev/null 2>&1; then
+    cl_found=1
+    cl_ver=$(cl.exe 2>&1 | head -n 1 || true)
+    write_pass 'cl.exe' "$cl_ver"
+fi
+if command -v clang-cl >/dev/null 2>&1; then
+    clangcl_found=1
+    clangcl_ver=$(clang-cl --version 2>&1 | head -n 1 || true)
+    write_pass 'clang-cl' "$clangcl_ver"
+fi
+if [ "$cl_found" -eq 0 ] && [ "$clangcl_found" -eq 0 ]; then
+    write_fail 'compiler' 'need cl.exe (VS Developer Command Prompt) or clang-cl (winget install LLVM.LLVM)'
 fi
 
-# g++ present
-gxx_line=$(tool_version g++ --version)
-if [ -z "$gxx_line" ]; then
-    write_fail 'g++' 'install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-toolchain'
+# MSVC linker (link.exe) -- required for both cl.exe and clang-cl on Windows.
+if command -v link.exe >/dev/null 2>&1; then
+    # Distinguish MSVC link.exe from coreutils link (which exists on some systems).
+    link_out=$(link.exe 2>&1 | head -n 1 || true)
+    case "$link_out" in
+        *Microsoft*|*LINK*|*Linker*)
+            write_pass 'link.exe' "$link_out"
+            ;;
+        *)
+            write_warn 'link.exe' "found link.exe but it may not be MSVC linker: $link_out"
+            ;;
+    esac
 else
-    write_pass 'g++' "$gxx_line"
-fi
-
-# lld / ld.lld present
-lld_line=$(tool_version lld --version)
-if [ -z "$lld_line" ]; then
-    lld_line=$(tool_version ld.lld --version)
-fi
-if [ -z "$lld_line" ]; then
-    write_fail 'lld' 'install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-lld (required by ninja-iter-msys2 linker step)'
-else
-    write_pass 'lld' "$lld_line"
+    write_warn 'link.exe' 'not found -- run from a VS Developer Command Prompt for MSVC builds'
 fi
 
 # python >= 3.10
@@ -180,7 +159,7 @@ if [ -z "$py_line" ]; then
     py_line=$(tool_version python3 --version)
 fi
 if [ -z "$py_line" ]; then
-    write_fail 'python' 'install: winget install Python.Python.3.12 (or pacman -S mingw-w64-ucrt-x86_64-python)'
+    write_fail 'python' 'install: winget install Python.Python.3.12'
 else
     py_ver=$(parse_version "$py_line")
     if [ -z "$py_ver" ]; then
@@ -215,49 +194,23 @@ fi
 # Warn-only checks
 # ---------------------------------------------------------------------------
 
-# PATH contains MSYS2 UCRT64 toolchain dir -- warn-only because `cmake
-# --preset ninja-iter-msys2` prepends the UCRT64 prefix via MSYSTEM_PREFIX
-# regardless. This check matters for scripts/dev/ bash wrappers that
-# resolve gcc via $PATH directly. False-failed on JetBrains-bundled-MinGW
-# hosts pre-split.
-path_has_ucrt=0
-IFS=':' read -r -a path_parts <<< "$PATH"
-for p in "${path_parts[@]}"; do
-    case "$p" in
-        */ucrt64/bin|/ucrt64/bin|/c/msys64/ucrt64/bin|/C/msys64/ucrt64/bin)
-            path_has_ucrt=1; break ;;
-    esac
-done
-# Windows-style PATH entries (semicolons) also valid when running this script
-# under Git Bash / pwsh: parse $PATH for "msys64\ucrt64\bin" or "msys64/ucrt64/bin".
-if [ "$path_has_ucrt" -eq 0 ]; then
-    case "$PATH" in
-        *msys64/ucrt64/bin*|*msys64\\ucrt64\\bin*) path_has_ucrt=1 ;;
-    esac
-fi
-if [ "$path_has_ucrt" -eq 0 ]; then
-    write_warn 'PATH' 'MSYS2 UCRT64 bin dir (e.g. /ucrt64/bin or C:\msys64\ucrt64\bin) not on PATH -- prepend it for direct-gcc invocation by scripts/dev/ (not required for cmake --preset)'
-else
-    write_pass 'PATH' 'contains MSYS2 UCRT64 bin dir'
-fi
-
 cppcheck_line=$(tool_version cppcheck --version)
 if [ -z "$cppcheck_line" ]; then
-    write_warn 'cppcheck' 'install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-cppcheck (used by scripts/dev/run_cppcheck.py)'
+    write_warn 'cppcheck' 'install via LLVM or Visual Studio individual components (used by scripts/dev/run_cppcheck.py)'
 else
     write_pass 'cppcheck' "$cppcheck_line"
 fi
 
 clang_tidy_line=$(tool_version clang-tidy --version)
 if [ -z "$clang_tidy_line" ]; then
-    write_warn 'clang-tidy' 'install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra (used by lint hook)'
+    write_warn 'clang-tidy' 'install via LLVM (winget install LLVM.LLVM) or Visual Studio individual components (used by lint hook)'
 else
     write_pass 'clang-tidy' "$clang_tidy_line"
 fi
 
 clang_format_line=$(tool_version clang-format --version)
 if [ -z "$clang_format_line" ]; then
-    write_warn 'clang-format' 'install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra (used by lint hook)'
+    write_warn 'clang-format' 'install via LLVM (winget install LLVM.LLVM) or Visual Studio individual components (used by lint hook)'
 else
     write_pass 'clang-format' "$clang_format_line"
 fi
@@ -269,7 +222,7 @@ fi
 if [ "${SMATCHET_DOCTOR_CHECK_COVERAGE:-0}" = "1" ]; then
     occ_line=$(tool_version OpenCppCoverage --help 2>/dev/null | head -n 1 || true)
     if [ -z "$occ_line" ]; then
-        write_warn 'OpenCppCoverage' 'install via Chocolatey (choco install opencppcoverage) or releases page (used by scripts/dev/coverage.sh; CI installs it via Chocolatey, so this is only relevant for local coverage runs)'
+        write_warn 'OpenCppCoverage' 'install via Chocolatey (choco install opencppcoverage) or releases page (used by scripts/dev/coverage.sh)'
     else
         write_pass 'OpenCppCoverage' "$occ_line"
     fi

@@ -302,13 +302,13 @@ Useful values to log (passed via `dataInt` for the helper or interpolated into t
 Build after each instrumentation round:
 
 ```bash
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 ```
 
 If the touched code affects `Source_Core/`, also build:
 
 ```bash
-cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12
+cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
 ```
 
 If the build fails because of instrumentation, fix the instrumentation only. Do not drift into product fixes.
@@ -330,7 +330,7 @@ Report the absolute executable path, size, and modified time so the user does no
 ```bash
 Smatchet.exe cmd scenario.run --name=<repro> --frames=300 --yes 2> debug.log
 Smatchet.exe cmd tickets.get --id=<id>             2> debug.log
-ctest --preset ninja-test-msys2 -R <UnitName>                 # for pure-logic repros
+ctest --preset ninja-test-msvc -R <UnitName>                 # for pure-logic repros
 ```
 
 If `scenario.run` is missing for the bug, the auto-repro path **upgrades to a `test-author` handoff in parallel** so the next investigation has automation. Don't block this round on it — flag in `## Self-improvement` and continue.
@@ -454,16 +454,16 @@ Collect:
 If appropriate, suggest or run:
 
 - Debug / RelWithDebInfo build.
-- AddressSanitizer + UndefinedBehaviorSanitizer for lifetime, bounds, and UB bugs → `ninja-debug-msys2-asan` (GCC; ASan implies LSan).
-- ThreadSanitizer for data races → `ninja-debug-msys2-tsan` (GCC; MinGW support partial — if symptoms surface, hand off to `build-doctor`).
-- MemorySanitizer for uninit-read bugs → `ninja-debug-msys2-msan` (Clang-only; needs `clang`/`clang++` on PATH).
+- AddressSanitizer + UndefinedBehaviorSanitizer for lifetime, bounds, and UB bugs → `ninja-msvc-asan` (GCC; ASan implies LSan).
+- ThreadSanitizer for data races → `ninja-debug-msvc-tsan` (GCC; MinGW support partial — if symptoms surface, hand off to `build-doctor`).
+- MemorySanitizer for uninit-read bugs → `ninja-debug-msvc-msan` (Clang-only; needs `clang`/`clang++` on PATH).
 - Windows minidump or debugger backtrace when no sanitizer applies.
 
 Pick **one** sanitizer per investigation — they cannot coexist at link/runtime. Configure + build:
 
 ```bash
-cmake --preset ninja-debug-msys2-asan
-cmake --build --preset ninja-debug-msys2-asan --target SmatchetStandalone
+cmake --preset ninja-msvc-asan
+cmake --build --preset ninja-msvc-asan --target SmatchetStandalone
 ```
 
 Sanitizer runtime DLLs (`libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll`) must be on `PATH` at launch — "DLL not found" on a sanitized exe is the runtime, not the build. If MSan preset errors `requires Clang`, install `mingw-w64-clang-x86_64-clang` in MSYS2. Wiring lives in `cmake/Sanitizers.cmake` — preset failures or new sanitizer requests go to `build-doctor`.
@@ -590,13 +590,13 @@ Gitignore patterns (`debug-*.log`, `Smatchet-debug-*.log`, `tests/_debug/`) are 
 **12d. Rebuild clean.** Confirm the no-instrumentation tree still compiles:
 
 ```bash
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 ```
 
 If `Source_Core/` was touched:
 
 ```bash
-cmake --build --preset ninja-iter-msys2 --target SmatchetCore_DX12
+cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
 ```
 
 Report cleanup status (zero `[temp-debug]` hits + helper deleted + log deleted) and final build status.

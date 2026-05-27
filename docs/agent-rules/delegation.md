@@ -228,7 +228,7 @@ Production-resident, header-only helper (shipped by slice 7 of [`docs/design/aut
 
 **Empty-file semantic:** an empty NDJSON file after a scenario run = **instrumentation didn't fire** (the scenario never reached any scope wrapped with `SMATCHET_AGENT_DEBUG_LOG`). Treat as an actionable signal, not a pass — phase 0.5 (existing-scenario reuse) must find a different scenario, or phase 1 (Reproduce) must add a new scope at the actual code path.
 
-**Off-build behaviour:** OFF in iter/publish (macro expands to `((void)0)`); ON in `ninja-debug-msys2`, `ninja-debug-msys2-asan`, `ninja-ui-test-msys2`. `LOG_AGENT_DEBUG(category, msg)` in `Source_Core/include/Logger.h` is always-callable — bridges to NDJSON when ON, routes to `LOG_DEBUG` when OFF (single resolution per the plan's debug-off contract).
+**Off-build behaviour:** OFF in iter/publish (macro expands to `((void)0)`); ON in `ninja-debug-msvc`, `ninja-msvc-asan`, `ninja-ui-test-msvc`. `LOG_AGENT_DEBUG(category, msg)` in `Source_Core/include/Logger.h` is always-callable — bridges to NDJSON when ON, routes to `LOG_DEBUG` when OFF (single resolution per the plan's debug-off contract).
 
 ## API-500 mid-run recovery
 
@@ -242,7 +242,7 @@ When a delegated agent errors API-500 mid-run, the worktree state is usually com
    Confirm the expected files are modified / created.
 
 2. **Run local gates** (the agent didn't get to):
-   - `cmake --build --preset ninja-iter-msys2` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target if any `Source_Core/` change).
+   - `cmake --build --preset ninja-iter-msvc` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target if any `Source_Core/` change).
    - `bash scripts/dev/test-all.sh` if the diff touches anything outside `agents/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception's allow-list.
 
 3. **Stage everything** — this is the gotcha. The agent may have created new files that aren't staged. Use `git add -A`, not `git add <list>`:
@@ -308,7 +308,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 | `mcp-toolsmith` | low · read-edit | `Plugins/Mcp/` + `SmatchetMcpServerUi` — MCP wire protocol, tool schemas (JSON-RPC), server lifecycle, REST envelope shape. |
 | `p4-blame` | low · read-edit | Perforce blame — `P4Blame`, `P4ErrorUtil`, `BlameAnalysisUi`, `CppSyntaxHighlight`, `CallstackParser`. `p4 annotate` / `p4 describe`, blame caching, stack-frame symbolication via `PathRemaps`, Jira-comment export. |
 | `unreal-bridge` | low · read-edit | Dual-target divergence — `SmatchetCore_DX12`, `UnrealPlugins/SmatchetImGuiPlugin`, `SMATCHET_EMBEDDED_IN_UNREAL`, header pollution in `Source_Core/`, packaging output. |
-| `test-rig` | low · read-edit | Pure-logic doctest rig under `tests/` — `tests/CMakeLists.txt`, `tests/Source_Core/<Unit>.test.cpp`, `SMATCHET_BUILD_TESTS`, `ninja-test-msys2` preset. Adding tests for pure C++14 helpers (JQL surgery, value parsers, queue-replay decision math), expanding coverage, fixing wrong assertions. **Refuses** UI / HTTP / SQLite / ImGui / cpr surfaces — those route to bucket-E or stay deferred. |
+| `test-rig` | low · read-edit | Pure-logic doctest rig under `tests/` — `tests/CMakeLists.txt`, `tests/Source_Core/<Unit>.test.cpp`, `SMATCHET_BUILD_TESTS`, `ninja-test-msvc` preset. Adding tests for pure C++14 helpers (JQL surgery, value parsers, queue-replay decision math), expanding coverage, fixing wrong assertions. **Refuses** UI / HTTP / SQLite / ImGui / cpr surfaces — those route to bucket-E or stay deferred. |
 
 ## Stay in the orchestrator for
 

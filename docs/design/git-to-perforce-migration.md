@@ -189,7 +189,7 @@ Exit: deliberately have two agents try to edit the same `+l`-locked file; one is
   - `scripts/dev/test-p4-submit-to-pr.sh` (new) — Phase 3 exit gate, uses a fake gh harness (no real PR opened).
   - `scripts/dev/test-p4-lock-claim.sh` (new) — Phase 4 exit gate, asserts `lock-claim-p4.sh` and `lock-claim.sh` produce equivalent `_plan-locks.generated.md` output.
   - `scripts/dev/test-dual-vcs-status-agreement.sh` (new) — modifies one file, asserts both `git status --porcelain` and `p4 reconcile -n` flag it consistently.
-- **Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — must pass before + after the plan ships (no C++ changes, but the dual-target invariant remains).
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — must pass before + after the plan ships (no C++ changes, but the dual-target invariant remains).
 - **Manual residue**: Phase 0 (server install) is irreducibly manual. Documented in `docs/perforce/SETUP.md`. Backlog entry `docs/backlog/agent-self-improvement/tooling.md`: "automate p4d bring-up via a `scripts/dev/setup-p4d.ps1` Idempotent installer."
 
 ## Out of scope (flagged, not designed)

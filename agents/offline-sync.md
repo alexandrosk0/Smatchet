@@ -46,7 +46,7 @@ Offline-sync / cache specialist for Smatchet.
 1. New cached field type → `CachedTicket.fieldValues` is `string`-keyed; rich content (ADF, HTML) goes through the parallel `richContent` map. Don't invent a third storage axis.
 2. New queue type → mirror the existing `pending_creates` / `pending_field_edits` schema: id, payload, attempts, last_error, dead_letter_at.
 3. New audit source → implement `FieldEditAuditSource` interface (for field edits) or push to `BackendAuditTrail` directly (for other ops).
-4. Build `ninja-iter-msys2`; smoke-test the offline path by toggling network off in preferences, making a change, restoring network, confirming replay + audit entry.
+4. Build `ninja-iter-msvc`; smoke-test the offline path by toggling network off in preferences, making a change, restoring network, confirming replay + audit entry.
 
 ## Files changed
 
@@ -54,7 +54,7 @@ Bullet list of relative paths touched, with one-line per file naming the change 
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+`cmake --build --preset ninja-iter-msvc` → PASS|FAIL.  
 Offline path smoke: network off → change → network on → confirm replay + audit entry → result.  
 `OfflineQueueService` + `BackendAuditTrail` (or `FieldEditAuditSource`) call-sites confirmed on every new write path.
 

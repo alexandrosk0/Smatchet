@@ -39,7 +39,7 @@
 
 - 2026-05-19 · coderabbit-triage · [test] · P2 — `AgentProposalStore.test.cpp` SQLite tests live in pure-logic rig; no bucket-E SQLite lane exists yet
   Details: CodeRabbit findings #15 + #16 on PR #264 (handoff-half re-review) flagged `tests/Source_Core/AgentProposalStore.test.cpp` as violating the "tests/Source_Core/** must be pure-logic doctest only" rule — `test-rig` agent contract refuses SQLite surfaces. The tests were knowingly authored under the H10 plan as integration-coverage in the doctest rig because no bucket-E SQLite harness exists today. Moving them now has no destination lane. Triage marked DEFERRED rather than rejected because the suggestion's intent (proper lane separation) is correct; the blocker is missing infrastructure.
-  Concrete next action: design a bucket-E SQLite lane — preset `ninja-test-sqlite-msys2` or extend bucket-E with SQLite-allowed test TUs. Move `AgentProposalStore.test.cpp` + any future SQLite-backed tests there. Until then, the doctest-rig location is the documented exception. ~4 h for the lane design + initial migration.
+  Concrete next action: design a bucket-E SQLite lane — preset `ninja-test-sqlite-msvc` or extend bucket-E with SQLite-allowed test TUs. Move `AgentProposalStore.test.cpp` + any future SQLite-backed tests there. Until then, the doctest-rig location is the documented exception. ~4 h for the lane design + initial migration.
   Status: open
   Last-reviewed: 2026-05-19
 

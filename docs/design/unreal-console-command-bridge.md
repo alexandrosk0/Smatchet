@@ -56,7 +56,7 @@ Console arguments are intentionally JSON-first: everything after the command nam
 ## Verification
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: `ScenarioCaptureSizing.test.cpp` covers the shared screenshot scenario sizing helper added during the Bucket-C follow-up.
-- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)**: N/A; no visual ImGui behavior changes.
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: N/A; no visual ImGui behavior changes.
 - **Bash-driver scenario / screenshot / sanitizer**: N/A unless an Unreal console automation harness exists.
 - **Build gate**: `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release`.
 - **Manual residue**: If UBT cannot run locally, record compile-only limitation and rely on CI/PR build.
@@ -83,9 +83,9 @@ Console arguments are intentionally JSON-first: everything after the command nam
 
 - `git diff --check` passes.
 - `clang-format -i` ran on the edited Unreal plugin C++ files.
-- `cmake --build --preset ninja-test-msys2 --target SmatchetTests` passes after reconfiguring the preset under the MSYS2 UCRT toolchain.
-- `.\build\ninja-test-msys2\tests\SmatchetTests.exe --test-case="scenario capture sizing*"` passes: 3 cases, 6 assertions.
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` passes.
+- `cmake --build --preset ninja-test-msvc --target SmatchetTests` passes after reconfiguring the preset under the MSYS2 UCRT toolchain.
+- `.\build\ninja-test-msvc\tests\SmatchetTests.exe --test-case="scenario capture sizing*"` passes: 3 cases, 6 assertions.
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` passes.
 - `.\scripts\dev\rebuild_testproject_plugin.ps1 -Release` passes end-to-end: CMake repackaged the native DX12 light profile, deployed the plugin to the local TestProject, UHT ran, and UBT compiled/linked `TestProject.exe` with `SmatchetImGuiConsoleCommands.cpp`.
 - Bucket-C was rechecked after restoring shared-loop screenshot capture and deterministic scenario capture sizing.
 - Bucket-C remains advisory in CI pending approved CI goldens; the job now preserves captures without failing the PR check.

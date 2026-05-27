@@ -440,7 +440,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `scripts/dev/coverage-delta-gate.sh` (NEW — per-PR `Source_Core/` change without test delta → exit 1)
   - `.github/workflows/coverage.yml` (NEW — advisory coverage capture + Cobertura artifact)
   - `.github/workflows/coverage-gate.yml` (NEW — hard-blocking test-delta gate from day 1; `tests-out-of-band` label dismisses)
-  - `CMakePresets.json` (append `ninja-coverage-msys2` extending `ninja-test-msys2` with gcov instrumentation)
+  - `CMakePresets.json` (append `ninja-test-msvc` extending `ninja-test-msvc` with gcov instrumentation)
   - `docs/design/_plan-locks.md` (this self-status flip + Phase-7 flip)
   - `docs/design/test-suite-expansion-completion.md` (impl-log + deviations + verification appendices)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close TBD placeholder on Phase-7 entry; optionally file follow-up entries for OpenCppCoverage CI install + threshold-flip + PR template addition)

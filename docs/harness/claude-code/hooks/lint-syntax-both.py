@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Both-target syntax check for first-party Smatchet .cpp files.
 
-Reads build/ninja-iter-msys2/compile_commands.json and runs every matching
+Reads build/ninja-iter-msvc/compile_commands.json and runs every matching
 compile command with -fsyntax-only (no codegen / no linking). Catches changes
 that compile in SmatchetStandalone but break SmatchetCore_DX12 (and vice
 versa) before they slip into the codebase.
@@ -66,7 +66,7 @@ def main() -> int:
         return 0  # headers are checked indirectly via dependent .cpp edits
 
     project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
-    cc_path = project / "build" / "ninja-iter-msys2" / "compile_commands.json"
+    cc_path = project / "build" / "ninja-iter-msvc" / "compile_commands.json"
     if not cc_path.is_file():
         return 0  # build not configured yet — degrade silently
 

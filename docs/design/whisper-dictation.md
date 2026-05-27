@@ -342,9 +342,9 @@ Each phase = one PR. Sequential — later phases depend on earlier ones.
 
 **Verification**:
 
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 build picks up stubs TU).
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 build picks up stubs TU).
 - `cmake -DSMATCHET_WITH_WHISPER=OFF --build ...` — Standalone-with-Whisper-off compiles green using stubs TU.
-- `cmake --build --preset ninja-test-msys2 && ctest` — router unit tests pass for both on and off configurations.
+- `cmake --build --preset ninja-test-msvc && ctest` — router unit tests pass for both on and off configurations.
 - `Smatchet.exe cmd whisper.status` — returns `{"enabled": false, "mode": "auto", "model_present": false}` (whisper-on build); command not registered at all (whisper-off build).
 - No runtime visual changes in either configuration.
 
@@ -548,7 +548,7 @@ For Whisper we want the same coverage — every PR must build green in **both** 
 
 ```yaml
 - name: Build standalone with SMATCHET_WITH_WHISPER=OFF
-  run: cmake -DSMATCHET_WITH_WHISPER=OFF --preset ninja-iter-msys2 && cmake --build --preset ninja-iter-msys2
+  run: cmake -DSMATCHET_WITH_WHISPER=OFF --preset ninja-iter-msvc && cmake --build --preset ninja-iter-msvc
 ```
 
 This catches stub drift the moment it lands — same regression-prevention shape as the existing dual-target build for DX12.
@@ -643,52 +643,52 @@ Each phase PR body must include `lock-slug: whisper-dictation` so `.github/workf
 ## Verification
 
 - Phase A:
-  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 picks up the stubs TU; Standalone the real router).
-  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode standalone compiles green.
-  - `cmake --build --preset ninja-test-msys2 && cd build/ninja-test-msys2 && ctest` — `smatchet_tests` passes including the new `DictationInsertionRouter.test.cpp` cases.
+  - `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 picks up the stubs TU; Standalone the real router).
+  - `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — stubs-mode standalone compiles green.
+  - `cmake --build --preset ninja-test-msvc && cd build/ninja-test-msvc && ctest` — `smatchet_tests` passes including the new `DictationInsertionRouter.test.cpp` cases.
   - `Smatchet.exe cmd whisper.status` — returns `{"enabled": false, "mode": "auto", "model_present": false, "setup_completed": false}` on a fresh profile.
   - `bash scripts/dev/test-all.sh` — full sweep green.
   - CI job `windows-msys2-ucrt64-no-whisper` — added in the same PR; sentinel for stubs/bindings drift.
 - Phase B:
-  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`, never visits the new Plugins/Whisper TUs).
-  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode build green; `InsertIntoFocusedInputText` stub linked.
-  - `cmake --build --preset ninja-test-msys2 && cd build/ninja-test-msys2 && ctest` — `smatchet_tests` passes; new test cases — `WhisperApiKeyResolve` (6), `WavWriter` (6), `WhisperApiPayload` (8) — all green.
+  - `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`, never visits the new Plugins/Whisper TUs).
+  - `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — stubs-mode build green; `InsertIntoFocusedInputText` stub linked.
+  - `cmake --build --preset ninja-test-msvc && cd build/ninja-test-msvc && ctest` — `smatchet_tests` passes; new test cases — `WhisperApiKeyResolve` (6), `WavWriter` (6), `WhisperApiPayload` (8) — all green.
   - `Smatchet.exe cmd whisper.status` — returns `{enabled, mode, model_present, setup_completed, api_key_resolved}` on a fresh profile; `api_key_resolved=false` until the user supplies a key.
   - `Smatchet.exe cmd whisper.transcribe-once --file tests/fixtures/whisper/hello-world.wav --mode cloud` — without a real API key, fails with `no API key available - set WhisperApiKey or AiApiKey (provider=openai)`. With a fake key, exits via the HTTP-transport / HTTP-401 branch in `WhisperApiClient::Transcribe` (transport-level, not key-resolution-level — proves the key-resolution path is no longer the blocker). End-to-end with a real key is documented as manual residue (bucket-E gap).
   - `bash scripts/dev/test-all.sh` — full sweep green.
 - Phase C:
-  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up the banner TU + ModelCatalog + ModelDownloader + WhisperLocal API surface).
-  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode build green; no Plugins/Whisper TU compiled.
-  - `cmake --build --preset ninja-test-msys2 && cd build/ninja-test-msys2 && ctest` — `smatchet_tests` passes; new test cases — `ModelCatalog` (5), `WhisperConsentGate` (4 × multi-subcase), `WhisperModeRouter` (5) — all green.
+  - `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up the banner TU + ModelCatalog + ModelDownloader + WhisperLocal API surface).
+  - `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — stubs-mode build green; no Plugins/Whisper TU compiled.
+  - `cmake --build --preset ninja-test-msvc && cd build/ninja-test-msvc && ctest` — `smatchet_tests` passes; new test cases — `ModelCatalog` (5), `WhisperConsentGate` (4 × multi-subcase), `WhisperModeRouter` (5) — all green.
   - `Smatchet.exe cmd whisper.status` — returns `{enabled, mode, model_present, setup_completed, api_key_resolved, local_backend}` on a fresh profile; `local_backend = OFF` until `SMATCHET_WHISPER_LOCAL_BACKEND=ON` is rebuilt.
   - `Smatchet.exe cmd whisper.download-model --name ggml-tiny.en` — manual gate: after stamping `WhisperConsentTimestampSec` via the banner / Preferences (or directly editing the config + Save for a smoke test), starts a worker; `whisper.model-progress` reports `{state: Downloading, bytes_received, bytes_expected}`; final rename happens only when the streaming SHA-256 matches the catalog. Network gate.
   - `Smatchet.exe cmd whisper.cancel-download` — returns `{cancelled: true}`; the worker's next chunk write returns false; `<dest>.partial` is preserved for resume.
   - `bash scripts/dev/test-all.sh` — full sweep green.
 - Phase D:
-  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps the stubs router TU; Standalone the real router with `g_dictationRouter` defined once).
-  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode standalone compiles green; the four target surfaces' explicit `g_dictationRouter.{Register,Unregister}InputText(...)` calls resolve to no-ops through the stubs TU.
-  - `cmake --build --preset ninja-test-msys2 && cd build/ninja-test-msys2 && ctest` — `smatchet_tests` passes; 10 new doctest cases in `DictationInsertionRouter.test.cpp` cover empty / non-empty / mid-cursor splices, cursor advance chain, capacity truncation, UTF-8 codepoint boundary integrity, idempotent re-register, `InsertIntoFocusedInputText` happy / no-target paths, and the `g_dictationRouter` global link sentinel (both gating states).
+  - `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps the stubs router TU; Standalone the real router with `g_dictationRouter` defined once).
+  - `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — stubs-mode standalone compiles green; the four target surfaces' explicit `g_dictationRouter.{Register,Unregister}InputText(...)` calls resolve to no-ops through the stubs TU.
+  - `cmake --build --preset ninja-test-msvc && cd build/ninja-test-msvc && ctest` — `smatchet_tests` passes; 10 new doctest cases in `DictationInsertionRouter.test.cpp` cover empty / non-empty / mid-cursor splices, cursor advance chain, capacity truncation, UTF-8 codepoint boundary integrity, idempotent re-register, `InsertIntoFocusedInputText` happy / no-target paths, and the `g_dictationRouter` global link sentinel (both gating states).
   - `Smatchet.exe cmd whisper.status` — unchanged contract (Phase D doesn't surface CLI changes); still returns the Phase C field set on a fresh profile.
   - `bash scripts/dev/test-all.sh` — full sweep green.
   - Manual residue (bucket-E rig wired (`docs/design/applied/imgui-test-engine-bucket-e-execution.md`) but no mic-hardware mock): end-to-end mic-capture → transcription → text appears in focused InputText on each of the four target surfaces (AI Assistant chat input, long-text field editor modal, Command Palette filter, any focused InputText routed via the wrapper).
 - Phase E:
-  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up the new HotkeyParse + GlobalHotkey_Win32 + Overlay TUs + Phase E surface on the router).
-  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode build green; mic indicator + overlay drop out cleanly (call sites are `#if defined(SMATCHET_WITH_WHISPER)` gated; the new `SetRecording / SetLastPeakAmplitude / GetLastPeakAmplitude` symbols exist on the stubs TU so the router header surface is identical across gating states).
-  - `cmake --build --preset ninja-test-msys2 && cd build/ninja-test-msys2 && ctest` — `smatchet_tests` passes; new `HotkeyParse.test.cpp` adds 18 cases.
+  - `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up the new HotkeyParse + GlobalHotkey_Win32 + Overlay TUs + Phase E surface on the router).
+  - `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — stubs-mode build green; mic indicator + overlay drop out cleanly (call sites are `#if defined(SMATCHET_WITH_WHISPER)` gated; the new `SetRecording / SetLastPeakAmplitude / GetLastPeakAmplitude` symbols exist on the stubs TU so the router header surface is identical across gating states).
+  - `cmake --build --preset ninja-test-msvc && cd build/ninja-test-msvc && ctest` — `smatchet_tests` passes; new `HotkeyParse.test.cpp` adds 18 cases.
   - `Smatchet.exe cmd whisper.status` — returns the extended Phase E blob with `is_recording` (bool, false until a hotkey press) + `hotkey_registered` (bool, true once `GlobalHotkey_Win32::Register` succeeds in `WhisperPlugin::OnStart`).
   - `Smatchet.exe cmd whisper.simulate-press` then `Smatchet.exe cmd whisper.simulate-release` — exercise the press / release worker paths from the CLI without a hardware key. Without a real mic the captured PCM is empty + the pipeline returns "0 PCM samples captured (release within < 1 chunk)" cleanly. The `is_recording` flag flips true after press + back to false after release (poll `whisper.status` between to observe).
   - `bash scripts/dev/test-all.sh` — full sweep green.
-  - Manual residue (bucket-E rig wired (`docs/design/applied/imgui-test-engine-bucket-e-execution.md`) but no mic-hardware mock): (1) end-to-end push-to-talk with a real mic — hold hotkey, speak, release, see text appear in focused InputText. Recipe: launch `build/ninja-iter-msys2/Smatchet.exe`, enable Whisper via Preferences (sets `WhisperEnabled` + `WhisperSetupCompleted` + `WhisperConsentTimestampSec`), focus the AI Assistant chat input, hold `Ctrl+Alt+Space`, speak, release. (2) Visual cue latency < 100 ms from hotkey press to mic indicator visible — eyeball test at 144 Hz. (3) Hotkey rebind UX in Preferences — eyeball check that the "Click to rebind" button captures Ctrl+Alt+F8 (etc.) and the new descriptor persists across launch.
+  - Manual residue (bucket-E rig wired (`docs/design/applied/imgui-test-engine-bucket-e-execution.md`) but no mic-hardware mock): (1) end-to-end push-to-talk with a real mic — hold hotkey, speak, release, see text appear in focused InputText. Recipe: launch `build/ninja-iter-msvc/Smatchet.exe`, enable Whisper via Preferences (sets `WhisperEnabled` + `WhisperSetupCompleted` + `WhisperConsentTimestampSec`), focus the AI Assistant chat input, hold `Ctrl+Alt+Space`, speak, release. (2) Visual cue latency < 100 ms from hotkey press to mic indicator visible — eyeball test at 144 Hz. (3) Hotkey rebind UX in Preferences — eyeball check that the "Click to rebind" button captures Ctrl+Alt+F8 (etc.) and the new descriptor persists across launch.
 - Phase F:
-  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up `SilenceTrim.cpp`, the 4-entry catalog, the language overloads on `WhisperApiClient` / `WhisperLocal`, the new router AI-Assistant methods, and the Preferences Phase F rows).
-  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode build green; the new router signatures (`RegisterAiAssistantInputText`, `IsFocusedTargetAiAssistant`, `SetAiAssistantSendCallback`, `TriggerAiAssistantSend`) link cleanly through the stubs TU.
-  - `cmake --build --preset ninja-test-msys2 && cd build/ninja-test-msys2 && ctest` — `smatchet_tests` passes; new + extended cases: `SilenceTrim` (8), `WhisperPrefsFields` (4), `ModelCatalog` (updated to 4-entry layout + URL prefix invariant).
+  - `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up `SilenceTrim.cpp`, the 4-entry catalog, the language overloads on `WhisperApiClient` / `WhisperLocal`, the new router AI-Assistant methods, and the Preferences Phase F rows).
+  - `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — stubs-mode build green; the new router signatures (`RegisterAiAssistantInputText`, `IsFocusedTargetAiAssistant`, `SetAiAssistantSendCallback`, `TriggerAiAssistantSend`) link cleanly through the stubs TU.
+  - `cmake --build --preset ninja-test-msvc && cd build/ninja-test-msvc && ctest` — `smatchet_tests` passes; new + extended cases: `SilenceTrim` (8), `WhisperPrefsFields` (4), `ModelCatalog` (updated to 4-entry layout + URL prefix invariant).
   - `Smatchet.exe cmd whisper.status` — unchanged contract; the Phase F config-field additions are observable via `Smatchet.exe cmd config.show whisper_language` / `whisper_trim` / `whisper_max_clip_sec` / `whisper_auto_send_on_punctuation` (or by re-reading `smatchet_config.json` after a Save).
   - `bash scripts/dev/test-all.sh` — 111 pass / 10 known env-only failures (matches the baseline; no new failures introduced).
   - Manual residue (bucket-E gap; covered by Phase G + the existing manual recipes): (1) Preferences Whisper tab visual eyeball — language Combo, trim Checkbox, max-clip InputInt with clamp behaviour at 600, auto-send Checkbox, Test connection button, Re-run setup banner button. (2) Hotkey hot-rebind end-to-end — capture Ctrl+Alt+F8 (etc.) and verify the global hook fires on the NEW combo immediately, without restarting Smatchet. (3) Test connection button against a real OpenAI API key — Connected vs HTTP 401 reporting. (4) Auto-send-on-punctuation flow — focus the AI Assistant input, press the hotkey, dictate "hello world.", release; the AI Assistant Send action fires.
 - Phase G:
-  - `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up `WhisperDictationScenario.cpp` via the source-list conditional alongside the overlay + banner).
-  - `cmake --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` — stubs-mode build green; `WhisperDictationScenario.cpp` is excluded from CORE_SOURCES + the `RegisterFactory` call is `#if defined(SMATCHET_WITH_WHISPER)` gated so there's no dangling `MakeWhisperDictationScenario` extern.
+  - `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target green (DX12 keeps `SMATCHET_WITH_WHISPER=OFF`; Standalone picks up `WhisperDictationScenario.cpp` via the source-list conditional alongside the overlay + banner).
+  - `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF && cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` — stubs-mode build green; `WhisperDictationScenario.cpp` is excluded from CORE_SOURCES + the `RegisterFactory` call is `#if defined(SMATCHET_WITH_WHISPER)` gated so there's no dangling `MakeWhisperDictationScenario` extern.
   - `Smatchet.exe cmd scenario.list` — includes `whisper-dictation-roundtrip` in the alphabetised list on the ON build; absent on the OFF build.
   - `Smatchet.exe cmd scenario.run --name=whisper-dictation-roundtrip --spawn` — completes with `{ok: true, data: {passed: true, expected_text: "the quick brown fox jumps over the lazy dog", observed_text: "the quick brown fox jumps over the lazy dog", state: "Asserted", ...}}`; exit code 0.
   - `bash scripts/dev/test-whisper-roundtrip.sh` — runs the scenario, parses the JSON, exits 0 against an ON build.

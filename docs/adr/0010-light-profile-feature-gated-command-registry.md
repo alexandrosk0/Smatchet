@@ -17,7 +17,7 @@ Light/Unreal-default packaging now **removes** disabled-feature TUs from `CORE_S
 When an optional feature flag is **OFF**, its commands are **absent from `CommandRegistry`** — no stub handlers, no disabled menu toggles, no “feature not built” palette entries.
 
 - **`commands.list` / palette / MCP tools/call** on an OFF build: disabled-feature names resolve to **`unknown-command`** with fuzzy `suggestions` among **registered** commands only.
-- **Automation** that needs `ai.*`, MCP tools, or `whisper.*` must run against **full** `Smatchet.exe` (`ninja-publish-msys2`), not `Smatchet-Light.exe` or light/Unreal embed libs.
+- **Automation** that needs `ai.*`, MCP tools, or `whisper.*` must run against **full** `Smatchet.exe` (`ninja-publish-msvc`), not `Smatchet-Light.exe` or light/Unreal embed libs.
 - **Lua glue** keeps unconditional no-op stubs on `AppController` ([`AppController.h`](../../Source_Core/include/AppController.h)) so scripts do not need parallel `#if` gates; only **registry-exposed** command names follow the absent-when-OFF rule.
 - **Standalone CLI on MCP-OFF builds** (`Smatchet-Light.exe`): full `cmd` surface for registered commands via **in-process dispatch** (headless boot + `CommandRegistry::Dispatch` + JSON stdout) — not MCP attach. See plan [`light-release-unreal-default.md`](../design/light-release-unreal-default.md) grill Q1 revision (2026-05-24).
 

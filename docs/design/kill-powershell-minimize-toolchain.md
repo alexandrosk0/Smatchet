@@ -142,12 +142,12 @@ N/A — no `Source_Core/` files touched. No CI perf gate fires. No bucket-E scen
 ## Verification
 
 - `bash scripts/dev/check-required-tools.sh` — confirms reduced tool set (no flock line in TOOLS array; jq still required).
-- `bash scripts/dev/build-and-run.sh ninja-iter-msys2` — full build + run from bash only. Matches prior PS exe output.
+- `bash scripts/dev/build-and-run.sh ninja-iter-msvc` — full build + run from bash only. Matches prior PS exe output.
 - `bash scripts/dev/lint-cpp-drain.sh` — concurrent runners (spawn 4 in parallel) — confirms `lockfile.py` serialises.
 - `bash scripts/publish/release-github.sh --tag v0.0.0-test --no-publish` — exercises release pipeline without uploading.
 - `bash scripts/dev/build-and-deploy-unreal-plugin.sh` — confirms UBT-from-bash works under Windows.
 - `bats tests/bats/` — full bats suite passes (covers merge-gates + lockfile interactions).
-- `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target build still clean (no script regression broke a code path).
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target build still clean (no script regression broke a code path).
 - Grep sweep: `git grep -nE '\.ps1|powershell|pwsh' -- 'scripts/**' 'docs/**' 'agents/**' '.github/**'` returns only the 4 kept PS shims + the SETUP.md callout.
 
 ## Implementation order (suggested PR slices)

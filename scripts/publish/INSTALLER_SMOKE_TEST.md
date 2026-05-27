@@ -62,7 +62,7 @@ Validate one exe's Windows version resource:
 
 ```powershell
 .\scripts\publish\test_windows_version_info.ps1 `
-  -Path .\build\ninja-publish-msys2\Smatchet.exe `
+  -Path .\build\ninja-publish-msvc\Smatchet.exe `
   -ExpectedVersion 0.6.7
 ```
 

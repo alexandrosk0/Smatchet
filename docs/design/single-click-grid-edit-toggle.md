@@ -98,15 +98,15 @@ Active gates on this PR (no opt-in needed):
 - Round-trip with key absent from JSON → assert loaded value is `true` (default).
 - `config.set singleClickToEditGridCells false` via the registered command → assert struct field flips + `config.get singleClickToEditGridCells` returns `false`.
 
-**Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msys2`)** — `tests/ui/grid_click_edit_mode.test.cpp`:
+**Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)** — `tests/ui/grid_click_edit_mode.test.cpp`:
 - Open ticket grid with one text + one single-select + one date column.
 - With default config: single-click each cell → assert editor active (text input focused; combo open; date picker open).
 - Flip config via `config.set` command: single-click each cell → assert NO editor; double-click → assert editor active.
 - Coverage residue (label / multi-select / cascading) — defer to one of: bucket-E follow-up if reuse cost is low, or `docs/backlog/agent-self-improvement/test.md` entry naming the gap explicitly. No silent residue.
 
-**Build gate**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` — dual-target must compile.
+**Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target must compile.
 
-**Manual visual-validation pause-loop** (per `AGENTS.md` § Visual-validation exception — diff touches `Source_Core/src/Smatchet*Ui*.cpp` AND new bucket-E scenario doesn't yet cover label/cascading): pause the ship-loop after build, launch `build/ninja-iter-msys2/Smatchet.exe`, verify (1) checkbox visible in Preferences → Appearance, (2) default = on lets text-field edit on single click, (3) toggle off requires double-click on text + select + multi-select + date + cascading + labels. User commits the verdict before push.
+**Manual visual-validation pause-loop** (per `AGENTS.md` § Visual-validation exception — diff touches `Source_Core/src/Smatchet*Ui*.cpp` AND new bucket-E scenario doesn't yet cover label/cascading): pause the ship-loop after build, launch `build/ninja-iter-msvc/Smatchet.exe`, verify (1) checkbox visible in Preferences → Appearance, (2) default = on lets text-field edit on single click, (3) toggle off requires double-click on text + select + multi-select + date + cascading + labels. User commits the verdict before push.
 
 ## Out of scope (flagged, not designed)
 
@@ -127,12 +127,12 @@ Active gates on this PR (no opt-in needed):
 
 ## Verification (actual)
 
-- **Bucket A (`ninja-test-msys2` ctest)** — new `tests/Source_Core/SingleClickEditConfig.test.cpp` ships with 2 cases / 4 assertions, all pass:
+- **Bucket A (`ninja-test-msvc` ctest)** — new `tests/Source_Core/SingleClickEditConfig.test.cpp` ships with 2 cases / 4 assertions, all pass:
   - Round-trip `SingleClickToEditGridCells = false` via `Save → InvalidateCache → Load` — value survives.
   - Round-trip back to `true` — value survives.
   - Key absent from JSON → loaded value defaults to `true`.
   - `config.set singleClickToEditGridCells …` command path — intentionally out of scope for this rig (no `CommandRegistry` harness in ctest); deferred to bucket-E or process backlog per the plan's verification §.
-- **Build gate** — `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` clean. `SmatchetCore_DX12` not built — pre-existing failure in `WhisperAiAssistantAutosendScenario.cpp` (`g_ui.assistantPanelOpen` missing) on `develop`'s head, confirmed unrelated via `git stash` A/B.
+- **Build gate** — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` clean. `SmatchetCore_DX12` not built — pre-existing failure in `WhisperAiAssistantAutosendScenario.cpp` (`g_ui.assistantPanelOpen` missing) on `develop`'s head, confirmed unrelated via `git stash` A/B.
 - **Manual visual-validation pause-loop** — fired twice per AGENTS.md § Visual-validation exception (diff touches `Source_Core/src/Smatchet*Ui*.cpp` AND no bucket-E coverage):
   - Round 1: user flagged blue framed combo background in single-click mode + asked for new Grid tab.
   - Round 2: user confirmed flat-Selectable combo look in both modes + Grid tab + checkbox + tooltip; verdict "Looks good — commit + push + PR".

@@ -72,7 +72,7 @@ All four sites in `Source_Core/src/`:
 
 - **Bucket A**: `FieldUsesAdfDocument` unit tests in `TrackerFieldPayloadPure` must stay green. Add one `test-rig` case for `IsDescriptionLikeFieldId` covering `body`, `Body`, `description`, `customDescription`, `environment` (expected: true/true/true/true/false).
 - **Perf**: `bash scripts/dev/perf-run.sh priority-grid-scroll` — must not regress vs baseline.
-- **Build**: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
+- **Build**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Manual residue**: hover grid cell for Jira ticket with multi-paragraph ADF description — confirm tooltip renders with paragraph breaks, wraps at ~48 em. Repeat with GitHub `body` field and Offline Queue payload. Deferred-automation: add Bucket-E hover scenario for description tooltip path when ImGui test harness gains stable column-hover support; track in `docs/backlog/agent-self-improvement/tooling.md`.
 
 ## Implementation log

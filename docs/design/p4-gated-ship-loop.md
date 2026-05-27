@@ -49,7 +49,7 @@ The existing git ship-loop is unchanged. The original pure-docs scope is not suf
   repeat until complete
 
 [smoke build — confirm compilable BEFORE user review]
-  cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+  cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
   → failure: fix in p4 → re-build (no shelf yet)
   → pass: continue
 
@@ -61,16 +61,16 @@ The existing git ship-loop is unchanged. The original pure-docs scope is not suf
 
 [full tests]
   bash scripts/dev/doctor.sh                                              # toolchain pre-flight
-  cmake --build --preset ninja-test-msys2                                 # doctest rig build
-  ctest --output-on-failure --test-dir build/ninja-test-msys2            # doctest rig run
-  cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF    # sentinel: no-whisper
-  cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_AGENTIC=OFF    # sentinel: no-agentic
+  cmake --build --preset ninja-test-msvc                                 # doctest rig build
+  ctest --output-on-failure --test-dir build/ninja-test-msvc            # doctest rig run
+  cmake --build --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF    # sentinel: no-whisper
+  cmake --build --preset ninja-iter-msvc -DSMATCHET_WITH_AGENTIC=OFF    # sentinel: no-agentic
   bash scripts/dev/lint-flush.sh                                          # clang-format + cppcheck + clang-tidy
   bash scripts/dev/coverage-delta-gate.sh   # if Source_Core/src/*.cpp touched
   bash scripts/dev/test-doc-anchors.sh      # if AGENTS.md or agents/** touched
   bash scripts/dev/test-agent-contract.sh   # if AGENTS.md or agents/** touched
   bash scripts/dev/test-all.sh              # scenario/integration/bash-driver tests
-  cmake --build --preset ninja-ui-test-msys2   # bucket-E: if visual paths touched (glob = AGENTS.md § Visual-validation exception)
+  cmake --build --preset ninja-ui-test-msvc   # bucket-E: if visual paths touched (glob = AGENTS.md § Visual-validation exception)
   # perf gate — conditional on diff hitting agents/perf-gatekeeper.md § scenario map
   bash scripts/dev/perf-run.sh <scenario>
   python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.$SMATCHET_PERF_HOST.json \
@@ -97,7 +97,7 @@ For each slice (repeat until all slices done):
     repeat within slice until complete
 
   [inter-slice slice-boundary gate — at-most-once per AGENTS.md § Build / ctest cadence]
-    cmake --build --preset ninja-test-msys2 && ctest --output-on-failure  # builds + runs test rig (one cmake --build)
+    cmake --build --preset ninja-test-msvc && ctest --output-on-failure  # builds + runs test rig (one cmake --build)
     bash scripts/dev/lint-flush.sh                                         # lint drain
     bash scripts/dev/test-all.sh                                           # bash-driver tests
     # NOTE: code-review agent NOT dispatched here — single end-gate cumulative pass (see end-gate).
@@ -107,12 +107,12 @@ For each slice (repeat until all slices done):
 [end-gate — after ALL slices pass slice-boundary gates]
   [full end-of-task test suite — runs ONCE here, NOT per slice]
     bash scripts/dev/doctor.sh
-    cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_WHISPER=OFF   # sentinel
-    cmake --build --preset ninja-iter-msys2 -DSMATCHET_WITH_AGENTIC=OFF   # sentinel
+    cmake --build --preset ninja-iter-msvc -DSMATCHET_WITH_WHISPER=OFF   # sentinel
+    cmake --build --preset ninja-iter-msvc -DSMATCHET_WITH_AGENTIC=OFF   # sentinel
     bash scripts/dev/coverage-delta-gate.sh                                # if Source_Core/src/*.cpp touched
     bash scripts/dev/test-doc-anchors.sh                                   # if AGENTS.md or agents/** touched
     bash scripts/dev/test-agent-contract.sh                                # if AGENTS.md or agents/** touched
-    cmake --build --preset ninja-ui-test-msys2                             # if visual paths touched
+    cmake --build --preset ninja-ui-test-msvc                             # if visual paths touched
     bash scripts/dev/perf-run.sh <scenario>                                # if scenario map hit
     python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.$SMATCHET_PERF_HOST.json \
         build/perf-runs/<scenario>-<ts>.json
@@ -139,9 +139,9 @@ For each slice (repeat until all slices done):
 
 ### Resolved invariants (was ambiguous — now explicit)
 
-**Slice-boundary cadence** — multi-slice inter-slice gate runs ONE `cmake --build` (`ninja-test-msys2`, which compiles `Source_Core` via the test rig + runs ctest) + lint + test-all. End-gate runs sentinels + coverage-delta + doc-anchors + agent-contract + bucket-E + perf — once total. **The small-change loop's `[smoke build] → [shelf] → [full tests]` phase split** explicitly carves out from § Build / ctest cadence: the rule targets wasteful mid-implementation rebuilds; the shelf-review boundary is a real phase transition (user-in-the-loop), so the smoke build (pre-shelf) and the test-rig build (post-shelf) are distinct gates within the slice. AGENTS.md § Build / ctest cadence text MUST be amended: "at-most-once per gate within p4-gated loops; pre-shelf smoke build + post-shelf test-rig build are distinct gates."
+**Slice-boundary cadence** — multi-slice inter-slice gate runs ONE `cmake --build` (`ninja-test-msvc`, which compiles `Source_Core` via the test rig + runs ctest) + lint + test-all. End-gate runs sentinels + coverage-delta + doc-anchors + agent-contract + bucket-E + perf — once total. **The small-change loop's `[smoke build] → [shelf] → [full tests]` phase split** explicitly carves out from § Build / ctest cadence: the rule targets wasteful mid-implementation rebuilds; the shelf-review boundary is a real phase transition (user-in-the-loop), so the smoke build (pre-shelf) and the test-rig build (post-shelf) are distinct gates within the slice. AGENTS.md § Build / ctest cadence text MUST be amended: "at-most-once per gate within p4-gated loops; pre-shelf smoke build + post-shelf test-rig build are distinct gates."
 
-**Shelf-before-build ordering** — small loop does `[smoke build] → [shelf] → [full tests]`. Multi-slice loop covers compile via each inter-slice gate's `ninja-test-msys2` build; end-gate sentinels confirm final compile across configs BEFORE shelf is created. User never sees a non-compiling shelf in either loop.
+**Shelf-before-build ordering** — small loop does `[smoke build] → [shelf] → [full tests]`. Multi-slice loop covers compile via each inter-slice gate's `ninja-test-msvc` build; end-gate sentinels confirm final compile across configs BEFORE shelf is created. User never sees a non-compiling shelf in either loop.
 
 **code-review agent contract** — dispatched **ONCE per task** at the end-gate / shelf step (cumulative diff). NOT per-slice. Re-dispatch only when orchestrator's inline fix loop completes a new cumulative diff (i.e. after fixing findings, end-gate re-runs + code-review re-fires on the new diff). Matches `agents/code-review.md` "review pending branch changes — read-only" contract.
 

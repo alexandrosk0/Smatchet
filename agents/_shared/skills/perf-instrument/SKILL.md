@@ -46,7 +46,7 @@ Mechanical perf-marker editor for Smatchet. Same procedure as `agents/perf-instr
 3. Verify `#include "UiPerfMonitor.h"` is present in the file. Add it (alphabetised with other `Source_Core` includes) if missing.
 4. Build to confirm no compile errors:
    ```
-   cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone
+   cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
    ```
 5. Report each tuple as inserted / skipped (with reason if skipped).
 
@@ -56,6 +56,6 @@ Mechanical perf-marker editor for Smatchet. Same procedure as `agents/perf-instr
 2. Delete every matching line (the macro statement; not the surrounding braces).
 3. If a file now has an unused `#include "UiPerfMonitor.h"` (no other `SMATCHET_UI_PERF_SCOPE` calls remain), leave the include — other code in the file may add scopes later, and removing it is a wider judgement call.
 4. Re-search all three directories to confirm zero matches.
-5. Build `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone` to confirm clean compile after the deletions.
+5. Build `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` to confirm clean compile after the deletions.
 
 Report: files touched + scope names added (or removed) + final `perf_temp:` search result (must be zero across all three directories after cleanup).

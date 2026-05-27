@@ -48,7 +48,7 @@ Grid / spreadsheet specialist for Smatchet.
 1. New column or cell editor → start in `TrackerFieldCatalog` (does the field need a new type?), then `SmatchetFieldRender` (display), then `SmatchetGridFieldEditPipeline` (edit), then `TrackerGridFieldDisplay` (grid-specific routing).
 2. Sort / filter changes → `TicketGridModel` (`CompareFieldValuesForSort` for new types).
 3. Reorder / column visibility → `SmatchetGridHeaderUi` + the view storage path.
-4. Build `ninja-iter-msys2`. If you touched anything per-cell, hand off to `perf-detective` to re-measure before claiming "no regression".
+4. Build `ninja-iter-msvc`. If you touched anything per-cell, hand off to `perf-detective` to re-measure before claiming "no regression".
 
 ## Files changed
 
@@ -56,7 +56,7 @@ Bullet list of relative paths touched, with one-line per file naming the change 
 
 ## Smoke-test result
 
-`cmake --build --preset ninja-iter-msys2` → PASS|FAIL.  
+`cmake --build --preset ninja-iter-msvc` → PASS|FAIL.  
 Per-cell allocation check (yes / no — no expected for hot-path edits).  
 If per-cell hot path touched: `perf-detective` hand-off invoked for re-measurement → result.
 

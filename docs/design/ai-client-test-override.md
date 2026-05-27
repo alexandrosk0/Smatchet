@@ -134,10 +134,10 @@ docs/design/ai-client-test-override.md
 ## Verification
 
 ```bash
-cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone
+cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone
 bash scripts/dev/test-ui-ai-prefs-autosave-flow.sh    # exit 0, Passed=3 Failed=0 — V2 + V3 now live
 bash scripts/dev/test-all.sh                          # global gate
-cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12   # dual-target tripwire
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12   # dual-target tripwire
 ```
 
 If the existing pre-merge spawn-runner flake reproduces (filed P2 infra), rerun the single TU runner on a fresh port — same workaround as PR #214.
@@ -175,7 +175,7 @@ After PR merges, append to this file:
 
 ## Verification
 
-- Build: `cmake --build --preset ninja-ui-test-msys2 --target SmatchetStandalone` — PASS.
+- Build: `cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone` — PASS.
 - TU#3 V1 Autosave_DebouncesThenSaves: PASS (deterministic).
 - TU#3 V2 VerifyOnSave_TestConnection_SetsResult: PASS (individual fresh-port runs; mass runs subject to the pre-existing bucket-E spawn-runner flake, P2 infra entry).
 - TU#3 V3 VerifyOnSave_CancelOnClose_ShortCircuits: PASS (individual fresh-port runs; same flake).
