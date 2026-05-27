@@ -105,5 +105,5 @@ class PreferencesSliderDragScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::PreferencesSliderDragScenario());
+    return std::make_unique<smatchet::cmd::PreferencesSliderDragScenario>();
 }

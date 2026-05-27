@@ -25,7 +25,6 @@
 #include <nlohmann/json.hpp>
 #include <iomanip>
 #include <sstream>
-#include <iostream>
 #include <thread>
 #include <algorithm>
 #include <atomic>
@@ -87,7 +86,7 @@ struct McpPlugin::Impl {
     std::string instanceJsonPath;
 };
 
-McpPlugin::McpPlugin(int port) : port_(port), impl_(new Impl()) {}
+McpPlugin::McpPlugin(int port) : port_(port), impl_(std::make_unique<Impl>()) {} // pimpl — Impl complete here
 
 McpPlugin::~McpPlugin() {
     // cppcheck-suppress virtualCallInConstructor
@@ -795,7 +794,7 @@ void McpPlugin::OnStart(AppController& app) {
                 if (appPtr != nullptr) {
                     appPtr->AppendMcpActivity("MCP: bind failed (port in use or permission denied).");
                 }
-                std::cerr << "MCP server: bind_to_port failed for " << impl_->bind_host << ":" << port_ << std::endl;
+                LOG_ERROR("MCP server: bind_to_port failed for %s:%d", impl_->bind_host.c_str(), port_);
                 return;
             }
             if (appPtr != nullptr) {
@@ -811,12 +810,12 @@ void McpPlugin::OnStart(AppController& app) {
             if (appPtr != nullptr) {
                 appPtr->AppendMcpActivity(std::string("MCP: listen thread exception: ") + e.what());
             }
-            std::cerr << "MCP server thread error: " << e.what() << std::endl;
+            LOG_ERROR("MCP server thread error: %s", e.what());
         } catch (...) {
             if (appPtr != nullptr) {
                 appPtr->AppendMcpActivity("MCP: listen thread unknown exception.");
             }
-            std::cerr << "MCP server thread unknown error" << std::endl;
+            LOG_ERROR("MCP server thread unknown error");
         }
     });
 }

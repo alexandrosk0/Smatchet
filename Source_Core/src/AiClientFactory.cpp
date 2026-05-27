@@ -29,11 +29,11 @@ std::unique_ptr<IAiClient> MakeAiClient(AiProvider provider) {
         // with the same streaming SSE shape + body fields). Reuse OpenAiClient;
         // the base URL + model ID select between OpenAI / DeepSeek at request
         // time.
-        return std::unique_ptr<IAiClient>(new OpenAiClient());
+        return std::make_unique<OpenAiClient>();
     case AiProvider::Anthropic:
-        return std::unique_ptr<IAiClient>(new AnthropicClient());
+        return std::make_unique<AnthropicClient>();
     case AiProvider::OllamaNative:
-        return std::unique_ptr<IAiClient>(new OllamaClient());
+        return std::make_unique<OllamaClient>();
     }
     LOG_ERROR("AiClientFactory: unknown AiProvider enum value %d", static_cast<int>(provider));
     return nullptr;

@@ -26,7 +26,7 @@ class PlaneFixtureBackendFactory : public ITrackerBackendFactory {
             LOG_WARN("PlaneFixtureBackendFactory: requested type '%s' but serving 'Plane' fixture from %s",
                      trackerType.c_str(), fixturePath_.c_str());
         }
-        auto backend = std::unique_ptr<PlaneFixtureBackend>(new PlaneFixtureBackend(fixturePath_));
+        auto backend = std::make_unique<PlaneFixtureBackend>(fixturePath_);
         if (!backend->LoadError().empty()) {
             LOG_ERROR("PlaneFixtureBackend: failed to load fixture '%s': %s", fixturePath_.c_str(),
                       backend->LoadError().c_str());
@@ -147,7 +147,7 @@ bool PlaneFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/, const
 }
 
 std::unique_ptr<ITrackerBackendFactory> MakePlaneFixtureBackendFactory(const std::string& fixturePath) {
-    return std::unique_ptr<ITrackerBackendFactory>(new PlaneFixtureBackendFactory(fixturePath));
+    return std::make_unique<PlaneFixtureBackendFactory>(fixturePath);
 }
 
 } // namespace plane

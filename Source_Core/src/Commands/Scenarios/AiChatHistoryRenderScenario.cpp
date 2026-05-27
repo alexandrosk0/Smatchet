@@ -173,7 +173,7 @@ class AiChatHistoryRenderScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::AiChatHistoryRenderScenario());
+    return std::make_unique<smatchet::cmd::AiChatHistoryRenderScenario>();
 }
 
 #endif // SMATCHET_WITH_AI

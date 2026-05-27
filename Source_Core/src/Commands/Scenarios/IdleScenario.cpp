@@ -78,6 +78,4 @@ class IdleScenario : public IScenario {
 } // namespace cmd
 } // namespace smatchet
 
-std::unique_ptr<smatchet::cmd::IScenario> MakeIdleScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::IdleScenario());
-}
+std::unique_ptr<smatchet::cmd::IScenario> MakeIdleScenario() { return std::make_unique<smatchet::cmd::IdleScenario>(); }

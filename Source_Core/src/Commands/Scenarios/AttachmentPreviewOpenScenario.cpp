@@ -84,5 +84,5 @@ class AttachmentPreviewOpenScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::AttachmentPreviewOpenScenario());
+    return std::make_unique<smatchet::cmd::AttachmentPreviewOpenScenario>();
 }
