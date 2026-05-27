@@ -224,13 +224,15 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
     if (s_needsReDock) {
         ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
         s_needsReDock = false;
+    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     }
     ImGui::SetNextWindowSize(ImVec2(580, 380), ImGuiCond_FirstUseEver);
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
     }
     if (ImGui::Begin("Performance", pOpen)) {
-        if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0)) {
+        if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
             s_needsReDock = true;
         }
         if (wantFocus) {

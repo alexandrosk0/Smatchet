@@ -11,22 +11,21 @@ namespace SmatchetLocalizedImGui {
 
 using namespace ::ImGui;
 
-// VS Code shell: every panel routed through this wrapper picks up NoCollapse + NoMove,
-// belt-and-braces alongside the dockspace-wide ImGuiDockNodeFlags_NoUndocking set at
-// SmatchetImGuiHost.cpp DockSpaceOverViewport. Floating popouts (Watchers / Votes /
-// Attachment Preview) bypass this by calling ::ImGui::Begin directly with NoDocking.
-constexpr ImGuiWindowFlags kSmatchetPanelFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove;
+// Floating popouts (Watchers / Votes / Attachment Preview) bypass this wrapper and
+// call ::ImGui::Begin directly with NoDocking.
+constexpr ImGuiWindowFlags kSmatchetPanelFlags = ImGuiWindowFlags_NoCollapse;
 
 inline bool Begin(const char* name, bool* p_open = nullptr, ImGuiWindowFlags flags = 0) {
-    return ::ImGui::Begin(SmatchetLocalization::WindowTitleFromSource(name), p_open,
-                          flags | kSmatchetPanelFlags);
+    return ::ImGui::Begin(SmatchetLocalization::WindowTitleFromSource(name), p_open, flags | kSmatchetPanelFlags);
 }
 
 inline bool BeginPopupModal(const char* name, bool* p_open = nullptr, ImGuiWindowFlags flags = 0) {
     return ::ImGui::BeginPopupModal(SmatchetLocalization::WindowTitleFromSource(name), p_open, flags);
 }
 
-inline void SetWindowFocus(const char* name) { ::ImGui::SetWindowFocus(SmatchetLocalization::WindowTitleFromSource(name)); }
+inline void SetWindowFocus(const char* name) {
+    ::ImGui::SetWindowFocus(SmatchetLocalization::WindowTitleFromSource(name));
+}
 
 inline void SetWindowFocus() { ::ImGui::SetWindowFocus(); }
 
@@ -50,7 +49,9 @@ inline bool Button(const char* label, const ImVec2& size = ImVec2(0, 0)) {
     return ::ImGui::Button(SmatchetLocalization::LabelFromSource(label), size);
 }
 
-inline bool SmallButton(const char* label) { return ::ImGui::SmallButton(SmatchetLocalization::LabelFromSource(label)); }
+inline bool SmallButton(const char* label) {
+    return ::ImGui::SmallButton(SmatchetLocalization::LabelFromSource(label));
+}
 
 inline bool Checkbox(const char* label, bool* v) {
     return ::ImGui::Checkbox(SmatchetLocalization::LabelFromSource(label), v);
@@ -106,8 +107,7 @@ inline void HookDictationOnLastItem(char* buf, std::size_t buf_size) {
         // ImGuiID is `unsigned int`; the router takes it through a plain
         // `unsigned int` parameter to keep imgui.h out of the router header.
         const ImGuiID itemId = ::ImGui::GetItemID();
-        g_dictationRouter.RegisterInputTextWithItemId(buf, buf_size, nullptr,
-                                                       static_cast<unsigned int>(itemId));
+        g_dictationRouter.RegisterInputTextWithItemId(buf, buf_size, nullptr, static_cast<unsigned int>(itemId));
     } else {
         g_dictationRouter.UnregisterInputText(buf);
     }

@@ -138,13 +138,6 @@ struct UiDrawSession {
     /// One-frame focus latch for the Performance window. See `requestPreferencesFocus`.
     bool requestPerformanceFocus = false;
     bool showBlameAnalysis = false;
-    /** 0 = Grid tab, 1 = Annotate tab. */
-    int activeGridTab = 0;
-    /** Set true to force-select activeGridTab via ImGuiTabItemFlags_SetSelected next frame. */
-    bool activeGridTabForcePending = false;
-    /** When false, the Annotate tab is not rendered (tab bar shows Grid only). Open paths
-     *  set this to true; Close button in Annotate sets it false. */
-    bool annotateTabVisible = false;
     bool showBulkImport = false;
     /// One-frame focus latch for the Bulk Import window. See `requestPreferencesFocus`.
     bool requestBulkImportFocus = false;

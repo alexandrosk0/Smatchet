@@ -53,8 +53,11 @@ ImVec2 ClampLuaWindowPos(const ImVec2& pos, const ImVec2& size) {
 
 void PrepareLuaWindowLayout(UiDrawSession& d) {
     const bool needsForce = d.pendingReDockWindows.erase("scripting") > 0;
-    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel,
-                               needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+    if (needsForce) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
+    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+    }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         ImGui::SetNextWindowSize(ImVec2(650.0f, 720.0f), ImGuiCond_FirstUseEver);
@@ -71,7 +74,7 @@ void RepairLuaWindowLayout(UiDrawSession& d) {
     if (ImGui::IsWindowDocked()) {
         return;
     }
-    if (!ImGui::IsMouseDown(0)) {
+    if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         d.pendingReDockWindows.insert("scripting");
     }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
