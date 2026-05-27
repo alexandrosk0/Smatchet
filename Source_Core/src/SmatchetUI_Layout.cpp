@@ -170,6 +170,7 @@ void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     d.showBulkExport = false;
     d.showAuditTrail = false;
     d.showLogWindow = false;
+    d.pendingReDockWindows.clear();
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     d.showLuaAutomationWindow = false;
     d.requestLuaAutomationFocus = false;
@@ -202,6 +203,7 @@ void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
     d.showBulkExport = false;
     d.showAuditTrail = false;
     d.showLogWindow = false;
+    d.pendingReDockWindows.clear();
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     d.showLuaAutomationWindow = false;
     d.requestLuaAutomationFocus = false;

@@ -50,8 +50,10 @@ ImVec2 ClampLuaWindowPos(const ImVec2& pos, const ImVec2& size) {
                   (std::max)(vp->WorkPos.y, (std::min)(pos.y, maxY)));
 }
 
-void PrepareLuaWindowLayout() {
-    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+void PrepareLuaWindowLayout(UiDrawSession& d) {
+    const bool needsForce = d.pendingReDockWindows.erase("scripting") > 0;
+    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel,
+                               needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         ImGui::SetNextWindowSize(ImVec2(650.0f, 720.0f), ImGuiCond_FirstUseEver);
@@ -64,10 +66,11 @@ void PrepareLuaWindowLayout() {
     ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
 }
 
-void RepairLuaWindowLayout() {
+void RepairLuaWindowLayout(UiDrawSession& d) {
     if (ImGui::IsWindowDocked()) {
         return;
     }
+    d.pendingReDockWindows.insert("scripting");
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         return;
@@ -366,7 +369,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         ImGui::SetNextWindowFocus();
     }
 
-    PrepareLuaWindowLayout();
+    PrepareLuaWindowLayout(g_ui);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 12));
 
     if (!ImGui::Begin("Scripting", &g_ui.showLuaAutomationWindow)) {
@@ -383,7 +386,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         ImGui::SetWindowFocus();
         g_ui.requestLuaAutomationFocus = false;
     }
-    RepairLuaWindowLayout();
+    RepairLuaWindowLayout(g_ui);
 
     if (g_ui.requestScriptingEditorTabFocus) {
         tabSel_ = 0;
