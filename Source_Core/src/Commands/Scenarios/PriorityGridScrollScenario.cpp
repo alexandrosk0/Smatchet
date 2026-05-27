@@ -101,6 +101,5 @@ private:
 /// Factory function callable from AppController::Initialize without including
 /// the concrete type header. Declared `extern` at the call site.
 std::unique_ptr<smatchet::cmd::IScenario> MakePriorityGridScrollScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(
-        new smatchet::cmd::PriorityGridScrollScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
+    return std::make_unique<smatchet::cmd::PriorityGridScrollScenario>();
 }

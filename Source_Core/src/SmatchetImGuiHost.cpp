@@ -581,7 +581,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     {
         const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
         if (cfg.McpEnabled) {
-            ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new McpPlugin(mcpPort))); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
+            ImplData->Plugins.Register(std::make_unique<McpPlugin>(mcpPort));
             LOG_INFO("SmatchetImGuiHost: MCP plugin enabled on port %d", mcpPort);
         } else {
             LOG_INFO("SmatchetImGuiHost: MCP plugin disabled by config.");
@@ -589,7 +589,7 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     }
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    ImplData->Plugins.Register(std::unique_ptr<IPlugin>(new LuaConsolePlugin())); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
+    ImplData->Plugins.Register(std::make_unique<LuaConsolePlugin>());
     LOG_INFO("SmatchetImGuiHost: LuaConsole plugin registered.");
 #if !defined(SMATCHET_WITH_MCP)
     LOG_INFO("SmatchetImGuiHost: light profile (Lua + command registry; MCP/AI/Whisper off).");

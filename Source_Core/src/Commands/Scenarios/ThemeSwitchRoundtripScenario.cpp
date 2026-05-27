@@ -227,5 +227,5 @@ class ThemeSwitchRoundtripScenario : public IScenario {
 } // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::ThemeSwitchRoundtripScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
+    return std::make_unique<smatchet::cmd::ThemeSwitchRoundtripScenario>();
 }

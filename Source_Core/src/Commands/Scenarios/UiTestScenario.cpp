@@ -193,7 +193,7 @@ void UiTestScenario::OnCancel(AppController& /*app*/) {
 // Factory for ScenarioRunner registration. Mirrors the
 // MakePriorityGridScrollScenario pattern in AppController.cpp.
 std::unique_ptr<smatchet::cmd::IScenario> MakeUiTestScenario() {
-    return std::unique_ptr<smatchet::cmd::IScenario>(new smatchet::cmd::UiTestScenario()); // custom-deleter — make_unique inapplicable (base-type unique_ptr wrapping derived)
+    return std::make_unique<smatchet::cmd::UiTestScenario>();
 }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)

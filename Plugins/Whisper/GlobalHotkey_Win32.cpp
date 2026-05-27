@@ -334,7 +334,7 @@ void HookThreadMain(GlobalHotkey_Win32::Impl* impl) {
 
 } // namespace
 
-GlobalHotkey_Win32::GlobalHotkey_Win32() : impl_(new Impl()) {} // pimpl
+GlobalHotkey_Win32::GlobalHotkey_Win32() : impl_(std::make_unique<Impl>()) {} // pimpl
 
 GlobalHotkey_Win32::~GlobalHotkey_Win32() { Unregister(); }
 
@@ -434,7 +434,7 @@ bool GlobalHotkey_Win32::IsRegistered() const noexcept {
 
 struct GlobalHotkey_Win32::Impl {};
 
-GlobalHotkey_Win32::GlobalHotkey_Win32() : impl_(new Impl()) {} // pimpl
+GlobalHotkey_Win32::GlobalHotkey_Win32() : impl_(std::make_unique<Impl>()) {} // pimpl
 GlobalHotkey_Win32::~GlobalHotkey_Win32() = default;
 
 // cppcheck-suppress functionStatic
