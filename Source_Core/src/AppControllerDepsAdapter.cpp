@@ -4,6 +4,8 @@
 #include "ITrackerBackendFactory.h"
 #include "ITrackerClient.h"
 #include "ITrackerConnectivity.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 #include "LocalCacheManager.h"
 
 #include <chrono>
@@ -21,6 +23,10 @@ AppControllerDepsAdapter::AppControllerDepsAdapter(AppController& app) : app_(ap
 LocalCacheManager* AppControllerDepsAdapter::Cache() { return app_.Cache.get(); }
 
 ITrackerClient* AppControllerDepsAdapter::Backend() { return app_.Backend.get(); }
+
+ITrackerIssueReader* AppControllerDepsAdapter::Reader() { return app_.Backend.get(); }
+
+ITrackerIssueMutations* AppControllerDepsAdapter::Mutations() { return app_.Backend.get(); }
 
 ITrackerConnectivity* AppControllerDepsAdapter::BackendConnectivity() { return app_.Backend.get(); }
 

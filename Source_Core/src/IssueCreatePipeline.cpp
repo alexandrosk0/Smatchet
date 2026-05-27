@@ -1,6 +1,6 @@
 #include "IssueCreatePipeline.h"
 
-#include "ITrackerClient.h"
+#include "ITrackerIssueMutations.h"
 #include "IssueCreatePipelineHelpers.h"
 #include "TrackerFieldPayload.h"
 
@@ -46,8 +46,9 @@ bool IsSprintCatalogFieldId(const std::string& fieldId, const std::vector<Tracke
     return TrackerFieldPayload::IsSprintField(*sprintField);
 }
 
-PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerClient& client, const std::string& issueKey, const IssueDraft& draft,
-                                          const std::vector<TrackerField>& catalog, IssueCreateResult& result) {
+PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerIssueMutations& client, const std::string& issueKey,
+                                          const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                                          IssueCreateResult& result) {
     PostIssueStepsOutcome outcome;
     const auto statusIt = draft.FieldValues.find("status");
     if (statusIt != draft.FieldValues.end()) {
@@ -215,7 +216,7 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vecto
     return t;
 }
 
-IssueCreateResult RunUpdateExisting(ITrackerClient& client, LocalCacheManager* cache, const IssueDraft& draft,
+IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheManager* cache, const IssueDraft& draft,
                                     const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
     std::string issueKey = TrackerFieldPayload::ExtractIssueKey(draft.ExistingIssueKey);
@@ -270,7 +271,7 @@ IssueCreateResult RunUpdateExisting(ITrackerClient& client, LocalCacheManager* c
     return result;
 }
 
-IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const IssueDraft& draft,
+IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const IssueDraft& draft,
                       const RequiredFieldSet& required, const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
 

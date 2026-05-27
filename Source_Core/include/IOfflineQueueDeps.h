@@ -27,6 +27,8 @@
 
 class LocalCacheManager;
 class ITrackerClient;
+class ITrackerIssueReader;
+class ITrackerIssueMutations;
 
 class IOfflineQueueDeps {
   public:
@@ -40,6 +42,12 @@ class IOfflineQueueDeps {
     /// `Cache()`. Replay tick guards on both before issuing live requests.
     virtual ITrackerClient* Backend() = 0;
 
+    /// Narrow read accessor — use instead of Backend() when only fetch operations are needed.
+    virtual ITrackerIssueReader* Reader() = 0;
+
+    /// Narrow mutation accessor — use instead of Backend() when only mutation operations are needed.
+    virtual ITrackerIssueMutations* Mutations() = 0;
+
     /// Catalog of tracker fields used by `TickOfflineCreates` to build `IssueCreatePipeline`
     /// input. Returned by const-ref so the caller can snapshot via `std::make_shared<...>`
     /// before spawning the background worker.
@@ -48,9 +56,8 @@ class IOfflineQueueDeps {
     /// Required-field set resolution. Used by `TickOfflineCreates` to validate the queued
     /// draft against per-project createmeta before replaying. Mirrors
     /// `AppController::GetRequiredFieldSet`.
-    virtual RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey,
-                                                  const std::string& issueTypeId,
-                                                  const std::string& issueTypeName) const = 0;
+    virtual RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
+                                                 const std::string& issueTypeName) const = 0;
 
     /// Spawn a background worker. Mirrors `AppController::LaunchBackgroundTask` — the task
     /// must be joined by the host before its captured state is destroyed.

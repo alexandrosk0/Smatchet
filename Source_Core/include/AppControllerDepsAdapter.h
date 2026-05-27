@@ -27,6 +27,8 @@
 class AppController;
 class LocalCacheManager;
 class ITrackerConnectivity;
+class ITrackerIssueMutations;
+class ITrackerIssueReader;
 class ITrackerBackendFactory;
 struct TrackerConfig;
 
@@ -37,6 +39,8 @@ class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDep
     // ---- IOfflineQueueDeps ------------------------------------------------------------
     LocalCacheManager* Cache() override;
     ITrackerClient* Backend() override;
+    ITrackerIssueReader* Reader() override;
+    ITrackerIssueMutations* Mutations() override;
     const std::vector<TrackerField>& AvailableFields() const override;
     RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
                                          const std::string& issueTypeName) const override;

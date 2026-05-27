@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-class ITrackerClient;
+class ITrackerIssueMutations;
 class LocalCacheManager;
 
 /**
@@ -56,15 +56,9 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vecto
  * do NOT flip `Ok` to false when the issue was created - they are reported in
  * `AttachmentFailures` so callers can choose to retry or warn.
  */
-IssueCreateResult Run(ITrackerClient& client, LocalCacheManager* cache, const IssueDraft& draft,
+IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const IssueDraft& draft,
                       const RequiredFieldSet& required, const std::vector<TrackerField>& catalog);
 
 } // namespace IssueCreatePipeline
 
 #endif
-
-
-
-
-
-

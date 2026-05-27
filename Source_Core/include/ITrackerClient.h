@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include "ITrackerConnectivity.h"
 #include "ITrackerIssueReader.h"
+#include "ITrackerIssueMutations.h"
 #include "TrackerFieldSchema.h"
 
 struct IssueDraft;
@@ -30,7 +31,7 @@ struct TrackerIssueComment {
     std::int64_t UpdatedAtSec = 0; // unix epoch seconds (== CreatedAtSec if never edited)
 };
 
-class ITrackerClient : public ITrackerIssueReader, public ITrackerConnectivity {
+class ITrackerClient : public ITrackerIssueReader, public ITrackerConnectivity, public ITrackerIssueMutations {
   public:
     virtual ~ITrackerClient() = default;
 
@@ -42,59 +43,6 @@ class ITrackerClient : public ITrackerIssueReader, public ITrackerConnectivity {
     virtual bool FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
                                    TrackerFieldCatalogResult& /*outCatalog*/, std::string& outError) {
         outError = "FetchFieldCatalog is not supported by this backend.";
-        return false;
-    }
-
-    // Update one or more tracker field values on an issue.
-    // `fields` is the backend-specific object payload under the update root.
-    virtual bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) = 0;
-
-    virtual bool UpdateField(const std::string& issueId, const TrackerField& field,
-                             const std::vector<std::string>& values, std::string& outError) = 0;
-
-    virtual bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
-                                   nlohmann::json& outPayload, std::string& outError) = 0;
-
-    virtual bool BuildCreatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
-                                    nlohmann::json& /*outPayload*/, std::string& outError) {
-        outError = "BuildCreatePayload is not supported by this backend.";
-        return false;
-    }
-
-    virtual bool BuildUpdatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
-                                    nlohmann::json& /*outPayload*/, std::string& outError) {
-        outError = "BuildUpdatePayload is not supported by this backend.";
-        return false;
-    }
-
-    /**
-     * Create a new issue and return its key (e.g. "PROJ-42") on success.
-     * Returns an empty string + sets `outError` on failure.
-     * Default impl errors out for backends without create support.
-     */
-    virtual std::string CreateIssue(const nlohmann::json& /*fields*/, std::string& outError) {
-        outError = "CreateIssue is not supported by this backend.";
-        return {};
-    }
-
-    /**
-     * Attach one or more local files to an existing issue.
-     * Per-file errors are reported via `outFailures` (path -> message) and do
-     * not abort the batch. Default impl errors out for backends without support.
-     */
-    virtual bool AttachFilesToIssue(const std::string& /*issueKey*/, const std::vector<std::string>& /*absolutePaths*/,
-                                    std::vector<std::pair<std::string, std::string>>& /*outFailures*/,
-                                    std::string& outError) {
-        outError = "AttachFilesToIssue is not supported by this backend.";
-        return false;
-    }
-
-    /**
-     * Add an existing issue to a sprint (Jira Agile). Default impl is unsupported.
-     */
-    virtual bool AddIssueToSprint(const std::string& /*issueKey*/, const std::string& /*sprintId*/,
-                                  std::string& outError) {
-        outError = "AddIssueToSprint is not supported by this backend.";
         return false;
     }
 

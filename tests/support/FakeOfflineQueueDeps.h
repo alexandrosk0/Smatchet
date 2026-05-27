@@ -13,6 +13,8 @@
 
 #include "FakeTrackerClient.h"
 #include "IOfflineQueueDeps.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 #include "IssueDraft.h"
 #include "LocalCacheManager.h"
 #include "TrackerFieldSchema.h"
@@ -44,15 +46,17 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     /// How `LaunchBackgroundTask` should run the task. Default: run inline on the caller.
     /// Tests that want to defer (e.g. to inject a fault between steps) override this.
     std::function<void(std::function<void()>)> BackgroundTaskRunner = [](std::function<void()> t) {
-        if (t) t();
+        if (t)
+            t();
     };
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
     ITrackerClient* Backend() override { return BackendImpl.get(); }
+    ITrackerIssueReader* Reader() override { return BackendImpl.get(); }
+    ITrackerIssueMutations* Mutations() override { return BackendImpl.get(); }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }
-    RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/,
-                                          const std::string& /*issueTypeId*/,
-                                          const std::string& /*issueTypeName*/) const override {
+    RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/, const std::string& /*issueTypeId*/,
+                                         const std::string& /*issueTypeName*/) const override {
         return Required;
     }
     void LaunchBackgroundTask(std::function<void()> task) override {
