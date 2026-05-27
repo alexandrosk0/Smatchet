@@ -65,7 +65,7 @@ Split standalone `catch (...)` into `catch (const std::exception& ex)` + `catch 
 
 ### Slice 4: Lint enforcement for empty catch-alls
 
-Extend `docs/harness/claude-code/hooks/lint-syntax-both.py` with a catch-all check. Must:
+Add `docs/harness/claude-code/hooks/lint-catch-all.py` and wire into the lint pipeline. Must:
 
 1. Flag `catch (...) {}` and `catch (...) { }` (empty body) as ERROR
 2. Flag `catch (...)` with no `LOG_` call in the body as WARNING

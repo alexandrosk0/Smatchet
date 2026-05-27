@@ -45,7 +45,7 @@ def _scan_file(path: Path) -> list[str]:
         body_lines: list[str] = []
         found_open = False
 
-        for j in range(i, min(i + 30, len(lines))):
+        for j in range(i, min(i + 100, len(lines))):
             for ch in lines[j]:
                 if ch == "{":
                     if not found_open:
