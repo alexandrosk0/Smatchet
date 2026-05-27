@@ -11,11 +11,11 @@ if command -v cygpath >/dev/null 2>&1; then
     LINT_NORM_PROJ="$(cygpath -m "$LINT_NORM_PROJ" 2>/dev/null || printf '%s' "$LINT_NORM_PROJ")"
 fi
 
-# MSYS2 UCRT64 toolchain (clang-format / cppcheck / clang-tidy / gcc) lives at
-# C:\msys64\ucrt64\bin. Hook invocations inherit the shell PATH, which on this
-# project's hosts often does NOT include that directory (the build presets fix
-# PATH internally via MSYSTEM_PREFIX). Without this prepend the hooks silently
-# `command -v`-skip every tool. Idempotent across sessions.
+# Lint toolchain (clang-format / cppcheck / clang-tidy / gcc) is installed from
+# MSYS2 UCRT64 on this machine at C:\msys64\ucrt64\bin. Hook invocations
+# inherit the shell PATH, which often does NOT include that directory. Without
+# this prepend the hooks silently `command -v`-skip every tool. Idempotent.
+# Note: this is the LINT toolchain path — the build presets use MSVC/Clang.
 SMATCHET_TOOLCHAIN_BIN="${SMATCHET_TOOLCHAIN_BIN:-/c/msys64/ucrt64/bin}"
 if [[ -d "$SMATCHET_TOOLCHAIN_BIN" ]]; then
     case ":$PATH:" in
@@ -116,21 +116,40 @@ lint_run_cppcheck() {
 
 # lint_run_clang_tidy <abs_file> <rel_path>
 # Echoes clang-tidy findings (empty on clean). Picks the test build dir for
-# tests/* sources, the iter build dir otherwise. Skipped silently when
-# compile_commands.json is absent.
+# tests/* sources, the iter build dir otherwise. Prefers ninja-iter-clang over
+# ninja-iter-msvc so clang-tidy resolves system headers via clang-native paths.
+# Skipped silently when no compile_commands.json is found in any candidate dir.
+# Headers (.h) are skipped — they are checked transitively when their .cpp TUs
+# are linted, and running clang-tidy directly on headers produces spurious
+# 'file not found' errors for standard headers because no TU context is injected.
 lint_run_clang_tidy() {
     local abs="$1" rel="$2"
     command -v clang-tidy >/dev/null 2>&1 || return 0
+    # Skip header files; they are covered transitively via their including TUs.
+    [[ "$rel" == *.h ]] && return 0
     local build_dir
     if [[ "$rel" == tests/* ]]; then
-        build_dir="$LINT_NORM_PROJ/build/ninja-test-msvc"
+        # For tests prefer the clang test preset; fall back to MSVC test preset.
+        if [[ -f "$LINT_NORM_PROJ/build/ninja-test-clang/compile_commands.json" ]]; then
+            build_dir="$LINT_NORM_PROJ/build/ninja-test-clang"
+        else
+            build_dir="$LINT_NORM_PROJ/build/ninja-test-msvc"
+        fi
     else
-        build_dir="$LINT_NORM_PROJ/build/ninja-iter-msvc"
+        # Prefer clang iter preset; fall back to MSVC iter preset.
+        if [[ -f "$LINT_NORM_PROJ/build/ninja-iter-clang/compile_commands.json" ]]; then
+            build_dir="$LINT_NORM_PROJ/build/ninja-iter-clang"
+        else
+            build_dir="$LINT_NORM_PROJ/build/ninja-iter-msvc"
+        fi
     fi
     [[ -f "$build_dir/compile_commands.json" ]] || return 0
     local out
     out="$(clang-tidy -p "$build_dir" --quiet "$abs" 2>/dev/null || true)"
-    printf '%s' "$out" | grep -E '(warning|error):' || true
+    # Filter clang-diagnostic-error (PCH mismatch / missing system headers when
+    # the linting toolchain differs from the build toolchain). Real compile
+    # errors are caught by cmake --build; the lint hook surfaces tidy checks only.
+    printf '%s' "$out" | grep -E '(warning|error):' | grep -v '\[clang-diagnostic-error\]' || true
 }
 
 # lint_run_dual_target <abs_file> <rel_path>

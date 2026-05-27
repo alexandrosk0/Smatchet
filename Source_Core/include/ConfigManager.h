@@ -503,7 +503,7 @@ class ConfigManager {
     // the bump just guarantees the new dock ID picks up cleanly on first launch
     // after the feature lands. All Ai* TrackerConfig fields default-load via
     // `j.value(..., default)` so v4 / v5 configs continue to load unchanged.
-    static const int kCurrentLayoutSchemaVersion = 6;
+    static const int kCurrentLayoutSchemaVersion = 7;
 
     struct CliOverrides {
         bool HasDbPath;

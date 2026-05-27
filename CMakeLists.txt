@@ -27,7 +27,7 @@ add_compile_definitions(
 
 # ==============================================================================
 # Iteration-speed knobs — all auto-detected and gracefully degrade. A fresh
-# clone with `cmake --preset ninja-publish-msys2 && cmake --build --preset ninja-publish-msys2`
+# clone with `cmake --preset ninja-publish-msvc && cmake --build --preset ninja-publish-msvc`
 # still works whether or not ccache / lld are installed.
 # See BUILD_ITERATION_PLAN.md for the rationale and benchmarks.
 # ==============================================================================
@@ -74,7 +74,7 @@ endif()
 # without forwarding MinGW's MSVC-import-lib search semantics, and link
 # fails with `unable to find library -lgdi32` even when the lib clearly
 # exists. The fix on Windows is to install a MinGW that bundles lld:
-#   * MSYS2:    pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
+#   * MSYS2 UCRT64 (legacy): pacman -S mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-lld
 #   * winlibs:  download a UCRT 13+ build from https://winlibs.com/ — they
 #               ship `ld.lld.exe` next to `g++.exe` already.
 # Then ensure that MinGW's `bin/` is the active toolchain (the CMake compiler
@@ -1283,7 +1283,7 @@ if(WIN32)
             target_link_options(SmatchetStandalone PRIVATE -static -static-libgcc -static-libstdc++)
         else()
             target_link_options(SmatchetStandalone PRIVATE -static-libgcc -static-libstdc++)
-            # Still links a handful of MinGW/MSYS2 runtime DLLs; copy them next to
+            # Still links a handful of MinGW runtime DLLs; copy them next to
             # the exe so command-prompt launches and debugger runs do not depend on
             # PATH pointing at the same toolchain build.
             get_filename_component(_SMATCHET_MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)

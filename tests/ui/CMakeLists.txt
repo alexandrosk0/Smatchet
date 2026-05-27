@@ -11,7 +11,7 @@ endif()
 # Slice 5 of docs/design/pillar-1-2-perf-review-system.md — opt-in flag that
 # compiles the synthetic stall hook in tests/ui/sync_stall_visible_cue.test.cpp.
 # Off by default even under SMATCHET_BUILD_UI_TESTS=ON so the file becomes a
-# no-op shell when the harness isn't wanted; on under the ninja-ui-test-msys2
+# no-op shell when the harness isn't wanted; on under the ninja-ui-test
 # preset where the bucket-E driver expects it.
 option(SMATCHET_DEBUG_VISIBLE_CUE_HARNESS "Compile the synthetic visible-cue stall hook in bucket-E tests" OFF)
 

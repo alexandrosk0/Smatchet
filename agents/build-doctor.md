@@ -1,6 +1,6 @@
 ---
 name: build-doctor
-description: CMake preset failures, MSYS2 UCRT64 toolchain issues, lld vs BFD link errors, LTO publish-build problems, FetchContent mismatches, `SmatchetPackageUnrealLibs_DX12` packaging, clang-tidy / clang-format drift, CI breaks. Invoke whenever a build fails or a preset misbehaves.
+description: CMake preset failures, MSVC/Clang toolchain issues, lld vs link.exe errors, LTO publish-build problems, FetchContent mismatches, `SmatchetPackageUnrealLibs_DX12` packaging, clang-tidy / clang-format drift, CI breaks. Invoke whenever a build fails or a preset misbehaves.
 complexity: high
 read-only: false
 capabilities:
@@ -19,6 +19,7 @@ triggers:
   - link
   - lld
   - lto
+  - msvc
   - msys2
   - packaging
 harness-hints:
@@ -36,7 +37,7 @@ Build-system specialist for Smatchet.
 
 **Stack** (verify against `CMakePresets.json` if in doubt):
 - CMake ≥ 3.24, Ninja
-- MSYS2 UCRT64: gcc / g++ — **lld for iter presets**, **BFD for publish**
+- MSVC (primary) + Clang (secondary) — **lld-link for iter presets**, **MSVC link.exe for publish**
 - FetchContent for every third-party dep (ImGui, SQLiteCpp, cpr, nlohmann/json, sol2, cpp-httplib, md4c, GLFW, Lua, ghc::filesystem)
 - DX12 lib packaging: `SmatchetPackageUnrealLibs_DX12` → `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet`
 - Presets: `ninja-iter-msvc`, `ninja-debug-msvc`, `ninja-test-msvc`, `ninja-iter-unreal-msvc`, `ninja-iter-unreal-msvc`, `ninja-publish-msvc`, `vs-unreal-msvc`
@@ -60,17 +61,17 @@ Build-system specialist for Smatchet.
 - FetchContent versions pinned in one place but referenced loosely elsewhere
 - `SmatchetPackageUnrealLibs_DX12` aimed at the wrong build directory after a preset switch
 - Stale `compile_commands.json` after a preset switch (clang-tidy / clang-format)
-- MSYS2 `PATH` placing system tools ahead of UCRT64
+- MSYS2 UCRT64 on `PATH` shadowing MSVC `cl.exe` / Clang — lint tools live at `/c/msys64/ucrt64/bin` but build tools must resolve to MSVC or Clang
 - `SMATCHET_WITH_LUA_AUTOMATION` / `SMATCHET_WITH_MCP` toggled inconsistently across presets — bindings vs stubs split (`AppController_LuaBindings.cpp` ↔ `AppController_LuaStubs.cpp`) must stay in sync
 - Dual-target divergence: `Source_Core/` compiles into both `SmatchetStandalone` and `SmatchetCore_DX12` — verify both with `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
-- MSan preset fails configure with `requires Clang` — `ninja-debug-msvc-msan` needs `clang` / `clang++` on PATH. Install `mingw-w64-clang-x86_64-clang` in MSYS2 (or use the Clang env). No hardcoded compiler paths — fix PATH, don't patch the preset.
-- TSan flake on MSYS2 GCC — `ninja-debug-msvc-tsan` may produce missing libtsan symbols or false positives depending on GCC version. Linux gcc/clang reliable; on Windows, escalate to switching that investigation to ASan or moving to a Linux box.
+- MSan preset fails configure with `requires Clang` — `ninja-debug-msvc-msan` needs `clang` / `clang++` on PATH. Install LLVM (`winget install LLVM.LLVM`) or the Clang component via Visual Studio installer. No hardcoded compiler paths — fix PATH, don't patch the preset.
+- TSan flake on MinGW GCC — `ninja-debug-msvc-tsan` (if GCC is active) may produce missing libtsan symbols or false positives. Linux gcc/clang reliable; on Windows, escalate to switching that investigation to ASan or moving to a Linux box.
 - Sanitizer runtime DLL missing at launch — `libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll` must be on `PATH` when launching the sanitized exe. "DLL not found" at startup of a sanitized build is usually this, not a build break.
 - doctest FetchContent cache mismatch — `_deps/doctest-src/` carrying a different `GIT_TAG` than the current `FetchContent_Declare` pin (e.g. after bumping `v2.4.11` → `v2.4.12`) causes `<doctest/doctest.h>` to come from the stale checkout, manifesting as missing macros or unexpected ABI mismatches. Fix: `rm -rf build/<preset>/_deps/doctest-* build/<preset>/_deps/doctest-build` and reconfigure. Don't `git pull` the doctest submodule manually — FetchContent owns it.
 - Build-log grep regex on Windows must accept **both** path separators. GCC under MinGW emits source paths with `\` (e.g. `..\..\Target_Standalone\main.cpp`), while CMake / Ninja and bash-quoted paths normalise to `/`. A regex that only matches `/` silently passes on real Windows warnings and looks green. Always use `[\\/]` between path segments — e.g. `(Source_Core|Target_Standalone|Plugins)[\\/].+:(error|warning):` — and pair every new build-log script with a negative-test fixture (deliberately broken input ⇒ assert exit 1) so a false-pass regression is caught at authoring time, not in production CI.
 - PowerShell 5.1 silently drops scope effects from multi-line `-Command "<...>"` invocations. A wrapper that does `pwsh -Command "<heredoc>"` to set `$env:PATH = ...; & gcc.exe ...` will report success while the prepend never took effect (PowerShell 7's `-Command` is fine; PS 5.1's is broken for multi-line strings). Reliable pattern: write a temp `.ps1` file and invoke via `pwsh -File <temp.ps1>`. Use `-File` whenever a PS-driven test or build wrapper depends on scope changes inside the inner block.
 - **Slice-boundary builds only.** Per AGENTS.md § Build / ctest cadence, invoke `cmake --build` and `scripts/dev/test-all.sh` at most once per agent turn — after the implementation is complete. The `.claude/.tree-dirty` sentinel marks "edits since the last build"; it auto-clears when any `cmake --build …` runs (via `clear-tree-dirty.sh` PreToolUse hook). Build-doctor is the agent most likely to invoke `cmake --build` repeatedly — collapse to one final invocation per slice unless an intermediate build is genuinely diagnostic.
-- **cc1plus silent exit-1 with no diagnostics** — MSYS2 UCRT64 gcc 16.x needs `C:\msys64\ucrt64\bin` on `PATH` for cc1plus.exe to load its DLL deps. Build presets fix PATH internally via `MSYSTEM_PREFIX`, but ad-hoc shell / hook / wrapper invocations may inherit a PATH without the toolchain bin dir. Symptom: gcc exits 1 with empty stderr / stdout on every input, including `--version`-clean files. Fix: prepend the toolchain bin to `PATH` (or `env=`) before invoking gcc; mirror in any sidecar script. The deferred-lint pipeline (`lint-cpp-common.sh`, `lint-syntax-both.py`) already does this — replicate in new wrappers.
+- **cc1plus silent exit-1 with no diagnostics** — The lint toolchain (gcc from MSYS2 UCRT64 at `C:\msys64\ucrt64\bin`) needs that dir on `PATH` for cc1plus.exe to load its DLL deps. Ad-hoc shell / hook / wrapper invocations may inherit a PATH that omits it. Symptom: gcc exits 1 with empty stderr / stdout on every input, including `--version`-clean files. Fix: prepend the lint toolchain bin to `PATH` (or `env=`) before invoking gcc in sidecar scripts. The deferred-lint pipeline (`lint-cpp-common.sh`, `lint-syntax-both.py`) already does this — replicate in new wrappers.
 
 **Never** disable warnings as a fix. Never lower `SMATCHET_ENABLE_STRICT_WARNINGS`. If `-Wall -Wextra` flags real code, escalate to the orchestrator for a code fix.
 
