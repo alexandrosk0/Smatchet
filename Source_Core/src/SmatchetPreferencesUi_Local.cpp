@@ -1,4 +1,4 @@
-﻿#if defined(_WIN32)
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -38,6 +38,7 @@
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
+// Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
 #include <cstring>

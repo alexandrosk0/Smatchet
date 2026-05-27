@@ -8,6 +8,7 @@
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
+// Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>

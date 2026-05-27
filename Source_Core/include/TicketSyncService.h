@@ -18,7 +18,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "AppController.h" // Needed for TrackerIssueFetchPack + ViewsStore + TrackerConfig.
+#include "AppController.h"     // Needed for TrackerIssueFetchPack + ViewsStore + TrackerConfig.
 #include "LocalCacheManager.h" // For CachedTicket inside StreamingSyncState.
 
 class ITicketSyncDeps;
@@ -100,4 +100,10 @@ class TicketSyncService {
     std::vector<std::string> staleIdsToDelete_;
     std::size_t totalStaleToDelete_ = 0;
     std::size_t staleDeletedSoFar_ = 0;
+
+    // Tracks consecutive full syncs that returned zero tickets. A legitimately empty project
+    // reconverges after kEmptyFullSyncWipeThreshold consecutive empty full-syncs so stale
+    // cache rows are not silently preserved forever.
+    int consecutiveEmptyFullSyncs_ = 0;
+    static constexpr int kEmptyFullSyncWipeThreshold = 2;
 };

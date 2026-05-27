@@ -110,8 +110,5 @@ void AiSseParser::Flush(const EventCallback& onEvent) {
 
 void AiSseParser::Reset() {
     buffer_.clear();
-    partial_ = Event();
     overflowed_ = false;
 }
-
-void AiSseParser::emitIfReady(const EventCallback&) {}
