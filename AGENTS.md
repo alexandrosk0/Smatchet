@@ -59,6 +59,8 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 
 **Logging**: `LOG_{DEBUG,INFO,WARN,ERROR,TRACE}` from `Logger.h` — never `printf` / `std::cerr`. Named exceptions (must have matching inline comment): `Target_Standalone/` pre-logger-init fatal paths (`// pre-logger-init — LOG_* unavailable`) and CLI stdout product output (`// CLI stdout — product output, not logging`).
 
+**Exceptions**: catch-all policy in [`docs/agent-rules/exception-handling-policy.md`](docs/agent-rules/exception-handling-policy.md). Empty `catch (...) {}` blocks = review CRITICAL.
+
 **nlohmann json**: `obj["k"] = v`, not `obj = {...}` (reassignment with brace-list won't compile).
 
 **Optional plugins**: gate with `#if SMATCHET_WITH_LUA_AUTOMATION` / `#if SMATCHET_WITH_MCP`. Lua bindings split: `AppController_LuaBindings.cpp` (on) ↔ `AppController_LuaStubs.cpp` (off) — keep in sync.

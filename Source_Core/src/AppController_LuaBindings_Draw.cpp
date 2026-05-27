@@ -760,7 +760,7 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
     nlohmann::json jParams;
     try {
         jParams = nlohmann::json::parse(paramsJson);
-    } catch (...) {
+    } catch (...) { // catch-all-ok: parse on untrusted Lua-provided JSON string
         jParams = nlohmann::json::object();
     }
     try {
@@ -919,7 +919,7 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
             }
         } catch (const std::exception& e) {
             outResultSummary = std::string("(return stringify failed: ") + e.what() + ")";
-        } catch (...) {
+        } catch (...) { // catch-all-ok: stringify on Lua return value for logging
             outResultSummary = "(return stringify failed)";
         }
         constexpr size_t kMaxSummary = 800;

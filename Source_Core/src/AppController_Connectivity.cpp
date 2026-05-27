@@ -30,8 +30,11 @@ void AppController::DrainTrackerConnectivityProbeFuture() {
             trackerConnectivityProbeFuture_.wait();
             (void)trackerConnectivityProbeFuture_.get();
         }
+    } catch (const std::exception& ex) {
+        LOG_DEBUG("CancelTrackerConnectivityProbe: shutdown swallow: %s", ex.what());
     } catch (...) {
-        // Shutdown path: swallow probe failures.
+        // catch-all-ok: shutdown path — swallow probe failures.
+        LOG_DEBUG("CancelTrackerConnectivityProbe: shutdown swallow: unknown exception");
     }
     trackerConnectivityProbeInFlight_ = false;
 }
@@ -131,9 +134,12 @@ void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
             TrackerReachabilityProbeResult r;
             try {
                 r = trackerConnectivityProbeFuture_.get();
+            } catch (const std::exception& ex) {
+                r.Kind = TrackerReachabilityProbeKind::TransportDown;
+                r.Diagnostic = std::string("probe future exception: ") + ex.what();
             } catch (...) {
                 r.Kind = TrackerReachabilityProbeKind::TransportDown;
-                r.Diagnostic = "probe future exception";
+                r.Diagnostic = "probe future exception: unknown";
             }
             trackerConnectivityProbeInFlight_ = false;
             ApplyTrackerConnectivityProbeResult(now, r);
@@ -152,7 +158,11 @@ void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
         trackerConnectivityProbeFuture_ =
             std::async(std::launch::async, [backend, cfg]() { return backend->Connectivity().ProbeReachability(cfg); });
         trackerConnectivityProbeInFlight_ = true;
+    } catch (const std::exception& ex) {
+        LOG_WARN("TrackerConnectivityProbe: failed to launch: %s", ex.what());
+        nextTrackerConnectivityProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
     } catch (...) {
+        LOG_WARN("TrackerConnectivityProbe: failed to launch: unknown exception");
         nextTrackerConnectivityProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
     }
 }

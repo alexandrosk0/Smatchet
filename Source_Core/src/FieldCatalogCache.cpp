@@ -86,9 +86,8 @@ nlohmann::json OptionToJson(const TrackerFieldOption& o) {
     j["payload_json"] = o.PayloadJson;
     j["disabled"] = o.Disabled;
     nlohmann::json ch = nlohmann::json::array();
-    std::transform(o.Children.begin(), o.Children.end(), std::back_inserter(ch), [](const auto& c) {
-        return OptionToJson(c);
-    });
+    std::transform(o.Children.begin(), o.Children.end(), std::back_inserter(ch),
+                   [](const auto& c) { return OptionToJson(c); });
     j["children"] = std::move(ch);
     return j;
 }
@@ -130,9 +129,8 @@ nlohmann::json FieldToJson(const TrackerField& f) {
     j["family"] = static_cast<int>(f.Family);
     j["allowed_values"] = f.AllowedValues;
     nlohmann::json opts = nlohmann::json::array();
-    std::transform(f.AllowedValueOptions.begin(), f.AllowedValueOptions.end(), std::back_inserter(opts), [](const auto& o) {
-        return OptionToJson(o);
-    });
+    std::transform(f.AllowedValueOptions.begin(), f.AllowedValueOptions.end(), std::back_inserter(opts),
+                   [](const auto& o) { return OptionToJson(o); });
     j["allowed_value_options"] = std::move(opts);
     j["raw_field_definition_json"] = f.RawFieldDefinitionJson;
     return j;
@@ -213,19 +211,15 @@ nlohmann::json BuildEntryJson(const std::vector<TrackerField>& fields, const std
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta) {
     nlohmann::json entry = nlohmann::json::object();
     nlohmann::json jf = nlohmann::json::array();
-    std::transform(fields.begin(), fields.end(), std::back_inserter(jf), [](const auto& f) {
-        return FieldToJson(f);
-    });
+    std::transform(fields.begin(), fields.end(), std::back_inserter(jf), [](const auto& f) { return FieldToJson(f); });
     entry["fields"] = std::move(jf);
     nlohmann::json jc = nlohmann::json::array();
-    std::transform(components.begin(), components.end(), std::back_inserter(jc), [](const auto& c) {
-        return nlohmann::json{{"id", c.Id}, {"name", c.Name}};
-    });
+    std::transform(components.begin(), components.end(), std::back_inserter(jc),
+                   [](const auto& c) { return nlohmann::json{{"id", c.Id}, {"name", c.Name}}; });
     entry["components"] = std::move(jc);
     nlohmann::json jm = nlohmann::json::array();
-    std::transform(issueTypeMeta.begin(), issueTypeMeta.end(), std::back_inserter(jm), [](const auto& m) {
-        return IssueTypeMetaToJson(m);
-    });
+    std::transform(issueTypeMeta.begin(), issueTypeMeta.end(), std::back_inserter(jm),
+                   [](const auto& m) { return IssueTypeMetaToJson(m); });
     entry["issue_type_meta"] = std::move(jm);
     return entry;
 }
@@ -292,9 +286,8 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
     const int oldVer = rootOnDisk.is_object() ? rootOnDisk.value("schema_version", 0) : 0;
     const std::int64_t now = NowUnixSeconds();
 
-    auto appendIndexEntry = [&](const std::string& cacheKey, const std::string& projectKey,
-                                const std::string& backend, const std::string& endpoint,
-                                std::int64_t lastUsed) {
+    auto appendIndexEntry = [&](const std::string& cacheKey, const std::string& projectKey, const std::string& backend,
+                                const std::string& endpoint, std::int64_t lastUsed) {
         nlohmann::json e = nlohmann::json::object();
         e["cacheKey"] = cacheKey;
         e["projectKey"] = projectKey;
@@ -307,16 +300,18 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
     if (oldVer >= 3 && rootOnDisk.contains("entries") && rootOnDisk["entries"].is_array()) {
         // v3 → v3: preserve the index as-is.
         for (const auto& idx : rootOnDisk["entries"]) {
-            if (!idx.is_object()) continue;
+            if (!idx.is_object())
+                continue;
             const std::string cacheKey = idx.value("cacheKey", std::string());
-            if (cacheKey.empty()) continue;
-            appendIndexEntry(cacheKey, idx.value("projectKey", std::string()),
-                             idx.value("backend", std::string()), idx.value("endpoint", std::string()),
-                             idx.value("lastUsedUnix", now));
+            if (cacheKey.empty())
+                continue;
+            appendIndexEntry(cacheKey, idx.value("projectKey", std::string()), idx.value("backend", std::string()),
+                             idx.value("endpoint", std::string()), idx.value("lastUsedUnix", now));
         }
         // Preserve per-cacheKey blobs at root (everything except schema_version + entries).
         for (auto it = rootOnDisk.begin(); it != rootOnDisk.end(); ++it) {
-            if (it.key() == "schema_version" || it.key() == "entries") continue;
+            if (it.key() == "schema_version" || it.key() == "entries")
+                continue;
             out[it.key()] = it.value();
         }
         return out;
@@ -328,7 +323,8 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
         // newly-upgraded cache doesn't evict good entries on the first write.
         for (auto it = rootOnDisk["entries"].begin(); it != rootOnDisk["entries"].end(); ++it) {
             const std::string& cacheKey = it.key();
-            if (!it.value().is_object()) continue;
+            if (!it.value().is_object())
+                continue;
             out[cacheKey] = it.value();
             appendIndexEntry(cacheKey, std::string(), std::string(), std::string(), now);
         }
@@ -387,8 +383,10 @@ nlohmann::json::iterator FindIndexEntry(nlohmann::json& indexArr, const std::str
 // Sort the index array by lastUsedUnix descending and drop everything past `cap-1`, also freeing
 // the per-cacheKey blobs at root. cap is clamped to a minimum of 1.
 void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap) {
-    if (cap < 1) cap = 1;
-    if (!root.contains("entries") || !root["entries"].is_array()) return;
+    if (cap < 1)
+        cap = 1;
+    if (!root.contains("entries") || !root["entries"].is_array())
+        return;
     nlohmann::json& indexArr = root["entries"];
     std::sort(indexArr.begin(), indexArr.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
         return a.value("lastUsedUnix", std::int64_t{0}) > b.value("lastUsedUnix", std::int64_t{0});
@@ -401,8 +399,8 @@ void EvictLeastRecentlyUsedIfOverCap(nlohmann::json& root, int cap) {
         if (!victimKey.empty() && root.contains(victimKey)) {
             root.erase(victimKey);
         }
-        LOG_INFO("FieldCatalogCache LRU evicted project='%s' (cap=%d, lastUsed=%lld)",
-                 victimProject.c_str(), cap, static_cast<long long>(victimLast));
+        LOG_INFO("FieldCatalogCache LRU evicted project='%s' (cap=%d, lastUsed=%lld)", victimProject.c_str(), cap,
+                 static_cast<long long>(victimLast));
         indexArr.erase(indexArr.end() - 1);
     }
 }
@@ -420,6 +418,7 @@ bool PersistRootLocked(const nlohmann::json& root, std::string& outError) {
         outError = ex.what();
         return false;
     } catch (...) {
+        LOG_ERROR("FieldCatalogCache::PersistFieldCatalog: unknown exception");
         outError = "Unknown error while persisting field catalog cache.";
         return false;
     }
@@ -439,8 +438,7 @@ std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::strin
 }
 
 bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& backend, const std::string& endpoint,
-                              const std::string& projectKey, int maxProjects,
-                              const std::vector<TrackerField>& fields,
+                              const std::string& projectKey, int maxProjects, const std::vector<TrackerField>& fields,
                               const std::vector<TrackerComponent>& components,
                               const std::vector<TrackerIssueTypeCreateMeta>& issueTypeMeta, std::string& outError) {
     outError.clear();
@@ -551,7 +549,8 @@ std::vector<CachedProjectEntry> ListCachedProjects() {
             return out;
         }
         for (const auto& e : root["entries"]) {
-            if (!e.is_object()) continue;
+            if (!e.is_object())
+                continue;
             CachedProjectEntry cpe;
             cpe.projectKey = e.value("projectKey", std::string());
             cpe.backend = e.value("backend", std::string());
@@ -559,10 +558,9 @@ std::vector<CachedProjectEntry> ListCachedProjects() {
             cpe.lastUsedUnix = e.value("lastUsedUnix", std::int64_t{0});
             out.push_back(std::move(cpe));
         }
-        std::sort(out.begin(), out.end(),
-                  [](const CachedProjectEntry& a, const CachedProjectEntry& b) {
-                      return a.lastUsedUnix > b.lastUsedUnix;
-                  });
+        std::sort(out.begin(), out.end(), [](const CachedProjectEntry& a, const CachedProjectEntry& b) {
+            return a.lastUsedUnix > b.lastUsedUnix;
+        });
     } catch (const std::exception& ex) {
         LOG_WARN("FieldCatalogCache::ListCachedProjects failed: %s", ex.what());
     } catch (...) {
@@ -581,8 +579,7 @@ bool ForgetProject(const std::string& projectKey, const std::string& backend, co
         nlohmann::json& indexArr = root["entries"];
         bool removed = false;
         for (auto it = indexArr.begin(); it != indexArr.end();) {
-            const bool matches = it->is_object() &&
-                                 it->value("projectKey", std::string()) == projectKey &&
+            const bool matches = it->is_object() && it->value("projectKey", std::string()) == projectKey &&
                                  it->value("backend", std::string()) == backend &&
                                  it->value("endpoint", std::string()) == endpoint;
             if (matches) {
@@ -615,9 +612,3 @@ bool ForgetProject(const std::string& projectKey, const std::string& backend, co
 }
 
 } // namespace FieldCatalogCache
-
-
-
-
-
-

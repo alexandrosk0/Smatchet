@@ -67,14 +67,14 @@ void AppendAllowlistedArgKvs(std::ostringstream& oss, const nlohmann::json& obj)
         } else {
             try {
                 oss << TruncateOneLine(v.dump(), 80);
-            } catch (...) {
+            } catch (...) { // catch-all-ok: dump for logging
                 oss << "?";
             }
         }
     }
 }
 
-}  // namespace
+} // namespace
 
 std::string TruncateOneLine(const std::string& s, std::size_t maxChars) {
     if (s.size() <= maxChars) {
@@ -152,8 +152,8 @@ std::string ExtractHostFromUrl(const std::string& url) {
 
 bool IsLoopbackAddress(const std::string& remoteAddr) {
     const std::string lowered = ToLowerAscii(TrimAsciiWhitespace(remoteAddr));
-    return lowered == SmatchetDefaults::Mcp::kBindLocalhost || lowered == "::1" || lowered == "localhost"
-           || lowered == "::ffff:127.0.0.1";
+    return lowered == SmatchetDefaults::Mcp::kBindLocalhost || lowered == "::1" || lowered == "localhost" ||
+           lowered == "::ffff:127.0.0.1";
 }
 
 bool ConstantTimeStringEquals(const std::string& a, const std::string& b) {
@@ -245,11 +245,11 @@ std::string ExtractJsonRpcErrorMessage(const nlohmann::json& jres, std::size_t m
     }
     try {
         return TruncateOneLine(e.dump(), maxLen);
-    } catch (...) {
+    } catch (...) { // catch-all-ok: dump for error summary logging
         return "error";
     }
 }
 
-}  // namespace pure
-}  // namespace mcp
-}  // namespace smatchet
+} // namespace pure
+} // namespace mcp
+} // namespace smatchet
