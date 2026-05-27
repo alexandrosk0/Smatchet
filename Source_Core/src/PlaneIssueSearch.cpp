@@ -477,7 +477,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
                 break;
             }
         }
-        summary.FullSyncCompleted = syncEndedCleanly && (!shouldCancel || !shouldCancel());
+        summary.FullSyncCompleted = syncEndedCleanly && pageCount > 0 && (!shouldCancel || !shouldCancel());
         LOG_INFO("PlaneClient::FetchIssuesStreamed fetched %zu issues from Plane.", summary.FetchedCount);
     } catch (const nlohmann::json::exception& jex) {
         LOG_ERROR("PlaneClient::FetchIssuesStreamed outer json error: %s", jex.what());

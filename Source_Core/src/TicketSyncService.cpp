@@ -80,9 +80,14 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     size_t deleted = 0;
     // Empty-fetch guard: a full-sync that returns zero tickets cannot prove the cache is
     // stale — treating it as authoritative would wipe every row silently (e.g. a 200-with-
-    // empty-body network glitch). Genuinely-empty projects re-converge on the next non-
-    // empty fetch.
-    if (fullSyncCompleted && !freshTickets.empty()) {
+    // empty-body network glitch). After kEmptyFullSyncWipeThreshold consecutive empty full-
+    // syncs we trust the empty result so genuinely-empty projects converge eventually.
+    if (fullSyncCompleted && freshTickets.empty()) {
+        ++consecutiveEmptyFullSyncs_;
+    } else if (!freshTickets.empty()) {
+        consecutiveEmptyFullSyncs_ = 0;
+    }
+    if (fullSyncCompleted && (!freshTickets.empty() || consecutiveEmptyFullSyncs_ >= kEmptyFullSyncWipeThreshold)) {
         std::unordered_set<std::string> keepIds;
         keepIds.reserve(freshTickets.size());
         for (const auto& t : freshTickets) {

@@ -40,10 +40,7 @@ class AiSseParser {
 
   private:
     std::string buffer_;
-    Event partial_;
     bool overflowed_ = false;
-
-    void emitIfReady(const EventCallback& onEvent);
 };
 
 #endif

@@ -1,4 +1,4 @@
-﻿// Define NOMINMAX / WIN32_LEAN_AND_MEAN before any include that transitively
+// Define NOMINMAX / WIN32_LEAN_AND_MEAN before any include that transitively
 // pulls in <windows.h> (SQLiteCpp via AppController.h chain) — otherwise the
 // preprocessor defines `min` / `max` as macros and `std::min(...)` later in
 // this TU fails to parse. Mirrors the same dance in AppController.cpp.
@@ -37,6 +37,7 @@
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
+// Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
