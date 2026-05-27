@@ -139,6 +139,45 @@ DockId=0x0000000A,9
 3. Delete `imgui.ini`, restart — verify all windows still dock correctly on fresh start
 4. Try to drag a window out of its dock slot — verify `NoUndocking` prevents it
 
+## Amendment: allow drag-and-snap between slots
+
+### Problem
+
+`ImGuiDockNodeFlags_NoUndocking` on the DockSpace prevents all undocking — including dragging windows between dock slots. ImGui requires a temporary floating state during tab drag, which `NoUndocking` blocks entirely.
+
+### Solution
+
+1. **Remove `ImGuiDockNodeFlags_NoUndocking`** from all three DockSpace calls (`StandaloneAppBootstrap.cpp`, `main.cpp`, `SmatchetImGuiHost.cpp`). This allows users to drag window tabs between any of the four slots.
+
+2. **Guard re-dock scheduling against active drags** — in `repairTopLevelWindow` and all bypass windows, only schedule re-dock when `!ImGui::IsMouseDown(0)`. This prevents the enforcement from fighting an in-progress drag:
+   - During drag (mouse held): window is temporarily floating, no re-dock scheduled
+   - Drop on another dock node: window docks into target, `IsWindowDocked()` true → no re-dock
+   - Drop in empty space (mouse released, still floating): re-dock scheduled → snaps to default slot next frame
+
+3. **User's intentional slot changes persist** — ImGui saves DockId per window in `imgui.ini`. When a user drags a window from Bottom to Primary Sidebar, the new slot is persisted. `SetNextWindowDockID(..., FirstUseEver)` only fires on first-ever use, so it won't override the saved position on subsequent launches.
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `Target_Standalone/StandaloneAppBootstrap.cpp` | Remove `NoUndocking` flag |
+| `Target_Standalone/main.cpp` | Remove `NoUndocking` flag |
+| `Source_Core/src/SmatchetImGuiHost.cpp` | Remove `NoUndocking` flag |
+| `Source_Core/src/SmatchetUI_Layout.cpp` | Guard `pendingReDockWindows.insert` with `!IsMouseDown(0)` |
+| `Source_Core/src/SmatchetPerfUi.cpp` | Guard `s_needsReDock` with `!IsMouseDown(0)` |
+| `Source_Core/src/SmatchetAiAssistantUi.cpp` | Guard `s_assistantNeedsReDock` with `!IsMouseDown(0)` |
+| `Plugins/LuaConsole/LuaConsolePlugin.cpp` | Guard `pendingReDockWindows.insert` with `!IsMouseDown(0)` |
+| `Source_Core/src/SmatchetMcpServerUi.cpp` | Guard `pendingReDockWindows.insert` with `!IsMouseDown(0)` |
+
+### Verification
+
+1. Build clean
+2. Drag a window tab from Bottom to Primary Sidebar → tabs into sidebar
+3. Drag a window tab to empty space → snaps back to its default slot
+4. Restart → window stays in user-chosen slot (persisted in ini)
+5. Reset layout → all windows return to default slots
+
 ## Implementation log
 
 Implemented in `f081d80` (2026-05-27). All planned changes landed as described — no deviations.
+Follow-up in `1a2ecf1`: complete enforcement for bypass windows (Performance, Lua, MCP, AI Assistant).

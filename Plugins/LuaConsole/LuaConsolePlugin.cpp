@@ -70,7 +70,9 @@ void RepairLuaWindowLayout(UiDrawSession& d) {
     if (ImGui::IsWindowDocked()) {
         return;
     }
-    d.pendingReDockWindows.insert("scripting");
+    if (!ImGui::IsMouseDown(0)) {
+        d.pendingReDockWindows.insert("scripting");
+    }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         return;

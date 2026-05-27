@@ -111,7 +111,9 @@ void RepairMcpWindowLayout(UiDrawSession& d) {
     if (ImGui::IsWindowDocked()) {
         return;
     }
-    d.pendingReDockWindows.insert("mcp");
+    if (!ImGui::IsMouseDown(0)) {
+        d.pendingReDockWindows.insert("mcp");
+    }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         return;

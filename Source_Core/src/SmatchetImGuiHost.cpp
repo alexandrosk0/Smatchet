@@ -218,7 +218,8 @@ static void Smatchet_ImplDX12_SrvAllocCb(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DES
         // overflow slot so extra thumbnails may alias each other but cannot corrupt text/icons.
         slot = (a.OverflowSlot > 0) ? a.OverflowSlot : 0;
         if (!a.bLoggedExhausted) {
-            LOG_WARN("SmatchetImGuiHost: DX12 SRV heap exhausted (capacity=%d, overflowSlot=%d). Extra thumbnails may alias.",
+            LOG_WARN("SmatchetImGuiHost: DX12 SRV heap exhausted (capacity=%d, overflowSlot=%d). Extra thumbnails may "
+                     "alias.",
                      a.Capacity, a.OverflowSlot);
             a.bLoggedExhausted = true;
         }
@@ -717,7 +718,7 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
     io.DeltaTime = (deltaTimeSeconds > 0.0f) ? deltaTimeSeconds : (1.0f / 60.0f);
     io.DisplaySize = ImVec2(viewportWidth, viewportHeight);
 
-    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_NoUndocking);
+    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
     ImplData->FrameActive.store(true, std::memory_order_relaxed);
     ImplData->BuildingFrame.store(false, std::memory_order_release);
 #else
@@ -786,8 +787,9 @@ void SmatchetImGuiHost::RenderDrawData(SmatchetRendererBackend backend, void* na
             LastDrawStatsLogSeconds = nowSeconds;
             if (drawData) {
                 LOG_DEBUG("SmatchetImGuiHost::RenderDrawData: display=(%f,%f) totalVtx=%d cmds=%d ui=%d init=%d",
-                          drawData->DisplaySize.x, drawData->DisplaySize.y, drawData->TotalVtxCount, drawData->CmdListsCount,
-                          IsUiVisible() ? 1 : 0, ImplData->Initialized.load(std::memory_order_relaxed) ? 1 : 0);
+                          drawData->DisplaySize.x, drawData->DisplaySize.y, drawData->TotalVtxCount,
+                          drawData->CmdListsCount, IsUiVisible() ? 1 : 0,
+                          ImplData->Initialized.load(std::memory_order_relaxed) ? 1 : 0);
             } else {
                 LOG_DEBUG("SmatchetImGuiHost::RenderDrawData: drawData=null");
             }

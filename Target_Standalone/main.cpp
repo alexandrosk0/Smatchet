@@ -151,9 +151,11 @@ static void SmatchetApplyWindowIcon(GLFWwindow* window) {
         // This is only for debugging the icon issue.
         HRSRC groupRes = FindResourceA(hModule, MAKEINTRESOURCE(kIconResourceId), RT_GROUP_ICON);
         if (!groupRes) {
-            ::fprintf(stderr, "Icon not found in resources (RT_GROUP_ICON) id=%u\n", (unsigned)kIconResourceId); // pre-logger-init — LOG_* unavailable
+            ::fprintf(stderr, "Icon not found in resources (RT_GROUP_ICON) id=%u\n",
+                      (unsigned)kIconResourceId); // pre-logger-init — LOG_* unavailable
         } else {
-            ::fprintf(stderr, "Icon resource exists but LoadIcon/LoadImage failed id=%u\n", (unsigned)kIconResourceId); // pre-logger-init — LOG_* unavailable
+            ::fprintf(stderr, "Icon resource exists but LoadIcon/LoadImage failed id=%u\n",
+                      (unsigned)kIconResourceId); // pre-logger-init — LOG_* unavailable
         }
         return;
     }
@@ -197,10 +199,14 @@ static void SmatchetLogOpenGLInfo() {
     const GLubyte* renderer = glGetString(GL_RENDERER);
     const GLubyte* version = glGetString(GL_VERSION);
     const GLubyte* shading = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    ::fprintf(stderr, "OpenGL vendor: %s\n", vendor ? reinterpret_cast<const char*>(vendor) : "(null)"); // pre-logger-init — LOG_* unavailable
-    ::fprintf(stderr, "OpenGL renderer: %s\n", renderer ? reinterpret_cast<const char*>(renderer) : "(null)"); // pre-logger-init — LOG_* unavailable
-    ::fprintf(stderr, "OpenGL version: %s\n", version ? reinterpret_cast<const char*>(version) : "(null)"); // pre-logger-init — LOG_* unavailable
-    ::fprintf(stderr, "OpenGL GLSL: %s\n", shading ? reinterpret_cast<const char*>(shading) : "(null)"); // pre-logger-init — LOG_* unavailable
+    ::fprintf(stderr, "OpenGL vendor: %s\n",
+              vendor ? reinterpret_cast<const char*>(vendor) : "(null)"); // pre-logger-init — LOG_* unavailable
+    ::fprintf(stderr, "OpenGL renderer: %s\n",
+              renderer ? reinterpret_cast<const char*>(renderer) : "(null)"); // pre-logger-init — LOG_* unavailable
+    ::fprintf(stderr, "OpenGL version: %s\n",
+              version ? reinterpret_cast<const char*>(version) : "(null)"); // pre-logger-init — LOG_* unavailable
+    ::fprintf(stderr, "OpenGL GLSL: %s\n",
+              shading ? reinterpret_cast<const char*>(shading) : "(null)"); // pre-logger-init — LOG_* unavailable
 }
 
 static std::string SmatchetNormalizeDirectory(std::string path) {
@@ -564,8 +570,7 @@ int main(int argc, char** argv) {
             // THE BRIDGE: Hand control over to your engine-agnostic UI layer
             // ====================================================================
 
-            // Full-screen dockspace — NoUndocking matches SmatchetImGuiHost.cpp (DX12 path).
-            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_NoUndocking);
+            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
 
             // Draw the main application
             SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);
