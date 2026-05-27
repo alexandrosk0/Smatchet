@@ -291,16 +291,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 d.requestViewsDashboardFocus = true;
                 recentViews_.Touch("view.toggle.views-dashboard");
             }
-            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.annotateTabVisible && d.activeGridTab == 1)) {
-                if (d.annotateTabVisible && d.activeGridTab == 1) {
-                    d.annotateTabVisible = false;
-                    d.activeGridTab = 0;
-                } else {
-                    d.annotateTabVisible = true;
-                    d.activeGridTab = 1;
-                    d.activeGridTabForcePending = true;
-                    d.requestActiveProjectFocus = true;
-                }
+            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.showBlameAnalysis)) {
+                d.showBlameAnalysis = !d.showBlameAnalysis;
                 recentViews_.Touch("view.toggle.source-blame");
             }
             ImGui::Separator();

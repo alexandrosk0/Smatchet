@@ -693,6 +693,9 @@ void SmatchetUI::Draw(AppController& app) {
             g_ui.requestPerformanceFocus = false;
         }
     }
+    if (g_ui.showBlameAnalysis) {
+        blameAnalysisUi_.DrawWindow(app, &g_ui.showBlameAnalysis, g_ui.gridState.ActiveIssueId);
+    }
     {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
         drawPreferencesWindow(app, d);

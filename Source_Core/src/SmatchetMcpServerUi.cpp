@@ -92,8 +92,11 @@ ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
 
 void PrepareMcpWindowLayout(UiDrawSession& d) {
     const bool needsForce = d.pendingReDockWindows.erase("mcp") > 0 || d.layoutForceDefaultsFrames > 0;
-    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel,
-                               needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+    if (needsForce) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
+    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+    }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
@@ -111,7 +114,7 @@ void RepairMcpWindowLayout(UiDrawSession& d) {
     if (ImGui::IsWindowDocked()) {
         return;
     }
-    if (!ImGui::IsMouseDown(0)) {
+    if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         d.pendingReDockWindows.insert("mcp");
     }
     const ImGuiViewport* vp = ImGui::GetMainViewport();

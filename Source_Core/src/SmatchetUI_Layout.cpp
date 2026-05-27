@@ -1,3 +1,7 @@
+// imgui_internal.h must come before SmatchetUI_Internal.h (which #defines ImGui as
+// SmatchetLocalizedImGui — that macro rewrite breaks imgui_internal.h if included after).
+#include "imgui_internal.h"
+
 #include "SmatchetUI_Internal.h"
 
 #include "AppController.h"
@@ -106,12 +110,30 @@ void PersistWindowOpenPreferences(UiDrawSession& d) {
 } // namespace ui_detail
 } // namespace smatchet
 
+void SmatchetUI::enforceDockNodePersistence(UiDrawSession& d) {
+    using namespace SmatchetDockNodeIds;
+    if (ImGui::DockBuilderGetNode(kCentralNode) && ImGui::DockBuilderGetNode(kViewsColumn) &&
+        ImGui::DockBuilderGetNode(kPrimarySideBar) && ImGui::DockBuilderGetNode(kBottomPanel)) {
+        return;
+    }
+    LOG_INFO("SmatchetUI: a fixed dock node was GC'd — reloading default layout.");
+    const char* ini = ConfigManager::GetDefaultImGuiDockLayoutIni();
+    ImGui::LoadIniSettingsFromMemory(ini, strlen(ini));
+    d.layoutForceDefaultsFrames = 8;
+}
+
 void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                        bool requestFocus) {
     const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
     if (slot != 0) {
         const bool needsForce = d.pendingReDockWindows.erase(layoutKey) > 0;
-        ImGui::SetNextWindowDockID(slot, needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+        if (needsForce) {
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_Always);
+        } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+            // Skip on drag AND release frames: DockId is 0 while floating, so FirstUseEver
+            // would override the drop target before ImGui finalises it.
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_FirstUseEver);
+        }
     }
     ImGui::SetNextWindowSize(ImVec2(defaultW, defaultH), ImGuiCond_FirstUseEver);
     if (requestFocus) {
@@ -125,7 +147,7 @@ void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, f
     }
     // Window is floating — schedule force-dock on next frame if it has a registered slot.
     const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
-    if (slot != 0 && !ImGui::IsMouseDown(0)) {
+    if (slot != 0 && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         d.pendingReDockWindows.insert(layoutKey);
         return;
     }

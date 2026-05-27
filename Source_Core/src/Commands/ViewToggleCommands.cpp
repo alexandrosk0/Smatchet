@@ -60,12 +60,7 @@ void OnOpenViewsDashboard(UiDrawSession& d) { d.requestViewsDashboardFocus = tru
 
 void OnOpenAuditTrail(UiDrawSession& d) { d.requestAuditTrailFocus = true; }
 
-void OnOpenAnnotate(UiDrawSession& d) {
-    d.annotateTabVisible = true;
-    d.activeGridTab = 1;
-    d.activeGridTabForcePending = true;
-    d.requestActiveProjectFocus = true;
-}
+void OnOpenAnnotate(UiDrawSession& d) { d.showBlameAnalysis = true; }
 
 #if defined(SMATCHET_WITH_MCP)
 void OnOpenMcpServer(UiDrawSession& d) { d.requestMcpServerFocus = true; }

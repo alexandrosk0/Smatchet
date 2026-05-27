@@ -29,10 +29,14 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         return;
     }
     constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
-    ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+    if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+    }
     ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Annotate###BlameAnalysisModal", pOpen, kPanelFlags)) {
-        CloseBlameModal(pOpen);
+        if (!*pOpen) {
+            CloseBlameModal(pOpen);
+        }
         ImGui::End();
         return;
     }

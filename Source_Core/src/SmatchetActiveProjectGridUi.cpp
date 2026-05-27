@@ -148,46 +148,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
     const std::vector<TicketGridColumn>& columns = gridFrameCtx_.columns;
 
-    // Tab bar: Grid is always shown. Annotate is only rendered while annotateTabVisible.
-    // When the Annotate tab is hidden, force activeGridTab back to Grid so stale state
-    // doesn't keep the panel "open" for background services.
-    if (!d.annotateTabVisible && d.activeGridTab != 0) {
-        d.activeGridTab = 0;
-    }
-    blameAnalysisUi_.SetBlamePanelOpen(d.annotateTabVisible && d.activeGridTab == 1);
+    blameAnalysisUi_.SetBlamePanelOpen(d.showBlameAnalysis);
     blameAnalysisUi_.ServiceBackground();
-    if (d.annotateTabVisible) {
-        if (ImGui::BeginTabBar("##active_project_tabs")) {
-            const bool forceSwitch = d.activeGridTabForcePending;
-            d.activeGridTabForcePending = false;
-            const ImGuiTabItemFlags gridFlags =
-                (d.activeGridTab == 0 && forceSwitch) ? ImGuiTabItemFlags_SetSelected : 0;
-            const ImGuiTabItemFlags annotateFlags =
-                (d.activeGridTab == 1 && forceSwitch) ? ImGuiTabItemFlags_SetSelected : 0;
-            if (ImGui::BeginTabItem("Grid", nullptr, gridFlags)) {
-                d.activeGridTab = 0;
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Annotate", nullptr, annotateFlags)) {
-                d.activeGridTab = 1;
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-    } else {
-        d.activeGridTabForcePending = false;
-    }
-
-    if (d.annotateTabVisible && d.activeGridTab == 1) {
-        bool wantClose = false;
-        blameAnalysisUi_.DrawContent(app, &wantClose, d.gridState.ActiveIssueId);
-        if (wantClose) {
-            d.annotateTabVisible = false;
-            d.activeGridTab = 0;
-        }
-        ImGui::End();
-        return;
-    }
 
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:header");

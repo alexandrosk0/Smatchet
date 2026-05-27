@@ -983,7 +983,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
         d.assistantPendingSideSwap = false;
         s_assistantNeedsReDock = false;
-    } else {
+    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
     }
 
@@ -1016,7 +1016,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         ImGui::SetWindowFocus();
         d.requestAssistantFocus = false;
     }
-    if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0)) {
+    if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         s_assistantNeedsReDock = true;
     }
 

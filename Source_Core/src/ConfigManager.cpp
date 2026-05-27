@@ -162,7 +162,8 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
     "DockSpace         ID=0x08BD597D Window=0x1BBC0F80 Pos=0,22 Size=1920,965 Split=Y Selected=0x7EBEC904\n"
     "  DockNode        ID=0x00000009 Parent=0x08BD597D SizeRef=1920,486 Split=X\n"
     "    DockNode      ID=0x00000001 Parent=0x00000009 SizeRef=1045,987 Split=X\n"
-    "      DockNode    ID=0x00000002 Parent=0x00000001 SizeRef=700,987 CentralNode=1 NoTabBar=1 Selected=0x7EBEC904\n"
+    "      DockNode    ID=0x00000002 Parent=0x00000001 SizeRef=700,987 CentralNode=1 HiddenTabBar=1 "
+    "Selected=0x7EBEC904\n"
     "      DockNode    ID=0x00000008 Parent=0x00000001 SizeRef=354,987 Selected=0x51577D15\n"
     "    DockNode      ID=0x00000004 Parent=0x00000009 SizeRef=873,987 Selected=0x74648FC6\n"
     "  DockNode        ID=0x0000000A Parent=0x08BD597D SizeRef=1920,477 Selected=0x6A4695A4\n";
