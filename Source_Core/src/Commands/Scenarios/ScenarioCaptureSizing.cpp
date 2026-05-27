@@ -1,5 +1,7 @@
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 
+#include "Logger.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -12,6 +14,7 @@ namespace {
 
 int IntArg(const nlohmann::json& args, const char* key, int fallback) {
     if (!args.contains(key)) {
+        LOG_TRACE("ScenarioCaptureSizing::IntArg: key '%s' not found, using fallback %d", key, fallback);
         return fallback;
     }
     const nlohmann::json& v = args[key];
@@ -22,9 +25,11 @@ int IntArg(const nlohmann::json& args, const char* key, int fallback) {
         try {
             return std::stoi(v.get<std::string>());
         } catch (...) {
+            LOG_TRACE("ScenarioCaptureSizing::IntArg: key '%s' parse error, using fallback %d", key, fallback);
             return fallback;
         }
     }
+    LOG_TRACE("ScenarioCaptureSizing::IntArg: key '%s' has unexpected type, using fallback %d", key, fallback);
     return fallback;
 }
 
