@@ -137,7 +137,10 @@ DockId=0x0000000A,9
 1. `cmake --build --preset ninja-iter-clang --target SmatchetStandalone SmatchetCore_DX12` — both targets clean
 2. Launch Smatchet, open every content window via menu — verify all dock into slots, none float
 3. Delete `imgui.ini`, restart — verify all windows still dock correctly on fresh start
-4. Try to drag a window out of its dock slot — verify `NoUndocking` prevents it
+4. Try to drag a window tab to another dock slot — verify it tabs in cleanly
+5. Drop a window tab in empty space — verify it snaps back to its default slot
+6. Restart after repositioning — verify user-chosen slot persists (saved in ini)
+7. Reset layout — verify all windows return to default slots
 
 ## Amendment: allow drag-and-snap between slots
 
@@ -179,5 +182,14 @@ DockId=0x0000000A,9
 
 ## Implementation log
 
-Implemented in `f081d80` (2026-05-27). All planned changes landed as described — no deviations.
-Follow-up in `1a2ecf1`: complete enforcement for bypass windows (Performance, Lua, MCP, AI Assistant).
+- `f081d80` (2026-05-27) — initial enforcement: `SmatchetDockNodeIds` registry, `pendingReDockWindows`, `prepareTopLevelWindow` / `repairTopLevelWindow` enforcement, missing ini entries for Blame + Plan Docs.
+- `1a2ecf1` — follow-up enforcement for bypass windows: Performance (`s_needsReDock`), Lua (`pendingReDockWindows`), MCP (`pendingReDockWindows`), AI Assistant (`s_assistantNeedsReDock`). All four lacked float-detection re-dock before this.
+- `5e352e5` — drag-and-snap amendment: removed `ImGuiDockNodeFlags_NoUndocking` from all three DockSpace call sites, added `!IsMouseDown(0)` guard to all re-dock scheduling sites so enforcement doesn't fight in-progress drags.
+- `0907200` — bumped `kCurrentLayoutSchemaVersion` to 7 to trigger `WriteDefaultImGuiSettingsFile()` on next launch, clearing stale `imgui.ini` state that blocked drag after `NoUndocking` removal.
+
+## Deviations from plan
+
+None for the core plan. The drag-and-snap amendment required three extra changes not in the original scope:
+
+1. `SmatchetPerfUi.cpp` and `SmatchetAiAssistantUi.cpp` needed `!IsMouseDown(0)` guards — these bypass windows were missed in the original bypass-window list.
+2. Schema version bump to 7 was not planned but required to clear cached `NoUndocking` state from existing `imgui.ini` files.
