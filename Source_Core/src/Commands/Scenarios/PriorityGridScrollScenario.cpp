@@ -14,12 +14,12 @@ namespace smatchet {
 namespace cmd {
 
 class PriorityGridScrollScenario : public IScenario {
-public:
+  public:
     std::string Name() const override { return "priority-grid-scroll"; }
 
     void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
-        frames_      = args.value("frames",        600);
-        pixPerFrame_ = args.value("pixPerFrame",   8);
+        frames_ = args.value("frames", 600);
+        pixPerFrame_ = args.value("pixPerFrame", 8);
         // Seed the scroll at y=0 before we begin.
         scrollY_ = 0;
         // Optional: force the Lua `priority` cached provider on for the run so the
@@ -31,7 +31,7 @@ public:
             const std::string fid = args.value("luaProviderField", std::string("priority"));
             std::string err;
             if (app.ScenarioRegisterLuaCachedProvider(fid, fn, err)) {
-                luaProviderField_     = fid;
+                luaProviderField_ = fid;
                 registeredLuaPriority_ = true;
             } else {
                 outErr = "ScenarioRegisterLuaCachedProvider failed: " + err;
@@ -41,13 +41,9 @@ public:
         // (No public Reset() yet; snapshot at start and diff at finish as a proxy.)
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
-        scrollY_ += pixPerFrame_;
-    }
+    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override { scrollY_ += pixPerFrame_; }
 
-    bool IsDone(int frameIndex) const override {
-        return frameIndex >= frames_;
-    }
+    bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
     void OnCancel(AppController& app) override {
         // Unwind transient state so cancelling a perf run never leaves a scenario-installed
@@ -68,17 +64,17 @@ public:
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
             rowsJson.push_back({
-                {"name",         r.name},
-                {"lastTotalMs",  r.lastTotalMs},
+                {"name", r.name},
+                {"lastTotalMs", r.lastTotalMs},
                 {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs",        r.maxMs},
-                {"calls",        r.calls},
-                {"emaAvgMs",     r.emaAvgMs},
+                {"maxMs", r.maxMs},
+                {"calls", r.calls},
+                {"emaAvgMs", r.emaAvgMs},
             });
         }
         nlohmann::json out;
         out["frames"] = frames_;
-        out["rows"]   = std::move(rowsJson);
+        out["rows"] = std::move(rowsJson);
         return out;
     }
 
@@ -87,16 +83,16 @@ public:
     /// IScenario default returns -1 (no scroll); this override returns the accumulated Y.
     int CurrentScrollY() const override { return scrollY_; }
 
-private:
-    int         frames_                = 600;
-    int         pixPerFrame_           = 8;
-    int         scrollY_               = 0;
-    bool        registeredLuaPriority_ = false;
+  private:
+    int frames_ = 600;
+    int pixPerFrame_ = 8;
+    int scrollY_ = 0;
+    bool registeredLuaPriority_ = false;
     std::string luaProviderField_;
 };
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
 /// Factory function callable from AppController::Initialize without including
 /// the concrete type header. Declared `extern` at the call site.

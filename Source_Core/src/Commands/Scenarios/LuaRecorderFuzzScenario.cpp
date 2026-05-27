@@ -23,14 +23,14 @@ namespace smatchet {
 namespace cmd {
 
 class LuaRecorderFuzzScenario : public IScenario {
-public:
+  public:
     std::string Name() const override { return "lua-recorder-fuzz"; }
 
     void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
-        frames_      = args.value("frames",      600);
+        frames_ = args.value("frames", 600);
         pixPerFrame_ = args.value("pixPerFrame", 4);
         const std::string fieldId = args.value("field", std::string("summary"));
-        const std::string luaFn   = args.value("luaFn", std::string("render_fuzz_cell"));
+        const std::string luaFn = args.value("luaFn", std::string("render_fuzz_cell"));
 
         std::string err;
         const std::vector<std::string> extraScripts = {"LuaRecorderFuzz.lua"};
@@ -39,7 +39,7 @@ public:
             return;
         }
         boundField_ = fieldId;
-        scrollY_    = 0;
+        scrollY_ = 0;
     }
 
     void OnFrame(AppController& app, int /*frameIndex*/) override {
@@ -50,9 +50,7 @@ public:
         app.ScenarioInvalidateLuaFieldCache();
     }
 
-    bool IsDone(int frameIndex) const override {
-        return frameIndex >= frames_;
-    }
+    bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
     int CurrentScrollY() const override { return scrollY_; }
 
@@ -72,29 +70,29 @@ public:
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
             rowsJson.push_back({
-                {"name",         r.name},
-                {"lastTotalMs",  r.lastTotalMs},
+                {"name", r.name},
+                {"lastTotalMs", r.lastTotalMs},
                 {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs",        r.maxMs},
-                {"calls",        r.calls},
-                {"emaAvgMs",     r.emaAvgMs},
+                {"maxMs", r.maxMs},
+                {"calls", r.calls},
+                {"emaAvgMs", r.emaAvgMs},
             });
         }
         nlohmann::json out;
         out["frames"] = frames_;
-        out["rows"]   = std::move(rowsJson);
+        out["rows"] = std::move(rowsJson);
         return out;
     }
 
-private:
-    int         frames_      = 600;
-    int         pixPerFrame_ = 4;
-    int         scrollY_     = 0;
+  private:
+    int frames_ = 600;
+    int pixPerFrame_ = 4;
+    int scrollY_ = 0;
     std::string boundField_;
 };
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario() {
     return std::make_unique<smatchet::cmd::LuaRecorderFuzzScenario>();
