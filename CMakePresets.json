@@ -16,7 +16,8 @@
                 "SMATCHET_WITH_MCP": "ON",
                 "CMAKE_C_COMPILER": "cl.exe",
                 "CMAKE_CXX_COMPILER": "cl.exe",
-                "CMAKE_LINKER": "link.exe"
+                "CMAKE_LINKER": "link.exe",
+                "CMAKE_AR": "lib.exe"
             }
         },
         {
