@@ -39,7 +39,11 @@ GitHubFetchPlan ComputeGitHubFetchPlan(const std::string& owner, const std::stri
         return plan;
     }
 
-    if (ownerSet != repoSet) {
+    // The partial-config + empty-query warnings below describe the issue/PR
+    // /search/issues fallback, so they only apply when that path actually runs.
+    // For a commits-only view (includeIssuesOrPullRequests=false) the
+    // commit-downgrade warning above is the accurate message (CR #504).
+    if (ownerSet != repoSet && includeIssuesOrPullRequests) {
         // Append (don't clobber) — a commit-downgrade warning may already be set
         // above when commits were requested under this same partial config.
         const std::string partial = "GitHub fetch: Owner='" + owner + "' Repo='" + repo +
@@ -53,16 +57,18 @@ GitHubFetchPlan ComputeGitHubFetchPlan(const std::string& owner, const std::stri
     }
 
     if (translatedQuery.empty()) {
-        plan.effectiveQuery = "is:issue is:open";
-        std::string extra = "No GitHub Owner/Repo and no view JQL — fetching newest open "
-                            "issues globally (capped at " +
-                            std::to_string(kPlanMaxPages * kPlanPerPage) +
-                            "). Set Owner+Repo in Preferences or add a view JQL filter "
-                            "for relevant results.";
-        if (plan.warning.empty()) {
-            plan.warning = std::move(extra);
-        } else {
-            plan.warning += " " + extra;
+        if (includeIssuesOrPullRequests) {
+            plan.effectiveQuery = "is:issue is:open";
+            std::string extra = "No GitHub Owner/Repo and no view JQL — fetching newest open "
+                                "issues globally (capped at " +
+                                std::to_string(kPlanMaxPages * kPlanPerPage) +
+                                "). Set Owner+Repo in Preferences or add a view JQL filter "
+                                "for relevant results.";
+            if (plan.warning.empty()) {
+                plan.warning = std::move(extra);
+            } else {
+                plan.warning += " " + extra;
+            }
         }
     } else {
         plan.effectiveQuery = translatedQuery;

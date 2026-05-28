@@ -147,3 +147,15 @@ TEST_CASE("ComputeGitHubFetchPlan — commits requested with partial config (own
     CHECK(plan.includeCommits == false);
     CHECK(Contains(plan.warning, "commit"));
 }
+
+TEST_CASE("ComputeGitHubFetchPlan — commits-only partial config omits issue-search wording (CR #504)") {
+    // includeIssuesOrPullRequests=false → the /search/issues fallback warnings
+    // must not appear; only the commit-downgrade message is accurate.
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "", "",
+                                                        /*includePullRequests=*/false, /*includeCommits=*/true,
+                                                        /*includeIssuesOrPullRequests=*/false);
+    CHECK(plan.includeCommits == false);
+    CHECK(Contains(plan.warning, "commit"));
+    CHECK_FALSE(Contains(plan.warning, "/search/issues"));
+    CHECK_FALSE(Contains(plan.warning, "newest open"));
+}

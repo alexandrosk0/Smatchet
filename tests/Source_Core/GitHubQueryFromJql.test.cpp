@@ -264,4 +264,5 @@ TEST_CASE("TranslateJqlToGitHubSearch — unknown type value warning lists commi
     CHECK(r.IncludeIssuesOrPullRequests == true);
     CHECK(Contains(r.Warning, "commit"));
     CHECK(Contains(r.Warning, "all"));
+    CHECK(Contains(r.Warning, "any")); // CR #504 — accepted aliases listed
 }

@@ -293,15 +293,30 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
         if (smatchet::github::ParseGitHubCommitKey(issueKeyOrId, ck)) {
             outError.clear();
             outFieldIdCanEdit.clear();
-            outFieldIdCanEdit["summary"] = false;
-            outFieldIdCanEdit["description"] = false;
-            outFieldIdCanEdit["status"] = false;
-            outFieldIdCanEdit["assignee"] = false;
-            outFieldIdCanEdit["labels"] = false;
-            outFieldIdCanEdit["milestone"] = false;
-            outFieldIdCanEdit["author"] = false;
-            outFieldIdCanEdit["created"] = false;
-            outFieldIdCanEdit["updated"] = false;
+            // Every catalog field id maps to false so the grid offers no edit
+            // affordance on any column of a commit row (CR #504).
+            const char* const kCommitReadOnlyFields[] = {"summary",
+                                                         "description",
+                                                         "status",
+                                                         "assignee",
+                                                         "labels",
+                                                         "milestone",
+                                                         "author",
+                                                         "created",
+                                                         "updated",
+                                                         "github.kind",
+                                                         "commit.sha",
+                                                         "commit.short_sha",
+                                                         "commit.author_name",
+                                                         "commit.author_email",
+                                                         "commit.committer_name",
+                                                         "commit.committer_email",
+                                                         "commit.url",
+                                                         "commit.parents",
+                                                         "commit.verified"};
+            for (const char* id : kCommitReadOnlyFields) {
+                outFieldIdCanEdit[id] = false;
+            }
             return true;
         }
     }

@@ -371,7 +371,7 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
                         result.IncludeCommits = true;
                     } else {
                         AppendWarning(result.Warning, std::string("Unknown 'type:' value '") + value +
-                                                          "' — ignored (use 'pr', 'issue', 'commit', or 'all')");
+                                                          "' — ignored (use 'pr', 'issue', 'commit', 'all', or 'any')");
                     }
                 }
             } else if (EqIgnoreCase(field, "text") || EqIgnoreCase(field, "summary") ||
