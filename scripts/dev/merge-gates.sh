@@ -40,6 +40,9 @@
 #                                  poll start (authorized-merge callers only)
 #   MERGE_GATES_CR_GRACE_POLLS   — CR review grace window (default 10 polls)
 #   MERGE_GATES_CR_INSTALLED     — override CR-installed auto-detection
+#   MERGE_GATES_STALE_REREVIEW_POLLS — consecutive STALE polls on same HEAD
+#                                  before auto-posting `@coderabbitai review`
+#                                  (default 5; 0 disables)
 #
 # Manual CR re-review trigger: post `@coderabbitai review` as a PR comment
 # (`gh pr comment <pr> --body "@coderabbitai review"`) when CR's review is
@@ -112,6 +115,15 @@ poll_merge_gates() {
     local MAX_POLLS="${MERGE_GATES_MAX_POLLS:-60}"
     local TIMEOUT_SECONDS="${MERGE_GATES_TIMEOUT_SECONDS:-3600}"
     local QUERY_FILE="${MERGE_GATES_QUERY_FILE:-$DEFAULT_QUERY_FILE}"
+    # When CR state is STALE_WITH_FINDINGS / STALE_UNKNOWN on the same HEAD for
+    # this many consecutive polls, post `@coderabbitai review` once per HEAD to
+    # nudge CR into re-reviewing. Default 5 polls (~5 min at default interval).
+    # Set to 0 to disable the auto-trigger.
+    local STALE_REREVIEW_POLLS="${MERGE_GATES_STALE_REREVIEW_POLLS:-5}"
+    if ! [[ "$STALE_REREVIEW_POLLS" =~ ^[0-9]+$ ]]; then
+        echo "poll_merge_gates: MERGE_GATES_STALE_REREVIEW_POLLS must be a non-negative integer (got: $STALE_REREVIEW_POLLS)" >&2
+        return 3
+    fi
     # Number of consecutive polls the gate will wait for CodeRabbit when the repo has
     # `.coderabbit.yaml` checked in (= CR is installed for this repo). After this many
     # polls without a review or a `CodeRabbit` SUCCESS StatusContext, NONE falls back
@@ -165,6 +177,14 @@ poll_merge_gates() {
     # The canonical pattern is to pass the document body as a string field.
     local query_body
     query_body=$(<"$QUERY_FILE")
+
+    # STALE-recovery state — count consecutive STALE polls for the same HEAD.
+    # Reset whenever HEAD advances. After STALE_REREVIEW_POLLS, post one
+    # `@coderabbitai review` comment to nudge CR into re-reviewing (idempotent
+    # per-HEAD — the trigger fires at most once per head SHA).
+    local stale_streak=0
+    local stale_head=""
+    local stale_rereview_posted_head=""
 
     local start gh_fails=0
     start=$(date +%s)
@@ -465,6 +485,27 @@ poll_merge_gates() {
                     cr_pass=false
                     cr_state_print="STALE_UNKNOWN (no Actionable header — treat as block per safe-default policy)"
                 fi
+                # STALE auto-recovery: when CR sits on a STALE blocking state for
+                # ≥STALE_REREVIEW_POLLS on the same HEAD, post `@coderabbitai review`
+                # once per HEAD to nudge a re-review (idempotent — dedups on head_sha).
+                if [ "$cr_pass" = false ] && [ "$STALE_REREVIEW_POLLS" -gt 0 ]; then
+                    if [ "$stale_head" = "$head_sha" ]; then
+                        stale_streak=$((stale_streak + 1))
+                    else
+                        stale_head="$head_sha"
+                        stale_streak=1
+                    fi
+                    if [ "$stale_streak" -ge "$STALE_REREVIEW_POLLS" ] && \
+                       [ "$stale_rereview_posted_head" != "$head_sha" ]; then
+                        echo "WARN: STALE on HEAD ${head_sha:0:8} for $stale_streak polls; posting @coderabbitai review to nudge re-review." >&2
+                        if gh pr comment "$prNumber" --body "@coderabbitai review" >/dev/null 2>&1; then
+                            stale_rereview_posted_head="$head_sha"
+                            echo "INFO: @coderabbitai review trigger posted on HEAD ${head_sha:0:8}." >&2
+                        else
+                            echo "WARN: gh pr comment failed posting @coderabbitai review; will retry next STALE_REREVIEW_POLLS window." >&2
+                        fi
+                    fi
+                fi
                 ;;
             NONE)
                 if [ "$cr_installed" != true ]; then
@@ -508,6 +549,18 @@ poll_merge_gates() {
                 ;;
         esac
 
+        # Reset STALE streak whenever the state leaves the BLOCKING-STALE
+        # family. Any non-STALE cr_state breaks consecutive — and so do
+        # passing STALE variants (STALE_CLEAN / STALE_RESOLVED) where
+        # cr_pass=true, since the re-review trigger only makes sense for
+        # blocking-STALE polls. Without `|| cr_pass=true`, an intermittent
+        # STALE_WITH_FINDINGS -> STALE_RESOLVED -> STALE_WITH_FINDINGS
+        # pattern would accumulate streak across the passing intervals.
+        if [ "$cr_state" != "STALE" ] || [ "$cr_pass" = true ]; then
+            stale_streak=0
+            stale_head=""
+        fi
+
         printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
             $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend - ci_warn_downgraded)) "$ci_total" \
             "$ci_fail" "$ci_pend" "$ci_warn_downgraded" \
@@ -527,6 +580,15 @@ poll_merge_gates() {
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \
            [ "$cr_pass" = true ] && [ "$cr_open_blocks" = false ] && \
            [ "$user" -eq 0 ] && [ "$review_pass" = true ]; then
+            # Diagnostic: surface GitHub's mergeStateStatus alongside our pass
+            # decision so the operator can correlate when GH says BLOCKED while
+            # our gates pass (typically branch-protection summary-only / stale
+            # GH mergeability cache — REST squash-merge still works).
+            local gh_merge_state
+            gh_merge_state=$(jq -r '.mergeStateStatus // "UNKNOWN"' <<<"$pr" 2>/dev/null || echo "UNKNOWN")
+            if [ "$gh_merge_state" != "CLEAN" ] && [ "$gh_merge_state" != "UNSTABLE" ] && [ "$gh_merge_state" != "UNKNOWN" ]; then
+                echo "INFO: merge-gates pass; GitHub mergeStateStatus=$gh_merge_state may be stale or branch-protection summary-only. REST squash-merge contract still applies." >&2
+            fi
             echo "GATES_PASSED"
             return 0
         fi
