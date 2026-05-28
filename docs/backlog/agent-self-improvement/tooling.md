@@ -16,12 +16,6 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
-- 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
-  Details: After PR #460 merged, the `agents/git-janitor.md` workflow was executed manually: fetch/prune, switch to `develop`, fast-forward, delete the squash-merged topic branch, run the dual-target build, and report clean git/P4 state. The steps are deterministic but easy to partially skip or reorder.
-  Concrete next action: add `scripts/dev/git-janitor.sh --post-merge <pr>` that performs the safe local path: audit worktrees and uncommitted state, fetch/prune, switch/ff `develop`, delete the local merged branch when the remote is gone and PR is merged, run `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`, and print a concise report. Estimated cost 1-2 h.
-  Status: open
-  Last-reviewed: 2026-05-26
-
 - 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
   Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
   Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
@@ -65,12 +59,6 @@
   Status: open
   Last-reviewed: 2026-05-21
 
-- 2026-05-20 · orchestrator · [tooling] · P2 — Release workflow does not fetch `fa-solid-900.ttf` (Font Awesome 6 Solid)
-  Details: `assets/fonts/README.md` (shipped in PR #334 per `docs/design/ai-chat-claude-desktop-parity.md` § Phase 4) claims "CI fetches it on release-tag builds; dev workstations drop it manually." `assets/fonts/*.ttf` is gitignored (`.gitignore`) so the binary cannot live in-repo. Grep over `.github/` for `fa-solid-900` returns zero hits — no release / build workflow actually fetches the TTF. Shipped exes will start with `LOG_WARN: g_FaIconsLoaded = false` and the AI-chat hover action row + pin strip will render the text fallback (`Copy` / `Pin` / `×`) instead of icons. UX regression vs. plan intent, but **not** a build / runtime failure thanks to the `SmatchetAreFaIconsLoaded()` graceful-degradation path wired in `SmatchetAiAssistantUi.cpp`.
-  Concrete next action: extend the release workflow (likely `.github/workflows/release.yml` and any `package-windows-*` job) to (1) `curl -L https://github.com/FortAwesome/Font-Awesome/raw/6.x/webfonts/fa-solid-900.ttf -o assets/fonts/fa-solid-900.ttf` before the CMake configure step, (2) let the existing POST_BUILD `copy_if_different` lay the TTF next to the exe, (3) make sure the packaging step picks the file up via the existing asset-bundling rule. Also add a configure-time `STATUS` message that reports whether the TTF was found vs. skipped, mirroring the README's contract. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-20
-
 - 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
   Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
@@ -93,21 +81,9 @@
   Last-reviewed: 2026-05-20
 
 
-- 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
-  Details: End-of-session cleanup found a stale `refs/locks/agentic-flow-cr-bundle-prod` lock owned by `handoff-implementer` on `fix/cr-handoff-bundle-prod`, even though that branch's PR (#271) had squash-merged hours earlier and the branch was deleted both remotely and locally. The `lock-slug: <slug>` auto-release token in the PR body is supposed to clear the lock on merge; either the PR body lacked the token, or the GitHub Action watching merge events doesn't fire on squash-merge specifically, or it errored silently. Manual recovery: `bash scripts/dev/lock-release.sh agentic-flow-cr-bundle-prod`. Cost: low per occurrence, but stale locks block sibling agents in subsequent sessions until somebody runs `locks-show.sh` and notices.
-  Concrete next action: (1) audit `scripts/dev/setup-locks-ruleset.sh` + the corresponding workflow to confirm it triggers on `pull_request.closed` with `merged=true` (covers squash, rebase, merge), not just `push to default branch`. (2) Verify the `handoff-implementer` (`agents/handoff-implementer.md`) and bundle-PR templates always include `lock-slug: <slug>` in the body. (3) Add a `bash scripts/dev/lock-staleness-sweep.sh` invocation to the standard end-of-session cleanup checklist (`agents/git-janitor.md`). Estimated cost ~45 min audit + doc tweak.
-  Status: open
-  Last-reviewed: 2026-05-18
-
 - 2026-05-18 · git-janitor · [tooling] · P3 — Worktree cross-checkout cleanup gap: `[gone]` branches stranded in sibling worktrees
   Details: After the whisper PR train squash-merged, `git branch -D <branch>` from the worktree that opened the PR failed for branches the active worktree didn't own — `git-janitor` correctly refused to reach into sibling worktrees to do checkout / pull / delete. End result: each operator has to manually visit each worktree at `git worktree list`, ff-pull develop, then delete the stale branch. Multi-worktree setups (this repo has 6 active) compound the friction.
   Concrete next action: add `scripts/dev/worktree-prune.sh` that iterates `git worktree list`, for each worktree checks if HEAD branch is `[gone]`, ff-pulls develop, then deletes the stale branch. Refuses to act when worktree has uncommitted work (mirrors git-janitor's discipline). Document in `docs/agent-rules/delegation.md` or `CONTRIBUTING.md` as the end-of-PR-train one-liner. ~45 min.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · test-author · [tooling] · P2 — `test-all.sh` baseline drift across worktrees: 8 fails on agent worktree vs 0 fails on main repo
-  Details: Phase B (PR #163) agent reported 168 pass / 8 fail on isolated-worktree dispatch. Same `bash scripts/dev/test-all.sh` on main develop reports 173/0. The 8 worktree-only failures are pre-existing infra (lint-hook-split needs `.claude/hooks/` symlinked into the worktree root; 4 ui-test scripts have batched-PATH issues that pass when run individually). Causes false "regression" alarms in every PR that ships from a worktree, eroding signal.
-  Concrete next action: either (a) `test-all.sh` auto-detects worktree context via `git rev-parse --git-common-dir` vs `git rev-parse --git-dir` and skips worktree-incompatible scripts with a CLEAR `SKIPPED (worktree)` line, or (b) `bash scripts/setup-harness.sh claude-code` extends to seed `.claude/hooks/` symlinks into newly-cut worktrees. Option (a) is simpler; option (b) is more thorough. ~2 h for either.
   Status: open
   Last-reviewed: 2026-05-18
 
@@ -115,24 +91,6 @@
   Supersedes: 2026-05-16 (dedup-merged in the 2026-05-18 sweep — earlier entry restated the same gap against PR #154 instead of PR #156; both pointed at `tests/ui/callstack_tooltip_hover.test.cpp` and the same `BucketE::TooltipContentMatches` proposal).
   Details: While writing `tests/ui/callstack_tooltip_hover.test.cpp` (PR #156 — regression gate for #147) a production-driven variant 4 had to be dropped. A generic `##Tooltip_NN` window probe cannot distinguish "my cell's tooltip" from concurrent host-process tooltips. Even with `WindowFocus` + `NoDocking` + `ImGuiCond_Always` position pinning, production's `IsItemHovered()` against the cell rect returned false in the spawned-child host because something else in the shared `ImGuiContext` claimed `g.HoveredWindow`. Workaround taken: faithful replica of the production callstack path with a TU-local `tooltipFiredThisFrame` flag (same idiom as `views_columns_reorder.test.cpp`), plus a `NoGroupWrap` regression-shape variant that proves the methodology is sensitive to the wrap's presence. Sanity-checked end-to-end: removing the wrap from the replica fails variants 1+2 deterministically.
   Concrete next action: add a `BucketE::TooltipContentMatches(ctx, sentinel)` helper to `tests/ui/` (or shared `tests/ui/_helpers/`) that walks a tooltip window's `DrawList`'s `CmdBuffer` for a text command containing `sentinel`. Use it to distinguish "my cell's tooltip" from concurrent tooltips by feeding a unique marker through `rawForTooltip`. Once available, retrofit `callstack_tooltip_hover.test.cpp` with a variant 4 that drives real `RenderClippedFieldText` and asserts content match — closing the production-drift gap the replica can't cover.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh:69` `tests/support/*.h` counts as a "test change"; gate is trivially dismissable
-  Details: A PR can add an empty `tests/support/foo.h` to dismiss the gate. The intent was per-test-file coverage parity.
-  Concrete next action: tighten to `tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/**/*.test.cpp` only. Surfaced by retrospective code-review sweep on PR #148.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage.sh:35` `--threshold "${2:-0}"; shift 2` triggers `unbound variable` under `set -euo pipefail` when `$2` missing
-  Details: `set -euo pipefail` is the file's default; the `shift 2` is unguarded.
-  Concrete next action: `shift $(( $# < 2 ? $# : 2 ))` or guard with `[[ $# -ge 2 ]] && shift 2 || shift 1`. Surfaced by retrospective code-review sweep on PR #148.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · code-review · [tooling] · P2 — `.github/workflows/coverage.yml:50` cache key hashes `CMakeLists.txt` but not `CMakePresets.json`
-  Details: `actions/cache@v4` key hashes `CMakeLists.txt` + `**/CMakeLists.txt`. Coverage-flag changes (which live in `CMakePresets.json`) won't bust the FetchContent cache → stale gcov-instrumented `_deps`.
-  Concrete next action: include `CMakePresets.json` in the cache key hash inputs. Surfaced by retrospective code-review sweep on PR #148.
   Status: open
   Last-reviewed: 2026-05-18
 

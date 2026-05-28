@@ -9,8 +9,20 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
+  Resolution: Slice 8 of `docs/design/tooling-process-backlog-sweep.md`. `scripts/dev/git-janitor.sh --post-merge <pr>` automates: clean-tree check, PR-merged verification via `gh pr view`, fetch+prune, ff-update develop, local branch delete (-D to handle squash-merge orphaning), dual-target build gate, concise report. Refuses on uncommitted work or non-MERGED PR.
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Merge-gates should explain GitHub `mergeStateStatus=BLOCKED`
   Resolution: Slice 2 of `docs/design/tooling-process-backlog-sweep.md`. `merge-gates.sh` now fetches `mergeStateStatus` from the GraphQL query and prints an INFO line on GATES_PASSED when GH reports anything other than CLEAN/UNSTABLE/UNKNOWN: "merge-gates pass; GitHub mergeStateStatus=<state> may be stale or branch-protection summary-only. REST squash-merge contract still applies."
+
+- 2026-05-20 · git-janitor · [process] · P2 — Pre-flight should cross-check `git worktree list` against `.git/worktrees/` to detect orphan on-disk dirs before pruning
+  Resolution: Slice 8. `agents/git-janitor.md` § Pre-flight cross-checks (Step 0) — added three pre-flight items: worktree-bookkeeping audit (porcelain-based gitdir inspection), detached-HEAD salvage-tag recipe, and lock-staleness sweep invocation. Runs before any destructive op.
+
+- 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
+  Resolution: Slice 8. `agents/git-janitor.md` § Pre-flight cross-checks (Step 0) now mandates `bash scripts/dev/lock-staleness-sweep.sh` before the final report — surfaces stale locks whose PR has already merged but the auto-release token didn't fire (squash-merge GH-Action edge case). The script itself ships.
+
+- 2026-05-17 · test-author · [tooling] · P2 — `test-all.sh` baseline drift across worktrees: 8 fails on agent worktree vs 0 fails on main repo
+  Resolution: Slice 8. `scripts/dev/test-all.sh` now detects worktree context via `git rev-parse --git-common-dir` vs `git rev-parse --git-dir` divergence; when running from a worktree, scripts matching the `WORKTREE_INCOMPATIBLE_RE` pattern (lint-hook-split, ui-test scripts) emit `SKIPPED (worktree)` instead of false-positive failures. Extend the regex as new worktree-incompatible scripts surface.
 
 - 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
   Resolution: Slice 5. `scripts/dev/p4-git-sync-check.sh` compares git-pending paths against `p4 opened` and reports both directions (git pending but not p4 opened; p4 opened but not git pending). Exit 0 = aligned, exit 1 = mismatch, exit 2 = p4 unreachable (informational for git-only sessions). `--quiet` flag for clean-on-success use.
@@ -68,6 +80,18 @@
 
 - 2026-05-25 · orchestrator · [process] · P2 — `light-release-unreal-default` plan item 10 (`main.cpp` → `StandaloneAppBootstrap`) deferred without a tracked follow-up slice
   Resolution: Follow-up slice in P4 task stream `light-release-unreal-default` — `InitAppAndPlugins` / `ParseStandaloneCli` / `BootEphemeral` / `ShutdownApplication` in `StandaloneAppBootstrap.{h,cpp}`; GUI render loop uses `bootCtx` + shared plugin init; `--ephemeral` early-outs via `BootEphemeral` (hidden window + forced MCP + `RunRenderLoop`). Process rule added at `docs/agent-rules/process-rules.md` § Deferred plan-file rows at ship boundary. Plan § Deviations updated on task stream. Light build verified (`ninja-publish-light-msvc`).
+
+- 2026-05-20 · orchestrator · [tooling] · P2 — Release workflow does not fetch `fa-solid-900.ttf` (Font Awesome 6 Solid)
+  Resolution: Slice 6 of `docs/design/tooling-process-backlog-sweep.md`. No release workflow exists yet; added pinned + sha256-verified `curl` fetch step to `.github/workflows/build-and-test.yml` before the configure step so all CI builds (and the bucket-C / bucket-E jobs that consume the uploaded exe) have icons available. Tag pinned at `6.7.2`; sha256 baked in env. When a release workflow is authored, it must duplicate this step before the configure step.
+
+- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh:69` `tests/support/*.h` counts as a "test change"; gate is trivially dismissable
+  Resolution: Slice 6. Tightened the test-surface case-pattern to `tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp` (dropped `tests/support/*.h`).
+
+- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage.sh:35` `--threshold "${2:-0}"; shift 2` triggers `unbound variable` under `set -euo pipefail` when `$2` missing
+  Resolution: Slice 6. Replaced unguarded `shift 2` with explicit validation: `--threshold` now requires a numeric argument (rejects missing / flag values / non-integers with exit 2).
+
+- 2026-05-17 · code-review · [tooling] · P2 — `.github/workflows/coverage.yml:50` cache key hashes `CMakeLists.txt` but not `CMakePresets.json`
+  Resolution: Slice 6. Added `CMakePresets.json` to the hashFiles inputs.
 
 - 2026-05-23 · debug-detective · [tooling] · P1 — No CI gate prevents BeginTooltip+MarkdownPreviewRender::Render blocks missing opts.wrapWidth
   Resolution: Added `scripts/dev/test-tooltip-wrapwidth.sh` (PR #430). Scans all `Source_Core/src/*.cpp` files; for every `BeginTooltip...EndTooltip` block containing `MarkdownPreviewRender::Render`, asserts `opts.wrapWidth` is also present in that block. Exits 1 if any violation found; auto-discovered by `test-all.sh`. The check catches the exact class of bug that caused ~1.5 h of mis-navigation in session 2026-05-23: `MarkdownPreviewRender::Render` ignores `PushTextWrapPos` and samples `GetContentRegionAvail().x`, which is near-zero in a fresh tooltip window, producing an ultra-narrow vertical strip unless `opts.wrapWidth` is explicitly set. Backtest against the pre-fix codebase confirmed `SmatchetOfflineQueueUi.cpp` would have been flagged — that violation was fixed in the same PR.
