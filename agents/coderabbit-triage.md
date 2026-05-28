@@ -182,7 +182,7 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 
 ## Watcher-invocation mode
 
-When invoked by `smatchet-merge-watcher` (per `docs/design/applied/smatchet-merge-watcher.md` Phase 3) the dispatch shape is:
+When invoked by `smatchet-merge-watcher` (per `docs/design/archive/smatchet-merge-watcher.md` Phase 3) the dispatch shape is:
 
 1. **Watcher** spawns `claude -p AUTO_ACT_PROMPT` (see `scripts/dev/merge-watcher.py:AUTO_ACT_PROMPT` for the literal text). Spawn is gated by `MERGE_WATCH_AUTO_ACT=true` + per-PR / per-head-sha budget; defaults are off to prevent runaway-loop risk.
 2. **Spawned session** invokes this agent (`coderabbit-triage`) first. The watcher passes only PR metadata via the prompt string (`pr`, `owner`, `repo`, `head_sha`, `budget`, `attempt` — see `merge-watcher.py:AUTO_ACT_PROMPT.format(...)`); the agent fetches the CR review body + inline review-thread comments itself via `gh api` (per § Process step 2 above). The agent then runs the 18-rule override table + validation pass, and emits per-finding handoff packets — VALID (with target subsystem named) + REJECT-INVARIANT / REJECT-AMBIGUOUS with rationale.

@@ -189,7 +189,7 @@ After B3a-c, `AppController_LuaBindings.cpp` shrinks to a thin stub (or disappea
 - `Source_Core/src/TicketSyncService.cpp` (consumer of friend → swaps to `ITicketSyncHost&`)
 - `Source_Core/include/OfflineQueueService.h` / `TicketSyncService.h` / `LuaAutomationHost.h` (replace `AppController&` ctor arg with interface)
 - `Source_Core/src/AppController_LuaBindings.cpp` — receives Phases 1B/1C/1D migration; not split directly
-- `docs/backlog/BACKLOG_PLANS.md` — add new entry indexing this plan + appendix to `docs/design/applied/` once shipped
+- `docs/backlog/BACKLOG_PLANS.md` — add new entry indexing this plan + appendix to `docs/design/archive/` once shipped
 - Stale references to remove during fix-up: `BACKLOG_CODE_REVIEW.md §1.7 / §7 item N` in `AppController.h` L92/98/102 + `OfflineQueueService.h` L4/L16 + `TicketSyncService.h` L5 + `LuaAutomationHost.h` L4 + `BuiltinCommands.cpp:332`
 
 ### Existing utilities to reuse (do not re-create)
@@ -214,7 +214,7 @@ Each slice is one PR. Ship low-risk Track A first to thin files; then Track B on
 6. **PR B1** — OfflineQueueService → `ICacheAccess` (smallest friend surface, lowest risk)
 7. **PR B2** — TicketSyncService → `ITicketSyncHost` (largest interface, but isolated)
 8. **PR B3a–d** — LuaAutomationHost Phase 1B / 1C / 1D / 2 (four PRs; coordinated with `AppController_LuaStubs.cpp`)
-9. **Fix-up PR** — remove dead `BACKLOG_CODE_REVIEW.md` references throughout, add `docs/design/applied/large-files-and-phase-2.md` index entry to `BACKLOG_PLANS.md`
+9. **Fix-up PR** — remove dead `BACKLOG_CODE_REVIEW.md` references throughout, add `docs/design/archive/large-files-and-phase-2.md` index entry to `BACKLOG_PLANS.md`
 
 Track A PRs are independent — can land in any order, in parallel, or by separate agents.
 
@@ -243,7 +243,7 @@ Final regression gate (end-of-effort): `git-janitor` runs the unified test runne
 
 ### Plan revision after implementation (AGENTS.md mandate)
 
-This plan file gets moved to `docs/design/applied/large-files-and-phase-2.md` after the last PR lands. Implementation log + Deviations from plan + Verification sections appended per the project rule. The stale `BACKLOG_CODE_REVIEW.md` references in source comments are replaced with a single pointer to the applied plan.
+This plan file gets moved to `docs/design/archive/large-files-and-phase-2.md` after the last PR lands. Implementation log + Deviations from plan + Verification sections appended per the project rule. The stale `BACKLOG_CODE_REVIEW.md` references in source comments are replaced with a single pointer to the applied plan.
 
 ---
 

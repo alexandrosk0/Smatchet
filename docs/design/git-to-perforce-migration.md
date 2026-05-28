@@ -57,7 +57,7 @@ Numbered list. Per-file rationale.
 ### Out of scope, explicitly **not** touched
 - Existing `.github/` workflows (11 of them) — git/GitHub remains the ship-line, all CI continues to fire on PRs.
 - Merge-gates poller (`scripts/dev/merge-gates.sh`) — operates on GitHub PRs, unchanged.
-- `smatchet-merge-watcher` host daemon (`docs/design/applied/smatchet-merge-watcher.md`) — out-of-band CI/CodeRabbit polling, GitHub-PR-shaped, unchanged.
+- `smatchet-merge-watcher` host daemon (`docs/design/archive/smatchet-merge-watcher.md`) — out-of-band CI/CodeRabbit polling, GitHub-PR-shaped, unchanged.
 - FetchContent vendoring — git stays, no need to vendor.
 - Existing `refs/locks/*` plan-locks — keep working; p4 counter is purely additive.
 - AGENTS.md merge-gates, plan-locks, force-push carve-out — all unchanged.
@@ -275,4 +275,4 @@ This doc's original framing (2026-05-15, commit `9d36aab`) was a full git → Pe
 
 The user clarified that the actual goal was an opt-in **local agentic-WIP layer** with git/GitHub preserved as the ship-line. This rewrite (2026-05-21) replaces the migration framing with the dual-VCS topology above. Original migration plan body preserved in git history at `9d36aab`; do not rebuild it from this doc.
 
-**Post-merge stale-ref cleanup (2026-05-21 evening)**: PR #361 ("agentic ripout doc cleanup") independently removed the `handoff-implementer` + `pr-iterator` agents, `docs/agentic/USAGE.md`, `ClaudeCodeLocalRunner`, the `SEED.json` / `RUN_RESULT.json` sentinel-envelope, and the `stub-claude` test harness. Phases 2, 3, 7 of this plan referenced those primitives by name; they have been re-anchored to (a) the orchestrator's pre-existing per-subagent worktree allocation (which survives), (b) the `smatchet-merge-watcher` host daemon (the replacement out-of-band poll path per `docs/design/applied/smatchet-merge-watcher.md`), and (c) a bats rig modelled on `tests/bats/merge_gates.bats` for Phase 3 coverage in place of the deleted stub harness.
+**Post-merge stale-ref cleanup (2026-05-21 evening)**: PR #361 ("agentic ripout doc cleanup") independently removed the `handoff-implementer` + `pr-iterator` agents, `docs/agentic/USAGE.md`, `ClaudeCodeLocalRunner`, the `SEED.json` / `RUN_RESULT.json` sentinel-envelope, and the `stub-claude` test harness. Phases 2, 3, 7 of this plan referenced those primitives by name; they have been re-anchored to (a) the orchestrator's pre-existing per-subagent worktree allocation (which survives), (b) the `smatchet-merge-watcher` host daemon (the replacement out-of-band poll path per `docs/design/archive/smatchet-merge-watcher.md`), and (c) a bats rig modelled on `tests/bats/merge_gates.bats` for Phase 3 coverage in place of the deleted stub harness.

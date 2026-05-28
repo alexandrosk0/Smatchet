@@ -157,7 +157,7 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 | build, cmake, preset, link, packaging, lld, LTO | `build-doctor` |
 | automate testing, manual verification, headless test | `test-author` |
 | end of session, merge open PRs, tidy up, post-merge cleanup | `git-janitor` |
-| coderabbit, code rabbit, rabbit feedback, PR bot comments, triage PR feedback, address review comments, watcher CR-blocked | `coderabbit-triage` (also invoked by `smatchet-merge-watcher` on CR `COMMENTED + N>0` per `docs/design/applied/smatchet-merge-watcher.md` Phase 3) |
+| coderabbit, code rabbit, rabbit feedback, PR bot comments, triage PR feedback, address review comments, watcher CR-blocked | `coderabbit-triage` (also invoked by `smatchet-merge-watcher` on CR `COMMENTED + N>0` per `docs/design/archive/smatchet-merge-watcher.md` Phase 3) |
 | stress-test plan, grill, interrogate | `grill-with-docs` (skill, not agent) |
 | test, ctest, doctest, unit-test, SmatchetTests | `test-rig` |
 

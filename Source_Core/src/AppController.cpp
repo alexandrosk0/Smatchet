@@ -363,7 +363,7 @@ AppController::~AppController() {
     // or read `this` via __smatchet_app must be joined BEFORE member destruction begins. This
     // matches the contract described in MainThreadDispatcher.h and AppController_LuaBindings.cpp.
 
-    // Phase 4b of docs/design/applied/smatchet-merge-watcher.md — stop the merge-watch
+    // Phase 4b of docs/design/archive/smatchet-merge-watcher.md — stop the merge-watch
     // HTTP server FIRST. Its listen thread queues toast-append lambdas via
     // mainThreadDispatcher; the join here guarantees no late post races
     // BeginShutdown() below.
@@ -1254,7 +1254,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     const std::string activeTrackerType = Backend ? Backend->Connectivity().GetTrackerType() : "Unknown";
 
-    // PR 5 of docs/design/applied/remove-global-project-key.md: one-shot legacy-project sweeps.
+    // PR 5 of docs/design/archive/remove-global-project-key.md: one-shot legacy-project sweeps.
     // Drain legacy global project state into per-entity carriers (offline-queue payloads,
     // Plane view query JSON). Each sweep is guarded by its own `cache_meta` flag so it runs
     // exactly once per database file; subsequent launches are no-ops.
@@ -1406,7 +1406,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     InitLua();
 
-    // Phase 4b of docs/design/applied/smatchet-merge-watcher.md — start the localhost
+    // Phase 4b of docs/design/archive/smatchet-merge-watcher.md — start the localhost
     // notify endpoint AFTER the main-thread dispatcher is initialised (it's a
     // member initialiser, ready since the AppController ctor) and BEFORE Lua
     // setup since the endpoint is independent of plugin state. Best-effort —
@@ -1440,7 +1440,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     // Unified Command System — register the catalog last so handlers can capture
     // references to AppController state that's now fully wired (tracker backend,
-    // Lua host, offline queue, etc.). See docs/design/applied/command-system-plan.md.
+    // Lua host, offline queue, etc.). See docs/design/archive/command-system-plan.md.
     try {
         commandRegistry_ = std::make_unique<smatchet::cmd::CommandRegistry>();
         commandRegistry_->LoadRecents();

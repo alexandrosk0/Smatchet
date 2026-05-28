@@ -70,7 +70,7 @@ Improve runtime feedback by printing the exact executable path and last-write ti
 ## Out of scope (flagged, not designed)
 
 - Full CI migration away from any historical MSYS2 jobs. That needs a separate CI plan if still present in workflows.
-- Rewriting old `docs/design/applied/*` implementation logs that truthfully record past MSYS2 builds.
+- Rewriting old `docs/design/archive/*` implementation logs that truthfully record past MSYS2 builds.
 - Replacing PowerShell wrappers with the proposed future bash-only build script from `docs/design/kill-powershell-minimize-toolchain.md`.
 - Adding a full C++ lint rule for `ghc::filesystem::directory_iterator` range-for. This is worthwhile, but should be a separate code-quality plan because it touches source-pattern policy rather than build onboarding.
 

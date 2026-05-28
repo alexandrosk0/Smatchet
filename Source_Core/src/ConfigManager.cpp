@@ -184,7 +184,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     nlohmann::json j = LoadMergedConfigJson();
     j["domain"] = config.Domain;
     j["email"] = config.Email;
-    // PR 5 of docs/design/applied/remove-global-project-key.md: stop persisting the legacy global
+    // PR 5 of docs/design/archive/remove-global-project-key.md: stop persisting the legacy global
     // project scope. The fields are still on `TrackerConfig` until PR 6 deletes them, but the
     // on-disk JSON no longer round-trips them — older builds reading the new config will see
     // them missing and default to empty, matching the new code path. Erase explicitly so any

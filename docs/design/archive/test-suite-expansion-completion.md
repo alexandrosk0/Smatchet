@@ -1,6 +1,6 @@
 # Test suite expansion — completion plan (Phases 4-9 + carry-overs)
 
-> Continuation of [`docs/design/applied/test-suite-expansion.md`](applied/test-suite-expansion.md). Phases 1-3 shipped 2026-05-16 ([#103](https://github.com/alexandrosk0/Smatchet/pull/103), [#106](https://github.com/alexandrosk0/Smatchet/pull/106), [#107](https://github.com/alexandrosk0/Smatchet/pull/107)). This plan sequences the remaining work end-to-end with locked decisions, parallelisation rules, and per-slice agent packets.
+> Continuation of [`docs/design/archive/test-suite-expansion.md`](applied/test-suite-expansion.md). Phases 1-3 shipped 2026-05-16 ([#103](https://github.com/alexandrosk0/Smatchet/pull/103), [#106](https://github.com/alexandrosk0/Smatchet/pull/106), [#107](https://github.com/alexandrosk0/Smatchet/pull/107)). This plan sequences the remaining work end-to-end with locked decisions, parallelisation rules, and per-slice agent packets.
 
 ## Locked decisions (2026-05-16 user review)
 
@@ -76,7 +76,7 @@ Every dispatched packet must include:
 3. **Test-rig `<Unit>Parse.{h,cpp}` TU-split pre-authorisation** for any unit with anon-namespace pure helpers (per AGENTS.md applied 2026-05-16 rule).
 4. **Plan-time production-file existence check** (5 s Glob) before finalising the packet (per AGENTS.md applied 2026-05-16 rule).
 5. **Output budget** — `Report ≤ 200 words, table form, no prose paragraphs`.
-6. **Plan revision contract** — append to `docs/design/applied/test-suite-expansion.md` § Implementation log + § Deviations + § Verification in the same commit per AGENTS.md § Plan revision after implementation.
+6. **Plan revision contract** — append to `docs/design/archive/test-suite-expansion.md` § Implementation log + § Deviations + § Verification in the same commit per AGENTS.md § Plan revision after implementation.
 7. **Mutation-sanity recipe** — one production-side mutation per high-risk case, demonstrably fails the new test, reverted before commit.
 
 ## Per-slice scoping
@@ -189,13 +189,13 @@ After PR D ships:
 
 ## Plan revision contract
 
-Per AGENTS.md § Plan revision after implementation, every PR appends three sections to `docs/design/applied/test-suite-expansion.md`:
+Per AGENTS.md § Plan revision after implementation, every PR appends three sections to `docs/design/archive/test-suite-expansion.md`:
 
 - `## Implementation log` — `<sha> · <one-line summary>` per PR.
 - `## Deviations from plan` — what changed vs this plan + one-line rationale.
 - `## Verification` — `ctest` result + mutation-sanity outcomes.
 
-When all carry-overs + Phases 4-7 + Phase 9 ship, move **this** file to `docs/design/applied/test-suite-expansion-completion.md` and add a final `## Outcome` table covering all 9 PR batches.
+When all carry-overs + Phases 4-7 + Phase 9 ship, move **this** file to `docs/design/archive/test-suite-expansion-completion.md` and add a final `## Outcome` table covering all 9 PR batches.
 
 ## End-state targets
 
@@ -208,7 +208,7 @@ Unchanged from parent plan, minus Phase 8 (deferred):
 
 ## Verification (this plan)
 
-This is a planning document — no code shipped here. Verification of the executed PRs lives in the per-PR `## Verification` appendices on the parent plan (`docs/design/applied/test-suite-expansion.md`) and on this file's eventual move to `applied/`.
+This is a planning document — no code shipped here. Verification of the executed PRs lives in the per-PR `## Verification` appendices on the parent plan (`docs/design/archive/test-suite-expansion.md`) and on this file's eventual move to `applied/`.
 
 ## Implementation log
 
@@ -428,4 +428,4 @@ Out-of-band PR shipped during the run (not part of the original plan, surfaced b
   - Trivial-visual-only change envelope: theme/locale literal-only edits skip the full regression loop, ship after a single Standalone build.
   - TU-split pre-authorisation pattern: orchestrator delegation packets for `test-rig` carry explicit allowed-production-file lists for the `<Unit>Parse.{h,cpp}` lift class (Phase 1 `IssueCreatePipelineHelpers` set the recipe; carried forward through Wave A1/A2 + Phase 5 preflight + Phase 6 unblocker).
 
-**Plan status**: closed. Moved to `docs/design/applied/test-suite-expansion-completion.md` via the same chore PR that flipped Phase-9's plan-lock to shipped. Subsequent test-coverage work is per-slice (e.g. the threshold flip, the DX12 readback, the bucket-E ImGui Test Engine wiring) and originates from individual backlog entries rather than this multi-phase plan.
+**Plan status**: closed. Moved to `docs/design/archive/test-suite-expansion-completion.md` via the same chore PR that flipped Phase-9's plan-lock to shipped. Subsequent test-coverage work is per-slice (e.g. the threshold flip, the DX12 readback, the bucket-E ImGui Test Engine wiring) and originates from individual backlog entries rather than this multi-phase plan.

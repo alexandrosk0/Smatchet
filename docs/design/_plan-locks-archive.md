@@ -71,14 +71,14 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/h12-l16-m13-bundle`
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
-- **Originating plan**: [`docs/design/applied/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § Open / backlog — H12 + L16 + M13
+- **Originating plan**: [`docs/design/archive/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § Open / backlog — H12 + L16 + M13
 - **Claimed write set**:
   - `Source_Core/src/SmatchetBulkTicketsUi.cpp` (H12 — Load file + Save to file buttons)
   - `Source_Core/src/SmatchetFieldIconRender.cpp` (L16 — URL-disk-cache-hit branch + file-path branch)
   - `Source_Core/src/TicketFieldEditor.cpp` (M13 — OpenLongTextEditor threshold-gated worker dispatch)
   - `Source_Core/include/SmatchetUiSession.h` (transient in-flight state for H12 bulk load/save)
   - `docs/design/_plan-locks.md` (this entry)
-  - `docs/design/applied/pillar-1-2-audit-2026-05-17.md` (Shipped + Watch list section)
+  - `docs/design/archive/pillar-1-2-audit-2026-05-17.md` (Shipped + Watch list section)
 - **Read-only adjacency**: `Source_Core/src/SmatchetGridFieldEditPipeline.cpp` (PR #186 pattern reference), `Source_Core/include/MainThreadDispatcher.h`, `Source_Core/include/AppController.h`
 - **Started**: 2026-05-17
 - **Last update**: 2026-05-17 — merged via PR [#196](https://github.com/alexandrosk0/Smatchet/pull/196) at sha `1952e8b`. Pure-helper `TicketFieldEditorLongTextPure` TU added in follow-up commit `d7da177` to satisfy the test-delta gate.
@@ -88,7 +88,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/configmanager-save-coalesce` (deleted)
 - **Owner agent**: `claude` (orchestrator-dispatched)
-- **Originating plan**: [`docs/design/applied/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
+- **Originating plan**: [`docs/design/archive/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
 - **Claimed write set**:
   - `Source_Core/include/SmatchetUiSession.h` (MOD — add `prefsDirty` + `prefsSaveDueAt` + `MarkPrefsDirty` helper)
   - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — 31 sites replaced with `MarkPrefsDirty(d)`; 3 AI Assistant tab sites preserved at lines 953/1024/1048)
@@ -104,7 +104,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/pillar-2-top5-fixes`
 - **Owner agent**: `claude` (orchestrator-dispatched)
-- **Originating plan**: [`docs/design/applied/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § Pillar 2 — CRITICAL (findings 1-9)
+- **Originating plan**: [`docs/design/archive/pillar-1-2-audit-2026-05-17.md`](applied/pillar-1-2-audit-2026-05-17.md) § Pillar 2 — CRITICAL (findings 1-9)
 - **Claimed write set**:
   - `Source_Core/src/SmatchetFieldIconRender.cpp` (finding #1 — icon fetch worker dispatch + loading sentinel)
   - `Source_Core/src/SmatchetAttachmentPreviewUi.cpp` (finding #2 — attachment download worker dispatch)
@@ -189,7 +189,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `fix/ai-feature-p0-p1-hotfix` (deleted)
 - **Owner agent**: `orchestrator`
-- **Originating plan**: orchestrator-direct (retrospective review of [`docs/design/applied/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) by `code-review` + `security-review` after merge of Phase E; 4 CRITICAL + 8 HIGH findings)
+- **Originating plan**: orchestrator-direct (retrospective review of [`docs/design/archive/ai-assistant-side-panel.md`](./applied/ai-assistant-side-panel.md) by `code-review` + `security-review` after merge of Phase E; 4 CRITICAL + 8 HIGH findings)
 - **Claimed write set**:
   - `Source_Core/src/AnthropicClient.cpp` (MOD — redact error body)
   - `Source_Core/src/OllamaClient.cpp` (MOD — redact error body)
@@ -332,13 +332,13 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/lua-host-friend-drop` (deleted)
 - **Owner agent**: `lua-binder`
-- **Originating plan**: [`docs/design/applied/lua-host-friend-drop.md`](./applied/lua-host-friend-drop.md)
+- **Originating plan**: [`docs/design/archive/lua-host-friend-drop.md`](./applied/lua-host-friend-drop.md)
 - **Claimed write set**:
   - `Source_Core/include/AppController.h` (drop `friend class LuaAutomationHost;` + surrounding comment block at lines 105-109; drop `class LuaAutomationHost;` forward-decl if no longer needed)
   - `Source_Core/include/LuaAutomationHost.h` (default ctor; remove `AppController& app_;` field + forward-decl; rewrite header doc-comment)
   - `Source_Core/src/LuaAutomationHost.cpp` (drop `#include "AppController.h"`; simplify ctor body)
   - `Source_Core/src/AppController.cpp` (line 1062 — `make_unique<LuaAutomationHost>()` with no `*this` arg)
-  - `docs/design/applied/large-files-and-phase-2.md` (B1/B2 shipped via PR #127 — `Deps` suffix; B3 superseded by PR #144 + this PR; append `## Implementation log` + `## Deviations from plan` + `## Verification`)
+  - `docs/design/archive/large-files-and-phase-2.md` (B1/B2 shipped via PR #127 — `Deps` suffix; B3 superseded by PR #144 + this PR; append `## Implementation log` + `## Deviations from plan` + `## Verification`)
   - `docs/design/lua-host-friend-drop.md` (append `## Implementation log` + `## Deviations from plan` + `## Verification`)
   - `docs/design/_plan-locks.md` (this entry + Track B status flip)
 - **Read-only adjacency**: `Source_Core/src/AppController_LuaBindings.cpp`, `Source_Core/src/AppController_LuaBindingsCore.cpp` (verification no friend-channel breakage)
@@ -434,7 +434,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-9-coverage-gates` (deleted)
 - **Owner agent**: `build-doctor`
-- **Originating plan**: [`docs/design/applied/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 9
+- **Originating plan**: [`docs/design/archive/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Phase 9
 - **Claimed write set**:
   - `scripts/dev/coverage.sh` (NEW — Windows-OpenCppCoverage-first wrapper; inline POSIX `lcov+gcov` fallback documented in header)
   - `scripts/dev/coverage-delta-gate.sh` (NEW — per-PR `Source_Core/` change without test delta → exit 1)
@@ -446,7 +446,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close TBD placeholder on Phase-7 entry; optionally file follow-up entries for OpenCppCoverage CI install + threshold-flip + PR template addition)
 - **Read-only adjacency**: `.github/workflows/build-and-test.yml` (pattern reference only), `cmake/Sanitizers.cmake` (helper convention reference)
 - **Started**: 2026-05-16
-- **Last update**: 2026-05-16 — merged via PR #148 at sha `039d286`. Final phase of `test-suite-expansion-completion` plan; plan doc moved to `docs/design/applied/` with full Outcome table in the same chore PR.
+- **Last update**: 2026-05-16 — merged via PR #148 at sha `039d286`. Final phase of `test-suite-expansion-completion` plan; plan doc moved to `docs/design/archive/` with full Outcome table in the same chore PR.
 - **Cleared by**: PR `#148` merged at `039d286`.
 
 ### test-suite-expansion-completion · Phase-7 · screenshot-diff · status: shipped (PR #146 merged at d857310)
@@ -601,7 +601,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 - **Originating plan**: [`docs/design/test-suite-expansion-completion.md`](./applied/test-suite-expansion-completion.md) § Carry-over A
 - **Claimed write set**:
   - `tests/Source_Core/CallstackParser.test.cpp`
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `code-review+security-review · [test]` entry)
 - **Read-only adjacency**: `Source_Core/src/CallstackParser.cpp`, `Source_Core/include/CallstackParser.h`
 - **Started**: 2026-05-16
@@ -619,7 +619,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/src/P4Blame.cpp` (call-site rewire of the four lifted helpers only — no semantic change)
   - `tests/Source_Core/P4BlameParse.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `test-rig · [infra] — Phase 2 P4BlameParse deferred`)
 - **Read-only adjacency**: `Source_Core/include/P4Blame.h`
 - **Started**: 2026-05-16
@@ -637,7 +637,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/src/TrackerLabelsEditor.cpp` (call-site rewire of pure helpers only — no semantic change)
   - `tests/Source_Core/TrackerLabelsPure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerLabelsEditor.h`
@@ -656,7 +656,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/src/TrackerDateTimeFieldEditor.cpp` (call-site rewire only)
   - `tests/Source_Core/TrackerDateTimePure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerDateTimeFieldEditor.h`
@@ -675,7 +675,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/src/TrackerFieldPayload.cpp` (call-site rewire only — `JiraClient.h` stays in production TU)
   - `tests/Source_Core/TrackerFieldPayloadPure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerFieldPayload.h`, `Source_Core/include/JiraClient.h`
@@ -721,7 +721,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/src/TrackerFieldCatalog.cpp` (call-site rewire only — `JiraClient.h` stays in production TU)
   - `tests/Source_Core/TrackerFieldCatalogPure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerFieldCatalog.h`, `Source_Core/include/JiraClient.h`
@@ -733,7 +733,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-1-tracker-pure-logic`
 - **Owner agent**: orchestrator (autonomous multi-phase mode per the plan's § Execution contract)
-- **Originating plan**: [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Phase 1
+- **Originating plan**: [`docs/design/archive/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Phase 1
 - **Claimed write set**:
   - `Source_Core/include/IssueCreatePipelineHelpers.h` (NEW)
   - `Source_Core/src/IssueCreatePipeline.cpp`
@@ -746,7 +746,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Source_Core/TrackerFieldValueParser.extended.test.cpp` (NEW)
   - `tests/Source_Core/TrackerFieldValueUtils.test.cpp` (NEW)
   - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
-  - `docs/design/applied/test-suite-expansion.md` (impl-log appendix)
+  - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
 - **Read-only adjacency**: `Source_Core/include/IssueDraft.h`, `Source_Core/include/TrackerFieldValueParser.h`, `Source_Core/include/IssueCreatePipeline.h`
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR [#103](https://github.com/alexandrosk0/Smatchet/pull/103) at sha `fdac8ff`.
@@ -754,7 +754,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded by `test-suite-expansion-completion.md` per-phase claims)
 
-- **Original Owner**: orchestrator (autonomous; see [`docs/design/applied/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Execution contract).
+- **Original Owner**: orchestrator (autonomous; see [`docs/design/archive/test-suite-expansion.md`](./applied/test-suite-expansion.md) § Execution contract).
 - **Superseded by**: Phase-by-phase claims under `test-suite-expansion-completion.md`. Phases 1 + 4 shipped; Phase 5 abandoned then unblocked by the `mcp-jsonrpc-pure-tu-split` slice above. The umbrella claim was never honoured across the 8 phases that actually shipped against develop.
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — converted `claimed` → `abandoned` by the Phase-5 pre-flight unblocker so the lock file matches reality.
@@ -764,7 +764,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: TBD per slice (B1: `claude/offline-queue-icache-access`, B2: TBD, B3: TBD)
 - **Owner agent**: `offline-sync` (B1, B2), `lua-binder` (B3)
-- **Originating plan**: [`docs/design/applied/large-files-and-phase-2.md`](./applied/large-files-and-phase-2.md) § Track B
+- **Originating plan**: [`docs/design/archive/large-files-and-phase-2.md`](./applied/large-files-and-phase-2.md) § Track B
 - **Reason on-hold (historical)**: overlapping write set with `test-suite-expansion` phases 2-9 (`TicketSyncService.cpp`, `ConfigManager.cpp`, `AppController.h`, `tests/CMakeLists.txt`). Resuming Track B before those test phases landed would have forced a multi-way rebase that defeated both efforts. Resume gate cleared by PR #148 + #149.
 - **Claimed write set on resume** (preview — re-asserted at resume time):
   - B1: shipped as `IOfflineQueueDeps` (PR #127) — `Deps` suffix naming, not `Access`/`Host`. Behaviour equivalent.

@@ -2,7 +2,7 @@
 #define SMATCHET_COMMANDS_COMMAND_PALETTE_UI_H
 
 // Ctrl+Shift+P command palette modal.
-// See docs/design/applied/command-system-plan.md §"Command Palette".
+// See docs/design/archive/command-system-plan.md §"Command Palette".
 //
 // This header includes only imgui.h — no GLFW / OpenGL / Win32 — so it
 // compiles into both SmatchetStandalone and SmatchetCore_DX12 (Unreal).

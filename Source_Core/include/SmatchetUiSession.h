@@ -550,7 +550,7 @@ struct UiDrawSession {
     bool offlineQueuePanelStatusHasClearDeadline = false;
     std::chrono::steady_clock::time_point offlineQueuePanelStatusClearAt{};
 
-    // ----- Scenario subsystem (see docs/design/applied/command-system-plan.md §Scenario) -----
+    // ----- Scenario subsystem (see docs/design/archive/command-system-plan.md §Scenario) -----
     /// When true the active scenario drives the scroll position this frame.
     /// Written by ScenarioRunner::Tick; read by SmatchetActiveProjectGridUi.
     bool scenarioScrollActive = false;
@@ -590,7 +590,7 @@ struct UiDrawSession {
     /// flag `prefsDirty = true` (via MarkPrefsDirty) on every mutation; the
     /// debounced fire in SmatchetUI::Draw drains the dirty flag and persists
     /// once per ~100 ms window. Eliminates the per-frame Save cascade documented
-    /// in docs/design/applied/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
+    /// in docs/design/archive/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
     /// AI Assistant tab keeps its explicit Save flow (PR #181 / #184) and does
     /// NOT route through this flag.
     bool prefsDirty = false;

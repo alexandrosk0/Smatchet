@@ -1,10 +1,10 @@
 # Plan — wire ImGui Test Engine (bucket E) + fix Views→Jira Columns drag-reorder
 
-> **Plan-location note**: Smatchet's `AGENTS.md` § Plan location requires plans to live at `docs/design/<slug>.md`. This file is the harness-mandated draft location. On the first commit of Phase 1, this content will be promoted to `docs/design/imgui-test-engine-bucket-e-execution.md` (or merged into the existing `docs/design/applied/imgui-test-engine-bucket-e.md` § Execution log, depending on the implementer's preference at commit time). The `wip(plan):` commit lands the doc into the repo immediately per the Plan-doc safety rule before any code-generating commit.
+> **Plan-location note**: Smatchet's `AGENTS.md` § Plan location requires plans to live at `docs/design/<slug>.md`. This file is the harness-mandated draft location. On the first commit of Phase 1, this content will be promoted to `docs/design/imgui-test-engine-bucket-e-execution.md` (or merged into the existing `docs/design/archive/imgui-test-engine-bucket-e.md` § Execution log, depending on the implementer's preference at commit time). The `wip(plan):` commit lands the doc into the repo immediately per the Plan-doc safety rule before any code-generating commit.
 
 ## Context
 
-User reports: **Views → Jira window → Columns tab → drag-and-drop to reorder columns does not work consistently.** Symptom is intermittent flakiness, which is exactly what bucket E (ImGui Test Engine) was scoped for in `docs/design/applied/imgui-test-engine-bucket-e.md` — manual repro can't characterise inconsistency, but a deterministic frame-level input-injection test run 50× will.
+User reports: **Views → Jira window → Columns tab → drag-and-drop to reorder columns does not work consistently.** Symptom is intermittent flakiness, which is exactly what bucket E (ImGui Test Engine) was scoped for in `docs/design/archive/imgui-test-engine-bucket-e.md` — manual repro can't characterise inconsistency, but a deterministic frame-level input-injection test run 50× will.
 
 The bug fits trigger condition row 1 of the bucket-E plan ("a verification step needs real ImGui input events — drag, type-into-edit-buffer, click-on-menu-item, popup-flow"). Current buckets A–D can't drive it: no scenario calls `BeginDragDropSource`/`EndDragDropTarget` directly, screenshot-diff only catches visual regression after the fact, and CLI `view.set_column_order` bypasses the drag handler entirely (which is the path actually broken).
 
@@ -141,7 +141,7 @@ Verify: mirror drift check exit 0; `agents/test-author.md` and `.claude/agents/t
 Files:
 
 - `backlog/AGENT_SELF_IMPROVEMENT.md` — `2026-05-13 · test-author · [new-agent / tooling]` flipped from `open` to `applied (<commit-3 sha>)` with full implementation log.
-- `docs/design/applied/imgui-test-engine-bucket-e.md` — append `## Implementation log` with the 5 commit shas, `## Deviations from plan` (PostSwap not Tick, in-process not separate exe, DX12 stub added, no upstream CMakeLists workaround), `## Verification` with exact CLI commands + observed output.
+- `docs/design/archive/imgui-test-engine-bucket-e.md` — append `## Implementation log` with the 5 commit shas, `## Deviations from plan` (PostSwap not Tick, in-process not separate exe, DX12 stub added, no upstream CMakeLists workaround), `## Verification` with exact CLI commands + observed output.
 - `docs/backlog/BACKLOG_PLANS.md` — bucket-E row updated to applied.
 
 ## Phase 2 — Diagnose the column-reorder bug (via the now-running test)
@@ -193,7 +193,7 @@ If hot lead refuted, alternative hypotheses:
 | `scripts/dev/test-ui-views-columns-reorder.sh` (new) | 1.3 | Bash wrapper, auto-enrols via `test-*.sh` glob |
 | `agents/test-author.md` (+ mirror) | 1.4 | § Bucket E status flip |
 | `backlog/AGENT_SELF_IMPROVEMENT.md` | 1.5 | Entry flipped to `applied` |
-| `docs/design/applied/imgui-test-engine-bucket-e.md` | 1.5 | Implementation log + Deviations + Verification appended |
+| `docs/design/archive/imgui-test-engine-bucket-e.md` | 1.5 | Implementation log + Deviations + Verification appended |
 | `docs/backlog/BACKLOG_PLANS.md` | 1.5 | Bucket-E row updated |
 | `Source_Core/src/SmatchetViewsDashboardUi.cpp` | 3 | Bug fix at Columns + Sort tab call sites |
 | `Source_Core/src/SmatchetViewsDashboardUi_widgets.cpp` | 3 | Optional fix at `HandleRowReorder` (only if call-site fix isn't sufficient) |
@@ -270,7 +270,7 @@ cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore
 
 ## Promotion at commit-1 time
 
-The implementer's first `wip(plan):` commit copies this file's content into `docs/design/imgui-test-engine-bucket-e-execution.md` (or merges into the existing `docs/design/applied/imgui-test-engine-bucket-e.md` as a new § Execution log section — implementer's preference) so the plan survives any branch switch / reset / GitHub Desktop interaction per Smatchet's Plan-doc safety rule. `~/.claude/plans/linear-wibbling-lighthouse.md` is the harness scratch only.
+The implementer's first `wip(plan):` commit copies this file's content into `docs/design/imgui-test-engine-bucket-e-execution.md` (or merges into the existing `docs/design/archive/imgui-test-engine-bucket-e.md` as a new § Execution log section — implementer's preference) so the plan survives any branch switch / reset / GitHub Desktop interaction per Smatchet's Plan-doc safety rule. `~/.claude/plans/linear-wibbling-lighthouse.md` is the harness scratch only.
 
 ## Implementation log
 

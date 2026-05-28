@@ -22,7 +22,7 @@ The underlying tooling already exists and is production-grade — scenario runne
 **Pillar 2 ready-to-use:**
 - `Source_Core/include/MainThreadDispatcher.h` — 4096-task bounded queue; `Drain()` runs once per frame at `SmatchetUI::Draw` head; `BeginShutdown()` for teardown safety.
 - AGENTS.md § UX Pillars: Pillar 2 enforceable invariants (code-review CRITICAL flag for new `cpr::` / `SQLite::` / `p4 …` / `std::ifstream` / `std::mutex::lock` reachable from `ImGui::*`).
-- Audit precedent: `docs/design/applied/pillar-1-2-audit-2026-05-17.md` — 9 CRITICAL + 3 HIGH + 3 MEDIUM sites; closed by PR #191.
+- Audit precedent: `docs/design/archive/pillar-1-2-audit-2026-05-17.md` — 9 CRITICAL + 3 HIGH + 3 MEDIUM sites; closed by PR #191.
 - `agents/code-review.md` Pillar 2 checklist (manual diff read today).
 
 **Harness adapter pattern (verified):**
@@ -41,7 +41,7 @@ The underlying tooling already exists and is production-grade — scenario runne
 - G2.4 No estimated-latency comment lint. → Slice 2.
 - G2.5 No call-graph reachability check (text-search heuristic, not full AST). → Slice 2.
 
-**Bucket-E (ImGui Test Engine) is wired** — per `docs/design/applied/imgui-test-engine-bucket-e-execution.md` (landed 2026-05-19). First test at `tests/ui/views_columns_reorder.test.cpp`; preset `ninja-ui-test-msvc`; tests registered via `IM_REGISTER_TEST`; bash drivers at `scripts/dev/test-ui-<area>.sh`. Slice 5 of this plan uses bucket-E directly rather than the earlier scenario-polling workaround.
+**Bucket-E (ImGui Test Engine) is wired** — per `docs/design/archive/imgui-test-engine-bucket-e-execution.md` (landed 2026-05-19). First test at `tests/ui/views_columns_reorder.test.cpp`; preset `ninja-ui-test-msvc`; tests registered via `IM_REGISTER_TEST`; bash drivers at `scripts/dev/test-ui-<area>.sh`. Slice 5 of this plan uses bucket-E directly rather than the earlier scenario-polling workaround.
 
 **Gaps deferred** (out of scope):
 - G1.3 Scenario authoring friction / Lua DSL — tracked as XL; defer to follow-up plan.
@@ -110,7 +110,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 | C6 | Full-suite scheduled workflow | P1 | S | `.github/workflows/perf-full.yml` | C5 driver scripts; `gh issue create` / `gh pr create` |
 | C7 | `perf-gatekeeper` agent + skill alias | P1 | M | `agents/perf-gatekeeper.md` (canonical, agents.md spec); `agents/_shared/skills/perf-gatekeeper/SKILL.md` (Claude-Code skill alias — generated path; the canonical agents/ file is what Codex / Cursor read) | `perf-measure` measurement loop; `perf-detective` heuristics for diff → affected-scenario classification |
 | C8 | Subsystem marker inventory | P2 | S | `scripts/dev/perf-marker-inventory.sh`, `docs/perf/MARKER_INVENTORY.md` | text-search only |
-| C9 | Visible-cue assertion harness (bucket-E) | P2 | L | `tests/ui/sync_stall_visible_cue.test.cpp` (`IM_REGISTER_TEST`), `scripts/dev/test-ui-sync-stall-visible-cue.sh`, `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`-gated stall hook in one chosen sync path (icon fetch is the simplest target); `ninja-ui-test-msvc` preset gains `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` | bucket-E ImGui Test Engine rig (see `docs/design/applied/imgui-test-engine-bucket-e-execution.md`); pattern from `tests/ui/views_columns_reorder.test.cpp` |
+| C9 | Visible-cue assertion harness (bucket-E) | P2 | L | `tests/ui/sync_stall_visible_cue.test.cpp` (`IM_REGISTER_TEST`), `scripts/dev/test-ui-sync-stall-visible-cue.sh`, `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`-gated stall hook in one chosen sync path (icon fetch is the simplest target); `ninja-ui-test-msvc` preset gains `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` | bucket-E ImGui Test Engine rig (see `docs/design/archive/imgui-test-engine-bucket-e-execution.md`); pattern from `tests/ui/views_columns_reorder.test.cpp` |
 | C10 | Sync-call latency comment lint | P2 | S | extends C2's scanner — same script | shared with Pillar 2 lint pass |
 | C11 | Process mandate update | P0 | S | `AGENTS.md` (§ UX Pillars cross-link to the registry + workflows), `docs/PERF_WORKFLOW.md` (add § "Step 7: gate-check vs baseline"); close + archive existing § Perf process/P2 backlog entry from 2026-05-20 in `docs/backlog/agent-self-improvement/process.md` → `applied.md` | existing backlog format |
 | C12 | Pillar 2 site annotation migration | P0 | L | bulk-add `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` annotations to existing safe sync-I/O sites; scope ~25-35 lines across ~10-15 files (audit doc as ground truth + fresh scanner output as the working list) | the audit doc lists the confirmed-safe sites |
@@ -146,7 +146,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
    - `docs/harness/cursor/hooks-equivalent.md` — same for Cursor.
    - All three thin paths funnel into the SAME canonical script. `scripts/setup-harness.sh` copies the Claude-Code wrapper into `.claude/hooks/` on `setup-harness.sh claude-code`.
 4. **C12 — migration pass**: run `bash scripts/dev/pillar2-scan.sh` against every first-party file. For each hit:
-   - If the audit doc (`docs/design/applied/pillar-1-2-audit-2026-05-17.md`) has it as already-on-worker → annotate with `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` referencing the audit's per-site rationale.
+   - If the audit doc (`docs/design/archive/pillar-1-2-audit-2026-05-17.md`) has it as already-on-worker → annotate with `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` referencing the audit's per-site rationale.
    - If new / unreviewed → triage. Per PR #191, most remaining hits should be worker-only. Anything genuinely on UI → open a bug entry in `docs/backlog/` and exempt the line with a `// TODO(pillar2): tracked in <issue>` marker that the scanner emits as WARN (not CRITICAL).
    - Commit migration as a single atomic step within Slice 2 so the strict gate lands with zero pre-existing CRITICAL violations.
 
@@ -187,7 +187,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 
 **Outcome**: a bucket-E ImGui Test Engine assertion verifies the < 100 ms visible-cue invariant under a synthetic 250 ms sync stall on one chosen sync path.
 
-**Builds on bucket-E** — wired 2026-05-19 per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`. Pattern (mirroring `tests/ui/views_columns_reorder.test.cpp`): test source at `tests/ui/<name>.test.cpp` with `IM_REGISTER_TEST(...)`; bash driver at `scripts/dev/test-ui-<name>.sh`; build + run via `cmake --build --preset ninja-ui-test-msvc`; auto-enrolled by `scripts/dev/test-all.sh` per the existing `test-ui-*.sh` convention.
+**Builds on bucket-E** — wired 2026-05-19 per `docs/design/archive/imgui-test-engine-bucket-e-execution.md`. Pattern (mirroring `tests/ui/views_columns_reorder.test.cpp`): test source at `tests/ui/<name>.test.cpp` with `IM_REGISTER_TEST(...)`; bash driver at `scripts/dev/test-ui-<name>.sh`; build + run via `cmake --build --preset ninja-ui-test-msvc`; auto-enrolled by `scripts/dev/test-all.sh` per the existing `test-ui-*.sh` convention.
 
 **Steps**:
 1. Add a debug-flag-gated stall hook in **one** chosen sync path. Recommended target: icon fetch in `Source_Core/src/SmatchetFieldIconRender.cpp` (single call site; spinner cue already implemented). Wrap the relevant block in `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`: if `g_smatchetSyncStallActive` (extern atom), call `std::this_thread::sleep_for(std::chrono::milliseconds(250))` and clear the flag. Production builds never compile the sleep.
@@ -241,7 +241,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 - `--spawn` ephemeral-instance pattern from `scripts/dev/test-grid-edit-perf-postfix.sh` (Slice 1 driver template)
 - `MainThreadDispatcher::PostToMainThread` invariants from `MainThreadDispatcher.h` (Slice 2 instrumentation)
 - `perf-detective` agent's "named scenario → top-N report" loop from `agents/perf-detective.md` (Slice 4 `perf-gatekeeper`)
-- Audit doc baseline of safe sites at `docs/design/applied/pillar-1-2-audit-2026-05-17.md` (Slice 2 migration ground truth)
+- Audit doc baseline of safe sites at `docs/design/archive/pillar-1-2-audit-2026-05-17.md` (Slice 2 migration ground truth)
 - `scripts/setup-harness.sh` (existing — Slice 2 picks up the new Claude-Code wrapper automatically via the existing copy-template mechanism)
 
 ## Verification (end-to-end)
