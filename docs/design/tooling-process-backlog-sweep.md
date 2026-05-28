@@ -119,7 +119,7 @@ New ImGui Test Engine test files following `tests/ui/views_columns_reorder.test.
 
 ## Ship order
 
-```
+```text
 Slice 1  ──→  Slice 2  ──→  Slice 3      (sequential: merge-gates → merge-watcher)
 Slices 4-10                                (independent: ship in parallel or any order)
 ```
