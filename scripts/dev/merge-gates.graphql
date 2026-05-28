@@ -6,6 +6,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       reviewDecision
       headRefOid
       headRefName
+      mergeStateStatus
       labels(first: 50) {
         pageInfo { hasNextPage }
         nodes { name }
