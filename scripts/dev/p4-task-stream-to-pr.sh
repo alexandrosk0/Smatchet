@@ -82,6 +82,8 @@
 
 set -euo pipefail
 
+command -v p4 >/dev/null 2>&1 || { echo "p4 required" >&2; exit 2; }
+
 usage() {
     cat >&2 <<'USAGE'
 usage:

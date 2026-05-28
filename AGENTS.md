@@ -75,6 +75,8 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 
 **Lint**: your harness may run an automatic lint pass after C++ edits. Claude Code does so via a `PostToolUse` hook wired by `bash scripts/setup-harness.sh claude-code` — `clang-format -i` applies in place; `cppcheck` + `clang-tidy` report to stderr. If your harness lacks hook automation, run those three tools manually on every edited `.cpp` / `.h` in `Source_Core` / `Plugins` / `Target_Standalone` and fix all reported issues before responding.
 
+**Shell lint**: shell scripts under `scripts/dev/` go through `scripts/dev/test-shell-lint.sh` (5 rules; checklist at [`docs/agent-rules/shell-script-self-review.md`](docs/agent-rules/shell-script-self-review.md)). Auto-runs via `scripts/dev/test-all.sh` at the pre-push gate. Bypass: `SMATCHET_SKIP_SHELL_LINT=1` (logged; emergency-only).
+
 **Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/PERF_WORKFLOW.md`](docs/PERF_WORKFLOW.md) and follow it. Don't load it for unrelated tasks.
 
 **Golden-image approval contract**: any agent that writes or regenerates a checked-in reference artefact a regression gate diffs against (`tests/golden/*.png`, JSON snapshots, deterministic byte streams) MUST hand the file + launched-app handle to the user and wait for explicit approve-golden verdict before `git add`. Iterate the underlying fix on rejection; never amend the golden to match a buggy state. Full recipe + motivating incident + dual-capture-no-golden preference in [`docs/agent-rules/golden-image-approval.md`](docs/agent-rules/golden-image-approval.md).

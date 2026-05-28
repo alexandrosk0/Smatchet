@@ -35,9 +35,13 @@ PR_URL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --pr) PR="$2"; shift 2 ;;
+        --pr=*) PR="${1#--pr=}"; shift ;;
         --state) STATE="$2"; shift 2 ;;
+        --state=*) STATE="${1#--state=}"; shift ;;
         --message) MESSAGE="$2"; shift 2 ;;
+        --message=*) MESSAGE="${1#--message=}"; shift ;;
         --pr-url) PR_URL="$2"; shift 2 ;;
+        --pr-url=*) PR_URL="${1#--pr-url=}"; shift ;;
         --help|-h)
             grep -E '^# ' "$0" | head -25 | sed 's/^# //'
             exit 0
@@ -67,7 +71,7 @@ success=0
 if command -v curl >/dev/null 2>&1; then
     body=$(printf '{"pr":%s,"state":"%s","message":"%s","pr_url":"%s"}' \
         "$PR" "$STATE" "${MESSAGE//\"/\\\"}" "$PR_URL")
-    if curl -sS --max-time 3 --connect-timeout 2 \
+    if curl -fsS --max-time 3 --connect-timeout 2 \
             -X POST -H "Content-Type: application/json" \
             -d "$body" "$NOTIFY_URL" >/dev/null 2>&1; then
         echo "smatchet-notify: in-app toast dispatched to ${NOTIFY_URL}"

@@ -18,6 +18,8 @@
 
 set -euo pipefail
 
+command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+
 usage() {
     cat >&2 <<'USAGE'
 Usage:
@@ -45,6 +47,7 @@ ASSUME_YES=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host=*) HOST="${1#--host=}"; shift ;;
+        --host) HOST="$2"; shift 2 ;;
         --yes|-y) ASSUME_YES=1; shift ;;
         --*) echo "unknown flag: $1" >&2; usage ;;
         *)

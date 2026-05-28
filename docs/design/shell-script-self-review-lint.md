@@ -112,12 +112,20 @@ Total: **~6 h** (revised from 3 h after locking repo-wide + same-PR cleanup).
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit)*
+- Plan committed (`4326726` + `7a4ff94` after grill-with-docs revisions).
+- Implementation single commit (this PR) — `scripts/dev/test-shell-lint.sh` (5 rules + self-lint, ~190 LoC); 6 fixtures under `tests/fixtures/shell_lint/`; `tests/bats/shell_lint.bats` (9 tests); `docs/agent-rules/shell-script-self-review.md` (the checklist); BUILD.md row + AGENTS.md one-liner; remediation of 21 pre-existing violators (3 shellcheck word-split annotations + 1 array refactor + 1 `curl -f` + 14 deps preflights + 6 flag-parity twin cases); backlog archive process.md → applied.md.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- **Allowlist shrunk from 20 to 19 — dropped `git`.** Implementation discovered `git` is invoked without preflight in 25 existing scripts; preflighting a tool the dev environment is BUILD.md-required to have produces noise without value. The other 19 entries match real preflight gaps. Reflected in lint source comment + the checklist doc + applied.md narrative.
+- **Rule #2 (shellcheck) gate**: original spec said `-S warning`. Implementation found SC2086 is `info`-level by default and `-S warning` filters it out — so `--include=SC2086,SC2046,SC2128,SC2155,SC2068` (no `-S` flag) is the correct invocation. Matches plan intent.
+- **Rule #5 (flag parity) detection**: original window was 6 lines after the case-branch; implementation found that scanned into neighboring case-branches in dense `case` statements (false-positiving `--once` / `--diff` / `--files` boolean flags). Fix: `awk -v start=$lno '... {print; if (/;;/) exit}'` so the scan terminates at the branch's own `;;` (sed range `,/;;/p` was tried first but skips the start-line match).
+- **Shellcheck stderr regex**: original `^In [^:]+ line N:` broke when shellcheck normalised absolute paths to `C:/...` (the drive-letter colon stopped the `[^:]+`). Fix: `^In .+ line N:`.
+- **Effort actual vs estimated** — ~6 h estimated, ~5 h actual (deps preflights batched via awk inserter; flag-parity twin cases were one-line edits per script). No scope cuts.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- Repo-wide lint: `bash scripts/dev/test-shell-lint.sh` → **Passed: 84  Failed: 0**.
+- Bats: `bats tests/bats/shell_lint.bats` → **9 / 9** (env-gate, shellcheck-missing fallback, 5 rule fixtures, known-good fixture, self-lint).
+- Self-lint: `bash scripts/dev/test-shell-lint.sh --target scripts/dev/test-shell-lint.sh` → clean.
+- No `Source_Core/` changes — build gate skipped per project rules.

@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+command -v cmake >/dev/null 2>&1 || { echo "cmake required" >&2; exit 2; }
+command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 2; }
+command -v cl.exe >/dev/null 2>&1 || { echo "cl.exe required" >&2; exit 2; }
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 

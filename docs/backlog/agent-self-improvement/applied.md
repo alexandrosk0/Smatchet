@@ -9,6 +9,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-28 · orchestrator · [process] · P1 — Implementer-side self-review didn't catch real shell-script bugs CR found in 4 of 9 slices this session
+  Resolution: `docs/design/shell-script-self-review-lint.md`. `scripts/dev/test-shell-lint.sh` enforces 5 rules repo-wide (closed external allowlist of 19, shellcheck on SC2086/2046/2128/2155/2068, `curl -f` everywhere, sha256-verify within 10 lines of any `curl -o`, `--key=value` ↔ `--key value` parity for value-taking flags). Auto-discovered by `scripts/dev/test-all.sh`. Bypass via `SMATCHET_SKIP_SHELL_LINT=1` (emergency-only). Bats coverage in `tests/bats/shell_lint.bats` (9 tests, 6 fixtures under `tests/fixtures/shell_lint/`). Checklist at `docs/agent-rules/shell-script-self-review.md`; AGENTS.md and BUILD.md cross-links landed in the same PR. Pre-existing-violator cleanup: 21 scripts fixed in same PR (shellcheck word-splitting annotations on doctor.sh / p4-reconcile-check.sh, array-refactor on test-theme-roundtrip.sh, `curl -f` on smatchet-notify.sh, `command -v` preflights on 14 scripts, 6 `--key=*` ↔ `--key` twin cases). Deviation: `git` dropped from the grilled allowlist of 20 (would've forced 25 spurious preflights for a tool every dev environment ships with by definition).
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
   Resolution: Slice 8 of `docs/design/tooling-process-backlog-sweep.md`. `scripts/dev/git-janitor.sh --post-merge <pr>` automates: clean-tree check, PR-merged verification via `gh pr view`, fetch+prune, ff-update develop, local branch delete (-D to handle squash-merge orphaning), dual-target build gate, concise report. Refuses on uncommitted work or non-MERGED PR.
 

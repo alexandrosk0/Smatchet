@@ -41,8 +41,10 @@ USAGE
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --preset=*) PRESET="${1#--preset=}"; shift ;;
+        --preset) PRESET="$2"; shift 2 ;;
         --no-launch) NO_LAUNCH=1; shift ;;
         --args=*) EXTRA_ARGS="${1#--args=}"; shift ;;
+        --args) EXTRA_ARGS="$2"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "unknown arg: $1" >&2; usage ;;
     esac

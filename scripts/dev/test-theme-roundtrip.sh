@@ -62,11 +62,17 @@ extract_field() {
 run_capture() {
     local label="$1" scen="$2" port="$3" out_png="$4" extra_args="${5:-}"
     echo "=== $label ($scen) ==="
+    # Intentional word-split: caller passes extra_args as a single string,
+    # we split here into a positional array so the exe sees discrete args.
+    local extra_args_arr=()
+    if [ -n "$extra_args" ]; then
+        # shellcheck disable=SC2206 — intentional split-on-IFS
+        extra_args_arr=( $extra_args )
+    fi
     # frames=24 + 6-frame warmup is the dock-gap-sentinel's tuned floor; we
     # match it so both captures get the same opportunity to settle their
     # docking + panel state. theme-switch-roundtrip's internal warmupA/B/Return
     # are 6/6/6 by default which fits.
-    # shellcheck disable=SC2086
     local out
     out=$("$EXE" cmd scenario.run \
         --name="$scen" \
@@ -74,7 +80,7 @@ run_capture() {
         --warmupFrames=20 \
         --screenshotPath="$out_png" \
         --mcp-port="$port" \
-        --spawn --yes $extra_args 2>&1 || true)
+        --spawn --yes "${extra_args_arr[@]}" 2>&1 || true)
     echo "$out" | tail -10
     # Deterministic poll — same shape as test-screenshot-diff.sh.
     for _ in $(seq 1 40); do

@@ -22,6 +22,8 @@
 
 set -euo pipefail
 
+command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+
 cd "$(git rev-parse --show-toplevel)"
 
 PASS=0

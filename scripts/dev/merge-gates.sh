@@ -63,6 +63,9 @@
 
 set -uo pipefail
 
+command -v gh >/dev/null 2>&1 || { echo "gh required" >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; exit 2; }
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 

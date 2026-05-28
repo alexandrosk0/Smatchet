@@ -44,6 +44,10 @@ while [ "$#" -gt 0 ]; do
             older_than_days="$2"
             shift 2
             ;;
+        --older-than-days=*)
+            older_than_days="${1#--older-than-days=}"
+            shift
+            ;;
         --dry-run)
             dry_run=1
             shift
