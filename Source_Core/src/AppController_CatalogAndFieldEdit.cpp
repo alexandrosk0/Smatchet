@@ -788,7 +788,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
             std::string payloadForLog;
             try {
                 payloadForLog = fieldsPayload.dump();
-            } catch (...) {
+            } catch (...) { // catch-all-ok: dump for logging
                 payloadForLog = "(payload dump failed)";
             }
             LOG_ERROR("AppController::SubmitFieldEdit failed issue=%s field=%s tracker_error=%s request=%s",
@@ -1077,6 +1077,7 @@ bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const
         outError = ex.what();
         return false;
     } catch (...) {
+        LOG_WARN("BuildFieldEditPayload: unknown exception serializing field payload");
         outError = "Failed to serialize field payload.";
         return false;
     }

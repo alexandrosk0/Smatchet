@@ -258,6 +258,7 @@ struct AuditWriter {
                         }
                     }
                 } catch (...) {
+                    LOG_DEBUG("BackendAuditTrail: worker iteration failed: unknown exception");
                 }
             }
         });
@@ -363,7 +364,8 @@ void AppendEvent(const AuditEvent& event) {
         // Post serialised line to the async writer; returns immediately without touching disk.
         Writer().Post(j.dump());
     } catch (...) {
-        // Audit must never block or fail backend mutations.
+        // catch-all-ok: audit must never block or fail backend mutations.
+        LOG_DEBUG("BackendAuditTrail::Record: failed to serialize/post audit event");
     }
 }
 
@@ -401,8 +403,7 @@ std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string*
             }
             try {
                 cache.Events.push_back(nlohmann::json::parse(line));
-            } catch (...) {
-                // Skip corrupt partial lines.
+            } catch (...) { // catch-all-ok: skip corrupt partial audit lines
             }
         }
         cache.Offset = file.eof() ? end : file.tellg();

@@ -34,7 +34,7 @@ inline int ParseJsonIntLoose(const nlohmann::json& v, int fallback = 0) {
     if (v.is_string()) {
         try {
             return std::stoi(v.get<std::string>());
-        } catch (...) {
+        } catch (...) { // catch-all-ok: stoi/stoll on untrusted JSON string
             return fallback;
         }
     }
@@ -54,7 +54,7 @@ inline long long ParseJsonInt64Loose(const nlohmann::json& v, long long fallback
     if (v.is_string()) {
         try {
             return std::stoll(v.get<std::string>());
-        } catch (...) {
+        } catch (...) { // catch-all-ok: stoi/stoll on untrusted JSON string
             return fallback;
         }
     }
@@ -76,9 +76,3 @@ inline long long ParseJsonInt64FieldLoose(const nlohmann::json& j, const char* k
     }
     return ParseJsonInt64Loose(*it, fallback);
 }
-
-
-
-
-
-

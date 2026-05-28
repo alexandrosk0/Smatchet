@@ -184,7 +184,8 @@ void McpPlugin::OnStart(AppController& app) {
                 std::fclose(f);
             }
         } catch (...) {
-            // Non-fatal — CLI can fall back to explicit flags.
+            // catch-all-ok: non-fatal — CLI can fall back to explicit flags.
+            LOG_DEBUG("MCP: instance JSON write failed");
         }
         impl_->instanceJsonPath = instancePath;
     }
@@ -318,8 +319,7 @@ void McpPlugin::OnStart(AppController& app) {
                 if (it != resp.header.end()) {
                     contentType = it->second;
                 }
-            } catch (...) {
-                // Ignore; keep default contentType.
+            } catch (...) { // catch-all-ok: keep default contentType on parse failure
             }
 
             res.status = resp.status_code;

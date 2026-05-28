@@ -30,7 +30,7 @@ std::string JsonString(const nlohmann::json& j, const char* key) {
     }
     try {
         return it->dump();
-    } catch (...) {
+    } catch (...) { // catch-all-ok: dump on untrusted JSON value
         return std::string();
     }
 }
@@ -360,7 +360,7 @@ void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json&
 }
 
 std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, const std::string& owner,
-                                                    const std::string& repo, bool includePullRequests) {
+                                                   const std::string& repo, bool includePullRequests) {
     std::vector<CachedTicket> out;
     if (!nodes.is_array()) {
         return out;

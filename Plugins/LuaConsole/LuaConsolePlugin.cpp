@@ -181,7 +181,7 @@ int LuaConsolePlugin::TryParseLuaErrorLine(const std::string& err) {
             if (k < n && err[k] == ':' && k > j) {
                 try {
                     return std::stoi(err.substr(j, k - j));
-                } catch (...) {
+                } catch (...) { // catch-all-ok: stoi on untrusted error string
                 }
             }
         }
