@@ -71,7 +71,7 @@ struct TrackerConfig {
     std::string PlaneWorkspaceSlug; // e.g. "my-workspace"
     std::string PlaneApiKey;        // Plane API Key
 
-    // GitHub-as-tracker configuration (PR2 of docs/design/github-tracker-backend.md).
+    // GitHub-as-tracker configuration (PR2 of docs/design/archive/github-tracker-backend.md).
     // Tracker-role only — independent from the deleted agentic flow's old GitHubPat.
     // PAT is DPAPI-encrypted on Win32 (same code path as AiApiKey); base URL defaults
     // to api.github.com; owner/repo carry the active repository the tracker views.
@@ -295,7 +295,7 @@ struct TrackerConfig {
 
 #if defined(SMATCHET_WITH_WHISPER)
     // --- Whisper dictation (push-to-talk) — Phase A schema (additive; no schema bump). ---
-    // See docs/design/whisper-dictation.md § Config schema additions.
+    // See docs/design/archive/whisper-dictation.md § Config schema additions.
     //
     // Runtime opt-in gate. Even when SMATCHET_WITH_WHISPER=ON the plugin stays
     // dormant (no mic access, no network, no model download) until this flips to
@@ -319,14 +319,14 @@ struct TrackerConfig {
     // OpenAI API key for /v1/audio/transcriptions. Persisted DPAPI-encrypted on
     // Win32; same legacy-plaintext migration shape as AiApiKey. Phase B consumer.
     // Falls back to AiApiKey only when this is empty AND AiProvider==OpenAi
-    // (see docs/design/whisper-dictation.md § API key fallback rule).
+    // (see docs/design/archive/whisper-dictation.md § API key fallback rule).
     std::string WhisperApiKey;
     // Unix epoch seconds stamped when the user actively clicked "Download +
     // enable" in the setup banner or the "Download" button in Preferences.
     // WhisperConsentGate::CanDownloadModel rejects any download whose stamp is
     // older than the freshness window (30 s by default). Enforces consent
     // invariant #2 ("no silent re-downloads, no resume-after-restart without
-    // re-confirming") — see docs/design/whisper-dictation.md § Consent
+    // re-confirming") — see docs/design/archive/whisper-dictation.md § Consent
     // invariants. Persisted so a future Preferences "re-run setup" flow can
     // observe whether the user has ever consented.
     std::int64_t WhisperConsentTimestampSec = 0;

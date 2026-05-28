@@ -30,11 +30,11 @@
 #   2 — argument / environment / repo-state error
 #   3 — transient network/git failure after retries
 #
-# See docs/design/git-ref-plan-locks.md § Phase 1.
+# See docs/design/archive/git-ref-plan-locks.md § Phase 1.
 
 set -euo pipefail
 
-# --- backend dispatch (Phase 4 of docs/design/git-to-perforce-migration.md)
+# --- backend dispatch (Phase 4 of docs/design/archive/git-to-perforce-migration.md)
 # `SMATCHET_LOCK_BACKEND=p4-counter` defers to the Perforce-counter sibling
 # script. Default backend stays git-ref (this script's body). Dispatch is at
 # top-of-script so the git-ref impl below is unchanged from the original.

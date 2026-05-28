@@ -1,7 +1,7 @@
 #ifndef SMATCHET_COMMANDS_SCENARIOS_REGISTRY_H
 #define SMATCHET_COMMANDS_SCENARIOS_REGISTRY_H
 
-// Slice 5 of docs/design/autonomous-debugging-no-creds.md — pure refactor:
+// Slice 5 of docs/design/archive/autonomous-debugging-no-creds.md — pure refactor:
 // extract the 14-entry scenario-factory registration block out of
 // AppController::Initialize so adding/removing a scenario is one edit in a
 // single self-contained TU rather than threading a line through the giant

@@ -10,7 +10,7 @@
 diagnose → fix → build → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
 
-`[gate-check]` is the merge-gates poller (see [`docs/agent-rules/merge-gates.md`](merge-gates.md)) — polls CI + CodeRabbit + user-comments before squash-merge. Triggered only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher" or in-session "merge when green"). The `smatchet-merge-watcher` host daemon (per `docs/design/applied/smatchet-merge-watcher.md`) takes over from this point when the user picks post-ship option 3; the orchestrator's in-session role ends at register-time. Halt + `AskUserQuestion` on block / timeout / `gh` API failure / PR closed-externally / pagination overflow.
+`[gate-check]` is the merge-gates poller (see [`docs/agent-rules/merge-gates.md`](merge-gates.md)) — polls CI + CodeRabbit + user-comments before squash-merge. Triggered only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher" or in-session "merge when green"). The `smatchet-merge-watcher` host daemon (per `docs/design/archive/smatchet-merge-watcher.md`) takes over from this point when the user picks post-ship option 3; the orchestrator's in-session role ends at register-time. Halt + `AskUserQuestion` on block / timeout / `gh` API failure / PR closed-externally / pagination overflow.
 
 All clarifications that the orchestrator anticipates needing are batched **once at the start** via `AskUserQuestion`. Once the user answers, the loop proceeds without further prompts until completion (or until an exception below fires).
 
@@ -71,7 +71,7 @@ When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a **P4-gated ship-loop** 
 - Plan-lock backend auto-flips to `p4-counter` **only when unset** — `export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"` (no colon — empty-string setting is preserved per `scripts/dev/test-p4-dual-vcs.sh` scenario 2 line 149 + scenario 6 line 369).
 - Post-ship `AskUserQuestion` ALWAYS fires with option 3 ("Register with watcher") pre-selected; when `docs/design/merge-gates-ci-coderabbit-comments.md` ships end-to-end the `AskUserQuestion` goes away entirely in p4-mode.
 
-Full phase sequence + invariants + exception rules in [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/design/p4-gated-ship-loop.md`](../design/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](../adr/0008-p4-gated-ship-loop.md).
+Full phase sequence + invariants + exception rules in [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/design/archive/p4-gated-ship-loop.md`](../design/archive/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](../adr/0008-p4-gated-ship-loop.md).
 
 ## Post-ship turn-end protocol
 
@@ -79,11 +79,11 @@ After the loop reaches PR-opened (or the equivalent terminal state for the task)
 
 1. **Manual verify** — user wants to drive the change manually before merge.
 2. **Review PR** — user wants to read the diff / comment on GitHub.
-3. **Register with watcher** — orchestrator runs `merge-watch register <pr>` (per [`docs/design/applied/smatchet-merge-watcher.md`](../design/applied/smatchet-merge-watcher.md)). The `smatchet-merge-watcher` host daemon's first step on register is `gh pr ready <n>` (idempotent — no-op if already non-draft) so CodeRabbit's `auto_review.drafts: false` doesn't skip the review (per `docs/backlog/agent-self-improvement/process.md` P1 — draft PRs silently bypassed CR for 15+ session PRs before this rule landed). Then it runs the gate-check loop + CodeRabbit-triage loop + REST-squash-merge per the watcher contract. Session can close immediately; watcher persists. Halt prompts surface as Smatchet notifications via `SmatchetToastManager` (watcher Phase 4), not back to this session.
+3. **Register with watcher** — orchestrator runs `merge-watch register <pr>` (per [`docs/design/archive/smatchet-merge-watcher.md`](../design/archive/smatchet-merge-watcher.md)). The `smatchet-merge-watcher` host daemon's first step on register is `gh pr ready <n>` (idempotent — no-op if already non-draft) so CodeRabbit's `auto_review.drafts: false` doesn't skip the review (per `docs/backlog/agent-self-improvement/process.md` P1 — draft PRs silently bypassed CR for 15+ session PRs before this rule landed). Then it runs the gate-check loop + CodeRabbit-triage loop + REST-squash-merge per the watcher contract. Session can close immediately; watcher persists. Halt prompts surface as Smatchet notifications via `SmatchetToastManager` (watcher Phase 4), not back to this session.
 4. **Done** — no further action; PR stays draft for later.
 
 Do **not** emit a free-form bulleted next-steps list — `AskUserQuestion` is a single click; prose is N seconds of composition.
 
 **Skip-condition**: if the user has already said "no more changes coming" / "ship it and stop" / "merge when green" in the same turn, skip the question and enter option 3 directly (`git-janitor` invokes `merge-watch register` before walking away).
 
-Cross-link: ship-loop reference in [`docs/agent-rules/delegation.md`](delegation.md); pause-loop override in [`docs/agent-rules/delegation.md`](delegation.md) § Debug-mode pause-loop; gate semantics + halt prompts in [`docs/agent-rules/merge-gates.md`](merge-gates.md); watcher integration in [`docs/design/applied/smatchet-merge-watcher.md`](../design/applied/smatchet-merge-watcher.md).
+Cross-link: ship-loop reference in [`docs/agent-rules/delegation.md`](delegation.md); pause-loop override in [`docs/agent-rules/delegation.md`](delegation.md) § Debug-mode pause-loop; gate semantics + halt prompts in [`docs/agent-rules/merge-gates.md`](merge-gates.md); watcher integration in [`docs/design/archive/smatchet-merge-watcher.md`](../design/archive/smatchet-merge-watcher.md).

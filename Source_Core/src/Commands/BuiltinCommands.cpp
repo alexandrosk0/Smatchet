@@ -1,5 +1,5 @@
 // Built-in commands registered by AppController::Initialize.
-// See docs/design/applied/command-system-plan.md for the full catalogue spec.
+// See docs/design/archive/command-system-plan.md for the full catalogue spec.
 //
 // This file is the thin dispatcher: each per-category bucket TU lives under
 // Source_Core/src/Commands/Builtin/ and exposes a single

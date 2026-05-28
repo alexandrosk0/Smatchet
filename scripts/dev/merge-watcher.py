@@ -2,7 +2,7 @@
 """
 merge-watcher — foreground daemon that polls every registered PR.
 
-Phase 1 of `docs/design/applied/smatchet-merge-watcher.md`. Reads the per-user
+Phase 1 of `docs/design/archive/smatchet-merge-watcher.md`. Reads the per-user
 registry at `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` (managed
 by `merge-watcher-cli.py`), runs `scripts/dev/merge-gates.sh` for each
 entry per the configured interval, writes per-PR state to
@@ -1106,10 +1106,10 @@ def maybe_resolve_stuck_cr_threads(
     """Sub-bug (b) — resolve CR review threads stuck `isResolved:false` after
     an auto-act push.
 
-    Gate conditions (all must hold; opt-in env flip required for the first
-    ship so a misconfigured production cycle can't auto-resolve real findings):
+    Gate conditions (all must hold):
 
-      1. `MERGE_WATCH_RESOLVE_CR_THREADS=true` env set.
+      1. `MERGE_WATCH_RESOLVE_CR_THREADS` not opted out (default `true` as of
+         2026-05-28; set `false` / `0` / `no` to disable).
       2. Registry entry has `auto_act_for_head_sha` recorded (we previously
          dispatched a fix-spawn against some prior head).
       3. Current `headRefOid` differs from `auto_act_for_head_sha` (the push

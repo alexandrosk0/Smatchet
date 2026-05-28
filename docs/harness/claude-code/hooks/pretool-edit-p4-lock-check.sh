@@ -14,7 +14,7 @@
 # session). Set SMATCHET_P4_LOCK_HOOK_BLOCK=1 to upgrade warning → block
 # (exit 2 to refuse the Edit).
 #
-# Phase 5 of `docs/design/git-to-perforce-migration.md`.
+# Phase 5 of `docs/design/archive/git-to-perforce-migration.md`.
 #
 # Triggered for: Edit, Write, MultiEdit (any tool that writes a file).
 # Skipped when:

@@ -54,7 +54,7 @@ class MainThreadDispatcher {
     /// out of the queue and each `Task` is released after invocation so captures (especially
     /// shared_ptr / large state) do not live across the whole drain loop.
     ///
-    /// Pillar 1 + 2 perf-review (slice 2 of `docs/design/pillar-1-2-perf-review-system.md`):
+    /// Pillar 1 + 2 perf-review (slice 2 of `docs/design/archive/pillar-1-2-perf-review-system.md`):
     /// the drain itself is wrapped in `SMATCHET_UI_PERF_SCOPE("dispatcher.drain")` so an
     /// unbounded posted lambda surfaces in `perf.snapshot` as a single hot row. The
     /// `lastDrainTaskCount_` accessor below lets perf-snapshot expose how many tasks ran

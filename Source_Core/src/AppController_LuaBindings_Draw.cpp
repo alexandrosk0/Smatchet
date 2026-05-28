@@ -50,7 +50,7 @@
 #include "AppController_LuaBindings_detail.h"
 
 // LuaDrawList method definitions — class declared in AppController_LuaBindings_detail.h.
-// See docs/design/applied/lua-recorded-cmd-list.md § Crash-safety hardening for per-method
+// See docs/design/archive/lua-recorded-cmd-list.md § Crash-safety hardening for per-method
 // input bounds; out-of-line so the class is complete-typed before InitLuaUi registers it.
 // LuaDrawList is declared at global scope (in the private header), so its method bodies
 // must also be at global scope — not inside an anonymous namespace.

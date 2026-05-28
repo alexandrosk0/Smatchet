@@ -70,15 +70,17 @@ Improve runtime feedback by printing the exact executable path and last-write ti
 ## Out of scope (flagged, not designed)
 
 - Full CI migration away from any historical MSYS2 jobs. That needs a separate CI plan if still present in workflows.
-- Rewriting old `docs/design/applied/*` implementation logs that truthfully record past MSYS2 builds.
+- Rewriting old `docs/design/archive/*` implementation logs that truthfully record past MSYS2 builds.
 - Replacing PowerShell wrappers with the proposed future bash-only build script from `docs/design/kill-powershell-minimize-toolchain.md`.
 - Adding a full C++ lint rule for `ghc::filesystem::directory_iterator` range-for. This is worthwhile, but should be a separate code-quality plan because it touches source-pattern policy rather than build onboarding.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` Plan revision after implementation - bullet per shipped commit: `<sha> - <one-line summary>`)*
+- Previous slices (5015147c): `scripts/dev/with-msvc-env.sh` bash wrapper + `build_standalone.ps1` MSYS2-guard landed.
+- This slice: `build_and_run.ps1` default preset → `ninja-iter-msvc`; `SmatchetImConfig.h` stale comment updated; `BUILD.md` MSYS2 section header updated with retirement notice; `run_standalone.ps1` exe path/timestamp/stale-sibling/PID output; `build_standalone.ps1` `*-msys2` preset now throws retirement error instead of activating MSYS2 env; `scripts/dev/test-build-wrapper.ps1` new lightweight test wrapper.
 
 ## Deviations from plan
-*(populated post-ship - what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- `build_standalone.ps1` (plan file 1) already had the MSVC bootstrap from slice 1. This slice only added the retirement `throw` for `*-msys2` presets (replacing the `Use-Msys2Ucrt64Environment` call) — the overall function was not removed to preserve historical context in `Use-Msys2Ucrt64Environment` for the function body itself (it is now unreachable but documents what it did).
+- `README.md` and `AGENTS.md` updates (plan files 5, 6) not implemented in this slice — the plan marked them as "Files to modify" but the task description's open items did not include them. Deferred.
 
 ## Verification (actual)
-*(populated post-ship - what was actually tested + result, passed / failed / not-run)*
+- `scripts/dev/test-build-wrapper.ps1` run: 3/3 tests passed. Verified: (1) `ninja-iter-msys2` passed to `build_standalone.ps1` exits non-zero with "retired" + "ninja-iter-msvc" in output; (2) `run_standalone.ps1` prints `Exe :` path and `Time:` timestamp; (3) stale-sibling comparison table printed with `<<< selected` marker.

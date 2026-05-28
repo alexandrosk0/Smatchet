@@ -1,7 +1,7 @@
 #ifndef SMATCHET_GITHUB_FIXTURE_BACKEND_H
 #define SMATCHET_GITHUB_FIXTURE_BACKEND_H
 
-// Slice 1 of docs/design/autonomous-debugging-no-creds.md — production-resident
+// Slice 1 of docs/design/archive/autonomous-debugging-no-creds.md — production-resident
 // fixture-backed GitHub `ITrackerBackend` that reads a GraphQL-search JSON
 // payload from disk instead of touching the network. Enables zero-credentials
 // scenario replay (`SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path>` env hook in

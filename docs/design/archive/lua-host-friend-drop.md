@@ -1,7 +1,7 @@
 # Lua-host friend drop — re-scope of Track B / B3 post-PR #144
 
 **Status**: drafted 2026-05-16 by `architect` for orchestrator implementation.
-**Originating plan**: `docs/design/applied/large-files-and-phase-2.md` § Track B.
+**Originating plan**: `docs/design/archive/large-files-and-phase-2.md` § Track B.
 **Predecessors**:
 - PR #127 (`b5fc194`) — shipped `IOfflineQueueDeps` + `ITicketSyncDeps`; closes B1 + B2 (different naming: `Deps` not `Access` / `Host`).
 - PR #144 (`7e6762d`) — shipped `ILuaBindingHost` + TU lift of `InitLuaCore` + 11 sol2 glues into `AppController_LuaBindingsCore.cpp`. AppController inherits `ILuaBindingHost`.
@@ -46,7 +46,7 @@ Update the applied plan: mark B1+B2 `shipped via PR #127 (Deps suffix, not Acces
   - `Source_Core/include/LuaAutomationHost.h` — change ctor to default `LuaAutomationHost() = default;`, remove `AppController& app_;` field, remove `class AppController;` forward declaration, rewrite header comment (drop Phase 1B/1C/1D migration plan, document the post-#144 reality: this class owns only the plugin log-sink fan-out) (role: `dead-field-remove + comment-rewrite`).
   - `Source_Core/src/LuaAutomationHost.cpp` — drop `#include "AppController.h"`; ctor becomes implicit (or delete file entirely if only the trivial bodies remain — keep the `.cpp` for ABI / future expansion latitude) (role: `include-prune + ctor-simplify`).
   - `Source_Core/src/AppController.cpp:1062` — change `std::make_unique<LuaAutomationHost>(*this)` to `std::make_unique<LuaAutomationHost>()` (role: `ctor-call-update`).
-  - `docs/design/applied/large-files-and-phase-2.md` § Track B — apply option (i) revision: mark B1/B2 shipped, rewrite B3 as `done-via-dead-code-drop`, append `## Implementation log` + `## Deviations from plan` + `## Verification` entries per AGENTS.md § Plan revision after implementation (role: `plan-revision`).
+  - `docs/design/archive/large-files-and-phase-2.md` § Track B — apply option (i) revision: mark B1/B2 shipped, rewrite B3 as `done-via-dead-code-drop`, append `## Implementation log` + `## Deviations from plan` + `## Verification` entries per AGENTS.md § Plan revision after implementation (role: `plan-revision`).
   - `docs/design/_plan-locks.md` — append `claimed` entry for slice `lua-host-friend-drop` (role: `lock-claim`).
 - **Closure rule** (no TU split this round): "every reference to `app_` inside `LuaAutomationHost.{h,cpp}` goes away; every consumer that constructs `LuaAutomationHost` updates its ctor call site." If `Grep` for `app_` inside `LuaAutomationHost.{h,cpp}` returns matches after the slice, the slice is incomplete.
 - **Verification gates** (bucket-classified per AGENTS.md § Verification automation):
@@ -63,7 +63,7 @@ Update the applied plan: mark B1+B2 `shipped via PR #127 (Deps suffix, not Acces
 
 ## Plan revision after implementation
 
-The implementing agent must, in the same commit (or the commit that drops the friend), append to **both** this doc AND the originating `docs/design/applied/large-files-and-phase-2.md`:
+The implementing agent must, in the same commit (or the commit that drops the friend), append to **both** this doc AND the originating `docs/design/archive/large-files-and-phase-2.md`:
 
 - `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.
 - `## Deviations from plan` — anything different from the sketch above + one-line rationale.

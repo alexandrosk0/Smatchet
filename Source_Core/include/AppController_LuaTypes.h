@@ -6,7 +6,7 @@
 // `AppController::LuaFieldCacheEntry` / `AppController::LuaWindowEntry` /
 // `AppController::PendingLuaWindowOp` through `using` aliases declared inside
 // the AppController class body. See docs/design/large-files-and-phase-2.md § A5
-// and docs/design/applied/lua-recorded-cmd-list.md.
+// and docs/design/archive/lua-recorded-cmd-list.md.
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 

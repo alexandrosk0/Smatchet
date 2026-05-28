@@ -198,4 +198,60 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "Expected executable missing: $exe"
 }
 
-& $exe @StandaloneArgs
+# Print resolved exe path and last-write timestamp before launch.
+$exeItem = Get-Item -LiteralPath $exe
+Write-Host "  Exe : $($exeItem.FullName)"
+Write-Host "  Time: $($exeItem.LastWriteTime)"
+
+# Stale-sibling comparison table — list known sibling outputs, mark the selected one.
+$siblingPaths = @(
+    (Join-Path $repoRoot "build\ninja-debug-msvc\Smatchet.exe"),
+    (Join-Path $repoRoot "build\ninja-iter-msvc\Smatchet.exe"),
+    (Join-Path $repoRoot "build\ninja-publish-msvc\Smatchet.exe")
+)
+# Include caller-provided BuildDir path if it differs from the above.
+$callerExe = $exeItem.FullName
+$siblingFound = $false
+foreach ($s in $siblingPaths) {
+    $resolved = Resolve-Path -LiteralPath $s -ErrorAction SilentlyContinue
+    if ($resolved -and ($resolved.ProviderPath -ceq $callerExe)) {
+        $siblingFound = $true
+        break
+    }
+}
+if (-not $siblingFound) {
+    $siblingPaths = @($siblingPaths) + @($callerExe)
+}
+
+$rows = @()
+foreach ($path in $siblingPaths) {
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $item = Get-Item -LiteralPath $path
+        $marker = if ($item.FullName -ceq $callerExe) { "<<< selected" } else { "" }
+        $rows += [pscustomobject]@{ Path = $item.FullName; LastWriteTime = $item.LastWriteTime; Note = $marker }
+    }
+}
+if ($rows.Count -gt 1) {
+    Write-Host ""
+    Write-Host "Sibling exe comparison:"
+    foreach ($row in $rows) {
+        Write-Host ("  [{0}]  {1}  {2}" -f $row.LastWriteTime, $row.Path, $row.Note)
+    }
+    Write-Host ""
+}
+
+# Determine if this is an interactive (GUI) launch or a command/CLI-style invocation.
+# CLI-style: first arg starts with '--' or '-' or is a recognised command verb.
+# Interactive: no args supplied.
+$isCommandStyle = ($StandaloneArgs.Count -gt 0)
+
+if ($isCommandStyle) {
+    # Foreground execution — caller gets stdout, stderr, and exit code.
+    & $exe @StandaloneArgs
+    exit $LASTEXITCODE
+} else {
+    # Interactive GUI launch — use Start-Process so we can print the PID and
+    # return immediately to the caller (the app manages its own window).
+    $proc = Start-Process -FilePath $exe -PassThru
+    Write-Host "  PID : $($proc.Id)"
+}

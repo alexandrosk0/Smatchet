@@ -206,7 +206,7 @@ Per AGENTS.md § Verification automation — zero manual steps, every check belo
 **Bucket-C screenshot diff** (mandatory for the theme touch — review issue routing for the visual-validation exception):
 - `tests/ui/screenshots/ai_chat_user_bubble_dark.png` golden for dark theme bubble bg.
 - `tests/ui/screenshots/ai_chat_user_bubble_light.png` golden for light theme.
-- Bootstrap goldens via the existing bucket-C rig (`docs/design/applied/visual-regression-bootstrap.md` if present, else add a backlog entry to introduce the screenshot harness as a precondition for this slice's merge).
+- Bootstrap goldens via the existing bucket-C rig (`docs/design/archive/visual-regression-bootstrap.md` if present, else add a backlog entry to introduce the screenshot harness as a precondition for this slice's merge).
 
 **Manual residue** (none expected; if any step above turns out to be infeasible inside the ImGui Test Engine, append a `tooling`-category entry to `docs/backlog/agent-self-improvement/` describing the gap + acceptable interim).
 

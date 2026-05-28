@@ -154,7 +154,7 @@ Operational rules — format, categories (`bug` / `process` / `tooling` / `infra
 
 Smatchet runs git/GitHub as the **ship-line** (PR review, CI, `smatchet-merge-watcher`) and Perforce as an **opt-in local layer** (`SMATCHET_AGENT_VCS=p4`; default `git`) for agentic-WIP primitives — named server-side shelves, atomic counters as plan-locks, exclusive `+l` file locks, task streams as parallel-isolation primitives. The Perforce layer is purely additive: never required, never authoritative, never on the ship-line.
 
-Concern-by-concern git ↔ p4 mapping + verb-level TL;DR + lock discipline + shelf-vs-stash + destructive-p4-op pre-flight: [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md). Bring-up: [`docs/perforce/SETUP.md`](docs/perforce/SETUP.md). Janitor: [`agents/p4-janitor.md`](agents/p4-janitor.md). Plan: [`docs/design/git-to-perforce-migration.md`](docs/design/git-to-perforce-migration.md).
+Concern-by-concern git ↔ p4 mapping + verb-level TL;DR + lock discipline + shelf-vs-stash + destructive-p4-op pre-flight: [`docs/perforce/AGENT_FLOWS.md`](docs/perforce/AGENT_FLOWS.md). Bring-up: [`docs/perforce/SETUP.md`](docs/perforce/SETUP.md). Janitor: [`agents/p4-janitor.md`](agents/p4-janitor.md). Plan: [`docs/design/archive/git-to-perforce-migration.md`](docs/design/archive/git-to-perforce-migration.md).
 
 ## Harness adapter
 

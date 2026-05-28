@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # p4-reconcile-check.sh — pre-push helper for the dual-VCS contract.
 #
-# Plan: docs/design/git-to-perforce-migration.md § Files to modify §
+# Plan: docs/design/archive/git-to-perforce-migration.md § Files to modify §
 #       scripts/git-hooks/pre-push:1 — "extend with `p4 reconcile -n` check
 #       when client is configured."
 #

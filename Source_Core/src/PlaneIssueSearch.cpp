@@ -121,7 +121,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     // PR 6: legacy global cfg.PlaneProjectId removed. The active project is extracted from the
     // active view's query (PR 5 sweep ensures legacy views carry their project in the saved
     // query). Empty here ≡ "no project scope" — surfaces the same "configure" error as before.
-    // See docs/design/applied/remove-global-project-key.md §2.5 / §7 PR 6.
+    // See docs/design/archive/remove-global-project-key.md §2.5 / §7 PR 6.
     const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
 
     if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {

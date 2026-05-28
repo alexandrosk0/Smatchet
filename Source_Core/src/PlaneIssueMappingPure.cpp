@@ -1,4 +1,4 @@
-// Slice 2 of docs/design/autonomous-debugging-no-creds.md — pure-logic helpers
+// Slice 2 of docs/design/archive/autonomous-debugging-no-creds.md — pure-logic helpers
 // extracted from PlaneIssueSearch.cpp. No cpr, no Logger, no PlaneClient
 // instance state. See PlaneIssueMappingPure.h for the contract.
 

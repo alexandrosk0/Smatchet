@@ -1,7 +1,7 @@
 #ifndef SMATCHET_PLANE_ISSUE_MAPPING_PURE_H
 #define SMATCHET_PLANE_ISSUE_MAPPING_PURE_H
 
-// Slice 2 of docs/design/autonomous-debugging-no-creds.md — pure-logic JSON →
+// Slice 2 of docs/design/archive/autonomous-debugging-no-creds.md — pure-logic JSON →
 // CachedTicket mapping helpers extracted out of PlaneIssueSearch.cpp (which
 // pulls cpr) so the doctest rig can exercise them without HTTP. Mirrors the
 // GitHub backend's PR12 split (`GitHubIssueSearchMapping.{h,cpp}`).

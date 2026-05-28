@@ -12,7 +12,7 @@
 #include <unordered_map>
 
 // GitHubClient — third tracker backend (PR2 of
-// docs/design/github-tracker-backend.md). Tracker-only — does NOT implement
+// docs/design/archive/github-tracker-backend.md). Tracker-only — does NOT implement
 // the PR / check-run / GraphQL surface the deleted agentic flow used.
 //
 // Lifecycle: factory-owned `unique_ptr<GitHubClient>` per `Create("github")`

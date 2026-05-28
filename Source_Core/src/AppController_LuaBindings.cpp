@@ -49,7 +49,7 @@
 // checks this and luaL_errors if Lua tries to draw immediate-mode UI while a
 // cached recording is active — otherwise the script would draw once on cache
 // miss and silently vanish on the next replay.
-// Per docs/design/applied/lua-recorded-cmd-list.md decision #5 + finding #6.
+// Per docs/design/archive/lua-recorded-cmd-list.md decision #5 + finding #6.
 thread_local bool g_luaImmediateModeAllowed = true;
 
 std::string TruncateForTrace(const std::string& s, std::size_t maxLen) {

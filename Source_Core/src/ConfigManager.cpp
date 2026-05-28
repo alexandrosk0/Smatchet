@@ -184,7 +184,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     nlohmann::json j = LoadMergedConfigJson();
     j["domain"] = config.Domain;
     j["email"] = config.Email;
-    // PR 5 of docs/design/applied/remove-global-project-key.md: stop persisting the legacy global
+    // PR 5 of docs/design/archive/remove-global-project-key.md: stop persisting the legacy global
     // project scope. The fields are still on `TrackerConfig` until PR 6 deletes them, but the
     // on-disk JSON no longer round-trips them — older builds reading the new config will see
     // them missing and default to empty, matching the new code path. Erase explicitly so any
@@ -194,7 +194,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["tracker_type"] = config.TrackerType;
     j["plane_url"] = config.PlaneUrl;
     j["plane_workspace_slug"] = config.PlaneWorkspaceSlug;
-    // GitHub-as-tracker fields (PR2 of docs/design/github-tracker-backend.md).
+    // GitHub-as-tracker fields (PR2 of docs/design/archive/github-tracker-backend.md).
     // PAT goes through DPAPI same as plane_api_key — see saveGithubPat block below.
     j["github_base_url"] = config.GitHubBaseUrl;
     j["github_owner"] = config.GitHubOwner;

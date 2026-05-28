@@ -4,7 +4,7 @@
 >
 > Describes the C++ CodeRabbit react loop that v1 PR1 of `docs/design/github-tracker-backend.md` (PR #356, merge sha `b1d241bc`) **deleted in full**. The runtime referenced throughout this doc (`PrCommentWatcher`, `PrCheckRunWatcher`, `CoderabbitCommentClassifier`, `CiFailureClassifier`, the `dispatch_source` enum, sentinel-file protocol) no longer exists in the tree.
 >
-> Kept as historical reference because [`docs/design/applied/smatchet-merge-watcher.md`](applied/smatchet-merge-watcher.md) (the daemon-driven revival per the 2026-05-21 P1 backlog entry `644f822`) reuses several conceptual building blocks from this plan — the three-bucket CR-state model, the CR-finding classifier's Smatchet-invariant override table, the cascade-detection approach. Useful input for the watcher's design pass; do NOT treat the body below as a current implementation roadmap.
+> Kept as historical reference because [`docs/design/archive/smatchet-merge-watcher.md`](archive/smatchet-merge-watcher.md) (the daemon-driven revival per the 2026-05-21 P1 backlog entry `644f822`) reuses several conceptual building blocks from this plan — the three-bucket CR-state model, the CR-finding classifier's Smatchet-invariant override table, the cascade-detection approach. Useful input for the watcher's design pass; do NOT treat the body below as a current implementation roadmap.
 >
 > **2026-05-18 partial-folding note (superseded by the 2026-05-21 ripout)**: The six `GitHubClient` PR / check-run / annotation / actions-log / rerun-workflow methods this plan originally scoped (phase 1 of the draft) shipped via [`agentic-coding-handoff.md`](agentic-coding-handoff.md) **H7** (PR #255, sha `37f4f2e`). H7's HTTP methods are also deleted now (per v1 PR1); a new `GitHubClient` exists in v1 PR2 (`cd66e28c`) but is tracker-only (issues + fields + labels), no PR / check-run / GraphQL surface.
 >
@@ -424,7 +424,7 @@ Phase 5 verification: `CiFailureClassifierPure.test.cpp` ctest green covering ch
 | CLI smoke (`test-coderabbit-react.sh`, `test-ci-react.sh`) | green | phase 9 (this PR) — 20 assertions across the two scripts; auto-enrolled by `scripts/dev/test-all.sh` |
 | Sanitizer build | partial / inherited | each phase's ctest pass implies green under `ninja-test-msvc` which enables `SMATCHET_BUILD_TESTS=ON`; full sanitizer preset not explicitly run per phase. Backlog entry below. |
 | Dual-target compile | green | every phase's PR body cites "dual-target build clean" |
-| End-to-end live-PR probe | pending | bucket-E (ImGui Test Engine) is wired (`docs/design/applied/imgui-test-engine-bucket-e-execution.md`); promoted to live P2 in `docs/backlog/agent-self-improvement/tooling.md` (2026-05-20 — coderabbit-react-loop probe) per AGENTS.md § Verification automation |
+| End-to-end live-PR probe | pending | bucket-E (ImGui Test Engine) is wired (`docs/design/archive/imgui-test-engine-bucket-e-execution.md`); promoted to live P2 in `docs/backlog/agent-self-improvement/tooling.md` (2026-05-20 — coderabbit-react-loop probe) per AGENTS.md § Verification automation |
 
 Final shipped state:
 - 9 phases + plan revision + 1 hygiene cleanup PR + 1 closing milestone PR = 11 PRs total
