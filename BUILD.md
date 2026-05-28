@@ -114,6 +114,26 @@ Wrapper shortcuts are still available:
 .\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
+### MSVC from bash (Git Bash / MSYS2)
+
+`build_and_run.ps1` handles `vcvars64` env for PowerShell sessions. The
+bash-side equivalent is `scripts/dev/with-msvc-env.sh` — a wrapper that
+discovers the latest VS install via `vswhere.exe`, sources `vcvars64.bat`
+through a PowerShell-mediated cmd.exe invocation (works around Git Bash's
+MSYS path-conversion quirks), and `exec`s the wrapped command with MSVC
+`INCLUDE` / `LIB` / `PATH` populated:
+
+```bash
+bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+bash scripts/dev/with-msvc-env.sh cmake --version    # smoke test: VS-bundled CMake
+bash scripts/dev/with-msvc-env.sh cl                 # smoke test: MSVC compiler banner
+```
+
+Without the wrapper, `cmake --build` from a plain bash session fails with
+"Cannot open include file: 'stdio.h'" — `cl.exe` runs but lacks the env
+that vcvars64 normally sets. Covers Community / Professional / Enterprise /
+BuildTools editions automatically.
+
 ## First-time verification
 
 Run on a fresh clone to confirm the toolchain is wired correctly. Expect
