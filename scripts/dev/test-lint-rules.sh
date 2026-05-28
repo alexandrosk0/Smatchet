@@ -273,14 +273,19 @@ compute_strict_triples() {
 [ "${SMATCHET_LINT_BYPASS:-0}" = "1" ] && { echo "[test-lint-rules] BYPASS"; exit 0; }
 
 MODE="diff"; ARG=""; REFRESH=0
+# --refresh is a modifier on --catalog; detect it independently of the
+# subcommand branch (keeps the subcommand parse value-free).
+for _a in "$@"; do [ "$_a" = "--refresh" ] && REFRESH=1; done
 case "${1:-}" in
-    --diff)      MODE=diff; ARG="${2:-}" ;;
-    --catalog)   MODE=catalog; [ "${2:-}" = "--refresh" ] && REFRESH=1 ;;
-    --scan-file) MODE=scanfile; ARG="${2:-}" ;;
-    --full)      MODE=full ;;
-    --selftest)  MODE=selftest ;;
-    "")          MODE=diff ;;
-    *) echo "usage: $0 [--diff <ref>|--catalog [--refresh]|--scan-file <f>|--full|--selftest]" >&2; exit 2 ;;
+    --diff)        MODE=diff;     ARG="${2:-}" ;;
+    --diff=*)      MODE=diff;     ARG="${1#--diff=}" ;;
+    --catalog)     MODE=catalog ;;
+    --scan-file)   MODE=scanfile; ARG="${2:-}" ;;
+    --scan-file=*) MODE=scanfile; ARG="${1#--scan-file=}" ;;
+    --full)        MODE=full ;;
+    --selftest)    MODE=selftest ;;
+    "")            MODE=diff ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--scan-file[=]<f>|--full|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
