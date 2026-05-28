@@ -1099,7 +1099,7 @@ SmatchetImGuiHost* LookupHost(SmatchetImGuiHostHandle handle) {
 extern "C" {
 
 SmatchetImGuiHostHandle SmatchetHost_Create() {
-    auto* host = new SmatchetImGuiHost(); // NOLINT: C ABI handle — paired delete in SmatchetHost_Destroy
+    auto* host = new SmatchetImGuiHost(); // C-ABI handle — raw pointer is the public contract
     {
         std::lock_guard<std::mutex> lock(gHostHandleSetMutex);
         gLiveHostHandles.insert(host);
