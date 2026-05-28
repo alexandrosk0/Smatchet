@@ -8,7 +8,7 @@
 # working tree (rooted at the same workspace via `smatchet_main_*`), then
 # onto a new git branch + push + GitHub PR.
 #
-# Phase 3 of `docs/design/git-to-perforce-migration.md`.
+# Phase 3 of `docs/design/archive/git-to-perforce-migration.md`.
 #
 # Modes:
 #   default (one-shot) — integrate → submit → git push → gh pr create in
@@ -17,7 +17,7 @@
 #   --prepare-review-cl — integrate → create a NAMED pending CL on
 #                        //smatchet/main (NOT submitted) → shelve. Prints
 #                        the CL number on stdout. Used by the p4-gated
-#                        ship-loop (docs/design/p4-gated-ship-loop.md) so a
+#                        ship-loop (docs/design/archive/p4-gated-ship-loop.md) so a
 #                        human can review the change in P4V before submit.
 #   --promote-reviewed-cl <CL> — resume from a CL prepared above. Validates
 #                        the CL (exists, pending, current client, matching
@@ -327,7 +327,7 @@ Co-Authored-By: ${P4USER}@p4 <noreply@anthropic.com>"
 
 Source: \`bash scripts/dev/p4-task-stream-to-pr.sh ${agent_id} \"${pr_title}\"\`
 
-See [docs/design/git-to-perforce-migration.md](docs/design/git-to-perforce-migration.md) § Phase 3."
+See [docs/design/archive/git-to-perforce-migration.md](docs/design/archive/git-to-perforce-migration.md) § Phase 3."
 
     if [ "$dry_run" = 1 ]; then
         echo "p4-task-stream-to-pr: DRY-RUN — skipping git push + gh pr create" >&2

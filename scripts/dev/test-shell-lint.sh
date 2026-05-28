@@ -3,7 +3,7 @@
 #
 # Closes docs/backlog/agent-self-improvement/process.md 2026-05-28 P1 entry
 # "Implementer-side self-review didn't catch real shell-script bugs".
-# Plan: docs/design/shell-script-self-review-lint.md.
+# Plan: docs/design/archive/shell-script-self-review-lint.md.
 #
 # Rules (one per CR finding class from session 2026-05-28):
 #   1. Dependency preflight — every allowlisted external must have

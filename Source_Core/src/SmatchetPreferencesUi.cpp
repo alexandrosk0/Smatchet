@@ -261,7 +261,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
                     "Comma-separated Plane field ids copied from the last grid row when you click + New issue "
                     "(e.g. description, priority, assignee, labels).");
             } else {
-                // GitHub-as-tracker — PR3 of docs/design/github-tracker-backend.md.
+                // GitHub-as-tracker — PR3 of docs/design/archive/github-tracker-backend.md.
                 ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
                 ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
                                  ImGuiInputTextFlags_CharsNoBlank);

@@ -14,7 +14,7 @@
 #   8. branch with MERGED PR + SMATCHET_ALLOW_MERGED_PR_PUSH=1 -> exit 0
 #   9. gh not on PATH -> exit 0 (silent skip)
 #
-# Plan: docs/design/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
+# Plan: docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
 
 set -euo pipefail
 

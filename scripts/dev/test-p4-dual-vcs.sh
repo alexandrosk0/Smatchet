@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-p4-dual-vcs.sh — verification scenarios for the Perforce dual-VCS layer.
 #
-# Phase 7 of docs/design/git-to-perforce-migration.md. Three scenarios:
+# Phase 7 of docs/design/archive/git-to-perforce-migration.md. Three scenarios:
 #   1. dual-VCS round-trip (allocate task stream → edit → bridge --dry-run)
 #   2. git-only baseline (regression — no p4 calls when SMATCHET_AGENT_VCS=git)
 #   3. multi-agent parallel (two task streams allocated + GC'd in one pass)
@@ -193,7 +193,7 @@ assert_eq "GC real run removes both" "0" "${remaining// /}"
 
 # ----- scenario 4: prepare-review-cl creates pending CL + shelf ------------
 # Covers `bash scripts/dev/p4-task-stream-to-pr.sh --prepare-review-cl`
-# from docs/design/p4-gated-ship-loop.md. Verifies that prepare-mode:
+# from docs/design/archive/p4-gated-ship-loop.md. Verifies that prepare-mode:
 #   1. Creates a NAMED pending CL on //smatchet/main (not the default
 #      changelist).
 #   2. Stamps the CL description with the contract tag
@@ -359,7 +359,7 @@ fi
 assert_eq "promote refuses non-existent CL with exit 5" "5" "$promote_missing_exit"
 
 # ----- scenario 6: lock-backend auto-flip if-unset pattern -----------------
-# Covers the contract from docs/design/p4-gated-ship-loop.md § Resolved
+# Covers the contract from docs/design/archive/p4-gated-ship-loop.md § Resolved
 # invariants § Plan-lock backend in p4-mode: orchestrator does
 #     export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
 # (no colon — preserves empty-string setting that scenario 2 above relies

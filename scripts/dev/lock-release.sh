@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-# --- backend dispatch (Phase 4 of docs/design/git-to-perforce-migration.md)
+# --- backend dispatch (Phase 4 of docs/design/archive/git-to-perforce-migration.md)
 if [ "${SMATCHET_LOCK_BACKEND:-git-ref}" = "p4-counter" ]; then
     exec bash "$(dirname "$0")/lock-release-p4.sh" "$@"
 fi

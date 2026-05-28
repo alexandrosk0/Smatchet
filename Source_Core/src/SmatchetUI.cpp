@@ -502,7 +502,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Whisper first-run dictation setup banner — pinned under the menu bar,
     // visible only while cfg.WhisperSetupCompleted == false. Renders nothing
     // once the user has answered (Enable / No thanks). See
-    // docs/design/whisper-dictation.md § Setup banner spec.
+    // docs/design/archive/whisper-dictation.md § Setup banner spec.
     if (!d.cfg.WhisperSetupCompleted && !d.cfg.ZenMode) {
         SMATCHET_UI_PERF_SCOPE("SmatchetWhisperSetupBanner::Render");
         if (smatchet::whisper::banner::Render(app, d.cfg)) {

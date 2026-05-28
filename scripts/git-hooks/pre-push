@@ -8,7 +8,7 @@
 #   2026-05-18 · orchestrator · [process] · P2 — Pushing commits to a
 #   merged-PR branch silently orphans them
 #
-# Plan: docs/design/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
+# Plan: docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
 #
 # Wired via: git config --local core.hooksPath scripts/git-hooks  (installed
 # by `bash scripts/setup-harness.sh claude-code`).
@@ -31,7 +31,7 @@ set -euo pipefail
 # refusal below. Silent no-op when SMATCHET_AGENT_VCS != p4 (default git
 # users pay zero cost). See:
 #   - scripts/dev/p4-reconcile-check.sh (the checker itself)
-#   - docs/design/git-to-perforce-migration.md § Files to modify §
+#   - docs/design/archive/git-to-perforce-migration.md § Files to modify §
 #     scripts/git-hooks/pre-push:1
 #   - AGENTS.md § Dual-VCS topology
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"

@@ -2,7 +2,7 @@
 
 # Status
 
-**Withdrawn (2026-05-21)** — the runtime this ADR governed (`ICodingHarnessRunner` / `ClaudeCodeLocalRunner` / sentinel-file protocol / `agent/<proposalId>` worktree base / spawned-harness lifecycle) was removed by v1 PR1 of [`docs/design/github-tracker-backend.md`](../design/github-tracker-backend.md) (merge sha `b1d241bc`). The future [`smatchet-merge-watcher`](../design/archive/smatchet-merge-watcher.md) revives a small subset of the underlying need (drive PRs to merge without orchestrator babysitting) but as a host daemon, not a spawn — different architecture, different ADR (or no ADR; the watcher plan-doc carries the rationale inline).
+**Withdrawn (2026-05-21)** — the runtime this ADR governed (`ICodingHarnessRunner` / `ClaudeCodeLocalRunner` / sentinel-file protocol / `agent/<proposalId>` worktree base / spawned-harness lifecycle) was removed by v1 PR1 of [`docs/design/archive/github-tracker-backend.md`](../design/archive/github-tracker-backend.md) (merge sha `b1d241bc`). The future [`smatchet-merge-watcher`](../design/archive/smatchet-merge-watcher.md) revives a small subset of the underlying need (drive PRs to merge without orchestrator babysitting) but as a host daemon, not a spawn — different architecture, different ADR (or no ADR; the watcher plan-doc carries the rationale inline).
 
 This file is kept for historical context. The "two paths" analysis below remains useful as design archaeology if anyone considers re-introducing a pluggable runner.
 

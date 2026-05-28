@@ -7,7 +7,7 @@
 
 ## Triage log
 
-- **2026-05-18** — Triage sweep per [`docs/design/agent-docs-improvements.md`](../../design/agent-docs-improvements.md) § Action 2. Cadence trigger: category breached the ~20 open-items threshold (was 27).
+- **2026-05-18** — Triage sweep per [`docs/design/archive/agent-docs-improvements.md`](../../design/archive/agent-docs-improvements.md) § Action 2. Cadence trigger: category breached the ~20 open-items threshold (was 27).
   - Before: 27 entries
   - Dedup-merged: 1 (Bucket-E tooltip-content-identity helper — 2026-05-17 entry kept as survivor with `Supersedes: 2026-05-16` line; 2026-05-16 sibling dropped)
   - Moved-to-parked: 16 (all P3 entries — see `## Parked` section at the bottom)
@@ -52,14 +52,14 @@
 
 - 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/archive/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
-  Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
+  Details: The closing milestone (phase 9 of `docs/design/archive/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
   Concrete next action: add ImGui Test Engine assertions for: (a) the two new Preferences UI toggles' keyboard-nav contract (`coderabbit_react.enabled` + `ci_react.enabled`), (b) the panel state-row reads for in-flight react-loop runs (per-PR iteration-budget snapshot, last-tick timestamp), (c) the `CHECK_RUN.json` sentinel surfacing in the agent-handoff UI panel. Register via `IM_REGISTER_TEST` in a new `tests/ui/coderabbit_react_loop.test.cpp` + bash driver `scripts/dev/test-ui-coderabbit-react-loop.sh`. ~3 h.
   Status: open
   Last-reviewed: 2026-05-20
 
 - 2026-05-20 · handoff-implementer · [tooling] · P2 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/archive/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
-  Details: `docs/design/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Source_Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip.
+  Details: `docs/design/archive/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Source_Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip.
   Concrete next action: add `tests/ui/ai_assistant_model_change_strip.test.cpp` that (1) seeds `g_ui.assistantHistory` with one stub assistant message, (2) flips `cfg.AiProviderKind` between Anthropic and DeepSeek, (3) drives a synthetic Send through `AiClientFactory::SetTestOverride` returning a stub `IAiClient` that ack-streams a one-token reply, (4) asserts the strip renders the expected text after the second turn lands. Register via `IM_REGISTER_TEST` + bash driver `scripts/dev/test-ui-ai-assistant-model-change.sh`. ~2 h.
   Status: open
   Last-reviewed: 2026-05-20
@@ -126,7 +126,7 @@
 <!-- Latest first within Parked. -->
 
 - 2026-05-21 · architect · [tooling] · P3 — Architect-review checklist needs "name the chokepoint AppController shim, not the upstream caller" rule
-  Details: Architect pre-code review of `docs/design/github-tracker-backend.md` found the plan's audit-call-site enumeration ("~30 sites across `*ReactController.cpp`, `JiraIssueMutation.cpp`, `PlaneIssueMutation.cpp`, `GitHubClient.cpp` write methods, `LuaConsole/`, `Mcp/`") was misleading. Lua and MCP have **zero direct** `BackendAuditTrail::Append*` / `UpdateField` / `AddIssueCommentPlain` calls — their writes route through `AppController` shim methods (the binding adapters in `AppController_LuaBindings.cpp` + MCP tool handlers). The actor pass-through is a 4-method change at the shim layer, not a 30-site sweep. A plan that names the upstream caller as the change-site sends the implementation agent to wrong files.
+  Details: Architect pre-code review of `docs/design/archive/github-tracker-backend.md` found the plan's audit-call-site enumeration ("~30 sites across `*ReactController.cpp`, `JiraIssueMutation.cpp`, `PlaneIssueMutation.cpp`, `GitHubClient.cpp` write methods, `LuaConsole/`, `Mcp/`") was misleading. Lua and MCP have **zero direct** `BackendAuditTrail::Append*` / `UpdateField` / `AddIssueCommentPlain` calls — their writes route through `AppController` shim methods (the binding adapters in `AppController_LuaBindings.cpp` + MCP tool handlers). The actor pass-through is a 4-method change at the shim layer, not a 30-site sweep. A plan that names the upstream caller as the change-site sends the implementation agent to wrong files.
   Concrete next action: add a checklist item to `agents/architect.md` § Cross-cutting review template: "For any cross-cutting signature change (audit-trail, error-policy, retry-shape, locale-string, etc.), grep the upstream caller for direct calls to the changed surface; if there are zero or near-zero direct calls, the true change-site is the AppController shim (or other binding adapter). Name that shim explicitly in the file list." ~10 min agent-doc edit. Wins on every cross-cutting plan that touches a shared API used by Lua / MCP / UI.
   Status: parked
   Last-reviewed: 2026-05-21

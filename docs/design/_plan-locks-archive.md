@@ -11,7 +11,7 @@
 > - **Update scope mid-slice**: `bash scripts/dev/lock-claim-update.sh <slug> <write-set-file>`.
 > - **Release a lock (manual)**: `bash scripts/dev/lock-release.sh <slug>` — usually auto-handled by
 >   [`.github/workflows/lock-cleanup.yml`](../../.github/workflows/lock-cleanup.yml) on PR-merge.
-> - **Plan + rationale**: [`docs/design/git-ref-plan-locks.md`](./git-ref-plan-locks.md).
+> - **Plan + rationale**: [`docs/design/archive/git-ref-plan-locks.md`](./git-ref-plan-locks.md).
 >
 > Hand-edits below the Protocol section are **no longer authoritative** and may be removed
 > in future archive cleanups. The Protocol section is retained for reference on the
@@ -134,7 +134,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `scripts/dev/test-grid-edit-perf-postfix.sh` (NEW — regression gate, auto-enrolled by `test-all.sh`)
   - `scripts/dev/test-grid-edit-perf-baseline.sh` (NEW — baseline capture; `test-` prefix but lenient — does not assert)
   - `scripts/dev/manual-grid-edit-perf-compare.sh` (NEW — `manual-` prefix means NOT auto-enrolled)
-  - `docs/design/grid-cell-edit-perf.md` (NEW — plan + implementation log)
+  - `docs/design/archive/grid-cell-edit-perf.md` (NEW — plan + implementation log)
   - `docs/design/_plan-locks.md` (this entry)
 - **Read-only adjacency**: `Source_Core/src/AppController_CatalogAndFieldEdit.cpp`, `Source_Core/include/MainThreadDispatcher.h`, `Source_Core/include/AppController.h`
 - **Started**: 2026-05-17

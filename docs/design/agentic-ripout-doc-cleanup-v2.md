@@ -104,7 +104,7 @@ Four files affected (3 in original v2 + `security-review.md` surfaced by 2026-05
 - `docs/design/agentic-coding-handoff.md` — **DELETE** (PR#217/#240/#259 etc.; describes deleted design).
 - `docs/design/agentic-flow-implementation.md` — **DELETE** (PR#217/#225 etc.).
 - `docs/design/agentic-triage-flow.md` — **DELETE** (PR#217).
-- `docs/design/coderabbit-react-loop.md` — **KEEP as historical** (re-grill correction; was DELETE). Add a `## Status` header at the top: `Historical — describes the C++ CodeRabbit react loop that v1 PR1 (#356, b1d241bc) deleted. The watcher revival (per docs/backlog/agent-self-improvement/tooling.md 'Long-running CI/CR polls block the interactive session') reuses the CR-triage classification concepts; this design doc is useful input for the watcher's design pass.` Keep the body verbatim.
+- `docs/design/archive/coderabbit-react-loop.md` — **KEEP as historical** (re-grill correction; was DELETE). Add a `## Status` header at the top: `Historical — describes the C++ CodeRabbit react loop that v1 PR1 (#356, b1d241bc) deleted. The watcher revival (per docs/backlog/agent-self-improvement/tooling.md 'Long-running CI/CR polls block the interactive session') reuses the CR-triage classification concepts; this design doc is useful input for the watcher's design pass.` Keep the body verbatim.
 - `docs/agentic/TRIAGE_MANUAL.md` + `USAGE.md` — **DELETE** (`docs(agentic)` PRs).
 - `docs/agentic/` directory itself — **DELETE**.
 

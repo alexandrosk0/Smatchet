@@ -98,4 +98,4 @@ Per AGENTS.md § Agent output contract § Maintenance class — these sections m
 - Sibling: [`agents/git-janitor.md`](git-janitor.md) — git/GitHub side.
 - Bring-up: [`docs/perforce/SETUP.md`](../docs/perforce/SETUP.md).
 - Verb-choice playbook: [`docs/perforce/AGENT_FLOWS.md`](../docs/perforce/AGENT_FLOWS.md).
-- Plan: [`docs/design/git-to-perforce-migration.md`](../docs/design/git-to-perforce-migration.md) § Phase 6.
+- Plan: [`docs/design/archive/git-to-perforce-migration.md`](../docs/design/archive/git-to-perforce-migration.md) § Phase 6.

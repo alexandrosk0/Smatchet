@@ -4,7 +4,7 @@
 # Drives N synthetic cell commits through ProcessGridFieldEdits and asserts the
 # UI-thread cost stays inside pillar-1 (144 Hz, 6.94 ms mean) and pillar-2
 # (no UI hitch > 16.67 ms / 60 Hz floor) budgets. See:
-#   docs/design/grid-cell-edit-perf.md
+#   docs/design/archive/grid-cell-edit-perf.md
 #   AGENTS.md § UX Pillars
 #
 # The assertion is that the HTTP commit no longer blocks the UI thread — the

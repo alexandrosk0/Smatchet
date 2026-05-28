@@ -194,7 +194,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["tracker_type"] = config.TrackerType;
     j["plane_url"] = config.PlaneUrl;
     j["plane_workspace_slug"] = config.PlaneWorkspaceSlug;
-    // GitHub-as-tracker fields (PR2 of docs/design/github-tracker-backend.md).
+    // GitHub-as-tracker fields (PR2 of docs/design/archive/github-tracker-backend.md).
     // PAT goes through DPAPI same as plane_api_key — see saveGithubPat block below.
     j["github_base_url"] = config.GitHubBaseUrl;
     j["github_owner"] = config.GitHubOwner;

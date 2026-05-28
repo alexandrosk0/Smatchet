@@ -114,7 +114,7 @@ for abs in "${CHUNK[@]}"; do
     [[ -n "$catch_out" ]] && ISSUES+="$catch_out"$'\n'
 done
 
-# --- Pillar 2 static gate (slice 2 of docs/design/pillar-1-2-perf-review-system.md) ----
+# --- Pillar 2 static gate (slice 2 of docs/design/archive/pillar-1-2-perf-review-system.md) ----
 # Runs the canonical harness-agnostic scanner at scripts/dev/pillar2-scan.sh
 # against every file in the chunk. Emits CRITICAL per sync-I/O reaching the
 # UI thread without /* PILLAR2_WORKER_ONLY */ + est-latency annotation.

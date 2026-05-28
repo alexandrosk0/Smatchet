@@ -18,7 +18,7 @@
 #   ^#+\s+File-level\s+(changes|edits|writes)
 # ends at the next heading at the same or higher level (smaller or equal #).
 #
-# Plan: docs/design/process-backlog-tighten-1-2-3-9-11-12.md § Slice 4
+# Plan: docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md § Slice 4
 
 set -euo pipefail
 

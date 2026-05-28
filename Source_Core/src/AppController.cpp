@@ -1172,7 +1172,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         activeTracker = "Jira";
     }
 
-    // Slice 2 of docs/design/autonomous-debugging-no-creds.md — env-hook
+    // Slice 2 of docs/design/archive/autonomous-debugging-no-creds.md — env-hook
     // override for the Plane backend. When SMATCHET_TEST_PLANE_BACKEND_FIXTURE
     // is set, swap in a fixture-driven backend factory before the default is
     // constructed. Sibling Jira/GitHub hooks land adjacent.
@@ -1194,7 +1194,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         }
     }
 
-    // Slice 1 of docs/design/autonomous-debugging-no-creds.md — env-hook to
+    // Slice 1 of docs/design/archive/autonomous-debugging-no-creds.md — env-hook to
     // swap the default tracker factory for a fixture-backed GitHub backend
     // when SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path> is set AND the active
     // tracker is GitHub. Keeps the no-credentials debug loop able to drive
@@ -1431,7 +1431,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     // Scenario runner — constructed before the registry so scenario.* commands
     // can capture a reference to it in their handlers.
     scenarioRunner_ = std::make_unique<smatchet::cmd::ScenarioRunner>();
-    // Slice 5 of docs/design/autonomous-debugging-no-creds.md — pure refactor.
+    // Slice 5 of docs/design/archive/autonomous-debugging-no-creds.md — pure refactor.
     // The 14-entry RegisterFactory block lives in SmatchetScenarioRegistry.cpp
     // so adding/removing a scenario is one edit in a self-contained TU. The
     // snapshot test tests/Source_Core/SmatchetScenarioRegistry.test.cpp pins

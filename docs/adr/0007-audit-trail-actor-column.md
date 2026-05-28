@@ -2,7 +2,7 @@
 
 # Status
 
-**Withdrawn (2026-05-21)** — the triage tracker-agnostic refactor that drove this ADR was stripped from the [`github-tracker-backend`](../design/github-tracker-backend.md) plan on the same day. Without the refactor, triage and grid writes continue to land on distinct call paths (concrete `GitHubClient::*` methods vs `ITrackerClient::UpdateField` virtuals), so the `source`+`action`+timestamp heuristic continues to discriminate triggers as it does today. This ADR remains in-tree as a reference: when the deferred refactor lands, re-propose under a new ADR number with status Accepted; reuse the design here verbatim.
+**Withdrawn (2026-05-21)** — the triage tracker-agnostic refactor that drove this ADR was stripped from the [`github-tracker-backend`](../design/archive/github-tracker-backend.md) plan on the same day. Without the refactor, triage and grid writes continue to land on distinct call paths (concrete `GitHubClient::*` methods vs `ITrackerClient::UpdateField` virtuals), so the `source`+`action`+timestamp heuristic continues to discriminate triggers as it does today. This ADR remains in-tree as a reference: when the deferred refactor lands, re-propose under a new ADR number with status Accepted; reuse the design here verbatim.
 
 Original status: Accepted (2026-05-21) — revoked same day.
 
@@ -38,4 +38,4 @@ Triage-flow + ci-react + coderabbit-react + lua + mcp call sites explicitly pass
 - **Audit-consumer simplification** — "what did triage do today" reduces to JSONL-grep `actor=triage` instead of a path-derived heuristic. The pre-refactor heuristic was implicit and brittle; this makes the discriminator explicit.
 - **Forward-compatibility with Pillar 3 incident triage** — when a Pillar 3 crash investigation needs to know "did a Lua script or the user trigger this last write before the crash", `actor` is the load-bearing column.
 
-Cross-link: [`docs/design/github-tracker-backend.md`](../design/github-tracker-backend.md) § Out of scope § Agentic triage tracker-agnostic refactor (the deferred work this ADR was originally drafted for).
+Cross-link: [`docs/design/archive/github-tracker-backend.md`](../design/archive/github-tracker-backend.md) § Out of scope § Agentic triage tracker-agnostic refactor (the deferred work this ADR was originally drafted for).
