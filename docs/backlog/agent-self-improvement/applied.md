@@ -9,6 +9,12 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-21 · orchestrator · [process] · P0 — Draft PRs silently bypass CodeRabbit review; merge-gates poll passes on the placeholder StatusContext without ever seeing a real review
+  Resolution: Slice 1 of `docs/design/tooling-process-backlog-sweep.md`. Three-prong fix landed: (1) `MERGE_GATES_FLIP_READY=true` env knob in `scripts/dev/merge-gates.sh` flips draft→ready at poll start when authorized-merge callers (orchestrator + `smatchet-merge-watcher`) opt in. CR's auto-review fires immediately on the ready transition. `agents/git-janitor.md` updated to set the env. (2) The C4 prong 2 logic (`cr_thread_comments_on_head > 0` required for NONE+SUCCESS pass) already shipped in an earlier merge-gates patch — verified in-place at `merge-gates.sh:453`. (3) `@coderabbitai review` manual trigger documented in AGENTS.md § Merge gates and in `merge-gates.sh` header comment. ADR 0006 amended with "Authorized-merge flip-at-poll-start carve-out" section explaining the design. 3 bats tests cover the flip behavior. Plain poll-only callers (status checks, dry-runs) leave the env unset; draft-as-WIP semantics preserved.
+
+- 2026-05-20 · orchestrator · [process] · P2 — ADR 0006 hole: merge-gates poller on draft PR never gets a real CodeRabbit signal
+  Resolution: Closed in same slice as P0 sister entry above. ADR 0006 now carries a 2026-05-27 amendment documenting the `MERGE_GATES_FLIP_READY=true` carve-out for authorized-merge callers, closing the structural bypass while preserving draft-as-WIP for non-authorized polls.
+
 - 2026-05-23 · orchestrator · [process] · P2 — Plan-revision direct-pushes vs classifier
   Resolution: Slice 4 of `docs/design/tooling-process-backlog-sweep.md`. Picked policy (b) — mandate PR-for-plan-revisions. AGENTS.md § Process rules § Plan-doc family now states "Plan-revision direct-pushes are PR-only … never direct-push to develop, even for one-line edits." Eliminates classifier-vs-rule drift; adds ~3 min ceremony per plan revision.
 
