@@ -9,6 +9,15 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-26 · orchestrator · [tooling] · P2 — Merge-gates should explain GitHub `mergeStateStatus=BLOCKED`
+  Resolution: Slice 2 of `docs/design/tooling-process-backlog-sweep.md`. `merge-gates.sh` now fetches `mergeStateStatus` from the GraphQL query and prints an INFO line on GATES_PASSED when GH reports anything other than CLEAN/UNSTABLE/UNKNOWN: "merge-gates pass; GitHub mergeStateStatus=<state> may be stale or branch-protection summary-only. REST squash-merge contract still applies."
+
+- 2026-05-21 · orchestrator · [process] · P1 — Force-merge on CR timeout silently discards STALE CR reviews on the prior commit; the poller treats "CR reviewed an older commit" the same as "CR never reviewed", and the timeout-fallthrough path doesn't surface the older review for explicit re-grading
+  Resolution: Slice 2 — verified the STALE_WITH_FINDINGS / STALE_CLEAN / STALE_RESOLVED / STALE_UNKNOWN discrimination is fully implemented in `merge-gates.sh:445-490`. STALE_WITH_FINDINGS and STALE_UNKNOWN block on timeout (no fallthrough to pass), STALE_CLEAN passes, STALE_RESOLVED (open=0 + status=SUCCESS) passes. The original session-bug from PR #357 cannot recur under current logic.
+
+- 2026-05-20 · orchestrator · [process] · P2 — Merge-gates poller has no encoded recovery for STALE-persist, MAX_POLLS-with-pushed-fix, or CR re-review trigger
+  Resolution: Slice 2. **(A) STALE auto-recovery**: `merge-gates.sh` now auto-posts `@coderabbitai review` once per HEAD when CR sits at STALE_WITH_FINDINGS / STALE_UNKNOWN for ≥`MERGE_GATES_STALE_REREVIEW_POLLS` consecutive polls (default 5; set to 0 to disable). Idempotent per HEAD — the trigger fires once per head SHA. **(C) `@coderabbitai review` reference**: documented in `merge-gates.sh` header + AGENTS.md § Merge gates (slice 1). **(B) auto-restart on push-after-COMMENTED** deferred — orchestrator's existing pattern (push fix, re-invoke poll) is functionally equivalent; encoding it in the script adds complexity without clear win.
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
   Resolution: Slice 5. `scripts/dev/p4-git-sync-check.sh` compares git-pending paths against `p4 opened` and reports both directions (git pending but not p4 opened; p4 opened but not git pending). Exit 0 = aligned, exit 1 = mismatch, exit 2 = p4 unreachable (informational for git-only sessions). `--quiet` flag for clean-on-success use.
 

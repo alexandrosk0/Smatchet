@@ -22,12 +22,6 @@
   Status: open
   Last-reviewed: 2026-05-26
 
-- 2026-05-26 · orchestrator · [tooling] · P2 — Merge-gates should explain GitHub `mergeStateStatus=BLOCKED`
-  Details: PR #460 showed `mergeStateStatus: BLOCKED` in `gh pr view` while `scripts/dev/merge-gates.sh` passed and the REST squash merge succeeded. The gate result was correct, but the mismatch looked suspicious during merge handoff.
-  Concrete next action: add a diagnostic mode or final line to `merge-gates.sh` that prints the current GitHub mergeability summary plus the gate's own CI/CodeRabbit/user-comment decision, e.g. "merge-gates pass; GitHub mergeStateStatus=BLOCKED may be stale or branch-protection summary-only." Estimated cost 30 min.
-  Status: open
-  Last-reviewed: 2026-05-26
-
 - 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
   Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
   Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
