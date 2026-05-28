@@ -70,6 +70,10 @@ When domain relationships are being discussed, stress-test them with specific sc
 
 When the user states how something works, check whether the code agrees. If you find a contradiction, surface it: "Your code cancels entire Orders, but you just said partial cancellation is possible — which is right?"
 
+### Storage-substrate pre-flight
+
+For any decision that mentions audit / log / persistence / cache / schema / migration, point at one `file:line` proving the actual storage shape **before locking the decision**. Phantom schema-version bumps and migration entries in plans for substrates that don't exist (e.g. locking "SQLite migration on `agent_audit_trail` table" when the substrate is append-only JSONL) drive implementation agents to hunt for tables that aren't there. The grill must surface storage-shape claims and verify them against the code; never accept a persistence claim on prose alone.
+
 ### Update CONTEXT.md inline
 
 When a term is resolved, update `CONTEXT.md` right there. Don't batch these up — capture them as they happen. Use the format in [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md).

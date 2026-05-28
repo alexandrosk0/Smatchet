@@ -9,6 +9,54 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
+  Resolution: Slice 5. `scripts/dev/p4-git-sync-check.sh` compares git-pending paths against `p4 opened` and reports both directions (git pending but not p4 opened; p4 opened but not git pending). Exit 0 = aligned, exit 1 = mismatch, exit 2 = p4 unreachable (informational for git-only sessions). `--quiet` flag for clean-on-success use.
+
+- 2026-05-24 · orchestrator · [process] · P2 — orchestrator session-start self-check for `SMATCHET_AGENT_VCS` mode-alignment
+  Resolution: Slice 5 of `docs/design/tooling-process-backlog-sweep.md`. AGENTS.md § Autonomous ship-loop default carries a "**Session-start self-check (mandatory, regardless of user-prompt flavour)**" paragraph instructing the orchestrator to read the `## === p4-mode ACTIVE ===` banner emitted by `scripts/clear-session-context.sh` and follow the P4-gated ship-loop regardless of prompt flavour. Paired with the SessionStart-hook tooling entry below.
+
+- 2026-05-24 · orchestrator · [tooling] · P2 — SessionStart hook should announce `SMATCHET_AGENT_VCS=p4` mode to the orchestrator
+  Resolution: Slice 5. `scripts/clear-session-context.sh` now appends a `## === p4-mode ACTIVE ===` banner to `.session-context.md` when `$SMATCHET_AGENT_VCS=p4` AND `p4 info` succeeds (reports client + server). On `p4 info` failure, emits `## === p4-mode REQUESTED but UNREACHABLE ===` instructing the orchestrator to ask via `AskUserQuestion` per ship-loops.md (never silently downgrade). Paired with the AGENTS.md session-start self-check rule.
+
+- 2026-05-23 · orchestrator · [process] · P2-RESOLVED — `smatchet-merge-watcher` triage budget exhausts on every push because counter was per-PR-lifetime instead of per-HEAD
+  Resolution: Slice 10 archive. Fix landed in PR #418 (merged 2026-05-23): `handle_blocked_cr_triage` resets `triage_attempts` to 0 when `triage_for_head_sha` differs from current HEAD. Bats coverage at `tests/bats/merge_watcher.bats`. Per-HEAD reset confirmed in tree.
+
+- 2026-05-21 · orchestrator · [process] · P0 — Draft PRs silently bypass CodeRabbit review; merge-gates poll passes on the placeholder StatusContext without ever seeing a real review
+  Resolution: Slice 1 of `docs/design/tooling-process-backlog-sweep.md`. Three-prong fix landed: (1) `MERGE_GATES_FLIP_READY=true` env knob in `scripts/dev/merge-gates.sh` flips draft→ready at poll start when authorized-merge callers (orchestrator + `smatchet-merge-watcher`) opt in. CR's auto-review fires immediately on the ready transition. `agents/git-janitor.md` updated to set the env. (2) The C4 prong 2 logic (`cr_thread_comments_on_head > 0` required for NONE+SUCCESS pass) already shipped in an earlier merge-gates patch — verified in-place at `merge-gates.sh:453`. (3) `@coderabbitai review` manual trigger documented in AGENTS.md § Merge gates and in `merge-gates.sh` header comment. ADR 0006 amended with "Authorized-merge flip-at-poll-start carve-out" section explaining the design. 3 bats tests cover the flip behavior. Plain poll-only callers (status checks, dry-runs) leave the env unset; draft-as-WIP semantics preserved.
+
+- 2026-05-20 · orchestrator · [process] · P2 — ADR 0006 hole: merge-gates poller on draft PR never gets a real CodeRabbit signal
+  Resolution: Closed in same slice as P0 sister entry above. ADR 0006 now carries a 2026-05-27 amendment documenting the `MERGE_GATES_FLIP_READY=true` carve-out for authorized-merge callers, closing the structural bypass while preserving draft-as-WIP for non-authorized polls.
+
+- 2026-05-18 · test-author · [tooling] · P2-RESOLVED — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
+  Resolution: Slice 10. `LaunchEphemeralInstance` in `Target_Standalone/CliCommandRunner.cpp` now redirects child stdout+stderr to `$TMPDIR/Smatchet-spawn-<parent-pid>-<port>.log` (Windows: `%TMP%/Smatchet-spawn-...`). The spawn driver emits the log path in the `[spawn] child stdout/stderr → <path>` banner so operators can tail it on test failures. Falls through to parent-handle inheritance if the log file can't be opened (non-fatal).
+
+- 2026-05-23 · orchestrator · [process] · P2 — Plan-revision direct-pushes vs classifier
+  Resolution: Slice 4 of `docs/design/tooling-process-backlog-sweep.md`. Picked policy (b) — mandate PR-for-plan-revisions. AGENTS.md § Process rules § Plan-doc family now states "Plan-revision direct-pushes are PR-only … never direct-push to develop, even for one-line edits." Eliminates classifier-vs-rule drift; adds ~3 min ceremony per plan revision.
+
+- 2026-05-21 · architect · [process] · P2 — Scope-reduction edits need a forward-reference grep over CONTEXT.md + ADRs for deferred-symbol orphans
+  Resolution: Slice 4. AGENTS.md § Process rules § Plan-doc family now requires forward-reference grep over `docs/CONTEXT.md` + `docs/adr/` + `agents/*.md` + `docs/backlog/agent-self-improvement/` for every symbol named in deferred work. Same rule applies to substrate/shape/contract rewrites — clear every stray reference in the keyword family.
+
+- 2026-05-21 · architect · [process] · P2 — Cross-cutting review must feasibility-check every prescribed plumbing channel
+  Resolution: Slice 4. `agents/architect.md` § Interface contracts checklist now requires naming the actual function signature / struct member / typedef arity at every hop of a prescribed X → Y → Z path; missing channels must be flagged as an explicit widening, not "plumb from context".
+
+- 2026-05-21 · grill-with-docs · [process] · P2 — Skill should pre-flight storage-substrate facts for every persistence claim
+  Resolution: Slice 4. `agents/_shared/skills/grill-with-docs/SKILL.md` § During the session now carries a "Storage-substrate pre-flight" rule — any decision mentioning audit / log / persistence / cache / schema / migration must point at one `file:line` proving the storage shape before being locked. Catches phantom-table claims that drive implementation agents to hunt for substrates that don't exist.
+
+- 2026-05-20 · orchestrator · [tooling] · P2 — 8 of 15 candidate perf scenarios don't emit `rows[]`; cannot be baselined under current shape
+  Resolution: Slice 9 of `docs/design/tooling-process-backlog-sweep.md`. Audited current state: (a) the 3 bucket-C-only scenarios (`command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel`) are correctly classified as render-bound and don't need rows[]; (b) the 3 named roundtrip scenarios (`agent-handoff-roundtrip`, `agent-triage-roundtrip`, `whisper-dictation-roundtrip`) were removed in the agentic-runtime ripout (v1 PR1 of github-tracker-backend.md, sha b1d241bc); (c) the 2 named "scenarios that exist but don't emit rows" — `cell-edit-burst` already has rows[] in `OnFinish` (`CellEditBurstScenario.cpp:74-87`), and `whisper-ai-assistant-autosend` also already emits rows[]. Net: no retrofit work needed; the gap closed via prior PRs while this entry sat open.
+
+- 2026-05-19 · perf-detective · [tooling] · P2 — `perf-measure --spawn` `WaitForFile` stale-file footgun
+  Resolution: Slice 9. `Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp` now calls `std::remove(outPath_.c_str())` before the scenario starts, eliminating the race where a prior run's result file looks like the new run's output to the spawn-mode WaitForFile poller.
+
+- 2026-05-19 · orchestrator · [tooling] · P2 — Cross-harness CI parity for skill-vs-agent forms
+  Resolution: Slice 9. `scripts/dev/test-skill-vs-agent-parity.sh` ships as a shape check: every skill under `agents/_shared/skills/*/SKILL.md` either has a matching `agents/<name>.md` twin OR is named in the script's `SKILL_ONLY_HELPERS` array. Auto-discovered by `test-all.sh`. The functional-parity stretch (driver scripts + stdout diff per harness) is deferred — naming the orphan-skill case is the immediate win; the test surfaces a real drift type that a pure-prose review wouldn't catch.
+
+- 2026-05-17 · perf-measure · [process] · P2 — "extend the CLI / scenarios if missing, never ask user to run UI manually" rule not encoded in `agents/perf-measure.md`
+  Resolution: Slice 4. The rule was already encoded in `agents/perf-measure.md` § Fallback ("Do not fall back to a manual UI session"). Extended `agents/perf-detective.md` § Hard rules and `agents/spike-hunter.md` § Hard rules with the same wording: "Extend the CLI / scenarios, never substitute a manual UI session. … The measurement is the deliverable."
+
+- 2026-05-16 · test-rig · [process] · P2 — Worktree-absolute vs main-repo-absolute path discipline
+  Resolution: Slice 4. AGENTS.md § Process rules § Git/p4 discipline now includes the worktree-absolute path rule: when running in `.claude/worktrees/<id>/`, all `Edit` / `Write` absolute paths must use the worktree prefix, never the main-repo prefix. `agents/test-rig.md` § Hard invariants carries the same rule with verification recipe (`git rev-parse --show-toplevel`).
+
 - 2026-05-25 · orchestrator · [process] · P2 — `light-release-unreal-default` plan item 10 (`main.cpp` → `StandaloneAppBootstrap`) deferred without a tracked follow-up slice
   Resolution: Follow-up slice in P4 task stream `light-release-unreal-default` — `InitAppAndPlugins` / `ParseStandaloneCli` / `BootEphemeral` / `ShutdownApplication` in `StandaloneAppBootstrap.{h,cpp}`; GUI render loop uses `bootCtx` + shared plugin init; `--ephemeral` early-outs via `BootEphemeral` (hidden window + forced MCP + `RunRenderLoop`). Process rule added at `docs/agent-rules/process-rules.md` § Deferred plan-file rows at ship boundary. Plan § Deviations updated on task stream. Light build verified (`ninja-publish-light-msvc`).
 

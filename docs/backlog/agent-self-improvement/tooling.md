@@ -28,12 +28,6 @@
   Status: open
   Last-reviewed: 2026-05-26
 
-- 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
-  Details: In the P4-backed PR #460 flow, follow-up edits made it easy to lose track of which changed files were opened in Perforce versus merely modified in git. Manual checks with `git status`, `git diff --name-only`, and `p4 opened` caught the mismatches, but this should be a one-command guard.
-  Concrete next action: add `scripts/dev/p4-git-sync-check.sh` that compares pending git paths against `p4 opened` paths, reports untracked files not opened for add, modified files not opened for edit, and opened P4 files with no git diff. Estimated cost 1 h.
-  Status: open
-  Last-reviewed: 2026-05-26
-
 - 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
   Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
   Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
@@ -77,12 +71,6 @@
   Status: open
   Last-reviewed: 2026-05-21
 
-- 2026-05-20 · orchestrator · [tooling] · P2 — 8 of 15 candidate perf scenarios don't emit `rows[]`; cannot be baselined under current shape
-  Details: The 2026-05-20 Slice-1-baselines bootstrap attempt (now applied) captured only 7 of the 15 candidate scenarios named in the original 14-scenario list. The 8 excluded fall into 3 classes: (a) **bucket-C screenshot scenarios** requiring `--screenshotPath` — `command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel` (these scenarios fail to start without the arg; `perf-baseline.sh` doesn't pass one, and they're render-bound bucket-C scenarios anyway, not perf-rows-emitting). (b) **roundtrip / state scenarios** that run cleanly but don't include `UiPerfMonitor::Instance().GetLastFrameRows()` in their `OnFinish` payload — `agent-handoff-roundtrip`, `agent-triage-roundtrip`, `whisper-dictation-roundtrip`. (c) **scenarios that exist but don't emit rows** — `cell-edit-burst`, `whisper-ai-assistant-autosend`. Net: 7 scenarios under PR-fast / perf-gatekeeper coverage; 8 surfaces structurally invisible to the perf regression gate.
-  Concrete next action: triage the 8 individually. For (a) bucket-C scenarios — confirm they're correctly classified as bucket-C-only and remove them from any perf-scenario lists (update `agents/perf-gatekeeper.md` § Curated diff → scenario map if they were listed there). For (b) + (c) — extend each scenario's `OnFinish` payload to include `rows[]` from `UiPerfMonitor::Instance().GetLastFrameRows()` (~10 lines per scenario, copy from `PriorityGridScrollScenario.cpp` OnFinish). Once a scenario emits rows[], re-run `bash scripts/dev/perf-baseline.sh init <scenario>` to capture its baseline. Net cost ~2 h for 5 row-emit retrofits + ~30 min triage of the bucket-C three. Until done, the 8 surfaces have no perf gate.
-  Status: open
-  Last-reviewed: 2026-05-20
-
 - 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
   Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
@@ -104,23 +92,6 @@
   Status: open
   Last-reviewed: 2026-05-20
 
-- 2026-05-19 · perf-detective · [tooling] · P2 — `perf-measure --spawn` `WaitForFile` stale-file footgun
-  Details: While investigating PR #311's markdown render perf, `perf-measure --spawn` returned the SAME numbers on three consecutive runs of two different scenarios. Diagnosed only after ~10 min of debugging that `WaitForFile` returns `true` for any non-empty file at the destination path, regardless of mtime. The previous run's result file was sitting at the same `outPath`; the CLI read it as the new run's output while the new spawn was still computing. Subsequent measurements landed but were attributed to the wrong scenario; the false "the instrumentation isn't firing" conclusion almost re-spent the time on adding more scopes.
-  Concrete next action: in the perf-measure CLI / scripts/dev wrapper, do one of (a) `unlink(outPath)` before sending `scenario.run` so the race is eliminated upstream, or (b) `WaitForFile` records mtime at entry and requires either a fresh file or `mtime > entry-time` before returning true. Option (a) is simpler and won't surprise existing callers. ~30 min including a regression smoke (drop a stale file, run, assert it doesn't get picked up). Touches `Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp` + scripts that wrap perf-measure.
-  Status: open
-  Last-reviewed: 2026-05-19
-
-- 2026-05-19 · orchestrator · [tooling] · P2 — Cross-harness CI parity for skill-vs-agent forms
-  Details: Surfaced while shipping `docs/design/agents-skill-conversion.md` v3 (`perf-instrument` / `perf-measure` dual-publish). The plan added Claude Code skill aliases at `agents/_shared/skills/perf-{instrument,measure}/SKILL.md` while keeping the agent files for Codex / Cursor. There is no CI rig today that runs Codex + Claude Code in lockstep against the same scenario to confirm functional parity between the two invocation forms. Risk: skill-form drift goes unnoticed until a cross-harness user files a bug. Verification V5 in the plan is currently a manual single-harness check.
-  Concrete next action: add `scripts/dev/test-skill-vs-agent-parity.sh` that (a) writes a tiny driver script per harness that invokes the helper, (b) diffs the captured stdout / output file. Wire into `scripts/dev/test-all.sh`. Stretch: also assert the SKILL.md body matches the agent body modulo agent-only telemetry blocks (banner, `## Outcome`, `## Self-improvement`) so prose drift surfaces immediately. ~2 h initial wire-up; per-skill parity test ~15 min thereafter.
-  Status: open
-  Last-reviewed: 2026-05-19
-
-- 2026-05-18 · test-author · [tooling] · P2 — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
-  Details: Surfaced while wiring `tests/ui/whisper_ai_assistant_autosend.test.cpp` (PR #258). `LaunchEphemeralInstance` in `Target_Standalone/CliCommandRunner.cpp` (around line 267) inherits the parent's stdout/stderr but the parent's `--spawn` driver redirects both before the child starts. ImGui Test Engine's `ConfigLogToTTY` output, plus any `LOG_*` from the child, disappears — when a bucket-E test fails, the operator has no trail beyond the parent's exit code.
-  Concrete next action: extend `LaunchEphemeralInstance` to capture child stdout + stderr to a per-spawn temp file (e.g. `$TMPDIR/Smatchet-spawn-<pid>.log`) and emit the path in the spawn banner the parent prints. Failure-path teardown should keep the file; success-path can delete it. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-18
 
 - 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
   Details: End-of-session cleanup found a stale `refs/locks/agentic-flow-cr-bundle-prod` lock owned by `handoff-implementer` on `fix/cr-handoff-bundle-prod`, even though that branch's PR (#271) had squash-merged hours earlier and the branch was deleted both remotely and locally. The `lock-slug: <slug>` auto-release token in the PR body is supposed to clear the lock on merge; either the PR body lacked the token, or the GitHub Action watching merge events doesn't fire on squash-merge specifically, or it errored silently. Manual recovery: `bash scripts/dev/lock-release.sh agentic-flow-cr-bundle-prod`. Cost: low per occurrence, but stale locks block sibling agents in subsequent sessions until somebody runs `locks-show.sh` and notices.
@@ -294,8 +265,3 @@
   Status: parked
   Last-reviewed: 2026-05-22
 
-- 2026-05-24 · orchestrator · [tooling] · P2 — SessionStart hook should announce `SMATCHET_AGENT_VCS=p4` mode to the orchestrator
-  Details: `scripts/clear-session-context.sh` (wired as the project's `SessionStart` hook in `.claude/settings.json`) does not check `$SMATCHET_AGENT_VCS` or run `p4 info`. The orchestrator boots into a session blind to the env-var unless it explicitly reads it itself — which AGENTS.md § Autonomous ship-loop default expects but does not actively prompt. This caused a real bypass: the autonomous-debugging Wave A (7 slice agents, 9 PRs) ran entirely in git-mode despite `SMATCHET_AGENT_VCS=p4` being set, because the user's prompt was git-flavoured ("address feedback in PR 439 and then start implementing the plan") and nothing surfaced the mode at session boot.
-  Concrete next action: extend `scripts/clear-session-context.sh` with a final block that, when `SMATCHET_AGENT_VCS=p4`, runs `p4 info` and emits a banner to the agent context window: `=== p4-mode ACTIVE === client=<P4CLIENT> stream=<stream-from-info> server=<P4PORT>`. The banner should instruct: orchestrator MUST follow `docs/agent-rules/ship-loops.md` § P4-gated ship-loop (not the default git ship-loop), ask the sub-variant question before any slice subagent, and avoid `git worktree add` (use `scripts/dev/p4-task-stream.sh`). On `p4 info` failure → exit-2 banner per ship-loops.md ("p4-mode requested but Perforce not bootstrapped"). 10-line shell-only change; surfaces every p4-mode session.
-  Status: open
-  Last-reviewed: 2026-05-24
