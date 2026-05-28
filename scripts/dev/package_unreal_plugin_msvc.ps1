@@ -16,6 +16,8 @@
       .\scripts\dev\package_unreal_plugin_msvc.ps1 -PackageOnly
       .\scripts\dev\package_unreal_plugin_msvc.ps1 -ConfigurePreset vs-unreal-msvc -BuildDir build/vs-unreal-msvc
       .\scripts\dev\package_unreal_plugin_msvc.ps1 -ForceConfigure
+      .\scripts\dev\package_unreal_plugin_msvc.ps1 -ToolsetVersion 14.44.35207
+      .\scripts\dev\package_unreal_plugin_msvc.ps1 -VsGenerator "Visual Studio 18 2026"
 #>
 param(
     [string]$ProjectRoot = "C:\Users\alexk\Documents\Unreal Projects\TestProject",
@@ -24,7 +26,14 @@ param(
     [switch]$PackageOnly,
     [string]$ConfigurePreset = "vs-unreal-msvc",
     [string]$BuildDir = "",
-    [switch]$ForceConfigure
+    [switch]$ForceConfigure,
+    # Override the auto-detected CMake generator (e.g. "Visual Studio 18 2026").
+    # Default prefers VS 2022 because that is the toolchain Unreal links with.
+    [string]$VsGenerator = "",
+    # Pin a specific MSVC toolset version (e.g. "14.44.35207") via `-T version=`.
+    # Must match the toolset Unreal links the packaged libs with, or the MSVC STL
+    # satellite symbols (__std_*) won't resolve at the Unreal link step.
+    [string]$ToolsetVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -154,13 +163,29 @@ $cmakeCacheInPresetDir = Join-Path $presetBinaryDir "CMakeCache.txt"
 # Detect the installed Visual Studio version and pick the matching CMake
 # generator. Hardcoding "Visual Studio 17 2022" broke on machines upgraded to
 # VS 2026 (v18): the v17 generator reports "could not find any instance of
-# Visual Studio". vswhere reports the installed major version; map it to the
-# generator name (17->2022, 18->2026, ...). Falls back to v17/2022 if detection
-# fails so behaviour on a clean VS 2022 box is unchanged.
+# Visual Studio". But blindly taking the newest install (vswhere -latest) is
+# also wrong: Unreal links the packaged Win64 libs with its OWN MSVC toolchain
+# (VS 2022 / 14.3x-14.4x for UE 5.7 — VS 2026 / 14.50 is not yet whitelisted).
+# Building with a newer toolset emits MSVC STL "satellite" symbols (__std_rotate,
+# __std_find_first_not_of_trivial_pos_1, __std_regex_transform_primary_char, ...)
+# absent in Unreal's older link-time runtime -> LNK2001/LNK2019.
+#
+# So: PREFER a VS 2022 instance when one is installed; fall back to the newest VS
+# only if no VS 2022 exists. Override with -VsGenerator once Unreal ships support
+# for a newer toolchain, and pin the exact toolset with -ToolsetVersion.
 function Get-VsGenerator {
+    param([string]$Override = "")
+    if ($Override) { return $Override }
     $fallback = "Visual Studio 17 2022"
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path -LiteralPath $vswhere)) { return $fallback }
+
+    # Prefer VS 2022 (major 17) to match Unreal's link toolchain.
+    $vs2022 = & $vswhere -version "[17.0,18.0)" -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationVersion 2>$null | Select-Object -First 1
+    if ($vs2022) { return "Visual Studio 17 2022" }
+
     $version = & $vswhere -latest -products * `
         -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
         -property installationVersion 2>$null | Select-Object -First 1
@@ -172,9 +197,10 @@ function Get-VsGenerator {
         Write-Host "==> WARN: VS major '$major' (v$version) not in generator map; falling back to '$fallback'."
         return $fallback
     }
+    Write-Host "==> WARN: no VS 2022 instance found; using newest '$("Visual Studio $major $year")'. If the Unreal link fails with unresolved __std_* symbols, install the VS 2022 build tools or pass -ToolsetVersion to match Unreal."
     return "Visual Studio $major $year"
 }
-$expectedGenerator = Get-VsGenerator
+$expectedGenerator = Get-VsGenerator -Override $VsGenerator
 $expectedFeatureCache = [ordered]@{
     "SMATCHET_WITH_LUA_AUTOMATION" = "ON"
     "SMATCHET_WITH_MCP" = "OFF"
@@ -211,18 +237,24 @@ if (-not $skipCMakePreset) {
     # Build-dir reset alone misses stale per-dependency subbuild generator
     # caches under the FetchContent base dir; clear those too before configure.
     Reset-StaleFetchContent -BaseDir $fetchContentBaseDir -ExpectedGenerator $expectedGenerator
-    Write-Host "==> Configuring CMake ($expectedGenerator, x64)..."
+    $toolsetText = if ($ToolsetVersion) { ", toolset $ToolsetVersion" } else { "" }
+    Write-Host "==> Configuring CMake ($expectedGenerator, x64$toolsetText)..."
+    $cmakeArgs = @("-S", $repoRoot, "-B", $presetBinaryDir, "-G", $expectedGenerator, "-A", "x64")
+    if ($ToolsetVersion) {
+        $cmakeArgs += @("-T", "version=$ToolsetVersion")
+    }
+    $cmakeArgs += @(
+        "-DSMATCHET_WITH_LUA_AUTOMATION=ON",
+        "-DSMATCHET_WITH_MCP=OFF",
+        "-DSMATCHET_WITH_AI=OFF",
+        "-DSMATCHET_WITH_WHISPER=OFF",
+        "-DSMATCHET_WHISPER_LOCAL_BACKEND=OFF",
+        "-DFETCHCONTENT_BASE_DIR=$fetchContentBaseDir",
+        "-DSMATCHET_UNREAL_THIRDPARTY_DIR=$($sourcePluginDir)\ThirdParty\Smatchet"
+    )
     Push-Location $repoRoot
     try {
-        & cmake -S $repoRoot -B $presetBinaryDir `
-            -G $expectedGenerator -A x64 `
-            "-DSMATCHET_WITH_LUA_AUTOMATION=ON" `
-            "-DSMATCHET_WITH_MCP=OFF" `
-            "-DSMATCHET_WITH_AI=OFF" `
-            "-DSMATCHET_WITH_WHISPER=OFF" `
-            "-DSMATCHET_WHISPER_LOCAL_BACKEND=OFF" `
-            "-DFETCHCONTENT_BASE_DIR=$fetchContentBaseDir" `
-            "-DSMATCHET_UNREAL_THIRDPARTY_DIR=$($sourcePluginDir)\ThirdParty\Smatchet"
+        & cmake @cmakeArgs
         if ($LASTEXITCODE -ne 0) {
             throw "cmake configure failed with exit code $LASTEXITCODE"
         }
