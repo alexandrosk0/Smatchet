@@ -184,10 +184,25 @@ N/A — diff is target-agnostic (no `Source_Core/` C++ touches).
 - Bucket-E test coverage batch (the original plan's slice 7 — separate work).
 
 ## Implementation log
-*(populated post-ship)*
+
+All four slices shipped 2026-05-28. Order matched the cheap-first suggestion.
+
+- **Slice 2** — `b715eec1` · `feat(merge): slice 2 — applied.md union merge + sort script (#485)` — `.gitattributes` union driver scoped to `applied.md` only (not `process.md` / `tooling.md`, per plan correction); `scripts/dev/sort-applied-md.sh` added.
+- **Slice 3** — pre-implementation triage rule landed in `docs/agent-rules/process-rules.md` (current line 31) as part of `71770c09` · `docs(process): slice 3 — pre-implementation triage rule (#484)`.
+- **Slice 4** — `5015147c` · `feat(build): slice 4 — bash-side vcvars64 env wrapper (#486)` — `scripts/dev/with-msvc-env.sh` via `vswhere.exe` install detection.
+- **Slice 1** — `8ebd840a` · `feat(shell-lint): test-shell-lint.sh with 5 rules + remediate 21 violators (#488)` — five-rule self-review linter with fixture-based bucket-A tests + 21 in-tree violator fixes.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Slice 1 script name**: plan named the file `scripts/dev/lint-shell-self-review.sh`; shipped as `scripts/dev/test-shell-lint.sh` to match the `test-*.sh` discovery pattern in `test-all.sh` (plan's "Option A" wiring). Functionally identical, name follows project convention.
+- **Slice 1 bonus**: ship-PR also fixed 21 in-tree shell-script violators caught by the new linter on its first run — out of scope on paper but logical to bundle since the linter was the diagnostic.
+- **Slice 1 hook surface**: plan offered two delivery options (Option A: extend `test-all.sh`; Option B: Claude Code PostToolUse hook). Shipped Option A only. Option B remains future work if push-time enforcement proves needed.
+- **Slice 2 scope correction**: caught during plan review — initial draft applied `merge=union` to three files; corrected to `applied.md` only because `process.md` / `tooling.md` parallel-delete different entries (union would wrongly preserve both).
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Slice 1**: `test-shell-lint.sh` ran clean on develop post-merge; five known-bad fixtures each fail the expected rule; `known-good.sh` passes clean. `tests/bats/shell_lint.bats` covers the fixture round-trip.
+- **Slice 2**: union merge verified during PR #485 implementation by running deliberate concurrent prepends against `applied.md`.
+- **Slice 3**: doc-only — verified by `grep "Pre-implementation triage" docs/agent-rules/process-rules.md`. Rule has been used in subsequent multi-slice plans (this very backfill is an instance — the plan was triaged before implementation began).
+- **Slice 4**: smoke-tested via `bash scripts/dev/with-msvc-env.sh cmake --version` and `bash scripts/dev/with-msvc-env.sh cl /help` per plan § Verify steps.
+- **Build gate**: N/A — slices 2/3 are pure docs/config; slices 1/4 are pure scripts; no `Source_Core/` C++ touched.
