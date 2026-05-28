@@ -9,6 +9,18 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
+  Resolution: Slice 8 of `docs/design/tooling-process-backlog-sweep.md`. `scripts/dev/git-janitor.sh --post-merge <pr>` automates: clean-tree check, PR-merged verification via `gh pr view`, fetch+prune, ff-update develop, local branch delete (-D to handle squash-merge orphaning), dual-target build gate, concise report. Refuses on uncommitted work or non-MERGED PR.
+
+- 2026-05-20 · git-janitor · [process] · P2 — Pre-flight should cross-check `git worktree list` against `.git/worktrees/` to detect orphan on-disk dirs before pruning
+  Resolution: Slice 8. `agents/git-janitor.md` § Pre-flight cross-checks (Step 0) — added three pre-flight items: worktree-bookkeeping audit (list vs `.git/worktrees/<basename>/`), detached-HEAD salvage-tag recipe, and lock-staleness sweep invocation. Runs before any destructive op.
+
+- 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
+  Resolution: Slice 8. `agents/git-janitor.md` § Pre-flight cross-checks (Step 0) now mandates `bash scripts/dev/lock-staleness-sweep.sh` before the final report — surfaces stale locks whose PR has already merged but the auto-release token didn't fire (squash-merge GH-Action edge case). The script itself ships.
+
+- 2026-05-17 · test-author · [tooling] · P2 — `test-all.sh` baseline drift across worktrees: 8 fails on agent worktree vs 0 fails on main repo
+  Resolution: Slice 8. `scripts/dev/test-all.sh` now detects worktree context via `git rev-parse --git-common-dir` vs `git rev-parse --git-dir` divergence; when running from a worktree, scripts matching the `WORKTREE_INCOMPATIBLE_RE` pattern (lint-hook-split, ui-test scripts) emit `SKIPPED (worktree)` instead of false-positive failures. Extend the regex as new worktree-incompatible scripts surface.
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
   Resolution: Slice 5. `scripts/dev/p4-git-sync-check.sh` compares git-pending paths against `p4 opened` and reports both directions (git pending but not p4 opened; p4 opened but not git pending). Exit 0 = aligned, exit 1 = mismatch, exit 2 = p4 unreachable (informational for git-only sessions). `--quiet` flag for clean-on-success use.
 

@@ -208,6 +208,14 @@ esac
 
 `UNKNOWN` after 20s is itself a halt-worthy signal — GitHub's mergeability computation usually settles within a few seconds; sustained `UNKNOWN` indicates an upstream problem (repo migration, abuse rate-limit, replication outage). Don't merge through it.
 
+## Pre-flight cross-checks (Step 0)
+
+Before any destructive op (`branch -D`, `worktree remove`, `reset --hard`), run these cross-checks once per session:
+
+1. **Worktree bookkeeping audit** — for each entry in `git worktree list`, confirm `.git/worktrees/<basename>/` exists. If missing → mark as "orphan on-disk dir, not git-managed; `git worktree prune` won't touch it". For each dir under `.claude/worktrees/<id>/`, confirm a matching `git worktree list` entry. Phantom dirs warrant a manual `rm -rf` after confirming with the user.
+2. **Detached-HEAD salvage tag** — for any worktree on detached HEAD, run `git -C <path> log --oneline HEAD ^origin/develop ^origin/main` to inventory unique commits. If non-empty, create a salvage tag `salvage/<worktree-name>-<short-summary>` BEFORE any prune / remove op so a parallel-agent's WIP isn't garbage-collected (default reflog window is 30 days for unreachable, 90 for reachable — short enough to lose work on a quiet week).
+3. **Lock staleness sweep** — `bash scripts/dev/lock-staleness-sweep.sh` to surface any plan-locks whose PR has already merged but the auto-release token didn't fire (squash-merge edge case per `docs/backlog/agent-self-improvement/tooling.md` 2026-05-18 plan-lock entry). Run before the final report so stale-lock residue isn't carried into the next session.
+
 ## Standard cleanup loop
 
 For each open PR targeting `develop`, in **dependency order** (oldest unmerged first; if two PRs touch the same file, the older one merges first):

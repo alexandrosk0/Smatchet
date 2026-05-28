@@ -16,12 +16,6 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
-- 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
-  Details: After PR #460 merged, the `agents/git-janitor.md` workflow was executed manually: fetch/prune, switch to `develop`, fast-forward, delete the squash-merged topic branch, run the dual-target build, and report clean git/P4 state. The steps are deterministic but easy to partially skip or reorder.
-  Concrete next action: add `scripts/dev/git-janitor.sh --post-merge <pr>` that performs the safe local path: audit worktrees and uncommitted state, fetch/prune, switch/ff `develop`, delete the local merged branch when the remote is gone and PR is merged, run `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`, and print a concise report. Estimated cost 1-2 h.
-  Status: open
-  Last-reviewed: 2026-05-26
-
 - 2026-05-26 · orchestrator · [tooling] · P2 — Merge-gates should explain GitHub `mergeStateStatus=BLOCKED`
   Details: PR #460 showed `mergeStateStatus: BLOCKED` in `gh pr view` while `scripts/dev/merge-gates.sh` passed and the REST squash merge succeeded. The gate result was correct, but the mismatch looked suspicious during merge handoff.
   Concrete next action: add a diagnostic mode or final line to `merge-gates.sh` that prints the current GitHub mergeability summary plus the gate's own CI/CodeRabbit/user-comment decision, e.g. "merge-gates pass; GitHub mergeStateStatus=BLOCKED may be stale or branch-protection summary-only." Estimated cost 30 min.
@@ -93,21 +87,9 @@
   Last-reviewed: 2026-05-20
 
 
-- 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
-  Details: End-of-session cleanup found a stale `refs/locks/agentic-flow-cr-bundle-prod` lock owned by `handoff-implementer` on `fix/cr-handoff-bundle-prod`, even though that branch's PR (#271) had squash-merged hours earlier and the branch was deleted both remotely and locally. The `lock-slug: <slug>` auto-release token in the PR body is supposed to clear the lock on merge; either the PR body lacked the token, or the GitHub Action watching merge events doesn't fire on squash-merge specifically, or it errored silently. Manual recovery: `bash scripts/dev/lock-release.sh agentic-flow-cr-bundle-prod`. Cost: low per occurrence, but stale locks block sibling agents in subsequent sessions until somebody runs `locks-show.sh` and notices.
-  Concrete next action: (1) audit `scripts/dev/setup-locks-ruleset.sh` + the corresponding workflow to confirm it triggers on `pull_request.closed` with `merged=true` (covers squash, rebase, merge), not just `push to default branch`. (2) Verify the `handoff-implementer` (`agents/handoff-implementer.md`) and bundle-PR templates always include `lock-slug: <slug>` in the body. (3) Add a `bash scripts/dev/lock-staleness-sweep.sh` invocation to the standard end-of-session cleanup checklist (`agents/git-janitor.md`). Estimated cost ~45 min audit + doc tweak.
-  Status: open
-  Last-reviewed: 2026-05-18
-
 - 2026-05-18 · git-janitor · [tooling] · P3 — Worktree cross-checkout cleanup gap: `[gone]` branches stranded in sibling worktrees
   Details: After the whisper PR train squash-merged, `git branch -D <branch>` from the worktree that opened the PR failed for branches the active worktree didn't own — `git-janitor` correctly refused to reach into sibling worktrees to do checkout / pull / delete. End result: each operator has to manually visit each worktree at `git worktree list`, ff-pull develop, then delete the stale branch. Multi-worktree setups (this repo has 6 active) compound the friction.
   Concrete next action: add `scripts/dev/worktree-prune.sh` that iterates `git worktree list`, for each worktree checks if HEAD branch is `[gone]`, ff-pulls develop, then deletes the stale branch. Refuses to act when worktree has uncommitted work (mirrors git-janitor's discipline). Document in `docs/agent-rules/delegation.md` or `CONTRIBUTING.md` as the end-of-PR-train one-liner. ~45 min.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · test-author · [tooling] · P2 — `test-all.sh` baseline drift across worktrees: 8 fails on agent worktree vs 0 fails on main repo
-  Details: Phase B (PR #163) agent reported 168 pass / 8 fail on isolated-worktree dispatch. Same `bash scripts/dev/test-all.sh` on main develop reports 173/0. The 8 worktree-only failures are pre-existing infra (lint-hook-split needs `.claude/hooks/` symlinked into the worktree root; 4 ui-test scripts have batched-PATH issues that pass when run individually). Causes false "regression" alarms in every PR that ships from a worktree, eroding signal.
-  Concrete next action: either (a) `test-all.sh` auto-detects worktree context via `git rev-parse --git-common-dir` vs `git rev-parse --git-dir` and skips worktree-incompatible scripts with a CLEAR `SKIPPED (worktree)` line, or (b) `bash scripts/setup-harness.sh claude-code` extends to seed `.claude/hooks/` symlinks into newly-cut worktrees. Option (a) is simpler; option (b) is more thorough. ~2 h for either.
   Status: open
   Last-reviewed: 2026-05-18
 
