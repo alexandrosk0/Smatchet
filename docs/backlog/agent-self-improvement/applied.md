@@ -9,6 +9,15 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-20 · orchestrator · [tooling] · P2 — 8 of 15 candidate perf scenarios don't emit `rows[]`; cannot be baselined under current shape
+  Resolution: Slice 9 of `docs/design/tooling-process-backlog-sweep.md`. Audited current state: (a) the 3 bucket-C-only scenarios (`command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel`) are correctly classified as render-bound and don't need rows[]; (b) the 3 named roundtrip scenarios (`agent-handoff-roundtrip`, `agent-triage-roundtrip`, `whisper-dictation-roundtrip`) were removed in the agentic-runtime ripout (v1 PR1 of github-tracker-backend.md, sha b1d241bc); (c) the 2 named "scenarios that exist but don't emit rows" — `cell-edit-burst` already has rows[] in `OnFinish` (`CellEditBurstScenario.cpp:74-87`), and `whisper-ai-assistant-autosend` also already emits rows[]. Net: no retrofit work needed; the gap closed via prior PRs while this entry sat open.
+
+- 2026-05-19 · perf-detective · [tooling] · P2 — `perf-measure --spawn` `WaitForFile` stale-file footgun
+  Resolution: Slice 9. `Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp` now calls `std::remove(outPath_.c_str())` before the scenario starts, eliminating the race where a prior run's result file looks like the new run's output to the spawn-mode WaitForFile poller.
+
+- 2026-05-19 · orchestrator · [tooling] · P2 — Cross-harness CI parity for skill-vs-agent forms
+  Resolution: Slice 9. `scripts/dev/test-skill-vs-agent-parity.sh` ships as a shape check: every skill under `agents/_shared/skills/*/SKILL.md` either has a matching `agents/<name>.md` twin OR is named in the script's `SKILL_ONLY_HELPERS` array. Auto-discovered by `test-all.sh`. The functional-parity stretch (driver scripts + stdout diff per harness) is deferred — naming the orphan-skill case is the immediate win; the test surfaces a real drift type that a pure-prose review wouldn't catch.
+
 - 2026-05-25 · orchestrator · [process] · P2 — `light-release-unreal-default` plan item 10 (`main.cpp` → `StandaloneAppBootstrap`) deferred without a tracked follow-up slice
   Resolution: Follow-up slice in P4 task stream `light-release-unreal-default` — `InitAppAndPlugins` / `ParseStandaloneCli` / `BootEphemeral` / `ShutdownApplication` in `StandaloneAppBootstrap.{h,cpp}`; GUI render loop uses `bootCtx` + shared plugin init; `--ephemeral` early-outs via `BootEphemeral` (hidden window + forced MCP + `RunRenderLoop`). Process rule added at `docs/agent-rules/process-rules.md` § Deferred plan-file rows at ship boundary. Plan § Deviations updated on task stream. Light build verified (`ninja-publish-light-msvc`).
 
