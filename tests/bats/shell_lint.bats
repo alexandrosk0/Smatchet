@@ -30,14 +30,15 @@ setup() {
 }
 
 @test "shellcheck not on PATH -> warn + exit 0 (matches cppcheck/clang-tidy fallback)" {
-    # PATH stripped so `command -v shellcheck` returns non-zero.
+    # PATH stripped so `command -v shellcheck` returns non-zero. If /usr/bin
+    # still has shellcheck (some Linux distros), skip rather than vacuously
+    # pass — the assertion only carries weight when the fallback actually fires.
     PATH=/usr/bin:/bin run bash "$LINT" --target "$FIXTURE_DIR/known-bad-1-deps.sh"
-    # On hosts where /usr/bin still has shellcheck (e.g. some Linux distros),
-    # the test would not exercise the fallback — accept either path.
-    if [[ "$output" == *"shellcheck not on PATH"* ]]; then
-        [ "$status" -eq 0 ]
-        [[ "$output" == *"Passed: 0  Failed: 0"* ]]
+    if [[ "$output" != *"shellcheck not on PATH"* ]]; then
+        skip "shellcheck reachable via /usr/bin:/bin — fallback path not exercised on this host"
     fi
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Passed: 0  Failed: 0"* ]]
 }
 
 # ---------- rule 1: dependency preflight ----------

@@ -18,9 +18,9 @@
 # Bypass: SMATCHET_SKIP_SHELL_LINT=1 (logged when used).
 #
 # Exit codes:
-#   0 — all-pass (Passed: N  Failed: 0)
+#   0 — all-pass (Passed: N  Failed: 0), or shellcheck not on PATH (warn-only
+#       fallback matches the cppcheck/clang-tidy missing-toolchain pattern)
 #   1 — at least one violation (Passed: N  Failed: M)
-#   2 — missing binary (shellcheck not on PATH)
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."

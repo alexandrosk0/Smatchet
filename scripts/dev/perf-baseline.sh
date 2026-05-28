@@ -47,7 +47,9 @@ ASSUME_YES=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host=*) HOST="${1#--host=}"; shift ;;
-        --host) HOST="$2"; shift 2 ;;
+        --host)
+            [ "$#" -ge 2 ] || { echo "perf-baseline: --host requires a value" >&2; usage; }
+            HOST="$2"; shift 2 ;;
         --yes|-y) ASSUME_YES=1; shift ;;
         --*) echo "unknown flag: $1" >&2; usage ;;
         *)

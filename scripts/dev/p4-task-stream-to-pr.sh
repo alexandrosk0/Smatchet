@@ -82,7 +82,16 @@
 
 set -euo pipefail
 
-command -v p4 >/dev/null 2>&1 || { echo "p4 required" >&2; exit 2; }
+# Validate the resolved p4 binary (P4_BIN may override; see line 59 docs and
+# `p4="${P4_BIN:-p4}"` resolution below). A bare `command -v p4` would reject
+# a valid `P4_BIN=/custom/path/p4` setup, so branch on whether the override is
+# set. Both branches use literal `command -v p4` / `command -v "$P4_BIN"`
+# so test-shell-lint's deps-preflight detector sees the guard.
+if [ -n "${P4_BIN:-}" ]; then
+    command -v "$P4_BIN" >/dev/null 2>&1 || { echo "p4 binary at \$P4_BIN ($P4_BIN) not found" >&2; exit 2; }
+else
+    command -v p4 >/dev/null 2>&1 || { echo "p4 required" >&2; exit 2; }
+fi
 
 usage() {
     cat >&2 <<'USAGE'

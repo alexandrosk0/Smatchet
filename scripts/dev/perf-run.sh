@@ -54,12 +54,15 @@ EXE="${SMATCHET_EXE:-build/ninja-iter-msvc/Smatchet.exe}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --frames=*)      FRAMES="${1#--frames=}"; shift ;;
-        --frames)        FRAMES="$2"; shift 2 ;;
+        --frames)        [ "$#" -ge 2 ] || { echo "perf-run: --frames requires a value" >&2; usage; }
+                         FRAMES="$2"; shift 2 ;;
         --out=*)         OUT_PATH="${1#--out=}"; shift ;;
-        --out)           OUT_PATH="$2"; shift 2 ;;
+        --out)           [ "$#" -ge 2 ] || { echo "perf-run: --out requires a value" >&2; usage; }
+                         OUT_PATH="$2"; shift 2 ;;
         --build)         FORCE_BUILD=1; shift ;;
         --exe=*)         EXE="${1#--exe=}"; shift ;;
-        --exe)           EXE="$2"; shift 2 ;;
+        --exe)           [ "$#" -ge 2 ] || { echo "perf-run: --exe requires a value" >&2; usage; }
+                         EXE="$2"; shift 2 ;;
         -h|--help)       usage ;;
         --*)             echo "unknown flag: $1" >&2; usage ;;
         *)
