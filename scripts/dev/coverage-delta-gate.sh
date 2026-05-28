@@ -67,8 +67,11 @@ for f in "${CHANGED[@]}"; do
         # require a paired test delta on their own.
         Source_Core/src/*.cpp)
             PROD_CHANGES+=("$f") ;;
-        # Test surface — any test TU under tests/ counts toward a delta.
-        tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp|tests/support/*.h)
+        # Test surface — only actual test TUs count toward a delta. tests/support/*.h
+        # (shared fixtures / helpers) was previously included but is trivially
+        # dismissable (add an empty header to "satisfy" the gate). Restrict to the
+        # per-test-file delta the gate was designed to enforce.
+        tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp)
             TEST_CHANGES+=("$f") ;;
     esac
 done

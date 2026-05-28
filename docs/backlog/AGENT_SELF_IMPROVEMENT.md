@@ -59,7 +59,7 @@ without movement.
 |---|---|---|
 | bug         | 6  | [agent-self-improvement/bug.md](agent-self-improvement/bug.md) |
 | process     | 12 | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
-| tooling     | 29 | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
+| tooling     | 25 | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
 | infra       | 10 | [agent-self-improvement/infra.md](agent-self-improvement/infra.md) |
 | test        | 9  | [agent-self-improvement/test.md](agent-self-improvement/test.md) |
 | security    | 6  | [agent-self-improvement/security.md](agent-self-improvement/security.md) |
