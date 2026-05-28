@@ -17,8 +17,9 @@
 #
 # Exit codes:
 #   0 — applied.md sorted (or already sorted in --check)
-#   1 — --check mode, file is out of order
-#   2 — file not found or parse error
+#   1 — --check mode, file is out of order; OR Python parse error propagated
+#       via `set -e` (cannot distinguish — both surface as exit 1)
+#   2 — file not found
 
 set -euo pipefail
 
