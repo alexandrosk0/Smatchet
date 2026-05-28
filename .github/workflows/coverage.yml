@@ -50,7 +50,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/ninja-test-msvc/_deps
-          key: ${{ runner.os }}-fetchcontent-msvc-coverage-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-fetchcontent-msvc-coverage-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', 'CMakePresets.json') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-msvc-coverage-
             ${{ runner.os }}-fetchcontent-
