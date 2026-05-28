@@ -140,12 +140,21 @@ Browse behavior:
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` Plan revision after implementation - bullet per shipped commit: `<sha> - <one-line summary>`)*.
+- *(pending squash sha)* - commit rows as a GitHub row kind: commit-key parser + URL helpers, `MapCommitJsonToCachedTicket`, REST commit fetch orchestrated beside the GraphQL issue/PR search, `type:commit`/`all`/`any` JQL, read-only editmeta + mutation rejection, commit browse URLs, commit catalog fields, and bucket-A tests across all four pure-logic seams.
 
 ## Deviations from plan
 
-*(populated post-ship - what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*.
+- **Issue/PR fetch is GraphQL, not REST `/issues`** (pre-existing Strategy C from PR12). Commits therefore land via a **separate REST path** (`GET /repos/{o}/{r}/commits?per_page=100`) orchestrated *beside* the GraphQL `search()` loop inside `FetchIssuesViaRestApi`, via two new anon-namespace helpers `RunGraphQlIssueSearch` + `RunCommitFetch`. Plan files-item 3/4 intent ("commit-row fetch beside the existing issue/PR fetch; preserve per-page streaming") is satisfied; the endpoint split differs from the plan's REST-only mental model. The terminal `isLast` streaming emission is owned by whichever source runs last.
+- **Row-source selection modeled as three booleans, not one enum.** `JqlToGitHubResult` + `GitHubFetchPlan` gained `IncludeIssuesOrPullRequests`, `IncludePullRequests` (keep-PR-rows, distinct from the existing `IsPullRequestQuery` which drives `is:pr` injection), and `IncludeCommits`. `ComputeGitHubFetchPlan` downgrades `includeCommits`→false + warns when Owner+Repo aren't both set (cross-repo commits out of scope). `type:all`/`type:any` keep PRs without injecting `is:pr` so plain issues stay in the result.
+- **`github.kind` exposed as a catalog field** ("Kind") in addition to the per-row value, so the field picker can surface the row-kind discriminator.
+- **`commit.parents` stored as comma-joined short SHAs** (7-char); `commit.verified` as `"true"`/`"false"`/`""`. Commit-key SHA validation accepts 7–40 hex chars (abbreviated through full object id).
+- **`FullSyncCompleted` guarded against the zero-source case** (commits-only view with no Owner/Repo downgrades to nothing) so a spurious full-sync never prunes the cache against an empty result.
 
 ## Verification (actual)
 
-*(populated post-ship - what was actually tested plus result: passed / failed / not-run)*.
+- **Bucket A (ctest doctest)**: PASSED — `ctest` on `ninja-test-msvc`, 842 test cases / 5765 assertions, 100% pass. New coverage: commit-key parse/reject + commit URL helpers (`GitHubClientHelpers.test.cpp`), full/partial/missing-nested commit mapping + `github.kind` stamping (`GitHubIssueSearchMapping.test.cpp`), row-source selection + commit downgrade (`GitHubFetchPlan.test.cpp`), `type:commit`/`all`/`any` translation + unknown-type warning (`GitHubQueryFromJql.test.cpp`).
+- **Build gate**: PASSED — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target, exit 0).
+- **Sanitizer/test gate**: PASSED — `ninja-test-msvc` build exit 0.
+- **clang-format**: PASSED — clean over all 14 changed files.
+- **Bucket B / E**: N/A first slice (no new UI control).
+- **Manual residue**: none.

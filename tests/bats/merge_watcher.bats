@@ -804,12 +804,14 @@ print('extras:', extras)
 # 2026-05-22 P1 sub-bug (b): CR threads remain `isResolved:false` after auto-fix
 # push lands, leaving cr_open > 0 and the merge gate permanently BLOCKED.
 
-@test "maybe_resolve_stuck_cr_threads: no-op when env flag unset" {
+@test "maybe_resolve_stuck_cr_threads: no-op when env explicitly set to false" {
+    # Default-on as of 2026-05-28 — env unset means the feature fires.
+    # Opt-out still works via false/0/no.
     run watch_cli register 999
     [ "$status" -eq 0 ]
     run python -c "
 import os, sys, importlib.util
-os.environ.pop('MERGE_WATCH_RESOLVE_CR_THREADS', None)
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'false'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
 entry = {'pr': 999, 'clone_path': r'$(pwd)',
@@ -821,6 +823,34 @@ print('extras:', extras)
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"extras: {}"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: env unset -> default-on (2026-05-28 flip)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    # Env unset should behave like enabled. To make this discriminating
+    # against a default-off regression, satisfy the remaining gates and
+    # stub the GitHub-touching helpers so the resolver path actually
+    # fires. Under the old opt-in default this would short-circuit on the
+    # env check and return {} — proving the flip when extras is non-empty.
+    run python -c "
+import os, sys, importlib.util
+os.environ.pop('MERGE_WATCH_RESOLVE_CR_THREADS', None)
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'newhead9999999999999999999999999999999999', ['PRT_kwDO1'])
+m._resolve_review_threads = lambda ids, clone: (len(ids), 0)
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (1 open)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('resolve_action:', extras.get('resolve_action', 'NONE'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resolve_action: resolved 1/1 CR threads (failed=0)"* ]]
 }
 
 @test "maybe_resolve_stuck_cr_threads: no-op when auto_act_for_head_sha absent" {
