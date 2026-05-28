@@ -84,7 +84,9 @@ if [ -n "$git_not_p4" ]; then
     mismatch=1
     {
         echo "p4-git-sync-check: paths pending in git but NOT opened in p4:"
-        printf '  - %s\n' $git_not_p4
+        # Read line-by-line so paths containing spaces / glob chars aren't
+        # split or expanded by the shell when printf iterates.
+        while IFS= read -r p; do printf '  - %s\n' "$p"; done <<< "$git_not_p4"
         echo "  -> Run \`p4 edit <path>\` (or \`p4 add\` for new files) before shipping."
     } >&2
 fi
@@ -92,7 +94,7 @@ if [ -n "$p4_not_git" ]; then
     mismatch=1
     {
         echo "p4-git-sync-check: paths opened in p4 but NOT pending in git:"
-        printf '  - %s\n' $p4_not_git
+        while IFS= read -r p; do printf '  - %s\n' "$p"; done <<< "$p4_not_git"
         echo "  -> Stage the change in git (\`git add <path>\`), revert the p4 op (\`p4 revert\`), or both."
     } >&2
 fi
