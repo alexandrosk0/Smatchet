@@ -28,12 +28,6 @@
   Status: open
   Last-reviewed: 2026-05-26
 
-- 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
-  Details: In the P4-backed PR #460 flow, follow-up edits made it easy to lose track of which changed files were opened in Perforce versus merely modified in git. Manual checks with `git status`, `git diff --name-only`, and `p4 opened` caught the mismatches, but this should be a one-command guard.
-  Concrete next action: add `scripts/dev/p4-git-sync-check.sh` that compares pending git paths against `p4 opened` paths, reports untracked files not opened for add, modified files not opened for edit, and opened P4 files with no git diff. Estimated cost 1 h.
-  Status: open
-  Last-reviewed: 2026-05-26
-
 - 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
   Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
   Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
@@ -318,8 +312,3 @@
   Status: parked
   Last-reviewed: 2026-05-22
 
-- 2026-05-24 · orchestrator · [tooling] · P2 — SessionStart hook should announce `SMATCHET_AGENT_VCS=p4` mode to the orchestrator
-  Details: `scripts/clear-session-context.sh` (wired as the project's `SessionStart` hook in `.claude/settings.json`) does not check `$SMATCHET_AGENT_VCS` or run `p4 info`. The orchestrator boots into a session blind to the env-var unless it explicitly reads it itself — which AGENTS.md § Autonomous ship-loop default expects but does not actively prompt. This caused a real bypass: the autonomous-debugging Wave A (7 slice agents, 9 PRs) ran entirely in git-mode despite `SMATCHET_AGENT_VCS=p4` being set, because the user's prompt was git-flavoured ("address feedback in PR 439 and then start implementing the plan") and nothing surfaced the mode at session boot.
-  Concrete next action: extend `scripts/clear-session-context.sh` with a final block that, when `SMATCHET_AGENT_VCS=p4`, runs `p4 info` and emits a banner to the agent context window: `=== p4-mode ACTIVE === client=<P4CLIENT> stream=<stream-from-info> server=<P4PORT>`. The banner should instruct: orchestrator MUST follow `docs/agent-rules/ship-loops.md` § P4-gated ship-loop (not the default git ship-loop), ask the sub-variant question before any slice subagent, and avoid `git worktree add` (use `scripts/dev/p4-task-stream.sh`). On `p4 info` failure → exit-2 banner per ship-loops.md ("p4-mode requested but Perforce not bootstrapped"). 10-line shell-only change; surfaces every p4-mode session.
-  Status: open
-  Last-reviewed: 2026-05-24

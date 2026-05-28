@@ -29,6 +29,8 @@ Clarifications batched **once at start** via `AskUserQuestion`. After the user a
 
 `SMATCHET_AGENT_VCS=p4` flips the loop to the **P4-gated** variant: smoke build → shelve → user review in P4V → full tests → submit → git branch + push + PR. Git is touched **once**, at the end, after shelf approval AND test-pass. Sub-variants chosen via `AskUserQuestion`: small-change loop (single slice, `//smatchet/main`) or task-stream loop (multi-slice, `scripts/dev/p4-task-stream.sh`).
 
+**Session-start self-check (mandatory, regardless of user-prompt flavour)**. The SessionStart hook (`scripts/clear-session-context.sh`) emits a `## === p4-mode ACTIVE ===` banner into `.session-context.md` when `$SMATCHET_AGENT_VCS=p4` AND `p4 info` succeeds. When the orchestrator sees that banner, it MUST follow the P4-gated ship-loop for ALL subsequent task-loops in this session — even when the user's prompt is git-flavoured (PR numbers, gh URLs, etc.). The env-var opt-in overrides prompt-driven mode inference. On `p4 info` failure the banner reads `## === p4-mode REQUESTED but UNREACHABLE ===` and the orchestrator routes through `AskUserQuestion` per `docs/agent-rules/ship-loops.md` § P4-gated ship-loop (never silently downgrade). `scripts/dev/p4-git-sync-check.sh` checks git-pending vs `p4 opened` alignment and is part of the P4-mode pre-ship verification.
+
 After the loop completes, the orchestrator emits the **post-ship 4-option `AskUserQuestion`**: Manual verify / Review PR / Register with watcher (auto-merges when gates pass) / Done. Skip-condition: if the user already said "merge when green", enter option 3 directly.
 
 Full sequence + per-exception detail + P4-gated phases + post-ship protocol: [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md).
