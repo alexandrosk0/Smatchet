@@ -5,7 +5,7 @@
 #include <string>
 
 // GitHubClientHelpers — pure helpers consumed by GitHubClient. Slice 1 of
-// docs/design/github-tracker-backend.md PR2. Mirrors the JiraIssueSearch /
+// docs/design/archive/github-tracker-backend.md PR2. Mirrors the JiraIssueSearch /
 // PlaneFieldCatalog split convention (pure helpers live in their own TU so
 // the doctest rig can link them without dragging in cpr / SQLite / ImGui).
 

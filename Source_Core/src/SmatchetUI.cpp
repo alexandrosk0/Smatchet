@@ -502,7 +502,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Whisper first-run dictation setup banner — pinned under the menu bar,
     // visible only while cfg.WhisperSetupCompleted == false. Renders nothing
     // once the user has answered (Enable / No thanks). See
-    // docs/design/whisper-dictation.md § Setup banner spec.
+    // docs/design/archive/whisper-dictation.md § Setup banner spec.
     if (!d.cfg.WhisperSetupCompleted && !d.cfg.ZenMode) {
         SMATCHET_UI_PERF_SCOPE("SmatchetWhisperSetupBanner::Render");
         if (smatchet::whisper::banner::Render(app, d.cfg)) {
@@ -837,7 +837,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Each MarkPrefsDirty call arms `prefsDirty` + a ~100 ms debounce window;
     // we drain at end-of-frame (after all panels have drawn) so the write
     // happens outside any mid-panel state. See SmatchetUiSession.h MarkPrefsDirty
-    // and docs/design/applied/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
+    // and docs/design/archive/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
     if (g_ui.prefsDirty && std::chrono::steady_clock::now() >= g_ui.prefsSaveDueAt) {
         SMATCHET_UI_PERF_SCOPE("ConfigManager::Save (prefs-debounced)");
         ConfigManager::Save(g_ui.cfg);

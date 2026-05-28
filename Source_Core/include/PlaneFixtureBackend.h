@@ -1,7 +1,7 @@
 #ifndef SMATCHET_PLANE_FIXTURE_BACKEND_H
 #define SMATCHET_PLANE_FIXTURE_BACKEND_H
 
-// Slice 2 of docs/design/autonomous-debugging-no-creds.md — deterministic
+// Slice 2 of docs/design/archive/autonomous-debugging-no-creds.md — deterministic
 // in-process Plane backend. Reads a JSON fixture from disk at construction
 // time, maps `list_response.results` through PlaneIssueMappingPure, and serves
 // `FetchIssues` from the resulting CachedTickets. No HTTP, no network, no

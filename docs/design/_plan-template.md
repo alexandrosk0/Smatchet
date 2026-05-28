@@ -33,7 +33,7 @@ Per `AGENTS.md` § UX Pillars (1 Performance, 2 UI-never-freezes, 3 Never-crash,
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-Per `docs/design/pillar-1-2-perf-review-system.md`. For each gate, declare: **fires** (one-line how) or **N/A** (one-line reason). No restating mechanics — link out for the canonical text.
+Per `docs/design/archive/pillar-1-2-perf-review-system.md`. For each gate, declare: **fires** (one-line how) or **N/A** (one-line reason). No restating mechanics — link out for the canonical text.
 
 1. **PR-fast CI** — name the scenario most directly exercising the changed path. Map: `agents/perf-gatekeeper.md` § Curated diff → scenario map. Subset declared in `scripts/dev/perf-pr-fast-set.json`.
 2. **Pillar 2 static scanner** — any new sync-I/O reachable from `ImGui::*`? If yes, worker-thread plan + `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` annotation.

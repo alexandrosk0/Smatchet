@@ -151,7 +151,7 @@ ImGui draw monoliths (slices 9-19; one PR each):
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-Per `docs/design/pillar-1-2-perf-review-system.md`.
+Per `docs/design/archive/pillar-1-2-perf-review-system.md`.
 
 1. **PR-fast CI** — each slice declares the matching scenario in its PR body. Mapping (from `agents/perf-gatekeeper.md` § Curated diff → scenario map):
    - Slice 1 (`SmatchetPreferencesUi_Whisper.cpp`) → `preferences-whisper-tab-render`.

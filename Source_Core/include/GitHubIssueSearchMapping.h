@@ -1,7 +1,7 @@
 #ifndef SMATCHET_GITHUB_ISSUE_SEARCH_MAPPING_H
 #define SMATCHET_GITHUB_ISSUE_SEARCH_MAPPING_H
 
-// PR12 of docs/design/github-tracker-backend.md — pure-logic JSON → CachedTicket
+// PR12 of docs/design/archive/github-tracker-backend.md — pure-logic JSON → CachedTicket
 // mapping helpers extracted out of GitHubIssueSearch.cpp (which pulls cpr) so
 // the doctest rig can exercise them without HTTP.
 //

@@ -1,6 +1,6 @@
 # Offline / restricted-network builds
 
-> Slice 6 of [docs/design/applied/first-time-setup-hardening.md](../design/applied/first-time-setup-hardening.md). Niche audience — contributors behind restrictive firewalls, corporate proxies that block `https://github.com`, air-gapped CI runners, or first-time setups where re-downloading every dependency on every fresh clone is painful.
+> Slice 6 of [docs/design/archive/first-time-setup-hardening.md](../design/archive/first-time-setup-hardening.md). Niche audience — contributors behind restrictive firewalls, corporate proxies that block `https://github.com`, air-gapped CI runners, or first-time setups where re-downloading every dependency on every fresh clone is painful.
 
 Smatchet pulls 11 third-party libraries via CMake `FetchContent` at configure time. The very first configure on a fresh clone takes ~5 min (see [BUILD.md § First-time verification](../../BUILD.md)). Every subsequent fresh clone repeats those downloads unless you steer FetchContent to a pre-populated cache.
 
@@ -124,4 +124,4 @@ You want this doc when:
 
 - [BUILD.md](../../BUILD.md) — top-level build recipes + first-time verification.
 - [scripts/dev/doctor.sh](../../scripts/dev/doctor.sh) — toolchain pre-flight checks (Slices 2/3).
-- [docs/design/git-to-perforce-migration.md](../design/git-to-perforce-migration.md) — the dual-VCS plan adds Perforce as an opt-in local layer alongside git; FetchContent stays git-backed, so this offline-builds doc continues to apply regardless of whether you've enabled the p4 layer. Earlier drafts of that plan called for vendoring all third-party deps into `//smatchet/main/third_party/`, but that scope was dropped per the 2026-05-21 rewrite — see § Superseded in the plan doc.
+- [docs/design/archive/git-to-perforce-migration.md](../design/archive/git-to-perforce-migration.md) — the dual-VCS plan adds Perforce as an opt-in local layer alongside git; FetchContent stays git-backed, so this offline-builds doc continues to apply regardless of whether you've enabled the p4 layer. Earlier drafts of that plan called for vendoring all third-party deps into `//smatchet/main/third_party/`, but that scope was dropped per the 2026-05-21 rewrite — see § Superseded in the plan doc.

@@ -959,7 +959,7 @@ foreach(_src IN LISTS _lua_sources)
         message(FATAL_ERROR
             "Smatchet_Lua_Internal source ${_src} has LANGUAGE=${_lang}, expected CXX. "
             "luaL_error must use C++ exceptions for crash-safe unwinding through the recorder "
-            "(see docs/design/applied/lua-recorded-cmd-list.md § Lua build mode).")
+            "(see docs/design/archive/lua-recorded-cmd-list.md § Lua build mode).")
     endif()
 endforeach()
 ```

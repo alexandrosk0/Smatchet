@@ -14,7 +14,7 @@
 # used by git-only sessions. Triggered by orchestrators that opt into the
 # dual-VCS layer with `SMATCHET_AGENT_VCS=p4`.
 #
-# Phase 2 Step 2 of `docs/design/git-to-perforce-migration.md`.
+# Phase 2 Step 2 of `docs/design/archive/git-to-perforce-migration.md`.
 #
 # Usage:
 #   bash scripts/dev/p4-task-stream.sh <agent-id>

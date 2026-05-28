@@ -1,6 +1,6 @@
 # Shell-script self-review checklist
 
-Five rules every `scripts/dev/*.sh` ships through, enforced by `scripts/dev/test-shell-lint.sh` (auto-runs via `scripts/dev/test-all.sh` at the pre-push gate). Each rule closes a real CodeRabbit finding class from session 2026-05-28. Plan: [`../design/shell-script-self-review-lint.md`](../design/shell-script-self-review-lint.md).
+Five rules every `scripts/dev/*.sh` ships through, enforced by `scripts/dev/test-shell-lint.sh` (auto-runs via `scripts/dev/test-all.sh` at the pre-push gate). Each rule closes a real CodeRabbit finding class from session 2026-05-28. Plan: [`../design/archive/shell-script-self-review-lint.md`](../design/archive/shell-script-self-review-lint.md).
 
 Bypass: `SMATCHET_SKIP_SHELL_LINT=1` (logged; emergency-only).
 

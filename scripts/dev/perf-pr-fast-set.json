@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "PR-fast scenario subset run by .github/workflows/perf-pr-fast.yml. Five scenarios chosen for broad coverage of the active code paths. Estimated combined wall-clock: < 120 s post-build on windows-2022. See docs/design/pillar-1-2-perf-review-system.md § D4. ai-chat-history-render added in Phase 6.7 of ai-chat-claude-desktop-parity so AI chat panel render regressions surface at PR time without manual perf-run invocation.",
+  "description": "PR-fast scenario subset run by .github/workflows/perf-pr-fast.yml. Five scenarios chosen for broad coverage of the active code paths. Estimated combined wall-clock: < 120 s post-build on windows-2022. See docs/design/archive/pillar-1-2-perf-review-system.md § D4. ai-chat-history-render added in Phase 6.7 of ai-chat-claude-desktop-parity so AI chat panel render regressions surface at PR time without manual perf-run invocation.",
   "scenarios": [
     "idle",
     "priority-grid-scroll",

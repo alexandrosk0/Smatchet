@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "$id": "https://smatchet.local/schemas/perf-baseline-v1.json",
   "title": "Smatchet perf baseline (one scenario × one host)",
-  "description": "Captured by `scripts/dev/perf-run.sh` + checked-in via `scripts/dev/perf-baseline.sh init|bump`. One file per (scenario, host) pair at `docs/perf/baselines/<scenarioId>.<host>.json`. Compared against fresh runs by `scripts/dev/perf-compare.py` per `docs/perf/regression-policy.json`. See `docs/design/pillar-1-2-perf-review-system.md` § C1 + § D1 for full design.",
+  "description": "Captured by `scripts/dev/perf-run.sh` + checked-in via `scripts/dev/perf-baseline.sh init|bump`. One file per (scenario, host) pair at `docs/perf/baselines/<scenarioId>.<host>.json`. Compared against fresh runs by `scripts/dev/perf-compare.py` per `docs/perf/regression-policy.json`. See `docs/design/archive/pillar-1-2-perf-review-system.md` § C1 + § D1 for full design.",
   "type": "object",
   "required": [
     "schemaVersion",

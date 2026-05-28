@@ -4,7 +4,7 @@
 > Inventory of every `SMATCHET_UI_PERF_SCOPE(...)` macro invocation across
 > first-party trees (`Source_Core`, `Plugins`, `Target_Standalone`, `tests`),
 > vendored `ThirdParty/` excluded. Slice 4 of
-> `docs/design/pillar-1-2-perf-review-system.md`.
+> `docs/design/archive/pillar-1-2-perf-review-system.md`.
 
 Last regenerated at: 2026-05-20T16:10:55Z
 

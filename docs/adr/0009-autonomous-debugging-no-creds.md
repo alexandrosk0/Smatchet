@@ -2,7 +2,7 @@
 
 # Status
 
-**Accepted (2026-05-23).** Three decisions in one ADR because they are coupled — they co-deliver the autonomous-debug end-state documented in [`docs/CONTEXT.md`](../CONTEXT.md) § Autonomous debugging and built out across the 11 slices in [`docs/design/autonomous-debugging-no-creds.md`](../design/autonomous-debugging-no-creds.md). Splitting into three ADRs would risk a future reader catching one without the context of the other two.
+**Accepted (2026-05-23).** Three decisions in one ADR because they are coupled — they co-deliver the autonomous-debug end-state documented in [`docs/CONTEXT.md`](../CONTEXT.md) § Autonomous debugging and built out across the 11 slices in [`docs/design/archive/autonomous-debugging-no-creds.md`](../design/archive/autonomous-debugging-no-creds.md). Splitting into three ADRs would risk a future reader catching one without the context of the other two.
 
 # Context
 
@@ -20,7 +20,7 @@ The grill-with-docs pass (recorded inline on the plan-doc's commit history under
 
 ## (a) Three-pattern backend-fake recipe
 
-Each backend that today requires credentials gets a different fake shape, chosen by the backend's real-world seam rather than unified onto a single mechanism. Documented at `docs/design/autonomous-debugging-no-creds.md` § Approach point 1.
+Each backend that today requires credentials gets a different fake shape, chosen by the backend's real-world seam rather than unified onto a single mechanism. Documented at `docs/design/archive/autonomous-debugging-no-creds.md` § Approach point 1.
 
 - **Tracker backends (GitHub + Plane)** extend the `FakeTrackerClient` + fixture-loader pattern from `deterministic-jira-test-backend.md`. Per-backend `tests/support/Fake<Backend>Fixture.h` thin wrapper + `SMATCHET_TEST_<BACKEND>_FIXTURE=<path>` env hook routed through `AppController::SetBackendFactory`. This works because `ITrackerClient` is a clean injection point already used by `FakeTrackerClient`; the only per-backend variation is the pure JSON-to-`CachedTicket` mapper extracted from each backend's `*IssueSearch.cpp` anonymous namespace.
 - **`P4Blame` C++ feature (annotate + describe-cache)** injects a **runner-seam fake** at the single `P4Blame.cpp:P4RunCommand` spawn-site via a new `BlameAnalysisConfig::P4RunOverride` function-pointer field. `tests/support/FakeP4Runner.h` installs a lambda that returns canned `(exit, stdout, stderr)` triples keyed on argv-prefix. **Explicitly rejected**: a stub `p4` binary on `PATH`. The dev-environment `scripts/dev/p4-*.sh` shell layer (30+ subcommand shapes, opt-in `SMATCHET_AGENT_VCS=p4`, exercised manually) is out of scope; the C++ blame feature has exactly two subcommands and one spawn-site, so the runner-seam approach is dramatically smaller.
@@ -30,7 +30,7 @@ The deliberate non-unification is the surprise. A future reader sees three diffe
 
 ## (b) `SmatchetAgentDebug.h` NDJSON helper — parallel logging surface alongside `Logger.h`
 
-A new header-only macro `SMATCHET_AGENT_DEBUG_LOG(category, json_obj)` appends one structured NDJSON line per call to `<userData>/agent-debug/<session-id>.ndjson` (production) or `tests/_debug/scratch/<test-name>.ndjson` (doctest / bats). Closed-set category enum (`backend-call`, `ui-event`, `worker-handoff`, `lock-claim`, `scenario-phase`, `cli-command`, `temp-debug`). 5-field schema (`ts`, `category`, `pid`, `tid`, `payload`). Mutex-guarded ofstream; one file per session; `git-janitor` end-of-session prunes files older than 30 days. Full operational contract at `docs/design/autonomous-debugging-no-creds.md` § Slice 7.
+A new header-only macro `SMATCHET_AGENT_DEBUG_LOG(category, json_obj)` appends one structured NDJSON line per call to `<userData>/agent-debug/<session-id>.ndjson` (production) or `tests/_debug/scratch/<test-name>.ndjson` (doctest / bats). Closed-set category enum (`backend-call`, `ui-event`, `worker-handoff`, `lock-claim`, `scenario-phase`, `cli-command`, `temp-debug`). 5-field schema (`ts`, `category`, `pid`, `tid`, `payload`). Mutex-guarded ofstream; one file per session; `git-janitor` end-of-session prunes files older than 30 days. Full operational contract at `docs/design/archive/autonomous-debugging-no-creds.md` § Slice 7.
 
 **Why a parallel surface, not extending `Logger.h`**: `Logger.h`'s `LOG_*` macros are optimised for **operator-readable text** with severity classification (`LOG_INFO`, `LOG_WARN`, `LOG_ERROR`). The agent's read-path needs **structured, grep-able, per-category-filterable** data with per-line schema discipline so an automated reader can deterministically extract just the `backend-call` entries (or just the `worker-handoff` entries) without a regex over freeform text. Extending `LOG_*` with JSON-mode would either bloat the macro (every call site picks text vs JSON), break the existing log readers, or silently mix the two formats in one file.
 

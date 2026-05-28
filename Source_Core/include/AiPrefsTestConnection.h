@@ -37,7 +37,7 @@ namespace AiPrefsTestConnection {
 // DRIFT WARNING: as long as `SmatchetPreferencesUi.cpp`'s `runProbe` lambda
 // remains inline (pending the follow-up PR after whisper-dictation-phase-f
 // merges), this function MUST stay in lock-step with that lambda's body.
-// docs/design/ai-client-test-override.md tracks the rewire follow-up.
+// docs/design/archive/ai-client-test-override.md tracks the rewire follow-up.
 void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider);
 
 } // namespace AiPrefsTestConnection

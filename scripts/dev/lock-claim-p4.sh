@@ -7,7 +7,7 @@
 # update if the current value isn't 0, so concurrent claims resolve
 # deterministically (first CAS wins, others get "Current value is 1").
 #
-# Phase 4 of `docs/design/git-to-perforce-migration.md`.
+# Phase 4 of `docs/design/archive/git-to-perforce-migration.md`.
 #
 # Usage:
 #   bash scripts/dev/lock-claim-p4.sh <slug> <write-set-file>

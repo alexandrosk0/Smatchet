@@ -2,7 +2,7 @@
 
 Centralized tracker for plan-shaped work in this repo. Three buckets:
 
-1. **Applied / archived plans** — design docs whose work shipped. Source under [`docs/design/applied/`](../design/applied/). Indexed below with approximate date and one-line summary.
+1. **Applied / archived plans** — design docs whose work shipped. Source under [`docs/design/archive/`](../design/archive/). Indexed below with approximate date and one-line summary.
 2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](./AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
 3. **Agentic dependencies** — work that the agent ecosystem (prompts, harness, mirror, telemetry) needs in the codebase to unblock further automation.
 
@@ -12,30 +12,30 @@ Format: `- <slug> · <approx-date> · <one-line>`.
 
 ## 1. Applied / archived plans
 
-These plans shipped. Files moved from `docs/design/*.md` (and a few from `backlog/*PLAN*.md` / `*REMAINING.md`) into `docs/design/applied/` to declutter the working set. Date column is the **first-commit date** of the canonical plan file under its original path.
+These plans shipped. Files moved from `docs/design/*.md` (and a few from `backlog/*PLAN*.md` / `*REMAINING.md`) into `docs/design/archive/` to declutter the working set. Date column is the **first-commit date** of the canonical plan file under its original path.
 
 | Plan (slug) | Approx. date | One-line summary |
 |---|---|---|
-| [`rich-text-editing-v2-remaining.md`](../design/applied/rich-text-editing-v2-remaining.md) | 2026-05-09 | Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. |
-| [`command-system-plan.md`](../design/applied/command-system-plan.md) | 2026-05-11 | Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. |
-| [`remove-global-project-key.md`](../design/applied/remove-global-project-key.md) | 2026-05-12 | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
-| [`vs-style-view-menu.md`](../design/applied/vs-style-view-menu.md) | 2026-05-12 | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |
-| [`lua-recorded-cmd-list.md`](../design/applied/lua-recorded-cmd-list.md) | 2026-05-14 | Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). |
-| [`lua-recorded-cmd-list-v2.md`](../design/applied/lua-recorded-cmd-list-v2.md) | 2026-05-14 | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
-| [`agent-ecosystem-gap-fill.md`](../design/applied/agent-ecosystem-gap-fill.md) | 2026-05-15 | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
-| [`imgui-test-engine-bucket-e.md`](../design/applied/imgui-test-engine-bucket-e.md) | 2026-05-15 | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
-| [`imgui-test-engine-bucket-e-execution.md`](../design/applied/imgui-test-engine-bucket-e-execution.md) | 2026-05-15 | Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. |
-| [`open-backlog-sweep.md`](../design/applied/open-backlog-sweep.md) | 2026-05-15 | Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. |
-| [`test-rig-agent.md`](../design/applied/test-rig-agent.md) | 2026-05-15 | Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. |
-| [`theme-driven-cpp-syntax-highlight.md`](../design/applied/theme-driven-cpp-syntax-highlight.md) | 2026-05-15 | Per-theme C++ syntax palette extracted from `BlameUiThemeColors`; generic `CppSyntaxHighlight` TU shared by blame + markdown + field renderers. Fully shipped (see plan § Shipped PRs). |
-| [`first-time-setup-hardening.md`](../design/applied/first-time-setup-hardening.md) | 2026-05-15 | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
-| [`test-suite-expansion.md`](../design/applied/test-suite-expansion.md) | 2026-05-16 | Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. |
-| [`large-files-and-phase-2.md`](../design/applied/large-files-and-phase-2.md) | 2026-05-15 | Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. |
-| [`pillar-1-2-audit-2026-05-17.md`](../design/applied/pillar-1-2-audit-2026-05-17.md) | 2026-05-17 | Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). |
+| [`rich-text-editing-v2-remaining.md`](../design/archive/rich-text-editing-v2-remaining.md) | 2026-05-09 | Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. |
+| [`command-system-plan.md`](../design/archive/command-system-plan.md) | 2026-05-11 | Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. |
+| [`remove-global-project-key.md`](../design/archive/remove-global-project-key.md) | 2026-05-12 | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
+| [`vs-style-view-menu.md`](../design/archive/vs-style-view-menu.md) | 2026-05-12 | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |
+| [`lua-recorded-cmd-list.md`](../design/archive/lua-recorded-cmd-list.md) | 2026-05-14 | Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). |
+| [`lua-recorded-cmd-list-v2.md`](../design/archive/lua-recorded-cmd-list-v2.md) | 2026-05-14 | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
+| [`agent-ecosystem-gap-fill.md`](../design/archive/agent-ecosystem-gap-fill.md) | 2026-05-15 | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
+| [`imgui-test-engine-bucket-e.md`](../design/archive/imgui-test-engine-bucket-e.md) | 2026-05-15 | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
+| [`imgui-test-engine-bucket-e-execution.md`](../design/archive/imgui-test-engine-bucket-e-execution.md) | 2026-05-15 | Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. |
+| [`open-backlog-sweep.md`](../design/archive/open-backlog-sweep.md) | 2026-05-15 | Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. |
+| [`test-rig-agent.md`](../design/archive/test-rig-agent.md) | 2026-05-15 | Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. |
+| [`theme-driven-cpp-syntax-highlight.md`](../design/archive/theme-driven-cpp-syntax-highlight.md) | 2026-05-15 | Per-theme C++ syntax palette extracted from `BlameUiThemeColors`; generic `CppSyntaxHighlight` TU shared by blame + markdown + field renderers. Fully shipped (see plan § Shipped PRs). |
+| [`first-time-setup-hardening.md`](../design/archive/first-time-setup-hardening.md) | 2026-05-15 | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
+| [`test-suite-expansion.md`](../design/archive/test-suite-expansion.md) | 2026-05-16 | Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. |
+| [`large-files-and-phase-2.md`](../design/archive/large-files-and-phase-2.md) | 2026-05-15 | Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. |
+| [`pillar-1-2-audit-2026-05-17.md`](../design/archive/pillar-1-2-audit-2026-05-17.md) | 2026-05-17 | Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). |
 
 ### Notes
 
-- The repo's project rule (AGENTS.md § Plan location) says new plans go to `docs/design/<slug>.md`. Once a plan ships, **move it to `docs/design/applied/`** and add a row above. The active-plan working set should stay shallow.
+- The repo's project rule (AGENTS.md § Plan location) says new plans go to `docs/design/<slug>.md`. Once a plan ships, **move it to `docs/design/archive/`** and add a row above. The active-plan working set should stay shallow.
 - The kebab-case slug is canonical. Older `SCREAMING_CASE` filenames from `backlog/` were renamed on move.
 - Approximate dates are first-commit dates of the canonical file under its original path. Most plans were authored over a single short window; "approximate" reflects that.
 
@@ -79,4 +79,4 @@ When an agent's `## Self-improvement` section identifies a codebase-side depende
 |---|---|---|
 | vexp `<!-- vexp -->` block autoregenerates inside `AGENTS.md` instead of `.claude/CLAUDE.md` | vexp tool source lives outside this repo. File upstream issue/PR. Workaround: leave block alone; ~250 input tokens/session is small vs autoregen friction. | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · orchestrator · process` |
 | `mcp__vexp__run_pipeline` rejects `max_tokens` as float | vexp tool source. Workaround: pass int literal. | AGENT_SELF_IMPROVEMENT.md `2026-05-12 · tracker-backend · tooling` |
-| ~~ImGui Test Engine bucket E~~ | Applied 2026-05-15 — see `docs/design/applied/imgui-test-engine-bucket-e-execution.md`. Phase 1 infra shipped; Phase 2 + Phase 3 deferred (debug-detective + grid-engine handoff). | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · test-author · new-agent / tooling` |
+| ~~ImGui Test Engine bucket E~~ | Applied 2026-05-15 — see `docs/design/archive/imgui-test-engine-bucket-e-execution.md`. Phase 1 infra shipped; Phase 2 + Phase 3 deferred (debug-detective + grid-engine handoff). | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · test-author · new-agent / tooling` |

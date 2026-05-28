@@ -1,5 +1,5 @@
 // perf.* — UI performance monitor snapshot, reset, dump, and panel toggle.
-// debug.grid.edit-burst — headless cell-edit burst harness (docs/design/grid-cell-edit-perf.md).
+// debug.grid.edit-burst — headless cell-edit burst harness (docs/design/archive/grid-cell-edit-perf.md).
 
 #include "BuiltinCommands_Internal.h"
 

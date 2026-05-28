@@ -49,7 +49,7 @@ Perforce blame specialist.
 ## Test surface
 
 - **Pure parsers** — `tests/Source_Core/P4BlameParse.test.cpp` covers the `p4 annotate` / `p4 describe` text-parse helpers from `Source_Core/include/P4BlameParse.h` (bucket-A; no process spawn).
-- **Zero-credentials end-to-end** — install `tests/support/FakeP4Runner.h` onto `BlameAnalysisConfig::P4RunOverride` (slice 3 of `docs/design/autonomous-debugging-no-creds.md`); drives the real `P4Blame.cpp:P4RunCommand` → `P4AnnotateFile` / `P4ChangelistDescribeCache` paths against canned fixtures under `tests/fixtures/p4/`. Doctests: `tests/Source_Core/P4BlameAnnotateE2E.test.cpp`, `tests/Source_Core/P4DescribeCacheE2E.test.cpp`. No `p4` binary, no server, no credentials.
+- **Zero-credentials end-to-end** — install `tests/support/FakeP4Runner.h` onto `BlameAnalysisConfig::P4RunOverride` (slice 3 of `docs/design/archive/autonomous-debugging-no-creds.md`); drives the real `P4Blame.cpp:P4RunCommand` → `P4AnnotateFile` / `P4ChangelistDescribeCache` paths against canned fixtures under `tests/fixtures/p4/`. Doctests: `tests/Source_Core/P4BlameAnnotateE2E.test.cpp`, `tests/Source_Core/P4DescribeCacheE2E.test.cpp`. No `p4` binary, no server, no credentials.
 - **Production behaviour preserved** — `cfg.P4RunOverride` is empty by default; the real `SubprocessCapture::Run` path runs in ship builds. The `test-agent-contract.sh` V3.3 grep gate asserts `P4Blame.cpp` keeps exactly one `SubprocessCapture::Run` call site so a future second spawn can't sneak in without a sibling `P4RunOverride` consult.
 
 ## Files changed

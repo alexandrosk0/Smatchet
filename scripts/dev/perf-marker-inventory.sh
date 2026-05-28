@@ -3,7 +3,7 @@
 # checked-in SMATCHET_UI_PERF_SCOPE markers, grouped by subsystem +
 # separated from in-flight `perf_temp:*` markers.
 #
-# Slice 4 of docs/design/pillar-1-2-perf-review-system.md. Auto-enrolled via
+# Slice 4 of docs/design/archive/pillar-1-2-perf-review-system.md. Auto-enrolled via
 # scripts/dev/test-all.sh as an ADVISORY check — emits a one-line WARN if the
 # regenerated docs/perf/MARKER_INVENTORY.md differs from the checked-in
 # version. Does NOT fail the test pass; the rebuild is a doc hygiene signal.
@@ -83,7 +83,7 @@ subsystem_of() {
     echo "> Inventory of every \`SMATCHET_UI_PERF_SCOPE(...)\` macro invocation across"
     echo "> first-party trees (\`Source_Core\`, \`Plugins\`, \`Target_Standalone\`, \`tests\`),"
     echo "> vendored \`ThirdParty/\` excluded. Slice 4 of"
-    echo "> \`docs/design/pillar-1-2-perf-review-system.md\`."
+    echo "> \`docs/design/archive/pillar-1-2-perf-review-system.md\`."
     echo ""
     echo "Last regenerated at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo ""

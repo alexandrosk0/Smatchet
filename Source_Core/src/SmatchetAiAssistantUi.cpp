@@ -105,7 +105,7 @@ void ScheduleConfigSaveDetached(const TrackerConfig& cfg) {
 // brief one-frame stall is preferable to the cost of an extra background-thread
 // + MainThreadDispatcher round-trip. Above the threshold the load goes to a
 // detached worker that posts the result back via the dispatcher. The exact value
-// is documented in `docs/design/ai-chat-claude-desktop-parity.md` § Phase 3 step
+// is documented in `docs/design/archive/ai-chat-claude-desktop-parity.md` § Phase 3 step
 // 7; the measured latency for the inline path is recorded next to the call site
 // via the Pillar-2 annotation below (see comment block).
 constexpr std::size_t kHydrateInlineRowThreshold = 200;

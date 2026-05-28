@@ -38,7 +38,7 @@ Each slice ships independently. Slices 1 and 3 are ~15 min each; Slice 2 is ~1 h
    ```bash
    gh api repos/alexandrosk0/Smatchet/branches/develop/protection 2>&1 | head -40
    ```
-   If branch protection is absent, document the constraint in `docs/design/applied/test-suite-expansion.md` § Auto-merge mechanics rather than enabling it as part of this slice (out of scope).
+   If branch protection is absent, document the constraint in `docs/design/archive/test-suite-expansion.md` § Auto-merge mechanics rather than enabling it as part of this slice (out of scope).
 
 4. Restore `--auto` flag where it was previously stripped. Grep for the fallback:
    ```bash
@@ -46,7 +46,7 @@ Each slice ships independently. Slices 1 and 3 are ~15 min each; Slice 2 is ~1 h
    ```
    For each call site that currently uses `gh pr merge ... --squash --delete-branch` (no `--auto`), evaluate whether the caller is the orchestrator/`git-janitor` merge path or a deliberate immediate-merge (post-gates-pass). The merge-gates poller path stays immediate (gates already green by definition); the pre-gates path is the one that benefits from `--auto`.
 
-5. Update `docs/design/applied/test-suite-expansion.md` § Auto-merge mechanics — replace "direct-merge fallback after CI greens (~270 s poll)" prose with the restored `--auto` flow. Cross-link to AGENTS.md § Merge gates so the two paths stay coherent.
+5. Update `docs/design/archive/test-suite-expansion.md` § Auto-merge mechanics — replace "direct-merge fallback after CI greens (~270 s poll)" prose with the restored `--auto` flow. Cross-link to AGENTS.md § Merge gates so the two paths stay coherent.
 
 6. Move the external-blockers entry to `docs/backlog/agent-self-improvement/applied.md` with a resolution stanza naming the REST `PATCH` + commit sha.
 

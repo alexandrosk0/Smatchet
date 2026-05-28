@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-// PR4 of docs/design/github-tracker-backend.md — paginated fetcher.
+// PR4 of docs/design/archive/github-tracker-backend.md — paginated fetcher.
 // PR12 (Strategy C revision) — replaced REST N+1 (paginated /search/issues +
 // per-PR GET /pulls/{n}) with one GraphQL query per page. Same 10-page cap;
 // PR-only fields arrive inline in the same response via PullRequest fragment.

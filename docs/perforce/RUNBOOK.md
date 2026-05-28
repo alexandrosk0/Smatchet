@@ -1,6 +1,6 @@
 # Perforce — operations runbook
 
-> **Plan**: [`docs/design/git-to-perforce-migration.md`](../design/git-to-perforce-migration.md).
+> **Plan**: [`docs/design/archive/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md).
 > **Sibling docs**: [`SETUP.md`](SETUP.md) — first-time bring-up. [`AGENT_FLOWS.md`](AGENT_FLOWS.md) — which verb to use when.
 > **Audience**: operator running the Smatchet Perforce server day-to-day. Most agents never read this — `p4-janitor` ([`agents/p4-janitor.md`](../../agents/p4-janitor.md)) handles routine maintenance.
 
@@ -127,4 +127,4 @@ Super stays restricted to the host operator.
 
 - [`agents/p4-janitor.md`](../../agents/p4-janitor.md) — automated maintenance agent.
 - [`agents/git-janitor.md`](../../agents/git-janitor.md) — git-side end-of-session cleanup (still load-bearing).
-- [`docs/design/git-to-perforce-migration.md`](../design/git-to-perforce-migration.md) — the plan this runbook closes a gap on.
+- [`docs/design/archive/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md) — the plan this runbook closes a gap on.
