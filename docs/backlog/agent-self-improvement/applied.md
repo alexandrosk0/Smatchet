@@ -9,6 +9,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-28 · orchestrator · [process] · P2 — Pre-implementation triage caught 5 already-resolved backlog items; encode as a slice-start rule
+  Resolution: Slice 3 of `docs/design/session-friction-fixes.md`. `docs/agent-rules/process-rules.md` § Plan-doc family now carries a **Pre-implementation triage** sub-rule mandating a two-step verification (Read the cited code + grep applied.md / `git log`) as the **first action** of every "fix existing tooling" slice. Items found already-shipped get archived with a `verified-in-tree` resolution; the slice is skipped. Plan-doc § Approach should pre-flight this for items known to overlap recent work. Empirical reference cited: `docs/design/tooling-process-backlog-sweep.md` § Approach (5 stale items / ~3 h saved on a 37-item plan).
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
   Resolution: Slice 8 of `docs/design/tooling-process-backlog-sweep.md`. `scripts/dev/git-janitor.sh --post-merge <pr>` automates: clean-tree check, PR-merged verification via `gh pr view`, fetch+prune, ff-update develop, local branch delete (-D to handle squash-merge orphaning), dual-target build gate, concise report. Refuses on uncommitted work or non-MERGED PR.
 
