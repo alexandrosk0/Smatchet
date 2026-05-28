@@ -101,6 +101,7 @@ Smatchet UI-thread spike specialist. Adversarial mindset toward the UI thread: a
 - **Don't add new threading primitives.** The existing pattern is: per-subsystem `std::thread` + mutex + atomic shutdown flag + destructor join; `MainThreadDispatcher` for posting back. Mirror it.
 - **`std::async` future captures** must be joined / waited before the captured-by-reference object dies — see `SmatchetUI.h:28` for the existing comment about UiDrawSession futures.
 - **Always** name the exact exe to run after a rebuild. Multiple build outputs (`build/ninja-iter-msvc/`, `build/ninja-debug-msvc/`, `build/ninja-publish-msvc/`, worktree builds) make wrong-exe spike repro common. `ls -la` both candidates, print mtimes side-by-side, tell the user the absolute path before asking them to reproduce.
+- **Extend the CLI / scenarios, never substitute a manual UI session.** If the validating scenario does not exist, extend `Source_Core/src/Commands/Scenarios/` (and the scenario-arg surface, if needed) as part of the same PR. The measurement is the deliverable — manual eyeballing the UI doesn't satisfy AGENTS.md § Pillar 2 (zero manual verification steps).
 
 Report: spike source (call site) + measured `maxPerCallMs` before / after + diff summary (or pointer to the implementing agent) + cleanup confirmation.
 

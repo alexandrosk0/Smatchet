@@ -9,6 +9,24 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-23 · orchestrator · [process] · P2 — Plan-revision direct-pushes vs classifier
+  Resolution: Slice 4 of `docs/design/tooling-process-backlog-sweep.md`. Picked policy (b) — mandate PR-for-plan-revisions. AGENTS.md § Process rules § Plan-doc family now states "Plan-revision direct-pushes are PR-only … never direct-push to develop, even for one-line edits." Eliminates classifier-vs-rule drift; adds ~3 min ceremony per plan revision.
+
+- 2026-05-21 · architect · [process] · P2 — Scope-reduction edits need a forward-reference grep over CONTEXT.md + ADRs for deferred-symbol orphans
+  Resolution: Slice 4. AGENTS.md § Process rules § Plan-doc family now requires forward-reference grep over `docs/CONTEXT.md` + `docs/adr/` + `agents/*.md` + `docs/backlog/agent-self-improvement/` for every symbol named in deferred work. Same rule applies to substrate/shape/contract rewrites — clear every stray reference in the keyword family.
+
+- 2026-05-21 · architect · [process] · P2 — Cross-cutting review must feasibility-check every prescribed plumbing channel
+  Resolution: Slice 4. `agents/architect.md` § Interface contracts checklist now requires naming the actual function signature / struct member / typedef arity at every hop of a prescribed X → Y → Z path; missing channels must be flagged as an explicit widening, not "plumb from context".
+
+- 2026-05-21 · grill-with-docs · [process] · P2 — Skill should pre-flight storage-substrate facts for every persistence claim
+  Resolution: Slice 4. `agents/_shared/skills/grill-with-docs/SKILL.md` § During the session now carries a "Storage-substrate pre-flight" rule — any decision mentioning audit / log / persistence / cache / schema / migration must point at one `file:line` proving the storage shape before being locked. Catches phantom-table claims that drive implementation agents to hunt for substrates that don't exist.
+
+- 2026-05-17 · perf-measure · [process] · P2 — "extend the CLI / scenarios if missing, never ask user to run UI manually" rule not encoded in `agents/perf-measure.md`
+  Resolution: Slice 4. The rule was already encoded in `agents/perf-measure.md` § Fallback ("Do not fall back to a manual UI session"). Extended `agents/perf-detective.md` § Hard rules and `agents/spike-hunter.md` § Hard rules with the same wording: "Extend the CLI / scenarios, never substitute a manual UI session. … The measurement is the deliverable."
+
+- 2026-05-16 · test-rig · [process] · P2 — Worktree-absolute vs main-repo-absolute path discipline
+  Resolution: Slice 4. AGENTS.md § Process rules § Git/p4 discipline now includes the worktree-absolute path rule: when running in `.claude/worktrees/<id>/`, all `Edit` / `Write` absolute paths must use the worktree prefix, never the main-repo prefix. `agents/test-rig.md` § Hard invariants carries the same rule with verification recipe (`git rev-parse --show-toplevel`).
+
 - 2026-05-25 · orchestrator · [process] · P2 — `light-release-unreal-default` plan item 10 (`main.cpp` → `StandaloneAppBootstrap`) deferred without a tracked follow-up slice
   Resolution: Follow-up slice in P4 task stream `light-release-unreal-default` — `InitAppAndPlugins` / `ParseStandaloneCli` / `BootEphemeral` / `ShutdownApplication` in `StandaloneAppBootstrap.{h,cpp}`; GUI render loop uses `bootCtx` + shared plugin init; `--ephemeral` early-outs via `BootEphemeral` (hidden window + forced MCP + `RunRenderLoop`). Process rule added at `docs/agent-rules/process-rules.md` § Deferred plan-file rows at ship boundary. Plan § Deviations updated on task stream. Light build verified (`ninja-publish-light-msvc`).
 
