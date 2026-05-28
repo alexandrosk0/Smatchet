@@ -53,6 +53,55 @@ function Reset-CMakeBuildDirectory {
     }
 }
 
+function Reset-StaleFetchContent {
+    # FetchContent_MakeAvailable drives a per-dependency "<dep>-subbuild" CMake
+    # project that caches its own CMAKE_GENERATOR. When the top-level generator
+    # changes (e.g. VS 2022 -> VS 2026 after a toolchain upgrade), resetting the
+    # main build dir is not enough: the stale subbuild caches under the
+    # FetchContent base dir still pin the old generator and the populate step
+    # fails with "Does not match the generator used previously". Drop the
+    # per-dependency *-build and *-subbuild dirs (keep *-src to avoid a full
+    # re-download).
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BaseDir,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedGenerator
+    )
+
+    if (-not (Test-Path -LiteralPath $BaseDir -PathType Container)) {
+        return
+    }
+
+    $resolvedRepoRoot = [System.IO.Path]::GetFullPath($repoRoot)
+    $resolvedBaseDir = [System.IO.Path]::GetFullPath($BaseDir)
+    if (-not $resolvedBaseDir.StartsWith($resolvedRepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove FetchContent base dir outside the repo root: $resolvedBaseDir"
+    }
+
+    $staleFound = $false
+    foreach ($cache in (Get-ChildItem -LiteralPath $resolvedBaseDir -Directory -Filter "*-subbuild" -ErrorAction SilentlyContinue)) {
+        $cachePath = Join-Path $cache.FullName "CMakeCache.txt"
+        $line = Select-String -Path $cachePath -Pattern '^CMAKE_GENERATOR:INTERNAL=' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($line) {
+            $cached = ($line.Line -replace '^CMAKE_GENERATOR:INTERNAL=', '').Trim()
+            if ($cached -ne $ExpectedGenerator) {
+                $staleFound = $true
+                break
+            }
+        }
+    }
+
+    if (-not $staleFound) {
+        return
+    }
+
+    Write-Host "==> Stale FetchContent generator caches detected; clearing *-build / *-subbuild under: $resolvedBaseDir"
+    Get-ChildItem -LiteralPath $resolvedBaseDir -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "*-build" -or $_.Name -like "*-subbuild" } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+}
+
 function Get-CMakeCacheValue {
     param(
         [Parameter(Mandatory = $true)]
@@ -159,6 +208,9 @@ if ($ForceConfigure -or $generatorMismatch -or $featureMismatch) {
 }
 $skipCMakePreset = (Test-Path -LiteralPath $cmakeCacheInPresetDir) -and (-not $ForceConfigure) -and (-not $generatorMismatch) -and (-not $featureMismatch)
 if (-not $skipCMakePreset) {
+    # Build-dir reset alone misses stale per-dependency subbuild generator
+    # caches under the FetchContent base dir; clear those too before configure.
+    Reset-StaleFetchContent -BaseDir $fetchContentBaseDir -ExpectedGenerator $expectedGenerator
     Write-Host "==> Configuring CMake ($expectedGenerator, x64)..."
     Push-Location $repoRoot
     try {
