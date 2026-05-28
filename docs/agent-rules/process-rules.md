@@ -26,6 +26,13 @@ A plan that ships without revision is a stale plan. Future agents read these doc
 
 **Plan-doc perf-gate section — mandatory when diff touches `Source_Core/`**: every plan whose recommended-approach diff touches `Source_Core/` MUST include a § Perf-review-system gates section naming which gates from `docs/design/pillar-1-2-perf-review-system.md` fire on the PR (PR-fast scenario subset + which scenario directly exercises the changed path; Pillar 2 static scanner; dispatcher drain; visible-cue bucket-E; marker inventory) AND which don't apply with a one-line reason. The section also names the recommended pre-push local check (`scripts/dev/perf-run.sh <scenario>` + `perf-compare.py`) so the author catches regression before CI burns runner time. Orchestrator self-checks this section is present before `ExitPlanMode`; missing section = plan not ready.
 
+**Pre-implementation triage — first action of every "fix existing tooling" slice**: when a plan item says "fix X", "extend X", or otherwise targets pre-existing code, the slice agent's **first** action is to verify the fix hasn't already shipped. Two-step check:
+
+1. **Code state** — `Grep` / `Read` the cited file. If the fix is already in tree, the backlog entry is stale.
+2. **Git history** — `git log --oneline -- <file>` plus a grep over `docs/backlog/agent-self-improvement/applied.md` for the backlog entry's date or symbol. If a prior PR archived it, the entry is stale.
+
+If either signal fires, archive the backlog entry into `applied.md` with a `Resolution: verified-in-tree (already shipped via ...)` note and skip the slice — do **not** reimplement. The plan's § Approach should pre-flight this triage for any item known to overlap recent work and surface the findings as per-item bullets, so the implementer doesn't redo the search. Empirically (see `docs/design/tooling-process-backlog-sweep.md` § Approach), pre-implementation triage on a 37-item plan caught 5 items already-resolved on develop in ~5 min total and saved ~3 h of redundant implementation.
+
 ## Git/p4 discipline
 
 **Destructive git ops in shared worktrees**: before running any destructive git op (`reset --hard`, `checkout --`, `clean -f`, `branch -D`) against a worktree the orchestrator did not personally check out earlier in the same session, run a mandatory 5-step pre-flight via `git -C <path>` from the orchestrator's main worktree (do not `cd`). Parallel agents in other worktrees can — and do — switch the target worktree's HEAD to a different branch between sessions; a stale assumption about "the develop worktree" is what destroys uncommitted work.
