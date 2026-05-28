@@ -459,12 +459,19 @@ void EmitErrorToStderr(const nlohmann::json& envelope) {
 /// Per-process suffix avoids collisions when two --spawn drivers run concurrently.
 std::string ComputeSpawnLogPath(int port) {
 #if defined(_WIN32)
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
     const char* tmpEnv = std::getenv("TMP");
     if (!tmpEnv)
         tmpEnv = std::getenv("TEMP");
     if (!tmpEnv)
         tmpEnv = "C:\\Windows\\Temp";
     const DWORD parentPid = GetCurrentProcessId();
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #else
     const char* tmpEnv = std::getenv("TMPDIR");
     if (!tmpEnv)

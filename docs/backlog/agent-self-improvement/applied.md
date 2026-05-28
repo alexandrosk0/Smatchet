@@ -12,7 +12,7 @@
 - 2026-05-23 · orchestrator · [process] · P2-RESOLVED — `smatchet-merge-watcher` triage budget exhausts on every push because counter was per-PR-lifetime instead of per-HEAD
   Resolution: Slice 10 archive. Fix landed in PR #418 (merged 2026-05-23): `handle_blocked_cr_triage` resets `triage_attempts` to 0 when `triage_for_head_sha` differs from current HEAD. Bats coverage at `tests/bats/merge_watcher.bats`. Per-HEAD reset confirmed in tree.
 
-- 2026-05-18 · test-author · [tooling] · P2 — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
+- 2026-05-18 · test-author · [tooling] · P2-RESOLVED — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
   Resolution: Slice 10. `LaunchEphemeralInstance` in `Target_Standalone/CliCommandRunner.cpp` now redirects child stdout+stderr to `$TMPDIR/Smatchet-spawn-<parent-pid>-<port>.log` (Windows: `%TMP%/Smatchet-spawn-...`). The spawn driver emits the log path in the `[spawn] child stdout/stderr → <path>` banner so operators can tail it on test failures. Falls through to parent-handle inheritance if the log file can't be opened (non-fatal).
 
 - 2026-05-23 · orchestrator · [process] · P2 — Plan-revision direct-pushes vs classifier
