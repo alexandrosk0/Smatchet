@@ -71,8 +71,11 @@ parse_version() {
 # Compare two "X Y Z" tuples: returns 0 if $1 >= $2, else 1.
 ver_ge() {
     local a="$1" b="$2"
+    # Intentional word-splitting: $a / $b are space-separated "X Y Z" tuples.
+    # shellcheck disable=SC2086
     set -- $a
     local a1=$1 a2=$2 a3=$3
+    # shellcheck disable=SC2086
     set -- $b
     local b1=$1 b2=$2 b3=$3
     if [ "$a1" -ne "$b1" ]; then [ "$a1" -gt "$b1" ] && return 0 || return 1; fi

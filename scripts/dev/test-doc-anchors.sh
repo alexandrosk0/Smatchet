@@ -8,5 +8,7 @@
 
 set -uo pipefail
 
+command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+
 cd "$(git rev-parse --show-toplevel)"
 exec python scripts/dev/test_doc_anchors.py "$@"

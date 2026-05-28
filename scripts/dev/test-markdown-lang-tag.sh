@@ -18,6 +18,8 @@
 
 set -euo pipefail
 
+command -v cmake >/dev/null 2>&1 || { echo "cmake required" >&2; exit 2; }
+
 cd "$(dirname "$0")/../.."
 
 TESTS_EXE="${SMATCHET_TESTS_EXE:-build/ninja-test-msvc/tests/SmatchetTests.exe}"

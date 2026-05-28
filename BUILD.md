@@ -40,6 +40,7 @@ The orchestrator + agent scripts (`scripts/dev/*.sh`, `scripts/dev/merge-watcher
 | `python` 3.11+ | dev scripts (perf-compare, watcher CLI, etc.) | `winget install Python.Python.3.13` |
 | `clang-format` / `clang-tidy` / `cppcheck` | lint hooks | Install via LLVM or Visual Studio individual components |
 | `bats` | `tests/bats/*.bats` regression suite (merge-gates poller, etc.) | `npm i -g bats` |
+| `shellcheck` | `scripts/dev/test-shell-lint.sh` (pre-push gate) | `npm install -g shellcheck` |
 
 Verify the full set in one shot:
 

@@ -80,6 +80,10 @@ poll_merge_gates() {
     local owner="${1:?poll_merge_gates: owner required}"
     local repo="${2:?poll_merge_gates: repo required}"
     local prNumber="${3:?poll_merge_gates: pr_number required}"
+    # Deps preflight scoped to function call — file is documented sourceable
+    # (see header § Usage). Top-level `exit` would kill the caller's shell.
+    command -v gh >/dev/null 2>&1 || { echo "gh required" >&2; return 2; }
+    command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; return 2; }
 
     # SKIP_MERGE_GATES=true at session init bypasses all gates. Documented in
     # AGENTS.md § Merge gates and docs/agent-rules/merge-gates.md § Override.

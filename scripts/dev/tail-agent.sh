@@ -139,6 +139,7 @@ while [ $# -gt 0 ]; do
         --files)       show_files=1; shift ;;
         --once)        once=1; shift ;;
         --interval)    interval="${2:-3}"; shift 2 ;;
+        --interval=*)  interval="${1#--interval=}"; shift ;;
         -h|--help)     grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
         --)            shift; id="${1:-}"; shift || true ;;
         -*)            echo "unknown flag: $1" >&2; exit 2 ;;

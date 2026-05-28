@@ -33,6 +33,8 @@
 
 set -euo pipefail
 
+command -v gh >/dev/null 2>&1 || { echo "gh required" >&2; exit 2; }
+
 : "${REPO:?REPO env var required (e.g. alexandrosk0/Smatchet)}"
 : "${THRESHOLD_DAYS:=14}"
 : "${GH_TOKEN:?GH_TOKEN env var required}"

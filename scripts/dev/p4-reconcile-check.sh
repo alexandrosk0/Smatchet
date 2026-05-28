@@ -87,6 +87,9 @@ The following files are open / modified on the p4 side (via
 \`p4 reconcile -n\`) but NOT reflected in git's working-tree status:
 
 EOF
+# Intentional word-splitting: $drift is a newline-separated list, each entry
+# becomes one printf arg → one '  <path>\n' line.
+# shellcheck disable=SC2086
 printf '  %s\n' $drift >&2
 cat >&2 <<EOF
 

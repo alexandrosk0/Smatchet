@@ -97,7 +97,9 @@ while IFS='=' read -r key val; do
         # native form.
         Path|PATH)
             export Path="$val"
-            export PATH="$(cygpath -p "$val" 2>/dev/null || echo "$val")"
+            command -v cygpath >/dev/null 2>&1 || { echo "with-msvc-env: cygpath required (ships with Git for Windows / MSYS2)" >&2; exit 2; }
+            converted=$(cygpath -p "$val" 2>/dev/null || printf '%s' "$val")
+            export PATH="$converted"
             ;;
     esac
 done < <(powershell.exe -NoProfile -Command "$PS_CMD" 2>/dev/null | tr -d '\r')
