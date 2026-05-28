@@ -26,7 +26,19 @@ The four roles do not overlap: a `plan-lock` is the object; `lock-slug` is its i
 
 ## UX Pillars
 
-Four north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § UX Pillars. Pillars 1-3 are enforceable merge gates; Pillar 4 is aspirational.
+Four north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § UX Pillars. Pillars 1-3 are **agent-enforced** (orchestrator + code-review agent + `merge-gates.sh` + per-pillar specialist agents); GitHub-side enforcement of each pillar is partial today (see § Enforcement matrix below). Pillar 4 is aspirational.
+
+### Enforcement matrix (current state)
+
+| Pillar | Agent enforcement | GitHub required-status-check | Target |
+|---|---|---|---|
+| 1 — Performance | `perf-detective` + `perf-gatekeeper` + `merge-gates.sh` reads `.github/workflows/perf-pr-fast.yml` artifact | NOT required on `develop` branch protection | Promote `Perf PR-fast (windows-2022)` to required after baseline coverage hits all 15 scenarios |
+| 2 — UI never freezes | `code-review` CRITICAL on sync I/O reaching UI thread; `pillar2-scan.sh` static check | NOT required on `develop` | Promote `Pillar 2 scanner` to required after the script is wired into a workflow |
+| 3 — Never crash | `debug-detective` runs ASan / UBSan on suspect investigations; RAII rule enforced by code-review | Build-only required (3 MSVC variants); sanitizer build NOT required | Promote sanitizer preset to a required CI job |
+| 4 — Accessibility | None (aspirational) | None | None |
+
+Cross-link: [`docs/design/gate-enforcement-hardening.md`](design/gate-enforcement-hardening.md) drives the agent-enforcement → GitHub-enforcement promotion sequence.
+
 
 - **Frame budget** — **6.94 ms** per UI-thread frame, derived from `1000 / 144`. Steady-state mean per-frame work above the budget is a Pillar-1 violation; `perf-detective` regression-fails any commit that lifts the mean. Floor: no single frame > **16.67 ms** (60 Hz) in normal operation; outliers above the floor are tracked at p99 by `spike-hunter`.
 - **Pillar 1 — Performance** — sustain ≈ 144 Hz. Enforced via `perf.reset` → `scenario.run` → `perf.snapshot` loop in `docs/PERF_WORKFLOW.md`. Owner agent: `perf-detective` for sustained load; `spike-hunter` for intermittent stalls.
