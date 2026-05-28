@@ -214,11 +214,10 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 1. **Verify merge state** via the poll-until-stable helper below — require `MERGEABLE` + `CLEAN`. `CONFLICTING` → halt (user resolves). `UNKNOWN` is transient; the helper waits it out.
 
-2. **Flip PR draft → ready BEFORE gates poll** (C4 prong 1, per `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4 + `docs/backlog/agent-self-improvement/process.md` 2026-05-21 P0). The CodeRabbit `auto_review.drafts: false` default means CR skips draft PRs entirely; flipping ready BEFORE the gates poll lets CR's real auto-review fire so the poll waits for it instead of passing on the placeholder StatusContext:
+2. **Best-effort pre-flip PR draft → ready** (C4 prong 1, per `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4 + `docs/backlog/agent-self-improvement/process.md` 2026-05-21 P0 — applied 2026-05-27). The CodeRabbit `auto_review.drafts: false` default means CR skips draft PRs; flipping ready BEFORE the gates poll lets CR's real auto-review fire. Non-blocking — the gates poll at step 3 sets `MERGE_GATES_FLIP_READY=true` which retries the flip with the same soft-fail semantics, so a transient failure here is recoverable:
    ```bash
-   gh_pr_ready_idempotent "$N" || { echo "gh pr ready failed (rc=6) — HALT" >&2; exit 1; }
+   gh_pr_ready_idempotent "$N" || echo "WARN: pre-flip failed; poller will retry flip at poll start" >&2
    ```
-   The same idempotent flip-ready was previously placed at step 3 (post-gates, pre-merge); it moves to step 2 so CR has a chance to review the non-draft PR before gates check CR state. Step 3 retains the call as a defence-in-depth no-op.
 
 3. **Run merge gates** (per AGENTS.md § Merge gates) unless `SKIP_MERGE_GATES=true`:
    ```bash

@@ -66,6 +66,11 @@ case "$1" in
         ;;
     pr)
         if [ "$2" = "ready" ]; then
+            if [ -n "${MERGE_GATES_STUB_READY_MARKER:-}" ]; then
+                # Marker file — caller's subshell may swallow our stderr, but
+                # the file persists so a test can assert invocation.
+                : > "$MERGE_GATES_STUB_READY_MARKER"
+            fi
             if [ -n "${MERGE_GATES_STUB_READY_STDERR:-}" ]; then
                 echo "$MERGE_GATES_STUB_READY_STDERR" >&2
             fi
@@ -102,7 +107,7 @@ STUB
 teardown() {
     rm -rf "$STUB_BIN_DIR"
     unset MERGE_GATES_TEST_FIXTURE MERGE_GATES_STUB_GH_FAIL MERGE_GATES_STUB_READY_STDERR MERGE_GATES_STUB_READY_EXIT
-    unset MERGE_GATES_TEST_ANSWER MERGE_GATES_STUB_CR_CONFIG
+    unset MERGE_GATES_TEST_ANSWER MERGE_GATES_STUB_CR_CONFIG MERGE_GATES_STUB_READY_MARKER
 }
 
 # ---------- helpers ----------
@@ -884,21 +889,31 @@ set_fixture() {
 @test "MERGE_GATES_FLIP_READY=true calls gh pr ready before polling" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     export MERGE_GATES_FLIP_READY=true
-    # Stub `gh pr ready` to succeed (default behavior, but record invocation).
+    # Marker-file approach: gh_pr_ready_idempotent captures stub stderr in a
+    # local subshell, so stderr can't leak to bats $output. The stub writes
+    # to MERGE_GATES_STUB_READY_MARKER when invoked — file-existence proves
+    # the call path was taken even though stderr is swallowed.
+    export MERGE_GATES_STUB_READY_MARKER="${BATS_TMPDIR:-/tmp}/ready-called-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_READY_MARKER"
     export MERGE_GATES_STUB_READY_EXIT=0
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
+    [ -f "$MERGE_GATES_STUB_READY_MARKER" ]
     [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$MERGE_GATES_STUB_READY_MARKER"
 }
 
 @test "MERGE_GATES_FLIP_READY unset does NOT flip to ready (default poll-only)" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     unset MERGE_GATES_FLIP_READY
-    # If the gate accidentally called `gh pr ready`, our stub's non-default path
-    # would error. Success here confirms the flip code path wasn't taken.
+    # If gh pr ready were invoked the stub would touch this marker file.
+    # Absence proves the flip path was NOT taken.
+    export MERGE_GATES_STUB_READY_MARKER="${BATS_TMPDIR:-/tmp}/ready-called-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_READY_MARKER"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
+    [ ! -f "$MERGE_GATES_STUB_READY_MARKER" ]
     [[ "$output" != *"WARN: gh_pr_ready_idempotent"* ]]
 }
 
