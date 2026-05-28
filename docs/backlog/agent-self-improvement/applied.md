@@ -27,6 +27,15 @@
 - 2026-05-21 · grill-with-docs · [process] · P2 — Skill should pre-flight storage-substrate facts for every persistence claim
   Resolution: Slice 4. `agents/_shared/skills/grill-with-docs/SKILL.md` § During the session now carries a "Storage-substrate pre-flight" rule — any decision mentioning audit / log / persistence / cache / schema / migration must point at one `file:line` proving the storage shape before being locked. Catches phantom-table claims that drive implementation agents to hunt for substrates that don't exist.
 
+- 2026-05-20 · orchestrator · [tooling] · P2 — 8 of 15 candidate perf scenarios don't emit `rows[]`; cannot be baselined under current shape
+  Resolution: Slice 9 of `docs/design/tooling-process-backlog-sweep.md`. Audited current state: (a) the 3 bucket-C-only scenarios (`command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel`) are correctly classified as render-bound and don't need rows[]; (b) the 3 named roundtrip scenarios (`agent-handoff-roundtrip`, `agent-triage-roundtrip`, `whisper-dictation-roundtrip`) were removed in the agentic-runtime ripout (v1 PR1 of github-tracker-backend.md, sha b1d241bc); (c) the 2 named "scenarios that exist but don't emit rows" — `cell-edit-burst` already has rows[] in `OnFinish` (`CellEditBurstScenario.cpp:74-87`), and `whisper-ai-assistant-autosend` also already emits rows[]. Net: no retrofit work needed; the gap closed via prior PRs while this entry sat open.
+
+- 2026-05-19 · perf-detective · [tooling] · P2 — `perf-measure --spawn` `WaitForFile` stale-file footgun
+  Resolution: Slice 9. `Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp` now calls `std::remove(outPath_.c_str())` before the scenario starts, eliminating the race where a prior run's result file looks like the new run's output to the spawn-mode WaitForFile poller.
+
+- 2026-05-19 · orchestrator · [tooling] · P2 — Cross-harness CI parity for skill-vs-agent forms
+  Resolution: Slice 9. `scripts/dev/test-skill-vs-agent-parity.sh` ships as a shape check: every skill under `agents/_shared/skills/*/SKILL.md` either has a matching `agents/<name>.md` twin OR is named in the script's `SKILL_ONLY_HELPERS` array. Auto-discovered by `test-all.sh`. The functional-parity stretch (driver scripts + stdout diff per harness) is deferred — naming the orphan-skill case is the immediate win; the test surfaces a real drift type that a pure-prose review wouldn't catch.
+
 - 2026-05-17 · perf-measure · [process] · P2 — "extend the CLI / scenarios if missing, never ask user to run UI manually" rule not encoded in `agents/perf-measure.md`
   Resolution: Slice 4. The rule was already encoded in `agents/perf-measure.md` § Fallback ("Do not fall back to a manual UI session"). Extended `agents/perf-detective.md` § Hard rules and `agents/spike-hunter.md` § Hard rules with the same wording: "Extend the CLI / scenarios, never substitute a manual UI session. … The measurement is the deliverable."
 
