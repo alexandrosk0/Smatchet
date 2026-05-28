@@ -345,18 +345,33 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
                 // = true so the fetch plan keeps PR items). `type:issue` →
                 // is:issue (explicit; GitHub's default). Unknown value drops
                 // with a warning.
-                if (op != "=" && op != ":") {
+                // Note: op was normalized from ":" to "=" above, so only "="
+                // reaches here for the shorthand + full-JQL forms alike.
+                if (op != "=") {
                     AppendWarning(result.Warning, "Unsupported operator '" + op + "' on type");
                 } else {
                     const std::string lowerVal = ToLower(value);
                     if (lowerVal == "pr" || lowerVal == "pullrequest" || lowerVal == "pull-request") {
                         AppendQueryTerm(body, "is:pr");
                         result.IsPullRequestQuery = true;
+                        result.IncludePullRequests = true;
                     } else if (lowerVal == "issue") {
                         AppendQueryTerm(body, "is:issue");
+                    } else if (lowerVal == "commit") {
+                        // github-commit-tracker-rows — commits only. No GitHub
+                        // search-qualifier term (commits aren't a /search/issues
+                        // kind); the REST commit path is selected via the flags.
+                        result.IncludeCommits = true;
+                        result.IncludeIssuesOrPullRequests = false;
+                    } else if (lowerVal == "all" || lowerVal == "any") {
+                        // github-commit-tracker-rows — issues + PRs + commits.
+                        // Keep PR rows (no is:pr injection so plain issues stay)
+                        // and additionally fetch commits.
+                        result.IncludePullRequests = true;
+                        result.IncludeCommits = true;
                     } else {
                         AppendWarning(result.Warning, std::string("Unknown 'type:' value '") + value +
-                                                          "' — ignored (use 'pr' or 'issue')");
+                                                          "' — ignored (use 'pr', 'issue', 'commit', 'all', or 'any')");
                     }
                 }
             } else if (EqIgnoreCase(field, "text") || EqIgnoreCase(field, "summary") ||

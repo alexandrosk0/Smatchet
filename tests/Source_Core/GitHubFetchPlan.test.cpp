@@ -102,3 +102,60 @@ TEST_CASE("ComputeGitHubFetchPlan — default isPullRequestQuery=false preserves
     const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "Smatchet", "");
     CHECK(plan.includePullRequests == false);
 }
+
+// github-commit-tracker-rows — row-source selection.
+
+TEST_CASE("ComputeGitHubFetchPlan — defaults: issues-only, no commits") {
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "Smatchet", "");
+    CHECK(plan.includeIssuesOrPullRequests == true);
+    CHECK(plan.includeCommits == false);
+}
+
+TEST_CASE("ComputeGitHubFetchPlan — commits-only: includeCommits set, issues path off") {
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "Smatchet", "",
+                                                        /*includePullRequests=*/false, /*includeCommits=*/true,
+                                                        /*includeIssuesOrPullRequests=*/false);
+    CHECK(plan.repoScoped == true);
+    CHECK(plan.includeCommits == true);
+    CHECK(plan.includeIssuesOrPullRequests == false);
+    CHECK(plan.warning.empty());
+}
+
+TEST_CASE("ComputeGitHubFetchPlan — all sources: issues+PRs+commits enabled") {
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "Smatchet", "",
+                                                        /*includePullRequests=*/true, /*includeCommits=*/true,
+                                                        /*includeIssuesOrPullRequests=*/true);
+    CHECK(plan.includePullRequests == true);
+    CHECK(plan.includeCommits == true);
+    CHECK(plan.includeIssuesOrPullRequests == true);
+    CHECK(plan.warning.empty());
+}
+
+TEST_CASE("ComputeGitHubFetchPlan — commits requested without owner+repo downgrades + warns") {
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("", "", "",
+                                                        /*includePullRequests=*/false, /*includeCommits=*/true,
+                                                        /*includeIssuesOrPullRequests=*/false);
+    CHECK(plan.includeCommits == false); // downgraded
+    CHECK_FALSE(plan.warning.empty());
+    CHECK(Contains(plan.warning, "commit"));
+}
+
+TEST_CASE("ComputeGitHubFetchPlan — commits requested with partial config (owner only) downgrades") {
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "", "",
+                                                        /*includePullRequests=*/false, /*includeCommits=*/true,
+                                                        /*includeIssuesOrPullRequests=*/true);
+    CHECK(plan.includeCommits == false);
+    CHECK(Contains(plan.warning, "commit"));
+}
+
+TEST_CASE("ComputeGitHubFetchPlan — commits-only partial config omits issue-search wording (CR #504)") {
+    // includeIssuesOrPullRequests=false → the /search/issues fallback warnings
+    // must not appear; only the commit-downgrade message is accurate.
+    const GitHubFetchPlan plan = ComputeGitHubFetchPlan("alexandrosk0", "", "",
+                                                        /*includePullRequests=*/false, /*includeCommits=*/true,
+                                                        /*includeIssuesOrPullRequests=*/false);
+    CHECK(plan.includeCommits == false);
+    CHECK(Contains(plan.warning, "commit"));
+    CHECK_FALSE(Contains(plan.warning, "/search/issues"));
+    CHECK_FALSE(Contains(plan.warning, "newest open"));
+}

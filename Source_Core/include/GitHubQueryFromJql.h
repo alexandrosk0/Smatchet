@@ -36,6 +36,19 @@ struct JqlToGitHubResult {
     /// and so the cross-repo path knows it has already injected `is:pr` into
     /// the body. Default `false` preserves issues-only behavior.
     bool IsPullRequestQuery = false;
+    /// github-commit-tracker-rows — true when PR rows should be KEPT in the
+    /// node mapping. Set for `type:pr` (PR-only) AND for `type:all`/`type:any`
+    /// (issues + PRs + commits). Distinct from `IsPullRequestQuery`, which also
+    /// drives the `is:pr` query injection that would exclude plain issues.
+    bool IncludePullRequests = false;
+    /// github-commit-tracker-rows — true when the GraphQL issue/PR search
+    /// should run. False only for `type:commit` (commits-only). Default true
+    /// preserves the issues/PRs path.
+    bool IncludeIssuesOrPullRequests = true;
+    /// github-commit-tracker-rows — true when commit rows should be fetched via
+    /// the REST `/repos/{o}/{r}/commits` path. Set for `type:commit` and
+    /// `type:all`/`type:any`. Default false preserves issues-only behavior.
+    bool IncludeCommits = false;
 };
 
 /// Translate a Smatchet JQL view query to a GitHub /search/issues `q=` value.
@@ -56,6 +69,10 @@ struct JqlToGitHubResult {
 ///   reporter = currentUser()   → author:@me
 ///   type = "pr" / type:pr      → is:pr (sets result.IsPullRequestQuery=true)
 ///   type = "issue" / type:issue → is:issue (explicit; GitHub default)
+///   type = "commit" / type:commit → commit rows only (IncludeCommits=true,
+///                                IncludeIssuesOrPullRequests=false; no query term)
+///   type:all / type:any        → issues + PRs + commits (IncludePullRequests
+///                                + IncludeCommits true; no is:pr/is:issue term)
 ///   ORDER BY <field> <dir>     → ignored with warning
 ///   AND / OR connectors        → AND becomes space (GitHub default);
 ///                                OR is unsupported and emits a warning

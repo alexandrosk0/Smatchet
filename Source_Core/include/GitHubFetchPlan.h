@@ -34,6 +34,16 @@ struct GitHubFetchPlan {
     /// runs.
     bool includePullRequests = false;
 
+    /// github-commit-tracker-rows — run the GraphQL issue/PR search. False only
+    /// for a commits-only (`type:commit`) view. Default true preserves the
+    /// existing issues/PRs path.
+    bool includeIssuesOrPullRequests = true;
+
+    /// github-commit-tracker-rows — fetch commit rows via REST
+    /// `/repos/{o}/{r}/commits`. Requires owner+repo (cross-repo commit search
+    /// is out of scope). Set for `type:commit` and `type:all`/`type:any`.
+    bool includeCommits = false;
+
     /// Single human-readable warning string, or empty when the plan is
     /// unambiguous. The caller forwards this to outWarning so TicketSyncService
     /// surfaces it as a Sync Warning toast (5s).
@@ -48,12 +58,19 @@ struct GitHubFetchPlan {
 ///                     didn't scope the search.
 ///   translatedQuery — the JQL → GitHub-search translator's output Query
 ///                     field (may be empty).
-///   isPullRequestQuery — PR12: the JQL → GitHub-search translator's
-///                     IsPullRequestQuery field. Forwarded onto
-///                     `plan.includePullRequests` unchanged so the caller
-///                     doesn't have to reach across two structs.
+///   includePullRequests — PR12 / github-commit-tracker-rows: whether PR rows
+///                     are kept in the node mapping (translator
+///                     `IncludePullRequests`). Forwarded onto
+///                     `plan.includePullRequests` unchanged.
+///   includeCommits    — github-commit-tracker-rows: fetch commit rows via
+///                     REST. When owner OR repo is empty, the plan downgrades
+///                     this to false + emits a warning (cross-repo commit
+///                     search is out of scope).
+///   includeIssuesOrPullRequests — github-commit-tracker-rows: run the GraphQL
+///                     issue/PR search. False only for commits-only views.
 GitHubFetchPlan ComputeGitHubFetchPlan(const std::string& owner, const std::string& repo,
-                                       const std::string& translatedQuery, bool isPullRequestQuery = false);
+                                       const std::string& translatedQuery, bool includePullRequests = false,
+                                       bool includeCommits = false, bool includeIssuesOrPullRequests = true);
 
 } // namespace github
 } // namespace smatchet

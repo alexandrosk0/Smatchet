@@ -35,6 +35,37 @@ bool ParseGitHubIssueKey(const std::string& issueKey, ParsedIssueKey& out);
 std::string BuildIssueListUrlSuffix(const std::string& owner, const std::string& repo, int perPage,
                                     std::int64_t sinceUnixSec);
 
+/// github-commit-tracker-rows — parsed `owner/repo@<sha>` commit key. Fields
+/// are populated only on success; callers must check the return value of
+/// `ParseGitHubCommitKey` before reading. The `@` separator distinguishes a
+/// commit key from the `owner/repo#N` issue key shape so a single string id
+/// can be routed to the correct browse / mutation path.
+struct ParsedCommitKey {
+    std::string Owner;
+    std::string Repo;
+    std::string Sha;
+};
+
+/// github-commit-tracker-rows — parse a GitHub commit key of the form
+/// `owner/repo@<sha>` (e.g. `alexandrosk0/Smatchet@a1b2c3d...`). Strict —
+/// exactly one `/` separates owner from repo, exactly one `@` separates repo
+/// from the SHA, owner/repo use the same charset as issue keys, and the SHA is
+/// 7–40 lower/upper hex chars (abbreviated through full git object id).
+/// Returns false + leaves `out` unchanged on any mismatch.
+bool ParseGitHubCommitKey(const std::string& commitKey, ParsedCommitKey& out);
+
+/// github-commit-tracker-rows — build the URL path suffix for the "list
+/// commits" endpoint. `perPage` clamped to [1, 100]. Returns a string like
+/// `/repos/{owner}/{repo}/commits?per_page=100`. Slice 1 fetches the most
+/// recent page of the repository default branch (no `sha`/`since` window).
+std::string BuildCommitListUrlSuffix(const std::string& owner, const std::string& repo, int perPage);
+
+/// github-commit-tracker-rows — build the browse-path suffix (no host) for a
+/// commit, e.g. `/{owner}/{repo}/commit/{sha}`. `GitHubClient::BuildBrowseUrl`
+/// prepends the host (api.github.com → github.com, or the Enterprise host with
+/// the `/api/v3` suffix stripped).
+std::string BuildCommitBrowseUrlSuffix(const std::string& owner, const std::string& repo, const std::string& sha);
+
 /// Build the URL path suffix for PATCH on a single issue (title/body/state/
 /// milestone updates). Caller composes the JSON body; this only handles the URL.
 std::string BuildIssuePatchUrlSuffix(const std::string& owner, const std::string& repo, std::int64_t number);

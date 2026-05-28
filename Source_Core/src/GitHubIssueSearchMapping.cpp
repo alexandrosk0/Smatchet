@@ -95,6 +95,10 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
 
     const bool isPr = IsPullRequest(issue);
 
+    // github-commit-tracker-rows — stamp the row kind so the grid + commit-key
+    // router can distinguish issues / PRs / commits without re-parsing the id.
+    ticket.fieldValues["github.kind"] = isPr ? std::string("pull_request") : std::string("issue");
+
     // PR12 — visible `[PR] ` summary prefix so users can tell PRs apart at a
     // glance even when the four pr.* columns aren't selected in the view.
     std::string title = JsonString(issue, "title");
@@ -169,6 +173,127 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     if (issue.is_object() && issue.contains("milestone") && issue["milestone"].is_object()) {
         ticket.fieldValues["milestone"] = JsonString(issue["milestone"], "title");
     }
+
+    return ticket;
+}
+
+namespace {
+
+// First line of a (possibly multi-line) commit message. Empty when `msg` is
+// empty. Used for the `[commit <short>] <subject>` summary.
+std::string FirstLine(const std::string& msg) {
+    const std::size_t nl = msg.find('\n');
+    if (nl == std::string::npos) {
+        return msg;
+    }
+    return msg.substr(0, nl);
+}
+
+// First 7 chars of `sha` (git's conventional abbreviated id), or the whole
+// string when shorter.
+std::string ShortSha(const std::string& sha) {
+    if (sha.size() <= 7) {
+        return sha;
+    }
+    return sha.substr(0, 7);
+}
+
+} // namespace
+
+CachedTicket MapCommitJsonToCachedTicket(const nlohmann::json& commit, const std::string& owner,
+                                         const std::string& repo) {
+    CachedTicket ticket;
+
+    const std::string sha = JsonString(commit, "sha");
+    const std::string shortSha = ShortSha(sha);
+
+    if (!owner.empty() && !repo.empty() && !sha.empty()) {
+        ticket.id = owner + "/" + repo + "@" + sha;
+    } else {
+        ticket.id = std::string("@") + sha;
+    }
+    ticket.fieldValues["key"] = ticket.id;
+    ticket.fieldValues["github.kind"] = "commit";
+
+    // Nested `commit` sub-object carries the git metadata (author/committer/
+    // message/verification). Tolerant of its absence per Pillar 3.
+    nlohmann::json inner = nlohmann::json::object();
+    if (commit.is_object()) {
+        const auto it = commit.find("commit");
+        if (it != commit.end() && it->is_object()) {
+            inner = *it;
+        }
+    }
+
+    std::string message = JsonString(inner, "message");
+    const std::string subject = FirstLine(message);
+    ticket.fieldValues["summary"] = std::string("[commit ") + shortSha + "] " + subject;
+
+    if (message.size() > kGitHubBodyMaxBytes) {
+        message.resize(kGitHubBodyMaxBytes);
+    }
+    ticket.fieldValues["description"] = message;
+    ticket.fieldValues["status"] = "commit";
+
+    // Author/committer name+email come from the git metadata; the GitHub user
+    // login (when GitHub resolved the email to an account) lives at the
+    // top-level `author`/`committer` objects.
+    const std::string gitAuthorName = JsonNestedString(inner, "author", "name");
+    const std::string gitAuthorEmail = JsonNestedString(inner, "author", "email");
+    const std::string gitCommitterName = JsonNestedString(inner, "committer", "name");
+    const std::string gitCommitterEmail = JsonNestedString(inner, "committer", "email");
+    const std::string authorDate = JsonNestedString(inner, "author", "date");
+    const std::string committerDate = JsonNestedString(inner, "committer", "date");
+
+    std::string authorLogin;
+    if (commit.is_object() && commit.contains("author") && commit["author"].is_object()) {
+        authorLogin = JsonString(commit["author"], "login");
+    }
+    const std::string displayAuthor = authorLogin.empty() ? gitAuthorName : authorLogin;
+    ticket.fieldValues["author"] = displayAuthor;
+    ticket.fieldValues["reporter"] = displayAuthor;
+    ticket.fieldValues["created"] = authorDate;
+    ticket.fieldValues["updated"] = committerDate;
+
+    // GitHub-specific commit columns.
+    ticket.fieldValues["commit.sha"] = sha;
+    ticket.fieldValues["commit.short_sha"] = shortSha;
+    ticket.fieldValues["commit.author_name"] = gitAuthorName;
+    ticket.fieldValues["commit.author_email"] = gitAuthorEmail;
+    ticket.fieldValues["commit.committer_name"] = gitCommitterName;
+    ticket.fieldValues["commit.committer_email"] = gitCommitterEmail;
+    ticket.fieldValues["commit.url"] = JsonString(commit, "html_url");
+
+    // Parents → comma-joined short SHAs (merge commits have ≥2). Empty when the
+    // payload omits the list or it isn't an array.
+    std::string parents;
+    if (commit.is_object() && commit.contains("parents") && commit["parents"].is_array()) {
+        for (const auto& p : commit["parents"]) {
+            if (!p.is_object()) {
+                continue;
+            }
+            const std::string pSha = ShortSha(JsonString(p, "sha"));
+            if (pSha.empty()) {
+                continue;
+            }
+            if (!parents.empty()) {
+                parents.append(", ");
+            }
+            parents.append(pSha);
+        }
+    }
+    ticket.fieldValues["commit.parents"] = parents;
+
+    // verification.verified is a bool → "true"/"false"; empty when absent.
+    std::string verified;
+    if (inner.is_object() && inner.contains("verification") && inner["verification"].is_object()) {
+        const auto& v = inner["verification"];
+        const auto it = v.find("verified");
+        if (it != v.end() && it->is_boolean()) {
+            verified = it->get<bool>() ? "true" : "false";
+        }
+    }
+    ticket.fieldValues["commit.verified"] = verified;
 
     return ticket;
 }

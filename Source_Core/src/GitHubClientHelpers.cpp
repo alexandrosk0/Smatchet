@@ -4,7 +4,7 @@
 
 #include <cctype>
 #include <chrono>
-#include <cstdio>  // snprintf / sscanf — per CodeRabbit on PR #357 (some toolchains don't transitively include via <ctime>/<sstream>)
+#include <cstdio> // snprintf / sscanf — per CodeRabbit on PR #357 (some toolchains don't transitively include via <ctime>/<sstream>)
 #include <cstdlib>
 #include <ctime>
 #include <sstream>
@@ -62,6 +62,70 @@ bool ParseGitHubIssueKey(const std::string& issueKey, ParsedIssueKey& out) {
     } catch (const std::exception&) {
         return false;
     }
+}
+
+bool ParseGitHubCommitKey(const std::string& commitKey, ParsedCommitKey& out) {
+    // Format: <owner>/<repo>@<hex-sha>. Owner + repo charset mirrors
+    // ParseGitHubIssueKey (alphanumeric, hyphen, underscore, dot). SHA: 7..40
+    // hex chars (abbreviated through full 40-char git object id).
+    if (commitKey.empty()) {
+        return false;
+    }
+    const std::size_t slash = commitKey.find('/');
+    if (slash == std::string::npos || slash == 0) {
+        return false;
+    }
+    const std::size_t at = commitKey.find('@', slash + 1);
+    if (at == std::string::npos || at == slash + 1 || at + 1 >= commitKey.size()) {
+        return false;
+    }
+    const std::string owner = commitKey.substr(0, slash);
+    const std::string repo = commitKey.substr(slash + 1, at - slash - 1);
+    const std::string sha = commitKey.substr(at + 1);
+
+    auto valid_seg = [](const std::string& s) {
+        if (s.empty()) {
+            return false;
+        }
+        for (char c : s) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_' && c != '.') {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!valid_seg(owner) || !valid_seg(repo)) {
+        return false;
+    }
+    if (sha.size() < 7 || sha.size() > 40) {
+        return false;
+    }
+    for (char c : sha) {
+        if (std::isxdigit(static_cast<unsigned char>(c)) == 0) {
+            return false;
+        }
+    }
+    out.Owner = owner;
+    out.Repo = repo;
+    out.Sha = sha;
+    return true;
+}
+
+std::string BuildCommitListUrlSuffix(const std::string& owner, const std::string& repo, int perPage) {
+    if (perPage < 1) {
+        perPage = 1;
+    } else if (perPage > 100) {
+        perPage = 100;
+    }
+    std::ostringstream out;
+    out << "/repos/" << owner << "/" << repo << "/commits?per_page=" << perPage;
+    return out.str();
+}
+
+std::string BuildCommitBrowseUrlSuffix(const std::string& owner, const std::string& repo, const std::string& sha) {
+    std::ostringstream out;
+    out << "/" << owner << "/" << repo << "/commit/" << sha;
+    return out.str();
 }
 
 namespace {
