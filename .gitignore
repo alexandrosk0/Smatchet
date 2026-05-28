@@ -114,3 +114,7 @@ assets/fonts/*.ttf
 # used on machines like Brick that run multiple p4d contexts (e.g. local
 # Unreal p4d + remote Mainbot p4d) where global env vars would collide.
 .p4config
+
+# vexp auto-generates this; per AGENTS.md § vexp, the canonical block lives
+# in .claude/CLAUDE.md — Copilot variant is not committed.
+.github/copilot-instructions.md
