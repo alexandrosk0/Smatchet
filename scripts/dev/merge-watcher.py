@@ -1168,7 +1168,12 @@ def maybe_resolve_stuck_cr_threads(
         _bump_resolved_threads(pr, clone_path, current_head, 0)
         return {"resolve_action": "noop: zero unresolved CR threads"}
     resolved, failed = _resolve_review_threads(thread_ids, clone_path)
-    _bump_resolved_threads(pr, clone_path, current_head, resolved)
+    # CR feedback PR #487 — only persist the same-head dedup marker when the
+    # batch fully succeeded. Otherwise the next poll must retry the still-
+    # unresolved threads on this same head; suppressing via
+    # `last_resolved_for_head_sha` would leave them stuck until the next push.
+    if failed == 0:
+        _bump_resolved_threads(pr, clone_path, current_head, resolved)
     return {
         "resolve_action": (
             f"resolved {resolved}/{len(thread_ids)} CR threads "

@@ -938,6 +938,42 @@ print('extras:', extras)
     [[ "$output" == *"suppressed (already resolved on this head)"* ]]
 }
 
+@test "maybe_resolve_stuck_cr_threads: partial failure does NOT persist same-head dedup (CR feedback PR #487)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'newhead6666666666666666666666666666666666',
+    ['PRT_a', 'PRT_b', 'PRT_c'])
+# 1 of 3 resolutions fails — partial-failure path.
+m._resolve_review_threads = lambda ids, clone: (2, 1)
+bump_calls = []
+real_bump = m._bump_resolved_threads
+def tracking_bump(*args, **kw):
+    bump_calls.append(args)
+    real_bump(*args, **kw)
+m._bump_resolved_threads = tracking_bump
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (3 open)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+print('bump_calls:', bump_calls)
+"
+    [ "$status" -eq 0 ]
+    # resolve_action still emitted, but _bump_resolved_threads NOT called →
+    # next poll retries the still-unresolved 1/3 thread on the same head.
+    [[ "$output" == *"resolved 2/3 CR threads"* ]]
+    [[ "$output" == *"failed=1"* ]]
+    [[ "$output" == *"bump_calls: []"* ]]
+}
+
 @test "maybe_resolve_stuck_cr_threads: noop result recorded when zero CR threads found" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
