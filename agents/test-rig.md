@@ -38,6 +38,7 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 - `SmatchetStandalone` and `SmatchetCore_DX12` must remain unaffected. `SMATCHET_BUILD_TESTS` is OFF by default; only `ninja-test-msvc` / `ninja-debug-msvc` / `ninja-publish-msvc` flip it ON.
 - Every new test file ships with `target_link_libraries(SmatchetTests PRIVATE doctest::doctest)` already in place — only edit `tests/CMakeLists.txt` to add the new test `.cpp` + any new `Source_Core/src/*.cpp` units to the source list.
 - **Slice-boundary builds + ctest only.** Per AGENTS.md § Build / ctest cadence, run `cmake --build --preset ninja-test-msvc --target SmatchetTests` + `ctest --output-on-failure` exactly once per slice — at the end, when every new test file + every `tests/CMakeLists.txt` edit is in place. Don't rebuild between adding test cases; doctest catches the same failure at the slice boundary at a fraction of the wall-clock cost. The `.claude/.tree-dirty` sentinel auto-clears on each `cmake --build …`.
+- **Worktree-absolute paths only when running in a worktree.** If the session's `Working directory` env shows a path under `.claude/worktrees/<id>/`, all `Edit` / `Write` absolute paths must start with that worktree prefix — NOT the main-repo prefix. Absolute paths to the main repo land changes on whatever branch main is currently on (often a sibling agent's branch), causing cross-branch contamination. Verify via `git rev-parse --show-toplevel` at the start of the session if uncertain.
 
 ## Workflow
 
