@@ -1127,8 +1127,17 @@ def maybe_resolve_stuck_cr_threads(
 
     Returns extras dict with `resolve_action` describing the outcome.
     """
-    if os.environ.get("MERGE_WATCH_RESOLVE_CR_THREADS", "").strip().lower() not in {
-        "true", "1", "yes",
+    # Default-on as of 2026-05-28 — opt-in shipped via PR #487 worked
+    # cleanly across 3 production cycles this session (manually run on PR
+    # #487 itself, #488, #496 / #497 to unblock stuck STALE_WITH_FINDINGS
+    # threads). Plan-doc § Out of scope had flagged "flip default after one
+    # production cycle"; the cycle's over. Set the env to "false" (or "0"
+    # / "no") to opt back out if the resolution behaviour ever causes a
+    # surprise — but the gate conditions (auto_act_for_head_sha recorded,
+    # head advanced, status_line not CR-block-shaped) are conservative
+    # enough that the false-positive blast radius is bounded.
+    if os.environ.get("MERGE_WATCH_RESOLVE_CR_THREADS", "true").strip().lower() in {
+        "false", "0", "no",
     }:
         return {}
     prior_auto_act_head = entry.get("auto_act_for_head_sha", "")

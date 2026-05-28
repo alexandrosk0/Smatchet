@@ -50,7 +50,7 @@ N/A — diff touches only `scripts/dev/` + `tests/bats/`; no `Source_Core/` impa
 ## Risks / non-goals
 
 - **Over-resolution risk** — the helper resolves all CR-authored open threads tied to the prior head, not just threads the auto-fix demonstrably addressed. Mitigation: gate fires only after head advanced AND CR re-review status is SUCCESS; CR re-opens any genuinely un-addressed thread on its next review pass. Accepted for P1 hygiene; finer-grained per-finding resolution is out of scope (would require structured handoff from the spawned claude session).
-- **Opt-in default for first ship** — `MERGE_WATCH_RESOLVE_CR_THREADS=true` required. Mitigation: bats covers the on-path; flip default in a follow-up after one production cycle.
+- **Default-on as of 2026-05-28 follow-up** — original ship was opt-in via `MERGE_WATCH_RESOLVE_CR_THREADS=true`. Flipped default to true after the feature ran cleanly across 3 production unblock cycles (manual `gh api graphql resolveReviewThread` dance on PRs #487 / #488 / #496-497). The env knob still accepts `false` / `0` / `no` to opt back out. Mitigation: gate conditions remain conservative (auto_act_for_head_sha recorded, head advanced, status_line not CR-block-shaped); bats still covers the on-path; CR re-opens any genuinely un-addressed thread on its next review pass.
 - **Non-goal**: refactoring the per-HEAD vs per-PR-lifetime counter split. The reset path covers the observed wedge without re-shaping the counter semantics.
 - **Non-goal**: closing the original `GH_API_DOWN` sister bug (2026-05-21 P1 line 46 of `tooling.md`). Same code area, separate root cause; not bundled here.
 
@@ -65,7 +65,7 @@ N/A — diff touches only `scripts/dev/` + `tests/bats/`; no `Source_Core/` impa
 ## Out of scope (flagged, not designed)
 
 - Live-PR end-to-end probe for the resolveReviewThread path. Tracked as a follow-up tooling backlog entry; depends on a future PR with real CR findings.
-- Flipping `MERGE_WATCH_RESOLVE_CR_THREADS` default to true. Deferred to follow-up after one production cycle.
+- ~~Flipping `MERGE_WATCH_RESOLVE_CR_THREADS` default to true. Deferred to follow-up after one production cycle.~~ **Done** 2026-05-28; default flipped after 3 successful production cycles.
 - Reshaping `triage_attempts` from per-PR-lifetime to per-HEAD-only semantics. The reset path closes the observed wedge; reshaping is gratuitous churn.
 
 ## Implementation log
