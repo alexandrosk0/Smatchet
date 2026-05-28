@@ -745,3 +745,253 @@ print('extras:', extras)
     [ "$status" -eq 0 ]
     [[ "$output" == *"extras: {}"* ]]
 }
+
+# ---------- Sub-bug (a) — counter reset on CR-clear ----------
+# 2026-05-22 P1 (docs/backlog/agent-self-improvement/tooling.md line 31):
+# previously, handle_blocked_cr_triage early-exited on `not _looks_like_cr_finding_block`
+# WITHOUT resetting triage_attempts. After a CR-finding round + auto-fix push that
+# made cr_state clean but left cr_open > 0, the registry kept the stale per-PR-
+# lifetime counter, appearing latched at TRIAGE_BUDGET_EXHAUSTED.
+
+@test "handle_blocked_cr_triage resets stale counter on CR-clear status_line" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    # Pre-populate triage_attempts > 0 from a prior CR-finding round.
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._bump_triage_attempts(999, r'$(pwd)', 7, 'samehead2222222222222222222222222222222222')
+"
+    [ "$status" -eq 0 ]
+    # Status line shows CR is no longer block-shaped (cr_open > 0 BUT review clean).
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'triage_attempts': 7,
+         'triage_for_head_sha': 'samehead2222222222222222222222222222222222'}
+status_line = 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (3 open)'
+extras = m.handle_blocked_cr_triage(entry, status_line)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"triage_reset_on_cr_clear"* ]]
+    [[ "$output" == *"prior_attempts=7 -> 0"* ]]
+    [[ "$output" == *"skipped: BLOCKED but not CR-finding"* ]]
+}
+
+@test "handle_blocked_cr_triage CR-clear with already-zero counter is a no-op" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)', 'triage_attempts': 0}
+status_line = 'Poll 1/1 CI: 5/5 pass | CodeRabbit: STALE_RESOLVED'
+extras = m.handle_blocked_cr_triage(entry, status_line)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    # No reset key when counter was already 0 (avoids spurious registry write).
+    [[ "$output" != *"triage_reset_on_cr_clear"* ]]
+    [[ "$output" == *"skipped: BLOCKED but not CR-finding"* ]]
+}
+
+# ---------- Sub-bug (b) — resolveReviewThread after auto-act push ----------
+# 2026-05-22 P1 sub-bug (b): CR threads remain `isResolved:false` after auto-fix
+# push lands, leaving cr_open > 0 and the merge gate permanently BLOCKED.
+
+@test "maybe_resolve_stuck_cr_threads: no-op when env flag unset" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ.pop('MERGE_WATCH_RESOLVE_CR_THREADS', None)
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: STALE_RESOLVED'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extras: {}"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: no-op when auto_act_for_head_sha absent" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)'}  # never auto-acted
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: STALE_RESOLVED'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extras: {}"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: no-op when status_line still CR-block-shaped" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: STALE_WITH_FINDINGS (3 actionable on prior commit - block)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"extras: {}"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: skipped when head unchanged since auto-act" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+# Stub the GraphQL fetch to return same head + 1 stuck CR thread.
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'samehead1111111111111111111111111111111111', ['PRT_kwDOABC'])
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'samehead1111111111111111111111111111111111'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (1 open)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipped: head unchanged since auto-act"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: fires resolveReviewThread per stuck CR thread" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+# Head has advanced since the prior auto-act dispatch.
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'newhead3333333333333333333333333333333333',
+    ['PRT_kwDO1', 'PRT_kwDO2', 'PRT_kwDO3'])
+calls = []
+def fake_resolve(ids, clone):
+    calls.extend(ids)
+    return (len(ids), 0)
+m._resolve_review_threads = fake_resolve
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (3 open)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+print('calls:', calls)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resolved 3/3 CR threads"* ]]
+    [[ "$output" == *"newhead3"* ]]
+    [[ "$output" == *"calls: ['PRT_kwDO1', 'PRT_kwDO2', 'PRT_kwDO3']"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: dedup suppresses re-resolve on same head" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'newhead4444444444444444444444444444444444', ['PRT_xyz'])
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000',
+         'last_resolved_for_head_sha': 'newhead4444444444444444444444444444444444'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (1 open)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"suppressed (already resolved on this head)"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: partial failure does NOT persist same-head dedup (CR feedback PR #487)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'newhead6666666666666666666666666666666666',
+    ['PRT_a', 'PRT_b', 'PRT_c'])
+# 1 of 3 resolutions fails — partial-failure path.
+m._resolve_review_threads = lambda ids, clone: (2, 1)
+bump_calls = []
+real_bump = m._bump_resolved_threads
+def tracking_bump(*args, **kw):
+    bump_calls.append(args)
+    real_bump(*args, **kw)
+m._bump_resolved_threads = tracking_bump
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (3 open)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+print('bump_calls:', bump_calls)
+"
+    [ "$status" -eq 0 ]
+    # resolve_action still emitted, but _bump_resolved_threads NOT called →
+    # next poll retries the still-unresolved 1/3 thread on the same head.
+    [[ "$output" == *"resolved 2/3 CR threads"* ]]
+    [[ "$output" == *"failed=1"* ]]
+    [[ "$output" == *"bump_calls: []"* ]]
+}
+
+@test "maybe_resolve_stuck_cr_threads: noop result recorded when zero CR threads found" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['MERGE_WATCH_RESOLVE_CR_THREADS'] = 'true'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'newhead5555555555555555555555555555555555', [])
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
+state = {'last_state': 'BLOCKED',
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable)'}
+extras = m.maybe_resolve_stuck_cr_threads(state, entry)
+print('extras:', extras)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"noop: zero unresolved CR threads"* ]]
+}

@@ -60,6 +60,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       reviewThreads(first: 100) {
         pageInfo { hasNextPage }
         nodes {
+          id
           isResolved
           isOutdated
           comments(first: 100) {
