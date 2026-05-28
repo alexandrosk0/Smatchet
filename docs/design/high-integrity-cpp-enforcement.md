@@ -2,22 +2,44 @@
 
 > **Slug**: `high-integrity-cpp-enforcement`.
 
+## Dependency — directory reorganization (precursor, blocking)
+
+**This plan is blocked on a precursor reorg PR.** Audit during the grill (2026-05-28) found the codebase is *flat*: 154 `.cpp` files live directly under `Source_Core/src/` organized by filename prefix; the only real subdirectory is `Commands/`, and `Plugins/Mcp/` has no `src/`. The directory-based zone globs below (`Source_Core/src/Tracker/**` etc.) therefore reference directories that **do not exist yet**.
+
+Decision (2026-05-28): rather than encode fragile filename-prefix globs, a **precursor reorganization PR** moves the flat files into real directories so the zone globs become valid. The reorg is mechanical (pure file moves + `#include` path fixups across the tree + CMake `GLOB`/source-list updates) and gets its **own plan-doc** (`docs/design/source-core-dir-reorg.md`, to be written) and its own PR, ideally driven by the `mechanic` agent. This enforcement plan does not start until the reorg lands on `develop`.
+
+**Target directory taxonomy** the reorg must produce (strict-zone dirs are the contract this plan depends on; exact per-file placement of edge cases is settled in the reorg PR's review):
+
+| New dir | File families that move in | Zone |
+|---|---|---|
+| `Source_Core/src/Tracker/` | `Tracker*`, `Jira*`, `Plane*`, `GitHub*`, `Jql*`, `Issue*`, `IssueDraft`, `IssueTableSerializer`, `LabelEdit*`, `ProjectResolver`, `DefaultTrackerBackendFactory`, `FieldCatalog*` | strict |
+| `Source_Core/src/Sync/` | `OfflineQueueService`, `TicketSyncService`, `NetworkUsageTracker` | strict |
+| `Source_Core/src/Persistence/` | `LocalCacheManager`, `BackendAuditTrail`, `FieldEditAuditSource`, `*Cache` | strict |
+| `Source_Core/src/Config/` | `ConfigManager*` | strict |
+| `Source_Core/src/Commands/` | (already exists) | strict |
+| `Plugins/Mcp/src/` | `McpJsonRpc*`, `McpPlugin*` | strict |
+| `Source_Core/src/Ui/` | `Smatchet*Ui*`, `*Ui*`, `SmatchetTheme`, `SmatchetToast`, `Blame*`, `CodeColorView`, `Markdown*`, `CppSyntaxHighlight` | light |
+| `Target_Standalone/` | (already exists) | light |
+| `Source_Core/src/` (residual root + other new dirs e.g. `Ai/`, `Core/`) | everything else | exempt-by-default |
+
+Risk this introduces: the reorg is a large-blast-radius diff (every `#include "Foo.h"` whose target moved must update). It must land as its own reviewed PR with a clean dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) before this plan proceeds. If the reorg PR stalls or is rejected, this plan falls back to filename-prefix globs (the alternative considered + deferred during the grill).
+
 ## Context
 
 Proposal floated 2026-05-28 to create a "Smatchet High-Integrity C++ Profile" — six phases, a new profile doc, a new scanner, a new CI workflow, a manual triage workflow, a deviation-comment migration, and a five-rule promotion ladder. Estimated effort ~20+ hours.
 
-Audit of existing infrastructure (this plan's § Approach) shows ~70% of the proposal's rule list is already enforced today via `AGENTS.md` § Project rules + `scripts/dev/test-lint-rules.sh` (shipped #468) + cppcheck/clang-tidy PostToolUse hooks + the `Sanitizer (ASAN + UBSAN)` CI job + the existing exemption-comment convention (`// C-ABI handle`, `// custom-deleter`, `// CLI stdout`, `// pre-logger-init`).
+Audit of existing infrastructure (this plan's § Approach) shows ~70% of the proposal's rule list is already enforced today via `AGENTS.md` § Project rules + `scripts/dev/test-lint-rules.sh` (shipped #468) + cppcheck/clang-tidy PostToolUse hooks + the `Sanitizer (ASAN via MSVC)` CI job (build-and-test.yml:313 — ASAN only; MSVC has no UBSAN) + the existing exemption-comment convention (`// C-ABI handle`, `// custom-deleter`, `// CLI stdout`, `// pre-logger-init`).
 
 The genuine value the full proposal would add lives in four ideas, not the rule list:
 
 1. **Tiered enforcement** — strict zone (parsing / sync / cache / config / command-registry), light zone (UI-heavy files), exempt zone. Current enforcement is uniform with per-site exemptions.
 2. **Delta gate** — fail only on **new** violations vs `origin/develop`, grandfather existing. PR #488 used this pattern manually for shell-lint; C++ violator volume makes manual rewrites infeasible.
-3. **Two uncovered rules + `deviation-overdue`** — silent narrowing (clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs) and `#define ImGui` macro-alias tricks (one-liner grep). Dynamic-index bounds checks dropped from this PR (see § Out of scope — Risks §2 conceded the rule wasn't ready to gate; ASAN+UBSAN in the existing `Sanitizer` CI job already catches the runtime class). `deviation-overdue` enforces the calendar-marker `revisit=` field from the `SMATCHET_DEVIATION` grammar.
+3. **Two uncovered rules + `deviation-overdue`** — silent narrowing (clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs) and `#define ImGui` macro-alias tricks (one-liner grep). Dynamic-index bounds checks dropped from this PR (see § Out of scope — Risks §2 conceded the rule wasn't ready to gate; ASAN in the existing `Sanitizer (ASAN via MSVC)` CI job already catches the out-of-bounds runtime class). `deviation-overdue` enforces the calendar-marker `revisit=` field from the `SMATCHET_DEVIATION` grammar.
 4. **Forward-only `SMATCHET_DEVIATION` comment format** — `rule / reason / owner / revisit` quad. Adds an audit-able "review this site by date X" surface (via `revisit=` + the `deviation-overdue` rule) that the existing one-line exemption comments lack.
 
 Outcome after this lands: existing strict-zone violators are catalogued in `docs/backlog/high-integrity-cpp-baseline.md` (grandfathered); every NEW violation in a strict-zone file fails CI; the two uncovered rules + `deviation-overdue` join the existing scanner; new deviation sites use the canonical comment format; the tiered scope is named in AGENTS.md with no separate profile doc to drift.
 
-**Effort estimate**: ~7 h (post-grill), up from the initial ~4-6 h estimate. The drift is concentrated in bats coverage (~1.5 h) and CI wiring (~0.5 h) — both costs the initial estimate handwaved. Still well under the full proposal's ~20+ h. Sliced as one PR (not multiple) because the parts are tightly coupled — the scanner, the AGENTS.md doc, the baseline file, and the bats coverage all land together or the gate's behaviour is incoherent. Internal slice breakdown (commit-per-row):
+**Effort estimate**: this plan's enforcement work is ~7 h, BUT it is now gated behind the precursor directory-reorg PR (see § Dependency above). The reorg itself is a separate plan + PR — estimate ~3-5 h of mechanical file-move + `#include`-fixup + CMake-source-list work plus dual-target build validation, dominated by blast-radius risk rather than complexity. **Combined: ~10-12 h across two PRs**, still under the full original proposal's ~20+ h but no longer the "slim ~7 h" the title implies — the flat-layout discovery is the reason. Enforcement-PR slice breakdown (commit-per-row; assumes reorg already on `develop`):
 
 | Slice | Hours |
 |---|---|
@@ -38,7 +60,7 @@ Outcome after this lands: existing strict-zone violators are catalogued in `docs
 
 Extend the existing rule infrastructure rather than parallel-shipping new infrastructure. Five concrete edits, in order:
 
-1. **`AGENTS.md` § Project rules § Tiered enforcement** (new subsection, ≤ 20 lines). Names the three zones by directory glob, references the existing rules (no rule restatement) and the scanner. Single source of truth. Zone globs (locked):
+1. **`AGENTS.md` § Project rules § Tiered enforcement** (new subsection, ≤ 20 lines). Names the three zones by directory glob, references the existing rules (no rule restatement) and the scanner. Single source of truth. Zone globs (locked — **valid only after the precursor reorg lands**; see § Dependency):
 
    ```yaml
    strict_zone:
@@ -127,8 +149,10 @@ Trade-off: the slim version preserves the existing one-source-of-truth structure
 
 ## Files to modify
 
+**Precursor (separate PR + plan-doc, blocking — see § Dependency)**: `docs/design/source-core-dir-reorg.md` (new plan) + the reorg PR itself (file moves across `Source_Core/src/**`, `Plugins/Mcp/**`, every dependent `#include`, CMake source lists). None of the rows below start until that lands on `develop`.
+
 1. `AGENTS.md` — add § Tiered enforcement subsection under § Project rules (≤ 20 lines; matches Approach §1) AND the `SMATCHET_DEVIATION` grammar paragraph (per Approach §4). Both edits land together so AGENTS.md is the single source of truth for both zone scope and deviation syntax.
-2. `scripts/dev/test-lint-rules.sh` — add `--diff` mode (default for `test-all.sh` invocation), `--catalog` + `--refresh` modes, the three new rule checks (clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs, `\b#define\s+ImGui\b` grep, `deviation-overdue` parser), zone-tier classification, and the rule-id contract per §8 below (existing rules renamed to `no-printf-stderr` + `no-raw-new`).
+2. `scripts/dev/test-lint-rules.sh` — add `--diff` mode (default for `test-all.sh` invocation), `--catalog` + `--refresh` modes, the three new rule checks (clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs, `\b#define\s+ImGui\b` grep, `deviation-overdue` parser), zone-tier classification, and the rule-id contract per § Rule-id contract below (existing rules renamed to `no-printf-stderr` + `no-raw-new`).
 3. `docs/backlog/high-integrity-cpp-baseline.md` (new) — initial dump from `--catalog`; lives under backlog rather than design since it's a tracking artefact, not a plan.
 4. `tests/bats/lint_rules.bats` (new) — bats coverage for `--diff` mode, `--catalog` mode, and each of the three new rules (one bats per rule, one all-clean fixture). Pattern mirrors `tests/bats/shell_lint.bats` from #488.
 5. `tests/fixtures/lint_rules/` (new) — per-rule known-bad + known-good fixtures.
@@ -157,7 +181,7 @@ Convention for future rules: lowercase kebab-case, ≤ 24 chars, namespaced when
 - `scripts/dev/test-lint-rules.sh` (shipped #468, ~40 LoC) — existing rule-loop, exemption-comment allowlist, file-walker. Reused as the foundation; this plan extends it rather than forking.
 - `scripts/dev/test-shell-lint.sh` pattern — bats fixture layout, `--target` flag, header doc, `SMATCHET_SKIP_*` env-bypass convention.
 - `scripts/dev/test-all.sh` discovery glob (`test-*.sh`) — auto-runs the extended script at pre-push gate.
-- `Sanitizer (ASAN + UBSAN)` CI job — already covers Pillar 3 contract; no new CI workflow needed.
+- `Sanitizer (ASAN via MSVC)` CI job (build-and-test.yml:313) — already covers part of the Pillar 3 contract (out-of-bounds memory); no new CI *workflow file* needed (this plan adds steps + one job to the existing workflow, not a new file — see Files §8).
 - `cppcheck` + `clang-tidy` PostToolUse hooks — already enforce most of the rule list at C++-edit time.
 - Existing inline exemption-comment allowlist (`// C-ABI handle`, `// custom-deleter`, `// CLI stdout`, `// pre-logger-init`) — accepted in perpetuity; `SMATCHET_DEVIATION(rule)` is a forward-only superset.
 
@@ -170,12 +194,12 @@ Convention for future rules: lowercase kebab-case, ≤ 24 chars, namespaced when
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-N/A — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`, `tests/bats/`, `tests/fixtures/`. The three new rule checks read `Source_Core/` but don't modify it.
+N/A (enforcement PR) — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`, `tests/bats/`, `tests/fixtures/`, `.github/workflows/build-and-test.yml`, `agents/coderabbit-triage.md`. The three new rule checks read `Source_Core/` but don't modify it. **The precursor reorg PR is a different story** — it moves `Source_Core/` files wholesale, so the perf-gate applies there and that plan-doc carries its own perf-gate section (a pure file-move with no logic change should be perf-neutral, but the reorg PR validates rather than asserting).
 
 ## Risks / non-goals
 
 - **Marketing-weight loss vs full proposal**. The slim version doesn't have a standalone "High-Integrity C++ Profile" doc; the rules live inside AGENTS.md. Contributors browsing the design folder will not see a flag-planting doc that says "this is a high-integrity codebase." Mitigation: the AGENTS.md subsection is title-cased clearly + the baseline doc under `docs/backlog/` is hand-linked from the subsection. Accepted as a marketing trade for the one-source-of-truth structural win.
-- **Dynamic-bounds rule dropped from this PR** (see § Out of scope). The heuristic's false-positive rate against `for (i; i<vec.size(); ...) v[i]` patterns was too high to gate; a "light-zone warn" that never fails CI was scanner code without behaviour change. ASAN+UBSAN in the existing `Sanitizer` CI job already catches the runtime class. Promotion path: a follow-up PR with a parameter-driven-index heuristic scoped to strict-zone files, evidence-driven not pre-scheduled.
+- **Dynamic-bounds rule dropped from this PR** (see § Out of scope). The heuristic's false-positive rate against `for (i; i<vec.size(); ...) v[i]` patterns was too high to gate; a "light-zone warn" that never fails CI was scanner code without behaviour change. ASAN in the existing `Sanitizer (ASAN via MSVC)` CI job already catches the out-of-bounds runtime class. Promotion path: a follow-up PR with a parameter-driven-index heuristic scoped to strict-zone files, evidence-driven not pre-scheduled.
 - **`SMATCHET_DEVIATION` not made mandatory** means existing exemption sites won't carry a revisit date. The audit-the-deviation surface this would enable stays partial. Mitigation: forward-only is a deliberate choice to avoid the rewrite-pass cost (estimated ~50 sites × 2 min = ~2 h of zero-behaviour-change churn). The mandatory form can be promoted later if review experience shows it's worth the rewrite.
 - **Baseline file as a gate input — not the design** (clarification, not a risk). The grill superseded the original "baseline as gate truth" framing: gate truth = live scan on `HEAD` vs live scan on `origin/develop`, computed every run; `docs/backlog/high-integrity-cpp-baseline.md` is a human-reading snapshot only. Drift between the file and the live state is normal between refreshes — `develop` post-merge runs `--catalog --refresh` with fail-on-drift so the committed snapshot can never silently diverge from reality on `develop`. PR-time staleness is a non-issue because the gate doesn't consult the file.
 - **Non-goal**: MISRA-C/C++ compliance certification. The rule set is curated for Smatchet-specific risk patterns; making a MISRA claim would require formal traceability tooling we don't have and don't need.
@@ -193,7 +217,7 @@ N/A — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`, `tests/bats/`, `
 ## Out of scope (flagged, not designed)
 
 - **Dynamic-bounds `operator[]` heuristic**. Dropped from this PR. Three options were considered: clang-tidy `cppcoreguidelines-pro-bounds-constant-array-index` (misses `std::vector[i]` — wrong target), a custom "parameter-driven index without prior `idx < vec.size()` check" regex (the actual crash shape, but unproven false-positive rate), and shipping it as a light-zone-warn-only rule (documentation, not enforcement). The strict-zone clang-tidy infrastructure this plan stands up makes adding the next cppcoreguidelines check a ~10-line follow-up; promotion is evidence-driven.
-- **Phase 4 dedicated CI workflow** (`.github/workflows/high-integrity-cpp.yml`). Pre-push `test-all.sh` + existing `Sanitizer` + `Windows + MSVC` jobs are enough. Add a dedicated workflow only if the pre-push gate is bypassed (e.g. someone force-pushes). Decide on evidence.
+- **Phase 4 dedicated CI workflow file** (`.github/workflows/high-integrity-cpp.yml`). Distinct from Files §8, which adds steps + one job to the *existing* `build-and-test.yml` — a new *job* in an existing workflow is not a new *workflow file*. A dedicated workflow file is only worth it if the pre-push gate is bypassed (e.g. someone force-pushes). Decide on evidence.
 - **Phase 5 promotion ladder** (5 rules in fixed order). Each rule is a separate ~30-min PR when it earns its way in based on observed false-positive rate + bug-catch payoff. Pre-scheduling the order predicts a future we can't see.
 - **Phase 6 PR-template checkbox**. Smatchet doesn't gate on checkboxes; merge-gates.sh + CodeRabbit own the merge contract.
 - **Phase 6 CodeRabbit path-specific instructions**. CR already cross-references AGENTS.md rules in its reviews; adding `.coderabbit.yaml` path instructions adds maintenance for marginal lift.
