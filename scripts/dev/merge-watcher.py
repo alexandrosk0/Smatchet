@@ -749,11 +749,29 @@ def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[st
     every subsequent push, because the counter persisted across HEAD moves.
     """
     extras: dict[str, Any] = {}
-    if not _looks_like_cr_finding_block(status_line):
-        extras["triage_action"] = "skipped: BLOCKED but not CR-finding"
-        return extras
     pr = int(entry["pr"])
     clone_path = entry["clone_path"]
+    if not _looks_like_cr_finding_block(status_line):
+        # Sub-bug (a) reset (P1, 2026-05-28 — closes 2026-05-22 P1 entry in
+        # docs/backlog/agent-self-improvement/tooling.md line 31).
+        # When the gates poll shows CR is no longer in a block shape (status
+        # line lacks "actionable…block" / "stale_with_findings" / "changes
+        # requested"), the per-PR-lifetime triage_attempts counter is stale
+        # — it was incremented during a prior CR-finding round that has now
+        # cleared. Reset to 0 so a later CR-finding round starts fresh and
+        # the registry never appears latched at TRIAGE_BUDGET_EXHAUSTED.
+        # Preserve triage_for_head_sha so the per-HEAD diagnostic stays
+        # accurate; only the count zeroes out.
+        if int(entry.get("triage_attempts", 0)) > 0:
+            _bump_triage_attempts(
+                pr, clone_path, 0,
+                entry.get("triage_for_head_sha", ""),
+            )
+            extras["triage_reset_on_cr_clear"] = (
+                f"prior_attempts={entry.get('triage_attempts')} -> 0"
+            )
+        extras["triage_action"] = "skipped: BLOCKED but not CR-finding"
+        return extras
     or_meta = _gh_owner_repo(clone_path)
     if not or_meta:
         extras["triage_action"] = "skipped: gh repo view failed"
@@ -951,6 +969,213 @@ def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: in
             return ("ok", attempts_after)
         # PR not in registry — shouldn't happen, but treat as dedup-block.
         return ("dedup", None)
+
+
+# ---------------------------------------------------------------------------
+# Sub-bug (b) — resolveReviewThread after auto-act push
+# ---------------------------------------------------------------------------
+# After the auto-act spawn pushes a fix commit, CR's per-line review threads
+# can stay `isResolved:false` on the prior head even when CR's StatusContext
+# on the new head flips to SUCCESS. The merge gate's `cr_open > 0` check then
+# keeps the PR BLOCKED indefinitely. These helpers enumerate the stuck CR
+# threads and resolve them via the GraphQL `resolveReviewThread` mutation so
+# the next poll lands at GATES_PASSED.
+#
+# Closes the 2026-05-22 P1 entry in docs/backlog/agent-self-improvement/
+# tooling.md (line 31), sub-bug (b). See docs/design/merge-watcher-triage-
+# recovery.md.
+
+_CR_THREADS_QUERY = (
+    "query($owner:String!,$repo:String!,$pr:Int!){"
+    "repository(owner:$owner,name:$repo){"
+    "pullRequest(number:$pr){"
+    "headRefOid "
+    "reviewThreads(first:100){pageInfo{hasNextPage} nodes{"
+    "id isResolved isOutdated "
+    "comments(first:1){nodes{author{login __typename}}}"
+    "}}"
+    "}}}"
+)
+
+
+def _fetch_unresolved_cr_threads(
+    owner: str, repo: str, pr: int, clone_path: str
+) -> tuple[str, list[str]]:
+    """Return (current_head_sha, [thread_id, ...]) for CR-authored,
+    non-outdated, unresolved review threads on the PR.
+
+    Raises RuntimeError on gh / GraphQL failure. Callers fail-open: if we
+    can't enumerate threads, skip the resolve step and let the next poll
+    retry — never wedge the daemon loop on a transient gh hiccup.
+    """
+    data = _gh_json(
+        [
+            "api", "graphql",
+            "-f", f"query={_CR_THREADS_QUERY}",
+            "-F", f"owner={owner}",
+            "-F", f"repo={repo}",
+            "-F", f"pr={pr}",
+        ],
+        cwd=clone_path,
+        timeout=30,
+    )
+    if not isinstance(data, dict):
+        raise RuntimeError("_fetch_unresolved_cr_threads: top-level not dict")
+    try:
+        pr_node = data["data"]["repository"]["pullRequest"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError(f"_fetch_unresolved_cr_threads: missing PR node: {exc}")
+    head_sha = pr_node.get("headRefOid", "") or ""
+    thread_ids: list[str] = []
+    for node in pr_node.get("reviewThreads", {}).get("nodes", []) or []:
+        if node.get("isResolved") or node.get("isOutdated"):
+            continue
+        comments = (node.get("comments") or {}).get("nodes") or []
+        # First-comment author drives bot-attribution. CR posts the thread-
+        # opening inline comment as `coderabbitai` / `coderabbitai[bot]`;
+        # human replies on the same thread don't shift authorship of the
+        # leading comment, so the filter is robust.
+        if not comments:
+            continue
+        author = (comments[0].get("author") or {}).get("login") or ""
+        if author.lower() not in {"coderabbitai", "coderabbitai[bot]"}:
+            continue
+        tid = node.get("id")
+        if tid:
+            thread_ids.append(tid)
+    return head_sha, thread_ids
+
+
+_RESOLVE_MUTATION = (
+    "mutation($threadId:ID!){"
+    "resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}"
+    "}"
+)
+
+
+def _resolve_review_threads(thread_ids: list[str], clone_path: str) -> tuple[int, int]:
+    """Call resolveReviewThread for each id. Return (resolved_count, failed_count).
+
+    Failures are logged to stderr but do NOT raise — one stuck thread should
+    not abort the batch (the next poll will retry whichever remain open).
+    """
+    resolved = 0
+    failed = 0
+    for tid in thread_ids:
+        try:
+            _gh_json(
+                [
+                    "api", "graphql",
+                    "-f", f"query={_RESOLVE_MUTATION}",
+                    "-f", f"threadId={tid}",
+                ],
+                cwd=clone_path,
+                timeout=20,
+            )
+            resolved += 1
+        except RuntimeError as exc:
+            failed += 1
+            print(
+                f"WARN: resolveReviewThread failed for {tid}: {exc}",
+                file=sys.stderr,
+            )
+    return resolved, failed
+
+
+def _bump_resolved_threads(
+    pr: int, clone_path: str, head_sha: str, resolved_count: int
+) -> None:
+    """Persist the resolve-action outcome on the registry entry. Tracks the
+    head_sha at the time of resolution so subsequent polls can dedup (don't
+    re-resolve already-resolved threads on the same head).
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                e["last_resolved_threads_count"] = resolved_count
+                e["last_resolved_at_unix"] = int(time.time())
+                e["last_resolved_for_head_sha"] = head_sha
+                break
+        _CLI.write_registry(entries)
+
+
+def maybe_resolve_stuck_cr_threads(
+    state: dict[str, Any], entry: dict[str, Any]
+) -> dict[str, Any]:
+    """Sub-bug (b) — resolve CR review threads stuck `isResolved:false` after
+    an auto-act push.
+
+    Gate conditions (all must hold; opt-in env flip required for the first
+    ship so a misconfigured production cycle can't auto-resolve real findings):
+
+      1. `MERGE_WATCH_RESOLVE_CR_THREADS=true` env set.
+      2. Registry entry has `auto_act_for_head_sha` recorded (we previously
+         dispatched a fix-spawn against some prior head).
+      3. Current `headRefOid` differs from `auto_act_for_head_sha` (the push
+         landed; we're no longer on the head the spawn was triggered against).
+      4. We have NOT already resolved threads on this current head (the
+         `last_resolved_for_head_sha` dedup mirrors the `auto_act_for_head_sha`
+         pattern — one resolve pass per head).
+      5. Daemon's last poll returned BLOCKED with a status_line shape that
+         suggests cr_open is the blocker (the early-exit "skipped: BLOCKED
+         but not CR-finding" branch — sub-bug (a) reset just fired — implies
+         CR review state is clean but threads still open).
+
+    Action: GraphQL fetch of all CR-authored, non-outdated, unresolved review
+    threads on the PR; one `resolveReviewThread` mutation per thread.
+
+    Returns extras dict with `resolve_action` describing the outcome.
+    """
+    if os.environ.get("MERGE_WATCH_RESOLVE_CR_THREADS", "").strip().lower() not in {
+        "true", "1", "yes",
+    }:
+        return {}
+    prior_auto_act_head = entry.get("auto_act_for_head_sha", "")
+    if not prior_auto_act_head:
+        return {}
+    last_state = state.get("last_state", "")
+    if last_state != "BLOCKED":
+        return {}
+    status_line = state.get("last_status_line", "")
+    # We only fire when CR's review state is NOT block-shaped (cr_open is
+    # the blocker, not a fresh CR finding). The sub-bug (a) early-exit
+    # branch surfaces `triage_action == "skipped: BLOCKED but not CR-finding"`
+    # in the same poll's state; use that as the signal so we don't act on
+    # genuine CR-finding blocks.
+    if _looks_like_cr_finding_block(status_line):
+        return {}
+    pr = int(entry["pr"])
+    clone_path = entry["clone_path"]
+    or_meta = _gh_owner_repo(clone_path)
+    if not or_meta:
+        return {"resolve_action": "skipped: gh repo view failed"}
+    owner, repo = or_meta
+    try:
+        current_head, thread_ids = _fetch_unresolved_cr_threads(
+            owner, repo, pr, clone_path
+        )
+    except RuntimeError as exc:
+        return {"resolve_action": f"skipped: fetch failed: {exc}"}
+    if not current_head:
+        return {"resolve_action": "skipped: headRefOid empty"}
+    if current_head == prior_auto_act_head:
+        return {"resolve_action": "skipped: head unchanged since auto-act"}
+    if entry.get("last_resolved_for_head_sha") == current_head:
+        return {"resolve_action": "suppressed (already resolved on this head)"}
+    if not thread_ids:
+        # Record the no-op so subsequent polls dedup against this head.
+        _bump_resolved_threads(pr, clone_path, current_head, 0)
+        return {"resolve_action": "noop: zero unresolved CR threads"}
+    resolved, failed = _resolve_review_threads(thread_ids, clone_path)
+    _bump_resolved_threads(pr, clone_path, current_head, resolved)
+    return {
+        "resolve_action": (
+            f"resolved {resolved}/{len(thread_ids)} CR threads "
+            f"(failed={failed}) on head {current_head[:8]}"
+        ),
+        "resolved_thread_ids": thread_ids,
+    }
 
 
 # Single source of truth for the spawned Claude session's instructions.
@@ -1298,6 +1523,18 @@ def daemon_loop(poll_interval: int) -> int:
                             f"  PR#{state['pr']:<6} state={state['last_state']:<24} "
                             f"poll_line={state.get('last_status_line', '')[:120]}"
                         )
+                    # Sub-bug (b) — resolve stuck CR review threads after
+                    # an auto-act push lands (opt-in via
+                    # MERGE_WATCH_RESOLVE_CR_THREADS). Runs before notify so
+                    # that if resolution succeeds, the next poll's gates can
+                    # pass cleanly without surfacing a spurious notification.
+                    resolve_extras = maybe_resolve_stuck_cr_threads(state, entry)
+                    if resolve_extras:
+                        state.update(resolve_extras)
+                        if "resolve_action" in resolve_extras:
+                            print(
+                                f"    resolve-threads: {resolve_extras.get('resolve_action', '?')}"
+                            )
                     # Phase 4a — fire smatchet-notify on terminal states.
                     notify_extras = maybe_notify(state, entry)
                     if notify_extras:

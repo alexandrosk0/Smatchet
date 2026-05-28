@@ -70,12 +70,15 @@ N/A — diff touches only `scripts/dev/` + `tests/bats/`; no `Source_Core/` impa
 
 ## Implementation log
 
-*(populated post-ship)*
+- `20b5b71` · plan doc landed (`wip(plan): merge-watcher-triage-recovery`).
+- Single follow-up implementation commit (this PR) — `scripts/dev/merge-gates.graphql` adds `id` to `reviewThreads.nodes`; `scripts/dev/merge-watcher.py` adds the counter-reset path inside `handle_blocked_cr_triage`, plus `_fetch_unresolved_cr_threads` + `_resolve_review_threads` + `_bump_resolved_threads` + `maybe_resolve_stuck_cr_threads` (~190 LoC); `daemon_loop` wires the new resolve step between triage and notify; `tests/bats/merge_watcher.bats` adds 9 new tests covering both sub-bugs.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- Initial bats covered registry-list assertions for the new `last_resolved_*` fields, but Windows path normalization (CLI `register` writes forward-slash `clone_path`, `os.getcwd()` returns backslash) made the same-Python-process bump miss the registry row. The bug is pre-existing (tests #24/25/26 fail with the same root cause) and out of scope for this slice; the new tests assert the in-memory `extras` shape via Python `print` and leave registry-list assertions for a future Windows-path-normalization PR.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- Bats — `bats tests/bats/merge_watcher.bats --filter 'maybe_resolve_stuck_cr_threads|handle_blocked_cr_triage resets stale|handle_blocked_cr_triage CR-clear'` → 9 / 9 passing locally.
+- Full bats file run: my 9 new tests pass; the pre-existing 12 tests that fail to load (parser barfing on `→` in test names) are unrelated to this slice and tracked separately.
+- No `Source_Core/` changes, so build gate skipped per project rules.
