@@ -109,6 +109,9 @@ for abs in "${CHUNK[@]}"; do
 
     dual_out="$(lint_run_dual_target "$abs" "$rel")"
     [[ -n "$dual_out" ]] && ISSUES+="$dual_out"$'\n'
+
+    catch_out="$(lint_run_catch_all "$abs")"
+    [[ -n "$catch_out" ]] && ISSUES+="$catch_out"$'\n'
 done
 
 # --- Pillar 2 static gate (slice 2 of docs/design/pillar-1-2-perf-review-system.md) ----

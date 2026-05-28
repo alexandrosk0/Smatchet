@@ -239,7 +239,7 @@ template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
     try {
         f.wait();
         (void)f.get();
-    } catch (...) {
+    } catch (...) { // catch-all-ok: swallow future exception on shutdown drain
     }
 }
 

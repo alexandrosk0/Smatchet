@@ -247,7 +247,7 @@ static std::string LuaObjectToIssueFieldString(const sol::object& v, std::size_t
                 return dumped.substr(0, maxDump) + "...";
             }
             return dumped;
-        } catch (...) {
+        } catch (...) { // catch-all-ok: dump on Lua value for logging
             return std::string("?");
         }
     }
@@ -1082,6 +1082,7 @@ void AppController::LuaMcpRegisterToolBind(sol::table toolDef, sol::function cal
         try {
             def.parametersSchema = nlohmann::json::parse(schemaStr);
         } catch (...) {
+            LOG_DEBUG("Lua MCP tool: parameters_json parse failed; using empty schema");
             def.parametersSchema = nlohmann::json::object();
         }
     }

@@ -1483,6 +1483,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         } catch (const std::exception& ex) {
             LOG_WARN("AppController::Initialize: project-scope audit failed: %s", ex.what());
         } catch (...) {
+            LOG_WARN("AppController::Initialize: project-scope audit failed: unknown exception");
         }
     }
 

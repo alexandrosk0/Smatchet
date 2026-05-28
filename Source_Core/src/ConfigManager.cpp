@@ -509,7 +509,7 @@ BlameAnalysisConfig ConfigManager::LoadBlameAnalysis() {
                     tmp[i] = static_cast<float>(uc[key][i].get<double>());
                 }
                 std::memcpy(out, tmp, sizeof(tmp));
-            } catch (...) {
+            } catch (...) { // catch-all-ok: malformed RGBA in config — keep default color
             }
         };
         loadRgba("status_info", b.UiColors.StatusInfo);
@@ -871,7 +871,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 for (const auto& item : j["quick_comment_templates"]) {
                     try {
                         cfg.QuickCommentTemplates.push_back(item.get<CommentTemplate>());
-                    } catch (...) {
+                    } catch (...) { // catch-all-ok: skip malformed template entry
                     }
                 }
             } else {
@@ -883,7 +883,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 for (const auto& item : j["blame_comment_templates"]) {
                     try {
                         cfg.BlameCommentTemplates.push_back(item.get<CommentTemplate>());
-                    } catch (...) {
+                    } catch (...) { // catch-all-ok: skip malformed template entry
                     }
                 }
             } else {
@@ -1073,7 +1073,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     if (const char* envMcpPort = std::getenv("SMATCHET_MCP_PORT")) {
         try {
             cfg.McpPort = std::stoi(envMcpPort);
-        } catch (...) {
+        } catch (...) { // catch-all-ok: stoi on env var — keep default port
         }
     }
     if (const char* envMcpRemote = std::getenv("SMATCHET_MCP_ALLOW_REMOTE")) {

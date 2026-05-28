@@ -114,6 +114,7 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
         d.appUpdateInfo = {};
         d.appUpdateInfo.Error = std::string("Update check failed: ") + ex.what();
     } catch (...) {
+        LOG_WARN("DrainAppUpdateCheck: unknown exception");
         d.appUpdateInfo = {};
         d.appUpdateInfo.Error = "Update check failed with an unknown error.";
     }
@@ -959,7 +960,7 @@ template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
     try {
         f.wait();
         (void)f.get();
-    } catch (...) {
+    } catch (...) { // catch-all-ok: swallow future exception on shutdown drain
     }
 }
 

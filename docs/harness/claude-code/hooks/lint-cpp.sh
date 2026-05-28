@@ -51,6 +51,8 @@ if [[ "${SMATCHET_LINT_INLINE:-0}" == "1" ]]; then
     [[ -n "$tidy_out" ]] && ISSUES+="$tidy_out"$'\n'
     dual_out="$(lint_run_dual_target "$ABS_FILE" "$REL")"
     [[ -n "$dual_out" ]] && ISSUES+="$dual_out"$'\n'
+    catch_out="$(lint_run_catch_all "$ABS_FILE")"
+    [[ -n "$catch_out" ]] && ISSUES+="$catch_out"$'\n'
     if [[ -n "$ISSUES" ]]; then
         {
             echo "lint-cpp: issues found in $REL — fix before responding."
