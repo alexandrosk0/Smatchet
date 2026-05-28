@@ -43,7 +43,7 @@ Status: `McpPlugin.cpp` cerr fixed. No known remaining sites in Source_Core/Plug
 
 Replace the current one-liner bans with an explicit escape-hatch table:
 
-```
+```text
 **Raw `new`/`delete`**: banned. Use `std::unique_ptr` + `make_unique`.
 Named exceptions (must be commented):
   - C ABI ownership boundary: `// C-ABI handle — raw pointer is the public contract`
@@ -95,7 +95,7 @@ Similarly for raw `new`.
 
 N/A — no Source_Core/ hot paths modified.
 
-## Verification
+## Planned verification
 
 - `grep -rn "printf\|fprintf\|std::cerr" Source_Core/ Plugins/` → zero unexempted hits
 - `grep -rn "\bnew\b" Source_Core/ Plugins/ Target_Standalone/ --include="*.cpp" --include="*.h"` → zero unexempted hits
@@ -117,7 +117,7 @@ N/A — no Source_Core/ hot paths modified.
 - `scripts/dev/test-lint-rules.sh` (Step 4) — verified shipped in #468 (`8710303`, file added by that PR per `git log --diff-filter=A`). Earlier draft of this section incorrectly claimed the script was deferred; corrected per CR feedback on PR #489.
 - Catch-all policy split into its own follow-up plan (`docs/design/policy-tighten-catch-all.md`, shipped as PR #471).
 
-## Verification
+## Post-ship verification
 
 - `grep -rn "\bnew\b" Source_Core/ Plugins/ Target_Standalone/ --include="*.cpp"` — only documented escape-hatch sites remain.
 - AGENTS.md § Project rules now lists named exception comments for both logging and RAII rules.
