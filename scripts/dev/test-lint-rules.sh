@@ -38,7 +38,18 @@
 # Exit codes: 0 pass, 1 new strict-zone violation / baseline drift, 2 usage error.
 
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+
+# Absolute path to THIS script — so the --diff base scan re-invokes the *current*
+# scanner logic (not origin/develop's older copy) against the base worktree.
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+# --root <dir> scans an arbitrary tree (used to scan the --diff baseline worktree
+# with the current scanner). Default root = repo root relative to this script.
+if [ "${1:-}" = "--root" ]; then
+    cd "$2"; shift 2
+else
+    cd "$(dirname "$0")/../.."
+fi
 REPO_ROOT="$(pwd)"
 
 BASELINE_FILE="docs/backlog/high-integrity-cpp-baseline.md"
@@ -154,30 +165,34 @@ scan_file_rules() {
             printf 'define-imgui\t%s:%s\t%s\n' "$f" "$lineno" "$line"
         fi
 
-        # Skip pure comment / blank lines for the printf/new heuristics.
-        case "$line" in ''|[[:space:]]*\**|[[:space:]]*//*|\#*) :; esac
-
         # Determine if the active SMATCHET_DEVIATION suppresses a rule on THIS line.
         local suppress="$prev_dev_rule"
         prev_dev_rule=""; prev_dev_revisit=""   # deviation only covers the next non-blank line
 
-        # no-printf-stderr
-        if printf '%s' "$line" | grep -qE '\b(printf|fprintf|std::cerr|std::cout)\b'; then
-            case "$line" in *'#include'*|*'//'*printf*) :;; *)
+        # Skip pure-comment lines (leading //, leading * doc-continuation, leading /*)
+        # for the printf/new heuristics — these are prose, not code.
+        if [[ "$line" =~ ^[[:space:]]*(//|\*|/\*) ]]; then continue; fi
+
+        # no-printf-stderr (bash regex — no subprocess per line). Word-ish
+        # boundary: token at start or preceded by a non-identifier char.
+        if [[ "$line" =~ (^|[^A-Za-z_])(printf|fprintf|std::cerr|std::cout)([^A-Za-z0-9_]|$) ]]; then
+            case "$line" in *'#include'*) :;; *)
                 if ! has_inline_exempt "$line" && [ "$suppress" != "no-printf-stderr" ]; then
                     printf 'no-printf-stderr\t%s:%s\t%s\n' "$f" "$lineno" "$line"
                 fi ;;
             esac
         fi
 
-        # no-raw-new — `new Type` (capitalised) not in a string/comment.
-        if printf '%s' "$line" | grep -qE '\bnew\s+[A-Z]'; then
-            case "$line" in *_new*|*new_*|*renewed*) :;; *)
-                if ! printf '%s' "$line" | grep -qE '^\s*(\*|//)' \
-                   && ! printf '%s' "$line" | grep -qE '"[^"]*new[^"]*"' \
-                   && ! has_inline_exempt "$line" && [ "$suppress" != "no-raw-new" ]; then
-                    printf 'no-raw-new\t%s:%s\t%s\n' "$f" "$lineno" "$line"
-                fi ;;
+        # no-raw-new — `new Type` (capitalised). Exclude identifiers containing
+        # "new" and `new` appearing inside a string literal.
+        if [[ "$line" =~ (^|[^A-Za-z_])new[[:space:]]+[A-Z] ]]; then
+            case "$line" in
+                *_new*|*new_*|*renewed*) : ;;
+                *'"'*new*'"'*) : ;;          # `new` inside a string literal
+                *)
+                    if ! has_inline_exempt "$line" && [ "$suppress" != "no-raw-new" ]; then
+                        printf 'no-raw-new\t%s:%s\t%s\n' "$f" "$lineno" "$line"
+                    fi ;;
             esac
         fi
     done < "$f"
@@ -188,8 +203,9 @@ scan_file_rules() {
 # toolchain fallback for cppcheck/shellcheck).
 CLANG_TIDY="${CLANG_TIDY:-clang-tidy}"
 find_compile_db() {
+    # Prefer clang dbs — clang-tidy can't parse the MSVC db (PCH + stdlib paths).
     local d
-    for d in build/ninja-iter-msvc build/ninja-test-msvc build/ninja-iter-clang build/ninja-debug-msvc; do
+    for d in build/ninja-iter-clang build/ninja-debug-clang build/ninja-iter-msvc build/ninja-test-msvc; do
         [ -f "$d/compile_commands.json" ] && { echo "$d"; return 0; }
     done
     return 1
@@ -197,6 +213,17 @@ find_compile_db() {
 
 scan_narrowing() {
     # $@ = strict-zone .cpp files. Emits narrowing-conversions triples.
+    #
+    # OPT-IN (SMATCHET_LINT_NARROWING=1). Default-off because clang-tidy needs a
+    # *clang* compile_commands.json: against the MSVC db it errors on the MSVC
+    # PCH ("not a valid PCH file") and can't resolve <string> (no clang stdlib
+    # paths), yielding only clang-diagnostic-error noise. Until a PCH-free clang
+    # db is provisioned in CI this rule is catalogued-only, never gated.
+    # See docs/design/high-integrity-cpp-enforcement.md § Deviations.
+    if [ "${SMATCHET_LINT_NARROWING:-0}" != "1" ]; then
+        echo "test-lint-rules: INFO: narrowing-conversions opt-in (SMATCHET_LINT_NARROWING=1 + clang db); skipped" >&2
+        return 0
+    fi
     if ! command -v "$CLANG_TIDY" >/dev/null 2>&1; then
         echo "test-lint-rules: WARN: clang-tidy not on PATH; narrowing-conversions skipped" >&2
         return 0
@@ -316,7 +343,10 @@ case "$MODE" in
 
   diff)
     BASE="${ARG:-origin/develop}"
-    head_set="$(compute_strict_triples)"
+    # narrowing-conversions is catalogue-only (not gated) — the base worktree has
+    # no compile db, so it can't be diffed without false positives. Exclude it
+    # from both sides of the set-diff. (See § Deviations in the plan.)
+    head_set="$(compute_strict_triples | grep -v $'^narrowing-conversions\t' || true)"
     if [ -n "${SMATCHET_LINT_BASELINE_SET:-}" ] && [ -f "$SMATCHET_LINT_BASELINE_SET" ]; then
         base_set="$(sort -u "$SMATCHET_LINT_BASELINE_SET")"
     else
@@ -328,7 +358,9 @@ case "$MODE" in
         fi
         wt="$(mktemp -d)"
         git worktree add -q --detach "$wt" "$BASE" 2>/dev/null || { echo "worktree add failed" >&2; exit 0; }
-        base_set="$(cd "$wt" && SMATCHET_LINT_BASELINE_SET="" bash "$REPO_ROOT/scripts/dev/test-lint-rules.sh" --full 2>/dev/null | sed -n 's/^  //p')"
+        # Run the CURRENT scanner (--root) against the base worktree so both sides
+        # use identical logic, regardless of what scanner version the base tree ships.
+        base_set="$(SMATCHET_LINT_BASELINE_SET="" bash "$SELF" --root "$wt" --full 2>/dev/null | sed -n 's/^  //p' | grep -v $'^narrowing-conversions\t' || true)"
         git worktree remove --force "$wt" 2>/dev/null || true
     fi
     # New triples = HEAD \ base.
