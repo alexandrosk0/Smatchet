@@ -101,7 +101,31 @@ if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
 }
 
 $cmakeCacheInPresetDir = Join-Path $presetBinaryDir "CMakeCache.txt"
-$expectedGenerator = "Visual Studio 17 2022"
+
+# Detect the installed Visual Studio version and pick the matching CMake
+# generator. Hardcoding "Visual Studio 17 2022" broke on machines upgraded to
+# VS 2026 (v18): the v17 generator reports "could not find any instance of
+# Visual Studio". vswhere reports the installed major version; map it to the
+# generator name (17->2022, 18->2026, ...). Falls back to v17/2022 if detection
+# fails so behaviour on a clean VS 2022 box is unchanged.
+function Get-VsGenerator {
+    $fallback = "Visual Studio 17 2022"
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere)) { return $fallback }
+    $version = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationVersion 2>$null | Select-Object -First 1
+    if (-not $version) { return $fallback }
+    $major = ($version -split '\.')[0]
+    $yearByMajor = @{ "17" = "2022"; "18" = "2026" }
+    $year = $yearByMajor[$major]
+    if (-not $year) {
+        Write-Host "==> WARN: VS major '$major' (v$version) not in generator map; falling back to '$fallback'."
+        return $fallback
+    }
+    return "Visual Studio $major $year"
+}
+$expectedGenerator = Get-VsGenerator
 $expectedFeatureCache = [ordered]@{
     "SMATCHET_WITH_LUA_AUTOMATION" = "ON"
     "SMATCHET_WITH_MCP" = "OFF"
@@ -135,7 +159,7 @@ if ($ForceConfigure -or $generatorMismatch -or $featureMismatch) {
 }
 $skipCMakePreset = (Test-Path -LiteralPath $cmakeCacheInPresetDir) -and (-not $ForceConfigure) -and (-not $generatorMismatch) -and (-not $featureMismatch)
 if (-not $skipCMakePreset) {
-    Write-Host "==> Configuring CMake (Visual Studio 17 2022, x64)..."
+    Write-Host "==> Configuring CMake ($expectedGenerator, x64)..."
     Push-Location $repoRoot
     try {
         & cmake -S $repoRoot -B $presetBinaryDir `
