@@ -2,7 +2,7 @@
 
 > **Slug**: `agentic-ripout-doc-cleanup-v2`
 >
-> **Status**: DRAFT-WAITING. v1 PR1 + PR2 merged 2026-05-21 (`b1d241bc` + `cd66e28c`). Watcher plan-doc landed 2026-05-21 (`docs/design/smatchet-merge-watcher.md` `8677e8b`); v2's "wait for watcher P1" sequencing step retired (see § Sequencing). Single remaining blocker: **3 in-flight PRs (#358 / #359 / #360) must merge first** to avoid AGENTS.md cascade-conflict. Once those clear, v2 is ready to execute per the locked 2026-05-21 evening re-grill (see § Context).
+> **Status**: DRAFT-WAITING. v1 PR1 + PR2 merged 2026-05-21 (`b1d241bc` + `cd66e28c`). Watcher plan-doc landed 2026-05-21 (`docs/design/applied/smatchet-merge-watcher.md` `8677e8b`); v2's "wait for watcher P1" sequencing step retired (see § Sequencing). Single remaining blocker: **3 in-flight PRs (#358 / #359 / #360) must merge first** to avoid AGENTS.md cascade-conflict. Once those clear, v2 is ready to execute per the locked 2026-05-21 evening re-grill (see § Context).
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location.
 
@@ -196,7 +196,7 @@ Verified via `grep -rE "AgenticHandoffController|ClaudeCodeLocalRunner|coderabbi
 4. **Architect pre-code review** before opening v2 PR.
 5. **One squashed v2 PR** for all doc + agent file + ADR + script deletions. Net negative LOC; reviewable as a single mechanical sweep.
 
-**Removed 2026-05-21 evening**: prior step 2 was "Wait for the watcher P1" — written when the watcher was unspec'd and the plan hedged that its reuse surface might force v2 to preserve more than expected. Now that [`docs/design/smatchet-merge-watcher.md`](smatchet-merge-watcher.md) (`8677e8b`) makes the watcher's reuse surface concrete — it imports exactly `scripts/dev/merge-gates.sh` (kept) + `agents/coderabbit-triage.md` (kept per re-grill decision 1) + nothing else from the strip list — the hedge is empty. V2's strip list is insulated against every watcher IPC choice (Python port, `claude --headless` subprocess, MCP-tool). The watcher's open design decisions (registry location, triage failure budget, etc.) don't change which v2 files get stripped.
+**Removed 2026-05-21 evening**: prior step 2 was "Wait for the watcher P1" — written when the watcher was unspec'd and the plan hedged that its reuse surface might force v2 to preserve more than expected. Now that [`docs/design/applied/smatchet-merge-watcher.md`](applied/smatchet-merge-watcher.md) (`8677e8b`) makes the watcher's reuse surface concrete — it imports exactly `scripts/dev/merge-gates.sh` (kept) + `agents/coderabbit-triage.md` (kept per re-grill decision 1) + nothing else from the strip list — the hedge is empty. V2's strip list is insulated against every watcher IPC choice (Python port, `claude --headless` subprocess, MCP-tool). The watcher's open design decisions (registry location, triage failure budget, etc.) don't change which v2 files get stripped.
 
 ## Risks / non-goals
 

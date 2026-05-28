@@ -6,7 +6,7 @@
 #include <thread>
 
 // SmatchetMergeWatchNotifyServer — Phase 4b of
-// docs/design/smatchet-merge-watcher.md. Localhost HTTP receiver for the
+// docs/design/applied/smatchet-merge-watcher.md. Localhost HTTP receiver for the
 // merge-watcher daemon's in-app toast notifications.
 //
 // Contract:

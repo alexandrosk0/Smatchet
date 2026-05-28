@@ -6,7 +6,7 @@
 
 ## Tracker interface
 
-The agentic-flow (triage + handoff) C++ runtime was removed by v1 PR1 of [`design/github-tracker-backend.md`](design/github-tracker-backend.md) (`b1d241bc`, 2026-05-21). Glossary entries for `AgentProposal` / `ImplementIssue` / `Triage half` / `Handoff half` / `Coding harness runner` / `Sentinel files` / `Handoff envelope` / `HarnessRunState` / `PR iteration budget` were retired with that ripout. The future `smatchet-merge-watcher` host daemon ([`design/smatchet-merge-watcher.md`](design/smatchet-merge-watcher.md)) revives a slim subset of these ideas in a different shape — concepts there get their own glossary entries when the watcher Phase-1 ships.
+The agentic-flow (triage + handoff) C++ runtime was removed by v1 PR1 of [`design/github-tracker-backend.md`](design/github-tracker-backend.md) (`b1d241bc`, 2026-05-21). Glossary entries for `AgentProposal` / `ImplementIssue` / `Triage half` / `Handoff half` / `Coding harness runner` / `Sentinel files` / `Handoff envelope` / `HarnessRunState` / `PR iteration budget` were retired with that ripout. The future `smatchet-merge-watcher` host daemon ([`design/applied/smatchet-merge-watcher.md`](design/applied/smatchet-merge-watcher.md)) revives a slim subset of these ideas in a different shape — concepts there get their own glossary entries when the watcher Phase-1 ships.
 
 Two terms survive because v1 PR2's tracker rewrite uses them:
 

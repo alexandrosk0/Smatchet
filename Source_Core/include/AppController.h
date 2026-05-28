@@ -184,7 +184,7 @@ class AppController
     /// thread; SmatchetUI::Draw drains them at the top of each frame. Use instead of ad-hoc atomics.
     MainThreadDispatcher mainThreadDispatcher;
 
-    /// Phase 4b of docs/design/smatchet-merge-watcher.md — localhost HTTP receiver for
+    /// Phase 4b of docs/design/applied/smatchet-merge-watcher.md — localhost HTTP receiver for
     /// the merge-watcher daemon's in-app toast notifications. Bound 127.0.0.1:7679;
     /// HTTP runs on cpp-httplib worker thread; toast appends post via
     /// mainThreadDispatcher. Started in Initialize(); stopped at the top of

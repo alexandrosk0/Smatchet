@@ -54,7 +54,7 @@ If either signal fires, archive the backlog entry into `applied.md` with a `Reso
 1. A Claude Code SDK-spawned worktree branch matching `claude/<id>/*`, OR
 2. A Perforce-task-stream-promoted branch matching `agent/<task-stream-id>/*` (created by `scripts/dev/p4-task-stream-to-pr.sh`).
 
-The `agent/<id>` carve-out was deleted post-`ClaudeCodeLocalRunner` (per v1 of `docs/design/github-tracker-backend.md`) and is reinstated here for the p4-task-stream surface: those branches are recovery-style throwaways, created by the script after a successful shelf submit, and they should never carry non-self commits. The `smatchet-merge-watcher` host daemon (per `docs/design/smatchet-merge-watcher.md`) runs in-process, not as a spawned subprocess, so it has no worktree branch that would need this carve-out.
+The `agent/<id>` carve-out was deleted post-`ClaudeCodeLocalRunner` (per v1 of `docs/design/github-tracker-backend.md`) and is reinstated here for the p4-task-stream surface: those branches are recovery-style throwaways, created by the script after a successful shelf submit, and they should never carry non-self commits. The `smatchet-merge-watcher` host daemon (per `docs/design/applied/smatchet-merge-watcher.md`) runs in-process, not as a spawned subprocess, so it has no worktree branch that would need this carve-out.
 
 **Exclusion list — top-level-prefix-only** (an exclusion triggers only at the first path segment): `develop`, `main`, `chore/*`, `feat/*`, `fix/*`, `docs/*`, `wip/*`. Branches under `claude/<id>/*` and `agent/<task-stream-id>/*` are permitted regardless of the nested slug prefix (a slug like `feat-perf-fix` under `agent/perf-detective-01/` is fine — the `feat-` prefix is below the protected first segment).
 
