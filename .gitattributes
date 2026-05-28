@@ -37,3 +37,19 @@
 *.umap binary
 *.udk binary
 *.blend binary
+
+# Union merge for the backlog archive only.
+# Parallel slices in multi-slice plans (see docs/design/tooling-process-backlog-sweep.md)
+# each PREPEND new "Resolution:" entries to applied.md. Without `merge=union`, the
+# parallel prepends conflict and require manual resolution per slice (~5 min × N slices).
+# Union concatenates both sides on conflict — correct for prepend, may interleave
+# date order. Run `bash scripts/dev/sort-applied-md.sh` to restore "Latest first"
+# ordering when interleaving is visible.
+#
+# DELIBERATELY NOT applied to process.md / tooling.md / AGENT_SELF_IMPROVEMENT.md:
+# - process.md / tooling.md: parallel branches DELETE different entries (the archive
+#   step). Union would WRONGLY preserve both deleted entries. Default 3-way merge
+#   is correct; manual resolution required on adjacent deletions.
+# - AGENT_SELF_IMPROVEMENT.md: parallel branches MODIFY the same count line with
+#   different values. Union would garble the count.
+docs/backlog/agent-self-improvement/applied.md merge=union
