@@ -40,7 +40,7 @@ Extend the existing rule infrastructure rather than parallel-shipping new infras
 
 1. **`AGENTS.md` § Project rules § Tiered enforcement** (new subsection, ≤ 20 lines). Names the three zones by directory glob, references the existing rules (no rule restatement) and the scanner. Single source of truth. Zone globs (locked):
 
-   ```
+   ```yaml
    strict_zone:
      - Source_Core/src/Tracker/**     # tracker-backend parsing/payload
      - Source_Core/src/Sync/**        # offline-queue replay, sync diff
@@ -60,7 +60,7 @@ Extend the existing rule infrastructure rather than parallel-shipping new infras
 
    - **`--diff <baseline-ref>` mode** (default `origin/develop`). Computes the set of `(rule, file-basename, snippet-hash)` triples on `baseline-ref` and on `HEAD`, fails only when `HEAD \ baseline` is non-empty. `snippet-hash` = SHA1 of the violating line's normalised content (strip leading whitespace + trailing `//` or `/* */` comment). Renames + line moves within a file don't trigger; only genuinely new `(rule, normalised-line)` instances do. Run via `git worktree add` against the baseline ref so the same scanner sees both trees without a checkout dance.
    - **CI is authoritative**: the PR runner invokes `--diff origin/develop` and fails the PR on any new triple. `merge-gates.sh` already polls all required checks. The pre-push hook runs the same gate locally for fast feedback but isn't the source of truth.
-   - **`develop` post-merge job**: `--catalog --refresh` only. Never gates; just rewrites the baseline file. No diff-vs-self attempted (would be a no-op anyway).
+   - **`develop` post-merge job**: `--catalog --refresh` regenerates the baseline in CI, then `git diff --exit-code docs/backlog/high-integrity-cpp-baseline.md` enforces fail-on-drift vs the committed file. This is not a strict-zone gate against develop's own code (no diff-vs-self attempted — that would be a no-op); it's an integrity check that the committed baseline snapshot still matches reality. Remediation on failure: contributor runs `--catalog --refresh` locally and commits. Identical contract is restated at Context § CI baseline-refresh policy and at §3 below.
    - **`--catalog` mode** dumps the current violator set to `docs/backlog/high-integrity-cpp-baseline.md` grouped by `(rule × zone)` — see §3 below for the exact format.
    - **Baseline file is a human-reading snapshot, not a gate input**. The gate re-computes on every run; `docs/backlog/high-integrity-cpp-baseline.md` exists only to make the grandfathered set visible to humans.
    - **Three new rules** — (a) clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs, (b) a one-liner `\b#define\s+ImGui\b` grep, (c) `deviation-overdue` (parses `SMATCHET_DEVIATION` comments, fails when `revisit=` is a calendar marker that has passed). Dynamic-bounds `operator[]` heuristic dropped — see § Out of scope.
