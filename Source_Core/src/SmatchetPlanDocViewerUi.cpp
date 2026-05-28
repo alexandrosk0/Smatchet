@@ -20,9 +20,12 @@
 #include <ghc/filesystem.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <fstream>
+#include <future>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fs = ghc::filesystem;
@@ -120,13 +123,20 @@ std::string ReadCapped(const std::string& path, std::size_t cap, bool& oversize)
     return out;
 }
 
+struct IndexResult {
+    fs::path repoRoot;
+    std::vector<std::string> files;
+};
+
 struct ViewerState {
     bool indexed = false; // file list scanned at least once
+    bool indexInFlight = false;
     fs::path repoRoot;
     std::vector<std::string> files; // absolute generic paths, sorted
     int selectedIdx = -1;
     std::string loadedPath; // path matching the cached body
     std::string body;       // cached markdown source for the active doc
+    std::future<IndexResult> indexFuture;
 };
 
 ViewerState& State() {
@@ -134,27 +144,61 @@ ViewerState& State() {
     return s;
 }
 
-void RescanIndex(ViewerState& s) {
-    s.files.clear();
+IndexResult BuildIndex() {
+    IndexResult out;
     std::error_code ec;
     fs::path cwd = fs::current_path(ec);
     if (ec) {
-        return;
+        return out;
     }
-    s.repoRoot = FindRepoRoot(cwd);
-    if (s.repoRoot.empty()) {
-        return;
+    out.repoRoot = FindRepoRoot(cwd);
+    if (out.repoRoot.empty()) {
+        return out;
     }
-    const fs::path designDir = s.repoRoot / "docs" / "design";
-    const fs::path adrDir = s.repoRoot / "docs" / "adr";
+    const fs::path designDir = out.repoRoot / "docs" / "design";
+    const fs::path adrDir = out.repoRoot / "docs" / "adr";
     std::vector<std::string> designFiles = ListMarkdownFiles(designDir);
     std::vector<std::string> adrFiles = ListMarkdownFiles(adrDir);
-    s.files.reserve(designFiles.size() + adrFiles.size());
+    out.files.reserve(designFiles.size() + adrFiles.size());
     for (std::size_t i = 0; i < designFiles.size(); ++i) {
-        s.files.push_back(designFiles[i]);
+        out.files.push_back(designFiles[i]);
     }
     for (std::size_t i = 0; i < adrFiles.size(); ++i) {
-        s.files.push_back(adrFiles[i]);
+        out.files.push_back(adrFiles[i]);
+    }
+    return out;
+}
+
+void StartRescanIndex(ViewerState& s) {
+    if (s.indexInFlight) {
+        return;
+    }
+    s.indexed = false;
+    s.indexInFlight = true;
+    s.files.clear();
+    s.selectedIdx = -1;
+    s.loadedPath.clear();
+    s.body.clear();
+    s.indexFuture = std::async(std::launch::async, []() { return BuildIndex(); });
+}
+
+void LoadSelected(ViewerState& s);
+
+void PollIndexResult(ViewerState& s) {
+    if (!s.indexInFlight || !s.indexFuture.valid()) {
+        return;
+    }
+    if (s.indexFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
+    }
+    IndexResult result = s.indexFuture.get();
+    s.repoRoot = std::move(result.repoRoot);
+    s.files = std::move(result.files);
+    s.indexInFlight = false;
+    s.indexed = true;
+    if (s.selectedIdx < 0 && !s.files.empty()) {
+        s.selectedIdx = 0;
+        LoadSelected(s);
     }
 }
 
@@ -204,14 +248,10 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     }
 
     ViewerState& s = State();
-    if (!s.indexed) {
-        RescanIndex(s);
-        s.indexed = true;
-        if (s.selectedIdx < 0 && !s.files.empty()) {
-            s.selectedIdx = 0;
-            LoadSelected(s);
-        }
+    if (!s.indexed && !s.indexInFlight) {
+        StartRescanIndex(s);
     }
+    PollIndexResult(s);
 
     if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
@@ -238,13 +278,12 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         LOG_DEBUG("Plan docs window: focused via menu request");
     }
 
-    if (s.files.empty()) {
+    if (s.indexInFlight) {
+        ImGui::TextDisabled("Scanning plan docs...");
+    } else if (s.files.empty()) {
         ImGui::TextDisabled("No plan docs found under docs/design or docs/adr.");
         if (ImGui::Button("Rescan")) {
-            s.indexed = false;
-            s.selectedIdx = -1;
-            s.loadedPath.clear();
-            s.body.clear();
+            StartRescanIndex(s);
         }
     } else {
         const int curIdx = (s.selectedIdx >= 0 && s.selectedIdx < static_cast<int>(s.files.size())) ? s.selectedIdx : 0;
@@ -266,9 +305,7 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Rescan")) {
-            s.indexed = false;
-            s.loadedPath.clear();
-            s.body.clear();
+            StartRescanIndex(s);
         }
     }
     ImGui::Separator();

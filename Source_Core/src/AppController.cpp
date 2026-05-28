@@ -1639,6 +1639,10 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
         }
 
         fs::directory_iterator it(root, ec);
+        if (ec) {
+            LOG_WARN("ListLuaScriptFiles: failed to enumerate %s: %s", root.string().c_str(), ec.message().c_str());
+            return out;
+        }
         const fs::directory_iterator end;
         for (; it != end; it.increment(ec)) {
 
