@@ -828,29 +828,29 @@ print('extras:', extras)
 @test "maybe_resolve_stuck_cr_threads: env unset -> default-on (2026-05-28 flip)" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
-    # Env unset; gate conditions also unmet (no auto_act_for_head_sha) so
-    # the helper returns {} cleanly. The point of this test: we don't
-    # short-circuit on env-unset anymore. If we did, the result here would
-    # be indistinguishable from default-off. The auto_act_for_head_sha
-    # check is the next gate condition; reaching it proves the env-default
-    # flipped.
+    # Env unset should behave like enabled. To make this discriminating
+    # against a default-off regression, satisfy the remaining gates and
+    # stub the GitHub-touching helpers so the resolver path actually
+    # fires. Under the old opt-in default this would short-circuit on the
+    # env check and return {} — proving the flip when extras is non-empty.
     run python -c "
 import os, sys, importlib.util
 os.environ.pop('MERGE_WATCH_RESOLVE_CR_THREADS', None)
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-entry = {'pr': 999, 'clone_path': r'$(pwd)'}  # no auto_act_for_head_sha
+m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+m._fetch_unresolved_cr_threads = lambda o, r, p, c: (
+    'newhead9999999999999999999999999999999999', ['PRT_kwDO1'])
+m._resolve_review_threads = lambda ids, clone: (len(ids), 0)
+entry = {'pr': 999, 'clone_path': r'$(pwd)',
+         'auto_act_for_head_sha': 'oldhead0000000000000000000000000000000000'}
 state = {'last_state': 'BLOCKED',
-         'last_status_line': 'Poll 1/1 CodeRabbit: STALE_RESOLVED'}
+         'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (0 actionable) (1 open)'}
 extras = m.maybe_resolve_stuck_cr_threads(state, entry)
-# Returns {} because auto_act_for_head_sha is absent — proves we passed
-# the env gate (which would have short-circuited under the old opt-in
-# default). Adding a positive-firing test with stubs would duplicate the
-# 'fires resolveReviewThread per stuck CR thread' test below.
-print('extras:', extras)
+print('resolve_action:', extras.get('resolve_action', 'NONE'))
 "
     [ "$status" -eq 0 ]
-    [[ "$output" == *"extras: {}"* ]]
+    [[ "$output" == *"resolve_action: resolved 1/1 CR threads (failed=0)"* ]]
 }
 
 @test "maybe_resolve_stuck_cr_threads: no-op when auto_act_for_head_sha absent" {

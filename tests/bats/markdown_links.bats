@@ -113,17 +113,15 @@ for h in hrefs:
 @test "docs/design/applied/ and docs/design/archive/ are excluded from default scan" {
     run python3 -c "
 import os
-EXCLUDED = (
-    os.path.join('docs', 'design', 'applied'),
-    os.path.join('docs', 'design', 'archive'),
-)
-def is_active_md(rel):
-    if not rel.endswith('.md'): return False
-    parts = rel.split(os.sep)
+EXCLUDED = ('docs/design/applied', 'docs/design/archive')
+def is_active_md(rel_in):
+    if not rel_in.endswith('.md'): return False
+    rel = rel_in.replace(os.sep, '/')
+    parts = rel.split('/')
     if parts[0] in ('AGENTS.md', 'BUILD.md', 'README.md') and len(parts) == 1: return True
     if parts[0] not in ('docs', 'agents'): return False
     for p in EXCLUDED:
-        if rel == p or rel.startswith(p + os.sep): return False
+        if rel == p or rel.startswith(p + '/'): return False
     return True
 print('active:', is_active_md('docs/design/foo.md'))
 print('archived applied:', is_active_md('docs/design/applied/bar.md'))

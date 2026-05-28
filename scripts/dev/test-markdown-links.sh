@@ -60,9 +60,12 @@ SCOPE = os.environ.get("SCOPE", "diff")
 # docs/design/archive/ hold shipped/historical plans whose link-paths drifted
 # over time without being maintained — they're documentation-history, not
 # active. Scope to docs that ARE actively maintained.
+# Use POSIX separators throughout — git diff --name-only emits forward
+# slashes on every platform, including Windows. Mixing os.sep here would
+# silently misclassify paths in diff scope under cmd/powershell.
 EXCLUDED_PREFIXES = (
-    os.path.join("docs", "design", "applied"),
-    os.path.join("docs", "design", "archive"),
+    "docs/design/applied",
+    "docs/design/archive",
 )
 
 
@@ -71,13 +74,16 @@ def is_active_md(rel_path):
     (docs/, agents/, root-level repo docs) and NOT under an archived dir."""
     if not rel_path.endswith(".md"):
         return False
-    parts = rel_path.split(os.sep)
+    # Normalize to POSIX so the same logic works for git-diff output and
+    # os.walk output on Windows (os.sep == '\\').
+    rel = rel_path.replace(os.sep, "/")
+    parts = rel.split("/")
     if parts[0] in ("AGENTS.md", "BUILD.md", "README.md") and len(parts) == 1:
         return True
     if parts[0] not in ("docs", "agents"):
         return False
     for p in EXCLUDED_PREFIXES:
-        if rel_path == p or rel_path.startswith(p + os.sep):
+        if rel == p or rel.startswith(p + "/"):
             return False
     return True
 

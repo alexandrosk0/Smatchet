@@ -55,7 +55,9 @@ for label in "${!FILES[@]}"; do
     [ -f "$f" ] || { echo "missing category file: $f" >&2; exit 2; }
     ACTUAL[$label]=$(grep -c '^- 20' "$f" 2>/dev/null || echo 0)
 done
-ACTUAL_APPLIED=$(grep -c '^- 20' "$DIR/$APPLIED_BASENAME.md" 2>/dev/null || echo 0)
+APPLIED_FILE="$DIR/$APPLIED_BASENAME.md"
+[ -f "$APPLIED_FILE" ] || { echo "missing category file: $APPLIED_FILE" >&2; exit 2; }
+ACTUAL_APPLIED=$(grep -c '^- 20' "$APPLIED_FILE" 2>/dev/null || echo 0)
 
 DRIFT=()
 PASS=0; FAIL=0
@@ -139,6 +141,22 @@ for line in text.splitlines():
     out_lines.append(line)
 open(path, "w", encoding="utf-8").write("\n".join(out_lines) + "\n")
 PY
-echo "test-backlog-counts: index rewritten." >&2
-echo "Passed: $((PASS + FAIL))  Failed: 0"
-exit 0
+echo "test-backlog-counts: index rewritten; re-validating..." >&2
+
+# Re-validate to ensure missing rows weren't silently left unresolved.
+DRIFT=()
+PASS=0
+FAIL=0
+for label in bug process tooling infra test security external; do
+    check_row "$label" "${ACTUAL[$label]}"
+done
+check_row "applied (archive)" "$ACTUAL_APPLIED"
+
+if [ "$FAIL" -eq 0 ]; then
+    echo "Passed: $PASS  Failed: 0"
+    exit 0
+fi
+echo "test-backlog-counts: --fix incomplete; unresolved drift remains:" >&2
+for d in "${DRIFT[@]}"; do echo "  $d" >&2; done
+echo "Passed: $PASS  Failed: $FAIL"
+exit 1
