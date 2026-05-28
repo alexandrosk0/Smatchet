@@ -118,7 +118,9 @@ jobs:
           # existing. The gate scans HEAD vs a base worktree of origin/develop, so
           # fetch that ref (depth 1 is enough — no merge-base needed); warn-skips if
           # unreachable.
-          git fetch --no-tags --depth=1 origin develop 2>/dev/null || true
+          git fetch --no-tags --depth=1 origin develop
+          git rev-parse --verify --quiet origin/develop >/dev/null || {
+            echo "::error::origin/develop unavailable — cannot run high-integrity delta gate"; exit 1; }
           bash scripts/dev/test-lint-rules.sh --diff origin/develop
           bash scripts/dev/test-lint-rules-bats.sh
 

@@ -98,8 +98,11 @@ snippet_hash() {
 # SMATCHET_DEVIATION suppressing this rule? (deviation handled by caller via
 # the preceding-comment scan; here we only match the legacy inline markers.)
 has_inline_exempt() {
+    # Legacy inline markers only. NOLINT is intentionally NOT here: a strict-zone
+    # deviation must carry the audit-able SMATCHET_DEVIATION(rule=…; revisit=…)
+    # trail, not an ungoverned // NOLINT bypass (CR #507).
     case "$1" in
-        *"// CLI stdout"*|*"// pre-logger-init"*|*"// C-ABI"*|*"// custom-deleter"*|*"// pimpl"*|*NOLINT*) return 0 ;;
+        *"// CLI stdout"*|*"// pre-logger-init"*|*"// C-ABI"*|*"// custom-deleter"*|*"// pimpl"*) return 0 ;;
     esac
     return 1
 }
@@ -159,6 +162,10 @@ scan_file_rules() {
             fi
             continue
         fi
+
+        # Blank lines do NOT consume an active deviation — it covers the next
+        # NON-blank line (CR #507). Skip before touching prev_dev_rule.
+        if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
 
         # define-imgui — macro-alias trick.
         if [[ "$line" =~ \#define[[:space:]]+ImGui ]]; then
@@ -356,12 +363,15 @@ case "$MODE" in
     else
         # Compute the baseline triple-set against <ref> via a temp worktree so the
         # same scanner sees both trees without a checkout dance.
+        # Fail closed (CR #507): an unresolved base or failed worktree must NOT
+        # silently skip the gate in CI. Fetch origin/develop before invoking
+        # locally if you hit this.
         if ! git rev-parse --verify --quiet "$BASE" >/dev/null 2>&1; then
-            echo "test-lint-rules: WARN: base '$BASE' unresolved; gate skipped" >&2
-            exit 0
+            echo "test-lint-rules: ERROR: base '$BASE' unresolved; cannot compute delta gate" >&2
+            exit 2
         fi
         wt="$(mktemp -d)"
-        git worktree add -q --detach "$wt" "$BASE" 2>/dev/null || { echo "worktree add failed" >&2; exit 0; }
+        git worktree add -q --detach "$wt" "$BASE" 2>/dev/null || { echo "test-lint-rules: ERROR: worktree add for '$BASE' failed" >&2; exit 2; }
         # Run the CURRENT scanner (--root) against the base worktree so both sides
         # use identical logic, regardless of what scanner version the base tree ships.
         base_set="$(SMATCHET_LINT_BASELINE_SET="" bash "$SELF" --root "$wt" --full 2>/dev/null | sed -n 's/^  //p' | grep -v $'^narrowing-conversions\t' || true)"

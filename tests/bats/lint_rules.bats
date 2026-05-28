@@ -29,11 +29,13 @@ setup() {
 
 @test "no-raw-new fires on raw new Type" {
     run bash "$LINT" --scan-file "$FIX/known-bad-raw-new.cpp"
+    [ "$status" -eq 0 ]
     [[ "$output" == *"no-raw-new"* ]]
 }
 
 @test "define-imgui fires on #define ImGui macro-alias" {
     run bash "$LINT" --scan-file "$FIX/known-bad-define-imgui.cpp"
+    [ "$status" -eq 0 ]
     [[ "$output" == *"define-imgui"* ]]
 }
 
@@ -41,11 +43,13 @@ setup() {
 
 @test "deviation-overdue fires when calendar revisit has passed" {
     run bash "$LINT" --scan-file "$FIX/deviation-overdue.cpp"
+    [ "$status" -eq 0 ]
     [[ "$output" == *"deviation-overdue"* ]]
 }
 
 @test "deviation suppresses its rule on the next line + overdue not flagged when current" {
     run bash "$LINT" --scan-file "$FIX/deviation-current.cpp"
+    [ "$status" -eq 0 ]
     # rule=no-raw-new suppresses the new Thing(); revisit=2099 is not overdue.
     [[ "$output" != *"no-raw-new"* ]]
     [[ "$output" != *"deviation-overdue"* ]]
@@ -53,6 +57,7 @@ setup() {
 
 @test "deviation-overdue fixture suppresses no-raw-new (only overdue fires)" {
     run bash "$LINT" --scan-file "$FIX/deviation-overdue.cpp"
+    [ "$status" -eq 0 ]
     [[ "$output" != *"no-raw-new"* ]]
 }
 
@@ -60,6 +65,7 @@ setup() {
 
 @test "known-good fixture produces no findings" {
     run bash "$LINT" --scan-file "$FIX/known-good.cpp"
+    [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
 
@@ -89,9 +95,10 @@ setup() {
 # ---------- diff delta gate via stubbed baseline ----------
 
 @test "--diff PASSes when HEAD triples are a subset of the baseline" {
-    # Stub a baseline that already contains every current strict-zone triple.
-    head="$(bash "$LINT" --full 2>/dev/null | sed -n 's/^  //p')"
-    printf '%s\n' "$head" > /tmp/lr_base_all
+    # Validate --full succeeded before trusting its output as the baseline.
+    run bash "$LINT" --full
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | sed -n 's/^  //p' > /tmp/lr_base_all
     SMATCHET_LINT_BASELINE_SET=/tmp/lr_base_all run bash "$LINT" --diff
     [ "$status" -eq 0 ]
     [[ "$output" == *"PASS"* ]]
