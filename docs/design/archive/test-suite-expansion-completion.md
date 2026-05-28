@@ -1,6 +1,6 @@
 # Test suite expansion — completion plan (Phases 4-9 + carry-overs)
 
-> Continuation of [`docs/design/archive/test-suite-expansion.md`](applied/test-suite-expansion.md). Phases 1-3 shipped 2026-05-16 ([#103](https://github.com/alexandrosk0/Smatchet/pull/103), [#106](https://github.com/alexandrosk0/Smatchet/pull/106), [#107](https://github.com/alexandrosk0/Smatchet/pull/107)). This plan sequences the remaining work end-to-end with locked decisions, parallelisation rules, and per-slice agent packets.
+> Continuation of [`docs/design/archive/test-suite-expansion.md`](archive/test-suite-expansion.md). Phases 1-3 shipped 2026-05-16 ([#103](https://github.com/alexandrosk0/Smatchet/pull/103), [#106](https://github.com/alexandrosk0/Smatchet/pull/106), [#107](https://github.com/alexandrosk0/Smatchet/pull/107)). This plan sequences the remaining work end-to-end with locked decisions, parallelisation rules, and per-slice agent packets.
 
 ## Locked decisions (2026-05-16 user review)
 
@@ -11,7 +11,7 @@
 | Coverage tool (Phase 9) | **`OpenCppCoverage` Windows-only**, `lcov+gcov` documented fallback | No POSIX runner today. Acceptable per user. Document POSIX gap in `scripts/dev/coverage.sh` header + Phase 9 PR body. |
 | Carry-overs | **Ship all first**, then Phase 4-9 sequential | Eliminates concurrent-PR conflict risk during forward phases. Saves rebase cost on Phase 4-9 vs interleaved alternative. |
 
-Plus existing locked defaults from [§ Locked defaults](applied/test-suite-expansion.md#locked-defaults--no-clarifications-needed) of the parent plan (still in force): `TrackerHttpClient` interface shim, GL-context CI policy, mutation testing out of scope, `IScenario` reuse, ImGui Test Engine extension, blocking-vs-non-blocking deferral protocol.
+Plus existing locked defaults from [§ Locked defaults](archive/test-suite-expansion.md#locked-defaults--no-clarifications-needed) of the parent plan (still in force): `TrackerHttpClient` interface shim, GL-context CI policy, mutation testing out of scope, `IScenario` reuse, ImGui Test Engine extension, blocking-vs-non-blocking deferral protocol.
 
 ## Carry-over inventory
 
@@ -208,7 +208,7 @@ Unchanged from parent plan, minus Phase 8 (deferred):
 
 ## Verification (this plan)
 
-This is a planning document — no code shipped here. Verification of the executed PRs lives in the per-PR `## Verification` appendices on the parent plan (`docs/design/archive/test-suite-expansion.md`) and on this file's eventual move to `applied/`.
+This is a planning document — no code shipped here. Verification of the executed PRs lives in the per-PR `## Verification` appendices on the parent plan (`docs/design/archive/test-suite-expansion.md`) and on this file's already-archived state under `docs/design/archive/`.
 
 ## Implementation log
 
