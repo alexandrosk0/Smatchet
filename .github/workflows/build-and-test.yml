@@ -80,6 +80,17 @@ jobs:
         working-directory: build/ninja-test-msvc
         run: ctest --output-on-failure
 
+      - name: Fetch Font Awesome 6 Solid TTF
+        shell: bash
+        run: |
+          # assets/fonts/README.md states "CI fetches it on release-tag builds".
+          # No release workflow exists yet; fetch here so build-and-test artefacts
+          # also ship with the icon font and bucket-C / bucket-E jobs that consume
+          # the uploaded exe have icons available.
+          curl -sSL https://github.com/FortAwesome/Font-Awesome/raw/6.x/webfonts/fa-solid-900.ttf \
+               -o assets/fonts/fa-solid-900.ttf
+          ls -l assets/fonts/fa-solid-900.ttf
+
       - name: Configure ninja-iter-msvc
         run: cmake --preset ninja-iter-msvc
 

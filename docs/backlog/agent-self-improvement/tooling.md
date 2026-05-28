@@ -83,12 +83,6 @@
   Status: open
   Last-reviewed: 2026-05-20
 
-- 2026-05-20 · orchestrator · [tooling] · P2 — Release workflow does not fetch `fa-solid-900.ttf` (Font Awesome 6 Solid)
-  Details: `assets/fonts/README.md` (shipped in PR #334 per `docs/design/ai-chat-claude-desktop-parity.md` § Phase 4) claims "CI fetches it on release-tag builds; dev workstations drop it manually." `assets/fonts/*.ttf` is gitignored (`.gitignore`) so the binary cannot live in-repo. Grep over `.github/` for `fa-solid-900` returns zero hits — no release / build workflow actually fetches the TTF. Shipped exes will start with `LOG_WARN: g_FaIconsLoaded = false` and the AI-chat hover action row + pin strip will render the text fallback (`Copy` / `Pin` / `×`) instead of icons. UX regression vs. plan intent, but **not** a build / runtime failure thanks to the `SmatchetAreFaIconsLoaded()` graceful-degradation path wired in `SmatchetAiAssistantUi.cpp`.
-  Concrete next action: extend the release workflow (likely `.github/workflows/release.yml` and any `package-windows-*` job) to (1) `curl -L https://github.com/FortAwesome/Font-Awesome/raw/6.x/webfonts/fa-solid-900.ttf -o assets/fonts/fa-solid-900.ttf` before the CMake configure step, (2) let the existing POST_BUILD `copy_if_different` lay the TTF next to the exe, (3) make sure the packaging step picks the file up via the existing asset-bundling rule. Also add a configure-time `STATUS` message that reports whether the TTF was found vs. skipped, mirroring the README's contract. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-20
-
 - 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/design/applied/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
   Details: The closing milestone (phase 9 of `docs/design/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
@@ -150,24 +144,6 @@
   Supersedes: 2026-05-16 (dedup-merged in the 2026-05-18 sweep — earlier entry restated the same gap against PR #154 instead of PR #156; both pointed at `tests/ui/callstack_tooltip_hover.test.cpp` and the same `BucketE::TooltipContentMatches` proposal).
   Details: While writing `tests/ui/callstack_tooltip_hover.test.cpp` (PR #156 — regression gate for #147) a production-driven variant 4 had to be dropped. A generic `##Tooltip_NN` window probe cannot distinguish "my cell's tooltip" from concurrent host-process tooltips. Even with `WindowFocus` + `NoDocking` + `ImGuiCond_Always` position pinning, production's `IsItemHovered()` against the cell rect returned false in the spawned-child host because something else in the shared `ImGuiContext` claimed `g.HoveredWindow`. Workaround taken: faithful replica of the production callstack path with a TU-local `tooltipFiredThisFrame` flag (same idiom as `views_columns_reorder.test.cpp`), plus a `NoGroupWrap` regression-shape variant that proves the methodology is sensitive to the wrap's presence. Sanity-checked end-to-end: removing the wrap from the replica fails variants 1+2 deterministically.
   Concrete next action: add a `BucketE::TooltipContentMatches(ctx, sentinel)` helper to `tests/ui/` (or shared `tests/ui/_helpers/`) that walks a tooltip window's `DrawList`'s `CmdBuffer` for a text command containing `sentinel`. Use it to distinguish "my cell's tooltip" from concurrent tooltips by feeding a unique marker through `rawForTooltip`. Once available, retrofit `callstack_tooltip_hover.test.cpp` with a variant 4 that drives real `RenderClippedFieldText` and asserts content match — closing the production-drift gap the replica can't cover.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh:69` `tests/support/*.h` counts as a "test change"; gate is trivially dismissable
-  Details: A PR can add an empty `tests/support/foo.h` to dismiss the gate. The intent was per-test-file coverage parity.
-  Concrete next action: tighten to `tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/**/*.test.cpp` only. Surfaced by retrospective code-review sweep on PR #148.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage.sh:35` `--threshold "${2:-0}"; shift 2` triggers `unbound variable` under `set -euo pipefail` when `$2` missing
-  Details: `set -euo pipefail` is the file's default; the `shift 2` is unguarded.
-  Concrete next action: `shift $(( $# < 2 ? $# : 2 ))` or guard with `[[ $# -ge 2 ]] && shift 2 || shift 1`. Surfaced by retrospective code-review sweep on PR #148.
-  Status: open
-  Last-reviewed: 2026-05-18
-
-- 2026-05-17 · code-review · [tooling] · P2 — `.github/workflows/coverage.yml:50` cache key hashes `CMakeLists.txt` but not `CMakePresets.json`
-  Details: `actions/cache@v4` key hashes `CMakeLists.txt` + `**/CMakeLists.txt`. Coverage-flag changes (which live in `CMakePresets.json`) won't bust the FetchContent cache → stale gcov-instrumented `_deps`.
-  Concrete next action: include `CMakePresets.json` in the cache key hash inputs. Surfaced by retrospective code-review sweep on PR #148.
   Status: open
   Last-reviewed: 2026-05-18
 

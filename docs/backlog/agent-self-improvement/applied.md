@@ -9,6 +9,18 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-20 · orchestrator · [tooling] · P2 — Release workflow does not fetch `fa-solid-900.ttf` (Font Awesome 6 Solid)
+  Resolution: Slice 6 of `docs/design/tooling-process-backlog-sweep.md`. No release workflow exists yet; added `curl` fetch step to `.github/workflows/build-and-test.yml` before the configure step so all CI builds (and the bucket-C / bucket-E jobs that consume the uploaded exe) have icons available. When a release workflow is authored, it must duplicate this step before the configure step.
+
+- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh:69` `tests/support/*.h` counts as a "test change"; gate is trivially dismissable
+  Resolution: Slice 6. Tightened the test-surface case-pattern to `tests/Source_Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp` (dropped `tests/support/*.h`).
+
+- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage.sh:35` `--threshold "${2:-0}"; shift 2` triggers `unbound variable` under `set -euo pipefail` when `$2` missing
+  Resolution: Slice 6. Guarded shift with `if [ $# -ge 2 ]; then shift 2; else shift; fi`.
+
+- 2026-05-17 · code-review · [tooling] · P2 — `.github/workflows/coverage.yml:50` cache key hashes `CMakeLists.txt` but not `CMakePresets.json`
+  Resolution: Slice 6. Added `CMakePresets.json` to the hashFiles inputs.
+
 - 2026-05-25 · orchestrator · [process] · P2 — `light-release-unreal-default` plan item 10 (`main.cpp` → `StandaloneAppBootstrap`) deferred without a tracked follow-up slice
   Resolution: Follow-up slice in P4 task stream `light-release-unreal-default` — `InitAppAndPlugins` / `ParseStandaloneCli` / `BootEphemeral` / `ShutdownApplication` in `StandaloneAppBootstrap.{h,cpp}`; GUI render loop uses `bootCtx` + shared plugin init; `--ephemeral` early-outs via `BootEphemeral` (hidden window + forced MCP + `RunRenderLoop`). Process rule added at `docs/agent-rules/process-rules.md` § Deferred plan-file rows at ship boundary. Plan § Deviations updated on task stream. Light build verified (`ninja-publish-light-msvc`).
 
