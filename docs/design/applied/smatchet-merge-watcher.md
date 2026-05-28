@@ -185,7 +185,7 @@ Per [`AGENTS.md`](../../AGENTS.md) § Verification automation — zero manual st
 
 ## Implementation log
 
-Shipped 2026-05-21 → 2026-05-28 across 6 phases + 5 follow-up fix/extension PRs. All 7 plan-listed deliverables exist on `develop`; Phase 4b shipped as a dedicated server TU rather than a `SmatchetToastManager` extension (see § Deviations).
+Shipped 2026-05-21 → 2026-05-28 across 6 phases + 7 follow-up fix/extension PRs. All 7 plan-listed deliverables exist on `develop`; Phase 4b shipped as a dedicated server TU rather than a `SmatchetToastManager` extension (see § Deviations).
 
 - **Phase 1 — Registry CRUD + foreground daemon** (#363, 2026-05-21). `scripts/dev/merge-watcher.py` + `merge-watcher-cli.py`; per-user registry at `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` with file-lock serialization; foreground-default daemon writes per-PR state every poll cycle.
 - **Phase 2 — PASS-branch auto-merge + cascade** (#364, 2026-05-21). On `GATES_PASSED`, watcher flips draft→ready, REST-squash-merges via `gh api -X PUT`, detects stacked children via `gh pr list --search "base:<merged-branch>"`, pulls develop into each. Per-branch lock-files in `.claude/.merge-watch/locks/` prevent cascade races.
