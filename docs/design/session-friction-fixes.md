@@ -10,7 +10,7 @@ The tooling-process-backlog-sweep session shipped 33 P0-P2 backlog items via 9 p
 
 ## Approach
 
-Four independent slices, each addressing one friction. No dependencies between them — ship in any order. Total effort ~6-8 h. Three of four are pure tooling/automation (no design judgement); the fourth (pre-implementation triage) is a doc-rule edit.
+Four independent slices, each addressing one friction. No dependencies between them — ship in any order. Total effort ~4.75 h (matches the per-slice rollup in § Summary). Three of four are pure tooling/automation (no design judgement); the fourth (pre-implementation triage) is a doc-rule edit.
 
 ## Slices
 
@@ -27,13 +27,17 @@ CR caught genuine bugs in 4 of 9 shell-script slices this session — patterns t
 - `docs/agent-rules/shell-script-self-review.md` (new) — the checklist
 
 **Assertions in `lint-shell-self-review.sh`** (each one CR caught at least once this session):
-1. **Dependency preflight check** — every external command (`curl`, `gh`, `cmake`, `python`, `7z`, …) used in the script body MUST appear in a `command -v X >/dev/null 2>&1 || { ... exit 2; }` block at the top. Catches the `git-janitor.sh` python-missing bug from PR #482.
+1. **Dependency preflight check** — for every external command in a **closed allowlist** (`curl`, `gh`, `cmake`, `python`, `python3`, `jq`, `7z`, `cppcheck`, `clang-format`, `clang-tidy`, `bats`, `p4`) that appears in the script body, assert a `command -v X >/dev/null 2>&1 || { ... exit 2; }` (or equivalent) preflight block exists. Allowlist-based, not script-body scan, so bash builtins (`echo`, `printf`, `mapfile`, `comm`, `set`, `local`, `eval`, `exec`) and ubiquitous POSIX tools (`awk`, `sed`, `grep`, `head`, `cut`, `tr`) aren't false-flagged. Catches the `git-janitor.sh` python-missing bug from PR #482.
 2. **`shellcheck` clean** — run shellcheck, fail on warnings (SC2086 unquoted expansion, SC2046 word-split, SC2128 array-as-string). Catches the `p4-git-sync-check.sh` unquoted `$git_not_p4` bug from PR #478.
 3. **`curl -f` everywhere** — any `curl` invocation without `-f` (or `--fail`) fails the lint. Catches the Font Awesome 404-HTML-as-font bug from PR #477.
-4. **sha256 verify on network downloads** — any `curl` that writes to a file path under `assets/`, `build/`, or the repo root must be followed within 10 lines by `sha256sum -c` or `--checksum`. Catches the unpinned supply-chain risk on PR #477.
+4. **sha256 verify on network downloads** (diff-scoped only) — any **newly-added** `curl` that writes to a file path under `assets/`, `build/`, or the repo root must be followed within 10 lines by `sha256sum -c` or `--checksum`. Scoped to `git diff` against develop to grandfather existing scripts (e.g. the Mesa 7z download in `build-and-test.yml` already lacks a checksum and isn't blocking this work). Catches the unpinned supply-chain risk on PR #477.
 5. **`--key=value` and `--key value` parity** — when the script has a `--<flag>)` case, it must also have a `--<flag>=*)` case (or vice versa). Catches the `--threshold=` vs `--threshold` asymmetric-validation bug from PR #477.
 
-**Wiring**: `docs/harness/claude-code/settings.json` hook registers `lint-shell.sh` as a PreToolUse Bash hook for `git push`; refuses the push if `scripts/dev/*.sh` is in the diff AND the lint script fails. Bypass via `SMATCHET_SKIP_SHELL_LINT=1` for emergencies (logged).
+**Wiring**: Two delivery options — pick at implementation time:
+- **Option A (recommended)**: extend `scripts/dev/test-all.sh` to discover and run `lint-shell-self-review.sh` like every other `test-*.sh`. Auto-runs in the existing pre-push test gate. Simplest, no new hook surface.
+- **Option B**: add a Claude Code PostToolUse Bash hook in `.claude/settings.json` matching `Bash(git push:*)`. Needs verification that the hook surface fires reliably on bare `git push` (vs `git push --force`, `git push -u`, etc.) — surface untested for this use case.
+
+Bypass for either: `SMATCHET_SKIP_SHELL_LINT=1` env var (logged when used).
 
 ### Slice 2 — Backlog-archive union merge (P2 tooling)
 **Backlog**: 2026-05-28 tooling · P2 · "Backlog files conflict on every parallel-slice merge"
@@ -46,14 +50,17 @@ CR caught genuine bugs in 4 of 9 shell-script slices this session — patterns t
 - `docs/agent-rules/process-rules.md` — document the union merge + post-merge sort step
 - `scripts/dev/sort-applied-md.sh` (new, optional) — post-union sort by date descending
 
-**Diff**:
-```
+**Diff** (corrected after plan review — apply ONLY to `applied.md`):
+
+```text
 +docs/backlog/agent-self-improvement/applied.md merge=union
-+docs/backlog/agent-self-improvement/process.md merge=union
-+docs/backlog/agent-self-improvement/tooling.md merge=union
 ```
 
+**Why scoped to applied.md only**: `merge=union` concatenates both sides of a conflict. That's the right behaviour ONLY when both sides are prepending new entries (the applied.md parallel-archive case). For `process.md` / `tooling.md`, parallel branches DELETE different entries; union would wrongly preserve both deleted entries. For `AGENT_SELF_IMPROVEMENT.md`'s count line, parallel branches MODIFY the same line with different counts; union would garble it. Initial plan draft applied union to all three files — that was wrong and would have introduced bugs.
+
 **Trade-off**: union merge concatenates both sides verbatim — date order may interleave on the merge commit. The optional `sort-applied-md.sh` re-sorts entries by their first-line date prefix; agents can run it pre-push or it can ship as a pre-commit hook. Acceptable: a temporarily out-of-order applied.md is far cheaper than the manual conflict resolution it replaces.
+
+**Process.md / tooling.md / index file still conflict** — ~30% of session conflict time was on those. Defer to one-entry-per-file (below) if pain recurs. Empirically, ~70% of this session's conflict-resolution time was on applied.md, so this is still a real win.
 
 **Defer**: the more correct fix (one-entry-per-file under `applied.md.d/<date>-<slug>.md` + a build step) is 3 h vs 30 min. Skip until union merge proves insufficient — likely needed when single-line entries replace multi-line ones, or when applied.md crosses ~500 entries.
 
@@ -80,32 +87,57 @@ Slice 10's C++ build couldn't run from bash (`Cannot open stdio.h`) because the 
 - `BUILD.md` — document the wrapper next to the PowerShell entry
 - `agents/build-doctor.md` — cross-link
 
-**Recipe** (the script's body):
+**Recipe** (the script's body, corrected after plan review — uses `vswhere.exe` instead of a path glob):
+
 ```bash
 #!/usr/bin/env bash
 # Source vcvars64 env into the current shell, then exec the command.
 set -euo pipefail
-VCVARS="$(ls /c/Program*Files/Microsoft*Visual*Studio/*/Community/VC/Auxiliary/Build/vcvars64.bat 2>/dev/null | head -n 1)"
-[ -z "$VCVARS" ] && { echo "with-msvc-env: vcvars64.bat not found" >&2; exit 2; }
-# Run vcvars64 in cmd.exe, dump env, export every VS-relevant var into this bash.
-eval "$(cmd.exe /c "\"$VCVARS\" >nul && set" 2>/dev/null | awk -F= '/^(INCLUDE|LIB|LIBPATH|PATH|VCINSTALLDIR|WindowsSdkDir)=/ {gsub(/\\/,"\\\\",$2); print "export "$1"=\""$2"\""}')"
+
+# vswhere.exe ships with every VS 2017+ install at a stable path. It discovers
+# every installed edition (Community / Professional / Enterprise / BuildTools)
+# regardless of where they're installed — more robust than path globs.
+VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+[ -x "$VSWHERE" ] || { echo "with-msvc-env: vswhere.exe not found at $VSWHERE" >&2; exit 2; }
+
+VS_INSTALL="$("$VSWHERE" -latest -property installationPath 2>/dev/null | tr -d '\r')"
+[ -n "$VS_INSTALL" ] || { echo "with-msvc-env: no Visual Studio install detected" >&2; exit 2; }
+
+VCVARS="$VS_INSTALL\\VC\\Auxiliary\\Build\\vcvars64.bat"
+[ -f "${VCVARS//\\//}" ] || { echo "with-msvc-env: vcvars64.bat not found at $VCVARS" >&2; exit 2; }
+
+# Run vcvars64 in cmd.exe, dump env, import VS-relevant vars into this bash.
+# Use printenv-style key=value parsing (no awk regex on backslash-heavy paths).
+while IFS='=' read -r key val; do
+    case "$key" in
+        INCLUDE|LIB|LIBPATH|Path|PATH|VCINSTALLDIR|WindowsSdkDir|VCToolsInstallDir)
+            export "$key=$val" ;;
+    esac
+done < <(cmd.exe /c "call \"$VCVARS\" >nul && set" 2>/dev/null | tr -d '\r')
+
 exec "$@"
 ```
 
-Usage:
+**Usage**:
 ```bash
 bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 ```
 
-## Ship order
-
-All four slices are independent — ship in any order or in parallel. Suggested:
-
-```text
-Slice 2 (30 min)  ──→  Slice 3 (15 min)  ──→  Slice 1 (3 h)  ──→  Slice 4 (1 h)
+**Verify steps** (quote-safe — `/?` would glob-expand without quotes):
+```bash
+bash scripts/dev/with-msvc-env.sh cl /help        # prints MSVC banner
+bash scripts/dev/with-msvc-env.sh cmake --version # prints VS-bundled CMake
 ```
 
-Front-load the docs/config slices (slices 2/3) since they're cheap and remove friction from slice 1's review cycle.
+## Ship order
+
+All four slices are truly independent — ship in any order or in parallel. Suggested cheap-first ordering (just minimizes wall-clock to first review-feedback):
+
+```text
+Slice 3 (15 min, doc)  →  Slice 2 (30 min, config)  →  Slice 4 (1 h, script)  →  Slice 1 (3 h, script + checklist)
+```
+
+No correctness ordering — slice N doesn't unblock slice N+1. Pick whichever fits the next free slot.
 
 ## Summary
 
@@ -137,9 +169,11 @@ N/A — diff is target-agnostic (no `Source_Core/` C++ touches).
 ## Verification
 
 - **Per-slice**: ships via the autonomous ship-loop. Pure-docs slices (2/3) skip the dual-target build.
-- **Slice 1 self-test**: the lint script runs against itself (it IS a shell script) — must exit 0.
-- **Slice 2 verify**: deliberately create a merge conflict on applied.md (concurrent branch + parallel deletion) and confirm git auto-merges via the union driver.
-- **Slice 4 smoke**: `bash scripts/dev/with-msvc-env.sh cmake --version` should print the VS-bundled CMake; `bash scripts/dev/with-msvc-env.sh cl /?` should print the MSVC banner.
+- **Slice 1 verify** — fixture-based, not self-test (the lint script itself uses `shellcheck`, `awk`, `sed`, `grep` which aren't on the preflight allowlist — self-test would falsely pass / fail depending on whether ubiquitous-POSIX-tools are exempt). Ship `tests/fixtures/shell-lint/`: 5 known-bad sample scripts (one per assertion) + 1 known-good script. Lint-test asserts each sample fails the expected check and the known-good passes clean.
+- **Slice 2 verify**: deliberately create a merge conflict on applied.md (concurrent branch + parallel prepend) and confirm git auto-merges via the union driver. Verify with non-applied.md files that union does NOT apply (to confirm scope correction).
+- **Slice 4 smoke** (quote-safe — `/?` would glob-expand without quotes):
+  - `bash scripts/dev/with-msvc-env.sh cmake --version` → prints VS-bundled CMake banner
+  - `bash scripts/dev/with-msvc-env.sh cl /help` → prints MSVC compiler help
 - **Build gate**: N/A for slices 2/3; slices 1/4 are docs/scripts only.
 - **Manual residue**: none.
 
