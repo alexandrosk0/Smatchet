@@ -61,10 +61,16 @@ if [ -n "$p4_opened_depot" ]; then
         [ -z "$dpath" ] && continue
         # `p4 where //depot/...` returns "depot client local" — last field is the local abs path.
         local_path="$(p4 where "$dpath" 2>/dev/null | awk 'END { print $NF }')"
-        if [ -n "$local_path" ] && [ -e "$local_path" ]; then
-            # Repo-relative
-            rel="${local_path#"$REPO_ROOT/"}"
-            printf '%s\n' "$rel" | sed 's|\\|/|g'
+        if [ -n "$local_path" ]; then
+            # Don't gate on `-e "$local_path"` — `p4 opened` includes deleted /
+            # opened-for-delete files whose client copy is absent by design.
+            # Gate on "is it inside the repo root" instead so we emit those too.
+            case "$local_path" in
+                "$REPO_ROOT"/*)
+                    rel="${local_path#"$REPO_ROOT/"}"
+                    printf '%s\n' "$rel" | sed 's|\\|/|g'
+                    ;;
+            esac
         fi
     done | sort -u)"
 fi

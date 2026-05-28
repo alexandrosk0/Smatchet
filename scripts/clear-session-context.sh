@@ -101,8 +101,10 @@ fi
 # can't miss the mode at boot. p4 info failure routes through the
 # ship-loops.md exit-2 banner per § P4-gated ship-loop.
 if [ "${SMATCHET_AGENT_VCS:-}" = "p4" ]; then
-    P4_INFO="$(p4 info 2>/dev/null || true)"
-    if [ -n "$P4_INFO" ]; then
+    # Gate on `p4 info`'s exit status, not stdout content — a failing p4 server
+    # can still emit text to stdout ("Perforce client error:" banner) and the
+    # prior `[ -n "$P4_INFO" ]` form would misroute that as ACTIVE.
+    if P4_INFO="$(p4 info 2>/dev/null)"; then
         P4_CLIENT="$(printf '%s\n' "$P4_INFO" | sed -n 's/^Client name:[[:space:]]*//p' | head -n 1)"
         P4_PORT="$(printf '%s\n' "$P4_INFO" | sed -n 's/^Server address:[[:space:]]*//p' | head -n 1)"
         cat >> "$SCRATCHPAD" <<P4EOF
