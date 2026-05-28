@@ -118,7 +118,8 @@ Invoke-Test "run_standalone: stale sibling comparison table formatted correctly"
     # Create two fake sibling dirs under build/ so the sibling scan finds them.
     $buildRoot = Join-Path $repoRoot "build"
     $siblingPresets = @("ninja-debug-msvc", "ninja-iter-msvc")
-    $createdDirs = @()
+    $createdDirs  = @()
+    $createdFiles = @()
     foreach ($preset in $siblingPresets) {
         $dir = Join-Path $buildRoot $preset
         if (-not (Test-Path -LiteralPath $dir)) {
@@ -128,7 +129,7 @@ Invoke-Test "run_standalone: stale sibling comparison table formatted correctly"
         $sibExe = Join-Path $dir "Smatchet.exe"
         if (-not (Test-Path -LiteralPath $sibExe)) {
             Set-Content -Path $sibExe -Value "@echo off`r`nexit 0" -Encoding ASCII
-            $createdDirs += $sibExe
+            $createdFiles += $sibExe
         }
     }
 
@@ -157,9 +158,12 @@ Invoke-Test "run_standalone: stale sibling comparison table formatted correctly"
     }
     finally {
         Remove-Item -Recurse -Force -LiteralPath $tempDir -ErrorAction SilentlyContinue
-        # Remove only the files/dirs we created, not pre-existing sibling exes.
-        foreach ($item in $createdDirs) {
-            Remove-Item -Force -LiteralPath $item -ErrorAction SilentlyContinue
+        # Remove only what we created; files first so dirs are empty when deleted.
+        foreach ($f in $createdFiles) {
+            Remove-Item -Force -LiteralPath $f -ErrorAction SilentlyContinue
+        }
+        foreach ($d in $createdDirs) {
+            Remove-Item -Recurse -Force -LiteralPath $d -ErrorAction SilentlyContinue
         }
     }
 }
