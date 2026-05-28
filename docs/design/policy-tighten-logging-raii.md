@@ -114,7 +114,7 @@ N/A — no Source_Core/ hot paths modified.
 
 ## Deviations from plan
 
-- `scripts/dev/test-lint-rules.sh` (Step 4) — not landed in #468. Mechanical grep gate deferred; relies on code-review + lint hooks for now.
+- `scripts/dev/test-lint-rules.sh` (Step 4) — verified shipped in #468 (`8710303`, file added by that PR per `git log --diff-filter=A`). Earlier draft of this section incorrectly claimed the script was deferred; corrected per CR feedback on PR #489.
 - Catch-all policy split into its own follow-up plan (`docs/design/policy-tighten-catch-all.md`, shipped as PR #471).
 
 ## Verification
