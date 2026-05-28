@@ -9,6 +9,9 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-28 · orchestrator · [tooling] · P2 — No `vcvars64.bat` wrapper for bash sessions; C++ slices ship without local build verification
+  Resolution: Slice 4 of `docs/design/session-friction-fixes.md`. `scripts/dev/with-msvc-env.sh` ships: discovers VS install via `vswhere.exe -property installationPath` (covers Community / Professional / Enterprise / BuildTools without hard-coding globs), sources `vcvars64.bat` via PowerShell-mediated cmd.exe (works around Git Bash MSYS path-conversion quirks that mangle direct `cmd.exe //c` invocation), parses env via `while IFS='=' read` (no awk backslash escaping), and converts the Windows-shape PATH to bash-shape via `cygpath -p`. Smoke-tested with `cl` (compiler banner) and `cmake --version` (VS-bundled CMake). Documented in BUILD.md § MSVC from bash.
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
   Resolution: Slice 8 of `docs/design/tooling-process-backlog-sweep.md`. `scripts/dev/git-janitor.sh --post-merge <pr>` automates: clean-tree check, PR-merged verification via `gh pr view`, fetch+prune, ff-update develop, local branch delete (-D to handle squash-merge orphaning), dual-target build gate, concise report. Refuses on uncommitted work or non-MERGED PR.
 

@@ -22,12 +22,6 @@
   Status: open
   Last-reviewed: 2026-05-28
 
-- 2026-05-28 · orchestrator · [tooling] · P2 — No `vcvars64.bat` wrapper for bash sessions; C++ slices ship without local build verification
-  Details: Slice 10 (CliCommandRunner.cpp / spawn stdout capture) shipped without a local `cmake --build` because the bash session wasn't a VS Developer Command Prompt — `cl.exe` lacked `INCLUDE`/`LIB` env, build failed with "Cannot open include file: 'stdio.h'". CI caught no real bug this round but it's a real coverage gap: a future C++ slice with a subtle compile error would land on CI failure rather than pre-push detection. PowerShell side has `scripts/dev/build_and_run.ps1` that handles vcvars64 via call-then-inherit; bash side has nothing.
-  Concrete next action: ship `scripts/dev/with-msvc-env.sh` that detects vcvars64.bat via `vswhere.exe -property installationPath` (more robust than a path glob; covers Community / Professional / Enterprise / BuildTools editions), sources its env into a sub-shell via `cmd.exe /c "vcvars64.bat && set"`, then `exec "$@"` so `bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` just works. Document in BUILD.md. ~1 h. Wins on every bash-side C++ touch.
-  Status: open
-  Last-reviewed: 2026-05-28
-
 - 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
   Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
   Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
