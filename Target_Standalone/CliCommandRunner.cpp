@@ -36,6 +36,7 @@
 #include <thread>
 #include <vector>
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 #endif
@@ -407,7 +408,9 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
 void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     if (!quiet) {
         try {
-            std::fprintf(stdout, "%s\n", pretty ? envelope.dump(2).c_str() : envelope.dump().c_str()); // CLI stdout — product output, not logging
+            std::fprintf(stdout, "%s\n",
+                         pretty ? envelope.dump(2).c_str()
+                                : envelope.dump().c_str()); // CLI stdout — product output, not logging
         } catch (...) {
             std::fprintf(stdout, // CLI stdout — product output, not logging
                          "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
@@ -424,9 +427,11 @@ void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
             if (it.is_string()) {
                 std::fprintf(stdout, "%s\n", it.get<std::string>().c_str()); // CLI stdout — product output, not logging
             } else if (it.is_object() && it.contains("id") && it["id"].is_string()) {
-                std::fprintf(stdout, "%s\n", it["id"].get<std::string>().c_str()); // CLI stdout — product output, not logging
+                std::fprintf(stdout, "%s\n",
+                             it["id"].get<std::string>().c_str()); // CLI stdout — product output, not logging
             } else if (it.is_object() && it.contains("name") && it["name"].is_string()) {
-                std::fprintf(stdout, "%s\n", it["name"].get<std::string>().c_str()); // CLI stdout — product output, not logging
+                std::fprintf(stdout, "%s\n",
+                             it["name"].get<std::string>().c_str()); // CLI stdout — product output, not logging
             } else {
                 std::fprintf(stdout, "%s\n", it.dump().c_str()); // CLI stdout — product output, not logging
             }
@@ -444,13 +449,46 @@ void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
     std::fprintf(stdout, "%s\n", data.dump().c_str()); // CLI stdout — product output, not logging
 }
 
-void EmitErrorToStderr(const nlohmann::json& envelope) { std::fprintf(stderr, "%s\n", envelope.dump().c_str()); } // CLI stdout — product output, not logging
+void EmitErrorToStderr(const nlohmann::json& envelope) {
+    std::fprintf(stderr, "%s\n", envelope.dump().c_str());
+} // CLI stdout — product output, not logging
 
 #if defined(SMATCHET_WITH_MCP)
-bool LaunchEphemeralInstance(const std::string& exePath, int port) {
+/// Compute a per-spawn log file path so child stdout/stderr survive the
+/// parent's --spawn redirection. Format: $TMPDIR/Smatchet-spawn-<pid>-<port>.log.
+/// Per-process suffix avoids collisions when two --spawn drivers run concurrently.
+std::string ComputeSpawnLogPath(int port) {
+#if defined(_WIN32)
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+    const char* tmpEnv = std::getenv("TMP");
+    if (!tmpEnv)
+        tmpEnv = std::getenv("TEMP");
+    if (!tmpEnv)
+        tmpEnv = "C:\\Windows\\Temp";
+    const DWORD parentPid = GetCurrentProcessId();
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+#else
+    const char* tmpEnv = std::getenv("TMPDIR");
+    if (!tmpEnv)
+        tmpEnv = "/tmp";
+    const pid_t parentPid = getpid();
+#endif
+    return std::string(tmpEnv) + "/Smatchet-spawn-" + std::to_string(static_cast<long long>(parentPid)) + "-" +
+           std::to_string(port) + ".log";
+}
+
+bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* outLogPath) {
     if (exePath.empty())
         return false;
     const std::string portStr = std::to_string(port);
+    const std::string logPath = ComputeSpawnLogPath(port);
+    if (outLogPath)
+        *outLogPath = logPath;
     // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
     // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
@@ -458,10 +496,27 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port) {
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
     STARTUPINFOA si = {};
     si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
     si.wShowWindow = SW_HIDE;
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE hLog = CreateFileA(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hLog == INVALID_HANDLE_VALUE) {
+        // Log capture failure is non-fatal — fall back to inheriting parent
+        // handles so the spawn still works, just with no captured diagnostics.
+        si.dwFlags &= ~STARTF_USESTDHANDLES;
+    } else {
+        si.hStdOutput = hLog;
+        si.hStdError = hLog;
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    }
     PROCESS_INFORMATION pi = {};
-    BOOL ok = CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi);
+    BOOL ok = CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+    if (hLog != INVALID_HANDLE_VALUE) {
+        CloseHandle(hLog); // child holds its own dup; parent can release.
+    }
     if (ok) {
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
@@ -473,12 +528,25 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port) {
         return false;
     if (pid == 0) {
         setsid();
+        // Redirect stdout + stderr to the log file. open() returns -1 on
+        // failure; in that case stdio falls through to whatever the parent had.
+        int fd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDERR_FILENO);
+            close(fd);
+        }
         const char* args[] = {exePath.c_str(), "--ephemeral", "--mcp-port", portStr.c_str(), nullptr};
         execv(exePath.c_str(), const_cast<char* const*>(args));
         _exit(1);
     }
     return true;
 #endif
+}
+
+/// Back-compat overload — callers that don't care about the log path.
+bool LaunchEphemeralInstance(const std::string& exePath, int port) {
+    return LaunchEphemeralInstance(exePath, port, nullptr);
 }
 
 /// Poll until the MCP endpoint at host:port becomes reachable or timeoutMs elapses.
@@ -538,7 +606,8 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
                 std::fprintf(out, "\n  [%s]\n", category.c_str()); // CLI stdout — product output, not logging
                 lastCategory = category;
             }
-            std::fprintf(out, "    %-32s %s%s\n", name.c_str(), destructive ? "(destructive) " : "", summary.c_str()); // CLI stdout — product output, not logging
+            std::fprintf(out, "    %-32s %s%s\n", name.c_str(), destructive ? "(destructive) " : "",
+                         summary.c_str()); // CLI stdout — product output, not logging
         }
         std::fprintf(out, // CLI stdout — product output, not logging
                      "\nFor full schema:    Smatchet.exe cmd commands.help --name=<name>\n"
@@ -670,14 +739,20 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
             return kExitNotConnected;
         }
 
-        std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n", port); // CLI stdout — product output, not logging
-        if (!LaunchEphemeralInstance(exePath, port)) {
+        std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n",
+                     port); // CLI stdout — product output, not logging
+        std::string childLogPath;
+        if (!LaunchEphemeralInstance(exePath, port, &childLogPath)) {
             nlohmann::json env;
             env["ok"] = false;
             env["command"] = commandName;
             env["error"] = {{"code", "not-connected"}, {"message", "--spawn: failed to launch subprocess."}};
             EmitErrorToStderr(env);
             return kExitNotConnected;
+        }
+        if (!childLogPath.empty()) {
+            std::fprintf(stderr, "[spawn] child stdout/stderr → %s\n",
+                         childLogPath.c_str()); // CLI stdout — product output, not logging
         }
 
         const std::string host = "127.0.0.1";
@@ -704,7 +779,8 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
                 // Ignore malformed override; fall through to default.
             }
         }
-        std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n", readyTimeoutMs / 1000); // CLI stdout — product output, not logging
+        std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n",
+                     readyTimeoutMs / 1000); // CLI stdout — product output, not logging
         if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
             nlohmann::json env;
             env["ok"] = false;
@@ -778,7 +854,8 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         // If scenario.run returned {running:true, outPath:...}, wait for the file then emit it.
         if (isAsync) {
             const std::string outPath = SafeString(envData, "outPath");
-            std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames, frames / 60); // CLI stdout — product output, not logging
+            std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames,
+                         frames / 60); // CLI stdout — product output, not logging
             const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
             // Small delay to ensure fwrite+fclose has fully flushed before we read.
             // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
@@ -829,7 +906,9 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
                     const bool captureRequested = SafeBool(fileData, "captureRequested", false);
                     const std::string screenshotPath = SafeString(fileData, "screenshotPath");
                     if (captureRequested && !screenshotPath.empty()) {
-                        std::fprintf(stderr, "[spawn] waiting for screenshot capture ...\n"); // CLI stdout — product output, not logging
+                        std::fprintf(
+                            stderr,
+                            "[spawn] waiting for screenshot capture ...\n"); // CLI stdout — product output, not logging
                         WaitForFile(screenshotPath, 2000);
                     }
 
@@ -890,22 +969,23 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
 #if !defined(SMATCHET_WITH_MCP)
 
 void PrintCliHelpInProcess(std::FILE* out) {
-    std::fprintf(out, "Smatchet CLI — in-process Command System (light build).\n" // CLI stdout — product output, not logging
-                      "\n"
-                      "Usage:\n"
-                      "  Smatchet-Light.exe cmd <name> [--key=value ...] [flags]\n"
-                      "  Smatchet-Light.exe cmd commands.list        List registered commands.\n"
-                      "\n"
-                      "Output flags:\n"
-                      "  --pretty                Indent stdout JSON (2 spaces).\n"
-                      "  --quiet, -q             Bare scalar(s) on stdout.\n"
-                      "  --yes                   Confirm a destructive command.\n"
-                      "  --dry-run               Preview a mutation without applying it.\n"
-                      "\n"
-                      "Notes:\n"
-                      "  - Boots a hidden instance per invocation (no MCP attach).\n"
-                      "  - --spawn is ignored on light builds.\n"
-                      "  - Stdout is always JSON. Logs go to stderr.\n");
+    std::fprintf(out,
+                 "Smatchet CLI — in-process Command System (light build).\n" // CLI stdout — product output, not logging
+                 "\n"
+                 "Usage:\n"
+                 "  Smatchet-Light.exe cmd <name> [--key=value ...] [flags]\n"
+                 "  Smatchet-Light.exe cmd commands.list        List registered commands.\n"
+                 "\n"
+                 "Output flags:\n"
+                 "  --pretty                Indent stdout JSON (2 spaces).\n"
+                 "  --quiet, -q             Bare scalar(s) on stdout.\n"
+                 "  --yes                   Confirm a destructive command.\n"
+                 "  --dry-run               Preview a mutation without applying it.\n"
+                 "\n"
+                 "Notes:\n"
+                 "  - Boots a hidden instance per invocation (no MCP attach).\n"
+                 "  - --spawn is ignored on light builds.\n"
+                 "  - Stdout is always JSON. Logs go to stderr.\n");
 }
 
 bool IsTier1MetaCommand(const std::string& name) {

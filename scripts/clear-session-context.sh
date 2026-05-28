@@ -92,4 +92,48 @@ if [ -d "$HOOKS_SRC" ] && [ -d "$HOOKS_DST" ]; then
     done
 fi
 
+# --- P4-mode banner: surface SMATCHET_AGENT_VCS=p4 at session start --------
+# Per AGENTS.md § Autonomous ship-loop default § P4-gated variant: when the
+# user opts into p4-mode via the env var, the orchestrator MUST follow the
+# P4-gated ship-loop (docs/agent-rules/ship-loops.md § P4-gated ship-loop) for
+# ALL subsequent task-loops in this session, even when the user's prompt is
+# git-flavoured (PR numbers, gh URLs, etc.). Emit a banner so the orchestrator
+# can't miss the mode at boot. p4 info failure routes through the
+# ship-loops.md exit-2 banner per § P4-gated ship-loop.
+if [ "${SMATCHET_AGENT_VCS:-}" = "p4" ]; then
+    # Gate on `p4 info`'s exit status, not stdout content — a failing p4 server
+    # can still emit text to stdout ("Perforce client error:" banner) and the
+    # prior `[ -n "$P4_INFO" ]` form would misroute that as ACTIVE.
+    if P4_INFO="$(p4 info 2>/dev/null)"; then
+        P4_CLIENT="$(printf '%s\n' "$P4_INFO" | sed -n 's/^Client name:[[:space:]]*//p' | head -n 1)"
+        P4_PORT="$(printf '%s\n' "$P4_INFO" | sed -n 's/^Server address:[[:space:]]*//p' | head -n 1)"
+        cat >> "$SCRATCHPAD" <<P4EOF
+
+## === p4-mode ACTIVE ===
+
+client: ${P4_CLIENT:-unknown}
+server: ${P4_PORT:-unknown}
+
+Orchestrator MUST follow the P4-gated ship-loop per
+\`docs/agent-rules/ship-loops.md\` § P4-gated ship-loop. Ask the sub-variant
+question (small-change vs task-stream) before any slice subagent. Avoid
+\`git worktree add\` — use \`scripts/dev/p4-task-stream.sh\` instead. This
+overrides prompt-driven mode inference even when the user mentions PR
+numbers or gh URLs.
+
+P4EOF
+    else
+        cat >> "$SCRATCHPAD" <<P4EOF
+
+## === p4-mode REQUESTED but UNREACHABLE ===
+
+\`SMATCHET_AGENT_VCS=p4\` set, but \`p4 info\` failed. Follow
+\`docs/perforce/SETUP.md\` to bootstrap, OR fall back to default git ship-loop
+for this session (orchestrator MUST ask the user via \`AskUserQuestion\` —
+never silently downgrade).
+
+P4EOF
+    fi
+fi
+
 exit 0

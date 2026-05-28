@@ -21,20 +21,16 @@ namespace fs = ghc::filesystem;
 namespace smatchet {
 namespace cmd {
 
-void ScenarioRunner::RegisterFactory(const std::string& name, Factory f) {
-    factories_[name] = std::move(f);
-}
+void ScenarioRunner::RegisterFactory(const std::string& name, Factory f) { factories_[name] = std::move(f); }
 
-CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::json& args,
-                                    const CommandContext& ctx) {
+CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::json& args, const CommandContext& ctx) {
     auto it = factories_.find(name);
     if (it == factories_.end()) {
         std::vector<std::string> available;
-        for (const auto& kv : factories_) available.push_back(kv.first);
-        CommandResult r = CommandResult::Failure(
-            ErrorCode::NotFound,
-            "Scenario '" + name + "' not registered.",
-            "Available: " + (available.empty() ? "(none)" : available.front()));
+        for (const auto& kv : factories_)
+            available.push_back(kv.first);
+        CommandResult r = CommandResult::Failure(ErrorCode::NotFound, "Scenario '" + name + "' not registered.",
+                                                 "Available: " + (available.empty() ? "(none)" : available.front()));
         r.Error.Suggestions = std::move(available);
         return r;
     }
@@ -58,6 +54,13 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
     outPath_ = std::move(outPath);
     frame_ = 0;
 
+    // Stale-file footgun fix: --spawn callers' WaitForFile poller treats any
+    // non-empty file at outPath_ as "result ready". A stale file from the prior
+    // run produces phantom-same numbers on three consecutive runs (perf-detective
+    // hit this debugging PR #311). Unlink before scenario starts so the poller
+    // can only ever see the result of this run.
+    std::remove(outPath_.c_str());
+
     std::unique_ptr<IScenario> scenario = it->second();
     std::string startErr;
     // Capture ctx.App before the call (handler may be invoked from any source).
@@ -68,11 +71,10 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
         startErr = "AppController not available";
     }
     if (!startErr.empty()) {
-        return CommandResult::Failure(ErrorCode::HandlerError,
-            "Scenario '" + name + "' failed to start: " + startErr);
+        return CommandResult::Failure(ErrorCode::HandlerError, "Scenario '" + name + "' failed to start: " + startErr);
     }
 
-    app_    = appPtr;
+    app_ = appPtr;
     active_ = std::move(scenario);
     LOG_INFO("ScenarioRunner: started '%s' → %s", name.c_str(), outPath_.c_str());
     return CommandResult::Success({{"running", true}, {"outPath", outPath_}});
@@ -81,7 +83,8 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
 void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScrollTarget) {
     outScrollActive = false;
     outScrollTarget = -1;
-    if (!active_) return;
+    if (!active_)
+        return;
 
     active_->OnFrame(app, frame_);
 
@@ -111,7 +114,7 @@ void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScr
             }
         }
         active_.reset();
-        app_   = nullptr;
+        app_ = nullptr;
         frame_ = 0;
     }
 }
@@ -132,7 +135,7 @@ void ScenarioRunner::Cancel() {
         }
         LOG_INFO("ScenarioRunner: cancelled '%s' at frame %d", active_->Name().c_str(), frame_);
         active_.reset();
-        app_   = nullptr;
+        app_ = nullptr;
         frame_ = 0;
     }
 }
@@ -140,10 +143,11 @@ void ScenarioRunner::Cancel() {
 std::vector<std::string> ScenarioRunner::ListNames() const {
     std::vector<std::string> out;
     out.reserve(factories_.size());
-    for (const auto& kv : factories_) out.push_back(kv.first);
+    for (const auto& kv : factories_)
+        out.push_back(kv.first);
     std::sort(out.begin(), out.end());
     return out;
 }
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
