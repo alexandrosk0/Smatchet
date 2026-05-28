@@ -13,7 +13,7 @@ The genuine value the full proposal would add lives in four ideas, not the rule 
 1. **Tiered enforcement** — strict zone (parsing / sync / cache / config / command-registry), light zone (UI-heavy files), exempt zone. Current enforcement is uniform with per-site exemptions.
 2. **Delta gate** — fail only on **new** violations vs `origin/develop`, grandfather existing. PR #488 used this pattern manually for shell-lint; C++ violator volume makes manual rewrites infeasible.
 3. **Two uncovered rules + `deviation-overdue`** — silent narrowing (clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs) and `#define ImGui` macro-alias tricks (one-liner grep). Dynamic-index bounds checks dropped from this PR (see § Out of scope — Risks §2 conceded the rule wasn't ready to gate; ASAN+UBSAN in the existing `Sanitizer` CI job already catches the runtime class). `deviation-overdue` enforces the calendar-marker `revisit=` field from the `SMATCHET_DEVIATION` grammar.
-4. **Forward-only `SMATCHET_DEVIATION(rule)` comment format** — `reason / owner / revisit-trigger` triple. Adds an audit-able "review this site by date X" surface that the existing one-line exemption comments lack.
+4. **Forward-only `SMATCHET_DEVIATION` comment format** — `rule / reason / owner / revisit` quad. Adds an audit-able "review this site by date X" surface (via `revisit=` + the `deviation-overdue` rule) that the existing one-line exemption comments lack.
 
 Outcome after this lands: existing strict-zone violators are catalogued in `docs/backlog/high-integrity-cpp-baseline.md` (grandfathered); every NEW violation in a strict-zone file fails CI; the two uncovered rules + `deviation-overdue` join the existing scanner; new deviation sites use the canonical comment format; the tiered scope is named in AGENTS.md with no separate profile doc to drift.
 
@@ -61,7 +61,7 @@ Extend the existing rule infrastructure rather than parallel-shipping new infras
    - **`--diff <baseline-ref>` mode** (default `origin/develop`). Computes the set of `(rule, file-basename, snippet-hash)` triples on `baseline-ref` and on `HEAD`, fails only when `HEAD \ baseline` is non-empty. `snippet-hash` = SHA1 of the violating line's normalised content (strip leading whitespace + trailing `//` or `/* */` comment). Renames + line moves within a file don't trigger; only genuinely new `(rule, normalised-line)` instances do. Run via `git worktree add` against the baseline ref so the same scanner sees both trees without a checkout dance.
    - **CI is authoritative**: the PR runner invokes `--diff origin/develop` and fails the PR on any new triple. `merge-gates.sh` already polls all required checks. The pre-push hook runs the same gate locally for fast feedback but isn't the source of truth.
    - **`develop` post-merge job**: `--catalog --refresh` only. Never gates; just rewrites the baseline file. No diff-vs-self attempted (would be a no-op anyway).
-   - **`--catalog` mode** dumps the current violator set to `docs/backlog/high-integrity-cpp-baseline.md` grouped by `(rule × zone)` — see Q3 for the exact format.
+   - **`--catalog` mode** dumps the current violator set to `docs/backlog/high-integrity-cpp-baseline.md` grouped by `(rule × zone)` — see §3 below for the exact format.
    - **Baseline file is a human-reading snapshot, not a gate input**. The gate re-computes on every run; `docs/backlog/high-integrity-cpp-baseline.md` exists only to make the grandfathered set visible to humans.
    - **Three new rules** — (a) clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs, (b) a one-liner `\b#define\s+ImGui\b` grep, (c) `deviation-overdue` (parses `SMATCHET_DEVIATION` comments, fails when `revisit=` is a calendar marker that has passed). Dynamic-bounds `operator[]` heuristic dropped — see § Out of scope.
 3. **`docs/backlog/high-integrity-cpp-baseline.md`** — auto-generated snapshot, never a gate input (gate truth = live scan vs `origin/develop` per §2). Refresh runs on `develop` post-merge via `bash scripts/dev/test-lint-rules.sh --catalog --refresh`. Hand-edits are disallowed; CI re-runs the catalog and fails the post-merge job if the committed file diverges from a freshly-generated one (catches accidental edits).
@@ -127,13 +127,30 @@ Trade-off: the slim version preserves the existing one-source-of-truth structure
 
 ## Files to modify
 
-1. `AGENTS.md` — add § Tiered enforcement subsection under § Project rules; ≤ 15 lines.
-2. `scripts/dev/test-lint-rules.sh` — add `--diff` mode (default for `test-all.sh` invocation), `--catalog` mode, the three new rule checks (narrowing via clang-tidy, dynamic-index heuristic, `#define ImGui` grep), and zone-tier classification.
+1. `AGENTS.md` — add § Tiered enforcement subsection under § Project rules (≤ 20 lines; matches Approach §1) AND the `SMATCHET_DEVIATION` grammar paragraph (per Approach §4). Both edits land together so AGENTS.md is the single source of truth for both zone scope and deviation syntax.
+2. `scripts/dev/test-lint-rules.sh` — add `--diff` mode (default for `test-all.sh` invocation), `--catalog` + `--refresh` modes, the three new rule checks (clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs, `\b#define\s+ImGui\b` grep, `deviation-overdue` parser), zone-tier classification, and the rule-id contract per §8 below (existing rules renamed to `no-printf-stderr` + `no-raw-new`).
 3. `docs/backlog/high-integrity-cpp-baseline.md` (new) — initial dump from `--catalog`; lives under backlog rather than design since it's a tracking artefact, not a plan.
 4. `tests/bats/lint_rules.bats` (new) — bats coverage for `--diff` mode, `--catalog` mode, and each of the three new rules (one bats per rule, one all-clean fixture). Pattern mirrors `tests/bats/shell_lint.bats` from #488.
 5. `tests/fixtures/lint_rules/` (new) — per-rule known-bad + known-good fixtures.
 6. `docs/agent-rules/process-rules.md` — single-line note under § Plan-doc family pointing at the new tiered-enforcement subsection of AGENTS.md (so plan authors are reminded to declare their zone).
 7. `agents/coderabbit-triage.md` — one-line override-table entry recommending `SMATCHET_DEVIATION` for new strict-zone exemption requests rather than ad-hoc inline comments. No mandatory enforcement; just routing guidance.
+8. `.github/workflows/build-and-test.yml` (existing — the repo has no dedicated lint workflow today; the existing `windows-msvc` job's "Run non-UI bucket-A tests" step at line ~110 already runs `bash scripts/dev/test-*.sh` lints alongside other bucket-A scripts). Two edits:
+   - **PR + push runs** — append `bash scripts/dev/test-lint-rules.sh --diff origin/develop` to the existing "Run non-UI bucket-A tests" step. Same trigger as the surrounding lints; failure blocks merge via the existing required-check on `windows-msvc`.
+   - **`develop` post-merge — new job in the same workflow** gated on `if: github.event_name == 'push' && github.ref == 'refs/heads/develop'`. Runs `bash scripts/dev/test-lint-rules.sh --catalog --refresh` then `git diff --exit-code docs/backlog/high-integrity-cpp-baseline.md`. Non-zero exit = "baseline stale" remediation message + job fails. Never auto-commits — CI stays read-only against `develop`. New job because the existing `windows-msvc` runs on every PR and the refresh-and-diff is develop-only.
+
+## Rule-id contract
+
+Every rule emitted by `test-lint-rules.sh` carries a stable kebab-case id. The id is the linkage between scanner output, the catalog file's section headers, and the `SMATCHET_DEVIATION(rule=<id>; ...)` suppression key. Locked id set for this PR:
+
+| Rule id | Source | Strict-zone gate? |
+|---|---|---|
+| `no-printf-stderr` | existing scanner rule (currently emitted as a free-text description; rename to this id) | yes |
+| `no-raw-new` | existing scanner rule (same rename) | yes |
+| `narrowing-conversions` | new — clang-tidy `cppcoreguidelines-narrowing-conversions` mapped to this id | yes |
+| `define-imgui` | new — `\b#define\s+ImGui\b` grep | yes |
+| `deviation-overdue` | new — `SMATCHET_DEVIATION` parser fires when calendar-marker `revisit=` has passed | yes |
+
+Convention for future rules: lowercase kebab-case, ≤ 24 chars, namespaced when ambiguous (`cppcoreguidelines-*` for clang-tidy-derived ids when the clang-tidy name itself is already kebab-case and clear). New ids land via the same plan-doc grill loop, never silently.
 
 ## Existing utilities reused
 
@@ -148,7 +165,7 @@ Trade-off: the slim version preserves the existing one-source-of-truth structure
 
 - **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: N/A — the script runs at pre-push, not on the UI thread. clang-tidy on strict-zone TUs adds ~5-15 s to the local lint step; offset against the per-PR runner time the new CI workflow would have added.
 - **Pillar 2 (UI never blocks > 100 ms)**: N/A — same.
-- **Pillar 3 (never crash)**: **positive marginal impact** — the three new rules (narrowing, dynamic-bounds, `#define ImGui`) close gaps in the current crash-prevention enforcement. Narrowing in particular is a known footgun class (silent int truncation in tracker payload parsers); a heuristic + clang-tidy combo would catch the common shapes.
+- **Pillar 3 (never crash)**: **positive marginal impact** — the three new rules (`narrowing-conversions`, `define-imgui`, `deviation-overdue`) close gaps in the current crash-prevention enforcement. Narrowing in particular is a known footgun class (silent int truncation in tracker payload parsers); clang-tidy catches the common shapes. `deviation-overdue` is an indirect contribution — it forces accumulated deviations to be reviewed on calendar cadence rather than rotting.
 - **Pillar 4 (accessibility)**: N/A — no UI surface.
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
@@ -160,7 +177,7 @@ N/A — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`, `tests/bats/`, `
 - **Marketing-weight loss vs full proposal**. The slim version doesn't have a standalone "High-Integrity C++ Profile" doc; the rules live inside AGENTS.md. Contributors browsing the design folder will not see a flag-planting doc that says "this is a high-integrity codebase." Mitigation: the AGENTS.md subsection is title-cased clearly + the baseline doc under `docs/backlog/` is hand-linked from the subsection. Accepted as a marketing trade for the one-source-of-truth structural win.
 - **Dynamic-bounds rule dropped from this PR** (see § Out of scope). The heuristic's false-positive rate against `for (i; i<vec.size(); ...) v[i]` patterns was too high to gate; a "light-zone warn" that never fails CI was scanner code without behaviour change. ASAN+UBSAN in the existing `Sanitizer` CI job already catches the runtime class. Promotion path: a follow-up PR with a parameter-driven-index heuristic scoped to strict-zone files, evidence-driven not pre-scheduled.
 - **`SMATCHET_DEVIATION` not made mandatory** means existing exemption sites won't carry a revisit date. The audit-the-deviation surface this would enable stays partial. Mitigation: forward-only is a deliberate choice to avoid the rewrite-pass cost (estimated ~50 sites × 2 min = ~2 h of zero-behaviour-change churn). The mandatory form can be promoted later if review experience shows it's worth the rewrite.
-- **Baseline file becomes stale**. If contributors merge violations that the `--diff` gate happens to grandfather (e.g. moved a violation to a different file), the baseline doc gets out of sync with reality. Mitigation: a cron-style `bash scripts/dev/test-lint-rules.sh --catalog --refresh` invocation in CI on `develop` post-merge keeps the baseline refreshed.
+- **Baseline file as a gate input — not the design** (clarification, not a risk). The grill superseded the original "baseline as gate truth" framing: gate truth = live scan on `HEAD` vs live scan on `origin/develop`, computed every run; `docs/backlog/high-integrity-cpp-baseline.md` is a human-reading snapshot only. Drift between the file and the live state is normal between refreshes — `develop` post-merge runs `--catalog --refresh` with fail-on-drift so the committed snapshot can never silently diverge from reality on `develop`. PR-time staleness is a non-issue because the gate doesn't consult the file.
 - **Non-goal**: MISRA-C/C++ compliance certification. The rule set is curated for Smatchet-specific risk patterns; making a MISRA claim would require formal traceability tooling we don't have and don't need.
 - **Non-goal**: refactoring existing strict-zone violators. The whole point of the delta-gate approach is to grandfather existing code; refactoring decisions stay per-file and per-bug as they come up naturally.
 - **Non-goal**: gating on cppcoreguidelines as a whole. We're cherry-picking `narrowing-conversions` for now; the full ruleset has too many noisy checks for a Smatchet-tuned profile.
