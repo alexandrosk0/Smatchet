@@ -17,8 +17,8 @@
 #define IMGUI_USE_WCHAR32 1
 
 // ImGui Test Engine bucket-E hookup. Only enabled when the CMake gate
-// SMATCHET_BUILD_UI_TESTS is ON. Default builds (ninja-iter-msys2, debug,
-// publish) leave this OFF — production exe carries zero test surface.
+// SMATCHET_BUILD_UI_TESTS is ON. Default builds (ninja-iter-msvc, ninja-debug-msvc,
+// ninja-publish-msvc) leave this OFF — production exe carries zero test surface.
 //
 // We replicate the relevant fragment of imgui_test_engine/imgui_te_imconfig.h
 // instead of `#include`-ing it: pinning ourselves to a specific subset lets us

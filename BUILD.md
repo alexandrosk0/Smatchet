@@ -114,7 +114,10 @@ Wrapper shortcuts are still available:
 .\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
-### MSVC from bash (Git Bash / MSYS2)
+### MSVC from bash (Git Bash)
+
+**MSYS2 is not required or recommended for building Smatchet.** The `ninja-iter-msys2`
+preset is retired. Use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl) instead.
 
 `build_and_run.ps1` handles `vcvars64` env for PowerShell sessions. The
 bash-side equivalent is `scripts/dev/with-msvc-env.sh` — a wrapper that

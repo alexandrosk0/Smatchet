@@ -12,7 +12,7 @@
     build_standalone.ps1 / run_standalone.ps1 directly.
 #>
 param(
-    [string]$Preset = "ninja-debug-msvc",
+    [string]$Preset = "ninja-iter-msvc",
     [string]$Target = "SmatchetStandalone",
     [switch]$BuildOnly,
     [switch]$RunOnly,

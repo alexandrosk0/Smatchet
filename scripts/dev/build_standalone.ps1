@@ -179,7 +179,7 @@ if ($Preset -like "ninja*") {
 }
 
 if ($Preset -like "*-msys2") {
-    Use-Msys2Ucrt64Environment
+    throw "$Preset is retired. Use ninja-iter-msvc for MSVC or ninja-iter-clang for clang-cl. MSYS2 is no longer required or proposed for building Smatchet."
 }
 
 Push-Location $repoRoot
