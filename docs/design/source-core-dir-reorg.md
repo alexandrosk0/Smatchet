@@ -96,10 +96,21 @@ This diff moves `Source_Core/` files wholesale, so the gate **applies** — but 
 - Renaming `Source_Core/include/` headers to match `.cpp` co-location patterns beyond the taxonomy — not needed for zone validity.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `ae2d522` · wip(plan): source-core-dir-reorg plan-doc.
+- _(pending)_ · reorg: 183 Source_Core + 4 MCP files `git mv`'d into subsystem dirs; CMake source paths + include dirs; Build.cs PublicIncludePaths; test-CMake path + include-dir fixes.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Cheaper than the merged HICE plan implied — zero `#include` rewrites.** Includes are bare and resolve against path roots, so moving cpp+h together + adding the new subdirs to the include path sufficed. No "#include path fixups across the tree."
+- **Classifier substring false-positives.** A case-insensitive `*ui*` net wrongly matched `AiContextB`**`ui`**`lder` and `SmatchetLocalizedImGui.h`; both moved back to root. Lesson for any re-run: match the CamelCase word `Ui`, not the raw substring.
+- **Private headers co-located late.** 6 `*_Internal.h` / `*_detail.h` headers in `src/` (no matching `.cpp`) were missed by the initial header-only sweep (which scanned `include/` only) and moved in a follow-up step into their cpp's subdir (`ConfigManager_Internal.h`→Config, `PlaneClient_Internal.h`→Tracker, 4 Ui ones).
+- **Transitive cross-subsystem includes ⇒ every target needs ALL subdirs.** Moved headers include each other bare across subsystems (`ConfigManager.h`→`SmatchetThemeIds.h`, `ILuaBindingHost.h`→`TrackerFieldSchema.h`), so each include-dir site (core-impl function, `SmatchetTests`, `SmatchetLuaTests`) carries the full 5-subdir set, not just the subdirs of files it directly compiles. **This is the standing fragility of subdir-based zones** — flagged for the enforcement-plan handoff.
+- **Ui/ROOT boundary kept inclusive, not perfected.** Light zone == exempt for the gate, so borderline Ui-vs-root placements have zero enforcement consequence; not bikeshedded. Final Ui bucket: 52 cpp.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Build gate (dual-target)**: `SmatchetStandalone` + `SmatchetCore_DX12` via `ninja-iter-msvc` — **PASS** (validated twice, incl. a regression run after the private-header co-location).
+- **Bucket A (ctest)**: `ninja-test-msvc` build + `ctest` — **PASS** (100%, 2/2 test executables, 2.47s). Required iterative include-dir fixes: test source-paths, the full 5-subdir set on both `SmatchetTests` + `SmatchetLuaTests` (transitive cross-subsystem includes), and co-locating 6 private headers.
+- **FetchContent**: fresh worktree lacked the dep cache; configured against the main repo's `.fetchcontent-src` via `-DFETCHCONTENT_BASE_DIR` (the submodule-download failure was environmental, not the reorg).
+- **Manual residue (Unreal package build)**: NOT run here — the CMake `SmatchetCore_DX12` gate does not exercise `SmatchetImGuiPlugin.Build.cs`. A real UE package build is required to confirm the new `PublicIncludePaths` subdirs resolve bare includes UE-side. Backlog candidate (no headless UE runner).
