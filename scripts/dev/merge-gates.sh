@@ -120,6 +120,10 @@ poll_merge_gates() {
     # nudge CR into re-reviewing. Default 5 polls (~5 min at default interval).
     # Set to 0 to disable the auto-trigger.
     local STALE_REREVIEW_POLLS="${MERGE_GATES_STALE_REREVIEW_POLLS:-5}"
+    if ! [[ "$STALE_REREVIEW_POLLS" =~ ^[0-9]+$ ]]; then
+        echo "poll_merge_gates: MERGE_GATES_STALE_REREVIEW_POLLS must be a non-negative integer (got: $STALE_REREVIEW_POLLS)" >&2
+        return 3
+    fi
     # Number of consecutive polls the gate will wait for CodeRabbit when the repo has
     # `.coderabbit.yaml` checked in (= CR is installed for this repo). After this many
     # polls without a review or a `CodeRabbit` SUCCESS StatusContext, NONE falls back
@@ -501,10 +505,6 @@ poll_merge_gates() {
                             echo "WARN: gh pr comment failed posting @coderabbitai review; will retry next STALE_REREVIEW_POLLS window." >&2
                         fi
                     fi
-                else
-                    # Not STALE-blocking (passed STALE_RESOLVED/STALE_CLEAN or HEAD advanced) — reset.
-                    stale_streak=0
-                    stale_head=""
                 fi
                 ;;
             NONE)
@@ -548,6 +548,16 @@ poll_merge_gates() {
                 fi
                 ;;
         esac
+
+        # Reset STALE streak whenever the state leaves the STALE family. Any
+        # non-STALE cr_state (NONE / COMMENTED / APPROVED / CHANGES_REQUESTED
+        # / DISMISSED) breaks consecutive — without this reset, intermittent
+        # STALE polls would accumulate across non-STALE intervals and trigger
+        # the auto-re-review trigger early.
+        if [ "$cr_state" != "STALE" ]; then
+            stale_streak=0
+            stale_head=""
+        fi
 
         printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
             $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend - ci_warn_downgraded)) "$ci_total" \
