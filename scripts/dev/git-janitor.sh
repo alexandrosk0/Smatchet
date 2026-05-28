@@ -50,12 +50,15 @@ fi
 
 # ---------- Step 2: verify PR is merged --------------------------------------
 echo "[git-janitor] checking PR #${PR_NUMBER} state..."
-PR_JSON="$(gh pr view "$PR_NUMBER" --json state,headRefName,mergedAt 2>/dev/null)" || {
-    echo "git-janitor: gh pr view #${PR_NUMBER} failed; cannot verify merge state." >&2
+# Use gh's built-in --jq to extract fields — no python dependency. The script
+# pre-flight only checks for gh + cmake; python may be absent on python3-only
+# hosts and would have yielded empty PR_STATE / silent fallthrough.
+PR_STATE="$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || echo "")"
+PR_BRANCH="$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")"
+if [ -z "$PR_STATE" ]; then
+    echo "git-janitor: gh pr view #${PR_NUMBER} failed (state empty); cannot verify merge state." >&2
     exit 1
-}
-PR_STATE="$(printf '%s' "$PR_JSON" | python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("state",""))' 2>/dev/null || echo "")"
-PR_BRANCH="$(printf '%s' "$PR_JSON" | python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("headRefName",""))' 2>/dev/null || echo "")"
+fi
 if [ "$PR_STATE" != "MERGED" ]; then
     echo "git-janitor: REFUSE — PR #${PR_NUMBER} state=${PR_STATE} (expected MERGED). Aborting." >&2
     exit 1
