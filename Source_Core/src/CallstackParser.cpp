@@ -62,7 +62,7 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
             outPath = Trim(m[1].str());
             try {
                 outLine = std::stoi(m[2].str());
-            } catch (...) {
+            } catch (...) { // catch-all-ok: stoi on untrusted callstack line
                 return false;
             }
             const size_t pos = line.find(m[0].str());
@@ -89,7 +89,7 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
             outPath = Trim(m[1].str());
             try {
                 outLine = std::stoi(m[2].str());
-            } catch (...) {
+            } catch (...) { // catch-all-ok: stoi on untrusted callstack line
                 return false;
             }
             // Optional "at Function " prefix

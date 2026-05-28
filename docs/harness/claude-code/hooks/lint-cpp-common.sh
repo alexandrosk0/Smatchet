@@ -152,6 +152,15 @@ lint_run_clang_tidy() {
     printf '%s' "$out" | grep -E '(warning|error):' | grep -v '\[clang-diagnostic-error\]' || true
 }
 
+# lint_run_catch_all <abs_file>
+# Echoes lint-catch-all.py findings. Flags empty catch(...) blocks and
+# catch(...) without LOG_ calls unless suppressed by // catch-all-ok:.
+lint_run_catch_all() {
+    local abs="$1"
+    command -v python >/dev/null 2>&1 || return 0
+    python "$LINT_NORM_PROJ/.claude/hooks/lint-catch-all.py" "$abs" 2>&1 || true
+}
+
 # lint_run_dual_target <abs_file> <rel_path>
 # Echoes lint-syntax-both.py findings. Only runs for .cpp outside tests/.
 lint_run_dual_target() {

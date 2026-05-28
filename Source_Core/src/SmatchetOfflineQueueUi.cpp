@@ -1025,7 +1025,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                                 }
                             }
                         }
-                    } catch (...) {
+                    } catch (...) { // catch-all-ok: JSON parse on pending-queue metadata
                     }
                     if (md.empty())
                         md = BuildPayloadPreview(row.payload, 600);
@@ -1070,7 +1070,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                     mineMd = ctx.value("mine", std::string());
                     theirsMd = ctx.value("theirs", std::string());
                 }
-            } catch (...) {
+            } catch (...) { // catch-all-ok: JSON parse on conflict context
             }
             const std::string seed = "<<<<<<< mine\n" + mineMd + "\n=======\n" + theirsMd + "\n>>>>>>> theirs";
             d.conflictResolveBuf.assign(64 * 1024, '\0');
@@ -1090,7 +1090,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
                 theirsMd = ctx.value("theirs", std::string());
                 richKind = ctx.value("richKind", std::string("adf"));
             }
-        } catch (...) {
+        } catch (...) { // catch-all-ok: JSON parse on conflict context
         }
 
         const ImVec2 vp = ImGui::GetMainViewport()->Size;
