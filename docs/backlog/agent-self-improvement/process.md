@@ -175,9 +175,4 @@
   Status: open
   Last-reviewed: 2026-05-24
 
-- 2026-05-24 · orchestrator · [process] · P2 — orchestrator session-start self-check for `SMATCHET_AGENT_VCS` mode-alignment
-  Details: The autonomous ship-loop default in AGENTS.md says "p4-mode fires when SMATCHET_AGENT_VCS=p4 at session start AND `p4 info` confirms reachability." But the rule is passive — it describes what should happen, not who triggers the check. In practice, when the user's prompt is git-flavoured (mentions PRs, CR feedback, GitHub URLs), the orchestrator drifts into the git ship-loop without ever querying the env-var. The autonomous-debugging Wave A bypassed p4-mode entirely as a result. Worse, the bypass cascaded: 7 subagents were dispatched with `isolation: "worktree"` which is explicitly banned in p4-mode per `docs/agent-rules/ship-loops.md:57`.
-  Concrete next action: add a session-start self-check rule to AGENTS.md § Autonomous ship-loop default. Phrasing suggestion: "**Session-start self-check (mandatory, regardless of user-prompt flavour).** First non-comment action of every session is `echo $SMATCHET_AGENT_VCS` + `p4 info | head -3 || echo 'p4 unreachable'`. If `$SMATCHET_AGENT_VCS=p4` AND `p4 info` succeeds, the orchestrator MUST follow the P4-gated ship-loop (docs/agent-rules/ship-loops.md § P4-gated ship-loop) for ALL subsequent task-loops in this session — even when the user's prompt mentions PR numbers, gh URLs, or other git-flavoured terms. The user opted into p4-mode at the env-var; that overrides prompt-driven mode inference." Pair with the tooling-side SessionStart-hook entry above so the orchestrator gets the banner AND the rule.
-  Status: open
-  Last-reviewed: 2026-05-24
 

@@ -9,6 +9,15 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
+  Resolution: Slice 5. `scripts/dev/p4-git-sync-check.sh` compares git-pending paths against `p4 opened` and reports both directions (git pending but not p4 opened; p4 opened but not git pending). Exit 0 = aligned, exit 1 = mismatch, exit 2 = p4 unreachable (informational for git-only sessions). `--quiet` flag for clean-on-success use.
+
+- 2026-05-24 · orchestrator · [process] · P2 — orchestrator session-start self-check for `SMATCHET_AGENT_VCS` mode-alignment
+  Resolution: Slice 5 of `docs/design/tooling-process-backlog-sweep.md`. AGENTS.md § Autonomous ship-loop default carries a "**Session-start self-check (mandatory, regardless of user-prompt flavour)**" paragraph instructing the orchestrator to read the `## === p4-mode ACTIVE ===` banner emitted by `scripts/clear-session-context.sh` and follow the P4-gated ship-loop regardless of prompt flavour. Paired with the SessionStart-hook tooling entry below.
+
+- 2026-05-24 · orchestrator · [tooling] · P2 — SessionStart hook should announce `SMATCHET_AGENT_VCS=p4` mode to the orchestrator
+  Resolution: Slice 5. `scripts/clear-session-context.sh` now appends a `## === p4-mode ACTIVE ===` banner to `.session-context.md` when `$SMATCHET_AGENT_VCS=p4` AND `p4 info` succeeds (reports client + server). On `p4 info` failure, emits `## === p4-mode REQUESTED but UNREACHABLE ===` instructing the orchestrator to ask via `AskUserQuestion` per ship-loops.md (never silently downgrade). Paired with the AGENTS.md session-start self-check rule.
+
 - 2026-05-23 · orchestrator · [process] · P2-RESOLVED — `smatchet-merge-watcher` triage budget exhausts on every push because counter was per-PR-lifetime instead of per-HEAD
   Resolution: Slice 10 archive. Fix landed in PR #418 (merged 2026-05-23): `handle_blocked_cr_triage` resets `triage_attempts` to 0 when `triage_for_head_sha` differs from current HEAD. Bats coverage at `tests/bats/merge_watcher.bats`. Per-HEAD reset confirmed in tree.
 
