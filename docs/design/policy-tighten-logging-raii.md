@@ -20,7 +20,7 @@ This plan converts "rules with leaks" into "rules with named escape hatches." Th
 | Custom-deleter wraps (`PreviewPlanPtr(new X, Deleter{})`) | opaque lifecycle | **Keep** — `make_unique` is incompatible with custom deleters. Comment: `// custom-deleter — make_unique inapplicable` |
 | Third-party adapters | external seam | **Keep** — don't touch third-party glue |
 
-Status after agent sweep (2026-05-26): most pimpl + factory sites fixed. Residue: `WhisperPlugin.cpp:956,992` (denied during sweep) and `MarkdownPreviewRender.cpp:961` (custom deleter).
+Status after agent sweep (2026-05-26): most pimpl + factory sites fixed. Residue at plan time: `WhisperPlugin.cpp:956,992` (denied during sweep) and `MarkdownPreviewRender.cpp:961` (custom deleter). **Update (2026-05-28)**: WhisperPlugin `new PhaseEState()` converted to `std::make_unique<PhaseEState>()`; only the documented custom-deleter wrap in `MarkdownPreviewRender.cpp` remains as an intentional exemption.
 
 ### `std::cerr` / `std::cout`
 
@@ -107,3 +107,18 @@ N/A — no Source_Core/ hot paths modified.
 - `MarkdownPreviewRender.cpp` custom-deleter refactor (separate task if desired)
 - Converting CLI stdout to a structured output system (separate task)
 - Third-party / FetchContent code
+
+## Implementation log
+
+- `87103037` (2026-05-27) — `fix(policy): tighten logging+RAII rules with named escape hatches (#468)` — shipped the AGENTS.md tightening, named escape hatches, and WhisperPlugin `make_unique` conversion in one PR.
+
+## Deviations from plan
+
+- `scripts/dev/test-lint-rules.sh` (Step 4) — not landed in #468. Mechanical grep gate deferred; relies on code-review + lint hooks for now.
+- Catch-all policy split into its own follow-up plan (`docs/design/policy-tighten-catch-all.md`, shipped as PR #471).
+
+## Verification
+
+- `grep -rn "\bnew\b" Source_Core/ Plugins/ Target_Standalone/ --include="*.cpp"` — only documented escape-hatch sites remain.
+- AGENTS.md § Project rules now lists named exception comments for both logging and RAII rules.
+- `cmake --build --preset ninja-iter-msvc` clean post-merge.
