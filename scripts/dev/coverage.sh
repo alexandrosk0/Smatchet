@@ -61,7 +61,18 @@ while [ $# -gt 0 ]; do
             THRESHOLD="$2"
             shift 2
             ;;
-        --threshold=*) THRESHOLD="${1#--threshold=}"; shift ;;
+        --threshold=*)
+            THRESHOLD="${1#--threshold=}"
+            if [ -z "$THRESHOLD" ]; then
+                echo "FAIL: --threshold= requires an integer value" >&2
+                exit 2
+            fi
+            if ! [[ "$THRESHOLD" =~ ^[0-9]+$ ]]; then
+                echo "FAIL: --threshold must be an integer (got: $THRESHOLD)" >&2
+                exit 2
+            fi
+            shift
+            ;;
         -h|--help)
             sed -n '2,30p' "$0"
             exit 0
