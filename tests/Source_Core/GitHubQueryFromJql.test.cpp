@@ -208,3 +208,60 @@ TEST_CASE("TranslateJqlToGitHubSearch — type = \"pr\" full JQL shape") {
     CHECK(Contains(r.Query, "is:pr"));
     CHECK(r.IsPullRequestQuery == true);
 }
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:pr also sets IncludePullRequests") {
+    const auto r = TranslateJqlToGitHubSearch("type:pr", "", "");
+    CHECK(r.IncludePullRequests == true);
+    CHECK(r.IncludeIssuesOrPullRequests == true);
+    CHECK(r.IncludeCommits == false);
+}
+
+// github-commit-tracker-rows — type:commit / type:all / type:any.
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:commit selects commits only, no query term") {
+    const auto r = TranslateJqlToGitHubSearch("type:commit", "alexandrosk0", "Smatchet");
+    CHECK(r.Ok);
+    CHECK(r.IncludeCommits == true);
+    CHECK(r.IncludeIssuesOrPullRequests == false);
+    CHECK(r.IncludePullRequests == false);
+    CHECK(r.IsPullRequestQuery == false);
+    // No is:commit qualifier exists; only the repo: prefix is emitted.
+    CHECK(r.Query == "repo:alexandrosk0/Smatchet");
+    CHECK_FALSE(Contains(r.Query, "is:commit"));
+    CHECK(r.Warning.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — type = \"commit\" full JQL shape") {
+    const auto r = TranslateJqlToGitHubSearch("type = \"commit\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.IncludeCommits == true);
+    CHECK(r.IncludeIssuesOrPullRequests == false);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:all enables issues+PRs+commits") {
+    const auto r = TranslateJqlToGitHubSearch("type:all", "", "");
+    CHECK(r.Ok);
+    CHECK(r.IncludeCommits == true);
+    CHECK(r.IncludePullRequests == true);
+    CHECK(r.IncludeIssuesOrPullRequests == true);
+    CHECK(r.IsPullRequestQuery == false); // no is:pr injection — issues stay too
+    CHECK_FALSE(Contains(r.Query, "is:pr"));
+    CHECK(r.Warning.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — type:any is an alias for type:all") {
+    const auto r = TranslateJqlToGitHubSearch("type:any", "", "");
+    CHECK(r.Ok);
+    CHECK(r.IncludeCommits == true);
+    CHECK(r.IncludePullRequests == true);
+    CHECK(r.IncludeIssuesOrPullRequests == true);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — unknown type value warning lists commit + all") {
+    const auto r = TranslateJqlToGitHubSearch("type:foo", "", "");
+    CHECK(r.Ok);
+    CHECK(r.IncludeCommits == false);
+    CHECK(r.IncludeIssuesOrPullRequests == true);
+    CHECK(Contains(r.Warning, "commit"));
+    CHECK(Contains(r.Warning, "all"));
+}

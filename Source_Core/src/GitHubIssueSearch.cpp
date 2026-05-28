@@ -156,83 +156,21 @@ std::string ExtractGraphQlErrors(const nlohmann::json& parsed) {
     return out;
 }
 
-} // namespace
-
-std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat,
-                                                const std::string& owner, const std::string& repo,
-                                                const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
-                                                std::string* outFetchError, std::string* outWarning) {
-    return FetchIssuesViaRestApi(baseUrl, pat, owner, repo, jqlQueryOrEmpty, outFullSyncCompleted, outFetchError,
-                                 outWarning, nullptr);
-}
-
-std::vector<CachedTicket> FetchIssuesViaRestApi(
-    const std::string& baseUrl, const std::string& pat, const std::string& owner, const std::string& repo,
-    const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted, std::string* outFetchError, std::string* outWarning,
-    const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage) {
-    if (outFullSyncCompleted) {
-        *outFullSyncCompleted = false;
+// github-commit-tracker-rows — run the GraphQL issue/PR search loop. Appends
+// mapped tickets to `accum` and emits each page via `emitPage(page, isLast)`.
+// `isFinalSource` controls whether this source owns the terminal `isLast`
+// emission (false when a commit fetch will run afterwards). Returns
+// fullSyncCompleted; sets `*outFatal` true + `*outFetchError` on a fatal error.
+bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& headers, const std::string& graphQlQuery,
+                           const std::string& owner, const std::string& repo, bool includePullRequests,
+                           bool isFinalSource, std::vector<CachedTicket>& accum,
+                           const std::function<void(const std::vector<CachedTicket>&, bool)>& emitPage,
+                           std::string* outFetchError, std::string* outWarning, bool* outFatal) {
+    if (outFatal) {
+        *outFatal = false;
     }
-
-    if (pat.empty()) {
-        if (outFetchError) {
-            *outFetchError = kPatMissingError;
-        }
-        return {};
-    }
-
-    // Translate JQL once; warnings are non-fatal.
-    const JqlToGitHubResult translated = TranslateJqlToGitHubSearch(jqlQueryOrEmpty, owner, repo);
-    if (!translated.Ok) {
-        if (outFetchError) {
-            *outFetchError = std::string("JQL translation failed: ") + translated.Error;
-        }
-        return {};
-    }
-    if (!translated.Warning.empty()) {
-        AppendOutWarning(outWarning, translated.Warning);
-    }
-
-    const GitHubFetchPlan plan = ComputeGitHubFetchPlan(owner, repo, translated.Query, translated.IsPullRequestQuery);
-    if (!plan.warning.empty()) {
-        AppendOutWarning(outWarning, plan.warning);
-    }
-
-    // GraphQL path always uses `search()` with the same qualifier syntax as
-    // REST /search/issues. The fetch plan was built for the REST split (its
-    // `effectiveQuery` is empty on the repo-scoped path because REST
-    // /repos/{o}/{r}/issues doesn't accept `q=`); GraphQL accepts the same
-    // qualifier syntax universally, so we prefer `translated.Query` (which
-    // already carries the `repo:owner/repo` prefix when configured) and only
-    // fall back to `plan.effectiveQuery` for the cross-repo no-JQL case where
-    // it carries the "is:issue is:open" fallback.
-    //
-    // Repo-scoped JQL is honoured here (GraphQL search accepts the qualifiers
-    // REST /repos/{o}/{r}/issues couldn't). Strategy C deviation from PR12
-    // plan, documented in the plan-doc § Deviations.
-    std::string graphQlQuery = translated.Query.empty() ? plan.effectiveQuery : translated.Query;
-    if (graphQlQuery.empty()) {
-        graphQlQuery = "is:issue is:open";
-    }
-    const std::string endpoint = ResolveGraphQlEndpoint(baseUrl);
-    const cpr::Header headers = BuildGitHubHeaders(pat);
-
-    // Per AGENTS.md: nlohmann json `obj["k"] = v`, not brace-list reassignment.
-    // BuildGraphQlBody already follows this convention.
-
-    std::vector<CachedTicket> results;
     bool reachedShortPage = false;
     std::string cursor; // empty → page 1; subsequent pages use endCursor.
-    bool emittedTerminal = false;
-    // Helper: fire onPage with an empty terminal page after a mid-stream
-    // error. Idempotent — only fires when no prior emission carried isLast.
-    auto emitTerminalIfNeeded = [&]() {
-        if (onPage && !emittedTerminal) {
-            std::vector<CachedTicket> empty;
-            onPage(empty, /*isLast*/ true);
-            emittedTerminal = true;
-        }
-    };
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
         const std::string body = BuildGraphQlBody(graphQlQuery, cursor);
@@ -244,10 +182,12 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(
                 *outFetchError =
                     std::string("GitHub fetch error (HTTP ") + std::to_string(resp.status_code) + "): " + msg;
             }
-            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL HTTP %ld on page %d: %s", resp.status_code,
+            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL HTTP %ld on page %d: %s", resp.status_code,
                       page, msg.c_str());
-            emitTerminalIfNeeded();
-            return results;
+            if (outFatal) {
+                *outFatal = true;
+            }
+            return false;
         }
 
         nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
@@ -255,22 +195,24 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(
             if (outFetchError) {
                 *outFetchError = "GitHub returned invalid JSON";
             }
-            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL invalid JSON on page %d", page);
-            emitTerminalIfNeeded();
-            return results;
+            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL invalid JSON on page %d", page);
+            if (outFatal) {
+                *outFatal = true;
+            }
+            return false;
         }
 
-        // GraphQL responses can return HTTP 200 + a populated `errors` array
-        // (partial failure / rate-limit warning / bad query). Treat any
-        // non-empty `errors` as fatal.
         const std::string gqlErrors = ExtractGraphQlErrors(parsed);
         if (!gqlErrors.empty()) {
             if (outFetchError) {
                 *outFetchError = std::string("GitHub GraphQL error: ") + gqlErrors;
             }
-            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL errors on page %d: %s", page, gqlErrors.c_str());
-            emitTerminalIfNeeded();
-            return results;
+            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL errors on page %d: %s", page,
+                      gqlErrors.c_str());
+            if (outFatal) {
+                *outFatal = true;
+            }
+            return false;
         }
 
         if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
@@ -278,9 +220,11 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(
             if (outFetchError) {
                 *outFetchError = "GitHub GraphQL response missing data.search";
             }
-            LOG_ERROR("GitHubIssueSearch::FetchIssuesViaRestApi GraphQL response missing data.search on page %d", page);
-            emitTerminalIfNeeded();
-            return results;
+            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL response missing data.search on page %d", page);
+            if (outFatal) {
+                *outFatal = true;
+            }
+            return false;
         }
 
         const nlohmann::json& search = parsed["data"]["search"];
@@ -289,21 +233,15 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(
             if (outFetchError) {
                 *outFetchError = "GitHub GraphQL search.nodes not an array";
             }
-            emitTerminalIfNeeded();
-            return results;
+            if (outFatal) {
+                *outFatal = true;
+            }
+            return false;
         }
 
-        // Map this page's nodes — pure-logic helper (no HTTP, sentinel stripped).
-        std::vector<CachedTicket> pageTickets =
-            MapGraphQlNodesToTickets(nodes, owner, repo, plan.includePullRequests);
+        std::vector<CachedTicket> pageTickets = MapGraphQlNodesToTickets(nodes, owner, repo, includePullRequests);
 
-        // Determine isLast BEFORE recording the next-cursor — the per-page
-        // callback contract requires `isLast == true` on exactly one
-        // invocation (the terminal page, regardless of why we stopped).
         const nlohmann::json& pageInfo = search.value("pageInfo", nlohmann::json::object());
-        // Null-safe extraction: nlohmann's .value() default only fires on missing
-        // key, NOT on JSON null. GitHub returns `endCursor: null` when the result
-        // set is empty (e.g. issueCount=0), which would throw type_error.302.
         bool hasNext = false;
         {
             const auto it = pageInfo.find("hasNextPage");
@@ -328,57 +266,214 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(
         } else if (page == kGitHubMaxPages) {
             AppendOutWarning(outWarning, std::string("GitHub fetch page cap (") + std::to_string(kGitHubMaxPages) +
                                              ") reached; further results not fetched. Narrow your view JQL to fit.");
-            LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: page cap %d reached", kGitHubMaxPages);
+            LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: page cap %d reached", kGitHubMaxPages);
             isLastPage = true;
             stopLoop = true;
         } else if (endCursor.empty()) {
-            // Defensive — hasNext=true but endCursor empty would loop forever.
-            // Stop safely but do NOT mark reachedShortPage: FullSyncCompleted
-            // propagation (line ~360) treats reachedShortPage as the full-sync
-            // signal, and the caller's stale-prune fires on FullSyncCompleted.
-            // CR PR #399: marking inconsistent pagination metadata as full-sync
-            // pruned legitimate cached rows beyond the broken page boundary.
             AppendOutWarning(outWarning,
                              "GitHub GraphQL pageInfo.endCursor missing while hasNextPage=true; stopped early.");
-            LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: empty endCursor with hasNextPage=true; "
+            LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: empty endCursor with hasNextPage=true; "
                      "stopping page %d without claiming full sync",
                      page);
             isLastPage = true;
             stopLoop = true;
         }
 
-        LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: page %d mapped=%zu isLast=%d", page, pageTickets.size(),
+        LOG_INFO("GitHubIssueSearch::RunGraphQlIssueSearch: page %d mapped=%zu isLast=%d", page, pageTickets.size(),
                  isLastPage ? 1 : 0);
 
-        // Emit this page to the streaming callback (when provided) BEFORE
-        // accumulating into `results`. Per-page emission is what lets the UI
-        // grid populate progressively (t+1.7s, t+3.4s, ...) instead of
-        // all-at-once after the last page returns.
-        if (onPage) {
-            onPage(pageTickets, isLastPage);
-            if (isLastPage) {
-                emittedTerminal = true;
-            }
-        }
+        emitPage(pageTickets, isLastPage && isFinalSource);
 
-        // Accumulate into the legacy return vector — non-streaming callers
-        // (tests, FetchIssues backward-compat) still want the all-at-once
-        // snapshot.
-        results.insert(results.end(), std::make_move_iterator(pageTickets.begin()),
-                       std::make_move_iterator(pageTickets.end()));
+        accum.insert(accum.end(), std::make_move_iterator(pageTickets.begin()),
+                     std::make_move_iterator(pageTickets.end()));
 
         if (stopLoop) {
             break;
         }
-
         cursor = endCursor;
     }
+    return reachedShortPage;
+}
+
+// github-commit-tracker-rows — fetch the most-recent page (≤100) of commits for
+// the configured repo via REST `/repos/{o}/{r}/commits`. Appends mapped commit
+// rows to `accum` + emits a single page via `emitPage`. Commit-fetch failure is
+// non-fatal: it appends a warning and returns false (fullSync not completed) so
+// the caller propagates FullSyncCompleted=false and cached rows aren't pruned.
+bool RunCommitFetch(const std::string& baseUrl, const cpr::Header& headers, const std::string& owner,
+                    const std::string& repo, bool isFinalSource, std::vector<CachedTicket>& accum,
+                    const std::function<void(const std::vector<CachedTicket>&, bool)>& emitPage,
+                    std::string* outWarning) {
+    const std::string url = baseUrl + BuildCommitListUrlSuffix(owner, repo, kGitHubPerPage);
+    const cpr::Response resp =
+        TrackerGetLogged("GitHubClient", url, headers, kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
+
+    if (resp.status_code != 200) {
+        const std::string msg = ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+        AppendOutWarning(outWarning, std::string("GitHub commit fetch failed (HTTP ") +
+                                         std::to_string(resp.status_code) + "): " + msg +
+                                         " — cached commit rows preserved.");
+        LOG_ERROR("GitHubIssueSearch::RunCommitFetch HTTP %ld: %s", resp.status_code, msg.c_str());
+        const std::vector<CachedTicket> empty;
+        emitPage(empty, isFinalSource);
+        return false;
+    }
+
+    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_array()) {
+        AppendOutWarning(outWarning, "GitHub commit fetch returned invalid JSON — cached commit rows preserved.");
+        LOG_ERROR("GitHubIssueSearch::RunCommitFetch invalid JSON / not an array");
+        const std::vector<CachedTicket> empty;
+        emitPage(empty, isFinalSource);
+        return false;
+    }
+
+    std::vector<CachedTicket> pageTickets;
+    pageTickets.reserve(parsed.size());
+    for (const auto& c : parsed) {
+        if (!c.is_object()) {
+            continue;
+        }
+        try {
+            pageTickets.push_back(MapCommitJsonToCachedTicket(c, owner, repo));
+        } catch (const std::exception&) {
+            // Malformed commit — skip silently (Pillar 3). Aggregate count
+            // below is enough for diagnostics.
+        }
+    }
+    LOG_INFO("GitHubIssueSearch::RunCommitFetch: fetched %zu commit rows", pageTickets.size());
+
+    emitPage(pageTickets, isFinalSource);
+    accum.insert(accum.end(), std::make_move_iterator(pageTickets.begin()), std::make_move_iterator(pageTickets.end()));
+    return true;
+}
+
+} // namespace
+
+std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat,
+                                                const std::string& owner, const std::string& repo,
+                                                const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
+                                                std::string* outFetchError, std::string* outWarning) {
+    return FetchIssuesViaRestApi(baseUrl, pat, owner, repo, jqlQueryOrEmpty, outFullSyncCompleted, outFetchError,
+                                 outWarning, nullptr);
+}
+
+std::vector<CachedTicket>
+FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
+                      const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
+                      std::string* outFetchError, std::string* outWarning,
+                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage) {
+    if (outFullSyncCompleted) {
+        *outFullSyncCompleted = false;
+    }
+
+    if (pat.empty()) {
+        if (outFetchError) {
+            *outFetchError = kPatMissingError;
+        }
+        return {};
+    }
+
+    // Translate JQL once; warnings are non-fatal.
+    const JqlToGitHubResult translated = TranslateJqlToGitHubSearch(jqlQueryOrEmpty, owner, repo);
+    if (!translated.Ok) {
+        if (outFetchError) {
+            *outFetchError = std::string("JQL translation failed: ") + translated.Error;
+        }
+        return {};
+    }
+    if (!translated.Warning.empty()) {
+        AppendOutWarning(outWarning, translated.Warning);
+    }
+
+    const GitHubFetchPlan plan =
+        ComputeGitHubFetchPlan(owner, repo, translated.Query, translated.IncludePullRequests, translated.IncludeCommits,
+                               translated.IncludeIssuesOrPullRequests);
+    if (!plan.warning.empty()) {
+        AppendOutWarning(outWarning, plan.warning);
+    }
+
+    // GraphQL path always uses `search()` with the same qualifier syntax as
+    // REST /search/issues. The fetch plan was built for the REST split (its
+    // `effectiveQuery` is empty on the repo-scoped path because REST
+    // /repos/{o}/{r}/issues doesn't accept `q=`); GraphQL accepts the same
+    // qualifier syntax universally, so we prefer `translated.Query` (which
+    // already carries the `repo:owner/repo` prefix when configured) and only
+    // fall back to `plan.effectiveQuery` for the cross-repo no-JQL case where
+    // it carries the "is:issue is:open" fallback.
+    //
+    // Repo-scoped JQL is honoured here (GraphQL search accepts the qualifiers
+    // REST /repos/{o}/{r}/issues couldn't). Strategy C deviation from PR12
+    // plan, documented in the plan-doc § Deviations.
+    std::string graphQlQuery = translated.Query.empty() ? plan.effectiveQuery : translated.Query;
+    if (graphQlQuery.empty()) {
+        graphQlQuery = "is:issue is:open";
+    }
+    const std::string endpoint = ResolveGraphQlEndpoint(baseUrl);
+    const cpr::Header headers = BuildGitHubHeaders(pat);
+
+    // github-commit-tracker-rows — orchestrate up to two row sources: the
+    // GraphQL issue/PR search and the REST commit fetch. The terminal `isLast`
+    // emission must fire exactly once total; the final source that runs owns it.
+    const bool willRunCommits = plan.includeCommits; // already downgraded if owner/repo missing
+    const bool willRunIssues = plan.includeIssuesOrPullRequests;
+
+    std::vector<CachedTicket> results;
+    bool emittedTerminal = false;
+    auto emit = [&](const std::vector<CachedTicket>& page, bool isLast) {
+        if (!onPage) {
+            return;
+        }
+        onPage(page, isLast);
+        if (isLast) {
+            emittedTerminal = true;
+        }
+    };
+    // Fire a terminal empty page when no source claimed `isLast` (e.g. a fatal
+    // issue error, or nothing ran at all). Idempotent.
+    auto emitTerminalIfNeeded = [&]() {
+        if (onPage && !emittedTerminal) {
+            const std::vector<CachedTicket> empty;
+            onPage(empty, /*isLast*/ true);
+            emittedTerminal = true;
+        }
+    };
+
+    bool issuesFullSync = true; // vacuously complete when the source isn't run
+    bool commitsFullSync = true;
+
+    if (willRunIssues) {
+        bool fatal = false;
+        issuesFullSync =
+            RunGraphQlIssueSearch(endpoint, headers, graphQlQuery, owner, repo, plan.includePullRequests,
+                                  /*isFinalSource=*/!willRunCommits, results, emit, outFetchError, outWarning, &fatal);
+        if (fatal) {
+            emitTerminalIfNeeded();
+            if (outFullSyncCompleted) {
+                *outFullSyncCompleted = false;
+            }
+            return results;
+        }
+    }
+
+    if (willRunCommits) {
+        commitsFullSync =
+            RunCommitFetch(baseUrl, headers, owner, repo, /*isFinalSource=*/true, results, emit, outWarning);
+    }
+
+    // Safety net — if neither source emitted a terminal page (e.g. a
+    // commits-only view downgraded to no sources), still close the stream.
+    emitTerminalIfNeeded();
 
     if (outFullSyncCompleted) {
-        *outFullSyncCompleted = reachedShortPage;
+        // Never claim full sync when nothing ran (e.g. commits-only view with no
+        // owner/repo, downgraded to zero sources) — a spurious true would prune
+        // every cached row against an empty result.
+        const bool anySourceRan = willRunIssues || willRunCommits;
+        *outFullSyncCompleted = anySourceRan && issuesFullSync && commitsFullSync;
     }
-    LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu issues via GraphQL (includePRs=%d)",
-             results.size(), plan.includePullRequests ? 1 : 0);
+    LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu rows (issues=%d commits=%d includePRs=%d)",
+             results.size(), willRunIssues ? 1 : 0, willRunCommits ? 1 : 0, plan.includePullRequests ? 1 : 0);
     return results;
 }
 

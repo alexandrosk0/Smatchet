@@ -262,16 +262,49 @@ bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::st
     addField("pr.base", kPrBaseLabel, "string");
     addField("pr.mergeable", kPrMergeableLabel, "string");
     addField("pr.draft", kPrDraftLabel, "string");
+    // github-commit-tracker-rows — row-kind discriminator + commit-only columns.
+    // All read-only (commits are immutable history); they appear in the field
+    // picker so commit rows render their git metadata in the grid.
+    addField("github.kind", "Kind", "string");
+    addField("commit.sha", "Commit SHA", "string");
+    addField("commit.short_sha", "Commit Short SHA", "string");
+    addField("commit.author_name", "Commit Author", "string");
+    addField("commit.author_email", "Commit Author Email", "string");
+    addField("commit.committer_name", "Commit Committer", "string");
+    addField("commit.committer_email", "Commit Committer Email", "string");
+    addField("commit.url", "Commit URL", "string");
+    addField("commit.parents", "Commit Parents", "string");
+    addField("commit.verified", "Commit Verified", "string");
     return true;
 }
 
-bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
+bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& issueKeyOrId,
                                       std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
     // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly
     // editable when the PAT has repo write scope. Return success with all-true so
     // AppController caches the result and doesn't refetch every UI frame (the
     // default `ITrackerIssueReader::FetchIssueEditMeta` returns false + an "unsupported"
     // error, which AppController treats as a transient failure and retries forever).
+    // github-commit-tracker-rows — commit rows are immutable git history. Return
+    // success with every field non-editable so the grid never offers an edit
+    // affordance and offline replay never enqueues against a commit key.
+    {
+        smatchet::github::ParsedCommitKey ck;
+        if (smatchet::github::ParseGitHubCommitKey(issueKeyOrId, ck)) {
+            outError.clear();
+            outFieldIdCanEdit.clear();
+            outFieldIdCanEdit["summary"] = false;
+            outFieldIdCanEdit["description"] = false;
+            outFieldIdCanEdit["status"] = false;
+            outFieldIdCanEdit["assignee"] = false;
+            outFieldIdCanEdit["labels"] = false;
+            outFieldIdCanEdit["milestone"] = false;
+            outFieldIdCanEdit["author"] = false;
+            outFieldIdCanEdit["created"] = false;
+            outFieldIdCanEdit["updated"] = false;
+            return true;
+        }
+    }
     outError.clear();
     outFieldIdCanEdit.clear();
     // Field IDs aligned with the catalog (summary/description/status/assignee).
@@ -288,32 +321,60 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
 }
 
 std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std::string& issueKey) const {
+    // Resolve the browse host once (api.github.com → github.com, or strip the
+    // Enterprise `/api/v3` suffix). Shared by issue/PR and commit keys.
+    auto browseHost = [this]() -> std::string {
+        std::string host = baseUrl_;
+        const std::string apiSuffix = "/api/v3";
+        if (host.size() > apiSuffix.size() &&
+            host.compare(host.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
+            host.resize(host.size() - apiSuffix.size());
+        } else if (host == "https://api.github.com") {
+            host = "https://github.com";
+        }
+        return host;
+    };
+
+    // github-commit-tracker-rows — commit keys (`owner/repo@sha`) route to the
+    // /commit/<sha> path. Checked first because the issue-key parser rejects the
+    // `@` shape anyway.
+    smatchet::github::ParsedCommitKey commitKey;
+    if (smatchet::github::ParseGitHubCommitKey(issueKey, commitKey)) {
+        return browseHost() +
+               smatchet::github::BuildCommitBrowseUrlSuffix(commitKey.Owner, commitKey.Repo, commitKey.Sha);
+    }
+
     smatchet::github::ParsedIssueKey parsed;
     if (!smatchet::github::ParseGitHubIssueKey(issueKey, parsed)) {
         return "";
     }
-    // https://github.com/<owner>/<repo>/issues/<n>. Enterprise users with a
-    // non-api.github.com base URL get the same shape — replace `/api/v3`
-    // suffix with empty.
-    std::string host = baseUrl_;
-    const std::string apiSuffix = "/api/v3";
-    if (host.size() > apiSuffix.size() &&
-        host.compare(host.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
-        host.resize(host.size() - apiSuffix.size());
-    } else if (host == "https://api.github.com") {
-        host = "https://github.com";
-    }
-    return host + "/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
+    // https://github.com/<owner>/<repo>/issues/<n>.
+    return browseHost() + "/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
 }
 
-bool GitHubClient::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/,
+// github-commit-tracker-rows — shared read-only message for commit-key mutations.
+static const char* const kCommitReadOnlyError = "GitHub commit rows are immutable history and cannot be edited";
+
+bool GitHubClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& /*fields*/,
                                      std::string& outError) {
+    smatchet::github::ParsedCommitKey ck;
+    if (smatchet::github::ParseGitHubCommitKey(issueId, ck)) {
+        outError = kCommitReadOnlyError;
+        return false;
+    }
     StubError(outError, "UpdateIssueFields");
     return false;
 }
 
 bool GitHubClient::UpdateField(const std::string& issueId, const TrackerField& field,
                                const std::vector<std::string>& values, std::string& outError) {
+    // github-commit-tracker-rows — reject commit keys before issue-key parsing;
+    // the defensive last line behind editmeta's all-false map.
+    smatchet::github::ParsedCommitKey commitKey;
+    if (smatchet::github::ParseGitHubCommitKey(issueId, commitKey)) {
+        outError = kCommitReadOnlyError;
+        return false;
+    }
     smatchet::github::ParsedIssueKey parsed;
     if (!smatchet::github::ParseGitHubIssueKey(issueId, parsed)) {
         outError = "GitHubClient::UpdateField: invalid issueId shape (expected owner/repo#N): " + issueId;

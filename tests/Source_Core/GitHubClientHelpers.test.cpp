@@ -72,6 +72,49 @@ TEST_CASE("IsValidGitHubBaseUrl — strict: only api.github.com or <host>/api/v3
     CHECK_FALSE(IsValidGitHubBaseUrl("https:///api/v3", err)); // empty host
 }
 
+// github-commit-tracker-rows — commit key parser + commit URL helpers.
+
+TEST_CASE("ParseGitHubCommitKey — canonical owner/repo@<full-sha>") {
+    ParsedCommitKey k;
+    REQUIRE(ParseGitHubCommitKey("alexandrosk0/Smatchet@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", k));
+    CHECK(k.Owner == "alexandrosk0");
+    CHECK(k.Repo == "Smatchet");
+    CHECK(k.Sha == "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678");
+}
+
+TEST_CASE("ParseGitHubCommitKey — accepts abbreviated 7-char sha + hyphen/dot repo") {
+    ParsedCommitKey k;
+    REQUIRE(ParseGitHubCommitKey("foo/my-repo.git@a1b2c3d", k));
+    CHECK(k.Owner == "foo");
+    CHECK(k.Repo == "my-repo.git");
+    CHECK(k.Sha == "a1b2c3d");
+}
+
+TEST_CASE("ParseGitHubCommitKey — rejects malformed keys") {
+    ParsedCommitKey k;
+    CHECK_FALSE(ParseGitHubCommitKey("", k));
+    CHECK_FALSE(ParseGitHubCommitKey("noAt/repo", k));          // no @
+    CHECK_FALSE(ParseGitHubCommitKey("owner/repo@", k));        // empty sha
+    CHECK_FALSE(ParseGitHubCommitKey("/repo@a1b2c3d", k));      // empty owner
+    CHECK_FALSE(ParseGitHubCommitKey("owner/@a1b2c3d", k));     // empty repo
+    CHECK_FALSE(ParseGitHubCommitKey("owner/repo@ghijklm", k)); // non-hex sha
+    CHECK_FALSE(ParseGitHubCommitKey("owner/repo@abc12", k));   // sha too short (<7)
+    CHECK_FALSE(ParseGitHubCommitKey("owner/repo#42", k));      // issue key, not commit
+    // sha too long (>40)
+    CHECK_FALSE(ParseGitHubCommitKey("owner/repo@a1b2c3d4e5f60718293a4b5c6d7e8f90123456789", k));
+}
+
+TEST_CASE("BuildCommitListUrlSuffix — clamps perPage") {
+    CHECK(BuildCommitListUrlSuffix("alexandrosk0", "Smatchet", 100) ==
+          "/repos/alexandrosk0/Smatchet/commits?per_page=100");
+    CHECK(BuildCommitListUrlSuffix("o", "r", 0) == "/repos/o/r/commits?per_page=1");
+    CHECK(BuildCommitListUrlSuffix("o", "r", 9999) == "/repos/o/r/commits?per_page=100");
+}
+
+TEST_CASE("BuildCommitBrowseUrlSuffix — shapes /owner/repo/commit/sha") {
+    CHECK(BuildCommitBrowseUrlSuffix("alexandrosk0", "Smatchet", "a1b2c3d") == "/alexandrosk0/Smatchet/commit/a1b2c3d");
+}
+
 TEST_CASE("ExtractGitHubErrorMessage — pulls 'message' from JSON; falls back to HTTP code") {
     CHECK(ExtractGitHubErrorMessage(404, R"({"message":"Not Found","documentation_url":"..."})") == "Not Found");
     CHECK(ExtractGitHubErrorMessage(500, "") == "HTTP 500");

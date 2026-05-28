@@ -34,8 +34,21 @@ constexpr const char* kIsPullRequestSentinel = "_smatchet_is_pr";
 /// PR12 — entry point used by `FetchIssuesViaRestApi` + the doctest rig.
 /// `ownerHint` / `repoHint` are used when the issue payload doesn't carry
 /// `repository_url` (single-issue endpoint shape).
+/// github-commit-tracker-rows — also stamps `github.kind` = "issue" |
+/// "pull_request" so the grid + commit-key router can tell row kinds apart.
 CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue, const std::string& ownerHint,
                                                      const std::string& repoHint);
+
+/// github-commit-tracker-rows — map a single `/repos/{o}/{r}/commits` item to a
+/// read-only commit `CachedTicket`. `owner` / `repo` come from the configured
+/// repository (commit payloads don't carry `repository_url`). Tolerant of
+/// missing nested `author` / `committer` / `verification` / `parents` per
+/// Pillar 3 — a malformed field maps to a safe empty default rather than
+/// throwing. Row shape (id `owner/repo@<sha>`, `github.kind`=commit, the
+/// `commit.*` columns) is documented in
+/// docs/design/github-commit-tracker-rows.md § Row contract.
+CachedTicket MapCommitJsonToCachedTicket(const nlohmann::json& commit, const std::string& owner,
+                                         const std::string& repo);
 
 /// PR12 — enrich a ticket already mapped from a list/search response with the
 /// 4 PR-only fields (pr.head, pr.base, pr.mergeable, pr.draft) extracted from
@@ -84,7 +97,7 @@ nlohmann::json MapGraphQlPullRequestNodeToRestPrShape(const nlohmann::json& node
 /// the helper remains logger-free; the live caller in `GitHubIssueSearch.cpp`
 /// can log a summary count if needed.
 std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, const std::string& owner,
-                                                    const std::string& repo, bool includePullRequests);
+                                                   const std::string& repo, bool includePullRequests);
 
 } // namespace github
 } // namespace smatchet

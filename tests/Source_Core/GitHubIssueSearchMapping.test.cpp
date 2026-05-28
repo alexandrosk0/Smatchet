@@ -450,7 +450,8 @@ TEST_CASE("MapGraphQlNodesToTickets — skips malformed entries silently") {
     nlohmann::json nodes = nlohmann::json::array();
     nodes.push_back(MakeIssueNode(1, "Good"));
     nodes.push_back(nlohmann::json("scalar-not-object")); // skipped — not an object
-    nodes.push_back(nlohmann::json::object());            // skipped — missing __typename treated as Issue but no number → mapper may throw; either way not the first slot
+    nodes.push_back(nlohmann::json::object()); // skipped — missing __typename treated as Issue but no number → mapper
+                                               // may throw; either way not the first slot
     nodes.push_back(MakeIssueNode(2, "Also good"));
 
     const std::vector<CachedTicket> mapped = MapGraphQlNodesToTickets(nodes, "o", "r", true);
@@ -458,8 +459,10 @@ TEST_CASE("MapGraphQlNodesToTickets — skips malformed entries silently") {
     CHECK(mapped.size() >= 2);
     bool sawOne = false, sawTwo = false;
     for (const auto& t : mapped) {
-        if (GetField(t, "summary") == "Good") sawOne = true;
-        if (GetField(t, "summary") == "Also good") sawTwo = true;
+        if (GetField(t, "summary") == "Good")
+            sawOne = true;
+        if (GetField(t, "summary") == "Also good")
+            sawTwo = true;
     }
     CHECK(sawOne);
     CHECK(sawTwo);
@@ -475,7 +478,8 @@ TEST_CASE("MapGraphQlNodesToTickets — accumulating 4 simulated pages preserves
     int isLastTrueCount = 0;
     auto simulateOnPage = [&](const std::vector<CachedTicket>& page, bool isLast) {
         ++pageCallbackInvocations;
-        if (isLast) ++isLastTrueCount;
+        if (isLast)
+            ++isLastTrueCount;
         accumulated.insert(accumulated.end(), page.begin(), page.end());
     };
 
@@ -500,4 +504,126 @@ TEST_CASE("MapGraphQlNodesToTickets — accumulating 4 simulated pages preserves
     // MakeIssueNode win over the ownerHint/repoHint arguments.
     CHECK(accumulated.front().id == "alexandrosk0/Smatchet#1");
     CHECK(accumulated.back().id == "alexandrosk0/Smatchet#8");
+}
+
+// ---- github-commit-tracker-rows — github.kind stamping ----
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — stamps github.kind=issue on plain issues") {
+    nlohmann::json issue;
+    issue["number"] = 1;
+    issue["title"] = "t";
+    issue["state"] = "open";
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+    CHECK(GetField(t, "github.kind") == "issue");
+}
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — stamps github.kind=pull_request on PRs") {
+    nlohmann::json issue;
+    issue["number"] = 2;
+    issue["title"] = "t";
+    issue["state"] = "open";
+    issue["pull_request"] = nlohmann::json::object();
+    issue["pull_request"]["merged_at"] = nullptr;
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+    CHECK(GetField(t, "github.kind") == "pull_request");
+}
+
+// ---- github-commit-tracker-rows — commit JSON → CachedTicket mapping ----
+
+namespace {
+nlohmann::json MakeCommitJson() {
+    nlohmann::json c;
+    c["sha"] = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+    c["html_url"] = "https://github.com/alexandrosk0/Smatchet/commit/a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+    c["commit"] = nlohmann::json::object();
+    c["commit"]["message"] = "Fix the thing\n\nLonger body paragraph explaining why.";
+    c["commit"]["author"] = nlohmann::json::object();
+    c["commit"]["author"]["name"] = "Jane Dev";
+    c["commit"]["author"]["email"] = "jane@example.com";
+    c["commit"]["author"]["date"] = "2026-05-01T10:00:00Z";
+    c["commit"]["committer"] = nlohmann::json::object();
+    c["commit"]["committer"]["name"] = "Jane Dev";
+    c["commit"]["committer"]["email"] = "jane@example.com";
+    c["commit"]["committer"]["date"] = "2026-05-01T11:00:00Z";
+    c["commit"]["verification"] = nlohmann::json::object();
+    c["commit"]["verification"]["verified"] = true;
+    c["author"] = nlohmann::json::object();
+    c["author"]["login"] = "janedev";
+    nlohmann::json parents = nlohmann::json::array();
+    nlohmann::json p1 = nlohmann::json::object();
+    p1["sha"] = "0011223344556677889900112233445566778899";
+    parents.push_back(p1);
+    c["parents"] = parents;
+    return c;
+}
+} // namespace
+
+TEST_CASE("MapCommitJsonToCachedTicket — full payload maps all commit columns") {
+    const CachedTicket t = MapCommitJsonToCachedTicket(MakeCommitJson(), "alexandrosk0", "Smatchet");
+    CHECK(t.id == "alexandrosk0/Smatchet@a1b2c3d4e5f60718293a4b5c6d7e8f9012345678");
+    CHECK(GetField(t, "key") == t.id);
+    CHECK(GetField(t, "github.kind") == "commit");
+    CHECK(GetField(t, "summary") == "[commit a1b2c3d] Fix the thing");
+    CHECK(StartsWith(GetField(t, "description"), "Fix the thing"));
+    CHECK(GetField(t, "status") == "commit");
+    // GitHub login preferred over git author name.
+    CHECK(GetField(t, "author") == "janedev");
+    CHECK(GetField(t, "reporter") == "janedev");
+    CHECK(GetField(t, "created") == "2026-05-01T10:00:00Z");
+    CHECK(GetField(t, "updated") == "2026-05-01T11:00:00Z");
+    CHECK(GetField(t, "commit.sha") == "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678");
+    CHECK(GetField(t, "commit.short_sha") == "a1b2c3d");
+    CHECK(GetField(t, "commit.author_name") == "Jane Dev");
+    CHECK(GetField(t, "commit.author_email") == "jane@example.com");
+    CHECK(GetField(t, "commit.committer_name") == "Jane Dev");
+    CHECK(GetField(t, "commit.committer_email") == "jane@example.com");
+    CHECK(GetField(t, "commit.url") ==
+          "https://github.com/alexandrosk0/Smatchet/commit/a1b2c3d4e5f60718293a4b5c6d7e8f9012345678");
+    CHECK(GetField(t, "commit.parents") == "0011223");
+    CHECK(GetField(t, "commit.verified") == "true");
+}
+
+TEST_CASE("MapCommitJsonToCachedTicket — falls back to git author name when no GitHub login") {
+    nlohmann::json c = MakeCommitJson();
+    c.erase("author"); // no resolved GitHub user
+    const CachedTicket t = MapCommitJsonToCachedTicket(c, "o", "r");
+    CHECK(GetField(t, "author") == "Jane Dev");
+    CHECK(GetField(t, "reporter") == "Jane Dev");
+}
+
+TEST_CASE("MapCommitJsonToCachedTicket — tolerant of missing nested objects (Pillar 3)") {
+    nlohmann::json c;
+    c["sha"] = "abcdef1234567890";
+    // no `commit`, `author`, `parents`, `verification`
+    const CachedTicket t = MapCommitJsonToCachedTicket(c, "o", "r");
+    CHECK(t.id == "o/r@abcdef1234567890");
+    CHECK(GetField(t, "github.kind") == "commit");
+    CHECK(GetField(t, "summary") == "[commit abcdef1] ");
+    CHECK(GetField(t, "description").empty());
+    CHECK(GetField(t, "author").empty());
+    CHECK(GetField(t, "created").empty());
+    CHECK(GetField(t, "commit.author_name").empty());
+    CHECK(GetField(t, "commit.parents").empty());
+    CHECK(GetField(t, "commit.verified").empty());
+}
+
+TEST_CASE("MapCommitJsonToCachedTicket — multiple parents join as short SHAs") {
+    nlohmann::json c = MakeCommitJson();
+    nlohmann::json parents = nlohmann::json::array();
+    nlohmann::json p1 = nlohmann::json::object();
+    p1["sha"] = "1111111aaaaaaa";
+    nlohmann::json p2 = nlohmann::json::object();
+    p2["sha"] = "2222222bbbbbbb";
+    parents.push_back(p1);
+    parents.push_back(p2);
+    c["parents"] = parents;
+    const CachedTicket t = MapCommitJsonToCachedTicket(c, "o", "r");
+    CHECK(GetField(t, "commit.parents") == "1111111, 2222222");
+}
+
+TEST_CASE("MapCommitJsonToCachedTicket — unverified commit encodes verified=false") {
+    nlohmann::json c = MakeCommitJson();
+    c["commit"]["verification"]["verified"] = false;
+    const CachedTicket t = MapCommitJsonToCachedTicket(c, "o", "r");
+    CHECK(GetField(t, "commit.verified") == "false");
 }
