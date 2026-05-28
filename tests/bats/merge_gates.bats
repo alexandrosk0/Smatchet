@@ -881,6 +881,41 @@ set_fixture() {
     [[ "$output" == *"stdin is not a TTY"* ]]
 }
 
+@test "MERGE_GATES_FLIP_READY=true calls gh pr ready before polling" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    export MERGE_GATES_FLIP_READY=true
+    # Stub `gh pr ready` to succeed (default behavior, but record invocation).
+    export MERGE_GATES_STUB_READY_EXIT=0
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+}
+
+@test "MERGE_GATES_FLIP_READY unset does NOT flip to ready (default poll-only)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    unset MERGE_GATES_FLIP_READY
+    # If the gate accidentally called `gh pr ready`, our stub's non-default path
+    # would error. Success here confirms the flip code path wasn't taken.
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"WARN: gh_pr_ready_idempotent"* ]]
+}
+
+@test "MERGE_GATES_FLIP_READY=true with non-zero gh pr ready logs WARN but continues" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    export MERGE_GATES_FLIP_READY=true
+    export MERGE_GATES_STUB_READY_EXIT=1
+    export MERGE_GATES_STUB_READY_STDERR="some gh pr ready failure"
+    # gh pr view fallback says PR is still draft, so gh_pr_ready_idempotent returns 6.
+    export MERGE_GATES_STUB_VIEW_ISDRAFT=true
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    # The WARN goes to stderr; bats `run` captures both into $output.
+    [[ "$output" == *"WARN: gh_pr_ready_idempotent returned non-zero"* ]]
+}
+
 @test "gh-fail path enforces wall-clock timeout (returns 2 before 3 fails)" {
     # Intermittent fails that never hit 3-in-a-row would otherwise run forever.
     # Force TIMEOUT_SECONDS=0 so the very first failed poll triggers timeout.

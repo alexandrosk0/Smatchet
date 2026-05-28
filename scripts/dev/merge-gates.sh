@@ -36,6 +36,14 @@
 #   MERGE_GATES_MAX_POLLS        — max poll count (default 60)
 #   MERGE_GATES_TIMEOUT_SECONDS  — wall-clock budget (default 3600)
 #   MERGE_GATES_QUERY_FILE       — override GraphQL document path
+#   MERGE_GATES_FLIP_READY       — when "true", flip PR ready-for-review at
+#                                  poll start (authorized-merge callers only)
+#   MERGE_GATES_CR_GRACE_POLLS   — CR review grace window (default 10 polls)
+#   MERGE_GATES_CR_INSTALLED     — override CR-installed auto-detection
+#
+# Manual CR re-review trigger: post `@coderabbitai review` as a PR comment
+# (`gh pr comment <pr> --body "@coderabbitai review"`) when CR's review is
+# STALE on a new HEAD and isn't auto-firing.
 #
 # Return codes (poll_merge_gates):
 #   0 — gates passed
@@ -86,6 +94,18 @@ poll_merge_gates() {
     if [ -z "${ORCH_USER:-}" ]; then
         echo "poll_merge_gates: ORCH_USER not set (run: ORCH_USER=\$(gh api user --jq .login))" >&2
         return 3
+    fi
+
+    # MERGE_GATES_FLIP_READY=true flips the PR ready-for-review BEFORE polling starts.
+    # Authorized-merge callers (orchestrator + smatchet-merge-watcher) opt in so that
+    # CodeRabbit's auto_review.drafts:false config doesn't bypass review on draft PRs.
+    # Without this, CR's placeholder StatusContext SUCCESS could let a draft PR pass
+    # through the grace window without any real review activity (C4 draft-PR bypass).
+    # Plain poll-only callers (status checks, dry-runs) leave this unset; the gate's
+    # CR-installed grace window still blocks NONE for installed repos.
+    if [ "${MERGE_GATES_FLIP_READY:-}" = "true" ]; then
+        gh_pr_ready_idempotent "$prNumber" || \
+            echo "WARN: gh_pr_ready_idempotent returned non-zero; PR may still be draft." >&2
     fi
 
     local POLL_INTERVAL="${MERGE_GATES_POLL_INTERVAL:-60}"

@@ -223,7 +223,9 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 3. **Run merge gates** (per AGENTS.md § Merge gates) unless `SKIP_MERGE_GATES=true`:
    ```bash
    if [ "${SKIP_MERGE_GATES:-false}" != "true" ]; then
-       poll_merge_gates "$OWNER" "$REPO" "$N"
+       # Authorized merge → flip draft→ready at poll start so CodeRabbit's
+       # auto_review.drafts:false doesn't bypass review (ADR 0006 amendment).
+       MERGE_GATES_FLIP_READY=true poll_merge_gates "$OWNER" "$REPO" "$N"
        rc=$?
        case "$rc" in
            0) ;;                                                        # gates passed
@@ -235,6 +237,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
                case "$choice" in
                    "Skip gates and merge anyway") echo "WARN: user skipped gates: code=$rc" >&2 ;;
                    "Keep waiting"*) MERGE_GATES_MAX_POLLS=$((MERGE_GATES_MAX_POLLS*2)) \
+                                   MERGE_GATES_FLIP_READY=true \
                                    poll_merge_gates "$OWNER" "$REPO" "$N" || exit 1 ;;
                    *) exit 1 ;;
                esac
