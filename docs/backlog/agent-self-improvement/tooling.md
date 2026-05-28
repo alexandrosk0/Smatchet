@@ -104,11 +104,6 @@
   Status: open
   Last-reviewed: 2026-05-20
 
-- 2026-05-18 · test-author · [tooling] · P2 — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
-  Details: Surfaced while wiring `tests/ui/whisper_ai_assistant_autosend.test.cpp` (PR #258). `LaunchEphemeralInstance` in `Target_Standalone/CliCommandRunner.cpp` (around line 267) inherits the parent's stdout/stderr but the parent's `--spawn` driver redirects both before the child starts. ImGui Test Engine's `ConfigLogToTTY` output, plus any `LOG_*` from the child, disappears — when a bucket-E test fails, the operator has no trail beyond the parent's exit code.
-  Concrete next action: extend `LaunchEphemeralInstance` to capture child stdout + stderr to a per-spawn temp file (e.g. `$TMPDIR/Smatchet-spawn-<pid>.log`) and emit the path in the spawn banner the parent prints. Failure-path teardown should keep the file; success-path can delete it. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-18
 
 - 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
   Details: End-of-session cleanup found a stale `refs/locks/agentic-flow-cr-bundle-prod` lock owned by `handoff-implementer` on `fix/cr-handoff-bundle-prod`, even though that branch's PR (#271) had squash-merged hours earlier and the branch was deleted both remotely and locally. The `lock-slug: <slug>` auto-release token in the PR body is supposed to clear the lock on merge; either the PR body lacked the token, or the GitHub Action watching merge events doesn't fire on squash-merge specifically, or it errored silently. Manual recovery: `bash scripts/dev/lock-release.sh agentic-flow-cr-bundle-prod`. Cost: low per occurrence, but stale locks block sibling agents in subsequent sessions until somebody runs `locks-show.sh` and notices.

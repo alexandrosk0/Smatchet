@@ -9,11 +9,17 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-23 · orchestrator · [process] · P2-RESOLVED — `smatchet-merge-watcher` triage budget exhausts on every push because counter was per-PR-lifetime instead of per-HEAD
+  Resolution: Slice 10 archive. Fix landed in PR #418 (merged 2026-05-23): `handle_blocked_cr_triage` resets `triage_attempts` to 0 when `triage_for_head_sha` differs from current HEAD. Bats coverage at `tests/bats/merge_watcher.bats`. Per-HEAD reset confirmed in tree.
+
 - 2026-05-21 · orchestrator · [process] · P0 — Draft PRs silently bypass CodeRabbit review; merge-gates poll passes on the placeholder StatusContext without ever seeing a real review
   Resolution: Slice 1 of `docs/design/tooling-process-backlog-sweep.md`. Three-prong fix landed: (1) `MERGE_GATES_FLIP_READY=true` env knob in `scripts/dev/merge-gates.sh` flips draft→ready at poll start when authorized-merge callers (orchestrator + `smatchet-merge-watcher`) opt in. CR's auto-review fires immediately on the ready transition. `agents/git-janitor.md` updated to set the env. (2) The C4 prong 2 logic (`cr_thread_comments_on_head > 0` required for NONE+SUCCESS pass) already shipped in an earlier merge-gates patch — verified in-place at `merge-gates.sh:453`. (3) `@coderabbitai review` manual trigger documented in AGENTS.md § Merge gates and in `merge-gates.sh` header comment. ADR 0006 amended with "Authorized-merge flip-at-poll-start carve-out" section explaining the design. 3 bats tests cover the flip behavior. Plain poll-only callers (status checks, dry-runs) leave the env unset; draft-as-WIP semantics preserved.
 
 - 2026-05-20 · orchestrator · [process] · P2 — ADR 0006 hole: merge-gates poller on draft PR never gets a real CodeRabbit signal
   Resolution: Closed in same slice as P0 sister entry above. ADR 0006 now carries a 2026-05-27 amendment documenting the `MERGE_GATES_FLIP_READY=true` carve-out for authorized-merge callers, closing the structural bypass while preserving draft-as-WIP for non-authorized polls.
+
+- 2026-05-18 · test-author · [tooling] · P2-RESOLVED — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
+  Resolution: Slice 10. `LaunchEphemeralInstance` in `Target_Standalone/CliCommandRunner.cpp` now redirects child stdout+stderr to `$TMPDIR/Smatchet-spawn-<parent-pid>-<port>.log` (Windows: `%TMP%/Smatchet-spawn-...`). The spawn driver emits the log path in the `[spawn] child stdout/stderr → <path>` banner so operators can tail it on test failures. Falls through to parent-handle inheritance if the log file can't be opened (non-fatal).
 
 - 2026-05-23 · orchestrator · [process] · P2 — Plan-revision direct-pushes vs classifier
   Resolution: Slice 4 of `docs/design/tooling-process-backlog-sweep.md`. Picked policy (b) — mandate PR-for-plan-revisions. AGENTS.md § Process rules § Plan-doc family now states "Plan-revision direct-pushes are PR-only … never direct-push to develop, even for one-line edits." Eliminates classifier-vs-rule drift; adds ~3 min ceremony per plan revision.
