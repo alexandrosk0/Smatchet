@@ -74,7 +74,12 @@ std::vector<std::string> ListMarkdownFiles(const fs::path& dir) {
     if (ec) {
         return out;
     }
-    for (const auto& entry : it) {
+    const fs::directory_iterator end;
+    for (; it != end; it.increment(ec)) {
+        if (ec) {
+            break;
+        }
+        const auto& entry = *it;
         std::error_code fileEc;
         if (!entry.is_regular_file(fileEc) || fileEc) {
             continue;

@@ -1638,13 +1638,16 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
             return out;
         }
 
-        for (const auto& ent : fs::directory_iterator(root, ec)) {
+        fs::directory_iterator it(root, ec);
+        const fs::directory_iterator end;
+        for (; it != end; it.increment(ec)) {
 
             if (ec) {
 
                 break;
             }
 
+            const auto& ent = *it;
             if (!ent.is_regular_file(ec)) {
 
                 continue;
