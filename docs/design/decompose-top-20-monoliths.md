@@ -136,8 +136,8 @@ ImGui draw monoliths (slices 9-19; one PR each):
 
 ## Existing utilities reused
 
-- `SMATCHET_UI_PERF_SCOPE` (`Source_Core/include/SmatchetPerfScope.h`) — already demarcates the natural section boundaries; pattern reuses them verbatim.
-- `UiDrawSession` (`Source_Core/include/UiDrawSession.h`) — already the per-frame ctx carrier; `DrawCtx` extends, not replaces.
+- `SMATCHET_UI_PERF_SCOPE` (`Source_Core/include/UiPerfMonitor.h`) — already demarcates the natural section boundaries; pattern reuses them verbatim.
+- `UiDrawSession` (`Source_Core/include/SmatchetUiSession.h`) — already the per-frame ctx carrier; `DrawCtx` extends, not replaces.
 - Section-file naming precedent: `SmatchetViewsDashboardUi_widgets.cpp`, `SmatchetPreferencesUi_Whisper.cpp`, `SmatchetPreferencesUi_Assistant.cpp` (already-split files).
 - `MakeCommand` (`Source_Core/include/Commands/Command.h`) — already supports per-command factory; `RegisterAiCommands` split just hoists per-command bodies into free functions.
 - Bucket-A test pattern (`tests/Source_Core/*.test.cpp`) — pure-logic helpers extracted from `BuildUserFieldPayload`, `HtmlToMarkdown`, `ConfigManager::Load` become directly testable.
