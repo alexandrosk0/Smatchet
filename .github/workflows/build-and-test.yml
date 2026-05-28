@@ -122,7 +122,10 @@ jobs:
           git rev-parse --verify --quiet origin/develop >/dev/null || {
             echo "::error::origin/develop unavailable — cannot run high-integrity delta gate"; exit 1; }
           bash scripts/dev/test-lint-rules.sh --diff origin/develop
-          bash scripts/dev/test-lint-rules-bats.sh
+          # NB: the gate's bats (tests/bats/lint_rules.bats via test-lint-rules-bats.sh)
+          # run at the pre-push gate (test-all.sh, where bats is installed), NOT here —
+          # the Windows CI runner has no bats (the wrapper would exit 2 / "bats missing").
+          # CI enforces the gate itself (--diff above); the bats are the gate's unit tests.
 
       - name: Upload Smatchet.exe artefact (for bucket-C / bucket-E jobs)
         uses: actions/upload-artifact@v4
