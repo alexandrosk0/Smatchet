@@ -49,7 +49,18 @@ THRESHOLD=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --xml-only) XML_ONLY=1; shift ;;
-        --threshold) THRESHOLD="${2:-0}"; if [ $# -ge 2 ]; then shift 2; else shift; fi ;;
+        --threshold)
+            if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                echo "FAIL: --threshold requires an integer value" >&2
+                exit 2
+            fi
+            if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                echo "FAIL: --threshold must be an integer (got: $2)" >&2
+                exit 2
+            fi
+            THRESHOLD="$2"
+            shift 2
+            ;;
         --threshold=*) THRESHOLD="${1#--threshold=}"; shift ;;
         -h|--help)
             sed -n '2,30p' "$0"

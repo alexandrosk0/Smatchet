@@ -80,15 +80,22 @@ jobs:
         working-directory: build/ninja-test-msvc
         run: ctest --output-on-failure
 
-      - name: Fetch Font Awesome 6 Solid TTF
+      - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
         shell: bash
+        env:
+          # Pin to an immutable tag, not the mutable `6.x` branch — protects
+          # against silent upstream changes / branch hijack.
+          FA_TAG: "6.7.2"
+          # sha256 of fa-solid-900.ttf at tag 6.7.2. Bump in lockstep with FA_TAG.
+          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
         run: |
-          # assets/fonts/README.md states "CI fetches it on release-tag builds".
-          # No release workflow exists yet; fetch here so build-and-test artefacts
-          # also ship with the icon font and bucket-C / bucket-E jobs that consume
-          # the uploaded exe have icons available.
-          curl -sSL https://github.com/FortAwesome/Font-Awesome/raw/6.x/webfonts/fa-solid-900.ttf \
+          set -euo pipefail
+          # `-f` flips curl to fail on HTTP error (so a 404 HTML page doesn't
+          # land in the font path). `-L` follows redirects.
+          curl -fsSL \
+               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
                -o assets/fonts/fa-solid-900.ttf
+          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
           ls -l assets/fonts/fa-solid-900.ttf
 
       - name: Configure ninja-iter-msvc
