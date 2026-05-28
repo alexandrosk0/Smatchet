@@ -29,10 +29,10 @@ add_executable(SmatchetLuaTests
     # FieldEditAuditSource, Logger, Commands::CommandRegistry/Command/FuzzyMatch)
     # are added below.
     "${CMAKE_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_PathUtils.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/ConfigManager_Views.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/FieldEditAuditSource.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager_PathUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager_Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Command.cpp"
     "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/CommandRegistry.cpp"
@@ -64,6 +64,20 @@ endif()
 target_include_directories(SmatchetLuaTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source_Core/include"
     "${CMAKE_SOURCE_DIR}/Source_Core/src"   # for ConfigManager_Internal.h
+    # Subsystem subdirs from source-core-dir-reorg. All 5 are needed (not just
+    # Config/Persistence): moved headers cross-include each other bare — e.g.
+    # ConfigManager.h -> SmatchetThemeIds.h (Ui), ILuaBindingHost.h ->
+    # TrackerFieldSchema.h (Tracker) — so the full subdir set must be on the path.
+    "${CMAKE_SOURCE_DIR}/Source_Core/include/Tracker"
+    "${CMAKE_SOURCE_DIR}/Source_Core/include/Sync"
+    "${CMAKE_SOURCE_DIR}/Source_Core/include/Persistence"
+    "${CMAKE_SOURCE_DIR}/Source_Core/include/Config"
+    "${CMAKE_SOURCE_DIR}/Source_Core/include/Ui"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Sync"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Persistence"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config"
+    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/tests/support"
     "${LUA_SRC_DIR}/src"
 )

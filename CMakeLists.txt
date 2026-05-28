@@ -604,8 +604,8 @@ endif()
 # 3. SMATCHET CORE LIBRARY (Engine-Agnostic)
 # ==============================================================================
 file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "Source_Core/src/*.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHost.cpp")
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Ui/SmatchetImGuiHost.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Ui/SmatchetImGuiHostC_Diagnostics.cpp")
 # ImGuiColorTextEdit — vendored third-party TU promoted from Plugins/LuaConsole/ThirdParty
 # so Source_Core (AI chat panel) can consume it. The glob above only matches
 # Source_Core/src/*.cpp; the ThirdParty TU needs an explicit append. Both Standalone and
@@ -621,7 +621,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
 endif()
 # GLOB snapshots at configure time; pick up new TUs if the cache predates them (no duplicate paths).
-set(_SMATCHET_CPP_SYNTAX "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/CppSyntaxHighlight.cpp")
+set(_SMATCHET_CPP_SYNTAX "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Ui/CppSyntaxHighlight.cpp")
 if(EXISTS "${_SMATCHET_CPP_SYNTAX}")
     list(FIND CORE_SOURCES "${_SMATCHET_CPP_SYNTAX}" _smatchet_cpp_syntax_idx)
     if(_smatchet_cpp_syntax_idx EQUAL -1)
@@ -660,7 +660,7 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Smatc
 # shape as the setup banner. Compiled only on the ON path; the OFF build
 # never visits it (call site in SmatchetUI.cpp is wrapped
 # `#if defined(SMATCHET_WITH_WHISPER) ... #endif`).
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperOverlayUi.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Ui/SmatchetWhisperOverlayUi.cpp")
 # Phase G — whisper-dictation-roundtrip scenario. Source-list conditional with
 # the same shape as the overlay + banner above: the TU references
 # WhisperPlugin::SetMockTranscription which lives behind the gate, so the OFF
@@ -671,7 +671,7 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Comma
 if(SMATCHET_WITH_WHISPER)
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperSetupBanner.cpp")
-    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetWhisperOverlayUi.cpp")
+    list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Ui/SmatchetWhisperOverlayUi.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperDictationScenario.cpp")
     list(APPEND CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp")
 else()
@@ -703,9 +703,9 @@ set(_SMATCHET_AI_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiAssistantStreamingTransportDownScenario.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/AiChatHistoryRenderScenario.cpp"
 )
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAiAssistantUi.cpp")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Ui/SmatchetAiAssistantUi.cpp")
     list(APPEND _SMATCHET_AI_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/SmatchetAiAssistantUi.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/src/Ui/SmatchetAiAssistantUi.cpp")
 endif()
 foreach(_smatchet_ai_src IN LISTS _SMATCHET_AI_SOURCES)
     list(REMOVE_ITEM CORE_SOURCES "${_smatchet_ai_src}")
@@ -718,6 +718,15 @@ endif()
 add_library(SmatchetCoreInterface INTERFACE)
 target_include_directories(SmatchetCoreInterface INTERFACE
         Source_Core/include
+        # Subsystem subdirs from the source-core-dir-reorg precursor
+        # (docs/design/source-core-dir-reorg.md): headers moved into these
+        # dirs but #includes stay bare (`#include "JiraClient.h"`), so each
+        # subdir must be on the include path. Keeps zero #include rewrites.
+        Source_Core/include/Tracker
+        Source_Core/include/Sync
+        Source_Core/include/Persistence
+        Source_Core/include/Config
+        Source_Core/include/Ui
         Source_Core/ThirdParty/ImGuiColorTextEdit
         # Vendored Font Awesome 6 icon-name header (zlib licence) from
         # github.com/juliettef/IconFontCppHeaders. Header-only — defines
@@ -805,9 +814,18 @@ endfunction()
 function(smatchet_configure_core_impl_target _target)
     target_link_libraries("${_target}" PUBLIC SmatchetCoreInterface)
     target_include_directories("${_target}" PRIVATE Source_Core/src
+            # Subsystem subdirs from source-core-dir-reorg — bare #includes
+            # resolve against these roots so no #include rewrites are needed.
+            Source_Core/src/Tracker
+            Source_Core/src/Sync
+            Source_Core/src/Persistence
+            Source_Core/src/Config
+            Source_Core/src/Ui
             "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
     if(SMATCHET_WITH_MCP)
-        target_include_directories("${_target}" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+        target_include_directories("${_target}" PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp/src")
     endif()
     if(SMATCHET_WITH_WHISPER)
         # SmatchetWhisperSetupBanner.cpp (compiled into CORE_SOURCES on the ON
@@ -883,8 +901,8 @@ endif()
 # 3b. STATIC PLUGINS (same IPlugin contract as future DLLs)
 # ==============================================================================
 if(SMATCHET_WITH_MCP)
-    add_library(SmatchetPlugin_Mcp STATIC Plugins/Mcp/McpPlugin.cpp Plugins/Mcp/McpJsonRpcPure.cpp)
-    target_include_directories(SmatchetPlugin_Mcp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+    add_library(SmatchetPlugin_Mcp STATIC Plugins/Mcp/src/McpPlugin.cpp Plugins/Mcp/src/McpJsonRpcPure.cpp)
+    target_include_directories(SmatchetPlugin_Mcp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp" "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp/src")
     target_link_libraries(SmatchetPlugin_Mcp PUBLIC SmatchetCoreInterface SmatchetCoreMcpShim)
     # See AI-shim note on SmatchetPlugin_LuaConsole — UiDrawSession layout depends on
     # SMATCHET_WITH_AI. Plugins that include Source_Core headers must match the Source_Core
@@ -938,8 +956,8 @@ endif()
 if(WIN32)
     if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
         # EXCLUDE_FROM_ALL — Unreal-only target. See SmatchetCore_DX12 above.
-        add_library(SmatchetPlugin_Mcp_DX12 STATIC EXCLUDE_FROM_ALL Plugins/Mcp/McpPlugin.cpp Plugins/Mcp/McpJsonRpcPure.cpp)
-        target_include_directories(SmatchetPlugin_Mcp_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+        add_library(SmatchetPlugin_Mcp_DX12 STATIC EXCLUDE_FROM_ALL Plugins/Mcp/src/McpPlugin.cpp Plugins/Mcp/src/McpJsonRpcPure.cpp)
+        target_include_directories(SmatchetPlugin_Mcp_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp" "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp/src")
         target_link_libraries(SmatchetPlugin_Mcp_DX12 PUBLIC SmatchetCore_DX12 SmatchetCoreMcpShim)
         smatchet_apply_strict_warnings(SmatchetPlugin_Mcp_DX12)
     endif()
@@ -959,12 +977,12 @@ if(WIN32)
 
     # EXCLUDE_FROM_ALL — Unreal-only target. See SmatchetCore_DX12 above.
     add_library(SmatchetImGuiHost_DX12 STATIC EXCLUDE_FROM_ALL
-            Source_Core/src/SmatchetImGuiHost.cpp
-            Source_Core/src/SmatchetImGuiHostC_Diagnostics.cpp
+            Source_Core/src/Ui/SmatchetImGuiHost.cpp
+            Source_Core/src/Ui/SmatchetImGuiHostC_Diagnostics.cpp
     )
     target_include_directories(SmatchetImGuiHost_DX12 PUBLIC Source_Core/include)
     if(SMATCHET_WITH_MCP AND SMATCHET_WITH_MCP_UNREAL)
-        target_include_directories(SmatchetImGuiHost_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp")
+        target_include_directories(SmatchetImGuiHost_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp" "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/Mcp/src")
     endif()
     if(SMATCHET_WITH_LUA_AUTOMATION)
         target_include_directories(SmatchetImGuiHost_DX12 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/LuaConsole")
@@ -990,10 +1008,10 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E rm -rf "${_SMATCHET_UNREAL_LIB_DIR}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_LIB_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHost.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/Ui/SmatchetImGuiHost.h"
                 "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetImGuiHost.h"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHostC.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/Ui/SmatchetImGuiHostC.h"
                 "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetImGuiHostC.h"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetDefaults.h"

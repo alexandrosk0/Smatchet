@@ -88,6 +88,12 @@ public class SmatchetImGuiPlugin : ModuleRules
         string ThirdPartyDir = Path.GetFullPath(Path.Combine(PluginDir, "..", "..", "ThirdParty"));
         string SmatchetIncludeDir = Path.Combine(ThirdPartyDir, "Smatchet", "include");
         PublicIncludePaths.Add(SmatchetIncludeDir);
+        // NOTE (source-core-dir-reorg): the CMake packaging step copies only a
+        // flat curated header set (SmatchetImGuiHost.h, SmatchetImGuiHostC.h,
+        // SmatchetDefaults.h + imgui) into this dir — NOT the whole Source_Core
+        // tree — and this plugin only #includes that flat set. So the reorg's
+        // src/include subdirs do NOT need to be on the UE include path; the
+        // packaging source paths just had to follow the moved headers.
 
         // Expected output layout from a companion CMake packaging step.
         // Example:
