@@ -110,6 +110,7 @@ First match wins. Cite the rule when rejecting so the orchestrator (and the user
 | 16 | "Drop `const&` and pass by value, the compiler will elide" on a non-trivial type | Convention — explicit `const&` for non-trivial params. |
 | 17 | "Use `std::map` for deterministic order" when insertion-order does not matter | Prefer `std::unordered_map` on hot paths. |
 | 18 | Rename a public symbol the prompt has not authorised | Mechanical scope creep — flag for `mechanic` with explicit user sign-off, do not route automatically. |
+| 19 | Silence a strict-zone high-integrity lint (`no-printf-stderr` / `no-raw-new` / `define-imgui` / `narrowing-conversions`) with an ad-hoc inline comment or `// NOLINT` | Strict-zone deviations use `SMATCHET_DEVIATION(rule=…; reason=…; owner=…; revisit=…)` (AGENTS.md § Tiered enforcement) so they carry an audit-able revisit date — recommend that form, don't route the ad-hoc suggestion. |
 
 When rejecting, the triage table entry's `applies?` column is `no` and the `reason` column cites the rule number (e.g. `override #1 — C++14 hard`).
 
