@@ -307,16 +307,16 @@ case "$MODE" in
     ;;
 
   catalog)
-    snap_sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    ts="${SMATCHET_LINT_FAKE_TS:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
     triples="$(compute_strict_triples)"
+    # NB: NO timestamp / commit-sha in the body — the develop post-merge job
+    # enforces drift via `git diff --exit-code`, so the file must be a pure
+    # function of the violation set (byte-identical when nothing changed).
+    # "when did it last change" lives in git history, not the file.
     gen_catalog() {
         echo "# High-Integrity C++ — grandfathered baseline"
         echo
-        echo "_Auto-generated. Do not hand-edit; run \`bash scripts/dev/test-lint-rules.sh --catalog --refresh\`._"
-        echo "_Refreshed on \`develop\` post-merge; gate uses live scan vs \`origin/develop\`, not this file._"
-        echo
-        echo "Snapshot: $snap_sha  ·  $ts"
+        echo "_Auto-generated. Do not hand-edit; run \`bash scripts/dev/test-lint-rules.sh --catalog --refresh\` and commit._"
+        echo "_Refreshed on \`develop\` post-merge (fail-on-drift); gate uses live scan vs \`origin/develop\`, not this file._"
         local total=0 rule cnt
         for rule in narrowing-conversions no-printf-stderr no-raw-new define-imgui deviation-overdue; do
             echo
@@ -330,7 +330,6 @@ case "$MODE" in
         echo
         echo "## Totals"
         echo "- strict-zone violators grandfathered: $total"
-        echo "- last refresh: $ts"
     }
     if [ "$REFRESH" -eq 1 ]; then
         mkdir -p "$(dirname "$BASELINE_FILE")"
