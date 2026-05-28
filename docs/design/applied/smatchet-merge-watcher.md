@@ -184,10 +184,41 @@ Per [`AGENTS.md`](../../AGENTS.md) § Verification automation — zero manual st
 - **`merge-watch unregister --reason=<text>`** — audit-trail every unregister with a reason string for later analysis of why users abandoned watcher-owned PRs. Deferred — not P0.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+Shipped 2026-05-21 → 2026-05-28 across 6 phases + 5 follow-up fix/extension PRs. All 7 plan-listed deliverables exist on `develop`; Phase 4b shipped as a dedicated server TU rather than a `SmatchetToastManager` extension (see § Deviations).
+
+- **Phase 1 — Registry CRUD + foreground daemon** (#363, 2026-05-21). `scripts/dev/merge-watcher.py` + `merge-watcher-cli.py`; per-user registry at `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` with file-lock serialization; foreground-default daemon writes per-PR state every poll cycle.
+- **Phase 2 — PASS-branch auto-merge + cascade** (#364, 2026-05-21). On `GATES_PASSED`, watcher flips draft→ready, REST-squash-merges via `gh api -X PUT`, detects stacked children via `gh pr list --search "base:<merged-branch>"`, pulls develop into each. Per-branch lock-files in `.claude/.merge-watch/locks/` prevent cascade races.
+- **Phase 3 — CR-triage classifier** (#365 + #382, 2026-05-21). `scripts/dev/coderabbit-triage.py` (373 LoC) implements the 18-rule Smatchet-invariant rejection table from `agents/coderabbit-triage.md`. `MERGE_WATCH_TRIAGE_BUDGET` env tunable (default 1 — lowered from 3 per the option-C rationale in § Decisions locked item 2).
+- **Phase 4a — notify dispatch** (#366, 2026-05-21). `scripts/dev/smatchet-notify.sh` + `smatchet-notify-windows.ps1` give the two-prong channel: localhost HTTP POST to Smatchet (when running) + BurntToast fallback. Re-notify suppression via `notify_dispatched_for_state` registry field.
+- **Phase 4b — Smatchet in-app HTTP notify endpoint** (#367, 2026-05-21). `Source_Core/include/SmatchetMergeWatchNotifyServer.h` + `Source_Core/src/SmatchetMergeWatchNotifyServer.cpp` (161 LoC). cpp-httplib server on `127.0.0.1:7679` accepts POST `/merge-watch/notify` and posts toast appends through `MainThreadDispatcher`.
+- **Phase 4c — Windows Scheduled Task autostart** (#370, 2026-05-21). `merge-watcher-install-autostart.ps1` (run-at-login + restart-on-crash + log redirect) + `merge-watcher-uninstall-autostart.ps1` (preserves user data).
+- **Phase 5 — bats integration coverage** (#368, 2026-05-21). `tests/bats/merge_watcher.bats` (997 LoC at archive time) covers registry CRUD, file-lock concurrency, state-file lifecycle, per-PR JSON shape, Phase 4a notify suppression, Phase 4b HTTP probe, Phase 3 classifier rule-set sample.
+
+**Follow-up fix / extension PRs (post-Phase-5)**:
+
+- #392, #393 (2026-05-22) — auto `gh pr ready` before merge; resolve `bash` to Git-Bash (not WSL) on Windows hosts; UnicodeEncodeError defence (`sys.stdout.reconfigure(encoding='utf-8')`) for the `→` glyph that crashed the daemon under cp1252.
+- #407 (2026-05-23) — option-C fast-notify on CR findings + inline-files URL surfaced in the notification body.
+- #418 (2026-05-23) — per-HEAD reset of `triage_attempts` (the precursor fix to the 2026-05-28 P1 entry below).
+- #428 (2026-05-23) — C4 prong 1: flip draft→ready BEFORE the gates poll (not just before merge) so CR `auto_review.drafts:false` doesn't skip review.
+- #431 (2026-05-23) — C4 prong 2: require non-empty CR review for the `NONE + status-SUCCESS` pass path (closes the draft-PR-bypass-via-placeholder-StatusContext gap).
+- #487 (2026-05-28) — triage-budget reset on CR-clear + `resolveReviewThread` mutation after auto-act push (opt-in `MERGE_WATCH_RESOLVE_CR_THREADS=true`). Plan: `docs/design/merge-watcher-triage-recovery.md`.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **`tests/fixtures/watcher_registry_active.json` + `watcher_pr_state_*.json` — NOT created.** Plan § Files-to-modify items 7 + 8 named these fixtures; Phase 5 (#368) ended up using inline JSON via bats heredocs / `cat > "$LOCALAPPDATA/…/active.json" <<JSON …` patterns. Rationale: per-test bespoke shapes were easier to keep readable than juggling six top-level fixture files plus the inline state-overrides every test needs anyway. No observable coverage gap.
+- **Phase 4b shape — NEW server TU instead of `SmatchetToastManager` extension.** Plan § Files-to-modify item 10 named `SmatchetToastManager.h/.cpp` as the surface to extend. Phase 4b (#367) added a new `SmatchetMergeWatchNotifyServer.h/.cpp` pair instead — the HTTP server lifecycle (bind / accept loop / shutdown) is a different concern from the toast-render lifecycle, and tangling them into one TU would have grown `SmatchetToastManager.cpp` past the 67 KB file-size cap. The server TU calls `MainThreadDispatcher::PostToMainThread([&]{ toastManager.Append(...); })` on receipt, so the dispatcher-drain integration the plan specified is preserved.
+- **Triage budget default 3 → 1.** Plan § Decisions locked item 2 originally locked 3; updated in-line via the option-C fix logged in `docs/backlog/agent-self-improvement/process.md` (2026-05-22, applied via #407). Triage retries don't fix code, they only re-classify; the loop's actual value is the user notification, which should fire on the next poll, not three polls later. The plan-doc decision text has since been amended in-place to reflect the new default + cross-link to the sub-bug-a fix (2026-05-28, #487).
+- **Auto-act safeguards (decision 6) shipped in two waves.** Plan's decision-6 list was implemented as Phase 5+, not as part of original Phase 5. `MERGE_WATCH_AUTO_ACT`, dedup, budget, claude-on-PATH check, uncommitted-clone guard, detached subprocess, per-`(PR, sha-prefix)` log file — all landed across #407 / #418 / a follow-up `chore(merge-watcher): option C` series.
+- **C4 (draft-PR bypass) closure is two prongs, both implemented post-plan.** Plan didn't anticipate the `auto_review.drafts:false` CR config behaviour. Closed via #428 (flip-ready before gates poll) + #431 (require non-empty CR review for `NONE + status-SUCCESS`). Both prongs cross-linked from `docs/agent-rules/merge-gates.md`.
+- **Triage-recovery work (sub-bug a + sub-bug b) gets a sibling plan.** The 2026-05-22 latching-`TRIAGE_BUDGET_EXHAUSTED` + missing-`resolveReviewThread` issues turned out to be substantive enough that they earned their own plan doc — `docs/design/merge-watcher-triage-recovery.md` — rather than being captured as deviations here. Same code area; separate plan because the fix introduces new helper functions + a new env knob + a documented manual-unblock recipe.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run; named PR-fast scenario for Phase 4)*
+
+- **Bucket A (pure-logic ctest)**: N/A — implementation is Python + bash + a Phase-4-only C++ TU; no `Source_Core/` pure-logic helpers exposed.
+- **Bucket E (ImGui Test Engine)**: deferred. The plan promised `tests/ui/merge_watcher_toast_arrives.test.cpp` for Phase 4b; it never shipped. The 4b TU is exercised via Phase 5 bats (`maybe_notify`'s subprocess invocation of `smatchet-notify.sh`, which HTTP-POSTs to `127.0.0.1:7679` and surfaces success/failure). Tracked in tooling backlog as a follow-up — replacing it with a bucket-E probe would be one of the deferred bucket-E entries already on the list.
+- **Bash-driver scenario**: `tests/bats/merge_watcher.bats` — passing on every CI run since Phase 5 landed. Coverage spans registry CRUD, lock concurrency, state-file lifecycle, classifier rule-set, notify suppression, HTTP-endpoint smoke, and (post-#487) the 9 triage-recovery cases.
+- **Sanitizer build**: Phase 4b TU runs in the `Sanitizer (ASAN + UBSAN)` CI job; clean since #367.
+- **Build gate**: dual-target `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — Phase 4b TU is `SMATCHET_WITH_MCP`-gated on Standalone (Unreal target keeps `SMATCHET_WITH_MCP_UNREAL` OFF), so Unreal-side compiles unaffected. Clean on every merge.
+- **PR-fast perf scenario**: Phase 4b's POST handler does not run on the UI thread; dispatcher drain absorbs the toast append. No regression observed in `app_startup_with_toast_replay` baselines around the #367 timeframe.
+- **Production validation**: the watcher has merged every PR in this repo that landed via "Register with watcher" since 2026-05-21, including a multi-PR cascade during the github-tracker work + the 2026-05-28 session's PRs once the sub-bug-b `resolveReviewThread` fix (#487) closed the stuck-threads gap.

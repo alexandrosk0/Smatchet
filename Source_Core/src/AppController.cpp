@@ -363,7 +363,7 @@ AppController::~AppController() {
     // or read `this` via __smatchet_app must be joined BEFORE member destruction begins. This
     // matches the contract described in MainThreadDispatcher.h and AppController_LuaBindings.cpp.
 
-    // Phase 4b of docs/design/smatchet-merge-watcher.md — stop the merge-watch
+    // Phase 4b of docs/design/applied/smatchet-merge-watcher.md — stop the merge-watch
     // HTTP server FIRST. Its listen thread queues toast-append lambdas via
     // mainThreadDispatcher; the join here guarantees no late post races
     // BeginShutdown() below.
@@ -1406,7 +1406,7 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
     InitLua();
 
-    // Phase 4b of docs/design/smatchet-merge-watcher.md — start the localhost
+    // Phase 4b of docs/design/applied/smatchet-merge-watcher.md — start the localhost
     // notify endpoint AFTER the main-thread dispatcher is initialised (it's a
     // member initialiser, ready since the AppController ctor) and BEFORE Lua
     // setup since the endpoint is independent of plugin state. Best-effort —

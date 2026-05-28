@@ -2,7 +2,7 @@
 # scripts/dev/smatchet-notify.sh
 # ----------------------------------------------------------------------------
 # Notification dispatcher for smatchet-merge-watcher Phase 4a (per
-# `docs/design/smatchet-merge-watcher.md`).
+# `docs/design/applied/smatchet-merge-watcher.md`).
 #
 # Tries three channels in order:
 #   1. Smatchet in-app toast via localhost HTTP POST (Phase 4b — currently

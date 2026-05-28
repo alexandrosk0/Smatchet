@@ -2,7 +2,7 @@
 """
 merge-watcher-cli — register / unregister / status / list subcommands.
 
-Phase 1 of `docs/design/smatchet-merge-watcher.md`. Per-user registry at
+Phase 1 of `docs/design/applied/smatchet-merge-watcher.md`. Per-user registry at
 `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` (cross-clone). The
 companion daemon (`merge-watcher.py`) polls every registered PR via
 `scripts/dev/merge-gates.sh`.
@@ -273,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="merge-watch",
         description=(
             "Per-user CLI for smatchet-merge-watcher Phase 1 (registry CRUD). "
-            "See docs/design/smatchet-merge-watcher.md for the full design."
+            "See docs/design/applied/smatchet-merge-watcher.md for the full design."
         ),
     )
     sub = p.add_subparsers(dest="cmd", required=True)
