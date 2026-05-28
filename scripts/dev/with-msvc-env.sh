@@ -40,12 +40,20 @@ if [ ! -x "$VSWHERE" ]; then
     exit 2
 fi
 
-# `-latest -products *` covers BuildTools + IDE editions. -property
-# installationPath returns the absolute install dir (e.g.
+# `-latest -products *` covers BuildTools + IDE editions. `-requires
+# Microsoft.VisualStudio.Component.VC.Tools.x86.x64` filters out installs that
+# lack the VC toolchain (e.g. a VS instance with only the "ASP.NET and web
+# development" workload) — without the filter, vswhere happily returns such
+# an install and the resulting `vcvars64.bat` lookup fails further downstream
+# with a confusing "file not found" instead of the clear early-exit here.
+# -property installationPath returns the absolute install dir (e.g.
 # "C:\Program Files\Microsoft Visual Studio\2022\Community").
-VS_INSTALL="$("$VSWHERE" -latest -products '*' -property installationPath 2>/dev/null | tr -d '\r')"
+VS_INSTALL="$("$VSWHERE" -latest -products '*' \
+    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
+    -property installationPath 2>/dev/null | tr -d '\r')"
 if [ -z "$VS_INSTALL" ]; then
-    echo "with-msvc-env: no Visual Studio install detected by vswhere.exe" >&2
+    echo "with-msvc-env: no Visual Studio install with VC tools detected by vswhere.exe" >&2
+    echo "  (install requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64)" >&2
     exit 2
 fi
 
