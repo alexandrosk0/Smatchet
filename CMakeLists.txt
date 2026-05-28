@@ -1008,10 +1008,10 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E rm -rf "${_SMATCHET_UNREAL_LIB_DIR}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_SMATCHET_UNREAL_LIB_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHost.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/Ui/SmatchetImGuiHost.h"
                 "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetImGuiHost.h"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetImGuiHostC.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/Ui/SmatchetImGuiHostC.h"
                 "${_SMATCHET_UNREAL_INCLUDE_DIR}/SmatchetImGuiHostC.h"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/Source_Core/include/SmatchetDefaults.h"
