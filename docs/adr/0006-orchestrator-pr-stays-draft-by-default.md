@@ -43,6 +43,14 @@ Specifically:
 - **`auto_review.drafts: false` is no longer load-bearing.** If a future repo flips that setting, behaviour is unchanged — the poller still blocks `NONE` for CR-installed repos via the grace window.
 - **Repos without `.coderabbit.yaml` still pass `CodeRabbit: NONE`.** Legacy behaviour preserved; the poller's `MERGE_GATES_CR_INSTALLED` override remains available for forks / out-of-tree configs.
 
+# Amendment (2026-05-27) — Authorized-merge flip-at-poll-start carve-out
+
+The original ADR left a hole: when CR is installed AND the PR opens draft AND `auto_review.drafts: false`, CR's placeholder `StatusContext` SUCCESS could fire without any real review activity. The C4 prong 2 fix landed in `merge-gates.sh` (require non-empty inline CR comments on the current head before passing on NONE+SUCCESS) closes the bypass for the **default** poll path, but at the cost of a 10-poll grace-window wait every authorized-merge cycle on draft PRs.
+
+The carve-out: `MERGE_GATES_FLIP_READY=true` (passed by orchestrator + `smatchet-merge-watcher` only when the user has authorized auto-merge) flips the PR ready-for-review BEFORE polling starts. CR's auto-review fires immediately on the ready transition, the poller sees a real review signal, and the gate decides on actual evidence rather than placeholder status. Plain poll-only callers (status checks, dry-runs) leave the env unset; the draft-as-WIP semantics for non-authorized polls are preserved.
+
+This is **not** a re-introduction of PR #319's blanket "open ready" — PRs still open `--draft`. The flip happens later, at the entry point of an authorized-merge poll cycle, when the user has explicitly opted into the merge path.
+
 # Alternatives considered
 
 - **Keep #319 as belt-and-suspenders.** Rejected — two mechanisms enforcing one invariant drift; the cost of drift exceeds the benefit of an earlier CR fire.
