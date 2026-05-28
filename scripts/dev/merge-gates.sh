@@ -549,12 +549,14 @@ poll_merge_gates() {
                 ;;
         esac
 
-        # Reset STALE streak whenever the state leaves the STALE family. Any
-        # non-STALE cr_state (NONE / COMMENTED / APPROVED / CHANGES_REQUESTED
-        # / DISMISSED) breaks consecutive — without this reset, intermittent
-        # STALE polls would accumulate across non-STALE intervals and trigger
-        # the auto-re-review trigger early.
-        if [ "$cr_state" != "STALE" ]; then
+        # Reset STALE streak whenever the state leaves the BLOCKING-STALE
+        # family. Any non-STALE cr_state breaks consecutive — and so do
+        # passing STALE variants (STALE_CLEAN / STALE_RESOLVED) where
+        # cr_pass=true, since the re-review trigger only makes sense for
+        # blocking-STALE polls. Without `|| cr_pass=true`, an intermittent
+        # STALE_WITH_FINDINGS -> STALE_RESOLVED -> STALE_WITH_FINDINGS
+        # pattern would accumulate streak across the passing intervals.
+        if [ "$cr_state" != "STALE" ] || [ "$cr_pass" = true ]; then
             stale_streak=0
             stale_head=""
         fi
