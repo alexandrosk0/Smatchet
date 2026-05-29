@@ -22,59 +22,59 @@ The table below is **auto-generated** by `scripts/dev/test-plan-index.sh` from t
 
 | Plan (slug) | Approx. date | One-line summary |
 |---|---|---|
-| [`agent-contract-alignment`](shipped/agent-contract-alignment.md) | — | Agent contract alignment |
-| [`agent-docs-improvements`](shipped/agent-docs-improvements.md) | — | Agent docs improvements — 5-action P2/P3 backlog clearance |
-| [`agent-ecosystem-gap-fill`](shipped/agent-ecosystem-gap-fill.md) | — | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
-| [`agents-skill-conversion`](shipped/agents-skill-conversion.md) | — | Evaluate current agents — skill conversion candidates (v3, conservative-only, dual-publish) |
-| [`ai-assistant-bucket-e-tus`](shipped/ai-assistant-bucket-e-tus.md) | — | AI Assistant bucket-E TUs — execution plan |
-| [`ai-assistant-side-panel`](shipped/ai-assistant-side-panel.md) | — | AI Assistant — Right-Docked Side Panel + agents.md Harness |
-| [`ai-chat-claude-desktop-parity`](shipped/ai-chat-claude-desktop-parity.md) | — | AI chat — Claude-Desktop-style hover actions, pin, visible user bubbles, persisted history |
-| [`ai-chat-textedit-markdown`](shipped/ai-chat-textedit-markdown.md) | — | AI chat — TextEditor-backed selectable markdown render |
-| [`ai-client-test-override`](shipped/ai-client-test-override.md) | — | `AiClientFactory::SetTestOverride` + `AiPrefsTestConnection` extraction |
-| [`autonomous-debugging-no-creds`](shipped/autonomous-debugging-no-creds.md) | — | Plan — Fully autonomous debugging without credentials or user input |
-| [`coderabbit-react-loop`](shipped/coderabbit-react-loop.md) | — | PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`) |
-| [`command-system-plan`](shipped/command-system-plan.md) | — | Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. |
-| [`deepseek-provider`](shipped/deepseek-provider.md) | — | DeepSeek first-class provider + auto-clear chat on model change |
-| [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | — | Plan — description-field tooltip consolidation |
-| [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | — | Plan: Enforce dock-slot-only windows (no free-floating) |
-| [`first-time-setup-hardening`](shipped/first-time-setup-hardening.md) | — | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
-| [`generic-cmake-cross-platform`](shipped/generic-cmake-cross-platform.md) | — | Plan — Generic Cross-Platform CMake |
-| [`git-ref-plan-locks`](shipped/git-ref-plan-locks.md) | — | git-ref plan-locks — atomic remote-agent coordination |
-| [`git-to-perforce-migration`](shipped/git-to-perforce-migration.md) | — | Plan — Perforce as local agent VCS (dual with git) |
-| [`github-tracker-backend`](shipped/github-tracker-backend.md) | — | Plan — Rip out C++ agentic code + add GitHub as third tracker |
-| [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | — | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
-| [`grid-cell-edit-perf`](shipped/grid-cell-edit-perf.md) | — | grid-cell-edit-perf — async cell-edit commit (pillar 1 + 2 restoration) |
-| [`imgui-test-engine-bucket-e`](shipped/imgui-test-engine-bucket-e.md) | — | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
-| [`imgui-test-engine-bucket-e-execution`](shipped/imgui-test-engine-bucket-e-execution.md) | — | Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. |
-| [`large-files-and-phase-2`](shipped/large-files-and-phase-2.md) | — | Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. |
-| [`light-release-unreal-default`](shipped/light-release-unreal-default.md) | — | Plan - Lua-Capable Light Release and Unreal Default |
-| [`lint-hook-deferred-drain`](shipped/lint-hook-deferred-drain.md) | — | Reduce build / cppcheck / test invocations during multi-edit changes |
-| [`lua-host-friend-drop`](shipped/lua-host-friend-drop.md) | — | Lua-host friend drop — re-scope of Track B / B3 post-PR #144 |
-| [`lua-recorded-cmd-list`](shipped/lua-recorded-cmd-list.md) | — | Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). |
-| [`lua-recorded-cmd-list-v2`](shipped/lua-recorded-cmd-list-v2.md) | — | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
-| [`markdown-language-definition-for-textedit`](shipped/markdown-language-definition-for-textedit.md) | — | Extend ImGuiColorTextEdit — `LanguageDefinition::Markdown()` + 3 consumers |
-| [`merge-watcher-triage-recovery`](shipped/merge-watcher-triage-recovery.md) | — | Plan — merge-watcher triage-budget recovery + CR-thread resolution |
-| [`open-backlog-sweep`](shipped/open-backlog-sweep.md) | — | Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. |
-| [`p4-gated-ship-loop`](shipped/p4-gated-ship-loop.md) | — | Plan — P4-gated ship-loop |
-| [`pillar-1-2-audit-2026-05-17`](shipped/pillar-1-2-audit-2026-05-17.md) | — | Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). |
-| [`pillar-1-2-perf-review-system`](shipped/pillar-1-2-perf-review-system.md) | — | Repeatable Pillar 1 + Pillar 2 performance review — Smatchet |
-| [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | — | Plan: Tighten catch-all exception handling policy |
-| [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | — | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
-| [`process-backlog-tighten-1-2-3-9-11-12`](shipped/process-backlog-tighten-1-2-3-9-11-12.md) | — | Tighten 6 process-backlog rules (items 1, 2, 3, 9, 11, 12) |
-| [`remove-global-project-key`](shipped/remove-global-project-key.md) | — | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
-| [`rich-text-editing-v2-remaining`](shipped/rich-text-editing-v2-remaining.md) | — | Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. |
-| [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | — | Plan — Shell-script self-review lint |
-| [`single-click-grid-edit-toggle`](shipped/single-click-grid-edit-toggle.md) | — | Plan — single-click / double-click toggle for grid cell edit |
-| [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | — | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
-| [`test-rig-agent`](shipped/test-rig-agent.md) | — | Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. |
-| [`test-suite-expansion`](shipped/test-suite-expansion.md) | — | Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. |
-| [`test-suite-expansion-completion`](shipped/test-suite-expansion-completion.md) | — | Test suite expansion — completion plan (Phases 4-9 + carry-overs) |
-| [`theme-driven-cpp-syntax-highlight`](shipped/theme-driven-cpp-syntax-highlight.md) | — | Per-theme C++ syntax palette extracted from `BlameUiThemeColors`; generic `CppSyntaxHighlight` TU shared by blame + markdown + field renderers. Fully shipped (see plan § Shipped PRs). |
-| [`tracker-interface-split`](shipped/tracker-interface-split.md) | — | Plan — ITrackerClient Interface Split |
-| [`unreal-command-bridge`](shipped/unreal-command-bridge.md) | — | Plan - Unreal Async Command Bridge |
-| [`unreal-console-command-bridge`](shipped/unreal-console-command-bridge.md) | — | Plan - Unreal Console Command Bridge |
-| [`vs-style-view-menu`](shipped/vs-style-view-menu.md) | — | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |
-| [`whisper-dictation`](shipped/whisper-dictation.md) | — | whisper-dictation — push-to-talk dictation with local + cloud transcription |
+| [`rich-text-editing-v2-remaining`](shipped/rich-text-editing-v2-remaining.md) | 2026-05-09 | Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. |
+| [`command-system-plan`](shipped/command-system-plan.md) | 2026-05-11 | Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. |
+| [`remove-global-project-key`](shipped/remove-global-project-key.md) | 2026-05-12 | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
+| [`vs-style-view-menu`](shipped/vs-style-view-menu.md) | 2026-05-12 | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |
+| [`lua-recorded-cmd-list`](shipped/lua-recorded-cmd-list.md) | 2026-05-14 | Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). |
+| [`lua-recorded-cmd-list-v2`](shipped/lua-recorded-cmd-list-v2.md) | 2026-05-14 | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
+| [`agent-ecosystem-gap-fill`](shipped/agent-ecosystem-gap-fill.md) | 2026-05-15 | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
+| [`first-time-setup-hardening`](shipped/first-time-setup-hardening.md) | 2026-05-15 | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
+| [`imgui-test-engine-bucket-e`](shipped/imgui-test-engine-bucket-e.md) | 2026-05-15 | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
+| [`imgui-test-engine-bucket-e-execution`](shipped/imgui-test-engine-bucket-e-execution.md) | 2026-05-15 | Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. |
+| [`open-backlog-sweep`](shipped/open-backlog-sweep.md) | 2026-05-15 | Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. |
+| [`test-rig-agent`](shipped/test-rig-agent.md) | 2026-05-15 | Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. |
+| [`theme-driven-cpp-syntax-highlight`](shipped/theme-driven-cpp-syntax-highlight.md) | 2026-05-15 | Per-theme C++ syntax palette extracted from `BlameUiThemeColors`; generic `CppSyntaxHighlight` TU shared by blame + markdown + field renderers. Fully shipped (see plan § Shipped PRs). |
+| [`agent-contract-alignment`](shipped/agent-contract-alignment.md) | 2026-05-16 | Agent contract alignment |
+| [`ai-assistant-side-panel`](shipped/ai-assistant-side-panel.md) | 2026-05-16 | AI Assistant — Right-Docked Side Panel + agents.md Harness |
+| [`git-to-perforce-migration`](shipped/git-to-perforce-migration.md) | 2026-05-16 | Plan — Perforce as local agent VCS (dual with git) |
+| [`large-files-and-phase-2`](shipped/large-files-and-phase-2.md) | 2026-05-16 | Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. |
+| [`lint-hook-deferred-drain`](shipped/lint-hook-deferred-drain.md) | 2026-05-16 | Reduce build / cppcheck / test invocations during multi-edit changes |
+| [`lua-host-friend-drop`](shipped/lua-host-friend-drop.md) | 2026-05-16 | Lua-host friend drop — re-scope of Track B / B3 post-PR #144 |
+| [`test-suite-expansion`](shipped/test-suite-expansion.md) | 2026-05-16 | Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. |
+| [`test-suite-expansion-completion`](shipped/test-suite-expansion-completion.md) | 2026-05-16 | Test suite expansion — completion plan (Phases 4-9 + carry-overs) |
+| [`git-ref-plan-locks`](shipped/git-ref-plan-locks.md) | 2026-05-17 | git-ref plan-locks — atomic remote-agent coordination |
+| [`grid-cell-edit-perf`](shipped/grid-cell-edit-perf.md) | 2026-05-17 | grid-cell-edit-perf — async cell-edit commit (pillar 1 + 2 restoration) |
+| [`pillar-1-2-audit-2026-05-17`](shipped/pillar-1-2-audit-2026-05-17.md) | 2026-05-17 | Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). |
+| [`whisper-dictation`](shipped/whisper-dictation.md) | 2026-05-17 | whisper-dictation — push-to-talk dictation with local + cloud transcription |
+| [`agent-docs-improvements`](shipped/agent-docs-improvements.md) | 2026-05-18 | Agent docs improvements — 5-action P2/P3 backlog clearance |
+| [`ai-assistant-bucket-e-tus`](shipped/ai-assistant-bucket-e-tus.md) | 2026-05-18 | AI Assistant bucket-E TUs — execution plan |
+| [`ai-client-test-override`](shipped/ai-client-test-override.md) | 2026-05-18 | `AiClientFactory::SetTestOverride` + `AiPrefsTestConnection` extraction |
+| [`coderabbit-react-loop`](shipped/coderabbit-react-loop.md) | 2026-05-18 | PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`) |
+| [`agents-skill-conversion`](shipped/agents-skill-conversion.md) | 2026-05-19 | Evaluate current agents — skill conversion candidates (v3, conservative-only, dual-publish) |
+| [`ai-chat-textedit-markdown`](shipped/ai-chat-textedit-markdown.md) | 2026-05-19 | AI chat — TextEditor-backed selectable markdown render |
+| [`deepseek-provider`](shipped/deepseek-provider.md) | 2026-05-19 | DeepSeek first-class provider + auto-clear chat on model change |
+| [`markdown-language-definition-for-textedit`](shipped/markdown-language-definition-for-textedit.md) | 2026-05-19 | Extend ImGuiColorTextEdit — `LanguageDefinition::Markdown()` + 3 consumers |
+| [`process-backlog-tighten-1-2-3-9-11-12`](shipped/process-backlog-tighten-1-2-3-9-11-12.md) | 2026-05-19 | Tighten 6 process-backlog rules (items 1, 2, 3, 9, 11, 12) |
+| [`ai-chat-claude-desktop-parity`](shipped/ai-chat-claude-desktop-parity.md) | 2026-05-20 | AI chat — Claude-Desktop-style hover actions, pin, visible user bubbles, persisted history |
+| [`pillar-1-2-perf-review-system`](shipped/pillar-1-2-perf-review-system.md) | 2026-05-20 | Repeatable Pillar 1 + Pillar 2 performance review — Smatchet |
+| [`single-click-grid-edit-toggle`](shipped/single-click-grid-edit-toggle.md) | 2026-05-20 | Plan — single-click / double-click toggle for grid cell edit |
+| [`github-tracker-backend`](shipped/github-tracker-backend.md) | 2026-05-21 | Plan — Rip out C++ agentic code + add GitHub as third tracker |
+| [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | 2026-05-21 | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
+| [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | 2026-05-22 | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
+| [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | 2026-05-23 | Plan — description-field tooltip consolidation |
+| [`p4-gated-ship-loop`](shipped/p4-gated-ship-loop.md) | 2026-05-23 | Plan — P4-gated ship-loop |
+| [`autonomous-debugging-no-creds`](shipped/autonomous-debugging-no-creds.md) | 2026-05-24 | Plan — Fully autonomous debugging without credentials or user input |
+| [`light-release-unreal-default`](shipped/light-release-unreal-default.md) | 2026-05-25 | Plan - Lua-Capable Light Release and Unreal Default |
+| [`unreal-command-bridge`](shipped/unreal-command-bridge.md) | 2026-05-25 | Plan - Unreal Async Command Bridge |
+| [`unreal-console-command-bridge`](shipped/unreal-console-command-bridge.md) | 2026-05-25 | Plan - Unreal Console Command Bridge |
+| [`generic-cmake-cross-platform`](shipped/generic-cmake-cross-platform.md) | 2026-05-26 | Plan — Generic Cross-Platform CMake |
+| [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
+| [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
+| [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
+| [`merge-watcher-triage-recovery`](shipped/merge-watcher-triage-recovery.md) | 2026-05-28 | Plan — merge-watcher triage-budget recovery + CR-thread resolution |
+| [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | 2026-05-28 | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
+| [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | 2026-05-28 | Plan — Shell-script self-review lint |
 <!-- END auto-plan-index -->
 
 ### Notes
