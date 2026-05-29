@@ -29,24 +29,30 @@ printf -- '---\nname: p4-janitor\n---\nbody\n'        > agents/core/p4-janitor.m
 printf -- '---\nname: tracker-backend\n---\nbody\n'   > agents/project/tracker-backend.md
 
 # --- the discovery mechanism (mirror of setup-harness.sh link_agents) --------
-# A SINGLE directory link .claude/agents -> agents/ (junction on Windows, here a
-# portable dir symlink). Claude Code discovers agents recursively, so the split
-# subdirs are reached as .claude/agents/{core,project}/<name>.md.
-rm -rf .claude/agents 2>/dev/null || true
-ln -s ../agents .claude/agents 2>/dev/null || { mkdir -p .claude && cp -r agents .claude/agents; }
+# FLAT per-agent links in .claude/agents/<name>.md from the core/+project/
+# subdirs. Flat keeps discovery independent of harness subdir-recursion (the
+# canonical .claude/agents/*.md layout). Here we use plain links to stand in for
+# the hardlinks setup-harness creates on Windows.
+mkdir -p .claude/agents
+for f in agents/core/*.md agents/project/*.md; do
+  base="$(basename "$f")"
+  ln "$f" ".claude/agents/$base" 2>/dev/null \
+    || ln -s "../../$f" ".claude/agents/$base" 2>/dev/null \
+    || cp "$f" ".claude/agents/$base"
+done
 
-# --- assertions: each agent resolves through the link at its tier path -------
+# --- assertions: each agent resolves FLATLY at .claude/agents/<name>.md ------
 # name:tier pairs (no associative array — keeps this portable to bash 3.2/macOS).
 for pair in "code-review:core" "p4-janitor:core" "tracker-backend:project"; do
-  a="${pair%%:*}"; t="${pair##*:}"
-  p=".claude/agents/$t/$a.md"
-  [ -e "$p" ] || fail "agent not discoverable through the link: $p"
+  a="${pair%%:*}"
+  p=".claude/agents/$a.md"
+  [ -e "$p" ] || fail "agent not discoverable (flat): $p"
   grep -q "name: $a" "$p" || fail "$p resolves to wrong target"
 done
 
-# Recursive discovery sees all agents under the link (both tiers).
-n="$(find -L .claude/agents/core .claude/agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-[ "$n" = "3" ] || fail "expected 3 agents discoverable, got $n"
+# Exactly the agents from both tiers, flat — no extras, no collisions.
+n="$(find -L .claude/agents -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+[ "$n" = "3" ] || fail "expected 3 flat agent links, got $n"
 
-echo "test-agent-discovery-fixture: PASS — .claude/agents junction reaches core/+project/ agents recursively ($n)."
+echo "test-agent-discovery-fixture: PASS — flat .claude/agents/*.md from core/+project/ resolves ($n)."
 echo "Passed: 1  Failed: 0"
