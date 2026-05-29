@@ -77,6 +77,21 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 
 **Shell lint**: shell scripts under `scripts/dev/` go through `scripts/dev/test-shell-lint.sh` (5 rules; checklist at [`docs/agent-rules/shell-script-self-review.md`](docs/agent-rules/shell-script-self-review.md)). Auto-runs via `scripts/dev/test-all.sh` at the pre-push gate. Bypass: `SMATCHET_SKIP_SHELL_LINT=1` (logged; emergency-only).
 
+**Tiered enforcement** (high-integrity C++; plan [`docs/design/high-integrity-cpp-enforcement.md`](docs/design/high-integrity-cpp-enforcement.md)): `scripts/dev/test-lint-rules.sh` gates the **strict zone** on a delta basis — every NEW `(rule, file, snippet)` vs `origin/develop` fails CI; existing violators are grandfathered (snapshot: [`docs/backlog/high-integrity-cpp-baseline.md`](docs/backlog/high-integrity-cpp-baseline.md)). Delta-gated rules: `no-printf-stderr`, `no-raw-new`, `define-imgui`, `deviation-overdue`. `narrowing-conversions` (clang-tidy) is **opt-in / catalogue-only** — excluded from `--diff` (clang-tidy can't parse the MSVC compile-DB); run it with `SMATCHET_LINT_NARROWING=1` + a clang DB. Zones (the scanner asserts this list matches its own copy via `--selftest`):
+
+- **strict** (any violation fails): `Source_Core/src/Tracker/`, `Source_Core/src/Sync/`, `Source_Core/src/Persistence/`, `Source_Core/src/Config/`, `Source_Core/src/Commands/`, `Plugins/Mcp/src/` (+ matching `Source_Core/include/` subdirs).
+- **light** (not gated; existing inline exemptions apply): `Source_Core/src/Ui/`, `Target_Standalone/`.
+- **exempt** (not scanned): `ThirdParty/`, `build/`, non-C++ trees.
+
+**`SMATCHET_DEVIATION` comment** — forward-only superset of the inline exemption markers, for new strict-zone deviations. Grammar (pure comment; zero compile cost; the next non-blank line is the target):
+
+```cpp
+// SMATCHET_DEVIATION(rule=<rule-id>; reason=<short>; owner=<handle-or-unowned>; revisit=<YYYY-MM-DD | YYYY-Qn | slug | never>)
+int w = obj["w"].get<int64_t>();  // suppresses `narrowing-conversions` on this line
+```
+
+`rule` = scanner rule-id (suppresses that rule on the next line). `revisit` calendar markers that have passed emit `deviation-overdue` (a strict rule), forcing the audit loop; slug / `never` don't expire. Legacy markers (`// CLI stdout`, `// pre-logger-init`, `// C-ABI handle`, `// custom-deleter`) stay valid in perpetuity.
+
 **Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/PERF_WORKFLOW.md`](docs/PERF_WORKFLOW.md) and follow it. Don't load it for unrelated tasks.
 
 **Golden-image approval contract**: any agent that writes or regenerates a checked-in reference artefact a regression gate diffs against (`tests/golden/*.png`, JSON snapshots, deterministic byte streams) MUST hand the file + launched-app handle to the user and wait for explicit approve-golden verdict before `git add`. Iterate the underlying fix on rejection; never amend the golden to match a buggy state. Full recipe + motivating incident + dual-capture-no-golden preference in [`docs/agent-rules/golden-image-approval.md`](docs/agent-rules/golden-image-approval.md).

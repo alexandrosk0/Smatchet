@@ -226,12 +226,27 @@ N/A (enforcement PR) — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`,
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- Precursor `source-core-dir-reorg` (#505) landed first — see that plan; this work branched off the reorganized tree.
+- `8658993` · scanner: rule-ids, zone_of, SMATCHET_DEVIATION parser, --diff/--catalog/--scan-file/--full/--selftest modes.
+- `fdbd8b2` · subprocess-free hot path (~10× faster); `--root` fixes the --diff base scan; narrowing opt-in; AGENTS.md § Tiered enforcement + SMATCHET_DEVIATION grammar.
+- _(baseline)_ · byte-deterministic `--catalog` (no timestamp/sha) + initial `docs/backlog/high-integrity-cpp-baseline.md` (3 grandfathered `define-imgui`).
+- _(bats)_ · `tests/bats/lint_rules.bats` (12) + 6 fixtures + `test-lint-rules-bats.sh` wrapper; `--diff=`/`--scan-file=` forms (shell-lint clean).
+- _(ci)_ · `build-and-test.yml` PR delta gate + bats in bucket-A; develop post-merge baseline-drift job; process-rules.md + coderabbit-triage.md hooks.
 
 ## Deviations from plan
 
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **`narrowing-conversions` is opt-in / catalogue-only, NOT gated** (biggest deviation). clang-tidy cannot parse the project's MSVC `compile_commands.json` — it errors on the MSVC PCH (`not a valid PCH file`) and can't resolve `<string>` (no clang stdlib paths), yielding only `clang-diagnostic-error` noise. The rule + scanner are plumbed and run under `SMATCHET_LINT_NARROWING=1` with a *clang* compile db, but it's excluded from the `--diff` gate (the base worktree has no compile db either, so it can't be diffed without false positives). The 4 grep/parser rules (`no-printf-stderr`, `no-raw-new`, `define-imgui`, `deviation-overdue`) are the hard-gated core. Promotion is evidence-driven once a PCH-free clang db is provisioned in CI — matches the plan's existing cppcoreguidelines "promotion is evidence-driven" stance.
+- **Baseline body carries no timestamp/snapshot-sha.** The locked layout showed a `Snapshot: <sha> · <ts>` line, but the develop post-merge fail-on-drift uses `git diff --exit-code`, which a per-run timestamp breaks. Dropped the volatile header so the file is a pure function of the violation set (byte-identical when unchanged); "when it last changed" lives in git history.
+- **`--root` flag added** (not in the plan) so the `--diff` base scan runs the *current* scanner against the base worktree — the base tree (origin/develop) ships an older scanner, and the naive `cd $0/../..` jumped back to HEAD (base==head → false PASS). Required for a sound delta gate.
+- **`--diff=` / `--scan-file=` value forms added** to satisfy the shell-lint flag-parity rule (the scanner is itself shell-linted).
 
 ## Verification (actual)
 
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+- **Scanner unit behaviour**: `--scan-file` fires all 4 grep/parser rules on crafted fixtures; `SMATCHET_DEVIATION` suppresses the matching rule on the next line; `deviation-overdue` fires on a passed `revisit=2020-01-01` and not on `2099-12-31` — **PASS**.
+- **Delta gate**: injected `new Foo()` + `std::printf` into a strict-zone file → `--diff origin/develop` **FAILs** with the exact new triples; after revert → **PASS**. Grandfathers existing (3 `define-imgui`). **PASS**.
+- **Bats** (`tests/bats/lint_rules.bats`): 12/12 **PASS** (rules, deviation, --selftest, --catalog format + byte-determinism, --diff PASS/FAIL via baseline stub).
+- **`--selftest`**: AGENTS.md zone globs ⇄ scanner copy in sync — **PASS**.
+- **Shell-lint**: `test-lint-rules.sh` + `test-lint-rules-bats.sh` both clean — **PASS**.
+- **`--catalog` determinism**: two consecutive `--refresh` runs byte-identical — **PASS** (the develop drift job depends on this).
+- **Build gate**: N/A — bash + clang-tidy only; no C++/Source_Core modified.
+- **Not run**: live CI develop-post-merge drift job (validated locally instead); `narrowing-conversions` against a clang db (deferred — see § Deviations).
