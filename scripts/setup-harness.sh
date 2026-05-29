@@ -119,6 +119,7 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/clear-tree-dirty.sh" ".claude/hooks/clear-tree-dirty.sh"
   copy_template "docs/harness/claude-code/hooks/vexp-guard.sh"       ".claude/hooks/vexp-guard.sh"
   copy_template "docs/harness/claude-code/hooks/lint-syntax-both.py" ".claude/hooks/lint-syntax-both.py"
+  copy_template "docs/harness/claude-code/hooks/autoregister-pr.sh"  ".claude/hooks/autoregister-pr.sh"
 
   link_dir  ".claude/agents"                                  "agents"
 

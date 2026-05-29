@@ -59,6 +59,17 @@
             "timeout": 3000
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/autoregister-pr.sh\"",
+            "timeout": 30000,
+            "statusMessage": "Registering new PR with merge-watcher..."
+          }
+        ]
       }
     ],
     "SubagentStop": [

@@ -19,6 +19,7 @@ Idempotent. Run it after every clone and any time the canonical templates change
 | `hooks/lint-cpp.sh` | copy | `docs/harness/claude-code/hooks/lint-cpp.sh` |
 | `hooks/vexp-guard.sh` | copy | `docs/harness/claude-code/hooks/vexp-guard.sh` |
 | `hooks/lint-syntax-both.py` | copy | `docs/harness/claude-code/hooks/lint-syntax-both.py` |
+| `hooks/autoregister-pr.sh` | copy | `docs/harness/claude-code/hooks/autoregister-pr.sh` |
 | `agents/` | dir link | `agents/` (junction on Windows, symlink on Unix) |
 | `skills/grill-with-docs/` | dir link | `agents/_shared/skills/grill-with-docs/` |
 | `skills/scratchpad-recall/` | dir link | `agents/_shared/skills/scratchpad-recall/` |
@@ -46,11 +47,12 @@ The lint hooks (`lint-cpp.sh`, `vexp-guard.sh`, `lint-syntax-both.py`) are copie
 
 ## Hooks
 
-`.claude/settings.json` wires four hook surfaces:
+`.claude/settings.json` wires these hook surfaces:
 
 - **SessionStart** — `scripts/clear-session-context.sh` archives the prior session scratchpad.
 - **PreToolUse** (Grep/Glob/Regex) — `.claude/hooks/vexp-guard.sh` blocks raw text-search when the vexp daemon is running.
 - **PostToolUse** (Edit/Write) — `.claude/hooks/lint-cpp.sh` runs `clang-format`, `cppcheck`, `clang-tidy` on edited C++ files.
+- **PostToolUse** (Bash) — `.claude/hooks/autoregister-pr.sh` registers a newly-created PR (`gh pr create`) with smatchet-merge-watcher so the daemon owns it (gate-poll + auto-merge).
 - **SubagentStop** — `.claude/hooks/agent-token-log.py` appends per-agent token usage to `.claude/.agent-tokens.jsonl`.
 
 `.claude/.agent-tokens.jsonl` is per-machine state — gitignored, never committed.
