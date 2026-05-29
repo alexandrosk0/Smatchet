@@ -16,6 +16,12 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-28 · deep-audit · [tooling] · P2 — C++ lint (`lint-catch-all.py`, clang-tidy, cppcheck) runs only as local hooks, never in CI
+  Details: `.claude/hooks/lint-catch-all.py` flags unmarked empty `catch(...){}` as `[error]` (rc=2) but fires only as a local PostToolUse hook on Claude-Code edits — `grep` over `.github/workflows/*.yml` shows zero references. Same for clang-tidy + `run_cppcheck.py` (both only in `scripts/dev/`, not any workflow). This is why the 11 unmarked empty-catch blocks (paired bug entry) reached develop: the gate is local-only, so non-Claude-Code commits and any skipped hook run bypass it. Related: `.clang-tidy` enables only 3 checks (`-*,clang-analyzer-deadcode.DeadStores,misc-unused-using-decls,misc-unused-alias-decls`) — none of the `bugprone-*` / `clang-analyzer` memory families that back the Pillar-3 never-crash invariant; cppcheck carries the real static-analysis weight. Verified (deep-audit, adversarially confirmed: lint-catch-all + cppcheck + clang-tidy absent from all workflows).
+  Concrete next action: add a bucket-A CI step in `build-and-test.yml` that runs `lint-catch-all.py` over the diff (block on `[error]`-tier) + a curated cppcheck pass; decide whether clang-tidy joins (enable a `bugprone-*` subset) or is documented in `.clang-tidy` as intentionally cppcheck-primary. ~1-2 h.
+  Status: open
+  Last-reviewed: 2026-05-28
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
   Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
   Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
