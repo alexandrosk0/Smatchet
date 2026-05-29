@@ -52,4 +52,4 @@
 #   is correct; manual resolution required on adjacent deletions.
 # - AGENT_SELF_IMPROVEMENT.md: parallel branches MODIFY the same count line with
 #   different values. Union would garble the count.
-docs/backlog/agent-self-improvement/applied.md merge=union
+docs/self-improvement/categories/applied.md merge=union

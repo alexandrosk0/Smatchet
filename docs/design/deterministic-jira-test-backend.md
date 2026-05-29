@@ -245,7 +245,7 @@ Non-goals:
   - no screenshot/golden output
   - sanitizer remains the standard `ninja-test-msvc` gate for Source_Core changes
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
-- **Manual residue**: none expected. If a stable grid cell cannot be asserted through ImGui Test Engine, add a `docs/backlog/agent-self-improvement/tooling.md` entry and keep the app-state assertion as the temporary automated guard.
+- **Manual residue**: none expected. If a stable grid cell cannot be asserted through ImGui Test Engine, add a `docs/self-improvement/categories/tooling.md` entry and keep the app-state assertion as the temporary automated guard.
 
 ## Out of scope (flagged, not designed)
 

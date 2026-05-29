@@ -3,7 +3,7 @@
 # tool set and print a PASS/FAIL summary.
 #
 # Addresses the iter-loop friction documented in
-# docs/backlog/agent-self-improvement/tooling.md
+# docs/self-improvement/categories/tooling.md
 # "Required CLI tools must be discoverable + verified at first-setup time".
 # Two tools (jq, gh) bit the orchestrator mid-merge-gates-poll last session
 # because neither was on the bash-tool PATH nor documented in SETUP.md as

@@ -187,12 +187,12 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   - Slice 4 (`BuildUserFieldPayload`) — expand existing `tests/Source_Core/TrackerFieldPayload*.test.cpp` to cover every dispatch-table entry.
   - Slice 5 (`HtmlToMarkdown`) — add `tests/Source_Core/MarkdownConvert.test.cpp` per tag-handler entry.
   - Slice 7 (`AiAssistantController::RunRequest`) — extract phase methods are bucket-A testable; add one test per phase.
-- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: every ImGui-draw slice (9-19) gated on a screenshot-diff test against the pre-refactor golden. The window's existing scenario coverage is the source of truth; gaps = automation deferral noted in `docs/backlog/agent-self-improvement/test.md` per slice.
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: every ImGui-draw slice (9-19) gated on a screenshot-diff test against the pre-refactor golden. The window's existing scenario coverage is the source of truth; gaps = automation deferral noted in `docs/self-improvement/categories/test.md` per slice.
 - **Bash-driver scenario / screenshot / sanitizer**:
   - Slices 6 + 7 — ASan/UBSan run via `cmake --build --preset ninja-debug-msvc-asan && scripts/dev/scenario-run.sh app-cold-start`.
   - Slice 8 — `tests/bats/cli_spawn.bats`, `tests/bats/cli_attach.bats`.
 - **Build gate**: every slice — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
-- **Manual residue**: if a window has no existing bucket-E coverage, the slice ships the refactor + a `docs/backlog/agent-self-improvement/test.md` entry naming the missing scenario. No silent residue.
+- **Manual residue**: if a window has no existing bucket-E coverage, the slice ships the refactor + a `docs/self-improvement/categories/test.md` entry naming the missing scenario. No silent residue.
 
 ## Out of scope (flagged, not designed)
 

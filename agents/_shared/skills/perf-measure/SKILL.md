@@ -87,7 +87,7 @@ halt_reason: cli-gap — <name the missing CLI surface, e.g. "MCP socket unreach
 
 Then hand off:
 
-- **MCP socket unreachable / build broken** → `build-doctor` (`docs/backlog/agent-self-improvement/process.md` + the failing target name).
+- **MCP socket unreachable / build broken** → `build-doctor` (`docs/self-improvement/categories/process.md` + the failing target name).
 - **Scenario missing or lacks a non-MCP CLI surface** → `test-author` to extend `Source_Core/src/Commands/Scenarios/` per AGENTS.md § Verification automation (no manual UI substitution allowed).
 
 Do not attempt to read FPS visually — you can't observe the GUI, and the rule disallows it even if you could.

@@ -105,4 +105,4 @@ Smatchet UI-thread spike specialist. Adversarial mindset toward the UI thread: a
 
 Report: spike source (call site) + measured `maxPerCallMs` before / after + diff summary (or pointer to the implementing agent) + cleanup confirmation.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if a spike source was missing from the 12-source list, or the workflow hit a friction point. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if a spike source was missing from the 12-source list, or the workflow hit a friction point. Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

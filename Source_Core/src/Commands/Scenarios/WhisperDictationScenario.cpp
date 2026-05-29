@@ -162,7 +162,7 @@ class WhisperDictationScenario : public IScenario {
         out["frame_limit"] = frameLimit_;
         // Perf-rows emit so `scripts/dev/perf-baseline.sh init whisper-dictation-roundtrip`
         // captures a baseline (per the 8-of-15 retrofit in
-        // docs/backlog/agent-self-improvement/tooling.md). Pattern mirrors
+        // docs/self-improvement/categories/tooling.md). Pattern mirrors
         // PriorityGridScrollScenario::OnFinish.
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
         nlohmann::json rowsJson = nlohmann::json::array();

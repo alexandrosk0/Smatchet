@@ -251,7 +251,7 @@ int main(int argc, char** argv) {
     }
 
     // Default file-sink wire — addresses the debug-detective backlog entry at
-    // docs/backlog/agent-self-improvement/tooling.md "Smatchet Logger has no
+    // docs/self-improvement/categories/tooling.md "Smatchet Logger has no
     // console output + no default file sink". Until this default wire shipped,
     // every `LOG_INFO` / `LOG_DEBUG` from Smatchet itself was captured only in
     // the in-memory deque + (unwired in standalone) async file sink; running

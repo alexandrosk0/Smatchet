@@ -7,7 +7,7 @@
 # beyond docs/perf/regression-policy.json thresholds.
 #
 # Harness-agnostic — pure Python 3 stdlib, no third-party deps. Required CLI
-# tool per docs/backlog/agent-self-improvement/tooling.md (2026-05-20 entry).
+# tool per docs/self-improvement/categories/tooling.md (2026-05-20 entry).
 #
 # Usage:
 #   python scripts/dev/perf-compare.py <baseline.json> <fresh.json>

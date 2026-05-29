@@ -64,7 +64,7 @@ Scenario-aware PR-time perf gatekeeper. Slice 4 of `docs/design/archive/pillar-1
 | `Source_Core/src/MainThreadDispatcher.h` / per-frame infrastructure | `idle` (universally reachable) |
 | `Source_Core/include/Commands/Scenarios/*.h` / `BuiltinCommands.cpp` (new scenarios) | the new scenario itself + `idle` |
 
-**Bucket-C-only scenarios** (`command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel`): registered as scenarios but fail to start without `--screenshotPath`, so `perf-baseline.sh` cannot capture a `dev`-host baseline for them. They're routed to `idle` in the map above. When the scenarios are retrofitted to support optional `--screenshotPath` + emit `rows[]`, swap the map back to the specific scenario name. Tracking: `docs/backlog/agent-self-improvement/tooling.md` "8 of 15 candidate perf scenarios don't emit rows[]".
+**Bucket-C-only scenarios** (`command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel`): registered as scenarios but fail to start without `--screenshotPath`, so `perf-baseline.sh` cannot capture a `dev`-host baseline for them. They're routed to `idle` in the map above. When the scenarios are retrofitted to support optional `--screenshotPath` + emit `rows[]`, swap the map back to the specific scenario name. Tracking: `docs/self-improvement/categories/tooling.md` "8 of 15 candidate perf scenarios don't emit rows[]".
 
 When a touched file isn't in the map, fall back to `idle` (universally reachable on every frame) and flag the gap in the output for future map updates.
 
@@ -94,7 +94,7 @@ A single markdown report:
 - K baselines missing
 ```
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` (only if you hit real friction; empty is fine). Orchestrator appends backlog entries to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` (only if you hit real friction; empty is fine). Orchestrator appends backlog entries to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.
 
 ## Delegates / handoffs
 

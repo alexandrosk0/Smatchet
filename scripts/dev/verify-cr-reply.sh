@@ -2,7 +2,7 @@
 # verify-cr-reply.sh — confirm CR-cited file changes actually landed on origin.
 #
 # Closes the silent-drop class documented in:
-#   docs/backlog/agent-self-improvement/applied.md
+#   docs/self-improvement/categories/applied.md
 #     2026-05-28 process P1 — Mid-task `git stash` + branch switch silently
 #     drops uncommitted CR-fix work
 #   commit 639e2a9 — recovery push after CR triage reply cited code that

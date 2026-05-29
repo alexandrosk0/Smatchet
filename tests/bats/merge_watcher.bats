@@ -823,7 +823,7 @@ print('extras:', extras)
 }
 
 # ---------- Sub-bug (a) — counter reset on CR-clear ----------
-# 2026-05-22 P1 (docs/backlog/agent-self-improvement/tooling.md line 31):
+# 2026-05-22 P1 (docs/self-improvement/categories/tooling.md line 31):
 # previously, handle_blocked_cr_triage early-exited on `not _looks_like_cr_finding_block`
 # WITHOUT resetting triage_attempts. After a CR-finding round + auto-fix push that
 # made cr_state clean but left cr_open > 0, the registry kept the stale per-PR-

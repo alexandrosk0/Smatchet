@@ -14,8 +14,8 @@ This v2 plan exists to clean up that bit-rot once v1 has shipped + stabilised. *
 
 **2026-05-21 evening re-grill (4 locked decisions)**: after v1 PR1 (#356) merged + v1 PR2 (#357) hit CI, two P1 tooling backlog entries landed on develop that change v2's preserve/strip balance:
 
-1. **`docs/backlog/agent-self-improvement/process.md` — "Draft PRs silently bypass CodeRabbit review"** (`9312695`) — calls for the merge-gates poller to auto-invoke `agents/core/coderabbit-triage.md` on CR feedback.
-2. **`docs/backlog/agent-self-improvement/tooling.md` — "Long-running CI/CR polls block the interactive session"** (`644f822`) — proposes `smatchet-merge-watcher` as a separate host process; reuses `scripts/dev/merge-gates.*` + `agents/core/coderabbit-triage.md` as ingredients.
+1. **`docs/self-improvement/categories/process.md` — "Draft PRs silently bypass CodeRabbit review"** (`9312695`) — calls for the merge-gates poller to auto-invoke `agents/core/coderabbit-triage.md` on CR feedback.
+2. **`docs/self-improvement/categories/tooling.md` — "Long-running CI/CR polls block the interactive session"** (`644f822`) — proposes `smatchet-merge-watcher` as a separate host process; reuses `scripts/dev/merge-gates.*` + `agents/core/coderabbit-triage.md` as ingredients.
 
 Both REVIVE pieces of the agentic surface in a new (watcher-driven) shape. V2's "delete coderabbit-triage" + "strip § Merge gates" calls were overreach. Re-grilled decisions:
 
@@ -46,7 +46,7 @@ These describe deleted runtime but weren't added by `(agentic)`-titled PRs. Re-g
 The gate semantics (CI / CodeRabbit / user-comments / mergeStateStatus / pagination) describe the contract the future `smatchet-merge-watcher` reuses verbatim. The bash poller (`scripts/dev/merge-gates.sh / .graphql / -prompt.sh`) is the watcher's polling engine. Specific edits:
 
 - **Line 127** ("Before the orchestrator (or `git-janitor` running in the user's main session) squash-merges...") → add the watcher as a third caller: "Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` squash-merges...".
-- **Line 137** (CR `NONE` grace-window) → cross-link the P1 backlog entry: "The grace-window logic exists because CR's placeholder StatusContext on draft PRs would otherwise satisfy this branch without a real review — see `docs/backlog/agent-self-improvement/process.md` 'Draft PRs silently bypass CodeRabbit review' for the gap + the proposed `non-empty review on headRefOid` requirement that strengthens this rule once the watcher implements it."
+- **Line 137** (CR `NONE` grace-window) → cross-link the P1 backlog entry: "The grace-window logic exists because CR's placeholder StatusContext on draft PRs would otherwise satisfy this branch without a real review — see `docs/self-improvement/categories/process.md` 'Draft PRs silently bypass CodeRabbit review' for the gap + the proposed `non-empty review on headRefOid` requirement that strengthens this rule once the watcher implements it."
 - **Line 138** (STALE check) — add explicit "applies even when the PR has a CR StatusContext SUCCESS on the rollup" — the STALE rule trumps the placeholder.
 - **Line 176** (Auto-`gh pr ready` + merge authorization) → reword the trigger list: "(post-ship option 3 'Register with watcher', in-session 'merge when green', or any PR registered with the watcher daemon)".
 - **Line 194 — Scope boundary** → DELETE the second sentence entirely ("Spawned-child agents (`handoff-implementer`, `pr-iterator`) keep their existing draft-only contract — see § Handoff envelope § Spawned-child PR draft requirement"). Replaced with: "applies to the orchestrator, `git-janitor`, and `smatchet-merge-watcher`. No other caller has merge authority."
@@ -65,7 +65,7 @@ The diagnose → fix → build → commit → push → open PR → gate-check �
 Original v2 said "trim option 3". Post-grill: option 3 is the watcher integration point. Reword:
 
 - **Old line 116**: `3. **Wait for gates and merge** — orchestrator runs the merge-gates poller (see § Merge gates), then auto-`gh pr ready` + REST-squash-merge on pass. On block / timeout / `gh` down / PR closed-externally / pagination overflow → `AskUserQuestion` per the code-specific halt prompts.`
-- **New line 116**: `3. **Register with watcher** — orchestrator runs `smatchet-merge-watcher register <pr>` (host daemon — see `docs/backlog/agent-self-improvement/tooling.md` 'Long-running CI/CR polls block the interactive session' for the design). Watcher runs the gate-check loop + CodeRabbit-triage loop + REST-squash-merge per the watcher contract. Session can close immediately; watcher persists. Halt prompts surface as Smatchet notifications, not back to this session.`
+- **New line 116**: `3. **Register with watcher** — orchestrator runs `smatchet-merge-watcher register <pr>` (host daemon — see `docs/self-improvement/categories/tooling.md` 'Long-running CI/CR polls block the interactive session' for the design). Watcher runs the gate-check loop + CodeRabbit-triage loop + REST-squash-merge per the watcher contract. Session can close immediately; watcher persists. Halt prompts surface as Smatchet notifications, not back to this session.`
 - **Old line 121** (Skip-condition): "enter option 3 directly (`git-janitor` invokes the merge-gates poller before merging)" → "enter option 3 directly (`git-janitor` invokes the watcher register before merging)".
 
 #### § Project rules § Force-push carve-out for spawned-agent recovery (line 238) — **REWRITE around `claude/<id>` only**
@@ -104,7 +104,7 @@ Four files affected (3 in original v2 + `security-review.md` surfaced by 2026-05
 - `docs/design/agentic-coding-handoff.md` — **DELETE** (PR#217/#240/#259 etc.; describes deleted design).
 - `docs/design/agentic-flow-implementation.md` — **DELETE** (PR#217/#225 etc.).
 - `docs/design/agentic-triage-flow.md` — **DELETE** (PR#217).
-- `docs/design/archive/coderabbit-react-loop.md` — **KEEP as historical** (re-grill correction; was DELETE). Add a `## Status` header at the top: `Historical — describes the C++ CodeRabbit react loop that v1 PR1 (#356, b1d241bc) deleted. The watcher revival (per docs/backlog/agent-self-improvement/tooling.md 'Long-running CI/CR polls block the interactive session') reuses the CR-triage classification concepts; this design doc is useful input for the watcher's design pass.` Keep the body verbatim.
+- `docs/design/archive/coderabbit-react-loop.md` — **KEEP as historical** (re-grill correction; was DELETE). Add a `## Status` header at the top: `Historical — describes the C++ CodeRabbit react loop that v1 PR1 (#356, b1d241bc) deleted. The watcher revival (per docs/self-improvement/categories/tooling.md 'Long-running CI/CR polls block the interactive session') reuses the CR-triage classification concepts; this design doc is useful input for the watcher's design pass.` Keep the body verbatim.
 - `docs/agentic/TRIAGE_MANUAL.md` + `USAGE.md` — **DELETE** (`docs(agentic)` PRs).
 - `docs/agentic/` directory itself — **DELETE**.
 
@@ -177,7 +177,7 @@ Verified via `grep -rE "AgenticHandoffController|ClaudeCodeLocalRunner|coderabbi
 
 ### Backlog `applied.md` sweep — orphan archived entries
 
-`docs/backlog/agent-self-improvement/applied.md` contains historical-archived entries that reference deleted C++ surface (`AgenticHandoffController`, `ClaudeCodeLocalRunner`, `coderabbit-react-loop`, `handoff-implementer.md`, `pr-iterator.md`). Per AGENTS.md's "archive-don't-rewrite" convention for applied entries, edit each to add a `[2026-05-21 — runtime referenced has been removed by v1 PR1 of github-tracker-backend.md (b1d241bc); this entry is preserved for historical accuracy of what was tried]` annotation. Don't delete the entries — they're history.
+`docs/self-improvement/categories/applied.md` contains historical-archived entries that reference deleted C++ surface (`AgenticHandoffController`, `ClaudeCodeLocalRunner`, `coderabbit-react-loop`, `handoff-implementer.md`, `pr-iterator.md`). Per AGENTS.md's "archive-don't-rewrite" convention for applied entries, edit each to add a `[2026-05-21 — runtime referenced has been removed by v1 PR1 of github-tracker-backend.md (b1d241bc); this entry is preserved for historical accuracy of what was tried]` annotation. Don't delete the entries — they're history.
 
 ### Workflows
 
@@ -186,7 +186,7 @@ Verified via `grep -rE "AgenticHandoffController|ClaudeCodeLocalRunner|coderabbi
 
 ### Backlog
 
-- `docs/backlog/agent-self-improvement/*.md` — sweep entries that reference deleted C++ surface; either delete the entry or move to `applied.md` with a note. Don't touch general-purpose entries.
+- `docs/self-improvement/categories/*.md` — sweep entries that reference deleted C++ surface; either delete the entry or move to `applied.md` with a note. Don't touch general-purpose entries.
 
 ## Sequencing
 

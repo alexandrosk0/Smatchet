@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PostToolUse:Skill hook — append one JSONL line per skill invocation.
 
-Smatchet V6 telemetry (see docs/backlog/agent-self-improvement/tooling.md
+Smatchet V6 telemetry (see docs/self-improvement/categories/tooling.md
 2026-05-19 "Token telemetry does not record Claude Code skill-load overhead"
 entry — archived to applied.md once this lands).
 

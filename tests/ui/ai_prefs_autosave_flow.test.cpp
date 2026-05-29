@@ -14,7 +14,7 @@
 // The test.md P2 item (4) "Save / Discard + 'Assistant *' dirty-tab label"
 // describes a UI surface that was never shipped. This TU covers the actual
 // shipped behaviour (autosave + Test-connection verify). Stale-spec
-// disposition recorded in docs/backlog/agent-self-improvement/test.md.
+// disposition recorded in docs/self-improvement/categories/test.md.
 //
 // Three variants:
 //   1. Autosave_DebouncesThenSaves (PRIMARY, deterministic) — replica drives

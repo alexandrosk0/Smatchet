@@ -50,7 +50,7 @@ query($owner: String!, $repo: String!, $pr: Int!) {
           commit { oid }
           # Body — load-bearing for the three-bucket CR check (CURRENT_FINDINGS,
           # STALE_WITH_FINDINGS, STALE_CLEAN) per
-          # docs/backlog/agent-self-improvement/process.md P1. CR posts
+          # docs/self-improvement/categories/process.md P1. CR posts
           # "Actionable comments posted: N" as the first line of its review body;
           # the poller parses N to distinguish a real-findings review (block) from
           # a clean review (pass) regardless of state==COMMENTED.

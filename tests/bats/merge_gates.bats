@@ -226,7 +226,7 @@ set_fixture() {
 
 @test "stale CodeRabbit APPROVED on old SHA → return 1 (STALE)" {
     # Legacy fixture has no body — falls into STALE_UNKNOWN (safe-default block per
-    # P1 fix in docs/backlog/agent-self-improvement/process.md).
+    # P1 fix in docs/self-improvement/categories/process.md).
     set_fixture "$FIXTURES_DIR/merge_gates_cr_stale.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]

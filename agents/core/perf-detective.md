@@ -74,4 +74,4 @@ Before composing a scenario list for an audit / sweep / spec doc, run `Smatchet.
 
 Report: hypothesis + before / after numbers from `perf-measure` + diff summary (or pointer to the agent that landed the fix) + cleanup confirmation.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if you hit real friction (handoff gap with perf-instrument / perf-measure, missing hot-path in the known list, tooling needed). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only if you hit real friction (handoff gap with perf-instrument / perf-measure, missing hot-path in the known list, tooling needed). Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

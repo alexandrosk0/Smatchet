@@ -14,7 +14,7 @@ tooling gaps. Live entries split by category; this file is the index + spec.
   Last-reviewed: <YYYY-MM-DD>   # default = creation date; bump on each sweep
 ```
 
-Applied entries are archived immediately to [`agent-self-improvement/applied.md`](agent-self-improvement/applied.md).
+Applied entries are archived immediately to [`self-improvement/categories/applied.md`](self-improvement/categories/applied.md).
 
 ## Categories
 
@@ -57,13 +57,13 @@ without movement.
 
 | Category | Live count | File |
 |---|---|---|
-| bug         | 14  | [agent-self-improvement/bug.md](agent-self-improvement/bug.md) |
-| process     | 25  | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
-| tooling     | 33  | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
-| infra       | 14  | [agent-self-improvement/infra.md](agent-self-improvement/infra.md) |
-| test        | 18  | [agent-self-improvement/test.md](agent-self-improvement/test.md) |
-| security    | 13  | [agent-self-improvement/security.md](agent-self-improvement/security.md) |
-| external    | 1   | [agent-self-improvement/external-blockers.md](agent-self-improvement/external-blockers.md) |
-| applied (archive) | 142 | [agent-self-improvement/applied.md](agent-self-improvement/applied.md) |
+| bug         | 14  | [self-improvement/categories/bug.md](self-improvement/categories/bug.md) |
+| process     | 25  | [self-improvement/categories/process.md](self-improvement/categories/process.md) |
+| tooling     | 34  | [self-improvement/categories/tooling.md](self-improvement/categories/tooling.md) |
+| infra       | 14  | [self-improvement/categories/infra.md](self-improvement/categories/infra.md) |
+| test        | 18  | [self-improvement/categories/test.md](self-improvement/categories/test.md) |
+| security    | 13  | [self-improvement/categories/security.md](self-improvement/categories/security.md) |
+| external    | 1   | [self-improvement/categories/external-blockers.md](self-improvement/categories/external-blockers.md) |
+| applied (archive) | 144 | [self-improvement/categories/applied.md](self-improvement/categories/applied.md) |
 
-> **Count maintenance**: each "Live count" is the number of `^- 20YY-MM-DD` entries in the linked file (`grep -c '^- 20' agent-self-improvement/<file>.md`). The applied-archive count is the same `grep -c '^- 20' agent-self-improvement/applied.md`. `scripts/dev/test-backlog-counts.sh` runs at the pre-push gate (`test-all.sh` discovery) and refuses if any row diverges from the actual file. Update the row in the same commit that adds / archives / removes an entry, or run `bash scripts/dev/test-backlog-counts.sh --fix` to rewrite the table from current file counts.
+> **Count maintenance**: each "Live count" is the number of `^- 20YY-MM-DD` entries in the linked file (`grep -c '^- 20' self-improvement/categories/<file>.md`). The applied-archive count is the same `grep -c '^- 20' self-improvement/categories/applied.md`. `scripts/dev/test-backlog-counts.sh` runs at the pre-push gate (`test-all.sh` discovery) and refuses if any row diverges from the actual file. Update the row in the same commit that adds / archives / removes an entry, or run `bash scripts/dev/test-backlog-counts.sh --fix` to rewrite the table from current file counts.

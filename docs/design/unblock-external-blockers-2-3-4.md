@@ -1,6 +1,6 @@
 # Unblock external blockers 2 / 3 / 4
 
-Plan to retire three `docs/backlog/agent-self-improvement/external-blockers.md` entries that have low-cost in-repo workarounds even though each names an external upstream owner.
+Plan to retire three `docs/self-improvement/categories/external-blockers.md` entries that have low-cost in-repo workarounds even though each names an external upstream owner.
 
 | # | Blocker (entry date) | Owner | Slice |
 |---|---|---|---|
@@ -48,7 +48,7 @@ Each slice ships independently. Slices 1 and 3 are ~15 min each; Slice 2 is ~1 h
 
 5. Update `docs/design/archive/test-suite-expansion.md` § Auto-merge mechanics — replace "direct-merge fallback after CI greens (~270 s poll)" prose with the restored `--auto` flow. Cross-link to AGENTS.md § Merge gates so the two paths stay coherent.
 
-6. Move the external-blockers entry to `docs/backlog/agent-self-improvement/applied.md` with a resolution stanza naming the REST `PATCH` + commit sha.
+6. Move the external-blockers entry to `docs/self-improvement/categories/applied.md` with a resolution stanza naming the REST `PATCH` + commit sha.
 
 **Verification**:
 - Open a throw-away PR (or piggyback on the next real one) and run `gh pr merge --auto --squash`. Expect success, not `enablePullRequestAutoMerge` error.

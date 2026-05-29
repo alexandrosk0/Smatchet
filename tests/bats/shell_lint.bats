@@ -4,7 +4,7 @@
 # Bats coverage for scripts/dev/test-shell-lint.sh.
 #
 # Plan: docs/design/shell-script-self-review-lint.md. Closes
-# docs/backlog/agent-self-improvement/process.md 2026-05-28 P1 entry
+# docs/self-improvement/categories/process.md 2026-05-28 P1 entry
 # "Implementer-side self-review didn't catch real shell-script bugs".
 #
 # Six fixtures: one per rule plus one all-good. Each test asserts the lint

@@ -259,7 +259,7 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
                         transcribingCleared;
         // Perf-rows emit so `scripts/dev/perf-baseline.sh init
         // whisper-ai-assistant-autosend` captures a baseline (per the 8-of-15
-        // retrofit in docs/backlog/agent-self-improvement/tooling.md). Pattern
+        // retrofit in docs/self-improvement/categories/tooling.md). Pattern
         // mirrors PriorityGridScrollScenario::OnFinish.
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
         nlohmann::json rowsJson = nlohmann::json::array();

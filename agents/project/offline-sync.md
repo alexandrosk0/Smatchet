@@ -62,4 +62,4 @@ Offline path smoke: network off → change → network on → confirm replay + a
 
 Bullet list of items the user still owns. If none: write `none`.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (idempotency gap, conflict case missed, dead-letter handling missing). Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

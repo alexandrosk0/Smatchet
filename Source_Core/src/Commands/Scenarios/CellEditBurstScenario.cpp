@@ -69,7 +69,7 @@ class CellEditBurstScenario : public IScenario {
         out["scenario"] = "cell-edit-burst";
         // Perf-rows emit so `scripts/dev/perf-baseline.sh init cell-edit-burst`
         // captures a baseline (per the 8-of-15 retrofit in
-        // docs/backlog/agent-self-improvement/tooling.md). Pattern mirrors
+        // docs/self-improvement/categories/tooling.md). Pattern mirrors
         // PriorityGridScrollScenario::OnFinish.
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
         nlohmann::json rowsJson = nlohmann::json::array();

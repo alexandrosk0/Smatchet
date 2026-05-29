@@ -214,7 +214,7 @@ Before any destructive op (`branch -D`, `worktree remove`, `reset --hard`), run 
 
 1. **Worktree bookkeeping audit** — parse `git worktree list --porcelain` and inspect each entry's `gitdir` line. The **main worktree** has no `gitdir` line; skip it from orphan checks. For each additional worktree, the `gitdir` value points at `.git/worktrees/<id>/` — if that dir is missing, the working dir is orphaned (not git-managed; `git worktree prune` won't touch on-disk content). Conversely, for each on-disk dir under `.claude/worktrees/<id>/`, look up its path in the porcelain output and flag dirs with no matching `worktree` line. Phantom dirs warrant a manual `rm -rf` after confirming with the user — basename parity against `.git/worktrees/` is NOT reliable (the gitdir id can diverge from the working-dir basename).
 2. **Detached-HEAD salvage tag** — for any worktree on detached HEAD, run `git -C <path> log --oneline HEAD ^origin/develop ^origin/main` to inventory unique commits. If non-empty, create a salvage tag `salvage/<worktree-name>-<short-summary>` BEFORE any prune / remove op so a parallel-agent's WIP isn't garbage-collected (default reflog window is 30 days for unreachable, 90 for reachable — short enough to lose work on a quiet week).
-3. **Lock staleness sweep** — `bash scripts/dev/lock-staleness-sweep.sh` to surface any plan-locks whose PR has already merged but the auto-release token didn't fire (squash-merge edge case per `docs/backlog/agent-self-improvement/tooling.md` 2026-05-18 plan-lock entry). Run before the final report so stale-lock residue isn't carried into the next session.
+3. **Lock staleness sweep** — `bash scripts/dev/lock-staleness-sweep.sh` to surface any plan-locks whose PR has already merged but the auto-release token didn't fire (squash-merge edge case per `docs/self-improvement/categories/tooling.md` 2026-05-18 plan-lock entry). Run before the final report so stale-lock residue isn't carried into the next session.
 
 ## Standard cleanup loop
 
@@ -222,7 +222,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 1. **Verify merge state** via the poll-until-stable helper below — require `MERGEABLE` + `CLEAN`. `CONFLICTING` → halt (user resolves). `UNKNOWN` is transient; the helper waits it out.
 
-2. **Best-effort pre-flip PR draft → ready** (C4 prong 1, per `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4 + `docs/backlog/agent-self-improvement/process.md` 2026-05-21 P0 — applied 2026-05-27). The CodeRabbit `auto_review.drafts: false` default means CR skips draft PRs; flipping ready BEFORE the gates poll lets CR's real auto-review fire. Non-blocking — the gates poll at step 3 sets `MERGE_GATES_FLIP_READY=true` which retries the flip with the same soft-fail semantics, so a transient failure here is recoverable:
+2. **Best-effort pre-flip PR draft → ready** (C4 prong 1, per `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4 + `docs/self-improvement/categories/process.md` 2026-05-21 P0 — applied 2026-05-27). The CodeRabbit `auto_review.drafts: false` default means CR skips draft PRs; flipping ready BEFORE the gates poll lets CR's real auto-review fire. Non-blocking — the gates poll at step 3 sets `MERGE_GATES_FLIP_READY=true` which retries the flip with the same soft-fail semantics, so a transient failure here is recoverable:
    ```bash
    gh_pr_ready_idempotent "$N" || echo "WARN: pre-flip failed; poller will retry flip at poll start" >&2
    ```
@@ -298,9 +298,9 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 8. **Re-check mergeability** of the next PR via the same poll-until-stable helper. Merging A may flip B from `MERGEABLE` to `CONFLICTING` if they touched the same file.
 
-9. **Post-merge backlog sweep**: if `docs/backlog/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
+9. **Post-merge backlog sweep**: if `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
 
-10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
+10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
 10.5. **Orphan-scenario sweep** (same shape as step 10's residue check). Walk every scenario `.cpp` under `Source_Core/src/Commands/Scenarios/` and classify it against the orphan tri-condition. Surface every match via one combined `AskUserQuestion` block (one option-set per orphan: `keep` / `archive to docs/scenarios/archived/<name>.md` / `delete .cpp + registry line`). Default = **keep** (orphan detection is advisory, not destructive). The sweep is end-of-session only — never mid-loop.
 
@@ -379,7 +379,7 @@ Inventory the mutations performed this round (squash-merges, branch deletes, dev
 - `gh pr merge <N> --squash --delete-branch` — PR title, resulting squash sha.
 - Local branch delete (`git branch -d <name>`) per merged PR.
 - `git -C <main-repo> pull --ff-only origin develop` — old → new develop tip.
-- `docs/backlog/agent-self-improvement/*.md` status flips: entry → `applied.md`.
+- `docs/self-improvement/categories/*.md` status flips: entry → `applied.md`.
 
 Each line corresponds to one mutation actually executed; no aspirational bullets.
 
@@ -437,7 +437,7 @@ develop now at:  <sha-short>  <title>
 
 Residue requiring user action:
   - git -C "$MAIN_REPO" worktree remove "$WORKTREE"   (if you want this worktree gone)
-  - test-author follow-up: PR #<N> shipped manual verification step — flagged in docs/backlog/AGENT_SELF_IMPROVEMENT.md
+  - test-author follow-up: PR #<N> shipped manual verification step — flagged in docs/self-improvement/AGENT_SELF_IMPROVEMENT.md
   - <other manual items>
 
 Worktrees in scope: <git worktree list output>
@@ -460,4 +460,4 @@ When the prompt declares `DRY RUN`: do pre-flight + audit, print each intended m
 
 Trigger automatically when ≥3 PRs in batch, any PR touches `Source_Core/` or build files, or dependency order isn't obvious. User then says "go" for real run.
 
-End with `## Self-improvement` — only on real friction (CLI behaviour surprises, refusal triggered unexpectedly, build gate caught a real regression). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End with `## Self-improvement` — only on real friction (CLI behaviour surprises, refusal triggered unexpectedly, build gate caught a real regression). Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

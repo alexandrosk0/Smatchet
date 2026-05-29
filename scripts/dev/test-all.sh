@@ -32,7 +32,7 @@ if [ "$(git rev-parse --git-common-dir 2>/dev/null)" != "$(git rev-parse --git-d
     SMATCHET_IS_WORKTREE=1
 fi
 # Scripts that are known to be worktree-incompatible (per
-# docs/backlog/agent-self-improvement/tooling.md "test-all.sh baseline drift
+# docs/self-improvement/categories/tooling.md "test-all.sh baseline drift
 # across worktrees"). Extend this list as new worktree-only failures surface.
 WORKTREE_INCOMPATIBLE_RE='(test-lint-hook-split|test-ui-views-columns-reorder|test-ui-callstack-tooltip|test-ui-ai-assistant)'
 

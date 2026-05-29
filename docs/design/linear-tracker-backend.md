@@ -134,7 +134,7 @@ Tests and build:
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: Preferences tracker switch scenario verifies Linear appears, config buffers render, save persists the Linear profile, and backend-kind switching clears old active tickets.
 - **Bash-driver scenario / screenshot / sanitizer**: no screenshot/golden expected. Run sanitizer build after mutation slice because payload building touches user-entered JSON-like data and offline replay.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
-- **Manual residue**: one live Linear smoke remains unavoidable unless CI has test credentials: configure a personal API key, fetch one team, sync issues, update a throwaway issue title/label, add a comment, and create a test issue. Track automation follow-up in `docs/backlog/agent-self-improvement/tooling.md` if this remains manual at ship time.
+- **Manual residue**: one live Linear smoke remains unavoidable unless CI has test credentials: configure a personal API key, fetch one team, sync issues, update a throwaway issue title/label, add a comment, and create a test issue. Track automation follow-up in `docs/self-improvement/categories/tooling.md` if this remains manual at ship time.
 
 ## Implementation log
 

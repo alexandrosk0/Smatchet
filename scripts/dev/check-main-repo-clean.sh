@@ -20,7 +20,7 @@
 # Manual invocation (anytime, not just on Stop):
 #   bash scripts/dev/check-main-repo-clean.sh
 #
-# Authoritative spec: docs/backlog/agent-self-improvement/process.md
+# Authoritative spec: docs/self-improvement/categories/process.md
 # (2026-05-19 orchestrator P2 — option b).
 
 set -uo pipefail
@@ -88,7 +88,7 @@ worktree_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(detached
   echo "   git -C \"$main_repo\" stash push -m \"recovery: wrong-worktree-path edits\""
   echo "   # then replay the edits against the worktree paths."
   echo ""
-  echo " Reference: docs/backlog/agent-self-improvement/process.md"
+  echo " Reference: docs/self-improvement/categories/process.md"
   echo "            (2026-05-19 orchestrator P2)"
   echo "=========================================================================="
 } >&2

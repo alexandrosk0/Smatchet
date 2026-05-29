@@ -51,7 +51,7 @@ Explicitly excludes:
 
 # Cross-references
 
-- Backlog: `docs/backlog/agent-self-improvement/process.md` (Wave A2 API-500 entry, archived to `applied.md` on Slice 5 ship).
+- Backlog: `docs/self-improvement/categories/process.md` (Wave A2 API-500 entry, archived to `applied.md` on Slice 5 ship).
 - Recovery procedure: `docs/agent-rules/delegation.md` § API-500 mid-run recovery.
 - Plan: `docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 5.
 - Global ban: AGENTS.md § Project rules § Force-push carve-out for spawned-agent recovery (the rule this ADR records).

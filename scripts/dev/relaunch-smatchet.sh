@@ -3,7 +3,7 @@
 # launch the rebuilt exe in the background.
 #
 # Addresses the iter-loop friction documented in
-# docs/backlog/agent-self-improvement/tooling.md
+# docs/self-improvement/categories/tooling.md
 # "Running Smatchet.exe holds the file lock; rebuild link fails until the user
 # kills the window". Standardises the kill-then-build pattern so orchestrator /
 # build-doctor / debug-detective don't re-discover the lock dance per session.
