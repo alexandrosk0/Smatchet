@@ -23,9 +23,11 @@ setup() {
     export REPO_ROOT
     export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
 
-    # Isolate per-user state via LOCALAPPDATA (Windows path) — on POSIX bats the
-    # CLI's XDG_STATE_HOME branch picks it up regardless. We force LOCALAPPDATA
-    # for parity with the production Windows path.
+    # Isolate per-user watcher state in a temp sandbox. watcher_root() in
+    # merge-watcher-cli.py reads LOCALAPPDATA on Windows (os.name == "nt") and
+    # XDG_STATE_HOME (else real $HOME/.local/state) on POSIX, so BOTH must point
+    # into the temp dir — setting only LOCALAPPDATA leaks POSIX state into the
+    # real home and reintroduces cross-test flake (CodeRabbit, PR #527).
     #
     # git-bash mktemp yields a driveless POSIX path (/c/Users/...); native
     # Windows Python — both the CLI subprocess and the in-process module under
@@ -43,7 +45,11 @@ setup() {
     else
         LOCALAPPDATA="$SMATCHET_TEST_TMP"
     fi
-    export LOCALAPPDATA SMATCHET_TEST_TMP
+    # POSIX watcher root. On Windows the os.name == "nt" branch never reads
+    # XDG_STATE_HOME, so the raw (driveless) value is inert there; on POSIX it
+    # must be the native path, hence raw rather than cygpath -m.
+    XDG_STATE_HOME="$SMATCHET_TEST_TMP"
+    export LOCALAPPDATA XDG_STATE_HOME SMATCHET_TEST_TMP
     export PYTHONIOENCODING=utf-8
 }
 
