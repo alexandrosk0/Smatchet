@@ -83,7 +83,8 @@ poll_merge_gates() {
     # Deps preflight scoped to function call — file is documented sourceable
     # (see header § Usage). Top-level `exit` would kill the caller's shell.
     command -v gh >/dev/null 2>&1 || { echo "gh required" >&2; return 2; }
-    command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; return 2; }
+    # No standalone `jq` needed — the poll parses the GraphQL response via
+    # gh's bundled jq engine (`gh api --jq`). gh is the only hard dep.
 
     # SKIP_MERGE_GATES=true at session init bypasses all gates. Documented in
     # AGENTS.md § Merge gates and docs/agent-rules/merge-gates.md § Override.
@@ -193,6 +194,78 @@ poll_merge_gates() {
     local start gh_fails=0
     start=$(date +%s)
 
+    # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
+    # — no standalone `jq` binary required (gh is the only dep). One filter
+    # computes every gate field and emits them as a fixed-order, one-per-line
+    # stream (17 lines) that the poll loop reads with `mapfile`. The exact jq
+    # sub-expressions are the same ones the per-field `jq` calls used before;
+    # they're just composed into one program. ORCH_USER is spliced in as a
+    # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
+    # Field order (index): 0 state · 1 headSha · 2 overflow · 3 testsOob ·
+    # 4 perfOob · 5 ciTotal · 6 ciFail · 7 ciPend · 8 ciWarnDowngraded ·
+    # 9 dgNames · 10 crState · 11 crFirstLine · 12 crOpen · 13 crStatusState ·
+    # 14 crThreadCommentsOnHead · 15 userComments · 16 reviewDecision.
+    local GATE_FILTER
+    GATE_FILTER='
+.data.repository.pullRequest as $pr
+| ($pr.headRefOid // "") as $sha
+| ([$pr.labels.nodes[]?.name]) as $labels
+| ($labels | any(. == "tests-out-of-band")) as $tests
+| ($labels | any(. == "perf-out-of-band")) as $perf
+| ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
+   | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
+                   else ["StatusContext", (.context // "")] end)})
+   | group_by(._k) | map(sort_by(.startedAt // "") | .[-1]) | map(del(._k))) as $ctx
+| ([$ctx[] | select(.isRequired == true)]) as $req
+| ([$req[] | select(
+      (.__typename == "CheckRun" and .status == "COMPLETED" and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))) or
+      (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR"))))]) as $failing
+| ([$failing[] | select(
+      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))))]) as $downgraded
+| ([$pr.reviews.nodes[] | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]) as $crall
+| (if ($crall | length) == 0 then "NONE"
+   else (([$crall[] | select(.commit.oid == $sha)]) as $cur
+         | if ($cur | length) == 0 then "STALE" else ($cur | sort_by(.submittedAt) | .[-1].state) end) end) as $crstate
+| (if ($crall | length) == 0 then ""
+   else (([$crall[] | select(.commit.oid == $sha)]) as $cur
+         | if ($cur | length) > 0 then ($cur | sort_by(.submittedAt) | .[-1].body // "")
+           else ($crall | sort_by(.submittedAt) | .[-1].body // "") end) end) as $crbody
+| (
+    ($pr.state // "UNKNOWN"),
+    $sha,
+    (((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo.hasNextPage // false)
+       or ($pr.reviews.pageInfo.hasNextPage // false)
+       or ($pr.reviewThreads.pageInfo.hasNextPage // false)
+       or ($pr.comments.pageInfo.hasNextPage // false)
+       or ($pr.labels.pageInfo.hasNextPage // false)
+       or (any($pr.reviewThreads.nodes[]?; .comments.pageInfo.hasNextPage // false)))) | tostring),
+    ($tests | tostring),
+    ($perf | tostring),
+    ($req | length),
+    ([$failing[] | select(. as $f | ($downgraded | any(.name == $f.name and .__typename == $f.__typename)) | not)] | length),
+    ([$req[] | select(
+        (.__typename == "CheckRun" and .status != "COMPLETED") or
+        (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED"))))] | length),
+    ($downgraded | length),
+    ([$downgraded[].name] | join(", ")),
+    $crstate,
+    (($crbody | split("\n"))[0] // ""),
+    ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
+        and any(.comments.nodes[]; .author.login == "coderabbitai" or .author.login == "coderabbitai[bot]"))] | length),
+    ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+      | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state] | (.[0] // "ABSENT")),
+    ([$pr.reviewThreads.nodes[]? | .comments.nodes[]?
+      | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]") and (.commit.oid // "") == $sha)] | length),
+    (([$pr.comments.nodes[] | select(.author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase))] | length)
+     + ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
+          and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length)),
+    ($pr.reviewDecision // "NONE"),
+    ($pr.mergeStateStatus // "UNKNOWN")
+  )
+'
+    GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
+
     local p
     for ((p=0; p<MAX_POLLS; p++)); do
         local data
@@ -200,7 +273,8 @@ poll_merge_gates() {
                        -f owner="$owner" \
                        -f repo="$repo" \
                        -F pr="$prNumber" \
-                       -f query="$query_body" 2>&1); then
+                       -f query="$query_body" \
+                       --jq "$GATE_FILTER" 2>&1); then
             gh_fails=$((gh_fails+1))
             echo "Poll $((p+1)): gh failed ($gh_fails/3): $data"
             if [ "$gh_fails" -ge 3 ]; then
@@ -221,213 +295,94 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        local pr
-        pr=$(jq '.data.repository.pullRequest' <<<"$data")
+        # Parse the gh --jq field stream — 17 fixed-order lines (see GATE_FILTER
+        # field map above). gh --jq errors already routed through the gh-fail
+        # path above; this guards a truncated/partial body → fail closed (retry).
+        local fields
+        # Strip CR — Windows jq builds (and gh's bundled jq on Windows) emit
+        # CRLF, which would leave a trailing \r on every field (e.g. pr_state
+        # "OPEN\r" != "OPEN" → spurious return-4).
+        data="${data//$'\r'/}"
+        mapfile -t fields <<<"$data"
+        if [ "${#fields[@]}" -lt 18 ]; then
+            gh_fails=$((gh_fails+1))
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (<18); transient ($gh_fails/3)"
+            if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
+            local elapsed_short=$(( $(date +%s) - start ))
+            if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
+            if [ "$p" -lt $((MAX_POLLS-1)) ]; then sleep "$POLL_INTERVAL"; fi
+            continue
+        fi
 
-        # PR state early-exit.
-        # C2 defensive default: a jq parse failure (malformed gh response,
-        # transient pipeline blip) would otherwise leave pr_state empty, and
-        # `[ "" != "OPEN" ]` is true → spurious return-4. UNKNOWN routes
-        # through the same return-4 path (treats jq failure as "PR no longer
-        # mergeable"), which is the safer outcome than silent pass-through.
-        local pr_state
-        pr_state=$(jq -r '.state' <<<"$pr" 2>/dev/null || echo "UNKNOWN")
+        # PR state early-exit. Empty/UNKNOWN → return 4 (no-longer-mergeable).
+        local pr_state="${fields[0]:-UNKNOWN}"
         if [ "$pr_state" != "OPEN" ]; then
-            echo "PR_$pr_state"
+            echo "PR_${pr_state:-UNKNOWN}"
             return 4
         fi
 
-        local head_sha
-        head_sha=$(jq -r '.headRefOid' <<<"$pr" 2>/dev/null || echo "")
+        local head_sha="${fields[1]}"
 
-        # Pagination overflow.
-        # C2 defensive default: on jq failure assume overflow → fail closed.
-        # The cost of a false overflow is a halt prompt the user can override;
-        # the cost of a silent pass-through past unread later pages is a
-        # missed CR review or CI failure.
-        local overflow
-        overflow=$(jq '
-            ((.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo.hasNextPage // false)
-             or (.reviews.pageInfo.hasNextPage // false)
-             or (.reviewThreads.pageInfo.hasNextPage // false)
-             or (.comments.pageInfo.hasNextPage // false)
-             or (.labels.pageInfo.hasNextPage // false)
-             or (any(.reviewThreads.nodes[]?; .comments.pageInfo.hasNextPage // false)))
-        ' <<<"$pr" 2>/dev/null || echo "true")
+        # Pagination overflow — fail closed (return 5). The filter already OR's
+        # every hasNextPage; a malformed response routes through the gh-fail path.
+        local overflow="${fields[2]}"
         if [ "$overflow" = "true" ]; then
             echo "PAGINATION_OVERFLOW"
             return 5
         fi
 
-        # Labels — per-PR overrides per AGENTS.md § Merge gates § Per-PR overrides.
-        # `tests-out-of-band`  → downgrades `Test-delta gate` CheckRun FAIL → WARN.
-        # `perf-out-of-band`   → downgrades `Perf PR-fast (...)` CheckRun FAIL → WARN.
-        # WARN means the failure is logged but does NOT contribute to ci_fail; the
-        # gate still requires every non-downgraded required check to pass.
-        # C2 defensive defaults: false on jq failure → labels treated as absent,
-        # which means no spurious downgrade of failing checks (fail closed).
-        local has_tests_oob has_perf_oob
-        has_tests_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="tests-out-of-band")' <<<"$pr" 2>/dev/null || echo "false")
-        has_perf_oob=$(jq -r '[.labels.nodes[]?.name] | any(.=="perf-out-of-band")' <<<"$pr" 2>/dev/null || echo "false")
+        # Labels (tests-out-of-band / perf-out-of-band) — the downgrade was
+        # already applied inside the filter's ci_fail / ci_warn_downgraded; these
+        # are surfaced only for the WARN line below.
+        local has_tests_oob="${fields[3]}" has_perf_oob="${fields[4]}"
 
-        # CI — required-only, with latest-per-name dedup.
-        # GitHub's rollup keeps every historical run of a rerun job (old FAILURE
-        # alongside new SUCCESS). We dedup by (CheckRun.name | StatusContext.context),
-        # keeping the entry with the latest `startedAt` (CheckRun) or last-in-array
-        # position (StatusContext lacks startedAt and GH overwrites by context name).
-        # `jq | sort_by` is stable, so missing startedAt → original chronological order.
-        local ctx
-        # Composite key — `[__typename, name|context]` — prevents a CheckRun.name
-        # colliding with an identically-named StatusContext.context (which would
-        # otherwise group both into one bucket and drop one required entry).
-        ctx='((.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // []
-              | map(. + {_dedup_key: (if .__typename=="CheckRun"
-                                        then ["CheckRun", (.name // "")]
-                                        else ["StatusContext", (.context // "")]
-                                        end)})
-              | group_by(._dedup_key)
-              | map(sort_by(.startedAt // "") | .[-1])
-              | map(del(._dedup_key)))'
-        # C2 defensive defaults: any jq failure (malformed pr JSON, missing
-        # fields after a GraphQL schema change, transient pipe blip) returns
-        # -1, which fails closed at the integer comparison below (the pass
-        # check requires == 0). Previously an empty assignment let the
-        # `[ "$ci_fail" -eq 0 ]` check error out and treat the iteration as
-        # not-passing, which is the right outcome under benign jq failure but
-        # also masks more sinister cases where the gate should explicitly
-        # surface the error.
-        local ci_total ci_fail ci_pend ci_warn_downgraded
-        ci_total=$(jq "[$ctx | .[] | select(.isRequired==true)] | length" <<<"$pr" 2>/dev/null || echo -1)
-        # Failing contexts before label downgrades.
-        local failing_json
-        failing_json=$(jq -c "[$ctx | .[] | select(.isRequired==true) | select(
-            (.__typename==\"CheckRun\"      and .status==\"COMPLETED\" and ((.conclusion // \"\") | IN(\"FAILURE\",\"TIMED_OUT\",\"CANCELLED\",\"ACTION_REQUIRED\",\"STARTUP_FAILURE\"))) or
-            (.__typename==\"StatusContext\" and ((.state // \"\") | IN(\"FAILURE\",\"ERROR\")))
-        )]" <<<"$pr" 2>/dev/null || echo "[]")
-        # Split failing contexts into downgraded (label-suppressed) + real-fail.
-        # Downgrade rules — keep matchers narrow to avoid stomping unrelated checks
-        # that happen to fail (e.g. a future `Test-engine bucket-E` should NOT be
-        # silenced by `tests-out-of-band`).
-        local downgraded_json
-        downgraded_json=$(jq -c --argjson tests "$has_tests_oob" --argjson perf "$has_perf_oob" '
-            map(select(
-                ($tests and .__typename=="CheckRun" and .name=="Test-delta gate") or
-                ($perf  and .__typename=="CheckRun" and (.name // "" | startswith("Perf PR-fast")))
-            ))' <<<"$failing_json" 2>/dev/null || echo "[]")
-        ci_warn_downgraded=$(jq 'length' <<<"$downgraded_json" 2>/dev/null || echo -1)
-        ci_fail=$(jq --argjson dg "$downgraded_json" '
-            map(select(
-                . as $f | ($dg | any(.name==$f.name and .__typename==$f.__typename)) | not
-            )) | length' <<<"$failing_json" 2>/dev/null || echo -1)
-        ci_pend=$(jq "[$ctx | .[] | select(.isRequired==true) | select(
-            (.__typename==\"CheckRun\"      and .status!=\"COMPLETED\") or
-            (.__typename==\"StatusContext\" and ((.state // \"\") | IN(\"PENDING\",\"EXPECTED\")))
-        )] | length" <<<"$pr" 2>/dev/null || echo -1)
+        # CI — required-only, latest-per-name dedup + label downgrades, all done
+        # in the filter. Empty → -1, which fails closed at the integer checks.
+        local ci_total="${fields[5]:--1}"
+        local ci_fail="${fields[6]:--1}"
+        local ci_pend="${fields[7]:--1}"
+        local ci_warn_downgraded="${fields[8]:--1}"
+        local dg_names="${fields[9]}"
 
         # Surface every downgraded check on stderr so the operator sees what the
         # label hid. Mirrors the "Skip gates and merge anyway" LOG_WARN pattern.
         if [ "$ci_warn_downgraded" -gt 0 ]; then
-            local dg_names
-            dg_names=$(jq -r '[.[].name] | join(", ")' <<<"$downgraded_json")
             echo "WARN: out-of-band label(s) downgraded ${ci_warn_downgraded} failing check(s) to WARN: ${dg_names}" >&2
         fi
 
         # CodeRabbit — four-bucket discrimination with body-aware actionable parsing.
-        # P1 fix per docs/backlog/agent-self-improvement/process.md "Force-merge on CR
-        # timeout silently discards STALE CR reviews on the prior commit" + "Draft PRs
-        # silently bypass CodeRabbit review". Body's first line carries
-        # "Actionable comments posted: N" — N>0 means CR found real bugs the user
-        # should review explicitly before any force-merge / timeout-pass.
-        local cr_state
-        cr_state=$(jq -r --arg sha "$head_sha" '
-            ([.reviews.nodes[]
-              | select(.author.login=="coderabbitai" or .author.login=="coderabbitai[bot]")]) as $all
-            | if ($all | length) == 0 then "NONE"
-              else (([$all[] | select(.commit.oid==$sha)]) as $current
-                   | if ($current | length) == 0 then "STALE"
-                     else ($current | sort_by(.submittedAt) | .[-1].state)
-                     end)
-              end' <<<"$pr")
-        # Pull the most recent CR review's body — current-head preferred, else most-recent stale.
-        # Body carries the "Actionable comments posted: N" header that drives findings detection.
-        local cr_review_body
-        cr_review_body=$(jq -r --arg sha "$head_sha" '
-            ([.reviews.nodes[]
-              | select(.author.login=="coderabbitai" or .author.login=="coderabbitai[bot]")]) as $all
-            | if ($all | length) == 0 then ""
-              else (([$all[] | select(.commit.oid==$sha)]) as $current
-                   | if ($current | length) > 0
-                     then ($current | sort_by(.submittedAt) | .[-1].body // "")
-                     else ($all | sort_by(.submittedAt) | .[-1].body // "")
-                     end)
-              end' <<<"$pr")
+        # The filter computed cr_state + the review body's FIRST LINE (current-head
+        # review preferred, else most-recent stale — same selection as before).
+        # P1 fix per docs/backlog/agent-self-improvement/process.md: body's first
+        # line carries "Actionable comments posted: N" — N>0 means CR found real
+        # bugs the user should review before any force-merge / timeout-pass.
+        local cr_state="${fields[10]}"
+        local cr_first_line="${fields[11]}"
         # Extract N from "Actionable comments posted: N". -1 = header not found.
-        # Per CodeRabbit on PR #360 — restrict the parse to the FIRST LINE only. CR's
-        # convention is "Actionable comments posted: N" as the review body's opening line;
-        # subsequent lines may quote the same phrase in nested findings / agent prompts
-        # (e.g. a finding that itself says "Add to AGENTS.md: 'Actionable comments posted: N'")
-        # which would spuriously match the unrestricted grep + give the wrong N.
+        # First line only (CR's convention) — nested findings may quote the phrase.
         local cr_actionable=-1
-        if [ -n "$cr_review_body" ]; then
-            local first_line match
-            first_line=$(printf '%s\n' "$cr_review_body" | head -n 1)
-            match=$(printf '%s' "$first_line" | grep -oE 'Actionable comments posted:[[:space:]]*[0-9]+' || true)
+        if [ -n "$cr_first_line" ]; then
+            local match
+            match=$(printf '%s' "$cr_first_line" | grep -oE 'Actionable comments posted:[[:space:]]*[0-9]+' || true)
             if [ -n "$match" ]; then
                 cr_actionable=$(printf '%s' "$match" | grep -oE '[0-9]+')
             fi
         fi
-        # C2 defensive default: -1 on jq failure fails the `cr_open -eq 0`
-        # check at the pass condition, blocking the merge until the next poll
-        # succeeds. Better than silently passing when jq couldn't extract.
-        local cr_open
-        cr_open=$(jq '[.reviewThreads.nodes[]
-            | select(.isResolved==false and .isOutdated==false
-                     and any(.comments.nodes[];
-                             .author.login=="coderabbitai" or .author.login=="coderabbitai[bot]"))] | length' <<<"$pr" 2>/dev/null || echo -1)
+        # -1 (filter/parse miss) fails closed at the `cr_open -eq 0` pass check.
+        local cr_open="${fields[12]:--1}"
+        # CR StatusContext on the head rollup — some CR configs emit only a status
+        # (no review) when clean; SUCCESS is a positive signal. "ABSENT" if none.
+        local cr_status_state="${fields[13]}"
+        # C4 prong 2: count of CR review-thread comments anchored to the current
+        # head — positive evidence CR actively reviewed this commit (vs a bare
+        # placeholder StatusContext). The NONE branch uses it to gate the pass.
+        local cr_thread_comments_on_head="${fields[14]:--1}"
 
-        # CR StatusContext on the head commit's rollup — some CR configs emit only a
-        # status (no review) when a PR is clean. Treat SUCCESS as a positive signal so
-        # the grace-window fallback doesn't fire for repos that opt into status-only.
-        local cr_status_state
-        cr_status_state=$(jq -r '
-            [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-             | select(.__typename=="StatusContext" and .context=="CodeRabbit")
-             | .state] | (.[0] // "ABSENT")' <<<"$pr")
-
-        # C4 prong 2: count CR review-thread comments anchored to the current
-        # head commit. CR's placeholder StatusContext fires SUCCESS regardless
-        # of whether CR actually reviewed (the C4 draft-PR bypass), so the
-        # `NONE + status-SUCCESS` pass path was over-trusting the status alone.
-        # A non-zero count here is positive evidence CR has actively reviewed
-        # the current head (review-thread comments are CR's per-line inline
-        # findings; their `commit.oid` matches the commit they were left on).
-        # Zero is suspicious — either the repo is status-only (rare; CR's
-        # default emits both status + review) OR CR skipped this commit.
-        # The NONE branch below uses this to distinguish the two cases.
-        local cr_thread_comments_on_head
-        cr_thread_comments_on_head=$(jq -r --arg sha "$head_sha" '
-            [.reviewThreads.nodes[]?
-             | .comments.nodes[]?
-             | select((.author.login=="coderabbitai" or .author.login=="coderabbitai[bot]")
-                      and (.commit.oid // "")==$sha)] | length' <<<"$pr" 2>/dev/null || echo -1)
-
-        # User comments — typename bot filter, login case-insensitive.
-        # C2 defensive default: -1 on jq failure fails the `user -eq 0` check.
-        local user
-        user=$(jq --arg self "$ORCH_USER" '
-            ([.comments.nodes[]
-              | select(.author.__typename != "Bot"
-                       and ((.author.login // "") | ascii_downcase) != ($self | ascii_downcase))] | length) +
-            ([.reviewThreads.nodes[]
-              | select(.isResolved==false and .isOutdated==false
-                       and any(.comments.nodes[];
-                               .author.__typename != "Bot"
-                               and ((.author.login // "") | ascii_downcase) != ($self | ascii_downcase)))] | length)
-        ' <<<"$pr" 2>/dev/null || echo -1)
+        # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
+        local user="${fields[15]:--1}"
 
         # reviewDecision
-        local review_decision
-        review_decision=$(jq -r '.reviewDecision // "NONE"' <<<"$pr")
+        local review_decision="${fields[16]:-NONE}"
         local review_pass=false
         case "$review_decision" in
             APPROVED|NONE) review_pass=true ;;
@@ -588,8 +543,7 @@ poll_merge_gates() {
             # decision so the operator can correlate when GH says BLOCKED while
             # our gates pass (typically branch-protection summary-only / stale
             # GH mergeability cache — REST squash-merge still works).
-            local gh_merge_state
-            gh_merge_state=$(jq -r '.mergeStateStatus // "UNKNOWN"' <<<"$pr" 2>/dev/null || echo "UNKNOWN")
+            local gh_merge_state="${fields[17]:-UNKNOWN}"
             if [ "$gh_merge_state" != "CLEAN" ] && [ "$gh_merge_state" != "UNSTABLE" ] && [ "$gh_merge_state" != "UNKNOWN" ]; then
                 echo "INFO: merge-gates pass; GitHub mergeStateStatus=$gh_merge_state may be stale or branch-protection summary-only. REST squash-merge contract still applies." >&2
             fi

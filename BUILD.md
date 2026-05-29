@@ -36,7 +36,7 @@ The orchestrator + agent scripts (`scripts/dev/*.sh`, `scripts/dev/merge-watcher
 | Tool | Used by | Install (Windows) |
 |---|---|---|
 | `gh` | merge-gates poller, PR ops, watcher daemon | `winget install GitHub.cli` |
-| `jq` | merge-gates JSON parsing, watcher daemon | `winget install jqlang.jq` |
+| `jq` | **test harness only** — `merge_gates.bats` mocks `gh` via jq. The merge-gates poller + watcher daemon parse via gh's **bundled** jq (`gh api --jq`), so no standalone jq is needed at runtime. | `winget install jqlang.jq` |
 | `python` 3.11+ | dev scripts (perf-compare, watcher CLI, etc.) | `winget install Python.Python.3.13` |
 | `clang-format` / `clang-tidy` / `cppcheck` | lint hooks | Install via LLVM or Visual Studio individual components |
 | `bats` | `tests/bats/*.bats` regression suite (merge-gates poller, etc.) | `npm i -g bats` |
