@@ -42,7 +42,20 @@ case "$1" in
                 echo "$MERGE_GATES_STUB_GH_FAIL" >&2
                 exit 1
             fi
-            cat "${MERGE_GATES_TEST_FIXTURE:?stub gh: fixture not set}"
+            fixture="${MERGE_GATES_TEST_FIXTURE:?stub gh: fixture not set}"
+            # Emulate `gh api graphql --jq <filter>`: real gh applies the filter
+            # with its bundled jq. The test harness has standalone jq on PATH, so
+            # use it to reproduce gh's --jq behaviour (raw output, comma-stream =
+            # one line per result). Falls back to raw cat when no --jq passed.
+            _filter=""; _prev=""
+            for _a in "$@"; do
+                if [ "$_prev" = "--jq" ]; then _filter="$_a"; break; fi
+                _prev="$_a"
+            done
+            if [ -n "$_filter" ]; then
+                jq -r "$_filter" "$fixture"; exit $?
+            fi
+            cat "$fixture"
             exit 0
         fi
         # `gh api repos/.../contents/<path>` — used by poll_merge_gates' H12
