@@ -72,17 +72,30 @@ link_dir() {
 }
 
 # Agent discovery. Canonical defs live under agents/{core,project}/ (the
-# portable/project split). Claude Code discovers agents recursively under
-# .claude/agents/, so a SINGLE directory junction to the whole agents/ tree is
-# the right adapter — fast (one mklink //J) and safe.
+# portable/project split), but harnesses scan .claude/agents/*.md FLATLY — so
+# materialise a flat dir of per-agent links. Flat (not a junction-to-subdirs)
+# keeps discovery independent of whether the harness recurses.
 #
-# (An earlier revision created 24 individual per-file symlinks via cmd.exe
-# mklink; on Windows that is slow / can hang, and rm -rf'ing the old junction
-# risked deleting the target. Reverted to the single junction.)
+# Links are HARDLINKS, created directly (no symbolic-link attempt): on Windows a
+# symbolic mklink can prompt for elevation and intermittently HANG; mklink //H
+# needs no elevation and is reliable. Edits to the canonical file are visible
+# through the hardlink (shared inode), same as before.
 link_agents() {
-  local dest=".claude/agents"
+  local dest=".claude/agents" f base
   _clear_dir_link "$dest"
-  link_dir "$dest" "agents"
+  mkdir -p "$dest"
+  for f in agents/core/*.md agents/project/*.md; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    [[ -e "$dest/$base" ]] && continue
+    if [[ "$IS_WINDOWS" == "1" ]]; then
+      cmd.exe //c mklink //H "$(to_win_path "$dest/$base")" "$(to_win_path "$ROOT/$f")" >/dev/null 2>&1 \
+        || cp "$ROOT/$f" "$dest/$base"
+    else
+      ln -s "$(realpath --relative-to="$dest" "$f" 2>/dev/null || echo "$ROOT/$f")" "$dest/$base"
+    fi
+  done
+  echo "  link-agents  .claude/agents/*.md (flat hardlinks) <- agents/{core,project}/"
 }
 
 # Safely remove an existing .claude/agents whether it's a Windows junction, a
