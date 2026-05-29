@@ -36,6 +36,9 @@ cli="scripts/dev/merge-watcher-cli.py"
 command -v python >/dev/null 2>&1 || exit 0
 
 out="$(python "$cli" register "$pr" 2>&1 || true)"
-printf '{"systemMessage": "merge-watcher: auto-registered PR #%s — %s"}\n' \
-    "$pr" "$(printf '%s' "$out" | head -1 | tr -d '\r"' | cut -c1-80)"
+# Sanitize for embedding in a JSON string: backslashes (Windows clone paths like
+# C:\…) and double-quotes would otherwise produce invalid JSON. Map \ -> / and
+# drop " and CR, then clip. (CR #509.)
+msg="$(printf '%s' "$out" | head -1 | tr '\\' '/' | tr -d '\r"' | cut -c1-80)"
+printf '{"systemMessage": "merge-watcher: auto-registered PR #%s — %s"}\n' "$pr" "$msg"
 exit 0
