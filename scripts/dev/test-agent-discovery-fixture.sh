@@ -36,9 +36,10 @@ rm -rf .claude/agents 2>/dev/null || true
 ln -s ../agents .claude/agents 2>/dev/null || { mkdir -p .claude && cp -r agents .claude/agents; }
 
 # --- assertions: each agent resolves through the link at its tier path -------
-declare -A tier=( [code-review]=core [p4-janitor]=core [tracker-backend]=project )
-for a in "${!tier[@]}"; do
-  p=".claude/agents/${tier[$a]}/$a.md"
+# name:tier pairs (no associative array — keeps this portable to bash 3.2/macOS).
+for pair in "code-review:core" "p4-janitor:core" "tracker-backend:project"; do
+  a="${pair%%:*}"; t="${pair##*:}"
+  p=".claude/agents/$t/$a.md"
   [ -e "$p" ] || fail "agent not discoverable through the link: $p"
   grep -q "name: $a" "$p" || fail "$p resolves to wrong target"
 done
