@@ -67,7 +67,7 @@ This diff moves `Source_Core/` files wholesale, so the gate **applies** — but 
 4. **Visible-cue bucket-E harness** — N/A — no new sync-stall path.
 5. **Marker inventory** — N/A — no `SMATCHET_UI_PERF_SCOPE` markers added; existing markers move with their TU (string scope-names unchanged).
 
-**Pre-push local check**: run `docs/PERF_WORKFLOW.md` § Gate-check vs baseline against `priority-grid-scroll` once post-move; expect within-noise.
+**Pre-push local check**: run `docs/guides/perf-workflow.md` § Gate-check vs baseline against `priority-grid-scroll` once post-move; expect within-noise.
 
 **Override**: not needed — no intentional regression.
 

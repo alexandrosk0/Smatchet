@@ -1,6 +1,6 @@
 # Per-entry invalidation for the Lua field-display cache
 
-The `register_field_display_cached` cache (introduced in [lua-recorded-cmd-list.md](../design/lua-recorded-cmd-list.md)) keys validity off **per-entry inputs** — `rawValue`, `fieldName`, `quantAvailWidth`, `readOnly`, `allowEdits`, `providerGen` — not a single global epoch. A single-cell edit invalidates only that one cell; unrelated cells keep their recorded `ImCmd` lists and replay without invoking Lua.
+The `register_field_display_cached` cache (introduced in [lua-recorded-cmd-list.md](../plans/shipped/lua-recorded-cmd-list.md)) keys validity off **per-entry inputs** — `rawValue`, `fieldName`, `quantAvailWidth`, `readOnly`, `allowEdits`, `providerGen` — not a single global epoch. A single-cell edit invalidates only that one cell; unrelated cells keep their recorded `ImCmd` lists and replay without invoking Lua.
 
 ## Considered options
 

@@ -41,7 +41,7 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`. For each gate, declar
 4. **Visible-cue bucket-E harness** — adds a new sync-stall code path > 100 ms?
 5. **Marker inventory** — adds `SMATCHET_UI_PERF_SCOPE` markers? If yes, regen `docs/perf/MARKER_INVENTORY.md` in the same PR.
 
-**Pre-push local check**: run `docs/PERF_WORKFLOW.md` § Gate-check vs baseline (Step 7) against the named scenario(s) before opening the PR.
+**Pre-push local check**: run `docs/guides/perf-workflow.md` § Gate-check vs baseline (Step 7) against the named scenario(s) before opening the PR.
 
 **Override**: `perf-out-of-band` PR label per `AGENTS.md` § Merge gates — intentional regression + baseline-bump PR queued only.
 

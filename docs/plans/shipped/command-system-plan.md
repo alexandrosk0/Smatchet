@@ -576,7 +576,7 @@ Run after the mega-PR lands on the branch, before merge to develop:
    - Existing `ui.register_global_action("foo", function() ... end)` still appears in the helper window AND now in palette under category `lua`.
 
 8. **Perf workflow doc update**:
-   - Edit `docs/PERF_WORKFLOW.md`: replace the "hand off to user" section with `SmatchetStandalone.exe cmd scenario.run --name=priority-grid-scroll --frames=600` + `Read('<userData>/perf/...json')`. Cleanup section reads `cmd commands.list --category=perf` to confirm `temp:` markers are gone (the `temp:` audit is unchanged).
+   - Edit `docs/guides/perf-workflow.md`: replace the "hand off to user" section with `SmatchetStandalone.exe cmd scenario.run --name=priority-grid-scroll --frames=600` + `Read('<userData>/perf/...json')`. Cleanup section reads `cmd commands.list --category=perf` to confirm `temp:` markers are gone (the `temp:` audit is unchanged).
 
 ## Risks and open follow-ups
 

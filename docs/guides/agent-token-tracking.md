@@ -1,3 +1,4 @@
+<!-- tier: portable -->
 # Agent token tracking
 
 ## Context
@@ -133,7 +134,7 @@ Caveats: statusline runs on every refresh — keep parsing under 100ms. Tail the
 
 ## Files added
 
-- `docs/AGENT_TOKEN_TRACKING.md` — this doc.
+- `docs/guides/agent-token-tracking.md` — this doc.
 - `agents/_shared/token-tracking/agent-token-log.py` — canonical hook source (Python; linked into `.claude/hooks/agent-token-log.py` by `setup-harness.sh`).
 - `agents/_shared/token-tracking/agents-statusline.py` — canonical statusline source (linked into `.claude/hooks/agents-statusline.py`).
 - `agents/_shared/token-tracking/SKILL.md` — canonical slash-skill source (linked into `.claude/skills/agent-tokens/SKILL.md`).

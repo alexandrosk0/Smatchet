@@ -76,7 +76,7 @@ Active gates on this PR (no opt-in needed):
 1. **PR-fast CI** (`.github/workflows/perf-pr-fast.yml`) — auto-runs `idle`, `priority-grid-scroll`, `command-palette-fuzzy`, `cell-edit-burst` against `docs/perf/baselines/<scenario>.ci-windows-latest.json`. **`priority-grid-scroll` directly exercises `RenderFieldCell`** per `agents/perf-gatekeeper.md` § Curated diff → scenario map → load-bearing gate for this feature.
 2. **Pillar 2 static scanner** (`scripts/dev/pillar2-scan.sh` via end-of-turn lint drain) — runs on every edited `.cpp`/`.h`. Expected clean: no new `cpr::` / `SQLite::` / `std::ifstream` / `std::mutex::lock` introduced.
 
-**Pre-push local check**: run `docs/PERF_WORKFLOW.md` § Gate-check vs baseline (Step 7) against `priority-grid-scroll` before opening the PR.
+**Pre-push local check**: run `docs/guides/perf-workflow.md` § Gate-check vs baseline (Step 7) against `priority-grid-scroll` before opening the PR.
 
 **Optional but recommended**: invoke `perf-gatekeeper` agent pre-PR — picks `priority-grid-scroll` automatically + posts delta.
 

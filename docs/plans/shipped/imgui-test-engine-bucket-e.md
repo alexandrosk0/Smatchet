@@ -86,7 +86,7 @@ Five commits inside one session, in order:
 
 - **Test-rig plan structure** (`docs/plans/shipped/test-rig-agent.md`) — this plan mirrors its CMake gating + sibling-directory layout + `test-*.sh` auto-enrolment.
 - **`IScenario` runner** in `Source_Core/src/Commands/Scenarios/` — `ImGuiTestEngine_Tick()` polling fits the existing `OnFrame` shape.
-- **`--spawn` + ephemeral child** workflow (`docs/PERF_WORKFLOW.md` § Path A1) — `ui_test.run` follows the same launch-and-tear-down pattern.
+- **`--spawn` + ephemeral child** workflow (`docs/guides/perf-workflow.md` § Path A1) — `ui_test.run` follows the same launch-and-tear-down pattern.
 - **Bash test conventions** (`agents/test-author.md` § Bash conventions) — `Passed: N  Failed: M` final line, exit-code contract.
 
 ## Verification (when this plan executes)

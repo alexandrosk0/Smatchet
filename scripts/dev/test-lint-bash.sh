@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-lint-bash.sh — shellcheck gate for scripts/dev/*.sh.
 #
-# Per `docs/evaluation/agentic-infrastructure-2026-05-23.md` punch-list item 5
+# Per `docs/reference/agentic-infrastructure-2026-05-23.md` punch-list item 5
 # (bash-lint sweep). Encodes the failing-rule policy from the eval doc:
 # fail on the three checks that have historically masked real bugs
 # (SC2086 unquoted vars / SC2046 unquoted command substitution / SC2155

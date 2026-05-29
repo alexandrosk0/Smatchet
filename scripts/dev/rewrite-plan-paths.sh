@@ -3,12 +3,12 @@
 # rename (Phase D of agentic-layer-project-independence).
 #
 # Rewrites, across all tracked files, the OLD plan paths to the NEW homes:
-#   docs/design/archive/<slug>.md      -> docs/plans/shipped/<slug>.md
+#   docs/plans/shipped/<slug>.md      -> docs/plans/shipped/<slug>.md
 #   docs/design/<slug>.md (non-archive)-> docs/plans/active/<slug>.md
 #   docs/backlog/BACKLOG_PLANS.md       -> docs/plans/INDEX.md
 #
 # ORDERING IS LOAD-BEARING: the `archive` rewrite runs BEFORE the bare `design`
-# rewrite, else docs/design/archive/x would become docs/plans/active/archive/x.
+# rewrite, else docs/plans/shipped/x would become docs/plans/active/archive/x.
 #
 # Skips generated metadata (.understand-anything/) — that tool regenerates it and
 # rewriting it surfaces pre-existing mojibake. Emits a per-file change report.
@@ -25,7 +25,7 @@ import subprocess, re, sys
 
 # (pattern, replacement) — ORDERED: archive before bare design.
 subs = [
-    (re.compile(r'docs/design/archive/'),            'docs/plans/shipped/'),
+    (re.compile(r'docs/plans/shipped/'),            'docs/plans/shipped/'),
     (re.compile(r'docs/design/archive\b'),           'docs/plans/shipped'),
     (re.compile(r'docs/design/'),                    'docs/plans/active/'),
     (re.compile(r'docs/design\b'),                   'docs/plans/active'),

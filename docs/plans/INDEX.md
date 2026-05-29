@@ -2,7 +2,7 @@
 
 Centralized tracker for plan-shaped work in this repo. Three buckets:
 
-1. **Applied / archived plans** — design docs whose work shipped. Source under [`docs/plans/shipped/`](../design/archive/). Indexed below with approximate date and one-line summary.
+1. **Applied / archived plans** — design docs whose work shipped. Source under [`docs/plans/shipped/`](../plans/shipped/). Indexed below with approximate date and one-line summary.
 2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
 3. **Agentic dependencies** — work that the agent ecosystem (prompts, harness, mirror, telemetry) needs in the codebase to unblock further automation.
 

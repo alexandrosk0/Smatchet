@@ -1,8 +1,8 @@
 # Merge gates
 
-> Lifted from [`AGENTS.md`](../../AGENTS.md) § Merge gates per [`docs/plans/active/agents-md-reduction.md`](../design/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the three gates + the override / scope boundaries so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
+> Lifted from [`AGENTS.md`](../../AGENTS.md) § Merge gates per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the three gates + the override / scope boundaries so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
 
-Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` (the host daemon per [`docs/plans/shipped/smatchet-merge-watcher.md`](../design/archive/smatchet-merge-watcher.md)) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`scripts/dev/merge-gates.graphql`):
+Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` (the host daemon per [`docs/plans/shipped/smatchet-merge-watcher.md`](../plans/shipped/smatchet-merge-watcher.md)) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`scripts/dev/merge-gates.graphql`):
 
 1. **CI** — every required check (`isRequired(pullRequestNumber: $pr) == true`) on `pullRequest.commits(last:1).commit.statusCheckRollup.contexts` must reach a passing terminal state.
    - **CheckRun**: pass = `status == "COMPLETED"` AND `conclusion in {SUCCESS, NEUTRAL, SKIPPED, STALE}`. Block = `conclusion in {FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE}`. Any non-COMPLETED status counts as pending.

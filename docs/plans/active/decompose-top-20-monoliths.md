@@ -164,7 +164,7 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 4. **Visible-cue bucket-E harness** — N/A; no new sync-stall path > 100 ms (slices 6 + 7 must double-check during implementation).
 5. **Marker inventory** — perf scope **names** preserved by construction. If a slice introduces a new scope, regen `docs/perf/MARKER_INVENTORY.md` in that PR.
 
-**Pre-push local check**: each slice runs the named scenario per `docs/PERF_WORKFLOW.md` § Gate-check vs baseline before opening the PR.
+**Pre-push local check**: each slice runs the named scenario per `docs/guides/perf-workflow.md` § Gate-check vs baseline before opening the PR.
 
 **Override**: `perf-out-of-band` label not anticipated — any slice that needs it has gone wrong; halt and re-slice.
 

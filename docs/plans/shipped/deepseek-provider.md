@@ -72,7 +72,7 @@ DeepSeek serves an OpenAI-compatible API at `https://api.deepseek.com/v1/chat/co
 
 - Pre-existing style-lint cleanups applied opportunistically (cppcheck `useStlAlgorithm` warnings) in files I edited for DeepSeek: `Source_Core/src/AiModelCatalog.cpp::IsKnownModel`, `Source_Core/src/SmatchetPreferencesUi.cpp` Whisper label loop, `tests/Source_Core/AiModelCatalog.test.cpp::ContainsId`, `tests/Source_Core/AiPrefsValidator.test.cpp::ContainsSubstring`. The pre-commit lint hook blocks any further edit on the file until the lint warnings clear — these were collateral cleanup, not plan deviations. Marked here for traceability.
 - ConfigMigration round-trip test for DeepSeek lives in `ConfigMigration.test.cpp` (per plan); the legacy-plaintext migration test is `#if defined(_WIN32)` only because the `_enc` path itself is Win32-only (matches the existing AiAnthropicApiKey pattern even though no Anthropic round-trip test existed yet — the DeepSeek pair establishes the template).
-- Bucket-E (ImGui Test Engine) rendered-strip verification of the `"[model changed - chat cleared]"` warning banner deferred per plan § Verification. Logged to [`docs/backlog/agent-self-improvement/tooling.md`](../backlog/agent-self-improvement/tooling.md) (2026-05-19 entry under `## Parked`, P3, owner `handoff-implementer`).
+- Bucket-E (ImGui Test Engine) rendered-strip verification of the `"[model changed - chat cleared]"` warning banner deferred per plan § Verification. Logged to [`docs/backlog/agent-self-improvement/tooling.md`](../self-improvement/categories/tooling.md) (2026-05-19 entry under `## Parked`, P3, owner `handoff-implementer`).
 
 ## Verification
 

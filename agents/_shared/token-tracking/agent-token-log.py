@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SubagentStop hook — append one JSONL line of usage stats per subagent call.
 
-Schema: see docs/AGENT_TOKEN_TRACKING.md § Layer B.
+Schema: see docs/guides/agent-token-tracking.md § Layer B.
 
 Output:
   - $CLAUDE_PROJECT_DIR/.claude/.agent-tokens.jsonl (gitignored).

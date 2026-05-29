@@ -7,7 +7,7 @@
 
 ## Triage log
 
-- **2026-05-18** — Triage sweep per [`docs/plans/shipped/agent-docs-improvements.md`](../../design/archive/agent-docs-improvements.md) § Action 2. Cadence trigger: category breached the ~20 open-items threshold (was 27).
+- **2026-05-18** — Triage sweep per [`docs/plans/shipped/agent-docs-improvements.md`](../../plans/shipped/agent-docs-improvements.md) § Action 2. Cadence trigger: category breached the ~20 open-items threshold (was 27).
   - Before: 27 entries
   - Dedup-merged: 1 (Bucket-E tooltip-content-identity helper — 2026-05-17 entry kept as survivor with `Supersedes: 2026-05-16` line; 2026-05-16 sibling dropped)
   - Moved-to-parked: 16 (all P3 entries — see `## Parked` section at the bottom)

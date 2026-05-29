@@ -138,7 +138,7 @@ Effect:
 | `AGENTS.md:67` (UX Pillar agent-ownership table) | `helpers: perf-instrument, perf-measure` | **No change** — they remain helpers in agent form for cross-harness |
 | `AGENTS.md:380` (Semantic-search exceptions) | "`perf-instrument` already use text-search" | **No change** — statement still true; agent prose unchanged |
 | `docs/agent-rules/delegation.md` routing tables | Lists both as agents | **Add** a note that on Claude Code they have a skill form; the agent form is the cross-harness fallback. No row movement. |
-| `docs/PERF_WORKFLOW.md` | References agent form | Verify references hold; update if any prose says "must spawn perf-instrument agent" rather than "invoke perf-instrument" |
+| `docs/guides/perf-workflow.md` | References agent form | Verify references hold; update if any prose says "must spawn perf-instrument agent" rather than "invoke perf-instrument" |
 
 Net diff: 2 prose additions (perf-detective + spike-hunter) + 1 small note in delegation.md + a verification pass on PERF_WORKFLOW.md. No frontmatter changes. No file deletions. AGENTS.md untouched in v3.
 
@@ -172,7 +172,7 @@ Per `docs/CONTEXT.md:63`, each verification item classified into bucket A-E. Man
 - `agents/perf-detective.md` — add orchestrator-preference prose note
 - `agents/spike-hunter.md` — same
 - `docs/agent-rules/delegation.md` — note skill-form availability on Claude Code
-- `docs/PERF_WORKFLOW.md` — verify references; update prose if needed
+- `docs/guides/perf-workflow.md` — verify references; update prose if needed
 - `docs/backlog/agent-self-improvement/tooling.md` — add V5 + V6 deferred-automation entries
 
 **Unchanged (under dual-publish):**

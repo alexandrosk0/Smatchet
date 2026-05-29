@@ -48,7 +48,7 @@ Numbered list. Per-file rationale.
 16. `docs/harness/claude-code/hooks/` — add optional `pretool-edit-p4-lock-check.sh` template (gets junctioned into `.claude/hooks/` by `setup-harness.sh`). `.claude/` itself is gitignored — never committed.
 17. `AGENTS.md:?` — new short section § Dual-VCS topology (p4 opt-in primitives) cross-linking the new docs. Existing git-centric sections stay verbatim.
 18. `docs/CONTEXT.md:?` — add glossary entries: `task stream`, `shelf`, `pending CL`, `p4 counter` under a new § Source control section.
-19. `docs/dev/offline-builds.md:127` — update cross-reference (this plan no longer "supersedes" the doc).
+19. `docs/guides/offline-builds.md:127` — update cross-reference (this plan no longer "supersedes" the doc).
 20. `agents/git-janitor.md` — add cross-link to `agents/p4-janitor.md` (no behavior change; git path unchanged).
 
 `.gitignore` needs no change — `.claude/streams/` is already covered by the existing wholesale `.claude/` ignore at `.gitignore:63`.
@@ -203,7 +203,7 @@ Exit: deliberately have two agents try to edit the same `+l`-locked file; one is
 
 ## Naming
 
-Slug is `git-to-perforce-migration` for historical continuity (this doc was first committed under that name on 2026-05-15 as a full-migration plan). After 2026-05-21 scope-correction the doc describes a dual-VCS opt-in layer, not a migration. Slug retained because external references exist (`docs/dev/offline-builds.md:127`). Future renames are cheap if the slug becomes confusing.
+Slug is `git-to-perforce-migration` for historical continuity (this doc was first committed under that name on 2026-05-15 as a full-migration plan). After 2026-05-21 scope-correction the doc describes a dual-VCS opt-in layer, not a migration. Slug retained because external references exist (`docs/guides/offline-builds.md:127`). Future renames are cheap if the slug becomes confusing.
 
 ## Implementation log
 
@@ -265,7 +265,7 @@ What PR A actually shipped:
 - ✅ `scripts/git-hooks/pre-push` invokes the reconcile check.
 - ✅ `scripts/dev/lock-claim-update.sh` adds `SMATCHET_LOCK_BACKEND=p4-counter` dispatch (refuses with exit 2 + diagnostic; full p4-side update path filed as a P3 backlog entry).
 - ✅ `scripts/setup-harness.sh` adds dual-VCS opt-in check.
-- ✅ `docs/dev/offline-builds.md:127` cross-reference de-stale-d.
+- ✅ `docs/guides/offline-builds.md:127` cross-reference de-stale-d.
 - ✅ `agents/git-janitor.md` adds the `See also` cross-link to `agents/p4-janitor.md`.
 - ⏭ `scripts/dev/_lock-json.py` — no change required (the helper is backend-agnostic and already shared by both backends).
 

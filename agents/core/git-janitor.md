@@ -31,9 +31,9 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
-**See also**: [`agents/core/p4-janitor.md`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../AGENTS.md) § Dual-VCS topology.
+**See also**: [`agents/core/p4-janitor.md`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology.
 
-**P4-gated ship-loop note**: when the orchestrator hands off to `git-janitor` from the P4-gated ship-loop (per [`AGENTS.md`](../AGENTS.md) § P4-gated ship-loop), `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only. Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic; the watcher polls GitHub PR state and doesn't care whether the PR's commits were produced by direct git workflow or by `scripts/dev/p4-task-stream-to-pr.sh --promote-reviewed-cl`. `git-janitor` NEVER touches p4 shelves, p4 streams, or any p4 server state — that's `p4-janitor`'s remit. If `git-janitor` notices a stranded p4 shelf or task stream during cleanup, it reports the residue per § Residue requiring user action and routes the user to `p4-janitor`.
+**P4-gated ship-loop note**: when the orchestrator hands off to `git-janitor` from the P4-gated ship-loop (per [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop), `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only. Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic; the watcher polls GitHub PR state and doesn't care whether the PR's commits were produced by direct git workflow or by `scripts/dev/p4-task-stream-to-pr.sh --promote-reviewed-cl`. `git-janitor` NEVER touches p4 shelves, p4 streams, or any p4 server state — that's `p4-janitor`'s remit. If `git-janitor` notices a stranded p4 shelf or task stream during cleanup, it reports the residue per § Residue requiring user action and routes the user to `p4-janitor`.
 
 ## Path resolution — `<main-repo>` / `<worktree>`
 
@@ -222,7 +222,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 1. **Verify merge state** via the poll-until-stable helper below — require `MERGEABLE` + `CLEAN`. `CONFLICTING` → halt (user resolves). `UNKNOWN` is transient; the helper waits it out.
 
-2. **Best-effort pre-flip PR draft → ready** (C4 prong 1, per `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4 + `docs/self-improvement/categories/process.md` 2026-05-21 P0 — applied 2026-05-27). The CodeRabbit `auto_review.drafts: false` default means CR skips draft PRs; flipping ready BEFORE the gates poll lets CR's real auto-review fire. Non-blocking — the gates poll at step 3 sets `MERGE_GATES_FLIP_READY=true` which retries the flip with the same soft-fail semantics, so a transient failure here is recoverable:
+2. **Best-effort pre-flip PR draft → ready** (C4 prong 1, per `docs/reference/agentic-infrastructure-2026-05-23.md` § C4 + `docs/self-improvement/categories/process.md` 2026-05-21 P0 — applied 2026-05-27). The CodeRabbit `auto_review.drafts: false` default means CR skips draft PRs; flipping ready BEFORE the gates poll lets CR's real auto-review fire. Non-blocking — the gates poll at step 3 sets `MERGE_GATES_FLIP_READY=true` which retries the flip with the same soft-fail semantics, so a transient failure here is recoverable:
    ```bash
    gh_pr_ready_idempotent "$N" || echo "WARN: pre-flip failed; poller will retry flip at poll start" >&2
    ```
@@ -302,7 +302,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/plans/active/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
-10.5. **Orphan-scenario sweep** (same shape as step 10's residue check). Walk every scenario `.cpp` under `Source_Core/src/Commands/Scenarios/` and classify it against the orphan tri-condition. Surface every match via one combined `AskUserQuestion` block (one option-set per orphan: `keep` / `archive to docs/scenarios/archived/<name>.md` / `delete .cpp + registry line`). Default = **keep** (orphan detection is advisory, not destructive). The sweep is end-of-session only — never mid-loop.
+10.5. **Orphan-scenario sweep** (same shape as step 10's residue check). Walk every scenario `.cpp` under `Source_Core/src/Commands/Scenarios/` and classify it against the orphan tri-condition. Surface every match via one combined `AskUserQuestion` block (one option-set per orphan: `keep` / `archive to docs/reference/<name>.md` / `delete .cpp + registry line`). Default = **keep** (orphan detection is advisory, not destructive). The sweep is end-of-session only — never mid-loop.
 
    **Orphan-scenario definition.** A scenario is orphan when **all three** hold:
    - **(i) No recent PR cite** — `git log --grep="<scenario-name>" --since="60.days.ago" --oneline | wc -l` returns zero.

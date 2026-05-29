@@ -143,7 +143,7 @@ fi
 
 # -------------------------------------------------------------------------
 # 7. AGENTS.md § Agent output contract has 6 class rows (Design class added
-#    per H9 from docs/evaluation/agentic-infrastructure-2026-05-23.md).
+#    per H9 from docs/reference/agentic-infrastructure-2026-05-23.md).
 # -------------------------------------------------------------------------
 echo
 echo "[7/13] docs/agent-rules/delegation.md output-contract table has 6 class rows"
@@ -216,7 +216,7 @@ fi
 # -------------------------------------------------------------------------
 # 10. Frontmatter `version: N` matches banner `· vN`.
 # -------------------------------------------------------------------------
-# H7 from docs/evaluation/agentic-infrastructure-2026-05-23.md: eight agents
+# H7 from docs/reference/agentic-infrastructure-2026-05-23.md: eight agents
 # had `version: 1` in frontmatter but `· v2` in their banner; telemetry
 # pivots on frontmatter so v2 work was undercounted. PR #421 fixed those
 # eight. This check prevents future drift by asserting the two are always

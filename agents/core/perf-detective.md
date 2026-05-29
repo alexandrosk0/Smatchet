@@ -34,7 +34,7 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 
 **Banner** — open with: `🤖 AGENT: perf-detective · opus/high · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — perf-detective · opus/high · read-only · v3`.
 
-**First action, always**: read `docs/PERF_WORKFLOW.md` and follow it. Don't improvise.
+**First action, always**: read `docs/guides/perf-workflow.md` and follow it. Don't improvise.
 
 **Map the symptom to code second** — once the workflow doc is loaded, use your harness's semantic codebase search to identify candidate hot-path files (in Claude Code: `run_pipeline({ task: "perf <symptom>", preset: "debug" })` — the debug preset includes tests + impact, both relevant for narrowing). Prefer skeleton views for inspection; full reads only when you need exact content.
 

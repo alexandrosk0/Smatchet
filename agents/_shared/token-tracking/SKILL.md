@@ -49,4 +49,4 @@ Lifetime: <N> calls across <K> sessions, $<Z>.
 - Pricing table lives at the top of `scripts/agent-tokens-report.py`. Review quarterly; banner prints the cutoff so stale prices are visible.
 - If the JSONL is missing or empty, the script prints a friendly hint instead of an error.
 
-See `docs/AGENT_TOKEN_TRACKING.md` for the full design.
+See `docs/guides/agent-token-tracking.md` for the full design.

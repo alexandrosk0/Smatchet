@@ -2,7 +2,7 @@
 
 # Status
 
-**Accepted (2026-05-23).** Three decisions in one ADR because they are coupled — they co-deliver the autonomous-debug end-state documented in [`docs/CONTEXT.md`](../CONTEXT.md) § Autonomous debugging and built out across the 11 slices in [`docs/plans/shipped/autonomous-debugging-no-creds.md`](../design/archive/autonomous-debugging-no-creds.md). Splitting into three ADRs would risk a future reader catching one without the context of the other two.
+**Accepted (2026-05-23).** Three decisions in one ADR because they are coupled — they co-deliver the autonomous-debug end-state documented in [`docs/CONTEXT.md`](../CONTEXT.md) § Autonomous debugging and built out across the 11 slices in [`docs/plans/shipped/autonomous-debugging-no-creds.md`](../plans/shipped/autonomous-debugging-no-creds.md). Splitting into three ADRs would risk a future reader catching one without the context of the other two.
 
 # Context
 
