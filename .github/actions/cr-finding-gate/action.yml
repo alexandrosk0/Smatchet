@@ -32,7 +32,12 @@ runs:
         # protection entry exactly.
         CONTEXT: CR findings (0 actionable)
       run: |
-        set -uo pipefail
+        # GitHub runs composite-action bash steps with `-e` (errexit) injected:
+        # `bash --noprofile --norc -e -o pipefail`. decide() deliberately
+        # returns non-zero on its retry path, which under -e would abort the job
+        # before any status is posted. Turn errexit OFF explicitly — this script
+        # relies on explicit exit codes + checked returns, not errexit.
+        set +e -uo pipefail
 
         post() {
           # $1 state (success|failure|pending|error), $2 description
