@@ -60,7 +60,8 @@ jobs:
       github.event.pull_request.base.ref == 'develop' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
-       contains(github.event.comment.user.login, 'coderabbit'))
+       (github.event.comment.user.login == 'coderabbitai[bot]' ||
+        github.event.comment.user.login == 'coderabbitai'))
     steps:
       - name: Checkout
         uses: actions/checkout@v4
