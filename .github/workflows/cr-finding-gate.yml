@@ -32,8 +32,12 @@ permissions:
   pull-requests: read
 
 concurrency:
+  # Do NOT cancel in-progress: review/comment events fire in bursts, and a
+  # cancelled run leaves a red "cancelled" check on the commit. Each run is a
+  # few seconds and only posts a status (last write wins), so let them all
+  # complete rather than cancel.
   group: cr-finding-gate-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   cr-gate:

@@ -94,6 +94,28 @@ runs:
           exit 0
         }
 
+        # Count of CR reviews on the current head — distinguishes "CR has not
+        # reviewed this head yet" (0 -> pending) from "CR reviewed, body has no
+        # actionable header" (>0, empty first_line -> pass). Conflating the two
+        # would wedge on PENDING forever after an empty-body incremental review.
+        n_reviews=$(printf '%s' "$resp" | jq -r '
+          .data.repository.pullRequest as $pr
+          | ($pr.headRefOid // "") as $oid
+          | [ $pr.reviews.nodes[]
+              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                       and (.commit.oid // "") == $oid) ] | length
+          ' 2>/dev/null) || n_reviews=0
+        n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
+
+        if [ "$n_reviews" -eq 0 ]; then
+          # CR has not (yet) reviewed the current head. Mirror merge-gates.sh's
+          # grace-window block: PENDING, not success — the required check stays
+          # un-green until CR's review on this head exists.
+          post pending "awaiting CodeRabbit review on current head"
+          exit 0
+        fi
+
+        # First body line of the latest on-head CR review (may be empty).
         first_line=$(printf '%s' "$resp" | jq -r '
           .data.repository.pullRequest as $pr
           | ($pr.headRefOid // "") as $oid
@@ -104,14 +126,6 @@ runs:
           | if . == null then "" else ((.body // "") | split("\n")[0]) end
           ' 2>/dev/null) || first_line=""
         first_line="${first_line//$'\r'/}"
-
-        if [ -z "$first_line" ] || [ "$first_line" = "null" ]; then
-          # CR has not (yet) reviewed the current head. Mirror merge-gates.sh's
-          # grace-window block: PENDING, not success — the required check stays
-          # un-green until CR's review on this head exists.
-          post pending "awaiting CodeRabbit review on current head"
-          exit 0
-        fi
 
         # --- Parse "Actionable comments posted: N" ----------------------------
         n=$(printf '%s' "$first_line" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
