@@ -1,0 +1,127 @@
+name: CR finding gate
+description: >-
+  Posts a `CR findings (0 actionable)` commit StatusContext reflecting
+  CodeRabbit's actionable-finding count on the PR's current head. Lifts the
+  "0 actionable" semantics from scripts/dev/merge-gates.sh (client-side) to a
+  server-side required check. Plan: docs/design/gate-enforcement-hardening.md
+  § Slice 3.
+
+inputs:
+  github-token:
+    description: Token with statuses:write + pull-requests:read.
+    required: true
+  pr-number:
+    description: Pull-request number to evaluate.
+    required: true
+  head-sha:
+    description: Head commit SHA the status is posted against.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Evaluate CodeRabbit actionable findings and post status
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ inputs.pr-number }}
+        SHA: ${{ inputs.head-sha }}
+        OWNER: ${{ github.repository_owner }}
+        REPO: ${{ github.event.repository.name }}
+        # The required StatusContext name. Must match the develop branch-
+        # protection entry exactly.
+        CONTEXT: CR findings (0 actionable)
+      run: |
+        set -uo pipefail
+
+        post() {
+          # $1 state (success|failure|pending|error), $2 description
+          local state="$1" desc="$2"
+          # GitHub truncates description at 140 chars.
+          desc="${desc:0:140}"
+          echo "CR finding gate -> ${state}: ${desc}"
+          gh api "repos/${OWNER}/${REPO}/statuses/${SHA}" \
+            -f state="${state}" \
+            -f context="${CONTEXT}" \
+            -f description="${desc}" >/dev/null \
+            || echo "WARN: gh api statuses POST failed (fork PR / missing statuses:write?)" >&2
+        }
+
+        # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
+        # `cr-out-of-band` lets a maintainer force-pass this gate, consistent
+        # with the tests-out-of-band / perf-out-of-band downgrade mechanism.
+        labels=$(gh api "repos/${OWNER}/${REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
+        if printf '%s\n' "$labels" | grep -qx 'cr-out-of-band'; then
+          post success "cr-out-of-band label set — gate overridden"
+          exit 0
+        fi
+
+        # --- Is CodeRabbit installed? (probe .coderabbit.yaml/.yml) ------------
+        # Fall through to PASS when CR is not installed — same posture as
+        # merge-gates.sh (a repo without CR must not be blocked by this gate).
+        cr_installed=true
+        if ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yaml" >/dev/null 2>&1 \
+           && ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yml" >/dev/null 2>&1; then
+          cr_installed=false
+        fi
+        if [ "$cr_installed" = false ]; then
+          post success "CodeRabbit not installed — gate not applicable"
+          exit 0
+        fi
+
+        # --- Fetch reviews on the current head --------------------------------
+        # Latest CR review whose commit.oid == headRefOid. CR posts
+        # "Actionable comments posted: N" as the first body line.
+        q='query($owner:String!,$repo:String!,$pr:Int!){
+          repository(owner:$owner,name:$repo){
+            pullRequest(number:$pr){
+              headRefOid
+              reviews(first:100){
+                nodes{ author{login} state submittedAt commit{oid} body }
+              }
+            }
+          }
+        }'
+        # ubuntu-latest runner ships jq; parse the GraphQL response with it
+        # directly (unlike merge-gates.sh, which is jq-free for the local
+        # Windows dev env). First body line of the latest on-head CR review,
+        # sorted by submittedAt; empty when CR has not reviewed this head.
+        resp=$(gh api graphql -f query="$q" \
+                 -F owner="${OWNER}" -F repo="${REPO}" -F pr="${PR}" 2>/dev/null) || {
+          post error "GraphQL query failed"
+          exit 0
+        }
+
+        first_line=$(printf '%s' "$resp" | jq -r '
+          .data.repository.pullRequest as $pr
+          | ($pr.headRefOid // "") as $oid
+          | [ $pr.reviews.nodes[]
+              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                       and (.commit.oid // "") == $oid) ]
+          | sort_by(.submittedAt) | last
+          | if . == null then "" else ((.body // "") | split("\n")[0]) end
+          ' 2>/dev/null) || first_line=""
+        first_line="${first_line//$'\r'/}"
+
+        if [ -z "$first_line" ] || [ "$first_line" = "null" ]; then
+          # CR has not (yet) reviewed the current head. Mirror merge-gates.sh's
+          # grace-window block: PENDING, not success — the required check stays
+          # un-green until CR's review on this head exists.
+          post pending "awaiting CodeRabbit review on current head"
+          exit 0
+        fi
+
+        # --- Parse "Actionable comments posted: N" ----------------------------
+        n=$(printf '%s' "$first_line" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
+              | grep -oE '[0-9]+' | head -1 || true)
+        if [ -z "$n" ]; then
+          # CR reviewed but no actionable header (e.g. an approval / chit-chat).
+          # Treat as clean — consistent with merge-gates.sh.
+          post success "CodeRabbit reviewed head; no actionable-findings header"
+          exit 0
+        fi
+        if [ "$n" -gt 0 ]; then
+          post failure "CodeRabbit posted ${n} actionable finding(s) on current head"
+          exit 0
+        fi
+        post success "CodeRabbit: 0 actionable findings on current head"
