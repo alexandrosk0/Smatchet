@@ -223,6 +223,70 @@ def _pr_lifecycle_state(pr: int, clone_path: str) -> str:
     return ""
 
 
+def _poll_owner_repo(pr: int, clone_path: str):
+    """Resolve (owner, repo) for a poll via `gh repo view`.
+
+    Returns a 2-tuple `(owner, repo)` on success, or a poll state-dict
+    (last_state GH_UNAVAILABLE / GH_REPO_ERR / GH_PARSE_ERR) on failure.
+    Extracted from poll_one verbatim as a monkeypatchable seam: the
+    integration bats can't reach real gh on Windows (the absolute GH_BIN
+    ignores extensionless PATH stubs), so it patches this to return a fixed
+    (owner, repo). Production behavior is identical to the previous inline block.
+    """
+    try:
+        meta = subprocess.run(
+            [GH_BIN, "repo", "view", "--json", "owner,name"],
+            cwd=clone_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return {
+            "pr": pr,
+            "clone_path": clone_path,
+            "last_poll_unix": int(time.time()),
+            "last_state": "GH_UNAVAILABLE",
+            "last_status_line": f"gh repo view failed: {exc}",
+        }
+    if meta.returncode != 0:
+        return {
+            "pr": pr,
+            "clone_path": clone_path,
+            "last_poll_unix": int(time.time()),
+            "last_state": "GH_REPO_ERR",
+            "last_status_line": f"gh repo view exited {meta.returncode}: {meta.stderr.strip()[:200]}",
+        }
+    try:
+        meta_json = json.loads(meta.stdout)
+        return (meta_json["owner"]["login"], meta_json["name"])
+    except (json.JSONDecodeError, KeyError) as exc:
+        return {
+            "pr": pr,
+            "clone_path": clone_path,
+            "last_poll_unix": int(time.time()),
+            "last_state": "GH_PARSE_ERR",
+            "last_status_line": f"gh repo view JSON parse: {exc}",
+        }
+
+
+def _poll_run_gates(owner: str, repo: str, pr: int, env: dict):
+    """Run merge-gates.sh once and return the CompletedProcess. Seam for test
+    monkeypatching — the integration bats supply a fake result with the desired
+    returncode/stdout instead of executing the real gh-backed gates script."""
+    return subprocess.run(
+        [BASH_BIN, str(MERGE_GATES_SCRIPT), owner, repo, str(pr)],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+
+
 def poll_one(
     entry: dict[str, Any], extra_gates_env: dict[str, str] | None = None
 ) -> dict[str, Any]:
@@ -271,45 +335,12 @@ def poll_one(
             ),
             "gates_return_code": 4,
         }
-    # Resolve owner / repo via `gh repo view --json owner,name` in the clone.
-    try:
-        meta = subprocess.run(
-            [GH_BIN, "repo", "view", "--json", "owner,name"],
-            cwd=clone_path,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=15,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return {
-            "pr": pr,
-            "clone_path": clone_path,
-            "last_poll_unix": int(time.time()),
-            "last_state": "GH_UNAVAILABLE",
-            "last_status_line": f"gh repo view failed: {exc}",
-        }
-    if meta.returncode != 0:
-        return {
-            "pr": pr,
-            "clone_path": clone_path,
-            "last_poll_unix": int(time.time()),
-            "last_state": "GH_REPO_ERR",
-            "last_status_line": f"gh repo view exited {meta.returncode}: {meta.stderr.strip()[:200]}",
-        }
-    try:
-        meta_json = json.loads(meta.stdout)
-        owner = meta_json["owner"]["login"]
-        repo = meta_json["name"]
-    except (json.JSONDecodeError, KeyError) as exc:
-        return {
-            "pr": pr,
-            "clone_path": clone_path,
-            "last_poll_unix": int(time.time()),
-            "last_state": "GH_PARSE_ERR",
-            "last_status_line": f"gh repo view JSON parse: {exc}",
-        }
+    # Resolve owner / repo via `gh repo view` — extracted into the
+    # _poll_owner_repo seam so the integration bats can monkeypatch the gh hit.
+    owner_repo = _poll_owner_repo(pr, clone_path)
+    if isinstance(owner_repo, dict):
+        return owner_repo  # GH_UNAVAILABLE / GH_REPO_ERR / GH_PARSE_ERR
+    owner, repo = owner_repo
     # C4 prong 1 — flip draft → ready BEFORE the gates poll, not just before
     # the merge call. CodeRabbit's `auto_review.drafts: false` default means
     # PRs that stay draft skip CR review entirely; the merge-gates then
@@ -368,15 +399,7 @@ def poll_one(
     if extra_gates_env:
         env.update(extra_gates_env)
     try:
-        gates = subprocess.run(
-            [BASH_BIN, str(MERGE_GATES_SCRIPT), owner, repo, str(pr)],
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=120,
-        )
+        gates = _poll_run_gates(owner, repo, pr, env)
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return {
             "pr": pr,
