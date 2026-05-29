@@ -26,12 +26,29 @@ setup() {
     # Isolate per-user state via LOCALAPPDATA (Windows path) — on POSIX bats the
     # CLI's XDG_STATE_HOME branch picks it up regardless. We force LOCALAPPDATA
     # for parity with the production Windows path.
-    export LOCALAPPDATA="$(mktemp -d)"
+    #
+    # git-bash mktemp yields a driveless POSIX path (/c/Users/...); native
+    # Windows Python — both the CLI subprocess and the in-process module under
+    # test — mis-resolves that for open()/CreateProcess, so the registry write
+    # and read land in different places (FileNotFoundError / WinError 267) and
+    # clone_path stops matching the drive-qualified value `register` stores.
+    # cygpath -m converts to a mixed C:/... form (drive letter + forward
+    # slashes) that BOTH native Python and git-bash filesystem tests accept,
+    # and which matches `git rev-parse --show-toplevel`. POSIX has no cygpath
+    # and mktemp already returns a valid path, so use it verbatim there. Keep
+    # the raw POSIX path for teardown's rm (git-bash rm wants the /c/... form).
+    SMATCHET_TEST_TMP="$(mktemp -d)"
+    if command -v cygpath >/dev/null 2>&1; then
+        LOCALAPPDATA="$(cygpath -m "$SMATCHET_TEST_TMP")"
+    else
+        LOCALAPPDATA="$SMATCHET_TEST_TMP"
+    fi
+    export LOCALAPPDATA SMATCHET_TEST_TMP
     export PYTHONIOENCODING=utf-8
 }
 
 teardown() {
-    rm -rf "${LOCALAPPDATA:-}"
+    rm -rf "${SMATCHET_TEST_TMP:-}"
 }
 
 # ---------- helper ----------
@@ -395,7 +412,7 @@ spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher
 m = importlib.util.module_from_spec(spec)
 sys.modules['mw'] = m
 spec.loader.exec_module(m)
-m._bump_triage_attempts(999, r'$(pwd)', 2)
+m._bump_triage_attempts(999, r'$REPO_ROOT', 2)
 "
     [ "$status" -eq 0 ]
     # Verify
@@ -411,7 +428,7 @@ m._bump_triage_attempts(999, r'$(pwd)', 2)
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-m._bump_triage_attempts(999, r'$(pwd)', 3, 'feedface1234567890abcdef0987654321deadbe')
+m._bump_triage_attempts(999, r'$REPO_ROOT', 3, 'feedface1234567890abcdef0987654321deadbe')
 "
     [ "$status" -eq 0 ]
     run watch_cli list
@@ -428,7 +445,7 @@ m._bump_triage_attempts(999, r'$(pwd)', 3, 'feedface1234567890abcdef0987654321de
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-m._bump_triage_attempts(999, r'$(pwd)', 5, 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+m._bump_triage_attempts(999, r'$REPO_ROOT', 5, 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
 "
     [ "$status" -eq 0 ]
     # Now call handle_blocked_cr_triage with a CR-finding status line +
@@ -447,7 +464,7 @@ class FakeResult:
     stdout = 'ok'
     stderr = ''
 subprocess.run = lambda *a, **kw: FakeResult()
-entry = {'pr': 999, 'clone_path': r'$(pwd)',
+entry = {'pr': 999, 'clone_path': r'$REPO_ROOT',
          'triage_attempts': 5,
          'triage_for_head_sha': 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
 status_line = 'Poll 1/1 CodeRabbit: COMMENTED (2 actionable - block)'
@@ -653,8 +670,27 @@ os.environ['MERGE_WATCH_AUTO_ACT_BUDGET'] = '2'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
 m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
+# gh pr view returns a head_sha that differs from the seeded dedup head, so
+# the reserve reaches the budget branch instead of short-circuiting on dedup.
 m._gh_json = lambda args, **kw: {'headRefOid': 'feedfacefeedfacefeedfacefeedfacefeedface'}
-entry = {'pr': 999, 'clone_path': r'$(pwd)', 'auto_act_attempts': 2}
+# maybe_auto_act gates on claude-on-PATH and a clean clone before the budget
+# check; stub both so the test is deterministic regardless of host PATH or the
+# working tree's git state (CI/Linux has no 'claude'; dev trees are dirty).
+import shutil, subprocess
+shutil.which = lambda _n: '/fake/bin/claude'
+class _CleanGit:
+    returncode = 0
+    stdout = ''
+    stderr = ''
+subprocess.run = lambda *a, **kw: _CleanGit()
+# The budget counter is read from the REGISTRY entry (via the atomic reserve),
+# NOT from the passed-in entry dict — seed it to the budget on a PRIOR head so
+# this poll's (different) head is not deduped and trips the budget ceiling.
+# clone_path must equal the value `register` stored (drive-qualified) to match
+# the registry key.
+clone = r'$REPO_ROOT'
+m._bump_auto_act_state(999, clone, 'priorheadpriorheadpriorheadpriorhead0000', 2)
+entry = {'pr': 999, 'clone_path': clone, 'auto_act_attempts': 2}
 state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
          'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (1 actionable - block)'}
 extras = m.maybe_auto_act(state, entry)
@@ -704,16 +740,19 @@ print('budget default ok')
     [[ "$output" == *"unknown arg"* ]]
 }
 
-@test "smatchet-notify.sh with no Smatchet + no BurntToast → exit 1 + 'ALL channels failed'" {
-    # POSIX bats; no Windows BurntToast available. HTTP POST will fail (no
-    # server bound) + Windows branch may or may not fire depending on $OSTYPE.
-    # Either way, with no toast targets up, the final dispatch fails.
-    SMATCHET_NOTIFY_HOST=127.0.0.1 SMATCHET_NOTIFY_PORT=1 \
-        run bash "$SCRIPTS_DIR/smatchet-notify.sh" --pr 999 --state CI_FAIL --message "bats test"
-    # On non-Windows, exit=1 + ALL channels failed.
-    # On Windows w/o BurntToast, also exit=1.
+@test "smatchet-notify.sh with no writable channel → exit 1 + 'ALL channels failed'" {
+    # Channel 3 (file log) is a guaranteed fallback whenever LOCALAPPDATA /
+    # XDG_STATE_HOME / HOME point somewhere writable — and setup() always sets
+    # LOCALAPPDATA. So the all-channels-failed exit is only reachable with all
+    # three path vars unset, AND no Smatchet (dead HTTP host), AND no BurntToast.
+    # `env -u` strips the path vars for this one invocation (a plain VAR=val
+    # prefix on `run` would not make the file-log channel unavailable, so the
+    # script would always succeed via file-log and exit 0).
+    run env -u LOCALAPPDATA -u XDG_STATE_HOME -u HOME \
+        SMATCHET_NOTIFY_HOST=127.0.0.1 SMATCHET_NOTIFY_PORT=1 \
+        bash "$SCRIPTS_DIR/smatchet-notify.sh" --pr 999 --state CI_FAIL --message "bats test"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"ALL channels failed"* ]] || [[ "$output" == *"channels failed"* ]]
+    [[ "$output" == *"ALL channels failed"* ]]
 }
 
 @test "NOTIFY_STATES contains the 7 expected terminal states (incl. READY_FLIP_FAILED from C4 prong 1)" {
