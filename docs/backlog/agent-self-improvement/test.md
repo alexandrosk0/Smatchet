@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-28 · test-author · [test] · P2 — Bucket-E `--spawn` child redirect log is empty; a failing `IM_CHECK`'s text isn't captured
+  Details: While authoring `tests/ui/mcp_lua_fresh_state_race.test.cpp`, the `ConfigLogToTTY` engine output (the failing `IM_CHECK` text) did not land in the `--spawn` child redirect log (`Smatchet-spawn-*.log` was 0 bytes); diagnosing a first-run assertion failure required temporary `LOG_INFO` into the app's own `Smatchet-<pid>.log`. Every bucket-E author pays this temp-instrument round-trip on a first failure.
+  Concrete next action: add a `ui_test.run --verbose` that forces the engine result / per-check log into the JSON envelope (`data.checks`) or the spawn redirect, so the failing assertion text is captured without temp instrumentation. ~1.5 h.
+  Status: open
+  Last-reviewed: 2026-05-28
+
 - 2026-05-24 · test-author · [test] · P2 — `VerifyOnSave_TestConnection_SetsResult` bucket-E test fails under `--spawn` ephemeral runner (slice-9 ship-loop observation)
   Details: Slice 9 of `docs/design/archive/autonomous-debugging-no-creds.md` aggregate UI-test run (34/35 pass) revealed a single pre-existing failure: `VerifyOnSave_TestConnection_SetsResult` from `tests/ui/ai_prefs_autosave_flow.test.cpp:215`. The variant depends on `SmatchetActiveUiTestAppController()` returning a non-null `AppController*` so it can call `AiPrefsTestConnection::TriggerProbe`. Under `--spawn --ephemeral` the AppController seam is wired (other variants in the same TU pass), but the worker-thread `ProbeReachability` succeeds, then the result-callback dispatched to the main thread doesn't always run before the test budget (240 yields) expires. Sibling variant `VerifyOnSave_CancelOnClose_ShortCircuits` passes consistently because cancel-then-yield is deterministic. Not a slice-9 regression — slice-9's own 18 new variants all pass.
   Concrete next action: replace the 240-yield poll loop with a deterministic wait — either (a) drive the dispatcher tick from inside the test via `app.MainThreadDispatcher().DrainOnce()` after the worker join, or (b) gate `assistantPrefsTestInFlight=false` via a deterministic post-condition the test arms before TriggerProbe rather than waiting for the dispatched callback. ~1 h.

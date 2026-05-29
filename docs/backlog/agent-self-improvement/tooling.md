@@ -16,6 +16,12 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-28 · test-author · [tooling] · P2 — Capturing native-exe output for later inspection: PowerShell `Tee-Object` writes UTF-16-LE (mangles later Bash `grep`/`tr`); the Bash-tool VM intermittently `HCS_E_CONNECTION_TIMEOUT`s mid-session
+  Details: During the bucket-E ASan run, `Tee-Object`-captured logs were UTF-16-LE and corrupted when read back through the Bash tool's `grep`/`tr`; separately the Bash tool's Linux VM timed out mid-session and clobbered a captured log. The reliable pattern on this harness is `... | Out-File -Encoding utf8` from PowerShell, then read back with the `Read` tool (never the Bash VM) — every ASan/bucket-E run depends on capturing spawned-child output.
+  Concrete next action: one-line note in `agents/test-author.md` § Authoring patterns (bucket-E output-capture gotcha).
+  Status: open
+  Last-reviewed: 2026-05-28
+
 - 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
   Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
   Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.

@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-28 · security-review · [security] · P2 — Fresh-state Lua isolation is only as strong as its host glues; audit `*Bind` marshallers for member-state capture
+  Details: The MCP fresh-per-call `sol::state` fix (branch `fix/mcp-lua-fresh-state-race`) was initially incomplete: `InitLuaCore` keeps `smatchet.get_ticket` / `create_issue` / `decode_json` live on the fresh state, but their `ILuaBindingHost::Lua*Bind` impls marshalled results via the shared member `lua` (`sol::make_object(lua,…)` / `JsonToLua(lua,…)` / `lua.create_table()`) — re-introducing cross-thread `lua_State` access from a fresh-state caller AND returning a `sol::object` bound to the wrong state (cross-state transfer, UB even single-threaded). Caught in security review; fixed by threading the calling `sol::state_view` through the three binds.
+  Concrete next action: add a checklist item to `agents/security-review.md` § Sandbox integrity (Lua): "When reviewing any thread-isolation / fresh-state fix, grep the reachable glue set for the captured `lua` member and confirm marshalling is state-relative (`sol::this_state` / `sol::state_view`), not member-relative."
+  Status: open
+  Last-reviewed: 2026-05-28
+
 - 2026-05-17 · security-review · [security] · P1 — AI-client URL allow-list policy (per-provider host opt-in beyond the IP-literal block shipped in PR #176)
   Details: PR #176 added `AiEndpointSanitize` covering non-http(s) schemes, CR/LF/NUL, 169.254.169.254 / 100.100.100.200 metadata IPs, and 169.254/16 link-local. It does NOT enforce per-provider host allow-lists — a config-write attacker can still repoint OpenAi / Anthropic at any public host (e.g. attacker.example.com) and exfil the API key in the Authorization / x-api-key header. The validator deliberately chose breadth over strictness so Azure OpenAI / LiteLLM / openrouter proxies still work, but the right long-term shape is an explicit "custom endpoint" toggle per provider (default off → host must match `api.openai.com` / `api.anthropic.com`; explicit on → any host accepted with a one-time consent dialog naming the host).
   Concrete next action: extend `ConfigManager` with `AiAllowCustomEndpointOpenAi` + `AiAllowCustomEndpointAnthropic` bool fields (default false); extend `AiEndpointSanitize` with a new `EndpointVerdict::RejectedNonProviderHost` and a per-provider allow-list parameter; surface a one-time consent dialog in `SmatchetPreferencesUi` when the user enables either toggle. Estimated cost 2-3 h.
