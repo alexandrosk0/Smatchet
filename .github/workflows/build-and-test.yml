@@ -4,28 +4,17 @@ name: Build and test
 # See docs/design/generic-cmake-cross-platform.md.
 
 on:
+  # NO paths-ignore: required status checks (Windows + MSVC, Windows + MSVC
+  # light) must report on EVERY PR or branch protection wedges docs-only PRs
+  # ("Expected — Waiting for status," unmergeable). Instead the `changes` job
+  # below detects whether any non-docs path changed and the build jobs skip
+  # when it is docs-only — a skipped required job is treated as success by
+  # branch protection, while a path-skipped workflow never reports at all.
+  # See docs/agent-rules/ci-required-check-pattern.md (Pattern A).
   push:
     branches: [develop]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'agents/**'
-      - '.gitignore'
-      - '.gitattributes'
-      - '.coderabbit.yaml'
-      - '.github/CODEOWNERS'
-      - '.github/pull_request_template.md'
   pull_request:
     branches: [develop]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'agents/**'
-      - '.gitignore'
-      - '.gitattributes'
-      - '.coderabbit.yaml'
-      - '.github/CODEOWNERS'
-      - '.github/pull_request_template.md'
 
 # Cancel in-flight runs for the same branch on a new push.
 concurrency:
@@ -33,8 +22,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fast gate: did any NON-docs path change? Build jobs key off this so a
+  # docs-only PR skips the expensive Windows builds while the required check
+  # contexts still report (skipped == success for branch protection).
+  # Fail-safe: any detection uncertainty (empty/failed diff) defaults to
+  # code=true, so a code PR can never be wrongly skipped — the worst case is
+  # running a build that wasn't strictly needed, never skipping one that was.
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect non-docs changes
+        id: detect
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            range="origin/${{ github.base_ref }}...HEAD"
+          else
+            before="${{ github.event.before }}"
+            if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              range="HEAD~1...HEAD"
+            else
+              range="${before}...HEAD"
+            fi
+          fi
+          files=$(git diff --name-only $range 2>/dev/null || true)
+          echo "Changed files in ${range}:"; printf '  %s\n' $files
+          # Default code=true (fail-safe). Only flip to false when we have a
+          # non-empty file list AND every entry is a docs-class path.
+          code=true
+          if [ -n "$files" ]; then
+            code=false
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                *.md|docs/*|agents/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
+                *) code=true; break ;;
+              esac
+            done <<< "$files"
+          fi
+          echo "non-docs changes present: ${code}"
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+
   windows-msvc:
     name: Windows + MSVC
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 45
 
@@ -146,6 +189,8 @@ jobs:
 
   windows-msvc-light:
     name: Windows + MSVC (Smatchet light — AI/Whisper/MCP off)
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 30
     permissions:
