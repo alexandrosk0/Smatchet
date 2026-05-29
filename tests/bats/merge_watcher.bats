@@ -1025,3 +1025,170 @@ print('extras:', extras)
     [ "$status" -eq 0 ]
     [[ "$output" == *"noop: zero unresolved CR threads"* ]]
 }
+
+# ---------- CR-NONE grace wedge (cross-cycle grace driver) ----------
+# Regression for the wedge where a PR whose only blocker is a skipped/absent
+# CodeRabbit review (NONE + status-SUCCESS, no inline) never merges: merge-gates
+# passes NONE+SUCCESS only after its in-process poll index reaches CR_GRACE_POLLS,
+# unreachable under the daemon's MERGE_GATES_MAX_POLLS=1 driving. The watcher now
+# counts the window across real cycles (maybe_pass_cr_none_grace).
+
+@test "cr-none-grace: detector matches NONE-wait shapes only" {
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+f = mw._looks_like_cr_none_grace_wait
+assert f('CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)') is True
+assert f('CodeRabbit: NONE+pending (poll 2/10)') is True
+assert f('CodeRabbit: NONE+status-SUCCESS+inline-evidence (2 CR comment(s) on head)') is False
+assert f('CodeRabbit: COMMENTED (3 actionable - block)') is False
+assert f('CodeRabbit: CHANGES_REQUESTED') is False
+assert f('CodeRabbit: APPROVED') is False
+assert f('CodeRabbit: NONE+grace-expired') is False
+print('ok')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok"* ]]
+}
+
+@test "cr-none-grace: threshold honors env + floors at 1 + ignores garbage" {
+    run python -c "
+import os, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+os.environ.pop('MERGE_WATCH_CR_NONE_GRACE_CYCLES', None)
+assert mw._cr_none_grace_cycles() == 10
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='3'; assert mw._cr_none_grace_cycles()==3
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='0'; assert mw._cr_none_grace_cycles()==1
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='nan'; assert mw._cr_none_grace_cycles()==10
+print('ok')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok"* ]]
+}
+
+@test "cr-none-grace: below threshold increments per-head counter + stays BLOCKED" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    # Inherit the (MSYS2-converted) LOCALAPPDATA from the env — do NOT re-set it
+    # from the git-bash string, which pathlib reads as a drive-relative path and
+    # would miss the registry the CLI process just wrote. gh is monkeypatched via
+    # _gh_json so no PATH stub is needed.
+    run python -c "
+import os, importlib.util
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='5'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_json = lambda args, cwd=None, timeout=30: {'headRefOid':'aaaa1111bbbb2222cccc3333dddd4444eeee5555'}
+entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
+res = mw.maybe_pass_cr_none_grace(entry, state)
+print('count:', res.get('cr_none_grace_polls'))
+print('action:', res.get('cr_none_grace_action'))
+print('flipped:', res.get('last_state'))
+reg = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+print('persisted:', reg.get('cr_none_grace_polls'), reg.get('cr_none_grace_head','')[:8])
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"count: 1"* ]]
+    [[ "$output" == *"waiting out CR-NONE grace (1/5 cycles)"* ]]
+    [[ "$output" == *"flipped: None"* ]]
+    [[ "$output" == *"persisted: 1 aaaa1111"* ]]
+}
+
+@test "cr-none-grace: a new HEAD restarts the grace window" {
+    run watch_cli register 999
+    run python -c "
+import os, importlib.util
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='5'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_json = lambda args, cwd=None, timeout=30: {'headRefOid':'99990000999900009999000099990000abcd9999'}
+entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry['cr_none_grace_polls']=4
+entry['cr_none_grace_head']='0000oldoldoldoldoldoldoldoldoldoldold000'
+state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+pending (poll 1/10)'}
+res = mw.maybe_pass_cr_none_grace(entry, state)
+print('count:', res.get('cr_none_grace_polls'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"count: 1"* ]]
+}
+
+@test "cr-none-grace: at threshold re-polls with grace=0 and flips to GATES_PASSED" {
+    run watch_cli register 999
+    run python -c "
+import os, importlib.util
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='3'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_json = lambda args, cwd=None, timeout=30: {'headRefOid':'headheadheadheadheadheadheadheadhead0001'}
+captured = {}
+def fake_poll(entry, extra_gates_env=None):
+    captured['env'] = extra_gates_env
+    return {'pr':999,'clone_path':entry['clone_path'],'last_state':'GATES_PASSED','last_status_line':'forced pass'}
+mw.poll_one = fake_poll
+entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry['cr_none_grace_polls']=2
+entry['cr_none_grace_head']='headheadheadheadheadheadheadheadhead0001'
+state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
+res = mw.maybe_pass_cr_none_grace(entry, state)
+print('flipped:', res.get('last_state'))
+print('env:', captured.get('env'))
+print('action:', res.get('cr_none_grace_action'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"flipped: GATES_PASSED"* ]]
+    [[ "$output" == *"env: {'MERGE_GATES_CR_GRACE_POLLS': '0'}"* ]]
+    [[ "$output" == *"forced MERGE_GATES_CR_GRACE_POLLS=0 -> GATES_PASSED"* ]]
+}
+
+@test "cr-none-grace: HEAD fetch failure does NOT force a pass (fail-closed)" {
+    run watch_cli register 999
+    run python -c "
+import os, importlib.util
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='1'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+def boom(args, cwd=None, timeout=30):
+    raise RuntimeError('gh down')
+mw._gh_json = boom
+def fake_poll(entry, extra_gates_env=None):
+    raise AssertionError('poll_one must NOT be called when HEAD fetch fails')
+mw.poll_one = fake_poll
+entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
+res = mw.maybe_pass_cr_none_grace(entry, state)
+print('flipped:', res.get('last_state'))
+print('action:', res.get('cr_none_grace_action'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"flipped: None"* ]]
+    [[ "$output" == *"HEAD fetch failed"* ]]
+}
+
+@test "cr-none-grace: leaving the NONE-wait state resets a stale counter" {
+    run watch_cli register 999
+    run python -c "
+import os, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+def fake_poll(entry, extra_gates_env=None):
+    raise AssertionError('poll_one must NOT be called on a non-wait reset')
+mw.poll_one = fake_poll
+entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry['cr_none_grace_polls']=4
+entry['cr_none_grace_head']='someheadsomeheadsomeheadsomeheadsomehead'
+state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: COMMENTED (2 actionable - block)'}
+res = mw.maybe_pass_cr_none_grace(entry, state)
+print('count:', res.get('cr_none_grace_polls'))
+print('action:', res.get('cr_none_grace_action'))
+reg = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+print('persisted:', reg.get('cr_none_grace_polls'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"count: 0"* ]]
+    [[ "$output" == *"reset (CR left NONE-grace-wait state)"* ]]
+    [[ "$output" == *"persisted: 0"* ]]
+}
