@@ -16,7 +16,7 @@ Two intertwined goals:
 
 ## Target architecture — the portable / project boundary
 
-```
+```text
 /AGENTS.md              root; PORTABLE structure + prose pointers to project.config.json
 /project.config.json    NEW; the ONE home for project-specific values (see schema below)
 /agents/                root (symlink-backed into .claude/)
