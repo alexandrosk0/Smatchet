@@ -81,6 +81,11 @@ runs:
               reviews(first:100){
                 nodes{ author{login} state submittedAt commit{oid} body }
               }
+              commits(last:1){
+                nodes{ commit{ statusCheckRollup{ contexts(first:100){
+                  nodes{ __typename ... on StatusContext{ context state } }
+                } } } }
+              }
             }
           }
         }'
@@ -108,10 +113,33 @@ runs:
         n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
 
         if [ "$n_reviews" -eq 0 ]; then
-          # CR has not (yet) reviewed the current head. Mirror merge-gates.sh's
-          # grace-window block: PENDING, not success — the required check stays
-          # un-green until CR's review on this head exists.
-          post pending "awaiting CodeRabbit review on current head"
+          # No formal CR review node on this head. Two sub-cases, disambiguated
+          # by CodeRabbit's own "CodeRabbit" StatusContext on the head commit:
+          #   - SUCCESS  -> CR is done and chose not to leave a review (it skips
+          #                 trivial / workflow-only / docs changes). No review
+          #                 node == nothing actionable -> PASS. Without this,
+          #                 every CR-skipped PR would wedge on PENDING forever
+          #                 once this gate is required.
+          #   - FAILURE/ERROR -> CR reported a problem -> FAIL.
+          #   - anything else (PENDING/EXPECTED/absent) -> CR still working -> PENDING.
+          # Note: the SUCCESS->pass shortcut is only reached when there is NO
+          # review node; a review WITH actionable findings is caught below by
+          # the n>0 branch (CR's chill profile keeps its StatusContext green
+          # even with findings, so we never lean on it to detect findings).
+          cr_ctx=$(printf '%s' "$resp" | jq -r '
+            [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+              | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state ] | (.[0] // "ABSENT")
+            ' 2>/dev/null) || cr_ctx="ABSENT"
+          cr_ctx="${cr_ctx//[^A-Z]/}"
+          case "$cr_ctx" in
+            SUCCESS)
+              post success "CodeRabbit completed with no review on head (skipped/clean)" ;;
+            FAILURE|ERROR)
+              post failure "CodeRabbit check reported ${cr_ctx} on current head" ;;
+            *)
+              # Mirror merge-gates.sh's grace-window block: PENDING, not success.
+              post pending "awaiting CodeRabbit review on current head" ;;
+          esac
           exit 0
         fi
 
