@@ -12,7 +12,6 @@ agents/_shared/skills/perf-measure/SKILL.md	SmatchetStandalone
 agents/_shared/skills/perf-measure/SKILL.md	Source_Core
 agents/_shared/skills/perf-measure/SKILL.md	ninja-iter-msvc
 agents/_shared/token-tracking/SKILL.md	Smatchet
-agents/_shared/token-tracking/__pycache__/agent-token-log.cpython-313.pyc	Smatchet
 agents/_shared/token-tracking/agents-statusline.py	Smatchet
 agents/_shared/token-tracking/skill-load-log.py	Smatchet
 agents/core/architect.md	DX12

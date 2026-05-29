@@ -37,21 +37,22 @@ terms |= set(cfg.get("vcs", {}).get("p4_streams", []))
 # longest first; whole-token-ish match
 pat = re.compile("|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True)))
 
-PORTABLE = ["agents/core", "agents/_shared", "docs/agent-rules", "docs/harness"]
+PORTABLE = ("agents/core/", "agents/_shared/", "docs/agent-rules/", "docs/harness/")
+import subprocess
+# Only GIT-TRACKED files — never generated artifacts (__pycache__/*.pyc, etc.)
+# that exist on a CI runner but aren't part of the canonical tree.
+tracked = subprocess.run(["git", "ls-files", "--", *PORTABLE],
+                         capture_output=True, text=True).stdout.split("\n")
 hits = []
-for d in PORTABLE:
-    for root, _, files in os.walk(d):
-        for fn in files:
-            # skip project-specific templates (e.g. *.tmpl debug headers)
-            if fn.endswith(".tmpl"):
-                continue
-            fp = os.path.join(root, fn).replace(os.sep, "/")
-            try:
-                txt = open(fp, encoding="utf-8", errors="ignore").read()
-            except Exception:
-                continue
-            for m in set(pat.findall(txt)):
-                hits.append("%s\t%s" % (fp, m))
+for fp in tracked:
+    if not fp or fp.endswith(".tmpl"):  # *.tmpl = project-specific templates
+        continue
+    try:
+        txt = open(fp, encoding="utf-8", errors="ignore").read()
+    except Exception:
+        continue
+    for m in set(pat.findall(txt)):
+        hits.append("%s\t%s" % (fp, m))
 for h in sorted(set(hits)):
     print(h)
 PY
