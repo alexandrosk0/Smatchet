@@ -57,12 +57,12 @@ without movement.
 
 | Category | Live count | File |
 |---|---|---|
-| bug         | 11  | [agent-self-improvement/bug.md](agent-self-improvement/bug.md) |
-| process     | 24  | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
-| tooling     | 33  | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
-| infra       | 13  | [agent-self-improvement/infra.md](agent-self-improvement/infra.md) |
+| bug         | 14  | [agent-self-improvement/bug.md](agent-self-improvement/bug.md) |
+| process     | 25  | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
+| tooling     | 35  | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
+| infra       | 14  | [agent-self-improvement/infra.md](agent-self-improvement/infra.md) |
 | test        | 19  | [agent-self-improvement/test.md](agent-self-improvement/test.md) |
-| security    | 11  | [agent-self-improvement/security.md](agent-self-improvement/security.md) |
+| security    | 14  | [agent-self-improvement/security.md](agent-self-improvement/security.md) |
 | external    | 1   | [agent-self-improvement/external-blockers.md](agent-self-improvement/external-blockers.md) |
 | applied (archive) | 141 | [agent-self-improvement/applied.md](agent-self-improvement/applied.md) |
 

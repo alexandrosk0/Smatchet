@@ -84,6 +84,7 @@ extern UiDrawSession g_ui;
 
 namespace smatchet {
 namespace standalone {
+BootstrapContext::BootstrapContext() = default;
 BootstrapContext::~BootstrapContext() = default;
 } // namespace standalone
 } // namespace smatchet

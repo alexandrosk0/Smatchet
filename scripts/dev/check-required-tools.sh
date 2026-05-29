@@ -57,7 +57,7 @@ TOOLS=(
     "gcc${SEP}REQUIRED${SEP}MSYS2 UCRT64 (lint toolchain): pacman -S mingw-w64-ucrt-x86_64-gcc — build uses MSVC/Clang"
     "g++${SEP}REQUIRED${SEP}MSYS2 UCRT64 (lint toolchain): pacman -S mingw-w64-ucrt-x86_64-gcc — build uses MSVC/Clang"
     "python${SEP}REQUIRED${SEP}Windows: python.org installer (3.11+) or pacman -S mingw-w64-ucrt-x86_64-python"
-    "jq${SEP}REQUIRED${SEP}winget install jqlang.jq | MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-jq"
+    "jq${SEP}REQUIRED${SEP}Test harness only (merge_gates.bats mocks gh via jq). The merge-gates poller + watcher now parse via gh's BUNDLED jq (gh api --jq) — no standalone jq at runtime. winget install jqlang.jq | MSYS2 UCRT64: pacman -S mingw-w64-ucrt-x86_64-jq"
     "gh${SEP}REQUIRED${SEP}Windows: winget install GitHub.cli — then add 'C:/Program Files/GitHub CLI' to PATH"
     "clang-format${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra"
     "clang-tidy${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra"
