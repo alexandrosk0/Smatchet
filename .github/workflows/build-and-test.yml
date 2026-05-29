@@ -3,6 +3,12 @@ name: Build and test
 # Primary CI: MSVC + Clang (equal-citizen toolchains).
 # See docs/design/generic-cmake-cross-platform.md.
 
+# Least-privilege default for GITHUB_TOKEN: every job here only checks out,
+# builds, and uploads run-scoped artifacts — none writes to the repo. Jobs that
+# need more elevate per-job (none currently do).
+permissions:
+  contents: read
+
 on:
   # NO paths-ignore: required status checks (Windows + MSVC, Windows + MSVC
   # light) must report on EVERY PR or branch protection wedges docs-only PRs
@@ -10,7 +16,7 @@ on:
   # below detects whether any non-docs path changed and the build jobs skip
   # when it is docs-only — a skipped required job is treated as success by
   # branch protection, while a path-skipped workflow never reports at all.
-  # See docs/agent-rules/ci-required-check-pattern.md (Pattern A).
+  # See docs/agent-rules/ci-required-check-pattern.md (Pattern C).
   push:
     branches: [develop]
   pull_request:
