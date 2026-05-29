@@ -109,12 +109,15 @@ reviews:
       instructions: |
         Lua runs inside `LuaAutomationHost` sandbox. Hot-path Lua calls
         cost ~50–60× the C++ equivalent — flag per-frame sol2 bindings.
-    - path: 'tests/**'
+    - path: 'tests/**/*.{cpp,h,hpp}'
       instructions: |
         Pure-logic doctest rig only (`SMATCHET_BUILD_TESTS`,
         `ninja-test-msvc` preset). No UI / HTTP / SQLite / ImGui / cpr
         surfaces — those route to bucket-E (ImGui Test Engine) or stay
-        deferred.
+        deferred. Scoped to C++ test sources: `tests/bats/**` are shell /
+        python integration suites for tooling (merge-watcher, merge-gates,
+        lock primitives) that legitimately invoke scripts, so the pure-logic
+        rule does not apply to them.
     - path: '{CMakeLists.txt,cmake/**,CMakePresets.json,Source_Core/CMakeLists.txt,Plugins/**/CMakeLists.txt,UnrealPlugins/**/CMakeLists.txt}'
       instructions: |
         `*_DX12` targets are `EXCLUDE_FROM_ALL` (Unreal only) — do NOT
