@@ -16,6 +16,8 @@ Adopt the existing, proven isolation pattern from `AutomationWorkerLoop` (`AppCo
 
 2. **`ExecuteLuaMcpTool`** (registered tool): the tool's `callback` is a `sol::protected_function` **bound to main `lua`**, so it cannot be moved. Instead **rebuild it on a fresh state**: `InitLuaCore` a fresh state, install a **call-local `mcp.register_tool` override** that collects definitions into a stack-local vector (leaving the shared `luaMcpTools_` untouched), replay `activeSetupScripts_` on that state so the tool re-registers as a fresh-state-bound closure, then find + invoke it there. Limitation (accepted): a tool registered ad-hoc by a prior `run_lua` snippet — not by a setup script — won't exist in the rebuilt state and returns "tool not found"; this is a degenerate, already-racy usage.
 
+3. **Host glue marshallers must be state-relative** (found in security review). `InitLuaCore` keeps `smatchet.get_ticket` / `smatchet.create_issue` / `decode_json` live on the fresh state, but their `ILuaBindingHost::Lua*Bind` impls marshalled results via the **member `lua`** (`sol::make_object(lua,…)` / `JsonToLua(lua,…)` / `lua.create_table()`). From a fresh-state caller that both (a) re-touches the shared UI `lua_State` cross-thread and (b) returns a `sol::object` bound to `lua` into a snippet running on `callState` — a cross-state object transfer that is UB even single-threaded. Fix: thread the calling `sol::state_view` (the glue's `sol::this_state`) into `LuaGetTicketBind` / `LuaDecodeJsonBind` / `LuaCreateIssueBind` and marshal against it, never the member. This also closes the same latent bug for the automation worker's `bgState`.
+
 Trade-off: each MCP Lua call now pays `InitLuaCore` (snippet/script) or `InitLuaCore` + setup replay (tool) — bounded, off the UI thread, out-of-band; identical to the per-job cost `AutomationWorkerLoop` already accepts. This is strictly cheaper than the correctness alternatives (a global interpreter mutex would let a worker stall the UI thread; UI-thread marshalling would run I/O-heavy tool callbacks on the UI thread and freeze it).
 
 ## Files to modify
@@ -29,6 +31,12 @@ Trade-off: each MCP Lua call now pays `InitLuaCore` (snippet/script) or `InitLua
 7. `tests/Source_Core/McpLuaFreshStateRace.test.cpp` — **new** full integration test (real `AppController`, two threads, ASan). See Verification.
 8. `tests/CMakeLists.txt` — register the new test.
 9. `CMakePresets.json` — add an ASan-with-tests configure/build preset (`ninja-clang-asan` / `ninja-msvc-asan` build `SmatchetStandalone` only; the regression test needs `SMATCHET_BUILD_TESTS=ON` under the sanitizer).
+
+State-relative host-glue marshalling (added per security review, Approach §3):
+
+10. `Source_Core/include/ILuaBindingHost.h:56,60,68` — add leading `sol::state_view sv` to `LuaGetTicketBind` / `LuaDecodeJsonBind` / `LuaCreateIssueBind`.
+11. `Source_Core/src/AppController_LuaBindings.cpp:735,743,757` — impls marshal against `sv` (not member `lua`); `Source_Core/src/AppController_LuaBindingsCore.cpp:195,211,224,236` — 4 glue sites pass `sol::state_view(L)`.
+12. `tests/support/FakeLuaBindingHost.h:116,126,156` — test fake overrides match the new signatures (use the passed `sv`).
 
 ## Existing utilities reused
 
@@ -55,7 +63,7 @@ Trade-off: each MCP Lua call now pays `InitLuaCore` (snippet/script) or `InitLua
 
 ## Risks / non-goals
 
-- **Behavior change — `ui.*` from MCP `run_lua` snippets becomes no-op** (fresh `InitLuaCore` state installs no-op `ui`/`register_*`, matching `AutomationWorkerLoop`). Accepted + correct: worker-thread UI mutation was already an unsafe Pillar-2/3 violation; the no-op is safer. Documented for users.
+- **Behavior change — `InitLuaUi`-only bindings are unavailable to MCP `run_lua` snippets** (the fresh state runs `InitLuaCore` only, like `AutomationWorkerLoop`). Concretely: `ui.*` becomes a no-op, and `imgui.*` (`AppController_LuaBindings.cpp:697`) + `ai.*` (`:716`, `add_context`/`clear_context`/`prompt`) + the cached-renderer / icon-map `register_*` glues are **absent** (a call gets "attempt to index nil"). Accepted + correct: every one of these mutates UI-thread-affine state, so calling them from the MCP worker thread was already the racy Pillar-2/3 violation this PR removes (pre-fix they ran on the main `lua` from the worker). Migration path for callers that need UI-thread-affine work via MCP: expose it as a Command and call `commands.invoke(...)` (still available on the fresh state; routes through the thread-aware registry). The host glue marshallers (`get_ticket`/`create_issue`/`decode_json`) are now state-relative (see Approach), so they keep working on the fresh state.
 - **Behavior change — ad-hoc-registered MCP tools** (registered by a prior `run_lua` snippet, not a setup script) return "tool not found" on the rebuilt state. Accepted: degenerate, already-racy path.
 - **Per-call cost** — `InitLuaCore` (+ setup replay for tools) per MCP call. Accepted: out-of-band, off UI thread, equals existing worker cost.
 - **Non-goal**: host-binding (`create_issue`, `SubmitFieldEdit`) worker-thread safety — unchanged by this fix and already exercised worker-thread by `AutomationWorkerLoop`; out of scope.
@@ -63,9 +71,9 @@ Trade-off: each MCP Lua call now pays `InitLuaCore` (snippet/script) or `InitLua
 
 ## Verification
 
-- **Full integration test (Bucket A under sanitizer, `tests/Source_Core/McpLuaFreshStateRace.test.cpp`)**: construct a real `AppController` (temp SQLite DB, mock backend factory via `SetBackendFactory`), `Initialize` it; spawn a worker thread that fires `ExecuteLuaSnippetForMcp` in a tight loop while the test "UI thread" concurrently drives a main-`lua` operation representative of `DrawLuaWindows`/cell-provider evaluation; assert clean exit under ASan (and pre-fix, the same test reproduces the race). Two-thread overlap with a barrier to maximize interleaving.
+- **Full integration test (Bucket E under sanitizer, `tests/ui/mcp_lua_fresh_state_race.test.cpp` — see § Deviations for why bucket-E, not the originally-planned `tests/Source_Core/`)**: a real `AppController` is provided by the live bucket-E run via `SmatchetActiveUiTestAppController()`; a worker thread fires `ExecuteLuaSnippetForMcp` + `ExecuteLuaMcpTool` in a tight bounded loop while the UI thread concurrently drives the real `DrawLuaWindows` against the main `lua` state; assert clean exit under ASan (pre-fix the same body reproduces the race). Two-thread overlap with a spin barrier to maximize interleaving.
 - **Build gate (dual-target)**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`.
-- **Sanitizer gate**: configure+build the new ASan-with-tests preset, run the new test under `ninja-clang-asan` (ASan+UBSan) and/or `ninja-msvc-asan`; expect zero sanitizer reports.
+- **Sanitizer gate**: configure+build the new ASan-with-UI-tests preset (`ninja-ui-test-asan-clang` / `ninja-ui-test-asan-msvc`), run the new test via `scripts/dev/test-ui-mcp-lua-fresh-state-race.sh`; expect zero sanitizer reports.
 - **Existing suites**: `ninja-test-msvc` (`SmatchetTests` + `SmatchetLuaTests`) green; `scripts/dev/test-all.sh` pre-push gate.
 - **Manual residue**: if the real-`DrawLuaWindows`-via-ImGui path proves infeasible inside the ctest rig (ImGui context lifetime), the test substitutes a faithful main-`lua` eval proxy on the UI-thread side + a `docs/backlog/agent-self-improvement/test.md` entry for a bucket-E follow-up. No silent residue.
 
@@ -75,10 +83,18 @@ Trade-off: each MCP Lua call now pays `InitLuaCore` (snippet/script) or `InitLua
 - Caching/pooling fresh `sol::state`s across MCP calls — premature; revisit only if profiling shows per-call init cost matters.
 
 ## Implementation log
-*(populated post-ship)*
+
+- **Regression test (bucket-E, not the ctest rig)**: `tests/ui/mcp_lua_fresh_state_race.test.cpp` (ImGui Test Engine) + bash driver `scripts/dev/test-ui-mcp-lua-fresh-state-race.sh`. Registered in `tests/ui/ui_tests_registry.cpp` (guarded `#if defined(SMATCHET_WITH_LUA_AUTOMATION)`) and enrolled in `tests/ui/CMakeLists.txt`. A worker `std::thread` fires the real `ExecuteLuaSnippetForMcp` + `ExecuteLuaMcpTool` (each building a fresh `sol::state` via `PrepareFreshLuaState`) in a 600-iteration bounded loop, gated by a two-party spin barrier, concurrently with the UI thread driving the real `DrawLuaWindows` against the main `lua` state (a Lua window + an MCP tool are registered via `ExecuteLuaConsoleSnippet` on `lua` first). ASan is the primary oracle (heap-corruption / UAF on a shared `lua_State`); the `IM_CHECK`s assert liveness (both bounded loops completed without a crash).
+- **ASan-with-UI-tests presets**: added `ninja-ui-test-asan-clang` (Clang ASan+UBSan, RelWithDebInfo) and `ninja-ui-test-asan-msvc` (MSVC `/fsanitize=address`, RelWithDebInfo) to `CMakePresets.json`, each combining `SMATCHET_SANITIZER=asan` + `SMATCHET_BUILD_UI_TESTS=ON` (the existing `ninja-clang-asan` / `ninja-msvc-asan` build `SmatchetStandalone` *without* the bucket-E surface). Clang base preferred per the existing clang-asan note (Debug/MDd incompatible with clang-cl ASan → RelWithDebInfo).
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Test home: bucket-E (`tests/ui/`), not `tests/Source_Core/` (Files-to-modify item 7 + Verification).** A real `AppController` cannot be constructed in the per-unit `SmatchetTests` ctest rig (it compiles selected `.cpp` + links ImGui/SQLite/cpr but not the full `AppController` graph; `InitLuaCore` is "Class C" per `tests/support/LuaHostFixture.h`). The real-`AppController` home is the bucket-E ImGui Test Engine surface, which compiles into `SmatchetStandalone` under `SMATCHET_BUILD_UI_TESTS=ON` and exposes the live controller via `SmatchetActiveUiTestAppController()`. This is the *more* faithful option, not a fallback: it drives the genuine `DrawLuaWindows` path on the real UI thread (the § Verification "Manual residue" clause anticipated a proxy substitute; **none was needed**). `tests/CMakeLists.txt` (item 8) was therefore not touched; `tests/ui/CMakeLists.txt` + `tests/ui/ui_tests_registry.cpp` carry the enrolment instead.
+- **Preset names + scope.** Plan item 9 said "an ASan-with-tests preset"; shipped as two (`ninja-ui-test-asan-clang` / `-msvc`) scoped to `SMATCHET_BUILD_UI_TESTS` (bucket-E) rather than `SMATCHET_BUILD_TESTS` (ctest rig), matching the test-home deviation above.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Sanitizer gate — PASS.** Built `SmatchetStandalone` under `ninja-ui-test-asan-clang` (clang-cl 22.1.6, MSVC toolset pinned to 14.38, ASan+UBSan) and ran `Smatchet.exe cmd ui_test.run --name=FreshState --spawn --yes --mcp-port=<p>` with `ASAN_OPTIONS=abort_on_error=1:halt_on_error=1`. Result: `{"passed":1,"failed":0,"tested":1}`, process exit code 0, **zero sanitizer reports**. The 600×{snippet+tool} worker loop ran concurrently with 600 frames of real `DrawLuaWindows` on the main `lua` state with no heap corruption — the fix holds. (Pre-fix, two threads through one `lua_State` would corrupt the Lua heap and ASan would abort.)
+- **Default build unaffected**: `tests/ui/CMakeLists.txt` early-returns when `SMATCHET_BUILD_UI_TESTS=OFF`, so the `ninja-iter-msvc` default build is unaffected by the added test source (verified by build, exit 0).
+- **Driver**: `scripts/dev/test-ui-mcp-lua-fresh-state-race.sh` (auto-enrolled by `scripts/dev/test-all.sh`; exits 2-skip when the ASan exe is absent, matching the other `test-ui-*.sh` bucket-E drivers).
+- **Note on TSan**: ASan detects the *heap-corruption consequence* of the race, not the data race directly (TSan does, but TSan is unavailable on Windows MSVC/clang-cl per `cmake/Sanitizers.cmake`). This matches the plan's stated detection model ("realistically heap corruption / crash").
