@@ -70,8 +70,8 @@ When a touched file isn't in the map, fall back to `idle` (universally reachable
 
 ## Hard rules
 
-- **Never sort scenario rows by `avgPerCallMs`** — only by `lastTotalMs` (200-call × 50 µs row outweighs a 1-call × 5 ms row in frame-budget terms; same rule as `agents/perf-detective.md`).
-- **Always name the exact exe path** after rebuild (stale-exe testing is the most common false-pass cause; same rule as `agents/perf-detective.md` + `agents/spike-hunter.md`).
+- **Never sort scenario rows by `avgPerCallMs`** — only by `lastTotalMs` (200-call × 50 µs row outweighs a 1-call × 5 ms row in frame-budget terms; same rule as `agents/core/perf-detective.md`).
+- **Always name the exact exe path** after rebuild (stale-exe testing is the most common false-pass cause; same rule as `agents/core/perf-detective.md` + `agents/core/spike-hunter.md`).
 - **Per-host baselines** — local development uses `<scenario>.dev.json`; CI uses `<scenario>.ci-windows-latest.json`; P4-gated ship-loop machines use `<scenario>.$SMATCHET_PERF_HOST.json` (the developer's opt-in per-machine host name, set in their shell profile per [`docs/perforce/SETUP.md`](../docs/perforce/SETUP.md) § Per-machine perf baseline — typical values: `desktop`, `laptop`, `mainbot`). All three coexist as separate checked-in files; the gate picks the one matching the current host context. Don't mix; document which host the report compares against. If `SMATCHET_PERF_HOST` is set but the matching baseline file is missing, emit `MISSING_BASELINE` per the next rule rather than falling back to `dev`.
 - **Read-only on baselines** — `perf-gatekeeper` never mutates `docs/perf/baselines/*.json`. Baseline bumps go through `scripts/dev/perf-baseline.sh bump` (manual) or the scheduled `.github/workflows/perf-full.yml` (automated).
 - **No false-pass on missing baseline** — if a scenario's baseline file is absent, report it as `MISSING_BASELINE` in the verdict, do not silently treat as pass.

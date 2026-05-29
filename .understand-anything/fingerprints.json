@@ -46780,8 +46780,8 @@
       "totalLines": 125,
       "hasStructuralAnalysis": true
     },
-    "agents/architect.md": {
-      "filePath": "agents/architect.md",
+    "agents/core/architect.md": {
+      "filePath": "agents/core/architect.md",
       "contentHash": "29406e49732bbfd68e459378b77791419e408340fb1abd1278d22dbaf077cbf3",
       "functions": [],
       "classes": [],
@@ -46790,8 +46790,8 @@
       "totalLines": 60,
       "hasStructuralAnalysis": true
     },
-    "agents/build-doctor.md": {
-      "filePath": "agents/build-doctor.md",
+    "agents/core/build-doctor.md": {
+      "filePath": "agents/core/build-doctor.md",
       "contentHash": "9cd6dd2e6b4833607a2d48dbaa6e5f865e7740af054eea1613c4ce92ad69ded5",
       "functions": [],
       "classes": [],
@@ -46800,8 +46800,8 @@
       "totalLines": 106,
       "hasStructuralAnalysis": true
     },
-    "agents/code-review.md": {
-      "filePath": "agents/code-review.md",
+    "agents/core/code-review.md": {
+      "filePath": "agents/core/code-review.md",
       "contentHash": "b81fb12f1785cf70e9d087741158d23058f711312215d6dc4ec3181aee4aa435",
       "functions": [],
       "classes": [],
@@ -46810,8 +46810,8 @@
       "totalLines": 143,
       "hasStructuralAnalysis": true
     },
-    "agents/coderabbit-triage.md": {
-      "filePath": "agents/coderabbit-triage.md",
+    "agents/core/coderabbit-triage.md": {
+      "filePath": "agents/core/coderabbit-triage.md",
       "contentHash": "cdb60cbfc4b1e56456c1ef4fb58059eb82b4075e56c72caea00b15650d08b691",
       "functions": [],
       "classes": [],
@@ -46820,8 +46820,8 @@
       "totalLines": 201,
       "hasStructuralAnalysis": true
     },
-    "agents/command-system.md": {
-      "filePath": "agents/command-system.md",
+    "agents/project/command-system.md": {
+      "filePath": "agents/project/command-system.md",
       "contentHash": "209c8753a61232da24ab0868e4896e63408d5dc8f8a60736fd82159a25c00184",
       "functions": [],
       "classes": [],
@@ -46830,8 +46830,8 @@
       "totalLines": 67,
       "hasStructuralAnalysis": true
     },
-    "agents/debug-detective.md": {
-      "filePath": "agents/debug-detective.md",
+    "agents/core/debug-detective.md": {
+      "filePath": "agents/core/debug-detective.md",
       "contentHash": "4fdd2d61d6d939baa41cad0f2c473931c328a5c544b1cc74128dc4a3aa4f569e",
       "functions": [],
       "classes": [],
@@ -46840,8 +46840,8 @@
       "totalLines": 686,
       "hasStructuralAnalysis": true
     },
-    "agents/git-janitor.md": {
-      "filePath": "agents/git-janitor.md",
+    "agents/core/git-janitor.md": {
+      "filePath": "agents/core/git-janitor.md",
       "contentHash": "b52973c6a41cd237cb935565b18ee5652ea5a3c938c96d89c4723f31cee28704",
       "functions": [],
       "classes": [],
@@ -46850,8 +46850,8 @@
       "totalLines": 423,
       "hasStructuralAnalysis": true
     },
-    "agents/grid-engine.md": {
-      "filePath": "agents/grid-engine.md",
+    "agents/project/grid-engine.md": {
+      "filePath": "agents/project/grid-engine.md",
       "contentHash": "e8a0285fc2ff1896c26e9ac271e257ca4f8221d362e930af52a5962236d8bd01",
       "functions": [],
       "classes": [],
@@ -46860,8 +46860,8 @@
       "totalLines": 68,
       "hasStructuralAnalysis": true
     },
-    "agents/lua-binder.md": {
-      "filePath": "agents/lua-binder.md",
+    "agents/project/lua-binder.md": {
+      "filePath": "agents/project/lua-binder.md",
       "contentHash": "5e4f0a4ab046f61797ad3a447195a9d0650ca2bb02fe42b4225f152ca28b658b",
       "functions": [],
       "classes": [],
@@ -46870,8 +46870,8 @@
       "totalLines": 65,
       "hasStructuralAnalysis": true
     },
-    "agents/mcp-toolsmith.md": {
-      "filePath": "agents/mcp-toolsmith.md",
+    "agents/project/mcp-toolsmith.md": {
+      "filePath": "agents/project/mcp-toolsmith.md",
       "contentHash": "b2a55022b9ce934dba9987941b276eb3e4a27673d592ef077f67d3ff5ec279ec",
       "functions": [],
       "classes": [],
@@ -46880,8 +46880,8 @@
       "totalLines": 63,
       "hasStructuralAnalysis": true
     },
-    "agents/mechanic.md": {
-      "filePath": "agents/mechanic.md",
+    "agents/core/mechanic.md": {
+      "filePath": "agents/core/mechanic.md",
       "contentHash": "20e2e0bc8c1cb32667c8fdf3783c71dc4575be84c870d7b98bdb6942662e9484",
       "functions": [],
       "classes": [],
@@ -46890,8 +46890,8 @@
       "totalLines": 60,
       "hasStructuralAnalysis": true
     },
-    "agents/offline-sync.md": {
-      "filePath": "agents/offline-sync.md",
+    "agents/project/offline-sync.md": {
+      "filePath": "agents/project/offline-sync.md",
       "contentHash": "20ef252263fba3fc6bdb0b54204f5a81f1b6cd0497cfff0e2277f54aac4bc0ca",
       "functions": [],
       "classes": [],
@@ -46900,8 +46900,8 @@
       "totalLines": 66,
       "hasStructuralAnalysis": true
     },
-    "agents/p4-blame.md": {
-      "filePath": "agents/p4-blame.md",
+    "agents/project/p4-blame.md": {
+      "filePath": "agents/project/p4-blame.md",
       "contentHash": "96d00b5881e2e844617de233b00e8081701226612db47a6cb067373952084227",
       "functions": [],
       "classes": [],
@@ -46910,8 +46910,8 @@
       "totalLines": 64,
       "hasStructuralAnalysis": true
     },
-    "agents/p4-janitor.md": {
-      "filePath": "agents/p4-janitor.md",
+    "agents/core/p4-janitor.md": {
+      "filePath": "agents/core/p4-janitor.md",
       "contentHash": "18672023d370eccbaca9483f1964fd3304dd9fb2dc21f89ae27cef0501f56053",
       "functions": [],
       "classes": [],
@@ -46920,8 +46920,8 @@
       "totalLines": 104,
       "hasStructuralAnalysis": true
     },
-    "agents/perf-detective.md": {
-      "filePath": "agents/perf-detective.md",
+    "agents/core/perf-detective.md": {
+      "filePath": "agents/core/perf-detective.md",
       "contentHash": "3176fc0d52bda8119e078c8a7eab662476397c41abc8299704cc1e9d051afd4e",
       "functions": [],
       "classes": [],
@@ -46930,8 +46930,8 @@
       "totalLines": 77,
       "hasStructuralAnalysis": true
     },
-    "agents/perf-gatekeeper.md": {
-      "filePath": "agents/perf-gatekeeper.md",
+    "agents/core/perf-gatekeeper.md": {
+      "filePath": "agents/core/perf-gatekeeper.md",
       "contentHash": "96c1596d3292ba65686172523fc536022f3aa9795d3f5ac042e56259e463dbb3",
       "functions": [],
       "classes": [],
@@ -46940,8 +46940,8 @@
       "totalLines": 104,
       "hasStructuralAnalysis": true
     },
-    "agents/perf-instrument.md": {
-      "filePath": "agents/perf-instrument.md",
+    "agents/core/perf-instrument.md": {
+      "filePath": "agents/core/perf-instrument.md",
       "contentHash": "7e0a5b18f1842060ab973e44f6b66a31cbc1167aadaeab33a8f3f163ce7b0bdd",
       "functions": [],
       "classes": [],
@@ -46950,8 +46950,8 @@
       "totalLines": 71,
       "hasStructuralAnalysis": true
     },
-    "agents/perf-measure.md": {
-      "filePath": "agents/perf-measure.md",
+    "agents/core/perf-measure.md": {
+      "filePath": "agents/core/perf-measure.md",
       "contentHash": "c8a816ee2cce42c9027aedfbf2721e8fdb2fc4aa0b7be917afd9d7dfc11066b5",
       "functions": [],
       "classes": [],
@@ -46960,8 +46960,8 @@
       "totalLines": 106,
       "hasStructuralAnalysis": true
     },
-    "agents/security-review.md": {
-      "filePath": "agents/security-review.md",
+    "agents/core/security-review.md": {
+      "filePath": "agents/core/security-review.md",
       "contentHash": "41358dcd75b843fc8cedc31fe3a2648d6ba8c3579f23b30e7da99f15c31cf359",
       "functions": [],
       "classes": [],
@@ -46970,8 +46970,8 @@
       "totalLines": 142,
       "hasStructuralAnalysis": true
     },
-    "agents/spike-hunter.md": {
-      "filePath": "agents/spike-hunter.md",
+    "agents/core/spike-hunter.md": {
+      "filePath": "agents/core/spike-hunter.md",
       "contentHash": "2b5e6652b928ee11139f47ed010d481f7cbff6d1eb5da17a23edd21086f355dd",
       "functions": [],
       "classes": [],
@@ -46980,8 +46980,8 @@
       "totalLines": 108,
       "hasStructuralAnalysis": true
     },
-    "agents/test-author.md": {
-      "filePath": "agents/test-author.md",
+    "agents/core/test-author.md": {
+      "filePath": "agents/core/test-author.md",
       "contentHash": "5f30fcb26026f353f028938e8619bb25c0a92b383f823fc00a38a68f2d592c4b",
       "functions": [],
       "classes": [],
@@ -46990,8 +46990,8 @@
       "totalLines": 269,
       "hasStructuralAnalysis": true
     },
-    "agents/test-rig.md": {
-      "filePath": "agents/test-rig.md",
+    "agents/core/test-rig.md": {
+      "filePath": "agents/core/test-rig.md",
       "contentHash": "d73b5a23326e92f720a15540a260a02790c97a1af71c5e87d29d568e575fe998",
       "functions": [],
       "classes": [],
@@ -47000,8 +47000,8 @@
       "totalLines": 76,
       "hasStructuralAnalysis": true
     },
-    "agents/tracker-backend.md": {
-      "filePath": "agents/tracker-backend.md",
+    "agents/project/tracker-backend.md": {
+      "filePath": "agents/project/tracker-backend.md",
       "contentHash": "fa2525602c6e773ef1fb5e3c0103b824768e43c675dd08a6a2f7a9a22e6a8043",
       "functions": [],
       "classes": [],
@@ -47010,8 +47010,8 @@
       "totalLines": 65,
       "hasStructuralAnalysis": true
     },
-    "agents/unreal-bridge.md": {
-      "filePath": "agents/unreal-bridge.md",
+    "agents/project/unreal-bridge.md": {
+      "filePath": "agents/project/unreal-bridge.md",
       "contentHash": "13f964bc971a569d4b8ebcedd2899f4bd03596ccc37130a91ad9360e3c71fc54",
       "functions": [],
       "classes": [],

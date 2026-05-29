@@ -179,20 +179,20 @@ Some user phrases match multiple agents on a literal-substring basis. The orches
 
 When the user prompt matches the `debug-detective` trigger row above ("fix bug", "debug X", "investigate Y", "wrong output", "regression", "crash", "broken", "doesn't work", "looks wrong", "this used to work"), the orchestrator follows a **Cursor-style pause-loop** and **suspends BOTH ship-loop variants** — the default git ship-loop AND the P4-gated ship-loop (per [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop) — for the duration of the investigation. The override applies regardless of whether `SMATCHET_AGENT_VCS` is `git` or `p4`; debug investigations always pause both pipelines.
 
-**Reproducer-first contract** (per `agents/debug-detective.md`). The pause-loop is gated by phase 0 + phase 0.5 below. Phase 0's `AskUserQuestion` is the **only** user-input point in the entire loop — once the bug description is concrete (a/b/c dimensions satisfied) and phase 0.5 has selected an existing or new scenario, phases 1–10 proceed without further user questions (except `AWAITING USER FEEDBACK` signals at the § 7.5 wait-for-feedback gate).
+**Reproducer-first contract** (per `agents/core/debug-detective.md`). The pause-loop is gated by phase 0 + phase 0.5 below. Phase 0's `AskUserQuestion` is the **only** user-input point in the entire loop — once the bug description is concrete (a/b/c dimensions satisfied) and phase 0.5 has selected an existing or new scenario, phases 1–10 proceed without further user questions (except `AWAITING USER FEEDBACK` signals at the § 7.5 wait-for-feedback gate).
 
 **Phases — every phase ends in an explicit pause:**
 
 0. **Concreteness check (threshold gate)** — classify the incoming bug description against three required dimensions: **(a)** breaking surface (component / scenario / file / panel / command), **(b)** observable failure (assertion / log line / sanitizer report / screenshot diff / perf delta / golden mismatch / user symptom with file:line), **(c)** input shape (CLI args / scenario name / fixture path / Lua snippet / failing-doctest / registered bucket-E action). If any of (a)/(b)/(c) is missing, emit **one** structured `AskUserQuestion` naming the missing dimension(s). **This is the only user-input point in the reproducer-first contract loop.** Fully-specified CI-detected or CR-routed bugs skip directly to phase 0.5.
 
-0.5. **Existing-scenario reuse search** — before considering scenario-add, search `Source_Core/src/Commands/Scenarios/` for a scenario whose **bug-class** (injection point + render path) covers the failure. **Parametrize** an existing scenario (CLI arg / fixture variant / new `OnTick` sub-case) rather than fork a near-duplicate. **Forking allowed only** when the render path is genuinely orthogonal. If no scenario matches, fall through to phase 1 — Reproduce will require scenario-add per the hard refusal in `agents/debug-detective.md` § Reproduce.
+0.5. **Existing-scenario reuse search** — before considering scenario-add, search `Source_Core/src/Commands/Scenarios/` for a scenario whose **bug-class** (injection point + render path) covers the failure. **Parametrize** an existing scenario (CLI arg / fixture variant / new `OnTick` sub-case) rather than fork a near-duplicate. **Forking allowed only** when the render path is genuinely orthogonal. If no scenario matches, fall through to phase 1 — Reproduce will require scenario-add per the hard refusal in `agents/core/debug-detective.md` § Reproduce.
 
 1. **Clarify** — orchestrator (or `debug-detective`) batches every uncertainty into one `AskUserQuestion` before the first mutating tool call. Front-loaded; no drip-feed mid-loop.
 2. **Hypothesise** — write 2-4 falsifiable hypotheses ranked by distinguishing-evidence cost.
 3. **Instrument** — temporary `[temp-debug]` markers + the NDJSON helper (`tests/_debug/SmatchetAgentDebug.h`). Both sides of the suspect boundary.
-4. **Run** — auto-repro path (CLI / scenario / Lua / doctest). If none exists, phase 1 in `agents/debug-detective.md` § Reproduce required scenario-add; run that deterministic scenario here. **No ask-user-repro fallback** per the reproducer-first hard-refusal contract.
+4. **Run** — auto-repro path (CLI / scenario / Lua / doctest). If none exists, phase 1 in `agents/core/debug-detective.md` § Reproduce required scenario-add; run that deterministic scenario here. **No ask-user-repro fallback** per the reproducer-first hard-refusal contract.
 5. **Read** — parse logs, mark each hypothesis confirmed / rejected / open.
-6. **Pause + report** — emit the mid-loop report shape from `agents/debug-detective.md` § Report Shape, ending with an `AWAITING USER FEEDBACK` line. **Stop.** Orchestrator does **not** auto-commit, auto-push, or open a PR while waiting.
+6. **Pause + report** — emit the mid-loop report shape from `agents/core/debug-detective.md` § Report Shape, ending with an `AWAITING USER FEEDBACK` line. **Stop.** Orchestrator does **not** auto-commit, auto-push, or open a PR while waiting.
 7. **Resume on user signal** — acceptable signals: "fixed", "still broken + here's the log", "try hypothesis N", "use this repro instead", "skip to handoff", "abort". Loop back to (2) for next-round or (3) directly when call sites are already chosen.
 8. **Promote useful logs** — once the cause is pinned, promote ≤ 3 high-value boundary / state-transition logs to permanent (`LOG_DEBUG` / `LOG_INFO`). Zero promotions is valid.
 9. **Strip temp** — `[temp-debug]` text-search must return zero hits. Delete the per-investigation helper + NDJSON log file.
@@ -243,7 +243,7 @@ When a delegated agent errors API-500 mid-run, the worktree state is usually com
 
 2. **Run local gates** (the agent didn't get to):
    - `cmake --build --preset ninja-iter-msvc` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target if any `Source_Core/` change).
-   - `bash scripts/dev/test-all.sh` if the diff touches anything outside `agents/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception's allow-list.
+   - `bash scripts/dev/test-all.sh` if the diff touches anything outside `agents/core/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception's allow-list.
 
 3. **Stage everything** — this is the gotcha. The agent may have created new files that aren't staged. Use `git add -A`, not `git add <list>`:
    ```

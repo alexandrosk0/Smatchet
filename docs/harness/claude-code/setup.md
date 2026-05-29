@@ -31,7 +31,7 @@ Idempotent. Run it after every clone and any time the canonical templates change
 
 `agents/*.md` is the **single source of truth**. The link makes Claude Code's `.claude/agents/` discovery path read the canonical files directly — no sync step, no mirror banner, no drift-check.
 
-Edits to `agents/architect.md` are visible to Claude Code immediately. Adding a new file under `agents/` exposes it without re-running the setup script.
+Edits to `agents/core/architect.md` are visible to Claude Code immediately. Adding a new file under `agents/` exposes it without re-running the setup script.
 
 ## Why copies for templates
 

@@ -41,7 +41,7 @@ The skill is for **plan stress-testing**, not for every change.
 
 ## Integration with the architect agent
 
-`agents/architect.md` produces design docs at `docs/design/<slug>.md`. The grill-with-docs skill is a **complement**, not a replacement:
+`agents/core/architect.md` produces design docs at `docs/design/<slug>.md`. The grill-with-docs skill is a **complement**, not a replacement:
 
 1. Architect drafts the plan.
 2. Orchestrator (or user) invokes grill-with-docs to interrogate the plan term-by-term.

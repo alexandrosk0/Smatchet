@@ -6,7 +6,7 @@
 ## shared core, etc.
 ##
 ## Triage + routing of CodeRabbit feedback into Smatchet subsystem agents
-## is owned by `agents/coderabbit-triage.md`.
+## is owned by `agents/core/coderabbit-triage.md`.
 
 language: en-US
 early_access: false

@@ -63,7 +63,7 @@ The CR cell encodes the outcomes verbatim — examples: `APPROVED`, `COMMENTED (
 
 Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
 
-**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher", in-session "merge when green", OR any PR registered with `smatchet-merge-watcher`). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state. Use REST merge per `agents/git-janitor.md` § Hard refusals:
+**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher", in-session "merge when green", OR any PR registered with `smatchet-merge-watcher`). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state. Use REST merge per `agents/core/git-janitor.md` § Hard refusals:
 
 ```bash
 gh api -X PUT "repos/$owner/$repo/pulls/$prNumber/merge" -f merge_method=squash

@@ -262,7 +262,7 @@ Used by the P4-gated ship-loop's perf gate (per [`docs/design/archive/p4-gated-s
    done
    ```
    `perf-baseline.sh init` runs the scenario via `perf-run.sh` and writes the captured snapshot to `docs/perf/baselines/<scenario>.<host>.json`. Both `desktop.json` and `laptop.json` can coexist for the same scenario — the gate picks the one matching the current `SMATCHET_PERF_HOST`.
-3. Commit the new baseline files via the same path you'd use for a baseline bump (see `agents/perf-gatekeeper.md` § Hard rules). The baselines are checked-in source of truth.
+3. Commit the new baseline files via the same path you'd use for a baseline bump (see `agents/core/perf-gatekeeper.md` § Hard rules). The baselines are checked-in source of truth.
 
 **At gate time:**
 

@@ -133,13 +133,13 @@
 
 - 2026-05-21 · architect · [tooling] · P3 — Architect-review checklist needs "name the chokepoint AppController shim, not the upstream caller" rule
   Details: Architect pre-code review of `docs/design/archive/github-tracker-backend.md` found the plan's audit-call-site enumeration ("~30 sites across `*ReactController.cpp`, `JiraIssueMutation.cpp`, `PlaneIssueMutation.cpp`, `GitHubClient.cpp` write methods, `LuaConsole/`, `Mcp/`") was misleading. Lua and MCP have **zero direct** `BackendAuditTrail::Append*` / `UpdateField` / `AddIssueCommentPlain` calls — their writes route through `AppController` shim methods (the binding adapters in `AppController_LuaBindings.cpp` + MCP tool handlers). The actor pass-through is a 4-method change at the shim layer, not a 30-site sweep. A plan that names the upstream caller as the change-site sends the implementation agent to wrong files.
-  Concrete next action: add a checklist item to `agents/architect.md` § Cross-cutting review template: "For any cross-cutting signature change (audit-trail, error-policy, retry-shape, locale-string, etc.), grep the upstream caller for direct calls to the changed surface; if there are zero or near-zero direct calls, the true change-site is the AppController shim (or other binding adapter). Name that shim explicitly in the file list." ~10 min agent-doc edit. Wins on every cross-cutting plan that touches a shared API used by Lua / MCP / UI.
+  Concrete next action: add a checklist item to `agents/core/architect.md` § Cross-cutting review template: "For any cross-cutting signature change (audit-trail, error-policy, retry-shape, locale-string, etc.), grep the upstream caller for direct calls to the changed surface; if there are zero or near-zero direct calls, the true change-site is the AppController shim (or other binding adapter). Name that shim explicitly in the file list." ~10 min agent-doc edit. Wins on every cross-cutting plan that touches a shared API used by Lua / MCP / UI.
   Status: parked
   Last-reviewed: 2026-05-21
 
 - 2026-05-18 · orchestrator · [tooling] · P3 — `git worktree remove --force` leaves the directory on disk on Windows
   Details: End-of-session cleanup removed 35 agent worktrees via `git worktree unlock` + `git worktree remove --force` against each path. Git's metadata was correctly cleared (subsequent `git worktree list` showed only the main checkout), but every directory under `.claude/worktrees/agent-*` persisted on disk — 38 stale dirs requiring a manual `rm -rf agent-*` sweep. Likely cause: open file handles (lint hook caches, MSYS2 stat handles, antivirus scanning) prevent `RemoveDirectoryW` even with `--force`; git unregisters the worktree but logs no error when on-disk removal fails. Net effect: `worktree list` looks clean while disk usage remains, which is easy to miss for weeks.
-  Concrete next action: wrap the `worktree remove` step in `agents/git-janitor.md`'s end-of-session checklist with a follow-up `for d in .claude/worktrees/agent-*; do [ -d "$d" ] && rm -rf "$d"; done` sweep — and emit a clear log line per directory deleted so the post-cleanup output reflects on-disk reality, not just git metadata. ~10 min doc + tiny script tweak.
+  Concrete next action: wrap the `worktree remove` step in `agents/core/git-janitor.md`'s end-of-session checklist with a follow-up `for d in .claude/worktrees/agent-*; do [ -d "$d" ] && rm -rf "$d"; done` sweep — and emit a clear log line per directory deleted so the post-cleanup output reflects on-disk reality, not just git metadata. ~10 min doc + tiny script tweak.
   Status: parked
   Last-reviewed: 2026-05-18
 
@@ -205,13 +205,13 @@
 
 - 2026-05-16 · orchestrator · [tooling] · P3 — `gh pr merge --delete-branch` fails when local worktree owns the branch
   Details: After auto-merge of Wave A2 PRs, `gh pr merge 119 --squash --delete-branch` and siblings emitted `failed to delete local branch <branch>: failed to run git: error: cannot delete branch '<branch>' used by worktree at 'C:/Dev/Smatchet/.claude/worktrees/agent-<id>'`. The merge **does** succeed remotely; only the local-branch deletion silently fails. Subsequent `gh pr merge` calls on later PRs sometimes also fail because the local clone still thinks the branch is alive.
-  Concrete next action: document the right order in AGENTS.md § Project rules (alongside the existing § Destructive git ops in shared worktrees sub-section) + `agents/git-janitor.md`: worktree-remove first, then merge, then branch-delete. Estimated cost 15 min doc edit.
+  Concrete next action: document the right order in AGENTS.md § Project rules (alongside the existing § Destructive git ops in shared worktrees sub-section) + `agents/core/git-janitor.md`: worktree-remove first, then merge, then branch-delete. Estimated cost 15 min doc edit.
   Status: parked
   Last-reviewed: 2026-05-18
 
 - 2026-05-16 · orchestrator · [tooling] · P3 — `Source_Core/*.cpp` GLOB picks up new TUs for production targets — only test target needs explicit per-file entry
   Details: Wave A2 agents wrote new pure-helper TUs (`TrackerLabelsPure.cpp`, `TrackerDateTimePure.cpp`, `TrackerFieldPayloadPure.cpp`, `TrackerFieldCatalogPure.cpp`). Production builds (Standalone + DX12) picked them up automatically via the existing `Source_Core/src/*.cpp` GLOB in the root `CMakeLists.txt`. The test target (`tests/CMakeLists.txt`) is **explicit per-file** — needs a per-source `.cpp` entry **and** a per-test `.cpp` entry. Mental-model save: agents otherwise reflexively touch both files.
-  Concrete next action: add a one-line note to `agents/test-rig.md` § Workflow: "Production targets auto-pick new `Source_Core/src/*.cpp` via GLOB — only `tests/CMakeLists.txt` needs explicit per-file source list updates."
+  Concrete next action: add a one-line note to `agents/core/test-rig.md` § Workflow: "Production targets auto-pick new `Source_Core/src/*.cpp` via GLOB — only `tests/CMakeLists.txt` needs explicit per-file source list updates."
   Status: parked
   Last-reviewed: 2026-05-18
 

@@ -71,6 +71,22 @@ link_dir() {
   echo "  link-dir   $link -> $target"
 }
 
+# Flat agent discovery. Harnesses scan .claude/agents/*.md at the top level;
+# canonical defs live under agents/{core,project}/ (the portable/project split),
+# so materialise .claude/agents/ as a real dir of flat per-agent links. Works
+# whether or not the harness recurses. Proven by test-agent-discovery-fixture.sh.
+link_agents_flat() {
+  local dest=".claude/agents" f base
+  rm -rf "$dest" 2>/dev/null || true
+  mkdir -p "$dest"
+  for f in agents/core/*.md agents/project/*.md; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    link_file "$dest/$base" "$f"
+  done
+  echo "  link-agents .claude/agents/ <- agents/{core,project}/*.md (flat)"
+}
+
 # Idempotent file link.
 link_file() {
   local link="$1" target="$2"
@@ -121,7 +137,7 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/lint-syntax-both.py" ".claude/hooks/lint-syntax-both.py"
   copy_template "docs/harness/claude-code/hooks/autoregister-pr.sh"  ".claude/hooks/autoregister-pr.sh"
 
-  link_dir  ".claude/agents"                                  "agents"
+  link_agents_flat
 
   # Auto-link every SKILL.md package under agents/_shared/skills/. Future
   # skills get picked up with no script edit. Existing skills here today:
@@ -177,8 +193,8 @@ setup_codex() {
   echo "Verify:"
   if [[ -f "AGENTS.md" ]]; then echo "  OK  AGENTS.md present at repo root"; else echo "  FAIL AGENTS.md missing"; exit 1; fi
   local count
-  count="$(find agents -maxdepth 1 -name '*.md' -not -name 'README.md' | wc -l | tr -d ' ')"
-  echo "  OK  agents/*.md = $count files"
+  count="$(find agents/core agents/project -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+  echo "  OK  agents/{core,project}/*.md = $count files"
 }
 
 setup_cursor() {

@@ -445,7 +445,7 @@ No change to `handoff-implementer.md` § Hard rules line 91-92 — they already 
 | File | Change |
 |---|---|
 | `AGENTS.md` | Ship-loop add `[gate-check]`; new Merge-gates section; post-ship option 3 swap + per-code halt prompts; Handoff-envelope subsection rename + clarification |
-| `agents/git-janitor.md` | Insert `poll_merge_gates` flow before REST squash-merge; session-init prerequisites (`ORCH_USER`); `ask_user_question` halt routing per return code; idempotent `gh pr ready` error filter |
+| `agents/core/git-janitor.md` | Insert `poll_merge_gates` flow before REST squash-merge; session-init prerequisites (`ORCH_USER`); `ask_user_question` halt routing per return code; idempotent `gh pr ready` error filter |
 | `scripts/dev/merge-gates.graphql` | GraphQL document with pagination probes |
 | `scripts/dev/merge-gates-prompt.sh` | `ask_user_question` shell shim (orchestrator overrides for real prompts; bats overrides for tests) |
 | `tests/bats/merge_gates.bats` | Drive `poll_merge_gates` against fixture JSONs |

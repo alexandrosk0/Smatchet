@@ -127,10 +127,10 @@ Sub-rules NOT extracted from § Project rules (deliberately kept inline per § A
 - `AGENTS.md` — replace each of the 4 lifted topic-groups with a 5-12 line load-bearing stub per the Stub format rule (D6) above + cross-link to its new home. Compress § Dual-VCS topology to a 5-line stub pointing at `docs/perforce/AGENT_FLOWS.md` per D3. Update the existing § Delegation index entry to reference `delegation.md` (lowercase) per D1.
 - `docs/perforce/AGENT_FLOWS.md` — absorb the table + content from AGENTS.md § Dual-VCS topology per D3 (the table fits naturally alongside the existing TL;DR table).
 - `agents/*.md` and `docs/**.md` files that reference moved sections — for files we're touching for any reason (e.g. an existing form-A reference that points at a section now in a different stub), canonicalise on form B per D5 (`docs/agent-rules/<file>.md § <subsection>`). Files known to be touched:
-  - Merge-gates referrers: `agents/git-janitor.md` (+ any agent referencing `MERGE_GATES_*` env vars).
-  - UX-Pillars referrers: `agents/perf-detective.md`, `agents/spike-hunter.md`, `agents/code-review.md`, `agents/debug-detective.md`, `agents/build-doctor.md` (the 5 pillar-owning agents).
-  - Process-rules referrers (combined): `docs/design/_plan-template.md` + every existing plan-doc that mentions plan-rules + `agents/git-janitor.md` + `agents/p4-janitor.md` + `docs/perforce/AGENT_FLOWS.md`.
-  - Ship-loops referrers: `agents/git-janitor.md`, `docs/perforce/AGENT_FLOWS.md`, `docs/agent-rules/delegation.md` (Debug-mode pause-loop section already cross-references).
+  - Merge-gates referrers: `agents/core/git-janitor.md` (+ any agent referencing `MERGE_GATES_*` env vars).
+  - UX-Pillars referrers: `agents/core/perf-detective.md`, `agents/core/spike-hunter.md`, `agents/core/code-review.md`, `agents/core/debug-detective.md`, `agents/core/build-doctor.md` (the 5 pillar-owning agents).
+  - Process-rules referrers (combined): `docs/design/_plan-template.md` + every existing plan-doc that mentions plan-rules + `agents/core/git-janitor.md` + `agents/core/p4-janitor.md` + `docs/perforce/AGENT_FLOWS.md`.
+  - Ship-loops referrers: `agents/core/git-janitor.md`, `docs/perforce/AGENT_FLOWS.md`, `docs/agent-rules/delegation.md` (Debug-mode pause-loop section already cross-references).
   - DELEGATION.md → delegation.md rename: every file that names the old path (`DELEGATION.md`) gets path lowercased. Run `git grep -nF 'DELEGATION.md'` to enumerate.
 - Form-A refs in files NOT being touched for any other reason: leave alone (no churn just for canonicalisation per D5).
 

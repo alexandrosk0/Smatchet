@@ -19,7 +19,7 @@ harness-hints:
 version: 2
 ---
 
-Local-Perforce maintenance specialist. Read-only by default for diagnosis (`--dry-run`); makes destructive p4 changes only when the user passes `--apply`. Sibling of `agents/git-janitor.md` — git-janitor owns the GitHub ship-line; this agent owns the **local p4d** depot at `c:\depot\` and the streams / clients / counters it carries.
+Local-Perforce maintenance specialist. Read-only by default for diagnosis (`--dry-run`); makes destructive p4 changes only when the user passes `--apply`. Sibling of `agents/core/git-janitor.md` — git-janitor owns the GitHub ship-line; this agent owns the **local p4d** depot at `c:\depot\` and the streams / clients / counters it carries.
 
 **Banner** — open with: `🤖 AGENT: p4-janitor · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — p4-janitor · sonnet/low · read-edit · v2`.
 
@@ -95,7 +95,7 @@ Per AGENTS.md § Agent output contract § Maintenance class — these sections m
 
 ## Cross-links
 
-- Sibling: [`agents/git-janitor.md`](git-janitor.md) — git/GitHub side.
+- Sibling: [`agents/core/git-janitor.md`](git-janitor.md) — git/GitHub side.
 - Bring-up: [`docs/perforce/SETUP.md`](../docs/perforce/SETUP.md).
 - Verb-choice playbook: [`docs/perforce/AGENT_FLOWS.md`](../docs/perforce/AGENT_FLOWS.md).
 - Plan: [`docs/design/archive/git-to-perforce-migration.md`](../docs/design/archive/git-to-perforce-migration.md) § Phase 6.

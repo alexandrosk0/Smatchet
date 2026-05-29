@@ -31,7 +31,7 @@ The highest-priority fix. `.coderabbit.yaml` has `auto_review.drafts: false`, so
 2. Require non-empty CR review body (not just StatusContext) in the gates logic
 3. Document the `@coderabbitai review` trigger for manual re-review
 
-**Files**: `scripts/dev/merge-gates.sh`, `scripts/dev/merge-gates.graphql`, `docs/adr/0006-*.md`, `AGENTS.md`, `agents/git-janitor.md`, `tests/bats/merge_gates.bats`
+**Files**: `scripts/dev/merge-gates.sh`, `scripts/dev/merge-gates.graphql`, `docs/adr/0006-*.md`, `AGENTS.md`, `agents/core/git-janitor.md`, `tests/bats/merge_gates.bats`
 
 ### Slice 2 — Merge-gates: STALE recovery + explain BLOCKED
 **Items**: #2 (P1 — verify completion), #10 (P2), #17 (P2)
@@ -58,11 +58,11 @@ Core fix: `TRIAGE_BUDGET_EXHAUSTED` at `merge-watcher.py:794` is a terminal sink
 
 Seven pure documentation edits encoding process lessons:
 - **#6**: Forward-reference grep rule for scope-reduction edits → `AGENTS.md`
-- **#7**: Cross-cutting plumbing feasibility-check → `agents/architect.md`
+- **#7**: Cross-cutting plumbing feasibility-check → `agents/core/architect.md`
 - **#8**: Storage-substrate pre-flight → grill-with-docs skill
 - **#11**: Plan-revision direct-push policy → `AGENTS.md` + `docs/agent-rules/process-rules.md`
-- **#12**: "Extend CLI, never ask user manually" rule → `agents/perf-measure.md`, `agents/perf-detective.md`, `agents/spike-hunter.md`
-- **#35**: Worktree-absolute vs main-repo-absolute path discipline → `agents/test-rig.md` + `AGENTS.md`
+- **#12**: "Extend CLI, never ask user manually" rule → `agents/core/perf-measure.md`, `agents/core/perf-detective.md`, `agents/core/spike-hunter.md`
+- **#35**: Worktree-absolute vs main-repo-absolute path discipline → `agents/core/test-rig.md` + `AGENTS.md`
 - **#36**: AI chat panel bucket-E coverage gap → tracking entry only (actual work in slice 7)
 
 ### Slice 5 — P4/git mode alignment + SessionStart hook

@@ -17,7 +17,7 @@ Concern-oriented summary of which side owns which agentic-WIP primitive — abso
 | Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash scripts/dev/p4-task-stream.sh <agent-id>` |
 | Plan-lock backend | `refs/locks/<slug>` (default) | `SMATCHET_LOCK_BACKEND=p4-counter` |
 | Submit subagent work as PR | (manual) | `bash scripts/dev/p4-task-stream-to-pr.sh <id> <title>` |
-| Stale-stream GC | (cron via `agents/git-janitor.md`) | `agents/p4-janitor.md` + `scripts/dev/p4-task-stream-gc.sh` |
+| Stale-stream GC | (cron via `agents/core/git-janitor.md`) | `agents/core/p4-janitor.md` + `scripts/dev/p4-task-stream-gc.sh` |
 | Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
 | Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
 

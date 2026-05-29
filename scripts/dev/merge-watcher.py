@@ -1449,7 +1449,7 @@ def maybe_resolve_stuck_cr_threads(
 #
 # C4 prong 3 (per docs/evaluation/agentic-infrastructure-2026-05-23.md): the
 # spawned session is explicitly instructed to use the `coderabbit-triage`
-# agent's classification framework (per `agents/coderabbit-triage.md`) — that
+# agent's classification framework (per `agents/core/coderabbit-triage.md`) — that
 # agent specialises in CR-finding triage with hard invariant-rejection
 # heuristics. The agent itself is `read-only:true` (classification only); the
 # spawned session does the *application* step after the agent has classified.
@@ -1462,7 +1462,7 @@ AUTO_ACT_PROMPT = (
     "Address every actionable CodeRabbit comment on this PR. Steps:\n"
     "  1. `gh pr checkout {pr}` to switch this clone to the PR's branch.\n"
     "  2. **Invoke the `coderabbit-triage` agent first** (per "
-    "`agents/coderabbit-triage.md`). Pass it PR #{pr}; it will fetch the "
+    "`agents/core/coderabbit-triage.md`). Pass it PR #{pr}; it will fetch the "
     "inline CR comments via `gh api`, classify each by severity + target "
     "Smatchet subsystem, and reject suggestions that collide with the "
     "AGENTS.md invariants (C++14 hard, dual-target, UI-thread non-blocking, "
@@ -1495,7 +1495,7 @@ AUTO_ACT_SANITIZER_PROMPT = (
     "A sanitizer failure was detected. Invoke `debug-detective` directly to "
     "diagnose and fix the issue. Steps:\n"
     "  1. `gh pr checkout {pr}` to switch this clone to the PR's branch.\n"
-    "  2. **Invoke `debug-detective`** (per `agents/debug-detective.md`) with:\n"
+    "  2. **Invoke `debug-detective`** (per `agents/core/debug-detective.md`) with:\n"
     "     - Failing test: {failing_test}\n"
     "     - CI job log: run `gh run list --branch $(gh pr view {pr} --json "
     "headRefName -q .headRefName) --status failure --limit 5` to find the "

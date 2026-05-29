@@ -51,7 +51,7 @@ Outcome after this lands: existing strict-zone violators are catalogued in `docs
 | `AGENTS.md` § Tiered enforcement subsection + `SMATCHET_DEVIATION` grammar paragraph | 0.3 |
 | `tests/bats/lint_rules.bats` — `--diff`, `--catalog`, each new rule, deviation grammar parsing, overdue detection, idempotency | 1.5 |
 | `tests/fixtures/lint_rules/` — per-rule known-bad/known-good + `SMATCHET_DEVIATION` overdue/current fixture | 0.5 |
-| `docs/agent-rules/process-rules.md` + `agents/coderabbit-triage.md` one-liner edits | 0.2 |
+| `docs/agent-rules/process-rules.md` + `agents/core/coderabbit-triage.md` one-liner edits | 0.2 |
 | Buffer (clang-tidy strict-zone-TU runtime + post-merge fail-on-drift validation) | 1.0 |
 
 **CI baseline-refresh policy (locked)**: `develop` post-merge runs `--catalog --refresh` against a worktree and **fails the job on byte-diff vs the committed baseline file** — never auto-commits. Remediation message: `"baseline stale — run 'bash scripts/dev/test-lint-rules.sh --catalog --refresh' locally and commit"`. Trade chosen: clear contributor signal + CI stays read-only against `develop`, vs auto-commit's friendlier UX at the cost of a new CI-writes-to-develop surface. Smatchet has no other such surface today; introducing one for a snapshot file isn't earned.
@@ -157,7 +157,7 @@ Trade-off: the slim version preserves the existing one-source-of-truth structure
 4. `tests/bats/lint_rules.bats` (new) — bats coverage for `--diff` mode, `--catalog` mode, and each of the three new rules (one bats per rule, one all-clean fixture). Pattern mirrors `tests/bats/shell_lint.bats` from #488.
 5. `tests/fixtures/lint_rules/` (new) — per-rule known-bad + known-good fixtures.
 6. `docs/agent-rules/process-rules.md` — single-line note under § Plan-doc family pointing at the new tiered-enforcement subsection of AGENTS.md (so plan authors are reminded to declare their zone).
-7. `agents/coderabbit-triage.md` — one-line override-table entry recommending `SMATCHET_DEVIATION` for new strict-zone exemption requests rather than ad-hoc inline comments. No mandatory enforcement; just routing guidance.
+7. `agents/core/coderabbit-triage.md` — one-line override-table entry recommending `SMATCHET_DEVIATION` for new strict-zone exemption requests rather than ad-hoc inline comments. No mandatory enforcement; just routing guidance.
 8. `.github/workflows/build-and-test.yml` (existing — the repo has no dedicated lint workflow today; the existing `windows-msvc` job's "Run non-UI bucket-A tests" step at line ~110 already runs `bash scripts/dev/test-*.sh` lints alongside other bucket-A scripts). Two edits:
    - **PR + push runs** — append `bash scripts/dev/test-lint-rules.sh --diff origin/develop` to the existing "Run non-UI bucket-A tests" step. Same trigger as the surrounding lints; failure blocks merge via the existing required-check on `windows-msvc`.
    - **`develop` post-merge — new job in the same workflow** gated on `if: github.event_name == 'push' && github.ref == 'refs/heads/develop'`. Runs `bash scripts/dev/test-lint-rules.sh --catalog --refresh` then `git diff --exit-code docs/high-integrity/baseline.md`. Non-zero exit = "baseline stale" remediation message + job fails. Never auto-commits — CI stays read-only against `develop`. New job because the existing `windows-msvc` runs on every PR and the refresh-and-diff is develop-only.
@@ -194,7 +194,7 @@ Convention for future rules: lowercase kebab-case, ≤ 24 chars, namespaced when
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-N/A (enforcement PR) — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`, `tests/bats/`, `tests/fixtures/`, `.github/workflows/build-and-test.yml`, `agents/coderabbit-triage.md`. The three new rule checks read `Source_Core/` but don't modify it. **The precursor reorg PR is a different story** — it moves `Source_Core/` files wholesale, so the perf-gate applies there and that plan-doc carries its own perf-gate section (a pure file-move with no logic change should be perf-neutral, but the reorg PR validates rather than asserting).
+N/A (enforcement PR) — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`, `tests/bats/`, `tests/fixtures/`, `.github/workflows/build-and-test.yml`, `agents/core/coderabbit-triage.md`. The three new rule checks read `Source_Core/` but don't modify it. **The precursor reorg PR is a different story** — it moves `Source_Core/` files wholesale, so the perf-gate applies there and that plan-doc carries its own perf-gate section (a pure file-move with no logic change should be perf-neutral, but the reorg PR validates rather than asserting).
 
 ## Risks / non-goals
 

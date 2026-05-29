@@ -3,7 +3,7 @@
 coderabbit-triage — classify CR findings against Smatchet invariants.
 
 Phase 3 of `docs/design/archive/smatchet-merge-watcher.md`. Python port of
-`agents/coderabbit-triage.md`'s rejection table (the agent doc stays
+`agents/core/coderabbit-triage.md`'s rejection table (the agent doc stays
 the source-of-truth for the rules; this is the executable mirror).
 
 When `merge-watcher.py`'s daemon polls a PR + sees the gate BLOCKED on
@@ -62,7 +62,7 @@ class Finding:
 # regex, the finding is REJECT_INVARIANT.
 #
 # Sourced from AGENTS.md § Project rules. The agent file
-# (`agents/coderabbit-triage.md`) is the long-form authoritative source;
+# (`agents/core/coderabbit-triage.md`) is the long-form authoritative source;
 # this list is the executable mirror — keep in sync per the watcher
 # plan-doc § Risks § Phase 3 duplication drift.
 INVARIANT_REJECTS: list[tuple[re.Pattern[str], str]] = [
@@ -337,7 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="coderabbit-triage",
         description=(
             "Classify CodeRabbit findings against Smatchet invariants. "
-            "Python port of agents/coderabbit-triage.md for "
+            "Python port of agents/core/coderabbit-triage.md for "
             "smatchet-merge-watcher Phase 3."
         ),
     )
