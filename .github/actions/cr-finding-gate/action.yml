@@ -98,10 +98,15 @@ runs:
         # Windows dev env).
         decide() {
           local resp n_reviews cr_ctx first_line n
-          resp=$(gh api graphql -f query="$q" \
-                   -F owner="${OWNER}" -F repo="${REPO}" -F pr="${PR}" 2>/dev/null) || {
-            post error "GraphQL query failed"; exit 0
-          }
+          # On a transient GraphQL failure, do NOT post error + exit — that would
+          # bypass the poll loop and leave a false blocking status on a brief API
+          # blip. Return non-terminal so the loop retries; persistent failure is
+          # surfaced as error only after the window is exhausted (see below).
+          if ! resp=$(gh api graphql -f query="$q" \
+                        -F owner="${OWNER}" -F repo="${REPO}" -F pr="${PR}" 2>/dev/null); then
+            return 1
+          fi
+          any_fetch_ok=true
 
           # Count CR reviews on the current head — distinguishes "not reviewed
           # yet" (0) from "reviewed, empty body" (>0). Conflating them wedged on
@@ -167,11 +172,18 @@ runs:
         # StatusContext (no review/comment event re-triggers this workflow).
         # ~3 min total — long enough for a skip decision, short of a real
         # review (those re-trigger via pull_request_review events anyway).
+        any_fetch_ok=false   # set true by decide() on any successful fetch
         ATTEMPTS=12
         for i in $(seq 1 "$ATTEMPTS"); do
           decide   # exits on a terminal verdict; falls through on retry
           if [ "$i" -lt "$ATTEMPTS" ]; then sleep 15; fi
         done
-        # Exhausted the window without CR settling — leave PENDING; a later
-        # review event or re-run resolves it.
-        post pending "awaiting CodeRabbit review on current head"
+        # Window exhausted. If not a single fetch succeeded, the GraphQL API was
+        # down the whole time -> surface error. Otherwise CR simply hasn't
+        # settled on this head -> PENDING; a later review event or re-run
+        # resolves it.
+        if [ "$any_fetch_ok" = false ]; then
+          post error "GraphQL query failed on every attempt (transient API issue?)"
+        else
+          post pending "awaiting CodeRabbit review on current head"
+        fi
