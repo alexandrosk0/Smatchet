@@ -80,8 +80,7 @@ sol::protected_function_result Run(sol::state& L, const char* src) {
 // returning the host's tuple verbatim (e.g. a refactor that lost the field
 // payload), the `t:get_field("summary") == "x"` assertion below fails.
 // Mutation-sanity per backlog #48 taxonomy path 2.
-TEST_CASE("Lua bindings · smatchet.get_ticket round-trips CachedTicket"
-          * doctest::test_suite("[high-risk]")) {
+TEST_CASE("Lua bindings · smatchet.get_ticket round-trips CachedTicket" * doctest::test_suite("[high-risk]")) {
     CoreFixture fx;
 
     CachedTicket t;
@@ -102,8 +101,7 @@ TEST_CASE("Lua bindings · smatchet.get_ticket round-trips CachedTicket"
 // `(sol::nil, "not found")` from `LuaGetTicketGlue`. If the glue body lost the
 // error-string passthrough (e.g. always returned `("", "")`), the script's
 // `err ~= ""` assertion would flip false.
-TEST_CASE("Lua bindings · smatchet.get_ticket returns (nil, err) on miss"
-          * doctest::test_suite("[high-risk]")) {
+TEST_CASE("Lua bindings · smatchet.get_ticket returns (nil, err) on miss" * doctest::test_suite("[high-risk]")) {
     CoreFixture fx;
     // No tickets registered.
 
@@ -119,9 +117,12 @@ TEST_CASE("Lua bindings · smatchet.get_ticket returns (nil, err) on miss"
 TEST_CASE("Lua bindings · smatchet.get_active_tickets exposes N-element list") {
     CoreFixture fx;
 
-    CachedTicket a; a.id = "A-1";
-    CachedTicket b; b.id = "B-2";
-    CachedTicket c; c.id = "C-3";
+    CachedTicket a;
+    a.id = "A-1";
+    CachedTicket b;
+    b.id = "B-2";
+    CachedTicket c;
+    c.id = "C-3";
     fx.host.ActiveTickets = {a, b, c};
 
     sol::protected_function_result r = Run(fx.state(), R"(
@@ -170,6 +171,45 @@ TEST_CASE("Lua bindings · decode_json valid -> table, invalid -> nil + err") {
 }
 
 // =============================================================================
+// smatchet.create_issue — state-relative marshalling (cross-thread race fix)
+// =============================================================================
+
+// * doctest::test_suite("[high-risk]") — guards the state-relative marshalling
+// contract introduced by docs/design/mcp-lua-fresh-state-race.md. The three
+// sol::object-returning binds (LuaGetTicketBind / LuaDecodeJsonBind /
+// LuaCreateIssueBind) now take the *calling* sol::state_view and build their
+// result on it, never on a member state — required so MCP / automation workers
+// can run on a fresh per-call state without touching (or returning objects bound
+// to) the UI-thread `lua`. This drives smatchet.create_issue end-to-end through
+// LuaCreateIssueGlue → host->LuaCreateIssueBind(sv, spec): the result table is
+// built on the script's state and read back by the script, so a regression that
+// reverted the bind to marshal on a member state (cross-state object) would fail
+// the readback here. create_issue's result-table path is otherwise uncovered.
+TEST_CASE("Lua bindings · smatchet.create_issue marshals its result on the calling state" *
+          doctest::test_suite("[high-risk]")) {
+    CoreFixture fx;
+
+    // The fake builds the result table on the sol::state_view it is handed — i.e.
+    // the calling script's state when sv is threaded correctly through the glue.
+    fx.host.CreateIssueScripter = [](sol::state_view sv) {
+        sol::table t = sv.create_table();
+        t["ok"] = true;
+        t["issue_key"] = std::string("NEW-42");
+        return t;
+    };
+
+    sol::protected_function_result r = Run(fx.state(), R"(
+        local res, err = smatchet.create_issue({ summary = "hello", project = "ABC" })
+        if not res then return "ERR:" .. tostring(err) end
+        return tostring(res.ok) .. "|" .. tostring(res.issue_key)
+    )");
+    CHECK_EQ(r.get<std::string>(), std::string("true|NEW-42"));
+
+    // The spec table marshalled inbound on the calling state too (keys recorded).
+    REQUIRE_EQ(fx.host.CreateIssueSpecKeys.size(), 1u);
+}
+
+// =============================================================================
 // Ticket:set_field + Ticket:transition
 // =============================================================================
 
@@ -178,11 +218,11 @@ TEST_CASE("Lua bindings · decode_json valid -> table, invalid -> nil + err") {
 // `host->FindFieldById` + `host->SubmitFieldEdit`. If the glue stopped pushing
 // the single-element vector (e.g. dropped `vals.push_back(val)`), the
 // recorded `Values[0] == "High"` assertion would fail.
-TEST_CASE("Lua bindings · Ticket:set_field forwards to SubmitFieldEdit"
-          * doctest::test_suite("[high-risk]")) {
+TEST_CASE("Lua bindings · Ticket:set_field forwards to SubmitFieldEdit" * doctest::test_suite("[high-risk]")) {
     CoreFixture fx;
 
-    CachedTicket t; t.id = "ABC-5";
+    CachedTicket t;
+    t.id = "ABC-5";
     fx.host.TicketsById["ABC-5"] = t;
 
     TrackerField prio;
@@ -210,9 +250,12 @@ TEST_CASE("Lua bindings · Ticket:set_field forwards to SubmitFieldEdit"
 TEST_CASE("Lua bindings · Ticket:set_field surfaces failure path") {
     CoreFixture fx;
 
-    CachedTicket t; t.id = "ABC-7";
+    CachedTicket t;
+    t.id = "ABC-7";
     fx.host.TicketsById["ABC-7"] = t;
-    TrackerField prio; prio.Id = "priority"; prio.Name = "Priority";
+    TrackerField prio;
+    prio.Id = "priority";
+    prio.Name = "Priority";
     fx.host.FieldsById["priority"] = prio;
 
     fx.host.SubmitFieldEditReturn = false;
@@ -230,7 +273,8 @@ TEST_CASE("Lua bindings · Ticket:set_field surfaces failure path") {
 TEST_CASE("Lua bindings · Ticket:set_field unknown field returns error") {
     CoreFixture fx;
 
-    CachedTicket t; t.id = "ABC-9";
+    CachedTicket t;
+    t.id = "ABC-9";
     fx.host.TicketsById["ABC-9"] = t;
     // No fields registered -- FindFieldById returns nullptr.
 
@@ -248,9 +292,12 @@ TEST_CASE("Lua bindings · Ticket:set_field unknown field returns error") {
 TEST_CASE("Lua bindings · Ticket:transition uses status field") {
     CoreFixture fx;
 
-    CachedTicket t; t.id = "ABC-11";
+    CachedTicket t;
+    t.id = "ABC-11";
     fx.host.TicketsById["ABC-11"] = t;
-    TrackerField status; status.Id = "status"; status.Name = "Status";
+    TrackerField status;
+    status.Id = "status";
+    status.Name = "Status";
     fx.host.FieldsById["status"] = status;
 
     Run(fx.state(), R"(
@@ -338,18 +385,18 @@ TEST_CASE("Lua bindings · top-level tables are present and well-formed") {
             istbl(commands), isfn(commands.invoke),
             isfn(log_info),  isfn(decode_json)
     )");
-    CHECK(r.get<bool>(0));   // smatchet table
-    CHECK(r.get<bool>(1));   // smatchet.get_ticket
-    CHECK(r.get<bool>(2));   // smatchet.get_active_tickets
-    CHECK(r.get<bool>(3));   // tracker table
-    CHECK(r.get<bool>(4));   // tracker.get_type
-    CHECK(r.get<bool>(5));   // tracker.create_issue
-    CHECK(r.get<bool>(6));   // mcp table
-    CHECK(r.get<bool>(7));   // mcp.register_tool
-    CHECK(r.get<bool>(8));   // commands table
-    CHECK(r.get<bool>(9));   // commands.invoke
-    CHECK(r.get<bool>(10));  // log_info global
-    CHECK(r.get<bool>(11));  // decode_json global
+    CHECK(r.get<bool>(0));  // smatchet table
+    CHECK(r.get<bool>(1));  // smatchet.get_ticket
+    CHECK(r.get<bool>(2));  // smatchet.get_active_tickets
+    CHECK(r.get<bool>(3));  // tracker table
+    CHECK(r.get<bool>(4));  // tracker.get_type
+    CHECK(r.get<bool>(5));  // tracker.create_issue
+    CHECK(r.get<bool>(6));  // mcp table
+    CHECK(r.get<bool>(7));  // mcp.register_tool
+    CHECK(r.get<bool>(8));  // commands table
+    CHECK(r.get<bool>(9));  // commands.invoke
+    CHECK(r.get<bool>(10)); // log_info global
+    CHECK(r.get<bool>(11)); // decode_json global
 }
 
 TEST_CASE("Lua bindings · tracker.get_type returns config tracker type") {
