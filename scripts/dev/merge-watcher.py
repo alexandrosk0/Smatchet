@@ -1702,6 +1702,16 @@ def daemon_loop(poll_interval: int) -> int:
                                 f"  PR#{state['pr']:<6} BLOCKED (no triage) "
                                 f"poll_line={state.get('last_status_line', '')[:100]}"
                             )
+                    elif state.get("last_state") == "PR_CLOSED_OR_MERGED":
+                        # PR closed or merged externally (merge-gates exit 4):
+                        # drop it from the registry so the daemon stops polling a
+                        # dead PR. Without this, closed PRs accrete as stale
+                        # registry entries (observed: 17 pre-fix EXIT-state PRs).
+                        # maybe_notify below still fires once so the user sees the
+                        # terminal state before the entry is removed.
+                        maybe_remove_from_registry(int(entry["pr"]), entry["clone_path"])
+                        state["registry_action"] = "auto-unregistered (closed/merged)"
+                        print(f"  PR#{state['pr']:<6} CLOSED/MERGED -> auto-unregistered")
                     else:
                         print(
                             f"  PR#{state['pr']:<6} state={state['last_state']:<24} "
