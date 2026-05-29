@@ -81,8 +81,11 @@ fi
 
 # Channel 2: Windows native via BurntToast (foreground OS notification).
 # Always attempted as a fallback — Smatchet may not be running, or the
-# in-app toast may have been missed.
-if [[ "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || -n "${WINDIR:-}" ]]; then
+# in-app toast may have been missed. Set SMATCHET_NOTIFY_NO_WINDOWS_TOAST=1 to
+# opt out (users who don't want OS toasts; deterministic channel-skip in tests
+# where BurntToast may or may not be installed).
+if [[ -z "${SMATCHET_NOTIFY_NO_WINDOWS_TOAST:-}" \
+      && ( "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || -n "${WINDIR:-}" ) ]]; then
     PS_SCRIPT="$SCRIPT_DIR/smatchet-notify-windows.ps1"
     if [[ -f "$PS_SCRIPT" ]]; then
         # Quote MESSAGE for PowerShell single-quoted string by doubling embedded single-quotes.
@@ -93,7 +96,7 @@ if [[ "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || -n "${WINDIR:-}"
             echo "smatchet-notify: Windows native toast dispatched"
             success=1
         else
-            echo "smatchet-notify: Windows native toast failed (BurntToast module missing? Install: Install-Module BurntToast -Scope CurrentUser)" >&2
+            echo "smatchet-notify: Windows native toast failed. Set up once: powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-notify-setup.ps1" >&2
         fi
     fi
 fi

@@ -750,12 +750,17 @@ print('budget default ok')
     # Channel 3 (file log) is a guaranteed fallback whenever LOCALAPPDATA /
     # XDG_STATE_HOME / HOME point somewhere writable — and setup() always sets
     # LOCALAPPDATA. So the all-channels-failed exit is only reachable with all
-    # three path vars unset, AND no Smatchet (dead HTTP host), AND no BurntToast.
-    # `env -u` strips the path vars for this one invocation (a plain VAR=val
-    # prefix on `run` would not make the file-log channel unavailable, so the
-    # script would always succeed via file-log and exit 0).
+    # three path vars unset, AND no Smatchet (dead HTTP host), AND channel 2
+    # (Windows toast) skipped. `env -u` strips the path vars for this one
+    # invocation (a plain VAR=val prefix on `run` would not make the file-log
+    # channel unavailable, so the script would always succeed via file-log and
+    # exit 0). SMATCHET_NOTIFY_NO_WINDOWS_TOAST=1 deterministically skips the
+    # toast channel — on git-bash OSTYPE=msys always triggers it, and once
+    # merge-watcher-notify-setup.ps1 has installed BurntToast the toast would
+    # otherwise SUCCEED and this test would flip to exit 0.
     run env -u LOCALAPPDATA -u XDG_STATE_HOME -u HOME \
         SMATCHET_NOTIFY_HOST=127.0.0.1 SMATCHET_NOTIFY_PORT=1 \
+        SMATCHET_NOTIFY_NO_WINDOWS_TOAST=1 \
         bash "$SCRIPTS_DIR/smatchet-notify.sh" --pr 999 --state CI_FAIL --message "bats test"
     [ "$status" -eq 1 ]
     [[ "$output" == *"ALL channels failed"* ]]
