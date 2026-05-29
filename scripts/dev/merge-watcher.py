@@ -194,6 +194,35 @@ def _resolve_orch_user(clone_path: str) -> str:
     return ""
 
 
+def _pr_lifecycle_state(pr: int, clone_path: str) -> str:
+    """Return the PR's lifecycle state via `gh pr view --json state` — one of
+    'MERGED' / 'CLOSED' / 'OPEN', or '' when gh is unavailable or errors.
+
+    Isolated from poll_one so the reconcile-on-poll short-circuit is unit
+    testable by monkeypatching this helper — native-Windows-Python
+    `shutil.which` skips extensionless PATH stubs (it requires a PATHEXT
+    extension), so the usual bats `PATH=stub gh` trick can't override the
+    absolute GH_BIN the daemon resolves at import. Returning '' on any
+    failure makes poll_one fall through to the normal poll path rather than
+    stranding the PR on a transient gh hiccup.
+    """
+    try:
+        st = subprocess.run(
+            [GH_BIN, "pr", "view", str(pr), "--json", "state", "-q", ".state"],
+            cwd=clone_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    if st.returncode == 0:
+        return st.stdout.strip().upper()
+    return ""
+
+
 def poll_one(
     entry: dict[str, Any], extra_gates_env: dict[str, str] | None = None
 ) -> dict[str, Any]:
@@ -215,6 +244,32 @@ def poll_one(
             "last_poll_unix": int(time.time()),
             "last_state": "CLONE_MISSING",
             "last_status_line": f"clone path {clone_path} does not exist",
+        }
+    # Reconcile-on-poll: drop PRs that have already merged or closed (by the
+    # watcher on a prior cycle, by the orchestrator, or by a human) BEFORE the
+    # expensive gates poll. The daemon's only auto-unregister path keys off
+    # merge-gates exit 4 (PR_CLOSED_OR_MERGED), but a merged PR never reaches
+    # it: ensure_pr_ready_for_review() below cannot `gh pr ready` a merged PR,
+    # so it returns READY_FLIP_FAILED every cycle and the entry polls forever.
+    # Result before this check: the registry accreted stale MERGED/CLOSED
+    # entries (observed 2026-05: 19 zombies, triage_attempts up to 211,
+    # starving live PRs' poll slots). A cheap `gh pr view --json state`
+    # short-circuits straight to the existing PR_CLOSED_OR_MERGED branch
+    # (auto-unregister + one-shot notify), independent of merge-gates' own
+    # closed-detection. A transient gh failure returns '' from the helper and
+    # falls through to the normal poll path rather than stranding the PR.
+    pr_lifecycle = _pr_lifecycle_state(pr, clone_path)
+    if pr_lifecycle in ("MERGED", "CLOSED"):
+        return {
+            "pr": pr,
+            "clone_path": clone_path,
+            "last_poll_unix": int(time.time()),
+            "last_state": "PR_CLOSED_OR_MERGED",
+            "last_status_line": (
+                f"reconcile precheck: gh reports PR #{pr} {pr_lifecycle}; "
+                "short-circuiting to auto-unregister"
+            ),
+            "gates_return_code": 4,
         }
     # Resolve owner / repo via `gh repo view --json owner,name` in the clone.
     try:
