@@ -1,7 +1,7 @@
 #pragma once
 
 // WhisperPlugin — push-to-talk dictation plugin. See
-// docs/design/whisper-dictation.md for the full plan.
+// docs/plans/shipped/whisper-dictation.md for the full plan.
 //
 // Phase A: shell only. The plugin registers a single `whisper.status` CLI
 // command that reports the static feature flags. No audio capture, no

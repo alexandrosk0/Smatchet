@@ -5,7 +5,7 @@
 // abort() the process per sol2 defaults).
 //
 // Mirrors `LuaHookGuard` in AppController_LuaBindings.cpp:84-94. Production
-// uses a count of 100000 instructions per docs/design/applied/
+// uses a count of 100000 instructions per docs/plans/active/applied/
 // lua-recorded-cmd-list.md §LuaHookGuard Q7; tests use a much smaller count
 // so the abort fires in milliseconds. The MECHANISM under test is identical:
 // `lua_sethook(LUA_MASKCOUNT)` + a hook that calls `luaL_error` -> Lua

@@ -3,7 +3,7 @@
 // ModelCatalog — static catalog of the Whisper.cpp ggml models Smatchet is
 // allowed to download. Pure helper TU: no third-party deps, no I/O beyond a
 // single `IsModelPresent` filesystem probe. See
-// docs/design/whisper-dictation.md § Phase C / ModelCatalog.
+// docs/plans/shipped/whisper-dictation.md § Phase C / ModelCatalog.
 //
 // Entries describe English-only models in ascending size order:
 //   - ggml-tiny.en   ~39 MB    "Smaller, faster"

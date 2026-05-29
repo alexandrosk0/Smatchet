@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/dev/pillar2-scan.sh — canonical Pillar 2 static scanner.
 #
-# Slice 2 of docs/design/archive/pillar-1-2-perf-review-system.md. For each first-party
+# Slice 2 of docs/plans/shipped/pillar-1-2-perf-review-system.md. For each first-party
 # C++ source/header passed as an argument:
 #   1. Decide whether the TU is UI-thread-reachable (heuristic).
 #   2. If reachable, grep for known synchronous-I/O call patterns.

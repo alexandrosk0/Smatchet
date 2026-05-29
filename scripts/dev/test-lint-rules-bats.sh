@@ -6,7 +6,7 @@
 # scripts/dev/test-lint-rules.sh (the scanner / delta gate itself) — this gives
 # per-case isolation for the rule + deviation + diff-mode logic.
 #
-# Plan: docs/design/high-integrity-cpp-enforcement.md.
+# Plan: docs/plans/active/high-integrity-cpp-enforcement.md.
 #
 # Exit codes (test-author convention):
 #   0 — every bats test passed

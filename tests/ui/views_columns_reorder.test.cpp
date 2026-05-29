@@ -1,7 +1,7 @@
 // views_columns_reorder.test.cpp — first bucket-E test, targets the
 // SmatchetViewsDashboardUi.cpp Columns-tab drag-reorder bug.
 //
-// Hot lead recap (see docs/design/imgui-test-engine-bucket-e-execution.md
+// Hot lead recap (see docs/plans/shipped/imgui-test-engine-bucket-e-execution.md
 // § Context):
 //   - SmatchetViewsDashboardUi.cpp:683 submits an `ImGui::Selectable(...)`.
 //   - :687-691 conditionally calls `ImGui::TextDisabled(...)` for a width

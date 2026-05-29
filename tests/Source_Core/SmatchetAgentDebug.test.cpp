@@ -1,4 +1,4 @@
-// Slice 7 of docs/design/autonomous-debugging-no-creds.md — doctest cover
+// Slice 7 of docs/plans/shipped/autonomous-debugging-no-creds.md — doctest cover
 // for the production-resident NDJSON helper at tests/_debug/SmatchetAgentDebug.h.
 //
 // Cases V7.1..V7.5 from the plan's verification table. V7.6 (hot-path budget

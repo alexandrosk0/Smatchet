@@ -1,4 +1,4 @@
-// Slice 5 of docs/design/autonomous-debugging-no-creds.md (V5.1).
+// Slice 5 of docs/plans/shipped/autonomous-debugging-no-creds.md (V5.1).
 //
 // Snapshot test pinning the set of scenario names registered by
 // RegisterAllScenarios(). Catches accidental adds/removes/renames during the

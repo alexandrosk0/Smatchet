@@ -3,7 +3,7 @@
 
 #include <string>
 
-// PR5 of docs/design/archive/github-tracker-backend.md — pure-helper JQL → GitHub
+// PR5 of docs/plans/shipped/github-tracker-backend.md — pure-helper JQL → GitHub
 // /search/issues `q=` translator. Pure logic, no I/O, no globals. Lives in
 // its own TU so the doctest rig links it without pulling cpr/SQLite/ImGui
 // (mirrors the LabelEditDiffPure / GitHubClientHelpers convention).

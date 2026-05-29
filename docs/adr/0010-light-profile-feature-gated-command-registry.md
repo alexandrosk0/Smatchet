@@ -2,7 +2,7 @@
 
 # Status
 
-**Accepted (2026-05-24).** Plan: [`docs/design/archive/light-release-unreal-default.md`](../design/archive/light-release-unreal-default.md) grill Q3/Q7.
+**Accepted (2026-05-24).** Plan: [`docs/plans/shipped/light-release-unreal-default.md`](../design/archive/light-release-unreal-default.md) grill Q3/Q7.
 
 # Context
 
@@ -30,5 +30,5 @@ When an optional feature flag is **OFF**, its commands are **absent from `Comman
 
 - Delete the `#else` stub block in [`BuiltinCommands_Ai.cpp`](../../Source_Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp); `RegisterAiCommands` no-ops when AI is OFF.
 - Release smoke may assert **`ai.*` not in** `commands.list` output for light zips.
-- [`docs/design/archive/command-system-plan.md`](../design/archive/command-system-plan.md) § Feature-gated builds documents the contract for agents.
+- [`docs/plans/shipped/command-system-plan.md`](../design/archive/command-system-plan.md) § Feature-gated builds documents the contract for agents.
 - Reversing this later requires re-introducing stubs **and** updating smoke/ADR — treat as intentional API shape, not an implementation detail.

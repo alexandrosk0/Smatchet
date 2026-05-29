@@ -1,7 +1,7 @@
 #ifndef SMATCHET_GITHUB_ISSUE_SEARCH_MAPPING_H
 #define SMATCHET_GITHUB_ISSUE_SEARCH_MAPPING_H
 
-// PR12 of docs/design/archive/github-tracker-backend.md — pure-logic JSON → CachedTicket
+// PR12 of docs/plans/shipped/github-tracker-backend.md — pure-logic JSON → CachedTicket
 // mapping helpers extracted out of GitHubIssueSearch.cpp (which pulls cpr) so
 // the doctest rig can exercise them without HTTP.
 //
@@ -46,7 +46,7 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
 /// Pillar 3 — a malformed field maps to a safe empty default rather than
 /// throwing. Row shape (id `owner/repo@<sha>`, `github.kind`=commit, the
 /// `commit.*` columns) is documented in
-/// docs/design/github-commit-tracker-rows.md § Row contract.
+/// docs/plans/active/github-commit-tracker-rows.md § Row contract.
 CachedTicket MapCommitJsonToCachedTicket(const nlohmann::json& commit, const std::string& owner,
                                          const std::string& repo);
 

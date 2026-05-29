@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-ui-mcp-lua-fresh-state-race.sh — bucket-E driver for the MCP-Lua
-# fresh-per-call sol::state race regression (docs/design/mcp-lua-fresh-state-race.md).
+# fresh-per-call sol::state race regression (docs/plans/active/mcp-lua-fresh-state-race.md).
 #
 # Drives `ui_test.run --name=FreshState` against an ephemeral spawn of the
 # ASan-instrumented bucket-E exe. The test runs a worker thread firing the real

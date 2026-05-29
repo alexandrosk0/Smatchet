@@ -4,7 +4,7 @@
 // the huggingface mirror into `<userData>/whisper/<id>.bin`, with resumable
 // `.partial` staging + post-completion SHA-256 verification.
 //
-// See docs/design/whisper-dictation.md § Phase C / ModelDownloader.
+// See docs/plans/shipped/whisper-dictation.md § Phase C / ModelDownloader.
 //
 // Consent contract — Start() refuses unless WhisperConsentGate::CanDownloadModel
 // returns true (WhisperEnabled + fresh consent timestamp). Callers should

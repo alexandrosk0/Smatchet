@@ -19,9 +19,9 @@ The upstream skill talks about three artifact locations. Smatchet uses:
 |---|---|---|
 | Glossary | `CONTEXT.md` at repo root | `docs/CONTEXT.md` (single-context repo — no `CONTEXT-MAP.md` needed) |
 | ADRs (architecture decision records) | `docs/adr/0001-slug.md` | `docs/adr/0001-slug.md` (matches upstream) |
-| Feature plans | (not in upstream) | `docs/design/<slug>.md` — Smatchet convention, separate from ADRs |
+| Feature plans | (not in upstream) | `docs/plans/active/<slug>.md` — Smatchet convention, separate from ADRs |
 
-**Plans vs ADRs — keep them separate.** A plan (`docs/design/<slug>.md`) is the full multi-step design for a feature; it gets revised post-implementation per AGENTS.md § Plan revision after implementation. An ADR (`docs/adr/000N-slug.md`) records **one architectural decision** with a real trade-off — single paragraph, no revision lifecycle. Plans may **reference** ADRs but don't replace them.
+**Plans vs ADRs — keep them separate.** A plan (`docs/plans/active/<slug>.md`) is the full multi-step design for a feature; it gets revised post-implementation per AGENTS.md § Plan revision after implementation. An ADR (`docs/adr/000N-slug.md`) records **one architectural decision** with a real trade-off — single paragraph, no revision lifecycle. Plans may **reference** ADRs but don't replace them.
 
 **Glossary scope.** `docs/CONTEXT.md` is the Smatchet domain glossary — terms specific to this product (Smatchet, Tracker, View, Field, Catalog, Scenario, Pipeline, Audit, Backend, …). It is **not** a place for general programming concepts (timeout, mutex, async, etc.) per the upstream rule.
 
@@ -41,11 +41,11 @@ The skill is for **plan stress-testing**, not for every change.
 
 ## Integration with the architect agent
 
-`agents/core/architect.md` produces design docs at `docs/design/<slug>.md`. The grill-with-docs skill is a **complement**, not a replacement:
+`agents/core/architect.md` produces design docs at `docs/plans/active/<slug>.md`. The grill-with-docs skill is a **complement**, not a replacement:
 
 1. Architect drafts the plan.
 2. Orchestrator (or user) invokes grill-with-docs to interrogate the plan term-by-term.
-3. Grilling produces (a) refinements written back into `docs/design/<slug>.md`, (b) `docs/CONTEXT.md` updates when terms get pinned, (c) `docs/adr/000N-slug.md` when the three ADR criteria fire.
+3. Grilling produces (a) refinements written back into `docs/plans/active/<slug>.md`, (b) `docs/CONTEXT.md` updates when terms get pinned, (c) `docs/adr/000N-slug.md` when the three ADR criteria fire.
 4. Plan ships; revision sections (`## Implementation log`, `## Deviations from plan`, `## Verification`) get appended per the standard rule.
 
 ADRs are write-once. Plans are revised. Glossary entries are stable but additive.

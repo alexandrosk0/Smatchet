@@ -1,6 +1,6 @@
 // mcp_lua_fresh_state_race.test.cpp — bucket-E regression for the HIGH-severity
 // cross-thread `lua_State` race fixed on fix/mcp-lua-fresh-state-race
-// (commit 610b6aa5). Plan: docs/design/mcp-lua-fresh-state-race.md.
+// (commit 610b6aa5). Plan: docs/plans/active/mcp-lua-fresh-state-race.md.
 //
 // THE RACE (pre-fix):
 //   MCP `run_lua` snippet/script handlers + the registered-Lua-tool handler run

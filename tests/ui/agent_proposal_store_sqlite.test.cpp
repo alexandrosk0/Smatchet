@@ -1,6 +1,6 @@
 // agent_proposal_store_sqlite.test.cpp — bucket-E coverage for the
 // SQLite-backed AgentProposalStore UI flow. Per the slice-9 disposition
-// (docs/design/autonomous-debugging-no-creds.md § Slice 9), the "lane
+// (docs/plans/shipped/autonomous-debugging-no-creds.md § Slice 9), the "lane
 // sub-rig" framing was wrong; the existing `tests/support/SqliteMemFixture.h`
 // covers the SQLite-tempfile-lifecycle need directly with no new harness.
 //

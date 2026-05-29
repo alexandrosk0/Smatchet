@@ -1,5 +1,5 @@
 // WhisperModeRouter — Phase C doctest coverage for the mode-router decision
-// table in docs/design/whisper-dictation.md § Mode router decision tree.
+// table in docs/plans/shipped/whisper-dictation.md § Mode router decision tree.
 //
 // The router logic lives inside WhisperPlugin.cpp's transcribe-once handler
 // today (Phase C is the first time the local branch is exercised). Lifting

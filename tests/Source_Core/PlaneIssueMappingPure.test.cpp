@@ -1,4 +1,4 @@
-// Slice 2 of docs/design/autonomous-debugging-no-creds.md — pure-logic doctest
+// Slice 2 of docs/plans/shipped/autonomous-debugging-no-creds.md — pure-logic doctest
 // for the Plane JSON → CachedTicket mapper. Mirrors GitHubIssueSearchMapping.test.cpp
 // in shape. No HTTP, no PlaneClient instance.
 

@@ -1,7 +1,7 @@
 // WhisperConsentGate — see header for design pointers. Pure logic, zero
 // state, zero I/O beyond the steady_clock query helper. Tests drive the
 // three predicates with synthetic configs + a synthetic clock to lock the
-// four consent invariants from docs/design/whisper-dictation.md.
+// four consent invariants from docs/plans/shipped/whisper-dictation.md.
 
 #include "WhisperConsentGate.h"
 

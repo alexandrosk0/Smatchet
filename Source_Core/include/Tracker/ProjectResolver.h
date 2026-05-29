@@ -19,7 +19,7 @@ namespace smatchet {
  *  Pure C++14; no I/O. `client` may be null — then steps 1 (and the Plane-detect for step 2)
  *  degrade to "skip" and we fall straight to the prefix / legacy fallback.
  *
- *  Added in PR 2 of docs/design/archive/remove-global-project-key.md.
+ *  Added in PR 2 of docs/plans/shipped/remove-global-project-key.md.
  */
 std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std::string& activeViewQuery,
                                    const std::string& lastVisibleTicketId, const std::string& legacyFallback);

@@ -1,5 +1,5 @@
 // LuaBindings.test.cpp -- end-to-end round-trip of the `smatchet::lua::InitLuaCore`
-// surface lifted by PR #144 (`docs/design/_plan-locks.md` § Phase-6-unblocker).
+// surface lifted by PR #144 (`docs/plans/active/_plan-locks.md` § Phase-6-unblocker).
 // Drives the `Ticket` usertype + `smatchet` / `tracker` / `mcp` / `commands`
 // global tables through a `FakeLuaBindingHost`, asserting:
 //   - `CachedTicket` round-trips C++ -> Lua -> C++ via `smatchet.get_ticket`
@@ -175,7 +175,7 @@ TEST_CASE("Lua bindings · decode_json valid -> table, invalid -> nil + err") {
 // =============================================================================
 
 // * doctest::test_suite("[high-risk]") — guards the state-relative marshalling
-// contract introduced by docs/design/mcp-lua-fresh-state-race.md. The three
+// contract introduced by docs/plans/active/mcp-lua-fresh-state-race.md. The three
 // sol::object-returning binds (LuaGetTicketBind / LuaDecodeJsonBind /
 // LuaCreateIssueBind) now take the *calling* sol::state_view and build their
 // result on it, never on a member state — required so MCP / automation workers

@@ -14,7 +14,7 @@ name: Doc validation
 # Scoped narrowly via `paths:` so non-doc PRs skip entirely. Runs on Ubuntu
 # (cheap) because the two scripts are pure Python + bash, no MSYS2 / GL needed.
 #
-# Plan: docs/design/process-backlog-tighten-1-2-3-9-11-12.md § Slice 8
+# Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 8
 # (gap closure on top of PR #309 Slice 2 + PR #312 Slice 7).
 
 on:
@@ -26,13 +26,14 @@ on:
       - 'docs/agent-rules/**'
       - 'docs/backlog/**'
       - 'docs/self-improvement/**'
-      - 'docs/design/archive/**'
+      - 'docs/plans/shipped/**'
       - 'project.config.json'
       - 'project.config.schema.json'
       - 'scripts/dev/test-doc-anchors.sh'
       - 'scripts/dev/test_doc_anchors.py'
       - 'scripts/dev/test-agent-contract.sh'
       - 'scripts/dev/test-plan-index.sh'
+      - 'scripts/dev/test-plan-ref-integrity.sh'
       - 'scripts/dev/test-agent-discovery-fixture.sh'
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
@@ -45,13 +46,14 @@ on:
       - 'docs/agent-rules/**'
       - 'docs/backlog/**'
       - 'docs/self-improvement/**'
-      - 'docs/design/archive/**'
+      - 'docs/plans/shipped/**'
       - 'project.config.json'
       - 'project.config.schema.json'
       - 'scripts/dev/test-doc-anchors.sh'
       - 'scripts/dev/test_doc_anchors.py'
       - 'scripts/dev/test-agent-contract.sh'
       - 'scripts/dev/test-plan-index.sh'
+      - 'scripts/dev/test-plan-ref-integrity.sh'
       - 'scripts/dev/test-agent-discovery-fixture.sh'
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
@@ -97,6 +99,9 @@ jobs:
 
       - name: test-plan-index — shipped-plan index in sync with archive
         run: bash scripts/dev/test-plan-index.sh
+
+      - name: test-plan-ref-integrity — no dangling docs/plans refs
+        run: bash scripts/dev/test-plan-ref-integrity.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         run: bash scripts/dev/test-agent-discovery-fixture.sh

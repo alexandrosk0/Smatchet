@@ -2,7 +2,7 @@
 // half of the public `ConfigManager::*` surface (paths, storage preference, JSON read/write,
 // ImGui default-layout management, NormalizeUiLanguageCode, atomic file replace).
 //
-// Split off `ConfigManager.cpp` per `docs/design/large-files-and-phase-2.md` § A3 so the
+// Split off `ConfigManager.cpp` per `docs/plans/shipped/large-files-and-phase-2.md` § A3 so the
 // remaining file can focus on `Save(TrackerConfig)` / `Load(CliOverrides)` / blame-analysis
 // persistence. The helper namespace is `smatchet::config_detail` — declarations in
 // `ConfigManager_Internal.h`.

@@ -3,7 +3,7 @@
 
 // CodeColorView — read-only syntax-colored code rendering for Smatchet.
 //
-// Per the slice-1 deliverable of docs/design/code-syntax-coloring-and-tooltips.md.
+// Per the slice-1 deliverable of docs/plans/active/code-syntax-coloring-and-tooltips.md.
 // Extends Smatchet's existing C++-only `DrawColoredCppText` (CppSyntaxHighlight.h)
 // to a polymorphic multi-language API. Vendored LDs (CPlusPlus / C / Lua / Glsl /
 // Hlsl / Sql / AngelScript / Markdown) come from Source_Core/ThirdParty/
@@ -76,7 +76,7 @@ struct Token {
 
 /// Map a markdown fenced-code language tag to a CodeLang. Case-insensitive.
 /// Empty / unknown / "txt" / "text" / "plaintext" map to Plain.
-/// Full alias coverage per docs/design/code-syntax-coloring-and-tooltips.md
+/// Full alias coverage per docs/plans/active/code-syntax-coloring-and-tooltips.md
 /// § Slice 1 step 2.
 CodeLang FromTag(const std::string& tag);
 
@@ -85,7 +85,7 @@ CodeLang FromTag(const std::string& tag);
 /// bare basename (`script.py`). Strips everything before the last `/`, `\`,
 /// or `.` separator + delegates the extension to `FromTag`. Unknown
 /// extensions / paths with no extension map to Plain. Used by Slice 5 of
-/// docs/design/code-syntax-coloring-and-tooltips.md — `BlameAnalysisUi`
+/// docs/plans/active/code-syntax-coloring-and-tooltips.md — `BlameAnalysisUi`
 /// annotate view + future `SmatchetFieldRender` callstack tooltips that
 /// carry a file-path hint.
 CodeLang LangFromFilePath(const std::string& path);

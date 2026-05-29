@@ -276,7 +276,7 @@ def _infer_outcome(final_text: str) -> tuple[str, str | None]:
          missing tag is itself a signal that something diverged. The
          former rule ("`## Self-improvement` present → `applied`") was
          dropped because it silently green-washed halted runs — see
-         docs/design/archive/agent-contract-alignment.md § Pre-resolved decision 5.
+         docs/plans/shipped/agent-contract-alignment.md § Pre-resolved decision 5.
     """
     m = _OUTCOME_TAG.search(final_text)
     if m:

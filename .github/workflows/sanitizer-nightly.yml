@@ -1,7 +1,7 @@
 name: Sanitizer nightly
 
 # Nightly ASan + UBSan + ctest on develop (plan:
-# docs/design/gate-enforcement-hardening.md § Slice 4). NOT a per-PR required
+# docs/plans/active/gate-enforcement-hardening.md § Slice 4). NOT a per-PR required
 # check — per-PR ASan was rejected during grill as too slow for a solo project.
 # The gate is "last nightly was clean"; a failure auto-opens a `bug` issue.
 # Trade-off (accepted): a UB regression can sit up to ~24 h before this catches
@@ -100,7 +100,7 @@ jobs:
           Run: ${RUN_URL}
 
           See the job summary for the AddressSanitizer / UBSan report. This is the
-          safety-net gate from docs/design/gate-enforcement-hardening.md § Slice 4 —
+          safety-net gate from docs/plans/active/gate-enforcement-hardening.md § Slice 4 —
           a sanitizer regression has landed on develop."
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true

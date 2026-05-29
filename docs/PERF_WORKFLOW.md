@@ -234,7 +234,7 @@ build/ninja-iter-msvc/Smatchet.exe cmd perf.reset
 
 ### 7. Gate-check vs baseline
 
-After cleanup, gate the change against the checked-in baseline registry. This is the merge-blocking step for feature PRs touching `Source_Core/`. See `docs/design/archive/pillar-1-2-perf-review-system.md` § C1 + § Slice 1 for the full design.
+After cleanup, gate the change against the checked-in baseline registry. This is the merge-blocking step for feature PRs touching `Source_Core/`. See `docs/plans/shipped/pillar-1-2-perf-review-system.md` § C1 + § Slice 1 for the full design.
 
 ```bash
 # Run a fresh snapshot through the canonical driver (harness-agnostic).

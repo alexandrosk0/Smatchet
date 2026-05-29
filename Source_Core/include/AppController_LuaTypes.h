@@ -5,8 +5,8 @@
 // that header under ~900 LOC. Types stay accessible as `AppController::ImCmd` /
 // `AppController::LuaFieldCacheEntry` / `AppController::LuaWindowEntry` /
 // `AppController::PendingLuaWindowOp` through `using` aliases declared inside
-// the AppController class body. See docs/design/large-files-and-phase-2.md § A5
-// and docs/design/archive/lua-recorded-cmd-list.md.
+// the AppController class body. See docs/plans/shipped/large-files-and-phase-2.md § A5
+// and docs/plans/shipped/lua-recorded-cmd-list.md.
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 

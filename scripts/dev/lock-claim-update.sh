@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-# --- backend dispatch (Phase 4 of docs/design/archive/git-to-perforce-migration.md)
+# --- backend dispatch (Phase 4 of docs/plans/shipped/git-to-perforce-migration.md)
 # `SMATCHET_LOCK_BACKEND=p4-counter` has no claim-update equivalent today:
 # `lock-claim-p4.sh` ships claim + release only (CAS via `p4 counter`).
 # Update-in-place against an existing counter is feasible but unscoped; the

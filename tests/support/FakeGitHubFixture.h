@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TESTS_FAKE_GITHUB_FIXTURE_H
 #define SMATCHET_TESTS_FAKE_GITHUB_FIXTURE_H
 
-// FakeGitHubFixture — slice 1 of docs/design/autonomous-debugging-no-creds.md.
+// FakeGitHubFixture — slice 1 of docs/plans/shipped/autonomous-debugging-no-creds.md.
 //
 // Header-only loader that:
 //   1. Reads a GitHub GraphQL-search-shaped JSON file from tests/fixtures/github/<scenario>.json.

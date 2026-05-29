@@ -38,4 +38,4 @@ Triage-flow + ci-react + coderabbit-react + lua + mcp call sites explicitly pass
 - **Audit-consumer simplification** — "what did triage do today" reduces to JSONL-grep `actor=triage` instead of a path-derived heuristic. The pre-refactor heuristic was implicit and brittle; this makes the discriminator explicit.
 - **Forward-compatibility with Pillar 3 incident triage** — when a Pillar 3 crash investigation needs to know "did a Lua script or the user trigger this last write before the crash", `actor` is the load-bearing column.
 
-Cross-link: [`docs/design/archive/github-tracker-backend.md`](../design/archive/github-tracker-backend.md) § Out of scope § Agentic triage tracker-agnostic refactor (the deferred work this ADR was originally drafted for).
+Cross-link: [`docs/plans/shipped/github-tracker-backend.md`](../design/archive/github-tracker-backend.md) § Out of scope § Agentic triage tracker-agnostic refactor (the deferred work this ADR was originally drafted for).

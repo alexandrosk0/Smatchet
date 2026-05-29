@@ -3,7 +3,7 @@
 
 // FakeP4Runner — scripted, in-process replacement for the `p4` CLI used by
 // `Source_Core/src/P4Blame.cpp:P4RunCommand`. Slice 3 of
-// docs/design/autonomous-debugging-no-creds.md.
+// docs/plans/shipped/autonomous-debugging-no-creds.md.
 //
 // Loads canned responses from a JSON fixture under tests/fixtures/p4/ keyed by an
 // "argv-prefix" string (whitespace-joined first-N args; the test fixture's

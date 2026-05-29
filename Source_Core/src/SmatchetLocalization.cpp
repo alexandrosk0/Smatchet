@@ -54,7 +54,7 @@ const TranslationEntry kEntries[] = {
     {"toast.comment_failed", "Comment Failed", u8"Échec du commentaire"},
     {"toast.queued_offline", "Queued Offline", u8"Mis en file hors ligne"},
 
-    // PR 5 of docs/design/archive/remove-global-project-key.md: badge for dead-letter rows whose draft
+    // PR 5 of docs/plans/shipped/remove-global-project-key.md: badge for dead-letter rows whose draft
     // was missing a project after the legacy-project sweep.
     {"offlineQueue.badge.missingProject", "missing project", u8"projet manquant"},
     {"offlineQueue.badge.missingProject.tooltip",
@@ -423,7 +423,7 @@ const TranslationEntry kEntries[] = {
     {"bulkImport.chooseProject.confirm", "Use this project", u8"Utiliser ce projet"},
 
     // Whisper dictation — first-run setup banner + model picker (Phase C).
-    // See docs/design/archive/whisper-dictation.md § Setup banner spec.
+    // See docs/plans/shipped/whisper-dictation.md § Setup banner spec.
     {"whisper.banner.title",
      "Enable voice dictation? Push-to-talk transcribes into any text field. Optional, off by default. "
      "No audio leaves your machine when the local model is used.",

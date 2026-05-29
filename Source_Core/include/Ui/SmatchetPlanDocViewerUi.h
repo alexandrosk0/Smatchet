@@ -1,7 +1,7 @@
 #ifndef SMATCHET_PLAN_DOC_VIEWER_UI_H
 #define SMATCHET_PLAN_DOC_VIEWER_UI_H
 
-// Plan-doc viewer — read-only TextEditor over docs/design/*.md and
+// Plan-doc viewer — read-only TextEditor over docs/plans/active/*.md and
 // docs/adr/*.md. Markdown coloring driven by
 // TextEditor::LanguageDefinition::Markdown().
 //
@@ -10,7 +10,7 @@
 // the file once on combo change (single-buffer reuse).
 //
 // This is a viewer only — no editing, no favourites, no per-file recent list,
-// no in-doc TOC. Keep it that way per the docs/design/<slug>.md plan §
+// no in-doc TOC. Keep it that way per the docs/plans/active/<slug>.md plan §
 // Risks § R6 ("scope creep").
 
 struct UiDrawSession;

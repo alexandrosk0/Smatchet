@@ -6,7 +6,7 @@ name: Plan-lock cleanup
 # is a no-op — the ref remains and will surface via the Phase 4 staleness
 # sweep eventually.
 #
-# Phase 3 of docs/design/git-ref-plan-locks.md.
+# Phase 3 of docs/plans/shipped/git-ref-plan-locks.md.
 #
 # Token scope: the default GITHUB_TOKEN has repo-wide `contents: write`.
 # Narrowing to refs/locks/* only requires a fine-grained PAT or GitHub

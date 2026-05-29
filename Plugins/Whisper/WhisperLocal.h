@@ -9,7 +9,7 @@
 // via MainThreadDispatcher::PostToMainThread.
 //
 // Two compile modes, gated by the new sub-option SMATCHET_WHISPER_LOCAL_BACKEND
-// (see root CMakeLists.txt and Deviations in docs/design/whisper-dictation.md):
+// (see root CMakeLists.txt and Deviations in docs/plans/shipped/whisper-dictation.md):
 //
 //   - SMATCHET_WHISPER_LOCAL_BACKEND=ON  → WhisperLocal.cpp pulls
 //     `whisper.h` from the FetchContent build and links the real

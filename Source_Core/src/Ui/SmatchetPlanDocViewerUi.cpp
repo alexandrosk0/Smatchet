@@ -36,7 +36,7 @@ namespace {
 
 constexpr std::size_t kMaxDocBytes = 1024 * 1024; // 1 MiB — plan docs are ~ tens of KiB
 
-// Walk up from `start` looking for a directory that contains `docs/design`.
+// Walk up from `start` looking for a directory that contains `docs/plans/active`.
 // Returns the directory containing that path on hit; empty path on miss.
 fs::path FindRepoRoot(const fs::path& start, std::size_t maxDepth = 8) {
     std::error_code ec;
@@ -221,7 +221,7 @@ void LoadSelected(ViewerState& s) {
 }
 
 // Derive a display label from an absolute path:
-//   "C:/dev/Smatchet/docs/design/foo.md" -> "design/foo.md"
+//   "C:/dev/Smatchet/docs/plans/active/foo.md" -> "design/foo.md"
 //   "C:/dev/Smatchet/docs/adr/0001-bar.md" -> "adr/0001-bar.md"
 std::string DisplayLabel(const fs::path& repoRoot, const std::string& absPath) {
     const std::string root = repoRoot.generic_string();
@@ -281,7 +281,7 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     if (s.indexInFlight) {
         ImGui::TextDisabled("Scanning plan docs...");
     } else if (s.files.empty()) {
-        ImGui::TextDisabled("No plan docs found under docs/design or docs/adr.");
+        ImGui::TextDisabled("No plan docs found under docs/plans/active or docs/adr.");
         if (ImGui::Button("Rescan")) {
             StartRescanIndex(s);
         }

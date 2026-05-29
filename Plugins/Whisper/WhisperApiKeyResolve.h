@@ -1,7 +1,7 @@
 #pragma once
 
 // WhisperApiKeyResolve — pure helper that implements the 5-row API-key fallback
-// decision table from docs/design/whisper-dictation.md § API key fallback rule.
+// decision table from docs/plans/shipped/whisper-dictation.md § API key fallback rule.
 //
 // Pure: no I/O, no globals, no SMATCHET_WITH_WHISPER gate, no third-party deps.
 // The TU lives under Plugins/Whisper/ because the rule is owned by the Whisper

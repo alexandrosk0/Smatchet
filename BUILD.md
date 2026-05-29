@@ -50,7 +50,7 @@ bash scripts/dev/check-required-tools.sh
 
 Exits 0 when every required tool resolves; fails loudly with install hints for any missing tool. The orchestrator's `setup-harness.sh` runs this on every fresh clone.
 
-**Scheduled-Task / service environments** (notably `SmatchetMergeWatcher`) get a more minimal PATH than an interactive shell and may not resolve `gh` / `jq` / `bash` via bare-name lookup. The `merge-watcher-install-autostart.ps1` installer probes standard install locations + winget's Links dir + Git's `bin` dir explicitly so daemons keep working. See [`docs/design/smatchet-merge-watcher.md`](docs/design/smatchet-merge-watcher.md) § Daemon environment prerequisites for the gotchas.
+**Scheduled-Task / service environments** (notably `SmatchetMergeWatcher`) get a more minimal PATH than an interactive shell and may not resolve `gh` / `jq` / `bash` via bare-name lookup. The `merge-watcher-install-autostart.ps1` installer probes standard install locations + winget's Links dir + Git's `bin` dir explicitly so daemons keep working. See [`docs/plans/shipped/smatchet-merge-watcher.md`](docs/plans/shipped/smatchet-merge-watcher.md) § Daemon environment prerequisites for the gotchas.
 
 ## Supported Presets
 

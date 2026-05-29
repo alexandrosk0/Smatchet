@@ -2,11 +2,11 @@
 # manual-locks-render-sync.sh — hand-fire the locks-render sync when the
 # `.github/workflows/locks-render.yml` workflow can't open its PR (typically
 # because the `LOCK_RENDER_PAT` secret isn't configured yet — see
-# docs/design/archive/git-ref-plan-locks.md § Operational requirements).
+# docs/plans/shipped/git-ref-plan-locks.md § Operational requirements).
 #
 # What it does:
 #   1. Fetches develop tip + refreshes refs/locks/*.
-#   2. Regenerates docs/design/_plan-locks.generated.md from live refs.
+#   2. Regenerates docs/plans/active/_plan-locks.generated.md from live refs.
 #   3. If the regen differs from develop's tracked file:
 #        a. Creates / force-pushes branch `bot/plan-locks-sync` rooted at
 #           develop tip with the regenerated file as a single new commit.
@@ -39,7 +39,7 @@ command -v gh >/dev/null 2>&1 || { echo "manual-locks-render-sync: gh CLI is req
 
 repo_root=$(git rev-parse --show-toplevel)
 script_dir="${repo_root}/scripts/dev"
-target_file="${repo_root}/docs/design/_plan-locks.generated.md"
+target_file="${repo_root}/docs/plans/active/_plan-locks.generated.md"
 sync_branch="bot/plan-locks-sync"
 base_branch="develop"
 
@@ -103,7 +103,7 @@ git commit -m "chore(plan-locks): regenerate _plan-locks.generated.md from refs/
 Manual sync via scripts/dev/manual-locks-render-sync.sh — invoked when
 the locks-render.yml workflow cannot open its PR (typically because
 LOCK_RENDER_PAT is not configured). See
-docs/design/archive/git-ref-plan-locks.md § Operational requirements."
+docs/plans/shipped/git-ref-plan-locks.md § Operational requirements."
 
 git push --force-with-lease --quiet -u "$remote" "$sync_branch"
 
@@ -114,7 +114,7 @@ if [ -z "$existing" ]; then
         --base "$base_branch" \
         --head "$sync_branch" \
         --title "chore(plan-locks): regenerate _plan-locks.generated.md from refs/locks/*" \
-        --body "Manual sync via \`scripts/dev/manual-locks-render-sync.sh\`. Runs when the \`locks-render.yml\` workflow can't open its own PR (typically because \`LOCK_RENDER_PAT\` is not configured — see [Operational requirements](../blob/develop/docs/design/archive/git-ref-plan-locks.md#operational-requirements))." \
+        --body "Manual sync via \`scripts/dev/manual-locks-render-sync.sh\`. Runs when the \`locks-render.yml\` workflow can't open its own PR (typically because \`LOCK_RENDER_PAT\` is not configured — see [Operational requirements](../blob/develop/docs/plans/shipped/git-ref-plan-locks.md#operational-requirements))." \
         >/dev/null
     pr_number=$(gh pr list --head "$sync_branch" --base "$base_branch" --state open --json number --jq '.[].number' | head -n1)
     echo "manual-locks-render-sync: opened PR #${pr_number}."

@@ -36,7 +36,7 @@ const char* const kPatMissingError = "GitHub PAT not configured (set Preferences
 
 void StubError(std::string& out, const char* method) {
     out = std::string(method) + ": GitHubClient HTTP impl deferred to a follow-up slice of "
-                                "docs/design/archive/github-tracker-backend.md PR2";
+                                "docs/plans/shipped/github-tracker-backend.md PR2";
 }
 
 } // namespace

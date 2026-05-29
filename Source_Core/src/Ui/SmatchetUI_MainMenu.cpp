@@ -1,6 +1,6 @@
 // SmatchetUI_MainMenu — `SmatchetUI::drawMainMenuBar`, the 449-LOC top-menu
 // composition extracted out of `SmatchetUI.cpp` per
-// `docs/design/large-files-and-phase-2.md` § A4. Only call site is
+// `docs/plans/shipped/large-files-and-phase-2.md` § A4. Only call site is
 // `SmatchetUI::Draw` (root TU).
 //
 // The include + macro setup mirrors `SmatchetUI.cpp` byte-for-byte. We do NOT

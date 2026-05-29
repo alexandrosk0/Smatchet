@@ -6,12 +6,12 @@
 # canonical human-readable mirror of the ref-based truth.
 #
 # Until Phase 6 cutover, the result is written to
-# `docs/design/_plan-locks.generated.md` by the locks-render GitHub Action.
+# `docs/plans/active/_plan-locks.generated.md` by the locks-render GitHub Action.
 # At Phase 6 cutover, the rendered content moves into
-# `docs/design/_plan-locks.md` itself and that file becomes auto-generated.
+# `docs/plans/active/_plan-locks.md` itself and that file becomes auto-generated.
 #
 # Usage:
-#   bash scripts/dev/locks-render-markdown.sh > docs/design/_plan-locks.generated.md
+#   bash scripts/dev/locks-render-markdown.sh > docs/plans/active/_plan-locks.generated.md
 #
 # Optional environment:
 #   LOCK_REMOTE                       — git remote name (default: origin)
@@ -53,7 +53,7 @@ git fetch --quiet --prune "$remote" '+refs/locks/*:refs/locks/*' 2>/dev/null || 
 # different file content even when refs/locks/* is unchanged, opening a
 # new sync PR every 30 minutes (noise). The canonical "when was this
 # regenerated" signal is the git commit timestamp on this file — query
-# via `git log -1 --format=%cI docs/design/_plan-locks.generated.md`.
+# via `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
 cat <<EOF
 # Plan-locks — auto-generated view of \`refs/locks/*\`
@@ -64,7 +64,7 @@ cat <<EOF
 >
 > **Live query**: \`bash scripts/dev/locks-show.sh\`
 >
-> **When was this last regenerated?** Run \`git log -1 --format=%cI docs/design/_plan-locks.generated.md\`.
+> **When was this last regenerated?** Run \`git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md\`.
 
 EOF
 

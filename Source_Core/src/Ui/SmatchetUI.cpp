@@ -253,7 +253,7 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
 // `SmatchetUI::prepareTopLevelWindow`, `SmatchetUI::repairTopLevelWindow`,
 // `SmatchetUI::resetWindowLayoutToDefault`, and the free function
 // `SmatchetUI_ResetLayoutToDefault` moved to `SmatchetUI_Layout.cpp` per
-// `docs/design/large-files-and-phase-2.md` § A4.
+// `docs/plans/shipped/large-files-and-phase-2.md` § A4.
 
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
@@ -502,7 +502,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Whisper first-run dictation setup banner — pinned under the menu bar,
     // visible only while cfg.WhisperSetupCompleted == false. Renders nothing
     // once the user has answered (Enable / No thanks). See
-    // docs/design/archive/whisper-dictation.md § Setup banner spec.
+    // docs/plans/shipped/whisper-dictation.md § Setup banner spec.
     if (!d.cfg.WhisperSetupCompleted && !d.cfg.ZenMode) {
         SMATCHET_UI_PERF_SCOPE("SmatchetWhisperSetupBanner::Render");
         if (smatchet::whisper::banner::Render(app, d.cfg)) {
@@ -837,7 +837,7 @@ void SmatchetUI::Draw(AppController& app) {
     // Each MarkPrefsDirty call arms `prefsDirty` + a ~100 ms debounce window;
     // we drain at end-of-frame (after all panels have drawn) so the write
     // happens outside any mid-panel state. See SmatchetUiSession.h MarkPrefsDirty
-    // and docs/design/archive/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
+    // and docs/plans/shipped/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
     if (g_ui.prefsDirty && std::chrono::steady_clock::now() >= g_ui.prefsSaveDueAt) {
         SMATCHET_UI_PERF_SCOPE("ConfigManager::Save (prefs-debounced)");
         ConfigManager::Save(g_ui.cfg);
@@ -946,7 +946,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
 }
 
 // `SmatchetUI::drawMainMenuBar` moved to `SmatchetUI_MainMenu.cpp` per
-// `docs/design/large-files-and-phase-2.md` § A4. Only call site is
+// `docs/plans/shipped/large-files-and-phase-2.md` § A4. Only call site is
 // `SmatchetUI::Draw` above (the declaration stays in `SmatchetUI.h`).
 // MOVED_DRAW_MAIN_MENU_BAR_BEGIN
 // MOVED_DRAW_MAIN_MENU_BAR_END
@@ -967,4 +967,4 @@ template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
 } // namespace
 
 // `DrainUiDrawSessionFuturesBeforeAppTeardown` and `UiDrawSession::~UiDrawSession`
-// moved to `SmatchetUI_Layout.cpp` per `docs/design/large-files-and-phase-2.md` § A4.
+// moved to `SmatchetUI_Layout.cpp` per `docs/plans/shipped/large-files-and-phase-2.md` § A4.

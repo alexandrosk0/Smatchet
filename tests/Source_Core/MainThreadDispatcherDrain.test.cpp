@@ -1,5 +1,5 @@
 // MainThreadDispatcherDrain.test.cpp — Slice 2 of
-// docs/design/pillar-1-2-perf-review-system.md.
+// docs/plans/shipped/pillar-1-2-perf-review-system.md.
 //
 // Locks the new `dispatcher.drain` perf-scope instrumentation contract
 // added to `Source_Core/include/MainThreadDispatcher.h`:

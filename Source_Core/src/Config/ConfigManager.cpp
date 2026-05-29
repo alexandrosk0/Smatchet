@@ -1,7 +1,7 @@
 // ConfigManager — `Save(TrackerConfig)` / `Load(CliOverrides)` plus the blame-analysis
 // persistence pair and the embedded default ImGui dock-layout ini.
 //
-// As of `docs/design/large-files-and-phase-2.md` § A3 the filesystem / secret / lock
+// As of `docs/plans/shipped/large-files-and-phase-2.md` § A3 the filesystem / secret / lock
 // helpers and the path-and-IO half of the public surface live in
 // `ConfigManager_PathUtils.cpp`; views persistence + the `CommentTemplate` ADL
 // serializers live in `ConfigManager_Views.cpp`. Helper declarations are in
@@ -184,7 +184,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     nlohmann::json j = LoadMergedConfigJson();
     j["domain"] = config.Domain;
     j["email"] = config.Email;
-    // PR 5 of docs/design/archive/remove-global-project-key.md: stop persisting the legacy global
+    // PR 5 of docs/plans/shipped/remove-global-project-key.md: stop persisting the legacy global
     // project scope. The fields are still on `TrackerConfig` until PR 6 deletes them, but the
     // on-disk JSON no longer round-trips them — older builds reading the new config will see
     // them missing and default to empty, matching the new code path. Erase explicitly so any
@@ -194,7 +194,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["tracker_type"] = config.TrackerType;
     j["plane_url"] = config.PlaneUrl;
     j["plane_workspace_slug"] = config.PlaneWorkspaceSlug;
-    // GitHub-as-tracker fields (PR2 of docs/design/archive/github-tracker-backend.md).
+    // GitHub-as-tracker fields (PR2 of docs/plans/shipped/github-tracker-backend.md).
     // PAT goes through DPAPI same as plane_api_key — see saveGithubPat block below.
     j["github_base_url"] = config.GitHubBaseUrl;
     j["github_owner"] = config.GitHubOwner;

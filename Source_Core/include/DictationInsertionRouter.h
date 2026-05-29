@@ -5,7 +5,7 @@
 //   - DictationInsertionRouter_Whisper.cpp when SMATCHET_WITH_WHISPER=ON
 //   - DictationInsertionRouter_Stubs.cpp   when SMATCHET_WITH_WHISPER=OFF
 // Both TUs export the exact same symbols; the CI matrix builds both gating
-// states (see § CI matrix in docs/design/archive/whisper-dictation.md) so drift
+// states (see § CI matrix in docs/plans/shipped/whisper-dictation.md) so drift
 // between them is caught at link time, not at runtime.
 
 #include "IDictationHost.h"

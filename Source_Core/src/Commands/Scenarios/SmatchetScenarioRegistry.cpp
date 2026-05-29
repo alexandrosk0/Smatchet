@@ -1,4 +1,4 @@
-// Slice 5 of docs/design/archive/autonomous-debugging-no-creds.md — pure refactor.
+// Slice 5 of docs/plans/shipped/autonomous-debugging-no-creds.md — pure refactor.
 // See Source_Core/include/Commands/Scenarios/SmatchetScenarioRegistry.h for
 // the behaviour contract.
 //

@@ -1,7 +1,7 @@
 // tests/_debug/SmatchetAgentDebug.h
 //
 // Production-resident NDJSON helper — slice 7 of
-// docs/design/autonomous-debugging-no-creds.md.
+// docs/plans/shipped/autonomous-debugging-no-creds.md.
 //
 // Header-only. Provides SMATCHET_AGENT_DEBUG_LOG(category, json_obj) macro.
 // Distinct from the per-investigation template

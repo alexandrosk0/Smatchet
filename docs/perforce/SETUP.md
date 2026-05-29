@@ -1,6 +1,6 @@
 # Perforce — Phase 0 runbook
 
-> Plan: [`docs/design/archive/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md) Phase 0 — Helix Core bring-up.
+> Plan: [`docs/plans/shipped/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md) Phase 0 — Helix Core bring-up.
 > Status: **runbook for remote Windows host on LAN**. Smatchet dev box (`Brick`) runs `p4` client only.
 
 ## Topology
@@ -239,14 +239,14 @@ Phase 0 closes when a throwaway client can submit + re-sync a file. This step ge
 ## Deviations from plan
 
 - **Two p4d hosts** instead of one — the dev box's existing `Brick:1666` (Unreal) is left untouched; Smatchet's depot lives on a remote LAN host. Plan § Approach assumed one combined `p4d`; the split is operationally cleaner and matches user preference.
-- **Case sensitivity**: original runbook hard-prescribed `sensitive` (`-C0`) for all hosts. Revised in 2026-05-22 to match the host filesystem — Windows hosts get the installer-default `insensitive` (no `-C` flag needed), Linux hosts get the installer-default `sensitive` (no `-C` flag needed). The `-C` flags only OVERRIDE the platform default: `-C0` forces case-sensitive, `-C1` forces case-insensitive. Rationale per the plan's own analysis (`docs/design/archive/git-to-perforce-migration.md:225`): case-sensitive p4d on a case-insensitive filesystem breaks the dual-VCS invariant because the filesystem cannot hold two files differing only in case while the depot can, producing phantom drift + `p4 sync` failures. Mainbot's shipped install runs `insensitive` and that is correct for a Windows host.
+- **Case sensitivity**: original runbook hard-prescribed `sensitive` (`-C0`) for all hosts. Revised in 2026-05-22 to match the host filesystem — Windows hosts get the installer-default `insensitive` (no `-C` flag needed), Linux hosts get the installer-default `sensitive` (no `-C` flag needed). The `-C` flags only OVERRIDE the platform default: `-C0` forces case-sensitive, `-C1` forces case-insensitive. Rationale per the plan's own analysis (`docs/plans/shipped/git-to-perforce-migration.md:225`): case-sensitive p4d on a case-insensitive filesystem breaks the dual-VCS invariant because the filesystem cannot hold two files differing only in case while the depot can, producing phantom drift + `p4 sync` failures. Mainbot's shipped install runs `insensitive` and that is correct for a Windows host.
 - **Server version**: 2025.2 (latest LTS available 2026-05-21) instead of plan's `r24.2`.
 - **Service wrapper**: original runbook prescribed `sc.exe create … binPath= "…\p4d.exe -r … -p … -L …"` (direct `p4d.exe` invocation). On Helix Core 2025.2 that registration succeeds but `Start-Service` fails — `p4d.exe` has no SCM dispatcher. The runbook above is the corrected version using `p4s.exe` + per-service env vars (`p4 set -S p4d_smatchet …`).
 - **Existing Mainbot install (2026-05-22)**: actual server root is `C:\depot\` (Helix installer default) instead of the runbook's `C:\depot-smatchet\` — purely cosmetic, both paths work equivalently. Service was renamed from the installer-default `Perforce` to `p4d_smatchet` in-place; per-service env vars point at `C:\depot\`. Case handling is `insensitive`, which is the correct Windows setting per the revised guidance above. Doc keeps the original `C:\depot-smatchet\` path as the canonical fresh-install target so new installs don't accidentally collide with a future Helix re-install at `C:\depot`.
 
 ## Per-machine perf baseline
 
-Used by the P4-gated ship-loop's perf gate (per [`docs/design/archive/p4-gated-ship-loop.md`](../design/archive/p4-gated-ship-loop.md) § Per-machine perf baseline setup) and by the slice-boundary auto-run in [`AGENTS.md`](../../AGENTS.md) § Perf slice-boundary auto-run. Each developer machine that participates in p4-mode work gets its own per-host baseline so a benchmark recorded on a fast desktop doesn't false-fail a regression check on a slower laptop.
+Used by the P4-gated ship-loop's perf gate (per [`docs/plans/shipped/p4-gated-ship-loop.md`](../design/archive/p4-gated-ship-loop.md) § Per-machine perf baseline setup) and by the slice-boundary auto-run in [`AGENTS.md`](../../AGENTS.md) § Perf slice-boundary auto-run. Each developer machine that participates in p4-mode work gets its own per-host baseline so a benchmark recorded on a fast desktop doesn't false-fail a regression check on a slower laptop.
 
 **One-time per machine:**
 

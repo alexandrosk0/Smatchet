@@ -1,5 +1,5 @@
 // GitHubFetchPlan doctest — ComputeGitHubFetchPlan pure helper.
-// PR4 follow-up of docs/design/github-tracker-backend.md.
+// PR4 follow-up of docs/plans/shipped/github-tracker-backend.md.
 //
 // The helper decides whether to take the repo-scoped /repos/{o}/{r}/issues
 // path or the cross-repo /search/issues path, and emits a single

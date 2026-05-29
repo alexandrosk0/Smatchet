@@ -1,5 +1,5 @@
 // GitHubClientHelpers doctest — pure helper round-trips.
-// PR2 of docs/design/github-tracker-backend.md.
+// PR2 of docs/plans/shipped/github-tracker-backend.md.
 
 #include "GitHubClientHelpers.h"
 

@@ -1,5 +1,5 @@
 // WhisperApiKeyResolve — pure doctest coverage for the 5-row API-key fallback
-// decision table from docs/design/whisper-dictation.md § API key fallback rule.
+// decision table from docs/plans/shipped/whisper-dictation.md § API key fallback rule.
 //
 // Every row in the plan's table corresponds to a CHECK below. Adding a sixth
 // row to the rule (or removing an existing row) must update both the plan

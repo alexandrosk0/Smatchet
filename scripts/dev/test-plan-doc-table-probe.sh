@@ -12,7 +12,7 @@
 #   5. Plan with one CMake GLOB-populated variable -> exit 0 (resolves via grep)
 #   6. Mixed plan (1 valid + 1 invalid symbol) -> exit 1 + miss line for invalid
 #
-# Plan: docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md § Slice 4
+# Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 4
 
 set -euo pipefail
 

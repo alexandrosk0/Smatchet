@@ -297,7 +297,7 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 s_LongTextEditor.SetLanguageDefinition(TextEditor::LanguageDefinition::Markdown());
                 s_LongTextEditor.SetColorizerEnable(true);
             }
-            // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md — swap to C++ LD when
+            // Slice 7 of docs/plans/active/code-syntax-coloring-and-tooltips.md — swap to C++ LD when
             // the active field is the configured callstack field. SetLanguageDefinition swaps the
             // table pointer; applied per-frame because the same editor instance hosts both kinds.
             static bool s_LongTextEditorIsCallstackLd = false;
@@ -421,7 +421,7 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
                 ImGui::PopStyleColor();
                 ImGui::Separator();
             }
-            // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md — when the active field
+            // Slice 7 of docs/plans/active/code-syntax-coloring-and-tooltips.md — when the active field
             // is the configured callstack field, render via the semantic callstack tokenizer instead
             // of the markdown-prose pipeline. Use the raw buffer (md) rather than LastRoundTripOutput:
             // the ADF/HTML converter mangles callstack punctuation, losing the tokens the colorizer needs.

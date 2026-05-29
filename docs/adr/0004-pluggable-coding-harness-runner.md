@@ -2,7 +2,7 @@
 
 # Status
 
-**Withdrawn (2026-05-21)** — the runtime this ADR governed (`ICodingHarnessRunner` / `ClaudeCodeLocalRunner` / sentinel-file protocol / `agent/<proposalId>` worktree base / spawned-harness lifecycle) was removed by v1 PR1 of [`docs/design/archive/github-tracker-backend.md`](../design/archive/github-tracker-backend.md) (merge sha `b1d241bc`). The future [`smatchet-merge-watcher`](../design/archive/smatchet-merge-watcher.md) revives a small subset of the underlying need (drive PRs to merge without orchestrator babysitting) but as a host daemon, not a spawn — different architecture, different ADR (or no ADR; the watcher plan-doc carries the rationale inline).
+**Withdrawn (2026-05-21)** — the runtime this ADR governed (`ICodingHarnessRunner` / `ClaudeCodeLocalRunner` / sentinel-file protocol / `agent/<proposalId>` worktree base / spawned-harness lifecycle) was removed by v1 PR1 of [`docs/plans/shipped/github-tracker-backend.md`](../design/archive/github-tracker-backend.md) (merge sha `b1d241bc`). The future [`smatchet-merge-watcher`](../design/archive/smatchet-merge-watcher.md) revives a small subset of the underlying need (drive PRs to merge without orchestrator babysitting) but as a host daemon, not a spawn — different architecture, different ADR (or no ADR; the watcher plan-doc carries the rationale inline).
 
 This file is kept for historical context. The "two paths" analysis below remains useful as design archaeology if anyone considers re-introducing a pluggable runner.
 
@@ -10,12 +10,12 @@ Originally: Accepted (2026-05-18).
 
 # Context
 
-The handoff half of the agentic flow (see [`docs/design/agentic-flow-implementation.md`](../design/agentic-flow-implementation.md) and the architecture rationale in [`docs/design/agentic-coding-handoff.md`](../design/agentic-coding-handoff.md)) spawns an external coding harness to drive an approved `ImplementIssue` proposal through to a merged PR. Two paths exist:
+The handoff half of the agentic flow (see [`docs/plans/active/agentic-flow-implementation.md`](../design/agentic-flow-implementation.md) and the architecture rationale in [`docs/plans/active/agentic-coding-handoff.md`](../design/agentic-coding-handoff.md)) spawns an external coding harness to drive an approved `ImplementIssue` proposal through to a merged PR. Two paths exist:
 
 - (a) Hard-wire the controller to a specific harness (the phase-1 target — Claude Code's local CLI), or
 - (b) Abstract the spawn / sentinel / iteration mechanics behind an `ICodingHarnessRunner` interface so future runners (cloud Claude, Codex / OpenAI Agents, Aider, generic) can drop in without controller surgery.
 
-A separate question is what the security boundary actually is. The phase-1 harness is invoked with `--permissions bypassPermissions` so the harness can edit / build / test inside its assigned worktree without prompting; that flag is **not** an OS-level sandbox. The boundary the controller relies on is two-fold: the **environment allow-list** passed to the spawn, and the **current working directory** the harness is bound to. The allow-list is locked in [`docs/design/agentic-flow-implementation.md`](../design/agentic-flow-implementation.md) plan decision #7 as `{PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY}`. Everything else (user shell aliases, ambient cloud creds, parent-process env leakage) is stripped before `Spawn` returns.
+A separate question is what the security boundary actually is. The phase-1 harness is invoked with `--permissions bypassPermissions` so the harness can edit / build / test inside its assigned worktree without prompting; that flag is **not** an OS-level sandbox. The boundary the controller relies on is two-fold: the **environment allow-list** passed to the spawn, and the **current working directory** the harness is bound to. The allow-list is locked in [`docs/plans/active/agentic-flow-implementation.md`](../design/agentic-flow-implementation.md) plan decision #7 as `{PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY}`. Everything else (user shell aliases, ambient cloud creds, parent-process env leakage) is stripped before `Spawn` returns.
 
 # Decision
 

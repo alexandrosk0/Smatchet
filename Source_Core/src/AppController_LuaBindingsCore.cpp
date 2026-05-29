@@ -6,7 +6,7 @@
 // can drop in a `FakeLuaBindingHost` without dragging ImGui / GLFW / cpr /
 // SQLite into the test binary -- a strict prerequisite for Phase 6b's
 // `LuaBindings.test.cpp` re-dispatch (see
-// docs/design/test-suite-expansion-completion.md § Phase 6).
+// docs/plans/shipped/test-suite-expansion-completion.md § Phase 6).
 //
 // **Strict no-ImGui rule.** This TU must not include `<imgui.h>` or any
 // transitive ImGui surface. ImGui-touching glue (imgui.text / image / button /

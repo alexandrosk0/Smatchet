@@ -47,8 +47,8 @@ EXCLUDE_GLOBS = (
     ":(exclude)build/**",
     ":(exclude).fetchcontent-src/**",
     ":(exclude).claude/worktrees/**",
-    ":(exclude)docs/design/_plan-locks-archive.md",
-    ":(exclude)docs/design/_plan-locks.generated.md",
+    ":(exclude)docs/plans/active/_plan-locks-archive.md",
+    ":(exclude)docs/plans/active/_plan-locks.generated.md",
     ":(exclude)docs/self-improvement/categories/applied.md",
 )
 
