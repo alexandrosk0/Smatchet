@@ -24,7 +24,7 @@
 #                                triples present on HEAD but not <ref>
 #                                (default origin/develop). Grandfathers existing.
 #   --catalog [--refresh]        dump the strict-zone violator set; --refresh
-#                                writes docs/backlog/high-integrity-cpp-baseline.md
+#                                writes docs/high-integrity/baseline.md
 #   --scan-file <f>              scan a single file with all rules (bats harness);
 #                                zone-agnostic, prints `<rule>\t<file>:<line>`
 #   --full                       whole-tree strict-zone scan (human/debug)
@@ -52,7 +52,7 @@ else
 fi
 REPO_ROOT="$(pwd)"
 
-BASELINE_FILE="docs/backlog/high-integrity-cpp-baseline.md"
+BASELINE_FILE="docs/high-integrity/baseline.md"
 
 # --- Zone globs (KEEP IN SYNC with AGENTS.md § Tiered enforcement; --selftest guards) ---
 STRICT_GLOBS=(
