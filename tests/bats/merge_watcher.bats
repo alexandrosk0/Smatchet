@@ -1099,6 +1099,7 @@ print('persisted:', reg.get('cr_none_grace_polls'), reg.get('cr_none_grace_head'
 
 @test "cr-none-grace: a new HEAD restarts the grace window" {
     run watch_cli register 999
+    [ "$status" -eq 0 ]
     run python -c "
 import os, importlib.util
 os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='5'
