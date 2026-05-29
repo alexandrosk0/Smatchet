@@ -328,6 +328,16 @@ class AppController
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     void InitLuaCore(sol::state& state);
     void InitLuaUi(sol::state& state);
+    /// Build a fresh per-call sol::state for off-UI-thread (MCP / automation
+    /// worker) Lua execution: InitLuaCore + the `__smatchet_app_ui` alias. The
+    /// returned state shares no lua_State with the UI-thread `lua` member, which
+    /// is the whole point — running two threads through one lua_State is UB.
+    /// See docs/design/mcp-lua-fresh-state-race.md.
+    void PrepareFreshLuaState(sol::state& state);
+    /// Replay the registered setup scripts (`activeSetupScripts_`) onto `state`
+    /// under `sandbox` so global helpers / actions / mcp.register_tool definitions
+    /// are present. Snapshots `activeSetupScripts_` under `automationJobMutex_`.
+    void ReplayActiveSetupScripts(sol::state& state, sol::environment& sandbox);
 #endif
 
     std::string ResolveLuaScriptPath(const std::string& filename) const;
@@ -407,6 +417,11 @@ class AppController
         nlohmann::json parametersSchema;
         sol::protected_function callback;
     };
+    /// Parse a Lua `mcp.register_tool` definition table into the name / description /
+    /// parametersSchema fields of `out` (does NOT set `callback`). Shared by
+    /// LuaMcpRegisterToolBind and the per-call register_tool override that
+    /// ExecuteLuaMcpTool installs on its fresh state.
+    static void ParseMcpToolDef(const sol::table& toolDef, McpToolDefinition& out);
     /** Thread-safe snapshot (e.g. MCP server thread vs Lua registration on the app thread). */
     std::vector<McpToolDefinition> GetLuaMcpTools() const;
     std::string ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError);
@@ -895,6 +910,12 @@ class AppController
     // stores `sol::protected_function`. C++ destroys members in reverse declaration order, so
     // the containers below tear down first (their Lua-handle members touch a still-alive
     // state), then `lua` last. Inverting this order is a UAF — see plan §Shutdown ordering.
+    //
+    // Threading invariant: `lua` is driven EXCLUSIVELY by the UI thread (DrawLuaWindows,
+    // cell-providers, ExecuteLuaConsoleSnippet). Off-UI-thread Lua execution (MCP run_lua /
+    // registered-tool handlers on httplib workers, the automation worker) MUST run on a fresh
+    // per-call sol::state via PrepareFreshLuaState — never `lua`. Two threads through one
+    // lua_State is UB. See docs/design/mcp-lua-fresh-state-race.md.
     sol::state lua;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProviders_;
     /** Lowercased Jira field display name (from catalog) -> handler. */

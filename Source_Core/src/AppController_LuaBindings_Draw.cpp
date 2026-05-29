@@ -732,6 +732,21 @@ bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const T
     return false;
 }
 
+namespace {
+// Shared MCP return-value marshal: first return value as a string verbatim, else
+// JSON-encoded; no return -> "{}". Used by all three MCP Lua execution paths.
+std::string McpLuaResultToString(sol::protected_function_result& result) {
+    if (result.return_count() > 0) {
+        sol::object obj = result[0];
+        if (obj.is<std::string>()) {
+            return obj.as<std::string>();
+        }
+        return LuaToJson(obj).dump();
+    }
+    return "{}";
+}
+} // namespace
+
 std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() const {
     std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
     return luaMcpTools_;
@@ -739,23 +754,68 @@ std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() co
 
 std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson,
                                              std::string& outError) {
-    sol::protected_function callback;
+    // Fast reject for genuinely-unknown names against the shared registry, before
+    // paying fresh-state setup. (The MCP dispatcher already gates on GetLuaMcpTools,
+    // so this is defensive.)
     {
         std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
-        const auto it = std::find_if(luaMcpTools_.begin(), luaMcpTools_.end(),
-                                     [&](const McpToolDefinition& tool) { return tool.name == name; });
-        if (it == luaMcpTools_.end()) {
+        const bool known = std::any_of(luaMcpTools_.begin(), luaMcpTools_.end(),
+                                       [&](const McpToolDefinition& tool) { return tool.name == name; });
+        if (!known) {
             outError = "Tool not found";
             LOG_TRACE("ExecuteLuaMcpTool: not_found name=%s", name.c_str());
             return "";
         }
-        callback = it->callback;
     }
 
     LOG_TRACE("ExecuteLuaMcpTool: begin name=%s params_len=%zu", name.c_str(), paramsJson.size());
-    lua_sethook(
-        lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) { luaL_error(L, "Script execution timeout exceeded."); },
-        LUA_MASKCOUNT, 100000);
+
+    // The registered callback is a sol::protected_function bound to the UI-thread `lua`
+    // state and cannot be invoked from this httplib worker thread without a data race.
+    // Rebuild the tool on a fresh per-call state: replay the setup scripts with a
+    // call-local register_tool override that collects definitions into `localTools`
+    // (declared AFTER callState so its protected_function members tear down BEFORE the
+    // state — the protected_function-before-state invariant). The rebuilt callback is
+    // bound to callState; nothing here touches `lua`.
+    sol::state callState;
+    PrepareFreshLuaState(callState);
+    std::vector<McpToolDefinition> localTools;
+
+    sol::table mcpTbl = callState["mcp"];
+    if (mcpTbl.valid()) {
+        std::vector<McpToolDefinition>* sink = &localTools;
+        mcpTbl.set_function("register_tool", [sink](sol::table def, sol::function cb) {
+            if (!def.valid() || !cb.valid()) {
+                return;
+            }
+            McpToolDefinition d;
+            AppController::ParseMcpToolDef(def, d);
+            d.callback = sol::protected_function(std::move(cb));
+            sink->erase(std::remove_if(sink->begin(), sink->end(),
+                                       [&](const McpToolDefinition& x) { return x.name == d.name; }),
+                        sink->end());
+            sink->push_back(std::move(d));
+        });
+    }
+
+    sol::environment sandbox = CreateSandboxEnvironment(callState);
+    ReplayActiveSetupScripts(callState, sandbox);
+
+    sol::protected_function callback;
+    for (auto& t : localTools) {
+        if (t.name == name) {
+            callback = t.callback;
+            break;
+        }
+    }
+    if (!callback.valid()) {
+        // Known to the shared registry but not produced by replaying the setup scripts —
+        // i.e. it was registered ad-hoc (e.g. by a prior run_lua snippet), so it cannot be
+        // rebuilt on a fresh state. Degenerate, already-racy usage; fail cleanly.
+        outError = "Tool not available (not defined by a setup script)";
+        LOG_TRACE("ExecuteLuaMcpTool: not_rebuildable name=%s", name.c_str());
+        return "";
+    }
 
     nlohmann::json jParams;
     try {
@@ -765,31 +825,22 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
     }
     try {
         LOG_TRACE("ExecuteLuaMcpTool: params_json=%s", TruncateForTrace(jParams.dump()).c_str());
-    } catch (...) {
+    } catch (...) { // catch-all-ok: trace dump of untrusted params JSON
         LOG_TRACE("ExecuteLuaMcpTool: params (dump failed)");
     }
 
-    FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
-    sol::protected_function_result result = callback(JsonToLua(lua, jParams));
-
-    lua_sethook(lua.lua_state(), nullptr, 0, 0);
-
-    if (!result.valid()) {
-        sol::error e = result;
-        outError = e.what();
-        LOG_TRACE("ExecuteLuaMcpTool: error name=%s err=%s", name.c_str(), TruncateForTrace(outError).c_str());
-        return "";
-    }
     std::string ret;
-    if (result.return_count() > 0) {
-        sol::object obj = result[0];
-        if (obj.is<std::string>()) {
-            ret = obj.as<std::string>();
-        } else {
-            ret = LuaToJson(obj).dump();
+    {
+        LuaHookGuard hook(callState);
+        FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
+        sol::protected_function_result result = callback(JsonToLua(callState, jParams));
+        if (!result.valid()) {
+            sol::error e = result;
+            outError = e.what();
+            LOG_TRACE("ExecuteLuaMcpTool: error name=%s err=%s", name.c_str(), TruncateForTrace(outError).c_str());
+            return "";
         }
-    } else {
-        ret = "{}";
+        ret = McpLuaResultToString(result);
     }
     LOG_TRACE("ExecuteLuaMcpTool: ok name=%s result_len=%zu", name.c_str(), ret.size());
     return ret;
@@ -805,18 +856,21 @@ std::string AppController::ExecuteLuaSnippetForMcp(const std::string& code, cons
     try {
         LOG_TRACE("ExecuteLuaSnippetForMcp: begin code_len=%zu args=%s", code.size(),
                   TruncateForTrace(args.dump()).c_str());
-    } catch (...) {
+    } catch (...) { // catch-all-ok: trace dump of untrusted args JSON
         LOG_TRACE("ExecuteLuaSnippetForMcp: begin code_len=%zu (args dump failed)", code.size());
     }
 
-    sol::environment sandbox = CreateSandboxEnvironment(lua);
-    sandbox["args"] = JsonToLua(lua, args);
+    // Fresh per-call state: this runs on an httplib worker thread, while the main
+    // `lua` state is driven by the UI thread. Never share a lua_State across threads.
+    sol::state callState;
+    PrepareFreshLuaState(callState);
+    sol::environment sandbox = CreateSandboxEnvironment(callState);
+    sandbox["args"] = JsonToLua(callState, args);
 
-    sol::load_result script = lua.load(code, "mcp.run_lua.snippet");
+    sol::load_result script = callState.load(code, "mcp.run_lua.snippet");
     if (!script.valid()) {
         sol::error err = script;
         outError = err.what();
-        lua_sethook(lua.lua_state(), nullptr, 0, 0);
         LOG_TRACE("ExecuteLuaSnippetForMcp: load_error %s", TruncateForTrace(outError).c_str());
         return "";
     }
@@ -824,30 +878,18 @@ std::string AppController::ExecuteLuaSnippetForMcp(const std::string& code, cons
     sol::protected_function func = script;
     sandbox.set_on(func);
 
-    lua_sethook(
-        lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) { luaL_error(L, "Script execution timeout exceeded."); },
-        LUA_MASKCOUNT, 100000);
-
-    FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
-    sol::protected_function_result result = func();
-    lua_sethook(lua.lua_state(), nullptr, 0, 0);
-
-    if (!result.valid()) {
-        sol::error e = result;
-        outError = e.what();
-        LOG_TRACE("ExecuteLuaSnippetForMcp: runtime_error %s", TruncateForTrace(outError).c_str());
-        return "";
-    }
     std::string ret;
-    if (result.return_count() > 0) {
-        sol::object obj = result[0];
-        if (obj.is<std::string>()) {
-            ret = obj.as<std::string>();
-        } else {
-            ret = LuaToJson(obj).dump();
+    {
+        LuaHookGuard hook(callState);
+        FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
+        sol::protected_function_result result = func();
+        if (!result.valid()) {
+            sol::error e = result;
+            outError = e.what();
+            LOG_TRACE("ExecuteLuaSnippetForMcp: runtime_error %s", TruncateForTrace(outError).c_str());
+            return "";
         }
-    } else {
-        ret = "{}";
+        ret = McpLuaResultToString(result);
     }
     LOG_TRACE("ExecuteLuaSnippetForMcp: ok result_len=%zu", ret.size());
     return ret;
@@ -945,18 +987,21 @@ std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName,
     try {
         LOG_TRACE("ExecuteLuaScriptForMcp: begin path=%s scriptName=%s args=%s", path.c_str(), scriptName.c_str(),
                   TruncateForTrace(args.dump()).c_str());
-    } catch (...) {
+    } catch (...) { // catch-all-ok: trace dump of untrusted args JSON
         LOG_TRACE("ExecuteLuaScriptForMcp: begin path=%s (args dump failed)", path.c_str());
     }
 
-    sol::environment sandbox = CreateSandboxEnvironment(lua);
-    sandbox["args"] = JsonToLua(lua, args);
+    // Fresh per-call state: runs on an httplib worker thread; the main `lua` state
+    // is the UI thread's. Never share a lua_State across threads.
+    sol::state callState;
+    PrepareFreshLuaState(callState);
+    sol::environment sandbox = CreateSandboxEnvironment(callState);
+    sandbox["args"] = JsonToLua(callState, args);
 
-    sol::load_result script = lua.load_file(path);
+    sol::load_result script = callState.load_file(path);
     if (!script.valid()) {
         sol::error err = script;
         outError = err.what();
-        lua_sethook(lua.lua_state(), nullptr, 0, 0);
         LOG_TRACE("ExecuteLuaScriptForMcp: load_error path=%s %s", path.c_str(), TruncateForTrace(outError).c_str());
         return "";
     }
@@ -964,30 +1009,19 @@ std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName,
     sol::protected_function func = script;
     sandbox.set_on(func);
 
-    lua_sethook(
-        lua.lua_state(), [](lua_State* L, lua_Debug* /*ar*/) { luaL_error(L, "Script execution timeout exceeded."); },
-        LUA_MASKCOUNT, 100000);
-
-    FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
-    sol::protected_function_result result = func();
-    lua_sethook(lua.lua_state(), nullptr, 0, 0);
-
-    if (!result.valid()) {
-        sol::error e = result;
-        outError = e.what();
-        LOG_TRACE("ExecuteLuaScriptForMcp: runtime_error path=%s %s", path.c_str(), TruncateForTrace(outError).c_str());
-        return "";
-    }
     std::string ret;
-    if (result.return_count() > 0) {
-        sol::object obj = result[0];
-        if (obj.is<std::string>()) {
-            ret = obj.as<std::string>();
-        } else {
-            ret = LuaToJson(obj).dump();
+    {
+        LuaHookGuard hook(callState);
+        FieldEditAuditSource::ScopedOverride mcpSource(FieldEditAuditSource::kMcp);
+        sol::protected_function_result result = func();
+        if (!result.valid()) {
+            sol::error e = result;
+            outError = e.what();
+            LOG_TRACE("ExecuteLuaScriptForMcp: runtime_error path=%s %s", path.c_str(),
+                      TruncateForTrace(outError).c_str());
+            return "";
         }
-    } else {
-        ret = "{}";
+        ret = McpLuaResultToString(result);
     }
     LOG_TRACE("ExecuteLuaScriptForMcp: ok path=%s result_len=%zu", path.c_str(), ret.size());
     return ret;
