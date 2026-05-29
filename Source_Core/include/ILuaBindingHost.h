@@ -40,10 +40,12 @@ class AppController;
  * on `AppController` directly, NOT here. The `InitLuaUi`-resident glues remain
  * in `AppController_LuaBindings.cpp` for exactly that reason.
  *
- * Behaviour-preservation contract: the methods on this interface have the
- * **same** signatures as the `AppController::Lua*Bind` methods they replace.
- * The only thing that changed at the glue site is the static type of the
- * resolved pointer (`AppController*` → `ILuaBindingHost*`).
+ * Behaviour-preservation contract: the methods on this interface mirror the
+ * `AppController::Lua*Bind` methods they replace. Exception: the sol::object-
+ * returning marshallers (`LuaGetTicketBind`, `LuaDecodeJsonBind`,
+ * `LuaCreateIssueBind`) take a leading `sol::state_view sv` (the glue's calling
+ * state) so results are built on the caller's state rather than a member state —
+ * required now that callers may be off-UI-thread fresh states.
  */
 class ILuaBindingHost {
   public:
@@ -53,11 +55,15 @@ class ILuaBindingHost {
     virtual void LuaLogInfoBind(const std::string& msg) = 0;
 
     // --- Ticket reads ---
-    virtual std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId) = 0;
+    // `sv` is the *calling* Lua state (the glue's sol::this_state). Marshal returned
+    // sol::objects against `sv`, never against any member state — the caller may be an
+    // off-UI-thread fresh state (MCP worker / automation worker). See
+    // docs/design/mcp-lua-fresh-state-race.md.
+    virtual std::tuple<sol::object, std::string> LuaGetTicketBind(sol::state_view sv, const std::string& issueId) = 0;
     virtual std::vector<CachedTicket> LuaGetActiveTicketsBind() = 0;
 
     // --- JSON ---
-    virtual std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s) = 0;
+    virtual std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) = 0;
 
     // --- Field edits (Ticket:set_field / Ticket:transition) ---
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
@@ -65,7 +71,9 @@ class ILuaBindingHost {
                                  const std::vector<std::string>& rawValues, std::string& outError) = 0;
 
     // --- Issue create ---
-    virtual std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::table spec) = 0;
+    // `sv` is the calling Lua state — see the LuaGetTicketBind note. `spec` is already
+    // bound to `sv`; the returned result table MUST also be built on `sv`.
+    virtual std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::state_view sv, sol::table spec) = 0;
 
     // --- MCP tool registration ---
     virtual void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) = 0;

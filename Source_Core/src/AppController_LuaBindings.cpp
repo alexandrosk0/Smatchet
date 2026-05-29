@@ -732,29 +732,36 @@ std::vector<CachedTicket> AppController::LuaGetActiveTicketsBind() {
     return std::vector<CachedTicket>(snap->begin(), snap->end());
 }
 
-std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(const std::string& issueId) {
+std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(sol::state_view sv, const std::string& issueId) {
+    // Marshal against the *calling* state `sv`, not the member `lua`: the caller may be an
+    // off-UI-thread fresh state (MCP / automation worker). Touching `lua` here would re-introduce
+    // cross-thread lua_State access + a cross-state sol::object return. See
+    // docs/design/mcp-lua-fresh-state-race.md.
     CachedTicket ticket;
     if (Cache->TryGetTicket(issueId, ticket)) {
-        return {sol::make_object(lua, ticket), ""};
+        return {sol::make_object(sv, ticket), ""};
     }
-    return {sol::make_object(lua, sol::nil), "Ticket not found in local cache"};
+    return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};
 }
 
-std::tuple<sol::object, std::string> AppController::LuaDecodeJsonBind(const std::string& s) {
+std::tuple<sol::object, std::string> AppController::LuaDecodeJsonBind(sol::state_view sv, const std::string& s) {
+    // Marshal against the calling state `sv` (see LuaGetTicketBind).
     constexpr size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
     if (s.size() > kMaxDecodeBytes) {
-        return {sol::make_object(lua, sol::nil), std::string("input too large")};
+        return {sol::make_object(sv, sol::nil), std::string("input too large")};
     }
     try {
         const nlohmann::json j =
             nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/false);
-        return {JsonToLua(lua, j), std::string()};
+        return {JsonToLua(sv, j), std::string()};
     } catch (const std::exception& e) {
-        return {sol::make_object(lua, sol::nil), std::string(e.what())};
+        return {sol::make_object(sv, sol::nil), std::string(e.what())};
     }
 }
 
-std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::table spec) {
+std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::state_view sv, sol::table spec) {
+    // Marshal against the calling state `sv`, not the member `lua` (see LuaGetTicketBind):
+    // `spec` is already on `sv`, and the result table must be too.
     const TrackerConfig cfg = ConfigManager::Load();
     // Same base as the grid new-issue row: config fallbacks plus last-row project / issue type when present.
     IssueDraft draft = BuildDraftFromLastTicket(cfg);
@@ -767,11 +774,11 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
 
     LuaMergeIssueCreateSpec(draft, std::move(spec), AvailableFields);
 
-    sol::table result = lua.create_table();
+    sol::table result = sv.create_table();
 
     if (offline) {
         if (!Cache) {
-            return {sol::make_object(lua, sol::nil),
+            return {sol::make_object(sv, sol::nil),
                     std::string("Local cache not initialized (cannot queue offline create)")};
         }
         const std::int64_t qid = QueueCreateOffline(draft);
@@ -792,10 +799,10 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
     try {
         r = fut.get();
     } catch (const std::exception& e) {
-        return {sol::make_object(lua, sol::nil),
+        return {sol::make_object(sv, sol::nil),
                 std::string("create_issue failed while waiting for result: ") + e.what()};
-    } catch (...) {
-        return {sol::make_object(lua, sol::nil),
+    } catch (...) { // catch-all-ok: future::get may throw any type; surface as a clean error string
+        return {sol::make_object(sv, sol::nil),
                 std::string("create_issue failed while waiting for result: unknown exception")};
     }
 
@@ -805,7 +812,7 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
     }
     result["error"] = r.Error;
     if (!r.MissingFieldIds.empty()) {
-        sol::table miss = lua.create_table();
+        sol::table miss = sv.create_table();
         std::size_t i = 1;
         for (const auto& id : r.MissingFieldIds) {
             miss[i++] = id;
@@ -813,10 +820,10 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
         result["missing_field_ids"] = miss;
     }
     if (!r.AttachmentFailures.empty()) {
-        sol::table af = lua.create_table();
+        sol::table af = sv.create_table();
         std::size_t i = 1;
         for (const auto& p : r.AttachmentFailures) {
-            sol::table row = lua.create_table();
+            sol::table row = sv.create_table();
             row["path"] = p.first;
             row["reason"] = p.second;
             af[i++] = row;

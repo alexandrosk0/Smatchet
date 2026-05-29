@@ -113,8 +113,7 @@ class FakeLuaBindingHost : public ILuaBindingHost {
 
     void LuaLogInfoBind(const std::string& msg) override { LoggedInfo.push_back(msg); }
 
-    std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId) override {
-        sol::state_view sv = GetStateView();
+    std::tuple<sol::object, std::string> LuaGetTicketBind(sol::state_view sv, const std::string& issueId) override {
         auto it = TicketsById.find(issueId);
         if (it == TicketsById.end()) {
             return std::make_tuple(sol::make_object(sv, sol::nil), std::string("not found"));
@@ -124,8 +123,7 @@ class FakeLuaBindingHost : public ILuaBindingHost {
 
     std::vector<CachedTicket> LuaGetActiveTicketsBind() override { return ActiveTickets; }
 
-    std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s) override {
-        sol::state_view sv = GetStateView();
+    std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) override {
         if (DecodeJsonImpl) {
             return DecodeJsonImpl(sv, s);
         }
@@ -154,15 +152,15 @@ class FakeLuaBindingHost : public ILuaBindingHost {
         return SubmitFieldEditReturn;
     }
 
-    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::table spec) override {
+    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::state_view sv, sol::table spec) override {
         // Record the inbound spec keys so tests can prove the marshal happened.
         std::vector<std::string> keys;
         spec.for_each([&](sol::object k, sol::object /*v*/) {
-            if (k.is<std::string>()) keys.push_back(k.as<std::string>());
+            if (k.is<std::string>())
+                keys.push_back(k.as<std::string>());
         });
         CreateIssueSpecKeys.push_back(std::move(keys));
 
-        sol::state_view sv = GetStateView();
         if (CreateIssueScripter) {
             sol::table t = CreateIssueScripter(sv);
             return std::make_tuple(sol::object(t), CreateIssueErr);
@@ -202,21 +200,29 @@ class FakeLuaBindingHost : public ILuaBindingHost {
     sol::state_view GetStateView() const { return sol::state_view(lua_state_); }
 
     static sol::object JsonToSolObject(sol::state_view sv, const nlohmann::json& j) {
-        if (j.is_null()) return sol::make_object(sv, sol::nil);
-        if (j.is_boolean()) return sol::make_object(sv, j.get<bool>());
-        if (j.is_number_integer()) return sol::make_object(sv, static_cast<double>(j.get<std::int64_t>()));
-        if (j.is_number_unsigned()) return sol::make_object(sv, static_cast<double>(j.get<std::uint64_t>()));
-        if (j.is_number_float()) return sol::make_object(sv, j.get<double>());
-        if (j.is_string()) return sol::make_object(sv, j.get<std::string>());
+        if (j.is_null())
+            return sol::make_object(sv, sol::nil);
+        if (j.is_boolean())
+            return sol::make_object(sv, j.get<bool>());
+        if (j.is_number_integer())
+            return sol::make_object(sv, static_cast<double>(j.get<std::int64_t>()));
+        if (j.is_number_unsigned())
+            return sol::make_object(sv, static_cast<double>(j.get<std::uint64_t>()));
+        if (j.is_number_float())
+            return sol::make_object(sv, j.get<double>());
+        if (j.is_string())
+            return sol::make_object(sv, j.get<std::string>());
         if (j.is_array()) {
             sol::table arr = sv.create_table();
             std::size_t i = 1;
-            for (const auto& el : j) arr[i++] = JsonToSolObject(sv, el);
+            for (const auto& el : j)
+                arr[i++] = JsonToSolObject(sv, el);
             return arr;
         }
         if (j.is_object()) {
             sol::table tbl = sv.create_table();
-            for (auto it = j.begin(); it != j.end(); ++it) tbl[it.key()] = JsonToSolObject(sv, it.value());
+            for (auto it = j.begin(); it != j.end(); ++it)
+                tbl[it.key()] = JsonToSolObject(sv, it.value());
             return tbl;
         }
         return sol::make_object(sv, sol::nil);

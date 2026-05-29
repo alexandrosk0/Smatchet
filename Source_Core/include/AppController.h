@@ -380,8 +380,8 @@ class AppController
      * merges unrelated lambdas or member-wrappers that share the same demangled metatable name.
      */
     void LuaLogInfoBind(const std::string& msg) override;
-    std::tuple<sol::object, std::string> LuaGetTicketBind(const std::string& issueId) override;
-    std::tuple<sol::object, std::string> LuaDecodeJsonBind(const std::string& s) override;
+    std::tuple<sol::object, std::string> LuaGetTicketBind(sol::state_view sv, const std::string& issueId) override;
+    std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) override;
     /// Recorded-command-list cell renderer: Lua provider returns a static draw recording that
     /// the C++ side replays every frame until one of the cache-key inputs changes. See
     /// docs/design/archive/lua-recorded-cmd-list.md.
@@ -403,7 +403,7 @@ class AppController
     void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) override;
     std::vector<CachedTicket> LuaGetActiveTicketsBind() override;
     /** Live create or offline queue from a Lua spec table; see LUA_GUIDE.md. */
-    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::table spec) override;
+    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::state_view sv, sol::table spec) override;
     void ClearLuaTicketContextGlue();
 
     // --- ILuaBindingHost forwarders (interface required for the lifted InitLuaCore
