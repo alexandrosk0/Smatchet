@@ -15,7 +15,7 @@
 #   - Test 5 (chunked drain across > SMATCHET_LINT_DRAIN_CHUNK files)
 #   - Test 6 (parallel-subagent per-PID queue isolation across live PIDs)
 #   - Test 10 (lockfile serialises concurrent Stop events)
-# Filed in docs/backlog/AGENT_SELF_IMPROVEMENT.md as a follow-up sweep.
+# Filed in docs/self-improvement/AGENT_SELF_IMPROVEMENT.md as a follow-up sweep.
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 

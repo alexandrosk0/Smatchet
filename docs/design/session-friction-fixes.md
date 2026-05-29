@@ -53,7 +53,7 @@ Bypass for either: `SMATCHET_SKIP_SHELL_LINT=1` env var (logged when used).
 **Diff** (corrected after plan review — apply ONLY to `applied.md`):
 
 ```text
-+docs/backlog/agent-self-improvement/applied.md merge=union
++docs/self-improvement/categories/applied.md merge=union
 ```
 
 **Why scoped to applied.md only**: `merge=union` concatenates both sides of a conflict. That's the right behaviour ONLY when both sides are prepending new entries (the applied.md parallel-archive case). For `process.md` / `tooling.md`, parallel branches DELETE different entries; union would wrongly preserve both deleted entries. For `AGENT_SELF_IMPROVEMENT.md`'s count line, parallel branches MODIFY the same line with different counts; union would garble it. Initial plan draft applied union to all three files — that was wrong and would have introduced bugs.
@@ -74,7 +74,7 @@ The backlog-sweep plan's § Approach pre-flighted 5 items as "already done" via 
 - `docs/agent-rules/process-rules.md` — add § Pre-implementation triage sub-rule under the Plan-doc family bullet
 
 **Wording**:
-> **Pre-implementation triage** — for any plan item that says "fix existing tooling" or "extend X", the slice agent's first action is to grep / `Read` the cited code AND check git history (`git log --oneline -- <file>` + `docs/backlog/agent-self-improvement/applied.md` for prior fixes). If the fix has already shipped, archive the backlog entry and skip the slice — don't reimplement. Plan-doc § Approach should pre-flight this triage for items known to overlap recent work; § Pre-implementation triage findings get a per-item bullet in § Approach so the implementer doesn't have to redo the search.
+> **Pre-implementation triage** — for any plan item that says "fix existing tooling" or "extend X", the slice agent's first action is to grep / `Read` the cited code AND check git history (`git log --oneline -- <file>` + `docs/self-improvement/categories/applied.md` for prior fixes). If the fix has already shipped, archive the backlog entry and skip the slice — don't reimplement. Plan-doc § Approach should pre-flight this triage for items known to overlap recent work; § Pre-implementation triage findings get a per-item bullet in § Approach so the implementer doesn't have to redo the search.
 
 ### Slice 4 — bash-side MSVC env wrapper (P2 tooling)
 **Backlog**: 2026-05-28 tooling · P2 · "No `vcvars64.bat` wrapper for bash sessions"

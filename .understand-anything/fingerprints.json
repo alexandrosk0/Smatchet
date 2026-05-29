@@ -47220,8 +47220,8 @@
       "totalLines": 26,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/AGENT_SELF_IMPROVEMENT.md": {
-      "filePath": "docs/backlog/AGENT_SELF_IMPROVEMENT.md",
+    "docs/self-improvement/AGENT_SELF_IMPROVEMENT.md": {
+      "filePath": "docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
       "contentHash": "5753440931cfba4eb51732495f09fdead6e15478127e109d52b9dec0e23b00e4",
       "functions": [],
       "classes": [],
@@ -47240,8 +47240,8 @@
       "totalLines": 83,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/applied.md": {
-      "filePath": "docs/backlog/agent-self-improvement/applied.md",
+    "docs/self-improvement/categories/applied.md": {
+      "filePath": "docs/self-improvement/categories/applied.md",
       "contentHash": "c3d24bf1ae3e542ca3751cff4e644d7759ac3b9099399b8ab2e66bd0ebec90bf",
       "functions": [],
       "classes": [],
@@ -47250,8 +47250,8 @@
       "totalLines": 323,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/bug.md": {
-      "filePath": "docs/backlog/agent-self-improvement/bug.md",
+    "docs/self-improvement/categories/bug.md": {
+      "filePath": "docs/self-improvement/categories/bug.md",
       "contentHash": "37f9c83da308bcc5bfdb573a403107adbda5c6b75e454a283b6b2d92a4ef5941",
       "functions": [],
       "classes": [],
@@ -47260,8 +47260,8 @@
       "totalLines": 76,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/external-blockers.md": {
-      "filePath": "docs/backlog/agent-self-improvement/external-blockers.md",
+    "docs/self-improvement/categories/external-blockers.md": {
+      "filePath": "docs/self-improvement/categories/external-blockers.md",
       "contentHash": "e48656c43a2ab2df0193639c6826335eb48422c6ad27839773723ec8eef2dded",
       "functions": [],
       "classes": [],
@@ -47270,8 +47270,8 @@
       "totalLines": 17,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/infra.md": {
-      "filePath": "docs/backlog/agent-self-improvement/infra.md",
+    "docs/self-improvement/categories/infra.md": {
+      "filePath": "docs/self-improvement/categories/infra.md",
       "contentHash": "96e83839273631d4bbfbc41383f8ccd5928ceb0c0baf877bb69e53f3b5c87b0e",
       "functions": [],
       "classes": [],
@@ -47280,8 +47280,8 @@
       "totalLines": 85,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/process.md": {
-      "filePath": "docs/backlog/agent-self-improvement/process.md",
+    "docs/self-improvement/categories/process.md": {
+      "filePath": "docs/self-improvement/categories/process.md",
       "contentHash": "1eda14c51e1a49b76d91a160f9637ea2cdccdd4b1bccf7dfd6cdaa1344d5181c",
       "functions": [],
       "classes": [],
@@ -47290,8 +47290,8 @@
       "totalLines": 189,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/security.md": {
-      "filePath": "docs/backlog/agent-self-improvement/security.md",
+    "docs/self-improvement/categories/security.md": {
+      "filePath": "docs/self-improvement/categories/security.md",
       "contentHash": "ab28196e8e036c46fc6b3e02e9acd896faa85fe3f231f63bfad42a412a8cea65",
       "functions": [],
       "classes": [],
@@ -47300,8 +47300,8 @@
       "totalLines": 51,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/test.md": {
-      "filePath": "docs/backlog/agent-self-improvement/test.md",
+    "docs/self-improvement/categories/test.md": {
+      "filePath": "docs/self-improvement/categories/test.md",
       "contentHash": "c97780b6ffafb4f291a9b1c8723007b713a821fab27c1933be89d8c3c7bfed76",
       "functions": [],
       "classes": [],
@@ -47310,8 +47310,8 @@
       "totalLines": 93,
       "hasStructuralAnalysis": true
     },
-    "docs/backlog/agent-self-improvement/tooling.md": {
-      "filePath": "docs/backlog/agent-self-improvement/tooling.md",
+    "docs/self-improvement/categories/tooling.md": {
+      "filePath": "docs/self-improvement/categories/tooling.md",
       "contentHash": "c7a1012828e3e826b2d9ac0ee88d19ba66af4364e39173fd56675c4e569e4a12",
       "functions": [],
       "classes": [],

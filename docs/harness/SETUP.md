@@ -83,7 +83,7 @@ POSIX runners would fall back to `lcov` + `gcov` for the same purpose — that p
    ```
    Restages any uncommitted work; the worktree's branch now sits on top of latest develop. Cheap because most `claude/<id>` worktrees have zero or one commit at the time of the rebase.
 
-**Upstream fix**: this is the Claude Code SDK's responsibility — the worktree-spawn machinery should default the base to `origin/develop` (or a configurable `claude.worktree.baseBranch`) rather than current local HEAD. Filed as external-blocker in `docs/backlog/agent-self-improvement/external-blockers.md`.
+**Upstream fix**: this is the Claude Code SDK's responsibility — the worktree-spawn machinery should default the base to `origin/develop` (or a configurable `claude.worktree.baseBranch`) rather than current local HEAD. Filed as external-blocker in `docs/self-improvement/categories/external-blockers.md`.
 
 **Not the same path as the agentic-handoff runner**: `ClaudeCodeLocalRunner` (the in-repo H3 deliverable for `agent/<proposalId>` worktrees) already bases on `origin/develop` correctly per `Source_Core/src/ClaudeCodeLocalRunner.cpp` + the `handoff.auto_fetch_before_worktree` config flag (default `true`). Only the Claude Code SDK's own session-spawn path (`claude/<id>` worktrees) is affected.
 

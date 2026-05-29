@@ -43,7 +43,7 @@ fresh claim:
     bash scripts/dev/lock-claim.sh <slug> <new-write-set-file>
 
 Backlog: implement lock-claim-update-p4.sh as a follow-up. Filed in
-docs/backlog/agent-self-improvement/tooling.md.
+docs/self-improvement/categories/tooling.md.
 EOF
     exit 2
 fi

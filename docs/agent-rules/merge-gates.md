@@ -16,7 +16,7 @@ Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` (the host da
      - **CR installed, no review yet, no SUCCESS status** → **block** until the grace window expires. After the window, the poller logs a `WARN: CodeRabbit grace window ... expired` line and falls through to pass so a stuck integration never wedges the ship-loop indefinitely.
    - **On-head review** (`commit.oid == headRefOid`):
      - `APPROVED` → **pass** unconditionally (approval trumps body).
-     - `COMMENTED + body has "Actionable comments posted: N" with N > 0` → **block** (CR found real findings the user must address before merge). The previous "COMMENTED == pass" rule shipped 5 unaddressed CR findings to develop on PR #357 — see `docs/backlog/agent-self-improvement/process.md` P1 (2026-05-21) for the post-mortem.
+     - `COMMENTED + body has "Actionable comments posted: N" with N > 0` → **block** (CR found real findings the user must address before merge). The previous "COMMENTED == pass" rule shipped 5 unaddressed CR findings to develop on PR #357 — see `docs/self-improvement/categories/process.md` P1 (2026-05-21) for the post-mortem.
      - `COMMENTED + N == 0` → **pass** (CR explicitly said no findings).
      - `COMMENTED + no Actionable header in body` → **pass** (placeholder review / older CR template; conservative).
      - `CHANGES_REQUESTED` / `DISMISSED` → **block**.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-backlog-counts.sh — verify (or fix) the Live-count column in
-# docs/backlog/AGENT_SELF_IMPROVEMENT.md matches the actual entry counts
-# in each agent-self-improvement/<category>.md.
+# docs/self-improvement/AGENT_SELF_IMPROVEMENT.md matches the actual entry counts
+# in each self-improvement/categories/<category>.md.
 #
 # Why: the index table is a manually-maintained summary with no documented
 # update rule. Drift was substantial at first inspection (2026-05-28
@@ -29,8 +29,8 @@ if [ "${SMATCHET_SKIP_BACKLOG_COUNTS:-0}" = "1" ]; then
     exit 0
 fi
 
-INDEX="docs/backlog/AGENT_SELF_IMPROVEMENT.md"
-DIR="docs/backlog/agent-self-improvement"
+INDEX="docs/self-improvement/AGENT_SELF_IMPROVEMENT.md"
+DIR="docs/self-improvement/categories"
 [ -f "$INDEX" ] || { echo "missing index: $INDEX" >&2; exit 2; }
 
 FIX=0

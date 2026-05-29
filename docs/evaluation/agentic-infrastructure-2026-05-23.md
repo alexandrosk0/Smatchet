@@ -3,7 +3,7 @@
 **Date**: 2026-05-23
 **Scope**: non-C++ surface only — `AGENTS.md`, `.claude/CLAUDE.md`, every doc linked
 from those (`docs/agent-rules/*.md`, `docs/perforce/*.md`, `docs/harness/**.md`,
-`docs/backlog/AGENT_SELF_IMPROVEMENT.md` + per-category live files), every agent
+`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` + per-category live files), every agent
 definition under `agents/`, and the bash / Python / PowerShell glue under
 `scripts/dev/` + `scripts/setup-harness.{sh,ps1}` + the bats tests at
 `tests/bats/`.
@@ -127,7 +127,7 @@ Order by leverage (highest first):
    `ensure_pr_ready_for_review` is only called in the merge path, not at
    registration / first poll. Every PR in session 1 needed a manual
    `gh pr ready` before CR would review. Three-pronged fix already designed
-   in [`docs/backlog/agent-self-improvement/process.md`](../backlog/agent-self-improvement/process.md)
+   in [`docs/self-improvement/categories/process.md`](../backlog/agent-self-improvement/process.md)
    2026-05-21 P0: (a) flip ready in `git-janitor` before merge-gates poll,
    (b) require a non-empty CR review (not just SUCCESS StatusContext),
    (c) route through `coderabbit-triage` automatically. Touches
@@ -251,7 +251,7 @@ To put the findings in context — these are the parts that hold up under audit:
 - **AGENTS.md reduction (PR #417)** — five topic files in `docs/agent-rules/`
   give every agent a stable URL to link to, and the AGENTS.md stubs are
   short enough to keep loaded in every harness's context.
-- **Self-improvement loop** — `docs/backlog/agent-self-improvement/` has 75
+- **Self-improvement loop** — `docs/self-improvement/categories/` has 75
   applied entries and 75 live ones across six categories. Agents actually
   flag friction; the orchestrator actually triages. This is the highest-
   leverage process this repo has.
@@ -602,8 +602,8 @@ backlog items already triaged for the next sweep.
 - `docs/agent-rules/{delegation,ship-loops,merge-gates,process-rules,ux-pillars,golden-image-approval}.md`
 - `docs/perforce/{AGENT_FLOWS,SETUP,RUNBOOK}.md`
 - `docs/harness/SETUP.md`
-- `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
-- `docs/backlog/agent-self-improvement/{bug,security,process,tooling,infra,test,external-blockers,applied}.md`
+- `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`
+- `docs/self-improvement/categories/{bug,security,process,tooling,infra,test,external-blockers,applied}.md`
 - `agents/*.md` (22 files) and `agents/_shared/skills/**/SKILL.md` (5 files) and `agents/_shared/token-tracking/{SKILL.md,README.md}`
 - `scripts/dev/{merge-gates.sh, merge-gates.graphql, merge-gates-prompt.sh, p4-task-stream.sh, p4-task-stream-to-pr.sh, p4-task-stream-gc.sh, p4-reconcile-check.sh, lock-claim.sh, lock-claim-p4.sh, lock-claim-update.sh, lock-release.sh, lock-release-p4.sh, locks-show.sh, lock-staleness-sweep.sh, locks-render-markdown.sh, manual-locks-render-sync.sh, agent-progress.sh, tail-agent.sh, is-pure-docs-diff.sh, vexp-strip-agents-md.sh, test-agent-contract.sh, test-p4-dual-vcs.sh, plan-doc-table-probe.sh, check-required-tools.sh}`
 - `scripts/setup-harness.sh`

@@ -117,7 +117,7 @@ echo "[perf-run] output -> $ABS_OUT"
 
 # Wipe any stale result file at the destination — closes the
 # `WaitForFile`-returns-stale-data footgun documented in
-# docs/backlog/agent-self-improvement/tooling.md (2026-05-19 entry).
+# docs/self-improvement/categories/tooling.md (2026-05-19 entry).
 rm -f "$ABS_OUT"
 
 # perf.reset clears the perf monitor's accumulators before the scenario runs;

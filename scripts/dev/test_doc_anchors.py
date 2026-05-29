@@ -49,7 +49,7 @@ EXCLUDE_GLOBS = (
     ":(exclude).claude/worktrees/**",
     ":(exclude)docs/design/_plan-locks-archive.md",
     ":(exclude)docs/design/_plan-locks.generated.md",
-    ":(exclude)docs/backlog/agent-self-improvement/applied.md",
+    ":(exclude)docs/self-improvement/categories/applied.md",
 )
 
 # Anchor sources — AGENTS.md + every file in docs/agent-rules/.

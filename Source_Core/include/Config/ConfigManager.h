@@ -275,7 +275,7 @@ struct TrackerConfig {
     // Default OFF: audit-trail blocks ship assignee emails, freeform comments, and custom-field
     // values via BackendAuditTrail::ReadRecentEvents to the configured AI provider. New users
     // opt-in explicitly via the Preferences > Assistant > Context tab. First-send consent modal
-    // (per docs/backlog/agent-self-improvement/security.md 2026-05-17 P1) tracked separately.
+    // (per docs/self-improvement/categories/security.md 2026-05-17 P1) tracked separately.
     bool AssistantContextBlockAuditTrail = false;
     /// Hard cap on persisted chat-history rows (excluding pinned messages, which are
     /// exempt from trim). Drives `LocalCacheManager::TrimChatMessages` after every

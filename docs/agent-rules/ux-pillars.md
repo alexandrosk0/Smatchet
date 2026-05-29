@@ -2,7 +2,7 @@
 
 > Lifted from [`AGENTS.md`](../../AGENTS.md) § UX Pillars per [`docs/design/agents-md-reduction.md`](../design/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming Pillars 1-4 + their owning agents so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
 
-Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`), not a merge block, until the supporting infrastructure lands.
+Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (category `process`), not a merge block, until the supporting infrastructure lands.
 
 ## 1. Performance — sustain ≈ 144 Hz
 
@@ -45,7 +45,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 ## 4. Accessibility — aspirational (locked scope)
 
-**Pillar 4**: keyboard nav, font-size / zoom, WCAG AA contrast. No auto-fail gates today. Agents flag missing a11y to `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (category `process`) so it accumulates evidence; pillar hardens once the supporting infra lands.
+**Pillar 4**: keyboard nav, font-size / zoom, WCAG AA contrast. No auto-fail gates today. Agents flag missing a11y to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (category `process`) so it accumulates evidence; pillar hardens once the supporting infra lands.
 
 **Locked in-scope (work on these when adjacent to current task):**
 - **Keyboard navigation**: every actionable widget reachable without mouse. Tab order sane, focus indicators visible, `Ctrl+Shift+P` Command Palette as the keyboard entry point to every registered command.

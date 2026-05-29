@@ -189,7 +189,7 @@ N/A — this plan's diff is workflows + branch-protection API calls + docs. Zero
 - **Slice 4**: trigger the nightly workflow manually via `gh workflow run sanitizer-nightly.yml`; verify it runs to completion + correctly opens an issue on a deliberately-broken doctest. Revert the deliberate breakage.
 - **Slice 5**: post-baselining, confirm `python scripts/dev/perf-compare.py` (Python, not bash) against all 15 `*.ci-windows-latest.json` baselines reports a clean diff. Then add the dummy-pass companion + the required check.
 - **Build gate**: N/A — no C++ touched.
-- **Manual residue**: each slice has a one-time manual verification step (open a no-op PR to confirm the gate is wired). These are not automatable without a fixture-PR harness, which is out of scope. Tracked as `docs/backlog/agent-self-improvement/test.md` candidate if a future plan needs the harness.
+- **Manual residue**: each slice has a one-time manual verification step (open a no-op PR to confirm the gate is wired). These are not automatable without a fixture-PR harness, which is out of scope. Tracked as `docs/self-improvement/categories/test.md` candidate if a future plan needs the harness.
 
 ## Out of scope
 

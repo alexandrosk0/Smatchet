@@ -4,7 +4,7 @@
 # the remote accepts but the closed PR will never pick up; CI doesn't fire,
 # the PR view stays frozen at the merge-time SHA, and the commits orphan.
 #
-# Backlog: docs/backlog/agent-self-improvement/process.md
+# Backlog: docs/self-improvement/categories/process.md
 #   2026-05-18 · orchestrator · [process] · P2 — Pushing commits to a
 #   merged-PR branch silently orphans them
 #

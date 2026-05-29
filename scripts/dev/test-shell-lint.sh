@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-shell-lint.sh — five-rule self-review lint for shell scripts.
 #
-# Closes docs/backlog/agent-self-improvement/process.md 2026-05-28 P1 entry
+# Closes docs/self-improvement/categories/process.md 2026-05-28 P1 entry
 # "Implementer-side self-review didn't catch real shell-script bugs".
 # Plan: docs/design/archive/shell-script-self-review-lint.md.
 #

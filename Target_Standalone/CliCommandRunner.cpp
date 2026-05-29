@@ -767,7 +767,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         // bucket-E gates regressed on develop tip). Env override SMATCHET_SPAWN_READY_MS
         // allows tightening on faster runners or raising further on cold-cache CI.
         // Lazy-loading AI clients is the architectural follow-up — entry remains open
-        // in docs/backlog/agent-self-improvement/tooling.md.
+        // in docs/self-improvement/categories/tooling.md.
         int readyTimeoutMs = 30000;
 #ifdef _MSC_VER
 #pragma warning(push)

@@ -248,7 +248,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/include/ConfigManager.h` (MOD — `kCurrentLayoutSchemaVersion` 5→6, single bump for the whole feature)
   - `README.md` (MOD — one feature bullet)
   - `LUA_GUIDE.md` (MOD — one `ai.*` bullet + short example)
-  - `docs/backlog/agent-self-improvement/process.md` (MOD — latest-first P2 worktree-bootstrap entry)
+  - `docs/self-improvement/categories/process.md` (MOD — latest-first P2 worktree-bootstrap entry)
   - `docs/design/_plan-locks.md` (this entry + Phase D flip to shipped)
   - `docs/design/ai-assistant-side-panel.md` (Implementation log + Deviations + Verification for Phase E — closes plan)
 - **Read-only adjacency**: `Source_Core/include/AppController.h` (always-on `AddAiContext` / `ClearAiContext` / `PromptAi` shipped Phase B), `Source_Core/include/ILuaBindingHost.h`, `Source_Core/src/AppController_LuaBindingsCore.cpp` (Phase 6b InitLuaCore pattern + `__smatchet_app_ui` dual-key)
@@ -357,7 +357,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Plugins/Mcp/McpPlugin.cpp` (move-out + using-decls only; zero semantic change)
   - `CMakeLists.txt` (add `McpJsonRpcPure.cpp` to `SmatchetPlugin_Mcp` + `SmatchetPlugin_Mcp_DX12`)
   - `docs/design/_plan-locks.md`
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
 - **Read-only adjacency**: `Plugins/Mcp/McpPlugin.h`, `Source_Core/include/SmatchetDefaults.h`
 - **Started**: 2026-05-16
@@ -376,7 +376,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Plugins/Mcp/McpDispatch.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
   - `docs/design/_plan-locks.md`
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
 - **Read-only adjacency**: `Plugins/Mcp/McpJsonRpcPure.h`, `Plugins/Mcp/McpJsonRpcPure.cpp`
 - **Started**: 2026-05-16
@@ -398,7 +398,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/lua-bindings-host-interface-lift` (deleted)
 - **Owner agent**: `lua-binder`
-- **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/include/ILuaBindingHost.h` (NEW)
   - `Source_Core/src/AppController_LuaBindingsCore.cpp` (NEW)
@@ -406,7 +406,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/include/AppController.h` (add `: public ILuaBindingHost` + override declarations)
   - `CMakeLists.txt` (register new TU + `-mcmodel=large` source-property)
   - `docs/design/_plan-locks.md`
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (flip top entry to applied)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (flip top entry to applied)
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
 - **Read-only adjacency**: `Source_Core/src/AppController_LuaStubs.cpp`, `tests/Lua/LuaSandbox.test.cpp` (sandbox closure invariant regression gate)
 - **Started**: 2026-05-16
@@ -424,7 +424,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Lua/CMakeLists.txt` (append-only)
   - `docs/design/_plan-locks.md`
   - `docs/design/test-suite-expansion-completion.md` (impl-log appendix)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close any TBD PR placeholder left by PR #144)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (close any TBD PR placeholder left by PR #144)
 - **Read-only adjacency**: `Source_Core/include/ILuaBindingHost.h`, `Source_Core/src/AppController_LuaBindingsCore.cpp`, `tests/support/LuaHostFixture.h`
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #145 at sha d125b36. Phase 7 (screenshot diff) unblocked + dispatched.
@@ -443,7 +443,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `CMakePresets.json` (append `ninja-test-msvc` extending `ninja-test-msvc` with gcov instrumentation)
   - `docs/design/_plan-locks.md` (this self-status flip + Phase-7 flip)
   - `docs/design/test-suite-expansion-completion.md` (impl-log + deviations + verification appendices)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (close TBD placeholder on Phase-7 entry; optionally file follow-up entries for OpenCppCoverage CI install + threshold-flip + PR template addition)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (close TBD placeholder on Phase-7 entry; optionally file follow-up entries for OpenCppCoverage CI install + threshold-flip + PR template addition)
 - **Read-only adjacency**: `.github/workflows/build-and-test.yml` (pattern reference only), `cmake/Sanitizers.cmake` (helper convention reference)
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #148 at sha `039d286`. Final phase of `test-suite-expansion-completion` plan; plan doc moved to `docs/design/archive/` with full Outcome table in the same chore PR.
@@ -471,7 +471,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `.github/workflows/build-and-test.yml` (append a `continue-on-error: true` screenshot-diff step that no-ops cleanly on headless runners)
   - `docs/design/_plan-locks.md` (this self-status flip)
   - `docs/design/test-suite-expansion-completion.md` (impl-log + deviations + verification appendices)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (DX12 backbuffer readback follow-up + headless-CI display-server follow-up)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (DX12 backbuffer readback follow-up + headless-CI display-server follow-up)
 - **Read-only adjacency**: `Source_Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp` (debug.window.screenshot already wired), `Source_Core/src/Commands/Builtin/BuiltinCommands_Scenario.cpp`, `Source_Core/src/Commands/Scenarios/UiTestScenario.cpp`, `Target_Standalone/main.cpp` (PPM writer already present at line 569).
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #146 at sha d857310. 2 scenarios (`dock-gap-sentinel`, `command-palette-fuzzy`) + GoldenImage.h + bash driver + advisory CI step (`continue-on-error: true` until 2026-05-30). Auto-bootstrap on first run; subsequent runs gate at L∞ <= 4.
@@ -503,11 +503,11 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/audit-trail-per-event-path`
 - **Owner agent**: orchestrator
-- **Originating plan**: backlog entries 2026-05-16 `security-review` + `offline-sync` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entries 2026-05-16 `security-review` + `offline-sync` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/src/BackendAuditTrail.cpp` (writer re-resolves `GetAuditFilePath()` per-event)
   - `tests/Source_Core/BackendAuditTrail.test.cpp` (add runtime-dir-change case; existing TEST_CASE workaround drops)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (status flip)
 - **Read-only adjacency**: `Source_Core/include/BackendAuditTrail.h`, `Source_Core/include/ConfigManager.h`
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #108 at sha 98ed9ea.
@@ -517,11 +517,11 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/cached-ticket-types-header-split`
 - **Owner agent**: orchestrator
-- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/backlog/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/include/CachedTicketTypes.h` (NEW)
   - `Source_Core/include/LocalCacheManager.h`
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`
 - **Read-only adjacency**: 20 callers of `LocalCacheManager.h` (no code edit — re-include keeps API)
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — shipped on develop at sha 8724b8b (branch deleted).
@@ -602,7 +602,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 - **Claimed write set**:
   - `tests/Source_Core/CallstackParser.test.cpp`
   - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `code-review+security-review · [test]` entry)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (status flip on `code-review+security-review · [test]` entry)
 - **Read-only adjacency**: `Source_Core/src/CallstackParser.cpp`, `Source_Core/include/CallstackParser.h`
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #112 at sha effda92.
@@ -620,7 +620,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Source_Core/P4BlameParse.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
   - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on `test-rig · [infra] — Phase 2 P4BlameParse deferred`)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (status flip on `test-rig · [infra] — Phase 2 P4BlameParse deferred`)
 - **Read-only adjacency**: `Source_Core/include/P4Blame.h`
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #111 at sha 52832d0.
@@ -638,7 +638,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Source_Core/TrackerLabelsPure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
   - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerLabelsEditor.h`
 - **Started**: 2026-05-16
@@ -657,7 +657,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Source_Core/TrackerDateTimePure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
   - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerDateTimeFieldEditor.h`
 - **Started**: 2026-05-16
@@ -676,7 +676,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Source_Core/TrackerFieldPayloadPure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
   - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerFieldPayload.h`, `Source_Core/include/JiraClient.h`
 - **Started**: 2026-05-16
@@ -722,7 +722,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Source_Core/TrackerFieldCatalogPure.test.cpp` (NEW)
   - `tests/CMakeLists.txt`
   - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (status flip on Phase 1 deferral entry)
   - `docs/design/_plan-locks.md` (self-status flips)
 - **Read-only adjacency**: `Source_Core/include/TrackerFieldCatalog.h`, `Source_Core/include/JiraClient.h`
 - **Started**: 2026-05-16
@@ -745,7 +745,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `tests/Source_Core/IssueDraft.test.cpp` (NEW)
   - `tests/Source_Core/TrackerFieldValueParser.extended.test.cpp` (NEW)
   - `tests/Source_Core/TrackerFieldValueUtils.test.cpp` (NEW)
-  - `docs/backlog/AGENT_SELF_IMPROVEMENT.md`
+  - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`
   - `docs/design/archive/test-suite-expansion.md` (impl-log appendix)
 - **Read-only adjacency**: `Source_Core/include/IssueDraft.h`, `Source_Core/include/TrackerFieldValueParser.h`, `Source_Core/include/IssueCreatePipeline.h`
 - **Started**: 2026-05-16

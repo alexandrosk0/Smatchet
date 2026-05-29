@@ -3,7 +3,7 @@
 Centralized tracker for plan-shaped work in this repo. Three buckets:
 
 1. **Applied / archived plans** — design docs whose work shipped. Source under [`docs/design/archive/`](../design/archive/). Indexed below with approximate date and one-line summary.
-2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](./AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
+2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
 3. **Agentic dependencies** — work that the agent ecosystem (prompts, harness, mirror, telemetry) needs in the codebase to unblock further automation.
 
 Format: `- <slug> · <approx-date> · <one-line>`.
@@ -87,7 +87,7 @@ The table below is **auto-generated** by `scripts/dev/test-plan-index.sh` from t
 
 ## 2. Deferred code items (C++ refactors / improvements)
 
-Each item is already tracked in [`AGENT_SELF_IMPROVEMENT.md`](./AGENT_SELF_IMPROVEMENT.md). This list is the **code-focused view** — when you're about to touch a relevant area, scan here for bundling opportunities.
+Each item is already tracked in [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md). This list is the **code-focused view** — when you're about to touch a relevant area, scan here for bundling opportunities.
 
 | Item | Where it bites | Bundle with |
 |---|---|---|
@@ -99,7 +99,7 @@ Each item is already tracked in [`AGENT_SELF_IMPROVEMENT.md`](./AGENT_SELF_IMPRO
 
 ### Adding to this list
 
-When `docs/backlog/AGENT_SELF_IMPROVEMENT.md` gains a new entry whose category is **`shortcut` / `context` / `tooling`** AND the action is a concrete C++ refactor (not an agent-prompt edit), mirror a one-line row here. Agent-prompt-only entries live in `AGENT_SELF_IMPROVEMENT.md` exclusively.
+When `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` gains a new entry whose category is **`shortcut` / `context` / `tooling`** AND the action is a concrete C++ refactor (not an agent-prompt edit), mirror a one-line row here. Agent-prompt-only entries live in `AGENT_SELF_IMPROVEMENT.md` exclusively.
 
 ---
 

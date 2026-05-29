@@ -1051,10 +1051,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
+      "id": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
       "type": "document",
       "name": "AGENT_SELF_IMPROVEMENT.md",
-      "filePath": "docs/backlog/AGENT_SELF_IMPROVEMENT.md",
+      "filePath": "docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
       "summary": "Index and operational rulebook for the agent self-improvement loop â€” format, six categories (bug/process/tooling/infra/test/security), P0-P3 priority enum, workflow steps, apply threshold, and triage cadence.",
       "tags": [
         "documentation",
@@ -1066,10 +1066,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/applied.md",
+      "id": "document:docs/self-improvement/categories/applied.md",
       "type": "document",
       "name": "applied.md",
-      "filePath": "docs/backlog/agent-self-improvement/applied.md",
+      "filePath": "docs/self-improvement/categories/applied.md",
       "summary": "Archive of all applied agent-self-improvement entries across categories, capturing the change that landed and which prompt/doc/script it touched for audit-trail history.",
       "tags": [
         "documentation",
@@ -1081,10 +1081,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/bug.md",
+      "id": "document:docs/self-improvement/categories/bug.md",
       "type": "document",
       "name": "bug.md",
-      "filePath": "docs/backlog/agent-self-improvement/bug.md",
+      "filePath": "docs/self-improvement/categories/bug.md",
       "summary": "Active bug-category entries in the agent self-improvement backlog â€” issues where an agent prompt or hook produced an incorrect outcome that needs fixing.",
       "tags": [
         "documentation",
@@ -1096,10 +1096,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/external-blockers.md",
+      "id": "document:docs/self-improvement/categories/external-blockers.md",
       "type": "document",
       "name": "external-blockers.md",
-      "filePath": "docs/backlog/agent-self-improvement/external-blockers.md",
+      "filePath": "docs/self-improvement/categories/external-blockers.md",
       "summary": "Self-improvement entries blocked on external dependencies (upstream tools, third-party services) that cannot be fixed inside this repo until the blocker resolves.",
       "tags": [
         "documentation",
@@ -1111,10 +1111,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/infra.md",
+      "id": "document:docs/self-improvement/categories/infra.md",
       "type": "document",
       "name": "infra.md",
-      "filePath": "docs/backlog/agent-self-improvement/infra.md",
+      "filePath": "docs/self-improvement/categories/infra.md",
       "summary": "Infrastructure-category self-improvement entries â€” build/CI/test-rig surface issues that block agents from running their work end-to-end.",
       "tags": [
         "documentation",
@@ -1126,10 +1126,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/process.md",
+      "id": "document:docs/self-improvement/categories/process.md",
       "type": "document",
       "name": "process.md",
-      "filePath": "docs/backlog/agent-self-improvement/process.md",
+      "filePath": "docs/self-improvement/categories/process.md",
       "summary": "Process-category self-improvement entries â€” gaps in agent workflows (ship-loop, delegation, plan-doc discipline) revealed by post-mortems, with prioritised remediation steps.",
       "tags": [
         "documentation",
@@ -1141,10 +1141,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/security.md",
+      "id": "document:docs/self-improvement/categories/security.md",
       "type": "document",
       "name": "security.md",
-      "filePath": "docs/backlog/agent-self-improvement/security.md",
+      "filePath": "docs/self-improvement/categories/security.md",
       "summary": "Security-category self-improvement entries â€” agent prompt or hook patterns that risk leaking secrets, bypassing permission gates, or otherwise weakening security posture.",
       "tags": [
         "documentation",
@@ -1156,10 +1156,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/test.md",
+      "id": "document:docs/self-improvement/categories/test.md",
       "type": "document",
       "name": "test.md",
-      "filePath": "docs/backlog/agent-self-improvement/test.md",
+      "filePath": "docs/self-improvement/categories/test.md",
       "summary": "Test-category self-improvement entries â€” manual-verification residue, missing scenarios, and bucket-C/E coverage gaps that test-author should convert to deterministic checks.",
       "tags": [
         "documentation",
@@ -1171,10 +1171,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:docs/backlog/agent-self-improvement/tooling.md",
+      "id": "document:docs/self-improvement/categories/tooling.md",
       "type": "document",
       "name": "tooling.md",
-      "filePath": "docs/backlog/agent-self-improvement/tooling.md",
+      "filePath": "docs/self-improvement/categories/tooling.md",
       "summary": "Tooling-category self-improvement entries â€” friction in scripts under scripts/dev, build presets, lint pipeline, harness hooks, and vexp/perf rigs that agents repeatedly hit.",
       "tags": [
         "documentation",
@@ -29231,7 +29231,7 @@
     },
     {
       "source": "document:docs/agent-rules/delegation.md",
-      "target": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
@@ -29244,99 +29244,99 @@
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/applied.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/applied.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/bug.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/bug.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/external-blockers.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/external-blockers.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/infra.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/infra.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/process.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/process.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/security.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/security.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/test.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/test.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-      "target": "document:docs/backlog/agent-self-improvement/tooling.md",
+      "source": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/categories/tooling.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/agent-self-improvement/process.md",
-      "target": "document:docs/backlog/agent-self-improvement/applied.md",
+      "source": "document:docs/self-improvement/categories/process.md",
+      "target": "document:docs/self-improvement/categories/applied.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/agent-self-improvement/tooling.md",
-      "target": "document:docs/backlog/agent-self-improvement/applied.md",
+      "source": "document:docs/self-improvement/categories/tooling.md",
+      "target": "document:docs/self-improvement/categories/applied.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/agent-self-improvement/infra.md",
-      "target": "document:docs/backlog/agent-self-improvement/applied.md",
+      "source": "document:docs/self-improvement/categories/infra.md",
+      "target": "document:docs/self-improvement/categories/applied.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/agent-self-improvement/bug.md",
-      "target": "document:docs/backlog/agent-self-improvement/applied.md",
+      "source": "document:docs/self-improvement/categories/bug.md",
+      "target": "document:docs/self-improvement/categories/applied.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/agent-self-improvement/test.md",
-      "target": "document:docs/backlog/agent-self-improvement/applied.md",
+      "source": "document:docs/self-improvement/categories/test.md",
+      "target": "document:docs/self-improvement/categories/applied.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:docs/backlog/agent-self-improvement/security.md",
-      "target": "document:docs/backlog/agent-self-improvement/applied.md",
+      "source": "document:docs/self-improvement/categories/security.md",
+      "target": "document:docs/self-improvement/categories/applied.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
@@ -29350,7 +29350,7 @@
     },
     {
       "source": "document:docs/backlog/BACKLOG_PLANS.md",
-      "target": "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
+      "target": "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
@@ -50377,15 +50377,15 @@
         "document:docs/AGENT_TOKEN_TRACKING.md",
         "document:docs/agent-rules/delegation.md",
         "document:docs/agent-rules/golden-image-approval.md",
-        "document:docs/backlog/AGENT_SELF_IMPROVEMENT.md",
-        "document:docs/backlog/agent-self-improvement/applied.md",
-        "document:docs/backlog/agent-self-improvement/bug.md",
-        "document:docs/backlog/agent-self-improvement/external-blockers.md",
-        "document:docs/backlog/agent-self-improvement/infra.md",
-        "document:docs/backlog/agent-self-improvement/process.md",
-        "document:docs/backlog/agent-self-improvement/security.md",
-        "document:docs/backlog/agent-self-improvement/test.md",
-        "document:docs/backlog/agent-self-improvement/tooling.md",
+        "document:docs/self-improvement/AGENT_SELF_IMPROVEMENT.md",
+        "document:docs/self-improvement/categories/applied.md",
+        "document:docs/self-improvement/categories/bug.md",
+        "document:docs/self-improvement/categories/external-blockers.md",
+        "document:docs/self-improvement/categories/infra.md",
+        "document:docs/self-improvement/categories/process.md",
+        "document:docs/self-improvement/categories/security.md",
+        "document:docs/self-improvement/categories/test.md",
+        "document:docs/self-improvement/categories/tooling.md",
         "document:docs/backlog/BACKLOG_PLANS.md",
         "document:docs/CAVEMAN.md",
         "document:docs/CONTEXT.md",

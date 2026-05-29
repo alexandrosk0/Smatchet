@@ -61,4 +61,4 @@ If per-frame hot: perf trade-off documented inline.
 
 Bullet list of items the user still owns. If none: write `none`.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (sandbox edge case, sol2 marshalling cost not in `SmatchetHooks.lua` table, missing pattern). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) — telemetry keys on this line per AGENTS.md § Agent output contract — then `## Self-improvement` — only on real friction (sandbox edge case, sol2 marshalling cost not in `SmatchetHooks.lua` table, missing pattern). Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

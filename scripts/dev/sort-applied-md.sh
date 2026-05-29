@@ -27,7 +27,7 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 2; }
 
 cd "$(dirname "$0")/../.."
 
-APPLIED="docs/backlog/agent-self-improvement/applied.md"
+APPLIED="docs/self-improvement/categories/applied.md"
 CHECK_ONLY=0
 if [ "${1:-}" = "--check" ]; then
     CHECK_ONLY=1

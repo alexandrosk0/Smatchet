@@ -57,7 +57,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: …
 - **Bash-driver scenario / screenshot / sanitizer**: …
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
-- **Manual residue**: if any verification step ends up manual, name the deferred-automation action plan + add a `docs/backlog/agent-self-improvement/tooling.md` entry. No silent residue.
+- **Manual residue**: if any verification step ends up manual, name the deferred-automation action plan + add a `docs/self-improvement/categories/tooling.md` entry. No silent residue.
 
 ## Out of scope (flagged, not designed)
 

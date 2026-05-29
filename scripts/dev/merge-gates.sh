@@ -355,7 +355,7 @@ poll_merge_gates() {
         # CodeRabbit — four-bucket discrimination with body-aware actionable parsing.
         # The filter computed cr_state + the review body's FIRST LINE (current-head
         # review preferred, else most-recent stale — same selection as before).
-        # P1 fix per docs/backlog/agent-self-improvement/process.md: body's first
+        # P1 fix per docs/self-improvement/categories/process.md: body's first
         # line carries "Actionable comments posted: N" — N>0 means CR found real
         # bugs the user should review before any force-merge / timeout-pass.
         local cr_state="${fields[10]}"

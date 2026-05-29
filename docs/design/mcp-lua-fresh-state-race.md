@@ -75,7 +75,7 @@ State-relative host-glue marshalling (added per security review, Approach §3):
 - **Build gate (dual-target)**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`.
 - **Sanitizer gate**: configure+build the new ASan-with-UI-tests preset (`ninja-ui-test-asan-clang` / `ninja-ui-test-asan-msvc`), run the new test via `scripts/dev/test-ui-mcp-lua-fresh-state-race.sh`; expect zero sanitizer reports.
 - **Existing suites**: `ninja-test-msvc` (`SmatchetTests` + `SmatchetLuaTests`) green; `scripts/dev/test-all.sh` pre-push gate.
-- **Manual residue**: if the real-`DrawLuaWindows`-via-ImGui path proves infeasible inside the ctest rig (ImGui context lifetime), the test substitutes a faithful main-`lua` eval proxy on the UI-thread side + a `docs/backlog/agent-self-improvement/test.md` entry for a bucket-E follow-up. No silent residue.
+- **Manual residue**: if the real-`DrawLuaWindows`-via-ImGui path proves infeasible inside the ctest rig (ImGui context lifetime), the test substitutes a faithful main-`lua` eval proxy on the UI-thread side + a `docs/self-improvement/categories/test.md` entry for a bucket-E follow-up. No silent residue.
 
 ## Out of scope (flagged, not designed)
 

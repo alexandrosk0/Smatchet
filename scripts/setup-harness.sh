@@ -218,7 +218,7 @@ setup_cursor() {
 # (merge-gates poll, lint flush, etc.). Non-fatal — the harness setup still
 # proceeds even if a required tool is missing, so the user can finish the
 # adapter wiring + install the missing tool separately. See
-# docs/backlog/agent-self-improvement/tooling.md "Required CLI tools must be
+# docs/self-improvement/categories/tooling.md "Required CLI tools must be
 # discoverable + verified at first-setup time" for the motivating incident.
 if [[ -x "$ROOT/scripts/dev/check-required-tools.sh" ]]; then
   bash "$ROOT/scripts/dev/check-required-tools.sh" || {

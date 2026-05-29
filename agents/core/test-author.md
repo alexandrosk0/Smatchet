@@ -207,7 +207,7 @@ Before reporting done:
 3. No `[temp-debug]` markers left in any new .cpp.
 4. New commands appear in `commands.list` (smoke test — quick `cmd commands.list --spawn --yes | grep <name>`).
 5. Plan-doc cross-link: add `scripts/dev/<feature>.sh` to the plan's `## Verification` section so future readers find it, and append to `## Implementation log` per AGENTS.md § Plan revision after implementation.
-6. If any manual residue remains, the agent's final report includes a **dated automation-backlog entry** in `docs/backlog/AGENT_SELF_IMPROVEMENT.md` with category `tooling` and the missing infrastructure (e.g. "ImGui Test Engine integration deferred to <date>"). Manual residue without a backlog entry is a fail.
+6. If any manual residue remains, the agent's final report includes a **dated automation-backlog entry** in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` with category `tooling` and the missing infrastructure (e.g. "ImGui Test Engine integration deferred to <date>"). Manual residue without a backlog entry is a fail.
 
 ## Authoring discipline
 
@@ -263,6 +263,6 @@ bash scripts/dev/test-all.sh         →  Passed: <total>  Failed: 0
 
 ### `## Residue requiring user action`
 
-Manual-residue items still uncovered, each with a concrete deferred-automation plan filed in `docs/backlog/agent-self-improvement/tooling.md` (NEVER "manual forever"). If no residue: write `none`.
+Manual-residue items still uncovered, each with a concrete deferred-automation plan filed in `docs/self-improvement/categories/tooling.md` (NEVER "manual forever"). If no residue: write `none`.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) then `## Self-improvement` — proactive: list **every** verification step encountered this round that needs a new CLI probe / new scenario / new debug command / ImGui Test Engine harness, plus the deferred-automation entry if any residue stayed manual. Empty is the **rare** case (only when audited plan had zero manual residue). Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) then `## Self-improvement` — proactive: list **every** verification step encountered this round that needs a new CLI probe / new scenario / new debug command / ImGui Test Engine harness, plus the deferred-automation entry if any residue stayed manual. Empty is the **rare** case (only when audited plan had zero manual residue). Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

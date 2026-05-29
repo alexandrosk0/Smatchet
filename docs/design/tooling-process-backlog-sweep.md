@@ -2,7 +2,7 @@
 
 > **Slug**: `tooling-process-backlog-sweep` (matches this file's basename without `.md`).
 >
-> **Origin**: User request, 2026-05-27. Sweep all P0-P2 items from `docs/backlog/agent-self-improvement/process.md` and `tooling.md`.
+> **Origin**: User request, 2026-05-27. Sweep all P0-P2 items from `docs/self-improvement/categories/process.md` and `tooling.md`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules for plan location, plan-doc safety, plan revision after implementation, plan stress-test, plan template, and plan-doc perf-gate section.
 

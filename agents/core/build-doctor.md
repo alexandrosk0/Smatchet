@@ -103,4 +103,4 @@ bash scripts/dev/test-all.sh                                                    
 
 Items the user still owns after the fix. Examples: install a missing dependency (`pacman -S <pkg>`), set a PATH env, re-run a one-time `bash scripts/setup-harness.sh claude-code`, clear a stale `build/<preset>/` dir. If no residue: write `none`.
 
-End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) then `## Self-improvement` — agent / prompt / process friction (preset confusion, missing common-cause entries, tooling gaps). Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+End every response with `## Outcome: <state>` (one of `applied | halted | failed | partial | aborted`) then `## Self-improvement` — agent / prompt / process friction (preset confusion, missing common-cause entries, tooling gaps). Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

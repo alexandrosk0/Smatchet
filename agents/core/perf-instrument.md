@@ -72,4 +72,4 @@ Per AGENTS.md § Agent output contract § Helper class — these sections must a
 - `## Spec executed` — the `(file, function-or-block, scope-name)` tuples (insert mode) OR the strip-target directories + the text-search pattern used (cleanup mode), copied verbatim from the caller's packet. One bullet per tuple.
 - `## Result` — files touched + scope names added (insert) or removed (cleanup) + final `perf_temp:` text-search count (must be zero across `Source_Core/`, `Plugins/`, `Target_Standalone/` after cleanup). Includes the build target name + pass/fail of the `cmake --build` step.
 - `## Outcome: <state>` — one of `applied | halted | failed | partial | aborted`. Telemetry keys on this line per AGENTS.md § Agent output contract.
-- `## Self-improvement` — only if the spec was ambiguous or a rule wasn't covered. Empty is fine. Orchestrator appends to `docs/backlog/AGENT_SELF_IMPROVEMENT.md`.
+- `## Self-improvement` — only if the spec was ambiguous or a rule wasn't covered. Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

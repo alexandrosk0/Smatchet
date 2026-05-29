@@ -347,7 +347,7 @@ def poll_one(
     # passes via the "NONE + StatusContext=SUCCESS" branch on CR's placeholder
     # status without ever seeing a real review. Documented as C4 in
     # `docs/evaluation/agentic-infrastructure-2026-05-23.md` and as P0 in
-    # `docs/backlog/agent-self-improvement/process.md` (2026-05-21).
+    # `docs/self-improvement/categories/process.md` (2026-05-21).
     #
     # Registering with the watcher = explicit authorization to flip-ready
     # (per `docs/agent-rules/merge-gates.md` § Auto-`gh pr ready` + merge).
@@ -866,7 +866,7 @@ def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[st
     clone_path = entry["clone_path"]
     if not _looks_like_cr_finding_block(status_line):
         # Sub-bug (a) reset (P1, 2026-05-28 — closes 2026-05-22 P1 entry in
-        # docs/backlog/agent-self-improvement/tooling.md line 31).
+        # docs/self-improvement/categories/tooling.md line 31).
         # When the gates poll shows CR is no longer in a block shape (status
         # line lacks "actionable…block" / "stale_with_findings" / "changes
         # requested"), the per-PR-lifetime triage_attempts counter is stale
@@ -1230,7 +1230,7 @@ def maybe_pass_cr_none_grace(
 # threads and resolve them via the GraphQL `resolveReviewThread` mutation so
 # the next poll lands at GATES_PASSED.
 #
-# Closes the 2026-05-22 P1 entry in docs/backlog/agent-self-improvement/
+# Closes the 2026-05-22 P1 entry in docs/self-improvement/categories/
 # tooling.md (line 31), sub-bug (b). See docs/design/merge-watcher-triage-
 # recovery.md.
 
