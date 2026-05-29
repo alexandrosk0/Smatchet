@@ -71,20 +71,35 @@ link_dir() {
   echo "  link-dir   $link -> $target"
 }
 
-# Flat agent discovery. Harnesses scan .claude/agents/*.md at the top level;
-# canonical defs live under agents/{core,project}/ (the portable/project split),
-# so materialise .claude/agents/ as a real dir of flat per-agent links. Works
-# whether or not the harness recurses. Proven by test-agent-discovery-fixture.sh.
-link_agents_flat() {
-  local dest=".claude/agents" f base
-  rm -rf "$dest" 2>/dev/null || true
-  mkdir -p "$dest"
-  for f in agents/core/*.md agents/project/*.md; do
-    [[ -e "$f" ]] || continue
-    base="$(basename "$f")"
-    link_file "$dest/$base" "$f"
-  done
-  echo "  link-agents .claude/agents/ <- agents/{core,project}/*.md (flat)"
+# Agent discovery. Canonical defs live under agents/{core,project}/ (the
+# portable/project split). Claude Code discovers agents recursively under
+# .claude/agents/, so a SINGLE directory junction to the whole agents/ tree is
+# the right adapter — fast (one mklink //J) and safe.
+#
+# (An earlier revision created 24 individual per-file symlinks via cmd.exe
+# mklink; on Windows that is slow / can hang, and rm -rf'ing the old junction
+# risked deleting the target. Reverted to the single junction.)
+link_agents() {
+  local dest=".claude/agents"
+  _clear_dir_link "$dest"
+  link_dir "$dest" "agents"
+}
+
+# Safely remove an existing .claude/agents whether it's a Windows junction, a
+# symlink, or a real (possibly partial) directory — WITHOUT recursing into a
+# junction's target (which rm -rf would do, deleting the canonical agents/).
+_clear_dir_link() {
+  local dest="$1"
+  [[ -e "$dest" || -L "$dest" ]] || return 0
+  if [[ "$IS_WINDOWS" == "1" ]]; then
+    # cmd rmdir removes a junction without touching the target; on a real
+    # non-empty dir it fails, so fall back to rm -rf (safe: real files only).
+    cmd.exe //c rmdir "$(to_win_path "$dest")" >/dev/null 2>&1 || rm -rf "$dest"
+  elif [[ -L "$dest" ]]; then
+    rm -f "$dest"
+  else
+    rm -rf "$dest"
+  fi
 }
 
 # Idempotent file link.
@@ -137,7 +152,7 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/lint-syntax-both.py" ".claude/hooks/lint-syntax-both.py"
   copy_template "docs/harness/claude-code/hooks/autoregister-pr.sh"  ".claude/hooks/autoregister-pr.sh"
 
-  link_agents_flat
+  link_agents
 
   # Auto-link every SKILL.md package under agents/_shared/skills/. Future
   # skills get picked up with no script edit. Existing skills here today:

@@ -28,34 +28,24 @@ printf -- '---\nname: code-review\n---\nbody\n'      > agents/core/code-review.m
 printf -- '---\nname: p4-janitor\n---\nbody\n'        > agents/core/p4-janitor.md
 printf -- '---\nname: tracker-backend\n---\nbody\n'   > agents/project/tracker-backend.md
 
-# --- the flattening logic (mirror of what setup-harness.sh will do) ----------
-flatten() {
-  local dest="$1"; shift
-  local src
-  for src in "$@"; do
-    [ -d "$src" ] || continue
-    for f in "$src"/*.md; do
-      [ -e "$f" ] || continue
-      local base; base="$(basename "$f")"
-      # relative link so the .claude/agents tree is relocatable
-      ln -sf "../../$f" "$dest/$base" 2>/dev/null \
-        || cp "$f" "$dest/$base"   # fallback for filesystems w/o symlinks
-    done
-  done
-}
-flatten ".claude/agents" agents/core agents/project
+# --- the discovery mechanism (mirror of setup-harness.sh link_agents) --------
+# A SINGLE directory link .claude/agents -> agents/ (junction on Windows, here a
+# portable dir symlink). Claude Code discovers agents recursively, so the split
+# subdirs are reached as .claude/agents/{core,project}/<name>.md.
+rm -rf .claude/agents 2>/dev/null || true
+ln -s ../agents .claude/agents 2>/dev/null || { mkdir -p .claude && cp -r agents .claude/agents; }
 
-# --- assertions --------------------------------------------------------------
-expect=(code-review p4-janitor tracker-backend)
-for a in "${expect[@]}"; do
-  [ -e ".claude/agents/$a.md" ] || fail "flat discovery link missing: $a.md"
-  # the flat entry must resolve to a file whose frontmatter names that agent
-  grep -q "name: $a" ".claude/agents/$a.md" || fail "$a.md resolves to wrong target"
+# --- assertions: each agent resolves through the link at its tier path -------
+declare -A tier=( [code-review]=core [p4-janitor]=core [tracker-backend]=project )
+for a in "${!tier[@]}"; do
+  p=".claude/agents/${tier[$a]}/$a.md"
+  [ -e "$p" ] || fail "agent not discoverable through the link: $p"
+  grep -q "name: $a" "$p" || fail "$p resolves to wrong target"
 done
 
-# No extras, no collisions across subdirs.
-n="$(find .claude/agents -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
-[ "$n" = "3" ] || fail "expected 3 flat links, got $n"
+# Recursive discovery sees all agents under the link (both tiers).
+n="$(find -L .claude/agents/core .claude/agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+[ "$n" = "3" ] || fail "expected 3 agents discoverable, got $n"
 
-echo "test-agent-discovery-fixture: PASS — flat discovery from core/+project/ subdirs resolves ($n agents)."
+echo "test-agent-discovery-fixture: PASS — .claude/agents junction reaches core/+project/ agents recursively ($n)."
 echo "Passed: 1  Failed: 0"
