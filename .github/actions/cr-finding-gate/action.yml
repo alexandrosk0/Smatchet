@@ -71,9 +71,10 @@ runs:
           exit 0
         fi
 
-        # --- Fetch reviews on the current head --------------------------------
-        # Latest CR review whose commit.oid == headRefOid. CR posts
-        # "Actionable comments posted: N" as the first body line.
+        # Latest CR review whose commit.oid == headRefOid; CR posts "Actionable
+        # comments posted: N" as the first body line. Also pull the head's
+        # "CodeRabbit" StatusContext so a skipped review (no review node) can
+        # still be resolved.
         q='query($owner:String!,$repo:String!,$pr:Int!){
           repository(owner:$owner,name:$repo){
             pullRequest(number:$pr){
@@ -89,83 +90,88 @@ runs:
             }
           }
         }'
-        # ubuntu-latest runner ships jq; parse the GraphQL response with it
-        # directly (unlike merge-gates.sh, which is jq-free for the local
-        # Windows dev env). First body line of the latest on-head CR review,
-        # sorted by submittedAt; empty when CR has not reviewed this head.
-        resp=$(gh api graphql -f query="$q" \
-                 -F owner="${OWNER}" -F repo="${REPO}" -F pr="${PR}" 2>/dev/null) || {
-          post error "GraphQL query failed"
-          exit 0
+
+        # decide(): one evaluation pass. Terminal verdicts call post + exit 0.
+        # Returns 1 (non-terminal) only when CR has not yet settled on this head,
+        # so the poll loop below can retry. ubuntu-latest ships jq; parse the
+        # GraphQL response directly (merge-gates.sh is jq-free only for the local
+        # Windows dev env).
+        decide() {
+          local resp n_reviews cr_ctx first_line n
+          resp=$(gh api graphql -f query="$q" \
+                   -F owner="${OWNER}" -F repo="${REPO}" -F pr="${PR}" 2>/dev/null) || {
+            post error "GraphQL query failed"; exit 0
+          }
+
+          # Count CR reviews on the current head — distinguishes "not reviewed
+          # yet" (0) from "reviewed, empty body" (>0). Conflating them wedged on
+          # PENDING after an empty-body incremental review.
+          n_reviews=$(printf '%s' "$resp" | jq -r '
+            .data.repository.pullRequest as $pr
+            | ($pr.headRefOid // "") as $oid
+            | [ $pr.reviews.nodes[]
+                | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                         and (.commit.oid // "") == $oid) ] | length
+            ' 2>/dev/null) || n_reviews=0
+          n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
+
+          if [ "$n_reviews" -eq 0 ]; then
+            # No CR review node on this head. Disambiguate via CR's own
+            # "CodeRabbit" StatusContext on the head commit:
+            #   SUCCESS -> CR is done and skipped the review (trivial / workflow
+            #              / docs change). No review node == nothing actionable
+            #              -> PASS. Without this every CR-skipped PR wedges on
+            #              PENDING once the gate is required.
+            #   FAILURE/ERROR -> CR reported a problem -> FAIL.
+            #   else (PENDING/EXPECTED/absent) -> still working -> retry.
+            # The SUCCESS->pass shortcut is reached ONLY with no review node; a
+            # review WITH findings is caught by the n>0 branch (CR's chill
+            # profile keeps its StatusContext green even with findings, so we
+            # never lean on it to detect findings).
+            cr_ctx=$(printf '%s' "$resp" | jq -r '
+              [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+                | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state ] | (.[0] // "ABSENT")
+              ' 2>/dev/null) || cr_ctx="ABSENT"
+            cr_ctx="${cr_ctx//[^A-Z]/}"
+            case "$cr_ctx" in
+              SUCCESS)       post success "CodeRabbit completed with no review on head (skipped/clean)"; exit 0 ;;
+              FAILURE|ERROR) post failure "CodeRabbit check reported ${cr_ctx} on current head"; exit 0 ;;
+              *)             return 1 ;;   # not settled — let the poll loop retry
+            esac
+          fi
+
+          # First body line of the latest on-head CR review (may be empty).
+          first_line=$(printf '%s' "$resp" | jq -r '
+            .data.repository.pullRequest as $pr
+            | ($pr.headRefOid // "") as $oid
+            | [ $pr.reviews.nodes[]
+                | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                         and (.commit.oid // "") == $oid) ]
+            | sort_by(.submittedAt) | last
+            | if . == null then "" else ((.body // "") | split("\n")[0]) end
+            ' 2>/dev/null) || first_line=""
+          first_line="${first_line//$'\r'/}"
+
+          n=$(printf '%s' "$first_line" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
+                | grep -oE '[0-9]+' | head -1 || true)
+          if [ -z "$n" ]; then
+            post success "CodeRabbit reviewed head; no actionable-findings header"; exit 0
+          fi
+          if [ "$n" -gt 0 ]; then
+            post failure "CodeRabbit posted ${n} actionable finding(s) on current head"; exit 0
+          fi
+          post success "CodeRabbit: 0 actionable findings on current head"; exit 0
         }
 
-        # Count of CR reviews on the current head — distinguishes "CR has not
-        # reviewed this head yet" (0 -> pending) from "CR reviewed, body has no
-        # actionable header" (>0, empty first_line -> pass). Conflating the two
-        # would wedge on PENDING forever after an empty-body incremental review.
-        n_reviews=$(printf '%s' "$resp" | jq -r '
-          .data.repository.pullRequest as $pr
-          | ($pr.headRefOid // "") as $oid
-          | [ $pr.reviews.nodes[]
-              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-                       and (.commit.oid // "") == $oid) ] | length
-          ' 2>/dev/null) || n_reviews=0
-        n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
-
-        if [ "$n_reviews" -eq 0 ]; then
-          # No formal CR review node on this head. Two sub-cases, disambiguated
-          # by CodeRabbit's own "CodeRabbit" StatusContext on the head commit:
-          #   - SUCCESS  -> CR is done and chose not to leave a review (it skips
-          #                 trivial / workflow-only / docs changes). No review
-          #                 node == nothing actionable -> PASS. Without this,
-          #                 every CR-skipped PR would wedge on PENDING forever
-          #                 once this gate is required.
-          #   - FAILURE/ERROR -> CR reported a problem -> FAIL.
-          #   - anything else (PENDING/EXPECTED/absent) -> CR still working -> PENDING.
-          # Note: the SUCCESS->pass shortcut is only reached when there is NO
-          # review node; a review WITH actionable findings is caught below by
-          # the n>0 branch (CR's chill profile keeps its StatusContext green
-          # even with findings, so we never lean on it to detect findings).
-          cr_ctx=$(printf '%s' "$resp" | jq -r '
-            [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-              | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state ] | (.[0] // "ABSENT")
-            ' 2>/dev/null) || cr_ctx="ABSENT"
-          cr_ctx="${cr_ctx//[^A-Z]/}"
-          case "$cr_ctx" in
-            SUCCESS)
-              post success "CodeRabbit completed with no review on head (skipped/clean)" ;;
-            FAILURE|ERROR)
-              post failure "CodeRabbit check reported ${cr_ctx} on current head" ;;
-            *)
-              # Mirror merge-gates.sh's grace-window block: PENDING, not success.
-              post pending "awaiting CodeRabbit review on current head" ;;
-          esac
-          exit 0
-        fi
-
-        # First body line of the latest on-head CR review (may be empty).
-        first_line=$(printf '%s' "$resp" | jq -r '
-          .data.repository.pullRequest as $pr
-          | ($pr.headRefOid // "") as $oid
-          | [ $pr.reviews.nodes[]
-              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-                       and (.commit.oid // "") == $oid) ]
-          | sort_by(.submittedAt) | last
-          | if . == null then "" else ((.body // "") | split("\n")[0]) end
-          ' 2>/dev/null) || first_line=""
-        first_line="${first_line//$'\r'/}"
-
-        # --- Parse "Actionable comments posted: N" ----------------------------
-        n=$(printf '%s' "$first_line" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
-              | grep -oE '[0-9]+' | head -1 || true)
-        if [ -z "$n" ]; then
-          # CR reviewed but no actionable header (e.g. an approval / chit-chat).
-          # Treat as clean — consistent with merge-gates.sh.
-          post success "CodeRabbit reviewed head; no actionable-findings header"
-          exit 0
-        fi
-        if [ "$n" -gt 0 ]; then
-          post failure "CodeRabbit posted ${n} actionable finding(s) on current head"
-          exit 0
-        fi
-        post success "CodeRabbit: 0 actionable findings on current head"
+        # Poll loop: catches the CR-skip case where CR only flips its
+        # StatusContext (no review/comment event re-triggers this workflow).
+        # ~3 min total — long enough for a skip decision, short of a real
+        # review (those re-trigger via pull_request_review events anyway).
+        ATTEMPTS=12
+        for i in $(seq 1 "$ATTEMPTS"); do
+          decide   # exits on a terminal verdict; falls through on retry
+          if [ "$i" -lt "$ATTEMPTS" ]; then sleep 15; fi
+        done
+        # Exhausted the window without CR settling — leave PENDING; a later
+        # review event or re-run resolves it.
+        post pending "awaiting CodeRabbit review on current head"
