@@ -1,0 +1,61 @@
+name: CR finding gate
+
+# Promotes CodeRabbit's "0 actionable findings" semantics to a required
+# server-side StatusContext: `CR findings (0 actionable)`. Plan:
+# docs/design/gate-enforcement-hardening.md § Slice 3.
+#
+# CR-timing race: CodeRabbit reviews asynchronously, so the initial
+# `pull_request` run usually fires BEFORE CR has reviewed the head — the action
+# posts PENDING then (not success), mirroring merge-gates.sh's grace-window
+# block. The check flips green only once CR's review on the current head
+# exists, which is why this also triggers on `pull_request_review` and
+# `pull_request_review_comment` (the events CR emits when it submits).
+#
+# No on.paths filter — required checks must report on every PR (Pattern A,
+# docs/agent-rules/ci-required-check-pattern.md). The action itself decides
+# pending/success/failure, so it always posts a status.
+#
+# Fork-PR limitation: `pull_request` from a fork carries a read-only token, so
+# `gh api .../statuses/<sha>` cannot post. Smatchet is sole-maintainer with no
+# external PR flow today; if external PRs are ever accepted, this gate cannot
+# post for them (would need pull_request_target with head-SHA pinning).
+
+on:
+  pull_request:
+    branches: [develop]
+  pull_request_review:
+  pull_request_review_comment:
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: read
+
+concurrency:
+  # Do NOT cancel in-progress: review/comment events fire in bursts, and a
+  # cancelled run leaves a red "cancelled" check on the commit. Each run is a
+  # few seconds and only posts a status (last write wins), so let them all
+  # complete rather than cancel.
+  group: cr-finding-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cr-gate:
+    name: CR finding gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # All three trigger events carry a pull_request payload; scope to PRs
+    # targeting develop and skip anything without one.
+    if: github.event.pull_request.base.ref == 'develop'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Evaluate CR findings
+        uses: ./.github/actions/cr-finding-gate
+        with:
+          github-token: ${{ github.token }}
+          pr-number: ${{ github.event.pull_request.number }}
+          head-sha: ${{ github.event.pull_request.head.sha }}

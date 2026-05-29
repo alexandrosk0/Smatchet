@@ -732,29 +732,36 @@ std::vector<CachedTicket> AppController::LuaGetActiveTicketsBind() {
     return std::vector<CachedTicket>(snap->begin(), snap->end());
 }
 
-std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(const std::string& issueId) {
+std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(sol::state_view sv, const std::string& issueId) {
+    // Marshal against the *calling* state `sv`, not the member `lua`: the caller may be an
+    // off-UI-thread fresh state (MCP / automation worker). Touching `lua` here would re-introduce
+    // cross-thread lua_State access + a cross-state sol::object return. See
+    // docs/design/mcp-lua-fresh-state-race.md.
     CachedTicket ticket;
     if (Cache->TryGetTicket(issueId, ticket)) {
-        return {sol::make_object(lua, ticket), ""};
+        return {sol::make_object(sv, ticket), ""};
     }
-    return {sol::make_object(lua, sol::nil), "Ticket not found in local cache"};
+    return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};
 }
 
-std::tuple<sol::object, std::string> AppController::LuaDecodeJsonBind(const std::string& s) {
+std::tuple<sol::object, std::string> AppController::LuaDecodeJsonBind(sol::state_view sv, const std::string& s) {
+    // Marshal against the calling state `sv` (see LuaGetTicketBind).
     constexpr size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
     if (s.size() > kMaxDecodeBytes) {
-        return {sol::make_object(lua, sol::nil), std::string("input too large")};
+        return {sol::make_object(sv, sol::nil), std::string("input too large")};
     }
     try {
         const nlohmann::json j =
             nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/false);
-        return {JsonToLua(lua, j), std::string()};
+        return {JsonToLua(sv, j), std::string()};
     } catch (const std::exception& e) {
-        return {sol::make_object(lua, sol::nil), std::string(e.what())};
+        return {sol::make_object(sv, sol::nil), std::string(e.what())};
     }
 }
 
-std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::table spec) {
+std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::state_view sv, sol::table spec) {
+    // Marshal against the calling state `sv`, not the member `lua` (see LuaGetTicketBind):
+    // `spec` is already on `sv`, and the result table must be too.
     const TrackerConfig cfg = ConfigManager::Load();
     // Same base as the grid new-issue row: config fallbacks plus last-row project / issue type when present.
     IssueDraft draft = BuildDraftFromLastTicket(cfg);
@@ -767,11 +774,11 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
 
     LuaMergeIssueCreateSpec(draft, std::move(spec), AvailableFields);
 
-    sol::table result = lua.create_table();
+    sol::table result = sv.create_table();
 
     if (offline) {
         if (!Cache) {
-            return {sol::make_object(lua, sol::nil),
+            return {sol::make_object(sv, sol::nil),
                     std::string("Local cache not initialized (cannot queue offline create)")};
         }
         const std::int64_t qid = QueueCreateOffline(draft);
@@ -792,10 +799,10 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
     try {
         r = fut.get();
     } catch (const std::exception& e) {
-        return {sol::make_object(lua, sol::nil),
+        return {sol::make_object(sv, sol::nil),
                 std::string("create_issue failed while waiting for result: ") + e.what()};
-    } catch (...) {
-        return {sol::make_object(lua, sol::nil),
+    } catch (...) { // catch-all-ok: future::get may throw any type; surface as a clean error string
+        return {sol::make_object(sv, sol::nil),
                 std::string("create_issue failed while waiting for result: unknown exception")};
     }
 
@@ -805,7 +812,7 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
     }
     result["error"] = r.Error;
     if (!r.MissingFieldIds.empty()) {
-        sol::table miss = lua.create_table();
+        sol::table miss = sv.create_table();
         std::size_t i = 1;
         for (const auto& id : r.MissingFieldIds) {
             miss[i++] = id;
@@ -813,10 +820,10 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::tabl
         result["missing_field_ids"] = miss;
     }
     if (!r.AttachmentFailures.empty()) {
-        sol::table af = lua.create_table();
+        sol::table af = sv.create_table();
         std::size_t i = 1;
         for (const auto& p : r.AttachmentFailures) {
-            sol::table row = lua.create_table();
+            sol::table row = sv.create_table();
             row["path"] = p.first;
             row["reason"] = p.second;
             af[i++] = row;
@@ -1066,27 +1073,30 @@ void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const
     }
 }
 
+void AppController::ParseMcpToolDef(const sol::table& toolDef, McpToolDefinition& out) {
+    out.name = toolDef.get_or<std::string>("name", "");
+    out.description = toolDef.get_or<std::string>("description", "");
+
+    sol::object params = toolDef["parameters"];
+    if (params.is<sol::table>()) {
+        out.parametersSchema = LuaToJson(params);
+    } else {
+        std::string schemaStr = toolDef.get_or<std::string>("parameters_json", "{}");
+        try {
+            out.parametersSchema = nlohmann::json::parse(schemaStr);
+        } catch (...) { // catch-all-ok: parse of Lua-provided schema string; fall back to empty schema
+            LOG_DEBUG("Lua MCP tool: parameters_json parse failed; using empty schema");
+            out.parametersSchema = nlohmann::json::object();
+        }
+    }
+}
+
 void AppController::LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) {
     if (!toolDef.valid() || !callback.valid()) {
         return;
     }
     McpToolDefinition def;
-    def.name = toolDef.get_or<std::string>("name", "");
-    def.description = toolDef.get_or<std::string>("description", "");
-
-    sol::object params = toolDef["parameters"];
-    if (params.is<sol::table>()) {
-        def.parametersSchema = LuaToJson(params);
-    } else {
-        std::string schemaStr = toolDef.get_or<std::string>("parameters_json", "{}");
-        try {
-            def.parametersSchema = nlohmann::json::parse(schemaStr);
-        } catch (...) {
-            LOG_DEBUG("Lua MCP tool: parameters_json parse failed; using empty schema");
-            def.parametersSchema = nlohmann::json::object();
-        }
-    }
-
+    ParseMcpToolDef(toolDef, def);
     def.callback = sol::protected_function(std::move(callback));
 
     std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
@@ -1124,6 +1134,67 @@ void AppController::RunFlatScriptAsync(const std::string& scriptPath) {
     automationJobCv_.notify_one();
 }
 
+void AppController::PrepareFreshLuaState(sol::state& state) {
+    InitLuaCore(state);
+    // The shutdown-watchdog hook in RunAutomationJob resolves `__smatchet_app_ui`
+    // as AppController* to read `shuttingDown_`. InitLuaUi is intentionally not run
+    // on these off-UI-thread states (no ImGui surface) — UI-mutating bindings stay
+    // no-ops here (see smatchet::lua::InitLuaCore) — so set the UI alias directly.
+    state["__smatchet_app_ui"] = this;
+}
+
+void AppController::ReplayActiveSetupScripts(sol::state& state, sol::environment& sandbox) {
+    // Snapshot activeSetupScripts_ under the same mutex used by RunLuaSetupScript so the
+    // iteration below sees a stable view even if the UI thread mutates the vector mid-job.
+    std::vector<std::string> setupScriptsSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(automationJobMutex_);
+        setupScriptsSnapshot = activeSetupScripts_;
+    }
+
+    // Load and run setup scripts so global actions / mcp.register_tool definitions are
+    // present for this job.
+    //
+    // Lifecycle contract (backlog #34): callers use a *fresh* sol::state per job/call for
+    // isolation, so every top-level statement in a setup script re-fires on every job.
+    // Setup scripts MUST therefore be defining-only — declaring functions, tables, constants —
+    // and avoid side effects at module-load (no `tracker.create_issue(...)` at the top level,
+    // no `os.execute(...)` outside of a function body, etc.). Wrap any such side-effecting work
+    // in a function that the job explicitly invokes, and the re-execution becomes harmless.
+    // Caching compiled sol::function refs across jobs would not change this: bytecode bound to
+    // a destroyed state cannot be replayed, and persisting the state across jobs would lose the
+    // isolation guarantee.
+    for (const auto& path : setupScriptsSnapshot) {
+        std::string resolved = ResolveLuaScriptPath(path);
+        if (resolved.empty()) {
+            continue;
+        }
+        auto script = state.load_file(resolved);
+        if (!script.valid()) {
+            sol::error err = script;
+            const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
+            LuaLogInfoBind(std::string("[ERROR] ") + bare);
+            for (const auto& sink : errorSinks_) {
+                sink(bare);
+            }
+            scriptingWindowOpenRequested_.store(true);
+            continue;
+        }
+        sol::protected_function func = script;
+        sandbox.set_on(func);
+        sol::protected_function_result res = func();
+        if (!res.valid()) {
+            sol::error err = res;
+            const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
+            LuaLogInfoBind(std::string("[ERROR] ") + bare);
+            for (const auto& sink : errorSinks_) {
+                sink(bare);
+            }
+            scriptingWindowOpenRequested_.store(true);
+        }
+    }
+}
+
 void AppController::AutomationWorkerLoop() {
     // Per-iteration try/catch wrapping all sol2/JSON/STL paths. Without this, a single throw
     // (sol::error from a malformed script, std::bad_alloc from a runaway capture, etc.) escapes
@@ -1143,65 +1214,13 @@ void AppController::AutomationWorkerLoop() {
             automationJobs_.pop_front();
         }
 
-        // Snapshot activeSetupScripts_ under the same mutex used by RunLuaSetupScript so the
-        // iteration below sees a stable view even if the UI thread mutates the vector mid-job.
-        std::vector<std::string> setupScriptsSnapshot;
-        {
-            std::lock_guard<std::mutex> lock(automationJobMutex_);
-            setupScriptsSnapshot = activeSetupScripts_;
-        }
-
         try {
+            // Fresh per-job sol::state for isolation — see PrepareFreshLuaState /
+            // ReplayActiveSetupScripts. Same pattern the MCP run_lua / tool handlers use.
             sol::state bgState;
-            InitLuaCore(bgState);
-            // The shutdown-watchdog hook in RunAutomationJob resolves `__smatchet_app_ui`
-            // as AppController* to read `shuttingDown_`. InitLuaUi is not run on bgState
-            // (worker has no ImGui surface), so we set the UI alias here directly.
-            bgState["__smatchet_app_ui"] = this;
-
+            PrepareFreshLuaState(bgState);
             sol::environment sandbox = CreateSandboxEnvironment(bgState);
-
-            // Load and run setup scripts so global actions are defined for this job.
-            //
-            // Lifecycle contract (backlog #34): the worker uses a *fresh* sol::state per job
-            // for isolation, so every top-level statement in a setup script re-fires on every
-            // job. Setup scripts MUST therefore be defining-only — declaring functions, tables,
-            // constants — and avoid side effects at module-load (no `tracker.create_issue(...)`
-            // at the top level, no `os.execute(...)` outside of a function body, etc.). Wrap any
-            // such side-effecting work in a function that the job explicitly invokes, and the
-            // re-execution becomes harmless. Caching compiled sol::function refs across jobs
-            // would not change this: bytecode bound to a destroyed state cannot be replayed,
-            // and persisting the state across jobs would lose the isolation guarantee.
-            for (const auto& path : setupScriptsSnapshot) {
-                std::string resolved = ResolveLuaScriptPath(path);
-                if (resolved.empty()) {
-                    continue;
-                }
-                auto script = bgState.load_file(resolved);
-                if (!script.valid()) {
-                    sol::error err = script;
-                    const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
-                    LuaLogInfoBind(std::string("[ERROR] ") + bare);
-                    for (const auto& sink : errorSinks_) {
-                        sink(bare);
-                    }
-                    scriptingWindowOpenRequested_.store(true);
-                    continue;
-                }
-                sol::protected_function func = script;
-                sandbox.set_on(func);
-                sol::protected_function_result res = func();
-                if (!res.valid()) {
-                    sol::error err = res;
-                    const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
-                    LuaLogInfoBind(std::string("[ERROR] ") + bare);
-                    for (const auto& sink : errorSinks_) {
-                        sink(bare);
-                    }
-                    scriptingWindowOpenRequested_.store(true);
-                }
-            }
-
+            ReplayActiveSetupScripts(bgState, sandbox);
             RunAutomationJob(bgState, sandbox, job);
         } catch (const std::exception& ex) {
             LOG_ERROR("AppController::AutomationWorkerLoop: exception escaped job '%s': %s",

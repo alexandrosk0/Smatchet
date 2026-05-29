@@ -113,8 +113,17 @@ fi
 
 # --fix mode: rewrite each row via python — handles variable column padding
 # correctly and avoids shell-quoting-perl-backrefs landmines.
-command -v python3 >/dev/null 2>&1 || { echo "python3 required for --fix" >&2; exit 2; }
-python3 - "$INDEX" "${ACTUAL[bug]}" "${ACTUAL[process]}" "${ACTUAL[tooling]}" \
+# Pick a working interpreter. The Windows Store `python3` shim satisfies
+# `command -v` but errors at runtime ("Python was not found"), so probe each
+# candidate by actually running it before committing to it.
+PYBIN=""
+for _cand in python3 python py; do
+    if command -v "$_cand" >/dev/null 2>&1 && [ "$("$_cand" -c 'print("ok")' 2>/dev/null)" = "ok" ]; then
+        PYBIN="$_cand"; break
+    fi
+done
+[ -n "$PYBIN" ] || { echo "python required for --fix (tried python3/python/py; Windows Store shim does not count)" >&2; exit 2; }
+"$PYBIN" - "$INDEX" "${ACTUAL[bug]}" "${ACTUAL[process]}" "${ACTUAL[tooling]}" \
     "${ACTUAL[infra]}" "${ACTUAL[test]}" "${ACTUAL[security]}" \
     "${ACTUAL[external]}" "$ACTUAL_APPLIED" <<'PY'
 import re, sys

@@ -1,0 +1,63 @@
+name: Pillar 2 scanner
+
+# Pillar 2 (UI-thread never blocks > 100 ms): runs scripts/dev/pillar2-scan.sh
+# over the PR's changed first-party C++ and fails on any new CRITICAL sync-I/O.
+# Promotes the agent-side scanner to a GitHub-required check (plan:
+# docs/design/gate-enforcement-hardening.md § Slice 1).
+#
+# Required-check "always reports" — Pattern A in docs/agent-rules/ci-required-
+# check-pattern.md: NO on.paths filter; the single job diffs changed files
+# itself and exits 0 when none are first-party C++. So the "Pillar 2 scanner"
+# context reports on EVERY PR (docs-only included) — no path-filter deadlock.
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pillar2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pillar2:
+    name: Pillar 2 scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Scan changed first-party C++ for UI-thread sync I/O
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Base = develop for PRs; for develop pushes, diff against the prior commit.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            base="origin/${{ github.base_ref }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          # Array (not a space-joined string) so paths with spaces survive as
+          # distinct args to pillar2-scan.sh.
+          mapfile -t files < <(git diff --name-only "$base"...HEAD 2>/dev/null \
+                  | grep -E '\.(cpp|h|hpp)$' \
+                  | grep -E '^(Source_Core/|Plugins/)' \
+                  | grep -v '/ThirdParty/' || true)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "Pillar 2 scanner: no first-party C++ changed — pass."
+            exit 0
+          fi
+          echo "Pillar 2 scanner: checking changed files:"
+          printf '  %s\n' "${files[@]}"
+          # pillar2-scan.sh exits 1 on any CRITICAL (new unannotated UI-thread
+          # sync I/O); WARN-tracked backlog sites do not fail it.
+          bash scripts/dev/pillar2-scan.sh "${files[@]}"

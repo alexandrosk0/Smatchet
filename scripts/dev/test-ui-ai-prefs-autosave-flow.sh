@@ -24,7 +24,7 @@ fi
 
 echo "[test-ui-ai-prefs-autosave-flow] launching ephemeral Smatchet (port $TEST_PORT)..."
 RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
-    --port="$TEST_PORT" 2>&1 || true)"
+    --mcp-port="$TEST_PORT" 2>&1 || true)"
 
 echo "$RAW_OUTPUT" | tail -40
 
