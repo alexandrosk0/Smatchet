@@ -5,10 +5,17 @@
 # in-app toast endpoint is unavailable (Smatchet closed, or Phase 4b not
 # shipped yet).
 #
-# Requires the BurntToast module. Install on first run:
-#   Install-Module BurntToast -Scope CurrentUser
+# Requires the BurntToast module. One-shot opt-in install + self-test:
+#   powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-notify-setup.ps1
 #
 # Exits 0 on toast dispatched; 1 if BurntToast missing or toast call failed.
+#
+# ASCII-only on purpose: Windows PowerShell 5.1 reads this no-BOM file as ANSI
+# and mis-decodes non-ASCII bytes. A literal em-dash or astral emoji in code or
+# a string breaks the parser (observed: an em-dash in the title string + astral
+# [char] casts silently killed every toast). Emoji are emitted at runtime via
+# [char]::ConvertFromUtf32 (handles code points above U+FFFF), never as literal
+# glyphs or [char] casts (which overflow on astral code points).
 # ----------------------------------------------------------------------------
 
 param(
@@ -20,40 +27,43 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# BurntToast presence check — no auto-install (user opt-in only).
+# BurntToast presence check -- no auto-install (user opt-in only). The one-shot
+# opt-in installer is scripts/dev/merge-watcher-notify-setup.ps1.
 $module = Get-Module -ListAvailable -Name BurntToast
 if (-not $module) {
-    Write-Error "BurntToast module not installed. Install with: Install-Module BurntToast -Scope CurrentUser"
+    Write-Error "BurntToast module not installed. Run the one-shot setup: powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-notify-setup.ps1  (or: Install-Module BurntToast -Scope CurrentUser)"
     exit 1
 }
 
 Import-Module BurntToast -ErrorAction Stop
 
-# Per-state emoji + AppId hint so notifications group sensibly in Action Center.
-$stateEmoji = @{
-    "CI_FAIL"                  = [char]0x274C  # ❌
-    "CONFLICT"                 = [char]0x26A0  # ⚠
-    "USER_COMMENT"             = [char]0x1F4AC # 💬
-    "TIMEOUT_NO_CR"            = [char]0x23F0  # ⏰
-    "TRIAGE_BUDGET_EXHAUSTED"  = [char]0x1F6D1 # 🛑
+# Per-state emoji code point. ConvertFromUtf32 (not [char]) so astral points
+# (U+1F4AC etc.) become a valid surrogate-pair string instead of overflowing.
+$stateCodePoint = @{
+    "CI_FAIL"                  = 0x274C   # cross mark
+    "CONFLICT"                 = 0x26A0   # warning sign
+    "USER_COMMENT"             = 0x1F4AC  # speech balloon
+    "TIMEOUT_NO_CR"            = 0x23F0   # alarm clock
+    "TRIAGE_BUDGET_EXHAUSTED"  = 0x1F6D1  # stop sign
 }[$State]
-if (-not $stateEmoji) { $stateEmoji = [char]0x1F514 }  # 🔔 default
+if (-not $stateCodePoint) { $stateCodePoint = 0x1F514 }  # bell (default)
+$stateEmoji = [System.Char]::ConvertFromUtf32($stateCodePoint)
 
-$title = "$stateEmoji  Smatchet watcher: PR #$PR — $State"
+$title = "$stateEmoji  Smatchet watcher: PR #$PR - $State"
 $body = $Message
 if ([string]::IsNullOrEmpty($body)) { $body = "(no message)" }
 
-$args = @{
+$toastArgs = @{
     Text = @($title, $body)
     AppLogo = $null
     UniqueIdentifier = "smatchet-merge-watcher-pr-$PR"
 }
 if (-not [string]::IsNullOrEmpty($PrUrl)) {
-    $args.Button = New-BTButton -Content "Open PR" -Arguments $PrUrl
+    $toastArgs.Button = New-BTButton -Content "Open PR" -Arguments $PrUrl
 }
 
 try {
-    New-BurntToastNotification @args
+    New-BurntToastNotification @toastArgs
     exit 0
 } catch {
     Write-Error "BurntToast notification failed: $_"
