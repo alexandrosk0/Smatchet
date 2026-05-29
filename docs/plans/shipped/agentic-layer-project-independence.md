@@ -94,7 +94,7 @@ A `scripts/dev/project-config.sh` loader exports these as shell vars (e.g. `PC_P
 ## Phased plan (each phase = its own PR(s); docs/scripts PRs pass via the merged Pattern C gate)
 
 - **Phase A — compatibility layer + config seam + classification (no moves).** Pure additive, lowest risk, de-risks every later phase:
-  - The canonical plan doc is already tracked at `docs/plans/active/agentic-layer-project-independence.md` (PR #532) — satisfies the "plan first" rule; lifecycle-rule edits are deferred to Phase F (after `docs/plans/` exists).
+  - The canonical plan doc is already tracked at `docs/plans/shipped/agentic-layer-project-independence.md` (PR #532) — satisfies the "plan first" rule; lifecycle-rule edits are deferred to Phase F (after `docs/plans/` exists).
   - Add `project.config.json` + `project.config.schema.json` + `scripts/dev/project-config.sh` loader (capture today's values).
   - Add `docs/PORTABILITY.md`: per-file portable/project classification + coupling inventory + extraction checklist. **Inventory the external path contracts** in `.github/`, `.gitattributes`, scripts, hooks, harness docs (the rewrite targets for later phases).
   - Add the plan-index generator `scripts/dev/test-plan-index.sh` pointed at the *current* paths; `--fix` the ~33-plan drift in place.
