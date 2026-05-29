@@ -1264,3 +1264,68 @@ print('persisted:', reg.get('cr_none_grace_polls'))
     [[ "$output" == *"reset (CR left NONE-grace-wait state)"* ]]
     [[ "$output" == *"persisted: 0"* ]]
 }
+
+# ---------- Reconcile-on-poll auto-unregister (PR_CLOSED_OR_MERGED short-circuit) ----------
+#
+# These monkeypatch mw._pr_lifecycle_state (the gh I/O seam) rather than
+# stubbing a `gh` binary on PATH: native-Windows Python's shutil.which skips
+# extensionless PATH stubs (it requires a PATHEXT extension), so the absolute
+# GH_BIN the daemon resolves at import would run the REAL gh and the stub would
+# be silently ignored. Patching the helper keeps the test deterministic and
+# offline on every platform.
+
+@test "poll_one short-circuits a MERGED PR to PR_CLOSED_OR_MERGED (reconcile precheck)" {
+    # A merged PR must leave the registry. Before this precheck, poll_one's
+    # ensure_pr_ready_for_review() flip failed on a merged PR (you cannot
+    # `gh pr ready` a merged PR) -> READY_FLIP_FAILED every cycle, never the
+    # exit-4 PR_CLOSED_OR_MERGED branch that auto-unregisters. Assert the
+    # short-circuit (state + rc 4) fires when the lifecycle helper reports MERGED.
+    run python -c "
+import os, sys, importlib.util
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); sys.modules['mw']=mw; spec.loader.exec_module(mw)
+mw._pr_lifecycle_state = lambda pr, clone_path: 'MERGED'
+state = mw.poll_one({'pr': 528, 'clone_path': r'$REPO_ROOT'})
+print('last_state:', state.get('last_state'))
+print('rc:', state.get('gates_return_code'))
+print('line:', state.get('last_status_line'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"last_state: PR_CLOSED_OR_MERGED"* ]]
+    [[ "$output" == *"rc: 4"* ]]
+    [[ "$output" == *"MERGED"* ]]
+}
+
+@test "poll_one short-circuits a CLOSED PR to PR_CLOSED_OR_MERGED (reconcile precheck)" {
+    run python -c "
+import os, sys, importlib.util
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); sys.modules['mw']=mw; spec.loader.exec_module(mw)
+mw._pr_lifecycle_state = lambda pr, clone_path: 'CLOSED'
+state = mw.poll_one({'pr': 777, 'clone_path': r'$REPO_ROOT'})
+print('last_state:', state.get('last_state'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"last_state: PR_CLOSED_OR_MERGED"* ]]
+}
+
+@test "poll_one does NOT short-circuit an OPEN PR (reconcile precheck passes through)" {
+    # An OPEN PR must proceed to the normal poll path, not be reconciled away.
+    # Force the downstream gh repo-view to FileNotFoundError (bogus GH_BIN) so
+    # the open path returns a GH_* state fast/offline — enough to prove the
+    # reconcile short-circuit did NOT fire.
+    run python -c "
+import os, sys, importlib.util
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); sys.modules['mw']=mw; spec.loader.exec_module(mw)
+mw._pr_lifecycle_state = lambda pr, clone_path: 'OPEN'
+mw.GH_BIN = 'smatchet-no-such-gh-binary-xyz'
+state = mw.poll_one({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+print('last_state:', state.get('last_state'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR_CLOSED_OR_MERGED"* ]]
+}
