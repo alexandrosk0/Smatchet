@@ -1,7 +1,7 @@
 # scripts/dev/merge-watcher-install-autostart.ps1
 # ----------------------------------------------------------------------------
 # Register a Windows Scheduled Task that starts `merge-watcher.py daemon` at
-# user login. Phase 4c of `docs/design/archive/smatchet-merge-watcher.md`.
+# user login. Phase 4c of `docs/plans/shipped/smatchet-merge-watcher.md`.
 #
 # Idempotent -- re-running unregisters + re-registers, so updates to the
 # arguments (e.g. switching poll interval) take effect on next run.
@@ -142,7 +142,7 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -RunLevel Limited `
-    -Description "Smatchet merge-watcher daemon -- polls registered PRs + auto-merges per docs/design/archive/smatchet-merge-watcher.md" | Out-Null
+    -Description "Smatchet merge-watcher daemon -- polls registered PRs + auto-merges per docs/plans/shipped/smatchet-merge-watcher.md" | Out-Null
 
 Write-Host ""
 Write-Host "[OK] Scheduled Task '$TaskName' registered." -ForegroundColor Green
