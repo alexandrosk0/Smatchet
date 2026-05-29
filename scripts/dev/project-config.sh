@@ -28,10 +28,26 @@ if [ -z "$_pc_python" ]; then
   return 1 2>/dev/null || exit 1
 fi
 
+PC_SCHEMA_FILE="${PC_SCHEMA_FILE:-$_pc_root/project.config.schema.json}"
+
 # Emit `KEY=value` lines (arrays space-joined). eval them into the caller.
-_pc_exports="$("$_pc_python" - "$PC_CONFIG_FILE" <<'PY'
+# Fail-fast (exit 2) on a malformed config or a missing required top-level key
+# rather than degrading into silent PC_*="" — a no-deps gate against the
+# schema's `required` list (full JSON-Schema validation runs in CI).
+_pc_exports="$("$_pc_python" - "$PC_CONFIG_FILE" "$PC_SCHEMA_FILE" <<'PY'
 import json, shlex, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
+
+# No-deps required-key gate (the full schema validation is a CI step).
+try:
+    schema = json.load(open(sys.argv[2], encoding="utf-8"))
+    missing = [k for k in schema.get("required", []) if k not in c]
+    if missing:
+        print("project-config.sh: %s missing required key(s): %s"
+              % (sys.argv[1], ", ".join(missing)), file=sys.stderr)
+        sys.exit(2)
+except FileNotFoundError:
+    pass  # schema optional at load time; CI enforces it
 
 def emit(key, val):
     if isinstance(val, list):

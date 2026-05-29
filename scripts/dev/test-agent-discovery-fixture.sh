@@ -54,7 +54,7 @@ for a in "${expect[@]}"; do
 done
 
 # No extras, no collisions across subdirs.
-n="$(ls .claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')"
+n="$(find .claude/agents -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
 [ "$n" = "3" ] || fail "expected 3 flat links, got $n"
 
 echo "test-agent-discovery-fixture: PASS — flat discovery from core/+project/ subdirs resolves ($n agents)."
