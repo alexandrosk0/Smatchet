@@ -59,11 +59,11 @@ without movement.
 |---|---|---|
 | bug         | 14  | [agent-self-improvement/bug.md](agent-self-improvement/bug.md) |
 | process     | 25  | [agent-self-improvement/process.md](agent-self-improvement/process.md) |
-| tooling     | 34  | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
+| tooling     | 33  | [agent-self-improvement/tooling.md](agent-self-improvement/tooling.md) |
 | infra       | 14  | [agent-self-improvement/infra.md](agent-self-improvement/infra.md) |
 | test        | 18  | [agent-self-improvement/test.md](agent-self-improvement/test.md) |
 | security    | 13  | [agent-self-improvement/security.md](agent-self-improvement/security.md) |
 | external    | 1   | [agent-self-improvement/external-blockers.md](agent-self-improvement/external-blockers.md) |
-| applied (archive) | 138 | [agent-self-improvement/applied.md](agent-self-improvement/applied.md) |
+| applied (archive) | 142 | [agent-self-improvement/applied.md](agent-self-improvement/applied.md) |
 
 > **Count maintenance**: each "Live count" is the number of `^- 20YY-MM-DD` entries in the linked file (`grep -c '^- 20' agent-self-improvement/<file>.md`). The applied-archive count is the same `grep -c '^- 20' agent-self-improvement/applied.md`. `scripts/dev/test-backlog-counts.sh` runs at the pre-push gate (`test-all.sh` discovery) and refuses if any row diverges from the actual file. Update the row in the same commit that adds / archives / removes an entry, or run `bash scripts/dev/test-backlog-counts.sh --fix` to rewrite the table from current file counts.
