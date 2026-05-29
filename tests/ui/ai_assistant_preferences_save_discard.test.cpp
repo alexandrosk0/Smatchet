@@ -8,9 +8,9 @@
 // save-discard semantics: arming dirty → debounce drain (effective "Save")
 // vs reset-before-drain (effective "Discard").
 //
-// Drift warning — IF YOU CHANGE Source_Core/include/SmatchetUiSession.h:601-614
+// Drift warning — IF YOU CHANGE Source/Core/include/SmatchetUiSession.h:601-614
 // (prefsDirty + prefsSaveDueAt + MarkPrefsDirty inline helper), OR
-// Source_Core/src/SmatchetUI.cpp:768-776 (debounce-and-save drain at end of
+// Source/Core/src/SmatchetUI.cpp:768-776 (debounce-and-save drain at end of
 // frame), UPDATE THIS REPLICA to match.
 
 #if defined(SMATCHET_BUILD_UI_TESTS) && defined(SMATCHET_WITH_AI)

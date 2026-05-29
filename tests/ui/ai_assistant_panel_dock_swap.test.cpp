@@ -1,7 +1,7 @@
 // ai_assistant_panel_dock_swap.test.cpp — bucket-E coverage for the Assistant
 // panel's dock-side swap toggle and auto-reveal of the secondary side bar.
 //
-// Drift warning — IF YOU CHANGE Source_Core/src/SmatchetAiAssistantUi.cpp
+// Drift warning — IF YOU CHANGE Source/Core/src/SmatchetAiAssistantUi.cpp
 // (specifically the swap-button block at SmatchetDrawAiAssistantPanel lines
 // 351-372, where SmallButton("<- Left" / "Right ->") flips
 // AssistantPanelOnSecondarySide + assistantPendingSideSwap + auto-reveals

@@ -93,7 +93,7 @@ function Get-SmatchetPluginManifestPath {
         [string]$Root
     )
 
-    return (Join-Path $Root "UnrealPlugins\SmatchetImGuiPlugin\SmatchetImGuiPlugin.uplugin")
+    return (Join-Path $Root "Source/UnrealPlugins\SmatchetImGuiPlugin\SmatchetImGuiPlugin.uplugin")
 }
 
 function Get-SmatchetPluginManifest {

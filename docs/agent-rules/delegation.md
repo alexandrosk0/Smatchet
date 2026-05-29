@@ -27,7 +27,7 @@ Each packet should include:
 - **Post-split include-replication rule**: after creating the shared internal header for a split, scan the original `.cpp`'s include list and replicate every non-self include into the internal header. Includes that were only in the original `.cpp` are silent until build — eliminate them up-front.
 - **Plan-time production-file existence check**: before finalising any test-coverage plan (or any plan whose write set names specific production `.h` / `.cpp` files), the orchestrator runs a one-liner Glob / skeleton scan to confirm every named production file actually exists at the stated path. Five seconds of pre-flight catches plan / tree drift (renamed file, file moved during a refactor, name aliased an older path) that otherwise costs the delegated agent ~10 min of cross-walk per phase before deferral entries can be written confidently.
 - **Subagent progress markers reminder** (per § Subagent progress markers): every delegation packet must include the literal sentence: *"Emit one-line progress markers to `.progress.log` via `bash scripts/dev/agent-progress.sh "<phase>: <text>"` at each major step (start, lock, design, code, test, gate, commit, push, pr, end) so `tail-agent.sh` shows live progress."*
-- **Pure-helper TU-split recipe**: when a delegation targets a unit whose pure helpers sit in an anonymous namespace inside a `.cpp` whose top-of-file pulls banned deps (cpr / httplib / SQLite / ImGui / GLFW / Unreal headers), pre-authorise the production-side split in the packet. Allowed write set includes `Source_Core/{include,src}/<Unit>Pure.{h,cpp}` (or `<Unit>Parse.{h,cpp}` for parsers — Phase 1 `IssueCreatePipelineHelpers` + `P4BlameParse` shape). Recipe — extract pure helpers to the new TU under namespace `smatchet::<unit>::pure`; rewire call sites in the original `.cpp` via `using` decls inside the anon namespace; the new TU must have zero banned-header includes (verify with grep guard). Without this pre-authorisation, the agent's auto-mode classifier denies the split. Instances applied: `IssueCreatePipelineHelpers`, `P4BlameParse`, `McpJsonRpcPure`, `ILuaBindingHost` + `AppController_LuaBindingsCore`. Live instances awaiting the same lift: `IsTrackerTransportErrorText`, the 4 Phase-1-deferred tracker units (Labels / DateTime / Payload / Catalog) — see `docs/self-improvement/categories/infra.md`.
+- **Pure-helper TU-split recipe**: when a delegation targets a unit whose pure helpers sit in an anonymous namespace inside a `.cpp` whose top-of-file pulls banned deps (cpr / httplib / SQLite / ImGui / GLFW / Unreal headers), pre-authorise the production-side split in the packet. Allowed write set includes `Source/Core/{include,src}/<Unit>Pure.{h,cpp}` (or `<Unit>Parse.{h,cpp}` for parsers — Phase 1 `IssueCreatePipelineHelpers` + `P4BlameParse` shape). Recipe — extract pure helpers to the new TU under namespace `smatchet::<unit>::pure`; rewire call sites in the original `.cpp` via `using` decls inside the anon namespace; the new TU must have zero banned-header includes (verify with grep guard). Without this pre-authorisation, the agent's auto-mode classifier denies the split. Instances applied: `IssueCreatePipelineHelpers`, `P4BlameParse`, `McpJsonRpcPure`, `ILuaBindingHost` + `AppController_LuaBindingsCore`. Live instances awaiting the same lift: `IsTrackerTransportErrorText`, the 4 Phase-1-deferred tracker units (Labels / DateTime / Payload / Catalog) — see `docs/self-improvement/categories/infra.md`.
 
 ### File-level table re-verify (before sealing)
 
@@ -185,7 +185,7 @@ When the user prompt matches the `debug-detective` trigger row above ("fix bug",
 
 0. **Concreteness check (threshold gate)** — classify the incoming bug description against three required dimensions: **(a)** breaking surface (component / scenario / file / panel / command), **(b)** observable failure (assertion / log line / sanitizer report / screenshot diff / perf delta / golden mismatch / user symptom with file:line), **(c)** input shape (CLI args / scenario name / fixture path / Lua snippet / failing-doctest / registered bucket-E action). If any of (a)/(b)/(c) is missing, emit **one** structured `AskUserQuestion` naming the missing dimension(s). **This is the only user-input point in the reproducer-first contract loop.** Fully-specified CI-detected or CR-routed bugs skip directly to phase 0.5.
 
-0.5. **Existing-scenario reuse search** — before considering scenario-add, search `Source_Core/src/Commands/Scenarios/` for a scenario whose **bug-class** (injection point + render path) covers the failure. **Parametrize** an existing scenario (CLI arg / fixture variant / new `OnTick` sub-case) rather than fork a near-duplicate. **Forking allowed only** when the render path is genuinely orthogonal. If no scenario matches, fall through to phase 1 — Reproduce will require scenario-add per the hard refusal in `agents/core/debug-detective.md` § Reproduce.
+0.5. **Existing-scenario reuse search** — before considering scenario-add, search `Source/Core/src/Commands/Scenarios/` for a scenario whose **bug-class** (injection point + render path) covers the failure. **Parametrize** an existing scenario (CLI arg / fixture variant / new `OnTick` sub-case) rather than fork a near-duplicate. **Forking allowed only** when the render path is genuinely orthogonal. If no scenario matches, fall through to phase 1 — Reproduce will require scenario-add per the hard refusal in `agents/core/debug-detective.md` § Reproduce.
 
 1. **Clarify** — orchestrator (or `debug-detective`) batches every uncertainty into one `AskUserQuestion` before the first mutating tool call. Front-loaded; no drip-feed mid-loop.
 2. **Hypothesise** — write 2-4 falsifiable hypotheses ranked by distinguishing-evidence cost.
@@ -228,7 +228,7 @@ Production-resident, header-only helper (shipped by slice 7 of [`docs/plans/ship
 
 **Empty-file semantic:** an empty NDJSON file after a scenario run = **instrumentation didn't fire** (the scenario never reached any scope wrapped with `SMATCHET_AGENT_DEBUG_LOG`). Treat as an actionable signal, not a pass — phase 0.5 (existing-scenario reuse) must find a different scenario, or phase 1 (Reproduce) must add a new scope at the actual code path.
 
-**Off-build behaviour:** OFF in iter/publish (macro expands to `((void)0)`); ON in `ninja-debug-msvc`, `ninja-msvc-asan`, `ninja-ui-test-msvc`. `LOG_AGENT_DEBUG(category, msg)` in `Source_Core/include/Logger.h` is always-callable — bridges to NDJSON when ON, routes to `LOG_DEBUG` when OFF (single resolution per the plan's debug-off contract).
+**Off-build behaviour:** OFF in iter/publish (macro expands to `((void)0)`); ON in `ninja-debug-msvc`, `ninja-msvc-asan`, `ninja-ui-test-msvc`. `LOG_AGENT_DEBUG(category, msg)` in `Source/Core/include/Logger.h` is always-callable — bridges to NDJSON when ON, routes to `LOG_DEBUG` when OFF (single resolution per the plan's debug-off contract).
 
 ## API-500 mid-run recovery
 
@@ -242,7 +242,7 @@ When a delegated agent errors API-500 mid-run, the worktree state is usually com
    Confirm the expected files are modified / created.
 
 2. **Run local gates** (the agent didn't get to):
-   - `cmake --build --preset ninja-iter-msvc` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target if any `Source_Core/` change).
+   - `cmake --build --preset ninja-iter-msvc` (and `--target SmatchetStandalone SmatchetCore_DX12` for dual-target if any `Source/Core/` change).
    - `bash scripts/dev/test-all.sh` if the diff touches anything outside `agents/core/git-janitor.md` § FF-clean docs-batch exception § Pure-docs sub-exception's allow-list.
 
 3. **Stage everything** — this is the gotcha. The agent may have created new files that aren't staged. Use `git add -A`, not `git add <list>`:
@@ -282,7 +282,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 
 | Agent | Complexity · access | Use when |
 |---|---|---|
-| `architect` | high · read-only | Change spans `Source_Core` + `Plugins` (+ `UnrealPlugins`), or alters `ITrackerClient`, the command registry contract, per-backend view storage, or MCP schemas. Hand off **before** writing code — returns a design doc; the orchestrator implements. |
+| `architect` | high · read-only | Change spans `Source/Core` + `Plugins` (+ `Source/UnrealPlugins`), or alters `ITrackerClient`, the command registry contract, per-backend view storage, or MCP schemas. Hand off **before** writing code — returns a design doc; the orchestrator implements. |
 | `build-doctor` | high · read-edit | CMake / Ninja / MSVC / Clang / lld / LTO / `SmatchetPackageUnrealLibs_DX12` failures. Pass the preset name and the failing output verbatim. |
 | `perf-detective` | high · read-only | Steady-state perf — optimize / profile / FPS / sustained lag. Owns hypothesis + diagnose + validate over frame averages. Delegates to `perf-instrument` and `perf-measure`. Wraps `docs/guides/perf-workflow.md`. |
 | `spike-hunter` | high · read-only | Intermittent UI-thread stalls — spike / hitch / freeze / stutter / "occasionally slow". Looks at p99 / max outliers + blocking calls reaching the UI thread (HTTP, SQLite, p4, file I/O, locks). Delegates to `perf-instrument` and `perf-measure`. |
@@ -303,23 +303,23 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 | `tracker-backend` | low · read-edit | `ITrackerClient`, `JiraClient`, `PlaneClient`, field catalog / value parser / payload, `TrackerHttpClient`, `IssueCreatePipeline`. Adding fields, fixing parsing, JQL / Plane queries, HTTP retries, audit-trail wiring. |
 | `grid-engine` | low · read-edit | Spreadsheet / ticket grid — `TicketGridModel`, `SpreadsheetState`, `SmatchetActiveProjectGridUi`, all `SmatchetGrid*`, `SmatchetViewsDashboardUi*`, `SmatchetFieldRender`, `TrackerGridFieldDisplay`. Columns, cell editors, sorting, drag-reorder, header UX, in-place edit flow. |
 | `offline-sync` | low · read-edit | SQLite cache, offline-queue replay, audit trail — `LocalCacheManager`, `OfflineQueueService`, `SmatchetOfflineQueueUi`, `TicketSyncService`, `BackendAuditTrail`, `FieldEditAuditSource`. Schema additions, replay, dead-letter, conflict resolution. |
-| `command-system` | low · read-edit | Adding / modifying commands in the unified registry (CLI + Palette + MCP + Lua + Scenarios). Touches `Source_Core/{include,src}/Commands/`. |
-| `lua-binder` | low · read-edit | sol2 bindings — `AppController_LuaBindings.cpp` ↔ `AppController_LuaStubs.cpp` sync, sandbox / timeout protection, `LuaAutomationHost`, `Plugins/LuaConsole`, hot-path cost trade-offs. |
-| `mcp-toolsmith` | low · read-edit | `Plugins/Mcp/` + `SmatchetMcpServerUi` — MCP wire protocol, tool schemas (JSON-RPC), server lifecycle, REST envelope shape. |
+| `command-system` | low · read-edit | Adding / modifying commands in the unified registry (CLI + Palette + MCP + Lua + Scenarios). Touches `Source/Core/{include,src}/Commands/`. |
+| `lua-binder` | low · read-edit | sol2 bindings — `AppController_LuaBindings.cpp` ↔ `AppController_LuaStubs.cpp` sync, sandbox / timeout protection, `LuaAutomationHost`, `Source/Plugins/LuaConsole`, hot-path cost trade-offs. |
+| `mcp-toolsmith` | low · read-edit | `Source/Plugins/Mcp/` + `SmatchetMcpServerUi` — MCP wire protocol, tool schemas (JSON-RPC), server lifecycle, REST envelope shape. |
 | `p4-blame` | low · read-edit | Perforce blame — `P4Blame`, `P4ErrorUtil`, `BlameAnalysisUi`, `CppSyntaxHighlight`, `CallstackParser`. `p4 annotate` / `p4 describe`, blame caching, stack-frame symbolication via `PathRemaps`, Jira-comment export. |
-| `unreal-bridge` | low · read-edit | Dual-target divergence — `SmatchetCore_DX12`, `UnrealPlugins/SmatchetImGuiPlugin`, `SMATCHET_EMBEDDED_IN_UNREAL`, header pollution in `Source_Core/`, packaging output. |
-| `test-rig` | low · read-edit | Pure-logic doctest rig under `tests/` — `tests/CMakeLists.txt`, `tests/Source_Core/<Unit>.test.cpp`, `SMATCHET_BUILD_TESTS`, `ninja-test-msvc` preset. Adding tests for pure C++14 helpers (JQL surgery, value parsers, queue-replay decision math), expanding coverage, fixing wrong assertions. **Refuses** UI / HTTP / SQLite / ImGui / cpr surfaces — those route to bucket-E or stay deferred. |
+| `unreal-bridge` | low · read-edit | Dual-target divergence — `SmatchetCore_DX12`, `Source/UnrealPlugins/SmatchetImGuiPlugin`, `SMATCHET_EMBEDDED_IN_UNREAL`, header pollution in `Source/Core/`, packaging output. |
+| `test-rig` | low · read-edit | Pure-logic doctest rig under `tests/` — `tests/CMakeLists.txt`, `tests/Core/<Unit>.test.cpp`, `SMATCHET_BUILD_TESTS`, `ninja-test-msvc` preset. Adding tests for pure C++14 helpers (JQL surgery, value parsers, queue-replay decision math), expanding coverage, fixing wrong assertions. **Refuses** UI / HTTP / SQLite / ImGui / cpr surfaces — those route to bucket-E or stay deferred. |
 
 ## Stay in the orchestrator for
 
 - Routine command registration (follow `RegisterCommand({...})` pattern; delegate to `command-system` only for non-trivial cases)
-- Routine ImGui panels in `Source_Core`
+- Routine ImGui panels in `Source/Core`
 - View-column additions
 - Field-catalog tweaks
 - `Locales/*.json` strings
 - Perforce blame UI tweaks
 - Additive SQLite schema changes
-- Adding a single `CHECK` to an already-tested `tests/Source_Core/<Unit>.test.cpp` (delegate to `test-rig` only when scoping a NEW unit's test surface)
+- Adding a single `CHECK` to an already-tested `tests/Core/<Unit>.test.cpp` (delegate to `test-rig` only when scoping a NEW unit's test surface)
 
 ## Heuristic
 
@@ -339,7 +339,7 @@ Optional. Agents that **directly call** another agent (helper-driven workflows l
 
 ## Why split
 
-Each delegated agent gets a fresh context window — `tracker-backend` work doesn't load CMake helpers, `build-doctor` doesn't load `Source_Core/` headers, `perf-detective` doesn't load MCP schemas. That context isolation is the real token win, bigger than per-model price differences.
+Each delegated agent gets a fresh context window — `tracker-backend` work doesn't load CMake helpers, `build-doctor` doesn't load `Source/Core/` headers, `perf-detective` doesn't load MCP schemas. That context isolation is the real token win, bigger than per-model price differences.
 
 ## Complexity rationale
 

@@ -2,7 +2,7 @@
 // deterministic AI streaming surface without spawning real HTTP traffic.
 //
 // Wired into production code via `AiClientFactory::SetTestOverride` (see
-// `Source_Core/include/AiClientFactory.h`). A test sets the override to a
+// `Source/Core/include/AiClientFactory.h`). A test sets the override to a
 // thunk that returns a fresh `StubAiClient` per call, runs the code under
 // test, then clears the override with `SetTestOverride(nullptr)`.
 //

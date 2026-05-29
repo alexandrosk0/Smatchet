@@ -1,7 +1,7 @@
 # Archived: AiAssistantStreaming401Scenario
 
 **Archived:** 2026-05-26  
-**Original file:** `Source_Core/src/Commands/Scenarios/AiAssistantStreaming401Scenario.cpp`  
+**Original file:** `Source/Core/src/Commands/Scenarios/AiAssistantStreaming401Scenario.cpp`  
 **Registry key:** `ai-assistant-streaming-401`
 
 ## What the scenario did
@@ -21,7 +21,7 @@ missing-bug-path scenario.
 
 1. No PR citation in the curated perf set (`scripts/dev/perf-run.sh` scenario list).
 2. No references in any test file beyond the mechanical stub in
-   `tests/Source_Core/SmatchetScenarioRegistry.stubs.cpp` (which existed only
+   `tests/Core/SmatchetScenarioRegistry.stubs.cpp` (which existed only
    to satisfy the linker, not to exercise the scenario logic).
 3. Not referenced from any current backlog item or plan-doc that would trigger
    regression runs.

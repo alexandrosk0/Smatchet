@@ -2,9 +2,9 @@
 // for the AI Assistant Preferences tab's validation banner: errors block
 // (red), warnings pass through (yellow), valid config shows no banner.
 //
-// Drift warning — IF YOU CHANGE Source_Core/include/AiPrefsValidator.h:62
-// `ValidateAiPrefs(const TrackerConfig&)`, Source_Core/src/AiPrefsValidator.cpp
-// (the issue-emission body), OR Source_Core/src/SmatchetPreferencesUi.cpp:567
+// Drift warning — IF YOU CHANGE Source/Core/include/AiPrefsValidator.h:62
+// `ValidateAiPrefs(const TrackerConfig&)`, Source/Core/src/AiPrefsValidator.cpp
+// (the issue-emission body), OR Source/Core/src/SmatchetPreferencesUi.cpp:567
 // where the banner is drawn from PrefsValidation.Errors / Warnings,
 // UPDATE THIS TEST to match. The test drives the **real** ValidateAiPrefs()
 // against synthetic TrackerConfig snapshots and asserts on the structured

@@ -55,9 +55,9 @@ Read-only security reviewer for Smatchet. Adversarial mindset — assume the att
 
 **External input enters via:**
 
-- **MCP server** (`Plugins/Mcp/McpPlugin.cpp`, `SmatchetMcpServerUi`) — HTTP-exposed when running; JSON-RPC tool args attacker-controlled. Tool schemas must validate; missing fields default to `{}`; errors return structured envelopes.
-- **CLI** (`Target_Standalone/CliCommandRunner.cpp`) — JSON args from shell / pipes / `--spawn` scenarios. Defense-in-depth landed recently (`feat(cli): defense-in-depth against bad input — never crash`); verify new commands preserve it.
-- **Lua** (`scripts/*.lua`, console via `Plugins/LuaConsole`) — user code in a sandbox with `lua_sethook` instruction-count timeout. New bindings must respect that.
+- **MCP server** (`Source/Plugins/Mcp/McpPlugin.cpp`, `SmatchetMcpServerUi`) — HTTP-exposed when running; JSON-RPC tool args attacker-controlled. Tool schemas must validate; missing fields default to `{}`; errors return structured envelopes.
+- **CLI** (`Source/Standalone/CliCommandRunner.cpp`) — JSON args from shell / pipes / `--spawn` scenarios. Defense-in-depth landed recently (`feat(cli): defense-in-depth against bad input — never crash`); verify new commands preserve it.
+- **Lua** (`scripts/*.lua`, console via `Source/Plugins/LuaConsole`) — user code in a sandbox with `lua_sethook` instruction-count timeout. New bindings must respect that.
 - **Tracker HTTP** (`JiraClient`, `PlaneClient`, `TrackerHttpClient`) — server may be hostile (compromised proxy, malicious Plane instance). Parse defensively.
 - **P4 CLI** (`P4Blame`) — depot server may craft data; the CLI itself is invoked with user-config workspace.
 - **Local config / cache** (`ConfigManager`, `LocalCacheManager`, attachment dirs) — files under user control; attacker-with-FS-access scenario.

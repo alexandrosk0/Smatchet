@@ -35,7 +35,7 @@ if ([string]::IsNullOrWhiteSpace($PluginRoot)) {
     if (Test-Path -LiteralPath $packagedPlugin -PathType Container) {
         $PluginRoot = $packagedPlugin
     } else {
-        $PluginRoot = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "UnrealPlugins\SmatchetImGuiPlugin"
+        $PluginRoot = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "Source/UnrealPlugins\SmatchetImGuiPlugin"
     }
 }
 

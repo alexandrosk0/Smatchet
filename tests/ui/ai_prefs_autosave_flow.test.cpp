@@ -3,11 +3,11 @@
 // async Test-connection verify probe.
 //
 // Drift warning — IF YOU CHANGE
-//   - Source_Core/include/SmatchetUiSession.h:546-568 (prefsDirty +
+//   - Source/Core/include/SmatchetUiSession.h:546-568 (prefsDirty +
 //     prefsSaveDueAt + MarkPrefsDirty inline helper), OR
-//   - Source_Core/src/SmatchetUI.cpp:768-776 (debounce-and-save drain at
+//   - Source/Core/src/SmatchetUI.cpp:768-776 (debounce-and-save drain at
 //     end of frame), OR
-//   - Source_Core/src/SmatchetPreferencesUi.cpp:198-205 (cancel-on-close
+//   - Source/Core/src/SmatchetPreferencesUi.cpp:198-205 (cancel-on-close
 //     short-circuit) or :520-680 (runProbe async path),
 // UPDATE THIS REPLICA / HOST-COUPLED CHECKS to match.
 //

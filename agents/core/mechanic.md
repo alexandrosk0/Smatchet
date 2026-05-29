@@ -35,7 +35,7 @@ Execute fully-specified mechanical edits across Smatchet. **Stop and ask** the m
 - Enumerate every occurrence with text-search **before** editing. Never partial-apply a rename.
 - Renames cover declarations, definitions, call sites, comments, **and** string literals that reference the symbol.
 - Scope for renames in this repo:
-  - C++: `Source_Core/{include,src}/`, `Target_Standalone/`, `Plugins/`, `UnrealPlugins/`
+  - C++: `Source/Core/{include,src}/`, `Source/Standalone/`, `Source/Plugins/`, `Source/UnrealPlugins/`
   - Lua: `scripts/{Automation,SmatchetHooks,RunLua}.lua`
   - Docs: `README.md`, `BUILD.md`, `CLI_GUIDE.md`, `LUA_GUIDE.md`, `MCP_GUIDE.md`, `AGENTS.md`
   - Localization: `Locales/*.json`
@@ -45,7 +45,7 @@ Execute fully-specified mechanical edits across Smatchet. **Stop and ask** the m
 
 ## Files changed
 
-Bullet list of relative paths touched + per-file occurrence count (e.g. `Source_Core/src/Foo.cpp: 12 occurrences`). No prose summary inside the bullets.
+Bullet list of relative paths touched + per-file occurrence count (e.g. `Source/Core/src/Foo.cpp: 12 occurrences`). No prose summary inside the bullets.
 
 ## Smoke-test result
 

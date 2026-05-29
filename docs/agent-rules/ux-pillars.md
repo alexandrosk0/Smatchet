@@ -30,14 +30,14 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 - `code-review` flags any new synchronous call to `cpr`, `SQLite::Database`, `p4 …`, `std::ifstream`-on-disk, or `std::mutex::lock` from a function reachable from `ImGui::*`-frame as Critical.
 - `spike-hunter` enforces UI-thread p99 < 100 ms on the standard scenario; cue-less hitches above that line block merge.
 
-**Worker-thread hand-off**: post results back to the UI thread via `MainThreadDispatcher` (`Source_Core/include/MainThreadDispatcher.h`); never touch ImGui state directly from a worker.
+**Worker-thread hand-off**: post results back to the UI thread via `MainThreadDispatcher` (`Source/Core/include/MainThreadDispatcher.h`); never touch ImGui state directly from a worker.
 
 ## 3. Never crash
 
 **Pillar 3**: Smatchet must terminate cleanly under all observed inputs. Crashes in dev block the next merge until fixed; crashes in shipped builds are P0 regressions.
 
 **Enforceable invariants:**
-- **Pre-merge sanitizer build** mandatory on any PR that touches `Source_Core/` C++: `cmake --build --preset ninja-test-msvc` runs the doctest rig under ASan / UBSan (when toolchain supports it). `debug-detective` runs the sanitizer build for every crash-suspect investigation.
+- **Pre-merge sanitizer build** mandatory on any PR that touches `Source/Core/` C++: `cmake --build --preset ninja-test-msvc` runs the doctest rig under ASan / UBSan (when toolchain supports it). `debug-detective` runs the sanitizer build for every crash-suspect investigation.
 - **RAII enforced**: no raw `new` / `delete` outside the documented edge cases (sol2 user data, ImGui callback shims). Use `std::unique_ptr` + `make_unique`. `code-review` flags raw heap ops.
 - **Bounds-checked**: every container index goes through `at()` / explicit length check; `cppcheck` `boundsError` / `arrayIndexOutOfBounds` blocks merge.
 - **No silent UB**: dereferenced `nullptr`, unsigned wrap-around, signed overflow, use-after-free — all blocking. UBSan output during the regression gate is a fail.

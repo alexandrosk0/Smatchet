@@ -10,7 +10,7 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 - **Full Issue Management**: Search, view, create, and edit issues. Supports offline drafting, custom fields, inline field editing, bulk import/export, and per-backend "new issue inherit" field configuration.
 - **Perforce Annotate**: Native P4 integration for fast file annotation directly within the UI, complete with syntax highlighting.
 - **Fast Local Caching**: Uses SQLite to cache field catalogs, user metadata, and recent issues locally for near-instant load times and offline capabilities.
-- **Engine-Agnostic UI**: Built on Dear ImGui. The core library (`Source_Core`) contains no direct graphics API dependencies.
+- **Engine-Agnostic UI**: Built on Dear ImGui. The core library (`Source/Core`) contains no direct graphics API dependencies.
 - **UI Localization**: Switch the app-owned Dear ImGui UI between built-in English and French, with optional local JSON overrides for teams that want custom wording.
 - **Dual Deployment**:
   - **Standalone App**: A native desktop application leveraging GLFW and OpenGL3.
@@ -128,14 +128,14 @@ Smatchet exposes several CMake options to customize the build:
 
 ### Unreal Engine Plugin
 
-When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX12`) that automatically packages the DX12-compatible core library, ImGui, and public headers into the `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` layout for immediate consumption by the Unreal Build Tool.
+When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX12`) that automatically packages the DX12-compatible core library, ImGui, and public headers into the `Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` layout for immediate consumption by the Unreal Build Tool.
 
 ## Architecture
 
-* **`Source_Core/`**: The heart of the application. Contains the backend-agnostic tracker interface (`ITrackerClient`), concrete backends (`JiraClient`, `PlaneClient`), Perforce tools, local cache managers, and all ImGui UI definitions.
-* **`Target_Standalone/`**: The main entry point, window management, and GLFW/OpenGL bootstrapping for the standalone application.
-* **`Plugins/`**: Optional plugin modules (Lua Console, MCP server).
-* **`UnrealPlugins/`**: Contains the Unreal Engine plugin scaffolding and DX12 render backend.
+* **`Source/Core/`**: The heart of the application. Contains the backend-agnostic tracker interface (`ITrackerClient`), concrete backends (`JiraClient`, `PlaneClient`), Perforce tools, local cache managers, and all ImGui UI definitions.
+* **`Source/Standalone/`**: The main entry point, window management, and GLFW/OpenGL bootstrapping for the standalone application.
+* **`Source/Plugins/`**: Optional plugin modules (Lua Console, MCP server).
+* **`Source/UnrealPlugins/`**: Contains the Unreal Engine plugin scaffolding and DX12 render backend.
 * **`ThirdParty/`**: Holds custom fixes or scripts for external dependencies.
 * **`scripts/`**: Runtime Lua/art assets plus tooling subfolders. `scripts/` root contains the shipped Lua runtime files (`Automation.lua`, `SmatchetHooks.lua`, `RunLua.lua`) and bundled art copied next to the standalone exe as `Scripts/`. Use `scripts/dev/` for local build/dev helpers and `scripts/publish/` for release, signing, installer, and smoke-test tooling.
 * **`cmake/`**: Additional CMake helper modules.

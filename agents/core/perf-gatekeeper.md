@@ -25,7 +25,7 @@ Scenario-aware PR-time perf gatekeeper. Slice 4 of `docs/plans/shipped/pillar-1-
 
 ## When to invoke
 
-- A PR touches `Source_Core/` / `Plugins/` / `Target_Standalone/` and the orchestrator (or user) wants a targeted perf check before merge.
+- A PR touches `Source/Core/` / `Source/Plugins/` / `Source/Standalone/` and the orchestrator (or user) wants a targeted perf check before merge.
 - An agent (`perf-detective`, `spike-hunter`) wants to verify a fix landed without regressing adjacent scenarios.
 - A scheduled PR-fast workflow (`.github/workflows/perf-pr-fast.yml`) returned a regression and the human wants a focused re-run.
 
@@ -52,17 +52,17 @@ Scenario-aware PR-time perf gatekeeper. Slice 4 of `docs/plans/shipped/pillar-1-
 
 | Touched-file pattern | Affected scenario(s) |
 |---|---|
-| `Source_Core/src/SmatchetActiveProjectGridUi.cpp` / `SmatchetGrid*.cpp` / `TicketGridModel.cpp` | `priority-grid-scroll`, `cell-edit-burst` |
-| `Source_Core/src/SmatchetCommandPaletteUi.cpp` / `Commands/CommandRegistry.cpp` / `FuzzyMatch.cpp` | `idle` (the `command-palette-fuzzy` scenario is bucket-C-only — requires `--screenshotPath`; tracked under tooling.md "8 of 15 candidate perf scenarios don't emit rows[]") |
-| `Source_Core/src/SmatchetAiAssistantUi.cpp` / `AiAssistantController.cpp` / `SmatchetChatPersistWorker.cpp` / `AiChatTextEditorRender.cpp` / `MarkdownPreviewRender.cpp` | `ai-chat-history-render`, `idle` |
-| `Source_Core/src/SmatchetTheme.cpp` / `SmatchetThemedTextEditorPalette.cpp` | `idle` (the `theme-switch-roundtrip` scenario is bucket-C-only — same gap as above) |
-| `Source_Core/src/SmatchetAttachmentPreviewUi.cpp` | `attachment-preview-open` |
-| `Source_Core/src/TicketFieldEditor.cpp` / `MarkdownPreviewRender.cpp` (long-text path) | `long-text-open-large-adf` |
-| `Source_Core/src/SmatchetPreferencesUi.cpp` (slider drag paths) | `preferences-slider-drag` |
-| `Source_Core/src/Commands/Scenarios/AgentTriageScenarioStep.cpp` / `Source_Core/src/Agent*.cpp` | `agent-triage-roundtrip` |
-| `Source_Core/src/Commands/Scenarios/AgentHandoffScenarioStep.cpp` / `agentic-coding-handoff/*` | `agent-handoff-roundtrip` |
-| `Source_Core/src/MainThreadDispatcher.h` / per-frame infrastructure | `idle` (universally reachable) |
-| `Source_Core/include/Commands/Scenarios/*.h` / `BuiltinCommands.cpp` (new scenarios) | the new scenario itself + `idle` |
+| `Source/Core/src/SmatchetActiveProjectGridUi.cpp` / `SmatchetGrid*.cpp` / `TicketGridModel.cpp` | `priority-grid-scroll`, `cell-edit-burst` |
+| `Source/Core/src/SmatchetCommandPaletteUi.cpp` / `Commands/CommandRegistry.cpp` / `FuzzyMatch.cpp` | `idle` (the `command-palette-fuzzy` scenario is bucket-C-only — requires `--screenshotPath`; tracked under tooling.md "8 of 15 candidate perf scenarios don't emit rows[]") |
+| `Source/Core/src/SmatchetAiAssistantUi.cpp` / `AiAssistantController.cpp` / `SmatchetChatPersistWorker.cpp` / `AiChatTextEditorRender.cpp` / `MarkdownPreviewRender.cpp` | `ai-chat-history-render`, `idle` |
+| `Source/Core/src/SmatchetTheme.cpp` / `SmatchetThemedTextEditorPalette.cpp` | `idle` (the `theme-switch-roundtrip` scenario is bucket-C-only — same gap as above) |
+| `Source/Core/src/SmatchetAttachmentPreviewUi.cpp` | `attachment-preview-open` |
+| `Source/Core/src/TicketFieldEditor.cpp` / `MarkdownPreviewRender.cpp` (long-text path) | `long-text-open-large-adf` |
+| `Source/Core/src/SmatchetPreferencesUi.cpp` (slider drag paths) | `preferences-slider-drag` |
+| `Source/Core/src/Commands/Scenarios/AgentTriageScenarioStep.cpp` / `Source/Core/src/Agent*.cpp` | `agent-triage-roundtrip` |
+| `Source/Core/src/Commands/Scenarios/AgentHandoffScenarioStep.cpp` / `agentic-coding-handoff/*` | `agent-handoff-roundtrip` |
+| `Source/Core/src/MainThreadDispatcher.h` / per-frame infrastructure | `idle` (universally reachable) |
+| `Source/Core/include/Commands/Scenarios/*.h` / `BuiltinCommands.cpp` (new scenarios) | the new scenario itself + `idle` |
 
 **Bucket-C-only scenarios** (`command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel`): registered as scenarios but fail to start without `--screenshotPath`, so `perf-baseline.sh` cannot capture a `dev`-host baseline for them. They're routed to `idle` in the map above. When the scenarios are retrofitted to support optional `--screenshotPath` + emit `rows[]`, swap the map back to the specific scenario name. Tracking: `docs/self-improvement/categories/tooling.md` "8 of 15 candidate perf scenarios don't emit rows[]".
 

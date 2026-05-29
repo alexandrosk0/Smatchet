@@ -99,8 +99,8 @@ INVARIANT_REJECTS: list[tuple[re.Pattern[str], str]] = [
         "raw new/delete banned (use std::unique_ptr + make_unique per AGENTS.md § Quality)",
     ),
     (
-        re.compile(r"GLFW.*Source_Core/(?:include|src)/.*\.h", re.IGNORECASE),
-        "GLFW headers banned in Source_Core/ (DX12 compiles them too — AGENTS.md § Don't)",
+        re.compile(r"GLFW.*Source/Core/(?:include|src)/.*\.h", re.IGNORECASE),
+        "GLFW headers banned in Source/Core/ (DX12 compiles them too — AGENTS.md § Don't)",
     ),
     (
         re.compile(

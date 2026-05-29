@@ -109,7 +109,7 @@ Same env vars as the git-ref backend (`AGENT_ID`, `LOCK_BRANCH`, `LOCK_PLAN`, `L
 For the rare case where two agents are racing to edit the same file. Open the file with the `+l` filetype modifier:
 
 ```bash
-p4 edit -t +l Source_Core/src/SmatchetApp.cpp
+p4 edit -t +l Source/Core/src/SmatchetApp.cpp
 ```
 
 Effects:
@@ -213,7 +213,7 @@ export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
 1. **`p4 iterate` on `//smatchet/main`** — `p4 edit` / `p4 add` / `p4 reconcile` into a pending CL. Keep the final review candidate **pending**; do not submit yet.
 2. **Smoke build** (`cmake --build --preset ninja-iter-msvc --target SmatchetStandalone`) — confirm compilable BEFORE shelf. Failure → fix → re-build, no shelf yet. Pass → continue.
 3. **Shelf for review** (`p4 shelve -c <pending-CL>`) — present shelf to user via `AskUserQuestion`. Rejected → iterate → re-shelve with `p4 shelve -f -c <pending-CL>`. Approved → continue.
-4. **Full tests** — `doctor.sh`, `ninja-test-msvc` + `ctest`, dual-target sentinels, `lint-flush.sh`, coverage-delta (Source_Core touch), doc-anchors / agent-contract (AGENTS.md / agents/** touch), `test-all.sh`, `ninja-ui-test-msvc` (visual touch), `perf-run.sh` + `perf-compare.py` (scenario-map hit). Failure → fix → re-test (no re-review). Pass → continue.
+4. **Full tests** — `doctor.sh`, `ninja-test-msvc` + `ctest`, dual-target sentinels, `lint-flush.sh`, coverage-delta (Source/Core touch), doc-anchors / agent-contract (AGENTS.md / agents/** touch), `test-all.sh`, `ninja-ui-test-msvc` (visual touch), `perf-run.sh` + `perf-compare.py` (scenario-map hit). Failure → fix → re-test (no re-review). Pass → continue.
 5. **Promote to PR** — `p4 submit -c <approved-CL>` lands on `//smatchet/main`. Then `git add -A && git commit -m "<title>" && git push -u origin <branch> && gh pr create --draft`. Post-ship `AskUserQuestion` fires with option 3 pre-selected.
 
 ### Phase sequence — multi-slice loop (task stream, user-approved)

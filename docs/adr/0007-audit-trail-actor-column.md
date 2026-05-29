@@ -8,7 +8,7 @@ Original status: Accepted (2026-05-21) — revoked same day.
 
 # Context
 
-`BackendAuditTrail::AppendBegin` / `AppendResult` writes one JSON-Lines row per backend mutation into `smatchet_backend_audit.jsonl` (async via `BackendAuditTrail::AuditWriter` at `Source_Core/src/BackendAuditTrail.cpp:152, 286-368`). **There is no SQLite audit table** — `AgentProposalStore` owns the SQLite schema for `agent_proposals` + `agent_poll_cursor` but does NOT carry an `agent_audit_trail` table. The pre-refactor row carries three discriminators:
+`BackendAuditTrail::AppendBegin` / `AppendResult` writes one JSON-Lines row per backend mutation into `smatchet_backend_audit.jsonl` (async via `BackendAuditTrail::AuditWriter` at `Source/Core/src/BackendAuditTrail.cpp:152, 286-368`). **There is no SQLite audit table** — `AgentProposalStore` owns the SQLite schema for `agent_proposals` + `agent_poll_cursor` but does NOT carry an `agent_audit_trail` table. The pre-refactor row carries three discriminators:
 
 - `source` — the backend client that made the call (`"github_client"`, `"jira_client"`, `"plane_client"`).
 - `action` — the verb (`"CommentAdd"`, `"LabelAdd"`, `"issue_transition"`, `"issue_update_fields"`).
@@ -25,7 +25,7 @@ Two options to recover it:
 
 # Decision
 
-**(b)**. Add `actor` field. JSONL row shape gains an `actor` key on every new line; reader tolerates legacy lines (pre-refactor file lines without the key) and treats absent key as `"user"`. `BackendAuditTrail::AppendBegin` / `AppendResult` / `AppendEvent` signatures gain a defaulted `actor` parameter (default `"user"` — safe for grid + UI surfaces that don't pass it). `AuditEvent` struct (`Source_Core/include/BackendAuditTrail.h`) gains `std::string Actor = "user";` member; struct-builder call sites that omit the field default-init it.
+**(b)**. Add `actor` field. JSONL row shape gains an `actor` key on every new line; reader tolerates legacy lines (pre-refactor file lines without the key) and treats absent key as `"user"`. `BackendAuditTrail::AppendBegin` / `AppendResult` / `AppendEvent` signatures gain a defaulted `actor` parameter (default `"user"` — safe for grid + UI surfaces that don't pass it). `AuditEvent` struct (`Source/Core/include/BackendAuditTrail.h`) gains `std::string Actor = "user";` member; struct-builder call sites that omit the field default-init it.
 
 Triage-flow + ci-react + coderabbit-react + lua + mcp call sites explicitly pass their actor; user-facing UI surfaces accept the default. `AppController` handoff AuditSink lambda (line 1873-1882) must explicitly stamp `ev.Actor` from the controller's dispatch_source context before invoking the sink — without this, every handoff-triggered backend write logs `actor="user"`.
 

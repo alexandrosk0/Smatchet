@@ -50,7 +50,7 @@ jobs:
           # distinct args to pillar2-scan.sh.
           mapfile -t files < <(git diff --name-only "$base"...HEAD 2>/dev/null \
                   | grep -E '\.(cpp|h|hpp)$' \
-                  | grep -E '^(Source_Core/|Plugins/)' \
+                  | grep -E '^(Source/Core/|Source/Plugins/)' \
                   | grep -v '/ThirdParty/' || true)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "Pillar 2 scanner: no first-party C++ changed — pass."

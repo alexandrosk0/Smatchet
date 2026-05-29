@@ -65,7 +65,7 @@ before flipping to blocking. Backlog entry filed for
 
 ## Adding a new scenario
 
-1. New `Source_Core/{include,src}/Commands/Scenarios/<Name>Scenario.{h,cpp}`
+1. New `Source/Core/{include,src}/Commands/Scenarios/<Name>Scenario.{h,cpp}`
    following the `DockGapSentinelScenario` template.
 2. `extern std::unique_ptr<smatchet::cmd::IScenario> Make<Name>Scenario();`
    factory registration in `AppController.cpp::Initialize`.

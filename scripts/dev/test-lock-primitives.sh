@@ -74,8 +74,8 @@ pass() { echo "  pass: $1"; PASS=$((PASS+1)); }
 write_set_for() {
     local out="$1"
     cat >"$out" <<EOF
-Source_Core/include/Example.h
-Source_Core/src/Example.cpp
+Source/Core/include/Example.h
+Source/Core/src/Example.cpp
 EOF
 }
 
@@ -132,9 +132,9 @@ fi
 echo "case 4 — update from holder succeeds"
 WS_A2="$SANDBOX/ws-a2.txt"
 cat >"$WS_A2" <<EOF
-Source_Core/include/Example.h
-Source_Core/src/Example.cpp
-Source_Core/include/ExampleNew.h
+Source/Core/include/Example.h
+Source/Core/src/Example.cpp
+Source/Core/include/ExampleNew.h
 EOF
 if run_in "$CLONE_A" \
     env AGENT_ID=agent-a LOCK_BRANCH=feat/example LOCK_NOTES="scope grew" \
@@ -172,7 +172,7 @@ stale_sha=$(git -C "$CLONE_B" rev-parse "refs/locks/example-slice")
 # clone-a moves the ref forward with a third update.
 WS_A3="$SANDBOX/ws-a3.txt"
 cat >"$WS_A3" <<EOF
-Source_Core/include/Example.h
+Source/Core/include/Example.h
 EOF
 run_in "$CLONE_A" \
     env AGENT_ID=agent-a \

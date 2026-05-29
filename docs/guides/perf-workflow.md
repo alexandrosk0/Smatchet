@@ -13,7 +13,7 @@ The first FPS-regression PR on this codebase missed the dominant cost twice in a
 
 ### 1. Instrument
 
-Wrap suspected hot paths in `SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source_Core/include/UiPerfMonitor.h`.
+Wrap suspected hot paths in `SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source/Core/include/UiPerfMonitor.h`.
 
 - **Always prefix new markers with `perf_temp:`** so cleanup is mechanical (one Grep call) and the prefix is unique enough to never collide with production scope names.
 - Cover the whole hypothesis tree: the call site, every candidate sub-call, and the surrounding render-plan branch — but read the overhead note below before going deep inside per-cell loops.
@@ -109,7 +109,7 @@ build/ninja-iter-msvc/Smatchet.exe cmd perf.snapshot \
 
 **How to add a scenario:**
 
-1. Create `Source_Core/src/Commands/Scenarios/<Name>Scenario.cpp` implementing `IScenario`:
+1. Create `Source/Core/src/Commands/Scenarios/<Name>Scenario.cpp` implementing `IScenario`:
 
 ```cpp
 #include "Commands/Scenarios/IScenario.h"
@@ -149,7 +149,7 @@ private:
 };
 ```
 
-2. Register one line in `Source_Core/src/Commands/BuiltinCommands.cpp` in the scenario registration block:
+2. Register one line in `Source/Core/src/Commands/BuiltinCommands.cpp` in the scenario registration block:
 
 ```cpp
 app.Scenarios().RegisterFactory("my-slow-path",
@@ -219,10 +219,10 @@ jq -s '
 
 ```
 Grep(pattern: 'SMATCHET_UI_PERF_SCOPE\("perf_temp:',
-     path: 'Source_Core', output_mode: 'files_with_matches')
+     path: 'Source/Core', output_mode: 'files_with_matches')
 ```
 
-Repeat for `Plugins/` and `Target_Standalone/`. All three must return zero matches before the PR commit.
+Repeat for `Source/Plugins/` and `Source/Standalone/`. All three must return zero matches before the PR commit.
 
 3. Reset the monitor so stale rows don't appear in the next session:
 ```bash
@@ -235,7 +235,7 @@ build/ninja-iter-msvc/Smatchet.exe cmd perf.reset
 
 ### 7. Gate-check vs baseline
 
-After cleanup, gate the change against the checked-in baseline registry. This is the merge-blocking step for feature PRs touching `Source_Core/`. See `docs/plans/shipped/pillar-1-2-perf-review-system.md` § C1 + § Slice 1 for the full design.
+After cleanup, gate the change against the checked-in baseline registry. This is the merge-blocking step for feature PRs touching `Source/Core/`. See `docs/plans/shipped/pillar-1-2-perf-review-system.md` § C1 + § Slice 1 for the full design.
 
 ```bash
 # Run a fresh snapshot through the canonical driver (harness-agnostic).
@@ -319,9 +319,9 @@ The CLI talks to a running Smatchet instance via MCP HTTP. Discovery order: `SMA
 | `scenario.run` | `name` (req), `frames?`, `outPath?` | `{running:true, outPath}` — use `--spawn` for fully-automated; CLI waits for file and prints result |
 | `scenario.cancel` | — | `{wasCancelled:bool}` |
 
-**Adding a scenario:** create `Source_Core/src/Commands/Scenarios/<Name>Scenario.cpp` implementing `IScenario` + one `RegisterFactory` line in `BuiltinCommands.cpp`. No other files needed.
+**Adding a scenario:** create `Source/Core/src/Commands/Scenarios/<Name>Scenario.cpp` implementing `IScenario` + one `RegisterFactory` line in `BuiltinCommands.cpp`. No other files needed.
 
 **Instrument macros:**
-- `SMATCHET_UI_PERF_SCOPE(name)` — `Source_Core/include/UiPerfMonitor.h`
-- `UiPerfMonitor::Instance().GetLastFrameRows()` — `Source_Core/src/UiPerfMonitor.cpp`
+- `SMATCHET_UI_PERF_SCOPE(name)` — `Source/Core/include/UiPerfMonitor.h`
+- `UiPerfMonitor::Instance().GetLastFrameRows()` — `Source/Core/src/UiPerfMonitor.cpp`
 - UI panel: `Inspect > Performance Monitor...`

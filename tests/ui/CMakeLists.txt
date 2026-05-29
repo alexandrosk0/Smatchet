@@ -47,7 +47,7 @@ endif()
 
 # Link the test source list into both Standalone (live runner) and the DX12
 # stub (compile tripwire — DX12 has no ui_test.run path but compiling the
-# tests there ensures no Source_Core leakage into the ImGui engine include
+# tests there ensures no Source/Core leakage into the ImGui engine include
 # cascade).
 target_sources(SmatchetStandalone PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
 target_link_libraries(SmatchetStandalone PRIVATE SmatchetImGuiTestEngine)

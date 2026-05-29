@@ -2,7 +2,7 @@
 #define SMATCHET_TESTS_FAKE_P4_RUNNER_H
 
 // FakeP4Runner — scripted, in-process replacement for the `p4` CLI used by
-// `Source_Core/src/P4Blame.cpp:P4RunCommand`. Slice 3 of
+// `Source/Core/src/P4Blame.cpp:P4RunCommand`. Slice 3 of
 // docs/plans/shipped/autonomous-debugging-no-creds.md.
 //
 // Loads canned responses from a JSON fixture under tests/fixtures/p4/ keyed by an

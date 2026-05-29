@@ -13,14 +13,14 @@
 - [ ] `bash scripts/dev/test-all.sh` (sidecar suite)
 - [ ] Manual residue: <!-- "none" if every check is automated -->
 
-## Coverage gate override (optional — read if your PR touches `Source_Core/src/*.cpp` without adding tests)
+## Coverage gate override (optional — read if your PR touches `Source/Core/src/*.cpp` without adding tests)
 
-The `coverage-gate.yml` workflow blocks PRs that change `Source_Core/src/*.cpp` without a matching test delta. Apply the **`tests-out-of-band`** label to dismiss the gate when one of these applies:
+The `coverage-gate.yml` workflow blocks PRs that change `Source/Core/src/*.cpp` without a matching test delta. Apply the **`tests-out-of-band`** label to dismiss the gate when one of these applies:
 
-- Docs-only edits inside `Source_Core/include/*.h` (inline comments, doc-strings, license headers)
+- Docs-only edits inside `Source/Core/include/*.h` (inline comments, doc-strings, license headers)
 - Include-shape fixes for dual-target compatibility (no runtime behaviour change)
 - Sanitizer / warning / static-analysis flag flips
-- Build-system PRs that touch `Source_Core/` only transitively (e.g. CMake source-property changes)
+- Build-system PRs that touch `Source/Core/` only transitively (e.g. CMake source-property changes)
 - Mechanical refactors that produce a behaviour-preserving rename / move (already covered by existing tests)
 
 If your PR is a behavioural change, **add tests instead of applying the label** — the gate exists so that behavioural drift gets the assertion coverage it needs.

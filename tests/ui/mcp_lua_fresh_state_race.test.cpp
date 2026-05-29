@@ -39,8 +39,8 @@
 //   work) — the sanitizer is the primary oracle.
 //
 // Drift warning — IF YOU CHANGE the fresh-state contract in
-//   Source_Core/src/AppController_LuaBindings_Draw.cpp (ExecuteLuaSnippetForMcp /
-//   ExecuteLuaMcpTool) or Source_Core/src/AppController_LuaBindings.cpp
+//   Source/Core/src/AppController_LuaBindings_Draw.cpp (ExecuteLuaSnippetForMcp /
+//   ExecuteLuaMcpTool) or Source/Core/src/AppController_LuaBindings.cpp
 //   (PrepareFreshLuaState / ReplayActiveSetupScripts), re-confirm this test still
 //   drives both the worker fresh-state path AND the UI-thread main-`lua` path.
 
@@ -59,7 +59,7 @@
 #include <thread>
 
 // SmatchetActiveUiTestAppController — defined in
-// Source_Core/src/Commands/Scenarios/UiTestScenario.cpp; returns the live
+// Source/Core/src/Commands/Scenarios/UiTestScenario.cpp; returns the live
 // AppController driving the bucket-E run.
 AppController* SmatchetActiveUiTestAppController();
 

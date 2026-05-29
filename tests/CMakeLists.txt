@@ -6,208 +6,208 @@ FetchContent_Declare(doctest
     GIT_TAG v2.4.11)
 FetchContent_MakeAvailable(doctest)
 
-# Per-unit linkage: each test target lists the specific Source_Core/*.cpp files
+# Per-unit linkage: each test target lists the specific Core/*.cpp files
 # it exercises. No production target links test code. Refactor to a SmatchetCore
 # static lib only if per-test link lists grow unwieldy.
 add_executable(SmatchetTests
     test_main.cpp
-    Source_Core/MainThreadDispatcherDrain.test.cpp
-    Source_Core/JqlProjectScope.test.cpp
-    Source_Core/TextMerge.test.cpp
-    Source_Core/JsonParseUtil.test.cpp
-    Source_Core/TrackerFieldValueParser.test.cpp
-    Source_Core/TrackerFieldValueParser.extended.test.cpp
-    Source_Core/TrackerFieldValueUtils.test.cpp
-    Source_Core/OfflineQueueReplayPolicy.test.cpp
-    Source_Core/SmatchetThemeSyntaxColors.test.cpp
+    Core/MainThreadDispatcherDrain.test.cpp
+    Core/JqlProjectScope.test.cpp
+    Core/TextMerge.test.cpp
+    Core/JsonParseUtil.test.cpp
+    Core/TrackerFieldValueParser.test.cpp
+    Core/TrackerFieldValueParser.extended.test.cpp
+    Core/TrackerFieldValueUtils.test.cpp
+    Core/OfflineQueueReplayPolicy.test.cpp
+    Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
-    Source_Core/SmatchetThemeAiColors.test.cpp
+    Core/SmatchetThemeAiColors.test.cpp
     # Regression guard for the inverted Norton Commander palette (blue-dominant, NC 2.01 menu).
-    Source_Core/SmatchetThemeNortonPalette.test.cpp
-    Source_Core/MarkdownPreviewLangTag.test.cpp
-    Source_Core/MarkdownConvertAdf.test.cpp
-    Source_Core/IssueDraft.test.cpp
-    Source_Core/IssueCreatePipeline.test.cpp
-    Source_Core/CallstackParser.test.cpp
-    Source_Core/LocalCacheManager.test.cpp
+    Core/SmatchetThemeNortonPalette.test.cpp
+    Core/MarkdownPreviewLangTag.test.cpp
+    Core/MarkdownConvertAdf.test.cpp
+    Core/IssueDraft.test.cpp
+    Core/IssueCreatePipeline.test.cpp
+    Core/CallstackParser.test.cpp
+    Core/LocalCacheManager.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).
-    Source_Core/LocalCacheManagerChat.test.cpp
-    Source_Core/BackendAuditTrail.test.cpp
-    Source_Core/IssueCreatePipelineIntegration.test.cpp
-    Source_Core/P4BlameParse.test.cpp
+    Core/LocalCacheManagerChat.test.cpp
+    Core/BackendAuditTrail.test.cpp
+    Core/IssueCreatePipelineIntegration.test.cpp
+    Core/P4BlameParse.test.cpp
     # Slice 3 of autonomous-debugging-no-creds — runner-seam fake exercises
     # P4Blame.cpp's P4RunCommand path via BlameAnalysisConfig::P4RunOverride,
     # without spawning the real `p4` binary. FakeP4Runner.h lives in
     # tests/support/ (already on the include path).
-    Source_Core/P4BlameAnnotateE2E.test.cpp
-    Source_Core/P4DescribeCacheE2E.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/P4Blame.cpp"
-    Source_Core/TrackerLabelsPure.test.cpp
-    Source_Core/TrackerDateTimePure.test.cpp
-    Source_Core/TicketFieldEditorLongTextPure.test.cpp
-    Source_Core/IsDescriptionLikeFieldId.test.cpp
-    Source_Core/TrackerFieldPayloadPure.test.cpp
-    Source_Core/TrackerFieldCatalogPure.test.cpp
-    Source_Core/TicketSyncService.test.cpp
-    Source_Core/OfflineQueueServiceRuntime.test.cpp
-    Source_Core/ConfigManager.test.cpp
-    Source_Core/ConfigMigration.test.cpp
-    Source_Core/SingleClickEditConfig.test.cpp
-    Source_Core/AiSseParser.test.cpp
+    Core/P4BlameAnnotateE2E.test.cpp
+    Core/P4DescribeCacheE2E.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/P4Blame.cpp"
+    Core/TrackerLabelsPure.test.cpp
+    Core/TrackerDateTimePure.test.cpp
+    Core/TicketFieldEditorLongTextPure.test.cpp
+    Core/IsDescriptionLikeFieldId.test.cpp
+    Core/TrackerFieldPayloadPure.test.cpp
+    Core/TrackerFieldCatalogPure.test.cpp
+    Core/TicketSyncService.test.cpp
+    Core/OfflineQueueServiceRuntime.test.cpp
+    Core/ConfigManager.test.cpp
+    Core/ConfigMigration.test.cpp
+    Core/SingleClickEditConfig.test.cpp
+    Core/AiSseParser.test.cpp
     # autonomous-debugging-no-creds § Slice 4 — verifies the StubAiClient
     # test-infrastructure header (tests/support/StubAiClient.h) honours its
     # AiCancelToken contract. Pure C++14 — no HTTP, no cpr, no production
     # AI client. Header-only stub; no extra .cpp source.
-    Source_Core/StubAiClientCancel.test.cpp
-    Source_Core/AgentsMdLoader.test.cpp
-    Source_Core/AiClientFactory.test.cpp
-    Source_Core/AiNdjsonParser.test.cpp
-    Source_Core/AiContextBuilder.test.cpp
-    Source_Core/AiErrorRedact.test.cpp
-    Source_Core/AiModelCatalog.test.cpp
-    Source_Core/AiModelSignature.test.cpp
-    Source_Core/AiPrefsValidator.test.cpp
-    Source_Core/AiEndpointSanitize.test.cpp
-    Source_Core/CliArgCoercion.test.cpp
-    Source_Core/DictationInsertionRouter.test.cpp
-    Source_Core/AiAssistantInputSeedDecision.test.cpp
-    Source_Core/AiAssistantSendButton.test.cpp
+    Core/StubAiClientCancel.test.cpp
+    Core/AgentsMdLoader.test.cpp
+    Core/AiClientFactory.test.cpp
+    Core/AiNdjsonParser.test.cpp
+    Core/AiContextBuilder.test.cpp
+    Core/AiErrorRedact.test.cpp
+    Core/AiModelCatalog.test.cpp
+    Core/AiModelSignature.test.cpp
+    Core/AiPrefsValidator.test.cpp
+    Core/AiEndpointSanitize.test.cpp
+    Core/CliArgCoercion.test.cpp
+    Core/DictationInsertionRouter.test.cpp
+    Core/AiAssistantInputSeedDecision.test.cpp
+    Core/AiAssistantSendButton.test.cpp
     # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
     # formatter for the hover action row. No ImGui dep; production TU is
     # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry
     # links it into the doctest rig.
-    Source_Core/AiChatTimestamp.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiChatTimestamp.cpp"
+    Core/AiChatTimestamp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
     # Slice 5 of autonomous-debugging-no-creds — snapshot test pinning the set
     # of scenario names registered by RegisterAllScenarios(). The test calls
     # ListNames() only — never invokes the factory lambdas — so it does not
     # need any scenario implementation TUs linked, only ScenarioRunner.cpp
     # (for ListNames/RegisterFactory), Command.cpp (for CommandResult), and
     # the registry TU itself.
-    Source_Core/SmatchetScenarioRegistry.test.cpp
-    Source_Core/SmatchetScenarioRegistry.stubs.cpp
-    Source_Core/ScenarioCaptureSizing.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Scenarios/ScenarioRunner.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Command.cpp"
+    Core/SmatchetScenarioRegistry.test.cpp
+    Core/SmatchetScenarioRegistry.stubs.cpp
+    Core/ScenarioCaptureSizing.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioRunner.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
     # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.
-    Source_Core/LabelEditDiffPure.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/LabelEditDiffPure.cpp"
-    Source_Core/GitHubClientHelpers.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/GitHubClientHelpers.cpp"
+    Core/LabelEditDiffPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
+    Core/GitHubClientHelpers.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
     # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
-    Source_Core/GitHubQueryFromJql.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/GitHubQueryFromJql.cpp"
+    Core/GitHubQueryFromJql.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"
     # PR4 follow-up — pure helper ComputeGitHubFetchPlan deciding repo-scoped vs
     # cross-repo fetch + the empty-config fallback warning. Pure TU (no cpr).
-    Source_Core/GitHubFetchPlan.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/GitHubFetchPlan.cpp"
+    Core/GitHubFetchPlan.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubFetchPlan.cpp"
     # PR12 — pure-logic JSON → CachedTicket mapping (PR detection, status
     # encoding, [PR] summary prefix) + per-PR field enrichment helper. Split
     # out of GitHubIssueSearch.cpp (which pulls cpr) so doctest can link it
     # without HTTP.
-    Source_Core/GitHubIssueSearchMapping.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/GitHubIssueSearchMapping.cpp"
+    Core/GitHubIssueSearchMapping.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearchMapping.cpp"
     # Slice 1 of docs/design/autonomous-debugging-no-creds.md — fixture-driven
     # GitHub mapping coverage (basic mapping / PR-vs-issue filter / assignee +
     # state + labels / pagination boundary). Reuses GitHubIssueSearchMapping.cpp
     # (already linked above for GitHubIssueSearchMapping.test.cpp).
-    Source_Core/GitHubIssueMappingPure.test.cpp
+    Core/GitHubIssueMappingPure.test.cpp
     # Slice 2 of docs/design/autonomous-debugging-no-creds.md — pure Plane
     # JSON → CachedTicket mapper extracted out of PlaneIssueSearch.cpp (which
     # pulls cpr). Same shape as the GitHub PR12 split above.
-    Source_Core/PlaneIssueMappingPure.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/PlaneIssueMappingPure.cpp"
-    Source_Core/MarkdownLanguageDefinition.test.cpp
+    Core/PlaneIssueMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueMappingPure.cpp"
+    Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
     # TU. Link it into the test rig so the symbols resolve.
-    "${CMAKE_SOURCE_DIR}/Source_Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp"
     # code-syntax-coloring-and-tooltips § Slice 1 — CodeColorView substrate.
     # The .cpp is auto-globbed into CORE_SOURCES by the root CMakeLists but
-    # the test rig links a curated subset of Source_Core/src/*.cpp, so the
+    # the test rig links a curated subset of Source/Core/src/*.cpp, so the
     # CodeColorView TU has to be named here. SmatchetTheme.cpp + TextEditor.cpp
     # already linked above. `DrawColoredCppText` symbol resolves via the
-    # pre-existing local stub in `Source_Core/MarkdownPreviewPlan.test.cpp`
+    # pre-existing local stub in `Core/MarkdownPreviewPlan.test.cpp`
     # (the same stub that lets MarkdownPreviewRender link without pulling
     # SmatchetImGuiFonts/CppSyntaxHighlight). CodeColorView's Tokenize tests
     # never exercise the C++/C `DrawColoredCppText` delegation path, so the
     # stub is sufficient.
-    Source_Core/CodeColorViewLang.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/CodeColorView.cpp"
+    Core/CodeColorViewLang.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/CodeColorView.cpp"
     # Slice 4 — pure-logic coverage of SelectableText::GetSelectedText
     # (doc-order range walk + reverse normalisation + block-boundary
     # newline insertion). Constructs a synthetic Context directly so no
     # ImGui context is required.
-    Source_Core/SelectableTextRun.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/SelectableTextRun.cpp"
+    Core/SelectableTextRun.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SelectableTextRun.cpp"
     # Perf Opt 1 + Opt B — BuildPlan / HashContent / PreviewPlan API surface.
     # Pure-logic only (the ImGui-side render is bucket E). Links the same
     # MarkdownPreviewRender.cpp the production targets compile.
-    Source_Core/MarkdownPreviewPlan.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/MarkdownPreviewRender.cpp"
-    Source_Core/SubprocessCapturePure.test.cpp
-    Source_Core/SubprocessCapture.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapturePure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/SubprocessCapture.cpp"
-    Plugins/Mcp/McpRequestParser.test.cpp
-    Plugins/Mcp/McpEnvelope.test.cpp
-    Plugins/Mcp/McpToolSchemas.test.cpp
-    Plugins/Mcp/McpDispatch.test.cpp
+    Core/MarkdownPreviewPlan.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownPreviewRender.cpp"
+    Core/SubprocessCapturePure.test.cpp
+    Core/SubprocessCapture.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
+    Source/Plugins/Mcp/McpRequestParser.test.cpp
+    Source/Plugins/Mcp/McpEnvelope.test.cpp
+    Source/Plugins/Mcp/McpToolSchemas.test.cpp
+    Source/Plugins/Mcp/McpDispatch.test.cpp
     "${CMAKE_SOURCE_DIR}/Plugins/Mcp/src/McpJsonRpcPure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/CallstackParser.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/P4BlameParse.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerLabelsPure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerDateTimePure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/TicketFieldEditorLongTextPure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerFieldPayloadPure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerFieldCatalogPure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/JqlProjectScope.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/TextMerge.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerFieldValueParser.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerFieldValueUtils.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/IssueDraft.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/IssueCreatePipeline.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerFieldPayload.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/CompactDateFormat.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/UiPerfMonitor.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/MarkdownConvert.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Persistence/LocalCacheManager.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Persistence/BackendAuditTrail.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager_PathUtils.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager_Views.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/SmatchetTheme.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Sync/TicketSyncService.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker/TrackerHttpUtils.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Sync/NetworkUsageTracker.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Sync/OfflineQueueService.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/Views.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui/SmatchetToast.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/SmatchetLocalization.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiSseParser.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiNdjsonParser.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiClientFactory.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiErrorRedact.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiEndpointSanitize.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/OpenAiClient.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AnthropicClient.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/OllamaClient.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AgentsMdLoader.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiContextBuilder.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelCatalog.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiModelSignature.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AiPrefsValidator.cpp"
-    "${CMAKE_SOURCE_DIR}/Target_Standalone/CliArgCoercion.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/P4BlameParse.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalogPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/TextMerge.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParser.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipeline.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormat.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetTheme.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetToast.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiSseParser.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiNdjsonParser.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiClientFactory.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AgentsMdLoader.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiContextBuilder.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelCatalog.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsValidator.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Standalone/CliArgCoercion.cpp"
     # Natural-order key/issuekey sort — exercises CompareIssueKeyNatural
     # (inline in StringUtil.h) which CompareFieldValuesForSort dispatches to.
-    Source_Core/TicketGridModelKeySort.test.cpp
+    Core/TicketGridModelKeySort.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent
@@ -216,11 +216,11 @@ add_executable(SmatchetTests
 # SMATCHET_WITH_WHISPER (always-compiled — covers both gating states).
 if(SMATCHET_WITH_WHISPER)
     target_sources(SmatchetTests PRIVATE
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Whisper.cpp")
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/DictationInsertionRouter_Whisper.cpp")
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_WHISPER=1)
 else()
     target_sources(SmatchetTests PRIVATE
-        "${CMAKE_SOURCE_DIR}/Source_Core/src/DictationInsertionRouter_Stubs.cpp")
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/DictationInsertionRouter_Stubs.cpp")
     # Explicit =0 so the test TU's value-based `#if SMATCHET_WITH_WHISPER` guard
     # evaluates deterministically (matches the ON path's =1 shape).
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_WHISPER=0)
@@ -234,9 +234,9 @@ endif()
 # OFF/ON state is independent — verified by the test's own `#ifndef` guard).
 if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
     target_sources(SmatchetTests PRIVATE
-        Source_Core/SmatchetAgentDebug.test.cpp)
+        Core/SmatchetAgentDebug.test.cpp)
     set_source_files_properties(
-        Source_Core/SmatchetAgentDebug.test.cpp
+        Core/SmatchetAgentDebug.test.cpp
         PROPERTIES COMPILE_DEFINITIONS "SMATCHET_AGENT_DEBUG=1")
     target_include_directories(SmatchetTests PRIVATE
         "${CMAKE_SOURCE_DIR}/tests/_debug")
@@ -265,19 +265,19 @@ endif()
 # fire live HTTP).
 if(SMATCHET_WITH_WHISPER)
     target_sources(SmatchetTests PRIVATE
-        Source_Core/WhisperApiKeyResolve.test.cpp
-        Source_Core/WhisperApiPayload.test.cpp
-        Source_Core/WavWriter.test.cpp
+        Core/WhisperApiKeyResolve.test.cpp
+        Core/WhisperApiPayload.test.cpp
+        Core/WavWriter.test.cpp
         # Phase C — local backend, downloader catalog, consent gate, mode router.
-        Source_Core/ModelCatalog.test.cpp
-        Source_Core/WhisperConsentGate.test.cpp
-        Source_Core/WhisperModeRouter.test.cpp
+        Core/ModelCatalog.test.cpp
+        Core/WhisperConsentGate.test.cpp
+        Core/WhisperModeRouter.test.cpp
         # Phase E — pure hotkey-descriptor parser.
-        Source_Core/HotkeyParse.test.cpp
+        Core/HotkeyParse.test.cpp
         # Phase F — silence-trim helper + config-fields round-trip.
-        Source_Core/SilenceTrim.test.cpp
-        Source_Core/WhisperPrefsFields.test.cpp
-        Source_Core/WhisperMockSeams.test.cpp
+        Core/SilenceTrim.test.cpp
+        Core/WhisperPrefsFields.test.cpp
+        Core/WhisperMockSeams.test.cpp
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiKeyResolve.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiClient.cpp"
         "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WavWriter.cpp"
@@ -291,24 +291,24 @@ if(SMATCHET_WITH_WHISPER)
 endif()
 
 target_include_directories(SmatchetTests PRIVATE
-    "${CMAKE_SOURCE_DIR}/Source_Core/include"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include"
     # Subsystem subdirs from source-core-dir-reorg — the test rig compiles
     # moved .cpp directly, so it needs the moved headers' subdirs on the path
     # (bare #includes, no rewrites). Mirrors the main-target fix in CMakeLists.txt.
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Tracker"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Sync"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Persistence"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Config"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Ui"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Sync"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Persistence"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui"
-    "${CMAKE_SOURCE_DIR}/Source_Core/ThirdParty/ImGuiColorTextEdit"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
+    "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit"
     "${CMAKE_SOURCE_DIR}/Plugins/Mcp"
     "${CMAKE_SOURCE_DIR}/Plugins/Mcp/src"
-    "${CMAKE_SOURCE_DIR}/Target_Standalone"
+    "${CMAKE_SOURCE_DIR}/Source/Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"
 )
 

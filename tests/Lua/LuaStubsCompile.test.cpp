@@ -30,10 +30,10 @@ namespace {
 
 // The Lua-public surface as declared by AppController.h under the
 // `#if !defined(SMATCHET_WITH_LUA_AUTOMATION)` half — every name listed here
-// MUST be defined in `Source_Core/src/AppController_LuaStubs.cpp` for the
+// MUST be defined in `Source/Core/src/AppController_LuaStubs.cpp` for the
 // no-Lua iter / DX12 build to link.
 //
-// Source of truth: tail of `tests/../Source_Core/src/AppController_LuaStubs.cpp`
+// Source of truth: tail of `tests/../Source/Core/src/AppController_LuaStubs.cpp`
 // at the time of writing (66 LoC). If you add a Lua-only public method to
 // `AppController.h`, you MUST add the corresponding stub AND extend this list.
 const std::set<std::string>& ExpectedLuaPublicSurface() {

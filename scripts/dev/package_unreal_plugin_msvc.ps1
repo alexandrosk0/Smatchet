@@ -41,7 +41,7 @@ Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $pluginName = "SmatchetImGuiPlugin"
-$sourcePluginDir = Join-Path $repoRoot "UnrealPlugins\$pluginName"
+$sourcePluginDir = Join-Path $repoRoot "Source/UnrealPlugins\$pluginName"
 $fetchContentBaseDir = Join-Path $repoRoot ".fetchcontent-msvc"
 
 function Reset-CMakeBuildDirectory {

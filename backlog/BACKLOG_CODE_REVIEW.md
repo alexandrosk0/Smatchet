@@ -1,6 +1,6 @@
 # Smatchet — Code Review Backlog (2026-05-16 full rewrite)
 
-> Scope: first-party C++ in `Source_Core/`, `Plugins/`, `Target_Standalone/`.
+> Scope: first-party C++ in `Source/Core/`, `Source/Plugins/`, `Source/Standalone/`.
 > Method: skeleton + targeted reads + symbol grep against develop tip `7597fd7+` (post PR #39).
 > Previous doc (2026-05-10..11) accumulated 62 numbered items, 87% of which landed. This rewrite drops all `✅ DONE` items and re-audits the remainder against current code.
 >
@@ -31,29 +31,29 @@
 
 ### A1. `TrackerConfig` caching — kill ~19 disk re-reads per UI action
 Old item 3 tail. `ConfigManager::Load()` still hit on every field-edit submit and per-mutation:
-- `Source_Core/src/AppController_CatalogAndFieldEdit.cpp` — **17 sites** (line 70, 137, 493, 598, 612, 871, 1009, 1075, 1094, 1112, 1126, 1135, 1150, 1159, 1176, 1185, 1205).
-- `Source_Core/src/AppController_LuaBindings.cpp:676, 921`.
-- `Source_Core/src/PlaneClient.cpp:1106, 1290`, `Source_Core/src/JiraIssueMutation.cpp:60, 481, 556`.
+- `Source/Core/src/AppController_CatalogAndFieldEdit.cpp` — **17 sites** (line 70, 137, 493, 598, 612, 871, 1009, 1075, 1094, 1112, 1126, 1135, 1150, 1159, 1176, 1185, 1205).
+- `Source/Core/src/AppController_LuaBindings.cpp:676, 921`.
+- `Source/Core/src/PlaneClient.cpp:1106, 1290`, `Source/Core/src/JiraIssueMutation.cpp:60, 481, 556`.
 
 Each `Load()` opens + reads + parses ~50-field JSON. Plumb a `const TrackerConfig&` snapshot from the public entry of each pipeline; add a `ConfigManager::CachedSnapshot()` with a revision counter for read-only fast-path callers.
 
 **Severity:** P1 (it's perf + lock churn, not correctness). Listed P0 because §6.3 of old doc tagged it that.
 
 ### A2. `Logger::SetFileSinkPath` never wired from `ConfigManager`
-Old item 6 tail. Header API + worker thread exist (`Source_Core/include/Logger.h:72`, `Source_Core/src/Logger.cpp:197`); `ConfigManager.cpp` never calls it. File sink stays dark unless a test path is set manually. Wire on `ConfigManager::Load()` post-parse with the chosen log path; honour a new `LogFilePath` config key (or default `<userdata>/smatchet_runtime.log`).
+Old item 6 tail. Header API + worker thread exist (`Source/Core/include/Logger.h:72`, `Source/Core/src/Logger.cpp:197`); `ConfigManager.cpp` never calls it. File sink stays dark unless a test path is set manually. Wire on `ConfigManager::Load()` post-parse with the chosen log path; honour a new `LogFilePath` config key (or default `<userdata>/smatchet_runtime.log`).
 
 ### A3. `TrackerField::IsRequired` not consumed by UI — shipped
 Old item 10 tail. Schema populated for Plane (`PlaneClient.cpp` `TrackerFieldFromPlaneProperty`); zero UI consumer in `TicketFieldEditor.cpp` / `SmatchetNewIssueDraftUi.cpp`. Required-field state is dead data. Add a `*` glyph + tooltip on required-field labels in the new-issue draft and in-line editor; refuse submit / show validation on blank required. — shipped on branch `feat/required-field-ui-glyph` (PR pending).
 
 ### A4. `FlushFileSink` not called on shutdown / crash path
-POST_P0 item 24 (last open from that review). `Logger::FlushFileSink()` exists; no caller in `AppController::~AppController` or `Target_Standalone/main.cpp` exit path or signal handler. Async file sink can drop the last batch on abrupt exit. Call from `~AppController` and from a `std::set_terminate` / `SIGSEGV` handler in `main.cpp`.
+POST_P0 item 24 (last open from that review). `Logger::FlushFileSink()` exists; no caller in `AppController::~AppController` or `Source/Standalone/main.cpp` exit path or signal handler. Async file sink can drop the last batch on abrupt exit. Call from `~AppController` and from a `std::set_terminate` / `SIGSEGV` handler in `main.cpp`.
 
 ---
 
 ## B. P1 structural — open big wins
 
 ### B1. LuaAutomationHost Phase 1B → 1D (item 14)
-`Source_Core/src/AppController_LuaBindings.cpp` grew from 1453 → **2648 LOC** since the old review — Phase 1A migrated only log-sinks. Remaining:
+`Source/Core/src/AppController_LuaBindings.cpp` grew from 1453 → **2648 LOC** since the old review — Phase 1A migrated only log-sinks. Remaining:
 - **1B** `InitLua` / `InitLuaCore` (~150–300 LOC). `<sol/sol.hpp>` stays PUBLIC on `AppController.h:11` until 1C; 1B alone is plumbing (low PR-value in isolation — see N1).
 - **1C** ~18 `Lua*Bind` methods + free-function glue (~1500 LOC at current size). High-risk: patched-metatable contract per `CMakeLists.txt:355-411`.
 - **1D** Automation worker thread (`AutomationWorkerLoop`, `automationJobMutex_`, shutdown contract).
@@ -94,13 +94,13 @@ Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer 
 `PlaneClient.cpp:1459-1501` handles 6 core IDs (`summary`/`description`/`priority`/`status`/`type`/`parent`/`assignee`). Any `TrackerField.Id` that's a UUID (custom property) is silently dropped. Iterate `catalog` for custom props and emit under `properties.<uuid>` or whichever shape Plane v1 accepts.
 
 ### C5. Extract `ScopedFileLock` + `AtomicWriteTextFile` (item 41)
-Both still defined in `Source_Core/src/ConfigManager.cpp` anonymous namespace (lines 179+, ~700+). `BackendAuditTrail` uses raw `ofstream`; export paths re-implement atomic-write. Promote to `Source_Core/{src,include}/FileIo.{h,cpp}` so all three share. Win32-only work.
+Both still defined in `Source/Core/src/ConfigManager.cpp` anonymous namespace (lines 179+, ~700+). `BackendAuditTrail` uses raw `ofstream`; export paths re-implement atomic-write. Promote to `Source/Core/{src,include}/FileIo.{h,cpp}` so all three share. Win32-only work.
 
 ### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43)
 Redacts `summary` / `assignee` / `body` / `text` etc. Likely too broad — audit dumps lose useful diffs. Product call: trim the list or document why each entry stays.
 
 ### C7. Manual `PushClipRect` per grid cell (item 54) — ✅ shipped (branch `feat/grid-pushcliprect-audit`)
-`Source_Core/src/SmatchetActiveProjectGridUi.cpp:843, 905, 930`. ImGui table already clips columns. Profile and remove if redundant. Removed; all three sites verified inside `BeginTable("TicketGrid")` scope.
+`Source/Core/src/SmatchetActiveProjectGridUi.cpp:843, 905, 930`. ImGui table already clips columns. Profile and remove if redundant. Removed; all three sites verified inside `BeginTable("TicketGrid")` scope.
 
 ---
 
@@ -113,7 +113,7 @@ Was 1453, now **2648**. Phase 1A of item 14 was supposed to start shrinking it; 
 Old item 9 step (c) was OPEN. Now done: `BlameAnalysisUi_Config.cpp` / `_Launch.cpp` / `_Modals.cpp` / `_Preferences.cpp` / `_Window.cpp` / `_Worker.cpp` + `BlameAnalysisUi_Internal.h`. Move from OPEN → done in tracker. Unreal hot-reload survival check still pending (no test infra).
 
 ### N3. `CommandRegistry::FindLocked` is a footgun (P2)
-`Source_Core/include/Commands/CommandRegistry.h:46` and `src/Commands/CommandRegistry.cpp:45-58`. Method name implies lock held but the impl is **lockless** — the comment says "Caller must serialize externally if they want stable pointers." External callers do NOT serialize: `Plugins/Mcp/McpPlugin.cpp:629, :860` call it from httplib worker threads checking `!= nullptr` only. Race is benign today (pointer-equality test) but the API will bite future callers that dereference. Either:
+`Source/Core/include/Commands/CommandRegistry.h:46` and `src/Commands/CommandRegistry.cpp:45-58`. Method name implies lock held but the impl is **lockless** — the comment says "Caller must serialize externally if they want stable pointers." External callers do NOT serialize: `Source/Plugins/Mcp/McpPlugin.cpp:629, :860` call it from httplib worker threads checking `!= nullptr` only. Race is benign today (pointer-equality test) but the API will bite future callers that dereference. Either:
 - Rename to `FindUnlocked` + add `Has(name)` for the only existing real use, **or**
 - Take the mutex internally and return a copy (`Optional<Command>`-style via `bool Find(name, Command& out)`).
 
@@ -135,27 +135,27 @@ New file — central registration of all CLI/Palette/MCP/Lua commands. Single `R
 Round-trip Markdown ↔ ADF / HTML continues to grow (`MarkdownToAdf`, `AdfToMarkdown`, `MarkdownToHtml`, `HtmlToMarkdown` + ~15 helpers). RICH_TEXT v2 backlog has asked for golden tests for **months**; until they exist every refactor (item 38, item 28, table-cell content) is a roll of the dice. Bootstrap a `tests/MarkdownConvert/` with doctest now — without tests these items stay frozen.
 
 ### N8. `OfflineQueueService` still friend-coupled to AppController (P1)
-`Source_Core/include/AppController.h:88-93` documents the friend-access boundary with a TODO to lift to interfaces. With Phase 1A→1C complete the service is at 1032 LOC of standalone logic plus AppController-private reach-throughs. Define the minimal access bundle (`IOfflineCacheAccess { Cache(), FindFieldById(), backendAuditTrail() }`) and convert. Same for `TicketSyncService` (currently friend-coupled).
+`Source/Core/include/AppController.h:88-93` documents the friend-access boundary with a TODO to lift to interfaces. With Phase 1A→1C complete the service is at 1032 LOC of standalone logic plus AppController-private reach-throughs. Define the minimal access bundle (`IOfflineCacheAccess { Cache(), FindFieldById(), backendAuditTrail() }`) and convert. Same for `TicketSyncService` (currently friend-coupled).
 
 ### N9. `McpPlugin.cpp` REST `tools/list` + JSON-RPC `tools/list` may have diverged again (P2)
 Old §5.1 P1 was a duplicated payload (REST `:506` vs JSON-RPC `:666`). PR #41 / #52 added `BuildRunLuaToolEntry()` for the `run_lua` row. Re-check: are the rest of the tool-list rows also shared, or did the registry-driven approach drift? Audit current `McpPlugin.cpp:586` (REST) vs JSON-RPC handler.
 
 ### N10. `<sol/sol.hpp>` STILL PUBLIC on `AppController.h:11` (P1, item 14 dependency)
-Worth flagging on its own. Every TU including `AppController.h` (which is most of `Source_Core/`) drags ~1 MB of sol2 templates through the compiler. Phase 1C of item 14 is the only thing that unblocks this. The build-time win is real and measurable (`SmatchetPch.h` comments narrate sol2 as the heaviest header).
+Worth flagging on its own. Every TU including `AppController.h` (which is most of `Source/Core/`) drags ~1 MB of sol2 templates through the compiler. Phase 1C of item 14 is the only thing that unblocks this. The build-time win is real and measurable (`SmatchetPch.h` comments narrate sol2 as the heaviest header).
 
 ### N11. No `tests/` directory still exists (P0 for any future refactor)
-Old §6.7 raised this. Still zero unit tests. Every structural change above (items 14, 16, 23 — and N6, N7) is gated on test infrastructure. **Bootstrap a minimal doctest target** (`tests/CMakeLists.txt` + `tests/test_main.cpp` + `tests/Source_Core/<Unit>.test.cpp` per pure-logic unit) before any further extraction. Candidates with zero UI / I/O coupling that would survive doctest unit testing today:
-- `Source_Core/src/FuzzyMatch.cpp`
-- `Source_Core/src/MarkdownConvert.cpp` (round-trip cases)
-- `Source_Core/src/JqlProjectScope.cpp`
-- `Source_Core/src/TextMerge.cpp`
-- `Source_Core/src/CompactDateFormat.cpp`
-- `Source_Core/src/StringUtil.h` inlines
+Old §6.7 raised this. Still zero unit tests. Every structural change above (items 14, 16, 23 — and N6, N7) is gated on test infrastructure. **Bootstrap a minimal doctest target** (`tests/CMakeLists.txt` + `tests/test_main.cpp` + `tests/Core/<Unit>.test.cpp` per pure-logic unit) before any further extraction. Candidates with zero UI / I/O coupling that would survive doctest unit testing today:
+- `Source/Core/src/FuzzyMatch.cpp`
+- `Source/Core/src/MarkdownConvert.cpp` (round-trip cases)
+- `Source/Core/src/JqlProjectScope.cpp`
+- `Source/Core/src/TextMerge.cpp`
+- `Source/Core/src/CompactDateFormat.cpp`
+- `Source/Core/src/StringUtil.h` inlines
 
 This is the single highest-leverage open item — unblocks B1/B2/B3 and validates B5.
 
 ### N12. `IsTrackerTransportErrorText` heuristic still classifies (P2)
-`Source_Core/src/TrackerHttpUtils.cpp:161-236` — string-pattern-matching error text. `TrackerError` now classifies properly via HTTP status. `IsTrackerTransportErrorText` should disappear once item 15 migration completes; until then it shadows the new mechanism and produces inconsistent classifications when callers mix the two.
+`Source/Core/src/TrackerHttpUtils.cpp:161-236` — string-pattern-matching error text. `TrackerError` now classifies properly via HTTP status. `IsTrackerTransportErrorText` should disappear once item 15 migration completes; until then it shadows the new mechanism and produces inconsistent classifications when callers mix the two.
 
 ### N13. `IPlugin::TryGetMcpStatusSnapshot` couples the host to MCP (P3)
 PR #20 replaced `dynamic_cast<McpPlugin*>` with `virtual bool TryGetMcpStatusSnapshot(McpServerStatus&)`. Cleaner, but the virtual is `#if SMATCHET_WITH_MCP`-gated on the base class — every plugin now ships a conditional v-table slot. Acceptable today; if more plugin-type-specific accessors land, switch to capability tags / `IPluginCapability* GetCapability(CapabilityId)` so the base interface stays MCP-agnostic.

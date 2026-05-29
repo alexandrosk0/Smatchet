@@ -5,10 +5,10 @@
 // edge-to-edge at content-region default; the test asserts the tooltip
 // path honours the configured value).
 //
-// Drift warning — IF YOU CHANGE Source_Core/src/TicketFieldEditor.cpp:596
+// Drift warning — IF YOU CHANGE Source/Core/src/TicketFieldEditor.cpp:596
 // (the `opts.wrapWidth = ImGui::GetFontSize() * 48.0f;` line, or its sibling
-// at :1096 for the body preview), Source_Core/include/MarkdownPreviewRender.h:115
-// (the Options::wrapWidth field), OR Source_Core/src/MarkdownPreviewRender.cpp:996
+// at :1096 for the body preview), Source/Core/include/MarkdownPreviewRender.h:115
+// (the Options::wrapWidth field), OR Source/Core/src/MarkdownPreviewRender.cpp:996
 // (where Options::wrapWidth maps to PreviewPlan::fixedWrapWidth via RenderPlan),
 // UPDATE THIS TEST to match.
 

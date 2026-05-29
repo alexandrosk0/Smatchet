@@ -3,7 +3,7 @@
 // and the drain reports no findings.
 //
 // Do NOT include this file in any production build target — it lives under
-// tests/fixtures/ which is not part of Source_Core / Plugins / Target_Standalone
+// tests/fixtures/ which is not part of Source/Core / Plugins / Source/Standalone
 // or the doctest rig. The deferred-lint hook's first-party filter accepts it
 // (matches `tests/**/*.cpp`) which is the whole point.
 //

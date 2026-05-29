@@ -67,7 +67,7 @@ ANNOTATION_LATENCY_REGEX='est-latency:[[:space:]]*~?[0-9.]+[[:space:]]*m?s'
 
 is_first_party() {
     case "$1" in
-        Source_Core/*|Plugins/*|Target_Standalone/*|tests/*) return 0 ;;
+        Source/Core/*|Source/Plugins/*|Source/Standalone/*|tests/*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -75,7 +75,7 @@ is_first_party() {
 # Excludes vendored third-party copies inside our tree.
 is_vendored() {
     case "$1" in
-        Source_Core/ThirdParty/*) return 0 ;;
+        Source/Core/ThirdParty/*) return 0 ;;
         *) return 1 ;;
     esac
 }

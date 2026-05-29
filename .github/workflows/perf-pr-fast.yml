@@ -2,7 +2,7 @@ name: Perf PR-fast
 
 # Slice 3 of docs/plans/shipped/pillar-1-2-perf-review-system.md. Runs the PR-fast
 # 4-scenario subset (declared in scripts/dev/perf-pr-fast-set.json) on every
-# PR that touches Source_Core / Plugins / Target_Standalone. Compares each
+# PR that touches Source/Core / Plugins / Source/Standalone. Compares each
 # scenario's output against the ci-windows-latest baseline at
 # docs/perf/baselines/<scenario>.ci-windows-latest.json. Posts a markdown
 # delta table to the PR via `gh pr comment`. Fails the gate if any
@@ -22,15 +22,15 @@ on:
     branches: [develop]
     # Positive path-filter: only fire when production code or the perf
     # tooling itself changes. Excludes doc-only / agent-doc / workflow-only
-    # PRs — those have no Source_Core to measure, and self-triggering on
+    # PRs — those have no Source/Core to measure, and self-triggering on
     # the workflow file itself defeats the gate (the new workflow runs
     # against a PR that introduces it, where there are no baselines yet
     # and the spawn-on-CI environment hasn't been bootstrapped).
     paths:
-      - 'Source_Core/**'
-      - 'Plugins/**'
-      - 'Target_Standalone/**'
-      - 'UnrealPlugins/**'
+      - 'Source/Core/**'
+      - 'Source/Plugins/**'
+      - 'Source/Standalone/**'
+      - 'Source/UnrealPlugins/**'
       - 'scripts/dev/perf-*.py'
       - 'scripts/dev/perf-*.sh'
       - 'scripts/dev/perf-*.json'

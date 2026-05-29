@@ -139,9 +139,9 @@ BIN_LUA="$OUTPUT_DIR/coverage-lua.bin"
 rm -f "$BIN_TESTS" "$BIN_LUA" "$XML_OUT"
 
 # OpenCppCoverage uses --source to include / exclude paths. We restrict to
-# Source_Core/ (excluding UI / ImGui-heavy bits is the threshold flip's job
-# downstream; this script captures everything Source_Core for now).
-SOURCE_INCLUDE="Source_Core"
+# Source/Core/ (excluding UI / ImGui-heavy bits is the threshold flip's job
+# downstream; this script captures everything Source/Core for now).
+SOURCE_INCLUDE="Source/Core"
 MODULE_INCLUDE="Smatchet"  # matches both SmatchetTests.exe and SmatchetLuaTests.exe
 
 OCC_FILTER_ARGS=(

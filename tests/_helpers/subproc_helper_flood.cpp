@@ -1,6 +1,6 @@
 // Test helper: writes argv[1] bytes of 'A' to stdout, then exits 0.
 //
-// Used by tests/Source_Core/SubprocessCapture.test.cpp to cover the
+// Used by tests/Core/SubprocessCapture.test.cpp to cover the
 // stdout-byte-cap truncation path deterministically. Single TU,
 // stdlib-only.
 

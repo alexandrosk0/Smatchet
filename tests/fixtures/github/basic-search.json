@@ -1,5 +1,5 @@
 {
-  "_comment": "captured-against: GitHub GraphQL API 2026-05-24 — synthetic fixture for slice 1 of docs/plans/shipped/autonomous-debugging-no-creds.md. Mirrors the shape returned by the kGraphQlSearchQuery search() call in Source_Core/src/GitHubIssueSearch.cpp. Three nodes: one plain issue (open), one open PR with one assignee + two labels, one merged PR. Pagination boundary: hasNextPage=false + endCursor=null exercises the short-page exit path. Owner/repo embedded inline so the mapper hint args can stay empty.",
+  "_comment": "captured-against: GitHub GraphQL API 2026-05-24 — synthetic fixture for slice 1 of docs/plans/shipped/autonomous-debugging-no-creds.md. Mirrors the shape returned by the kGraphQlSearchQuery search() call in Source/Core/src/GitHubIssueSearch.cpp. Three nodes: one plain issue (open), one open PR with one assignee + two labels, one merged PR. Pagination boundary: hasNextPage=false + endCursor=null exercises the short-page exit path. Owner/repo embedded inline so the mapper hint args can stay empty.",
   "data": {
     "search": {
       "issueCount": 3,

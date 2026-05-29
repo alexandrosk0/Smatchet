@@ -25,7 +25,7 @@ command -v cl.exe >/dev/null 2>&1 || { echo "cl.exe required" >&2; exit 2; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CANARY_FILE="$REPO_ROOT/tests/Source_Core/AsanCanary.test.cpp"
+CANARY_FILE="$REPO_ROOT/tests/Core/AsanCanary.test.cpp"
 KEEP_CANARY=false
 PRESET=""
 PASS=0
@@ -240,10 +240,10 @@ echo ""
 echo "=== Phase 8: Validate scenario infrastructure ==="
 
 check "SmatchetScenarioRegistry.cpp exists" \
-    test -f "$REPO_ROOT/Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
+    test -f "$REPO_ROOT/Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
 
 check "5 slice-8 scenarios registered" \
-    bash -c "grep -c 'Scenario()' '$REPO_ROOT/Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp' | awk '{exit (\$1 >= 19 ? 0 : 1)}'"
+    bash -c "grep -c 'Scenario()' '$REPO_ROOT/Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp' | awk '{exit (\$1 >= 19 ? 0 : 1)}'"
 
 check "StubAiClient.h exists" \
     test -f "$REPO_ROOT/tests/support/StubAiClient.h"

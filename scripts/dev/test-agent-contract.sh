@@ -14,7 +14,7 @@
 #   9. agent-token-log.py canonical and .claude/hooks/ copy are byte-identical (link_file drift check per process.md 2026-05-19 P3).
 #  10. Frontmatter `version: N` matches banner `· vN` (H7 fix from eval doc).
 #  11. Skill ↔ agent SKILL.md sibling parity — same version + same triggers (eval punch-list item 7 + M9).
-#  12. V3.3 — Source_Core/src/P4Blame.cpp has exactly one SubprocessCapture::Run call site.
+#  12. V3.3 — Source/Core/src/P4Blame.cpp has exactly one SubprocessCapture::Run call site.
 #  13. V10.1 — agents/core/debug-detective.md contains literal "reproducer-first contract" (slice 10).
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
@@ -291,8 +291,8 @@ fi
 #     must come with a sibling `cfg.P4RunOverride` consult or this gate trips.
 # -------------------------------------------------------------------------
 echo
-echo "[12/13] V3.3 — Source_Core/src/P4Blame.cpp has exactly one SubprocessCapture::Run call site"
-p4blame_src=Source_Core/src/P4Blame.cpp
+echo "[12/13] V3.3 — Source/Core/src/P4Blame.cpp has exactly one SubprocessCapture::Run call site"
+p4blame_src=Source/Core/src/P4Blame.cpp
 if [[ ! -f "$p4blame_src" ]]; then
   check_fail "V3.3: $p4blame_src missing"
 else

@@ -1,6 +1,6 @@
 // callstack_tooltip_hover.test.cpp — bucket-E regression gate for PR #147.
 //
-// Bug recap: Source_Core/src/SmatchetFieldRender.cpp::RenderClippedFieldText
+// Bug recap: Source/Core/src/SmatchetFieldRender.cpp::RenderClippedFieldText
 // emits one ImGui::TextUnformatted per token via DrawColoredCppLine for
 // callstack-typed cells. Pre-fix, the IsItemHovered() guard at the bottom
 // of RenderClippedFieldText only matched the LAST token submitted by

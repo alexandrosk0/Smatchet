@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-tooltip-wrapwidth.sh — assert every BeginTooltip+MarkdownPreviewRender::Render
-# block in Source_Core/src/ also sets opts.wrapWidth.
+# block in Source/Core/src/ also sets opts.wrapWidth.
 #
 # MarkdownPreviewRender::Render ignores ImGui's PushTextWrapPos and uses
 # GetContentRegionAvail().x instead.  In a fresh BeginTooltip() window that
@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-SRC_DIR="Source_Core/src"
+SRC_DIR="Source/Core/src"
 
 if [ ! -d "$SRC_DIR" ]; then
     echo "Source dir not found: $SRC_DIR" >&2

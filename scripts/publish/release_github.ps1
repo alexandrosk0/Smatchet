@@ -4,7 +4,7 @@
     Artifacts:
     - Standalone zip (Smatchet.exe + runtime files)
     - Light standalone zip (Smatchet-Light.exe + runtime files, automation-facing features disabled)
-    - Unreal plugin zip (UnrealPlugins/SmatchetImGuiPlugin packaged tree)
+    - Unreal plugin zip (Source/UnrealPlugins/SmatchetImGuiPlugin packaged tree)
     - Source zip (git archive, filtered to exclude internal workflow folders)
 
     Examples:
@@ -507,7 +507,7 @@ function Assert-CleanGitTree {
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot "..\common\SmatchetCMakeCommon.ps1")
 $presetFile = Join-Path $repoRoot "CMakePresets.json"
-$pluginRoot = Join-Path $repoRoot "UnrealPlugins/SmatchetImGuiPlugin"
+$pluginRoot = Join-Path $repoRoot "Source/UnrealPlugins/SmatchetImGuiPlugin"
 $licensePath = Join-Path $repoRoot "LICENSE"
 $readmePath = Join-Path $repoRoot "README.md"
 $installerScript = Join-Path $PSScriptRoot "installer\SmatchetStandalone.iss"

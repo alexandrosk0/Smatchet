@@ -4,7 +4,7 @@
 # Upstream has no CMakeLists.txt (see ocornut/imgui_test_engine#86), so we
 # hand-roll a static library against the 7 source files we actually consume.
 # Capture / PNG / GIF / ffmpeg are intentionally skipped — disabled via
-# IMGUI_TEST_ENGINE_ENABLE_CAPTURE=0 in Source_Core/include/SmatchetImConfig.h.
+# IMGUI_TEST_ENGINE_ENABLE_CAPTURE=0 in Source/Core/include/SmatchetImConfig.h.
 
 include(FetchContent)
 
@@ -61,7 +61,7 @@ endif()
 
 # DX12 stub variant — EXCLUDE_FROM_ALL, dead-code-linked into SmatchetCore_DX12
 # only as a compile tripwire to catch include-cascade regressions (someone
-# accidentally pulling GLFW/OpenGL into Source_Core via the engine glue).
+# accidentally pulling GLFW/OpenGL into Source/Core via the engine glue).
 if(WIN32)
     add_library(SmatchetImGuiTestEngine_DX12 STATIC EXCLUDE_FROM_ALL ${_SMATCHET_TE_SOURCES})
     target_include_directories(SmatchetImGuiTestEngine_DX12 PUBLIC

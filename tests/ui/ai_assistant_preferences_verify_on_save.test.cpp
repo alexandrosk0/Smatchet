@@ -3,11 +3,11 @@
 // debounce drain commits a Save, the verify probe arms automatically and
 // the result line populates with the outcome.
 //
-// Drift warning — IF YOU CHANGE Source_Core/include/AiPrefsTestConnection.h
-// (TriggerProbe signature), Source_Core/src/AiPrefsTestConnection.cpp
-// (the cancel-token short-circuit on completion), Source_Core/src/SmatchetUI.cpp
+// Drift warning — IF YOU CHANGE Source/Core/include/AiPrefsTestConnection.h
+// (TriggerProbe signature), Source/Core/src/AiPrefsTestConnection.cpp
+// (the cancel-token short-circuit on completion), Source/Core/src/SmatchetUI.cpp
 // (the autosave-debounce-then-verify chain at end-of-frame), OR
-// Source_Core/include/SmatchetUiSession.h:244-257 (assistantPrefsTest* fields),
+// Source/Core/include/SmatchetUiSession.h:244-257 (assistantPrefsTest* fields),
 // UPDATE THIS REPLICA to match.
 //
 // Per slice-9 per-test isolation contract: ResetVerifyOnSaveState() runs at

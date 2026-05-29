@@ -18,7 +18,7 @@
 #
 # Examples:
 #   bash scripts/dev/verify-cr-reply.sh feat/my-pr-branch scripts/dev/merge-gates.sh
-#   bash scripts/dev/verify-cr-reply.sh fix/foo Source_Core/src/Foo.cpp Source_Core/include/Foo.h
+#   bash scripts/dev/verify-cr-reply.sh fix/foo Source/Core/src/Foo.cpp Source/Core/include/Foo.h
 #
 # Exit codes:
 #   0 — every cited file differs between origin/<branch> and origin/develop (good)

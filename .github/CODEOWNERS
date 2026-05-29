@@ -53,8 +53,8 @@ docs/design/_plan-locks-archive.md     @alexandrosk0
 
 # Public C++ contracts whose ABI surface is consumed by both targets and
 # every tracker backend / command system / Lua binding.
-Source_Core/include/ITrackerClient.h   @alexandrosk0
-Source_Core/include/Commands/          @alexandrosk0
+Source/Core/include/ITrackerClient.h   @alexandrosk0
+Source/Core/include/Commands/          @alexandrosk0
 
 # Top-level agent + project rules. AGENTS.md drives every agent's behaviour
 # in the canonical tree; CLAUDE.md mirrors for Claude Code's auto-load path.

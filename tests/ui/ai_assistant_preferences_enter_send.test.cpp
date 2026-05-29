@@ -9,11 +9,11 @@
 // "Send" button — Enter on these fields commits the in-place edit and arms
 // the 100 ms autosave debounce.
 //
-// Drift warning — IF YOU CHANGE Source_Core/src/SmatchetPreferencesUi.cpp
+// Drift warning — IF YOU CHANGE Source/Core/src/SmatchetPreferencesUi.cpp
 // (the BeginTabItem("Assistant") block at line 562 — specifically the
 // InputText("##AiBaseUrl", ...) / InputText("##AiApiKey", ...) /
 // InputText("##AiModel...", ...) controls and their MarkPrefsDirty arm-on-edit
-// pattern), OR Source_Core/include/SmatchetUiSession.h:611 MarkPrefsDirty
+// pattern), OR Source/Core/include/SmatchetUiSession.h:611 MarkPrefsDirty
 // helper, UPDATE THIS REPLICA to match.
 
 #if defined(SMATCHET_BUILD_UI_TESTS) && defined(SMATCHET_WITH_AI)

@@ -34,7 +34,7 @@ reviews:
     - '!build/**'
     - '!**/.fetchcontent-src/**'
     - '!**/*-build-dir/**'
-    - '!UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/**'
+    - '!Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/**'
     - '!docs/plans/active/_plan-locks.generated.md'
     - '!docs/plans/active/_plan-locks-archive.md'
     - '!.session-context*'
@@ -47,7 +47,7 @@ reviews:
   ## Per-path review rules. The body of each instruction is read by the
   ## CodeRabbit reviewer agent verbatim — keep them concrete and citable.
   path_instructions:
-    - path: 'Source_Core/**/*.{cpp,h}'
+    - path: 'Source/Core/**/*.{cpp,h}'
       instructions: |
         C++14 hard (must build on MSVC + MinGW UCRT). Do NOT suggest any of:
         `std::string_view`, `std::optional`, `std::variant`, structured
@@ -60,7 +60,7 @@ reviews:
         `obj["k"] = v` style only — `obj = {...}` brace-list reassignment
         does not compile. Prefer `const&` for non-trivial params,
         `std::move` on last owning use (no use-after-move).
-    - path: 'Source_Core/include/**/*.h'
+    - path: 'Source/Core/include/**/*.h'
       instructions: |
         Shared header — also compiled into the DX12 / Unreal target. Do NOT
         suggest adding GLFW, glad, OpenGL, or any window-system include
@@ -68,13 +68,13 @@ reviews:
         `ImGuiLib`). Platform-specific code must be gated on
         `SMATCHET_EMBEDDED_IN_UNREAL`, `SMATCHET_WITH_MCP`, or
         `SMATCHET_WITH_LUA_AUTOMATION`.
-    - path: 'Source_Core/{src,include}/Commands/**'
+    - path: 'Source/Core/{src,include}/Commands/**'
       instructions: |
         Unified command system (CLI + Palette + MCP + Lua + Scenarios).
         Every command takes `const CommandContext&`, returns the structured
         error envelope, defaults `args` to `{}`. Routes go through
         `CommandRegistry` — flag any bypass.
-    - path: 'Source_Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}'
+    - path: 'Source/Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}'
       instructions: |
         Backend-specific code (`Jira*`, `Plane*`) MUST NOT leak into
         `ITrackerClient.h` or other shared interfaces. HTTP goes through
@@ -82,12 +82,12 @@ reviews:
         Field-value flow: catalog → parser → payload (no bypasses).
         Tracker writes must wire to `OfflineQueueService` +
         `BackendAuditTrail` / `FieldEditAuditSource`.
-    - path: 'Source_Core/**/{LocalCacheManager,OfflineQueueService,TicketSyncService,BackendAuditTrail}*.{cpp,h}'
+    - path: 'Source/Core/**/{LocalCacheManager,OfflineQueueService,TicketSyncService,BackendAuditTrail}*.{cpp,h}'
       instructions: |
         SQLite schema changes are additive only — flag drops, renames, or
         type changes. Offline-queue replay must remain idempotent + survive
         partial replay on crash.
-    - path: 'Source_Core/**/Smatchet*Ui*.{cpp,h}'
+    - path: 'Source/Core/**/Smatchet*Ui*.{cpp,h}'
       instructions: |
         UI thread is render-only — flag any synchronous `cpr::Get/Post`,
         `SQLite::Database` call, `p4` subprocess, `std::ifstream`-on-disk,
@@ -95,12 +95,12 @@ reviews:
         is reachable from `ImGui::*` frame. Workers post results back via
         `MainThreadDispatcher::PostToMainThread`. Budget = 6.94 ms / frame
         (144 Hz target).
-    - path: 'Plugins/Mcp/**'
+    - path: 'Source/Plugins/Mcp/**'
       instructions: |
-        MCP wire protocol = JSON-RPC. Tool schemas live in `Plugins/Mcp/`
+        MCP wire protocol = JSON-RPC. Tool schemas live in `Source/Plugins/Mcp/`
         and `SmatchetMcpServerUi`. Tools added here must also flow through
         `CommandRegistry` — flag direct registration.
-    - path: 'Source_Core/src/AppController_Lua*.cpp'
+    - path: 'Source/Core/src/AppController_Lua*.cpp'
       instructions: |
         `AppController_LuaBindings.cpp` (ON) and `AppController_LuaStubs.cpp`
         (OFF) MUST stay in shape-parity — every binding added on one side
@@ -118,7 +118,7 @@ reviews:
         python integration suites for tooling (merge-watcher, merge-gates,
         lock primitives) that legitimately invoke scripts, so the pure-logic
         rule does not apply to them.
-    - path: '{CMakeLists.txt,cmake/**,CMakePresets.json,Source_Core/CMakeLists.txt,Plugins/**/CMakeLists.txt,UnrealPlugins/**/CMakeLists.txt}'
+    - path: '{CMakeLists.txt,cmake/**,CMakePresets.json,Source/Core/CMakeLists.txt,Source/Plugins/**/CMakeLists.txt,Source/UnrealPlugins/**/CMakeLists.txt}'
       instructions: |
         `*_DX12` targets are `EXCLUDE_FROM_ALL` (Unreal only) — do NOT
         suggest changes there unless the diff explicitly targets them.

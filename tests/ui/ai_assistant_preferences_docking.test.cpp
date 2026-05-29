@@ -3,10 +3,10 @@
 // docking inside the Preferences modal, and "Assistant" tab persistence
 // across re-open.
 //
-// Drift warning — IF YOU CHANGE Source_Core/src/SmatchetPreferencesUi.cpp
+// Drift warning — IF YOU CHANGE Source/Core/src/SmatchetPreferencesUi.cpp
 // (specifically the `BeginTabItem("Assistant")` block at line 562 + the
 // tab-bar surrounding it, the showPreferences gating at
-// Source_Core/include/SmatchetUiSession.h:128, OR the close-handler cancel
+// Source/Core/include/SmatchetUiSession.h:128, OR the close-handler cancel
 // at SmatchetPreferencesUi.cpp:231-235 that cancels the in-flight probe on
 // tab/modal close), UPDATE THIS REPLICA to match.
 //
