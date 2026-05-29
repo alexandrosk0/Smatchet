@@ -34,6 +34,8 @@ on:
       - 'scripts/dev/test-agent-contract.sh'
       - 'scripts/dev/test-plan-index.sh'
       - 'scripts/dev/test-plan-ref-integrity.sh'
+      - 'scripts/dev/test-portable-purity.sh'
+      - 'scripts/dev/test-plan-naming.sh'
       - 'scripts/dev/test-agent-discovery-fixture.sh'
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
@@ -102,6 +104,12 @@ jobs:
 
       - name: test-plan-ref-integrity — no dangling docs/plans refs
         run: bash scripts/dev/test-plan-ref-integrity.sh
+
+      - name: test-plan-naming — plan files are kebab-case
+        run: bash scripts/dev/test-plan-naming.sh
+
+      - name: test-portable-purity — no NEW project literals in portable dirs
+        run: bash scripts/dev/test-portable-purity.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         run: bash scripts/dev/test-agent-discovery-fixture.sh

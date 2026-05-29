@@ -265,7 +265,7 @@ What PR A actually shipped:
 - ✅ `scripts/git-hooks/pre-push` invokes the reconcile check.
 - ✅ `scripts/dev/lock-claim-update.sh` adds `SMATCHET_LOCK_BACKEND=p4-counter` dispatch (refuses with exit 2 + diagnostic; full p4-side update path filed as a P3 backlog entry).
 - ✅ `scripts/setup-harness.sh` adds dual-VCS opt-in check.
-- ✅ `docs/guides/offline-builds.md:127` cross-reference de-stale-d.
+- ✅ `docs/guides/offline-builds.md:127` cross-reference de-staled.
 - ✅ `agents/git-janitor.md` adds the `See also` cross-link to `agents/p4-janitor.md`.
 - ⏭ `scripts/dev/_lock-json.py` — no change required (the helper is backend-agnostic and already shared by both backends).
 

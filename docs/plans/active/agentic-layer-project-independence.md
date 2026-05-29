@@ -12,7 +12,7 @@ Two intertwined goals:
 
 **Target outcome:** a repo where the **portable agentic layer is physically separated** from the **project-specific layer**, with all project values in **one `project.config.json`**, so reuse = "copy the portable tree + write a new config." Plus a clean, CI-enforced `docs/` taxonomy that can't re-drift. `AGENTS.md` and `agents/` stay at repo root.
 
-**Locked decisions:** boundary + config seam (no `${VAR}` templating); physical `agents/core/` + `agents/project/` split; machine-readable `project.config.json`; full `docs/plans/active`→`docs/plans` rename; consolidate orphan dirs; keep `docs/high-integrity/`.
+**Locked decisions:** boundary + config seam (no `${VAR}` templating); physical `agents/core/` + `agents/project/` split; machine-readable `project.config.json`; full `docs/design`→`docs/plans` rename; consolidate orphan dirs; keep `docs/high-integrity/`.
 
 ## Target architecture — the portable / project boundary
 
@@ -36,8 +36,8 @@ docs/
   agent-rules/          PORTABLE (rules; project values come from config)
   harness/              PORTABLE (IDE adapters)
   self-improvement/     framework PORTABLE / entries PROJECT
-    AGENT_SELF_IMPROVEMENT.md ; categories/ (was docs/self-improvement/categories/)
-  plans/                PROJECT     INDEX.md (auto-indexed) ; active/ (was design/) ; shipped/ (was plans/shipped/)
+    AGENT_SELF_IMPROVEMENT.md ; categories/ (was docs/backlog/agent-self-improvement/)
+  plans/                PROJECT     INDEX.md (auto-indexed) ; active/ (was design/) ; shipped/ (was design/archive/)
   guides/               mixed       offline-builds, perf-workflow, caveman, agent-token-tracking
   reference/            PROJECT     evaluation snapshot, archived scenario
   perf/  perforce/  high-integrity/   PROJECT (unchanged locations)
@@ -101,7 +101,7 @@ A `scripts/dev/project-config.sh` loader exports these as shell vars (e.g. `PC_P
   - Generate the **project-literal denylist** (from `project.config.json`) consumed by the purity guard.
 - **Phase B — agent split.** `git mv` agents into `agents/core/` + `agents/project/`. Update the full compatibility surface from Gate #1: `setup-harness.sh` (emit flat discovery symlinks; fix the codex/cursor `agents/*.md` counters to recurse), `test-agent-contract.sh` (the `for f in agents/*.md` loop **and** the hardcoded `agents/$a.md` named-agent paths), `test-doc-anchors.sh` globs, `AGENTS.md` delegation-table paths, CI `paths:` filters. Verify discovery on both harnesses + `test-agent-contract.sh` 19/19 green.
 - **Phase C — backlog split.** `git mv` `AGENT_SELF_IMPROVEMENT.md` + `self-improvement/categories/` → `docs/self-improvement/{,categories/}`. Fix the ~135 refs (12 agent prompts, `test-backlog-counts.sh:32-33`, `.gitattributes:55`, `sort-applied-md.sh`, `AGENTS.md`, knowledge-graph JSON). Verify `git grep docs/self-improvement/categories` → 0.
-- **Phase D — plans home (heavy; safe rewrite, not raw sed).** `git mv` `design/`→`plans/active/`, `plans/shipped/`→`plans/shipped/`, `BACKLOG_PLANS.md`→`plans/INDEX.md`. Rewrite the ~252 refs with a **purpose-built `scripts/dev/rewrite-plan-paths.sh`** (NOT a blind global sed) that handles each context separately — Markdown links, raw prose paths (C++ comments), generated JSON (`.understand-anything/*`), and **leaves intentional historical references in shipped plan logs untouched** — and **emits a review report** of every changed vs skipped reference. Still observe the ordering invariant (`docs/plans/shipped`→`docs/plans/shipped` before `docs/plans/active`→`docs/plans/active`). Repoint the index generator. Dismiss the high-integrity/test-delta delta gates only via the documented `tests-out-of-band` label (comment-only change). Add **temporary tombstone stubs** (`docs/plans/active/README.md`, `docs/plans/shipped/README.md`, `docs/plans/INDEX.md`) pointing to the new homes (removable after a grace period). Verify `test-plan-ref-integrity.sh` → 0 dangling + full build green.
+- **Phase D — plans home (heavy; safe rewrite, not raw sed).** `git mv` `design/`→`plans/active/`, `design/archive/`→`plans/shipped/`, `BACKLOG_PLANS.md`→`plans/INDEX.md`. Rewrite the ~252 refs with a **purpose-built `scripts/dev/rewrite-plan-paths.sh`** (NOT a blind global sed) that handles each context separately — Markdown links, raw prose paths (C++ comments), generated JSON (`.understand-anything/*`), and **leaves intentional historical references in shipped plan logs untouched** — and **emits a review report** of every changed vs skipped reference. Still observe the ordering invariant (`docs/design/archive`→`docs/plans/shipped` before `docs/design`→`docs/plans/active`). Repoint the index generator. Dismiss the high-integrity/test-delta delta gates only via the documented `tests-out-of-band` label (comment-only change). Add **temporary tombstone stubs** (`docs/plans/active/README.md`, `docs/plans/shipped/README.md`, `docs/plans/INDEX.md`) pointing to the new homes (removable after a grace period). Verify `test-plan-ref-integrity.sh` → 0 dangling + full build green.
 - **Phase E — orphan consolidation + hub demotion.** Create `guides/` + `reference/`; `git mv` `dev/offline-builds.md`, `PERF_WORKFLOW.md`, `CAVEMAN.md`, `AGENT_TOKEN_TRACKING.md`, evaluation snapshot, archived scenario; remove emptied dirs; fix ~117 hub refs. **Mixed dirs (`guides/`, `self-improvement/`) get a per-file frontmatter `tier: portable|project` tag enforced by `test-portable-purity.sh` + documented in `STRUCTURE.md`** (lighter than forcing `portable/`+`project/` subdirs; split a dir only where the boundary is clean). Keep `docs/high-integrity/` + `CONTEXT.md` (root).
 - **Phase F — config-wire (where cheap) + rules + lock.** Source `project-config.sh` in scripts that already use env-vars (merge-gates, perf-run, test-backlog-counts) and replace the cheapest inline values. **Done-bar (hard): no file under `agents/core/`, `agents/_shared/`, `docs/agent-rules/`, or `docs/harness/` may contain a project literal except as a `project.config` key reference** (`test-portable-purity.sh` enforces). Heavier rewiring of **project-only** scripts (e.g. `test-lint-rules.sh` zone globs) may stay as documented follow-ups — those files are project-specific, not portable. Add `docs/STRUCTURE.md` (taxonomy + per-file portable/project tags + per-row enforcing guard + "shipped/ never renamed again" record). Stub into `process-rules.md` + 1-line `AGENTS.md` pointer (keeps `§` anchors resolving). Now update the plan-lifecycle rule to `docs/plans/active/<slug>.md`. Flip the log-only guards to fail.
 
@@ -154,10 +154,28 @@ External review applied. Verdict per point:
 - **#10 mixed-dir labeling — ACCEPTED (lighter form):** per-file `tier:` frontmatter enforced by `test-portable-purity.sh` + `STRUCTURE.md`, rather than forcing `portable/`+`project/` subdirs everywhere.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped phase/PR: `<sha/PR> · <one-line>`)*
+
+- **PR #542 · Phase A** — `project.config.json` + schema + `project-config.sh` loader; `docs/PORTABILITY.md`; `test-plan-index.sh` (closed index drift 16→53); Gate #1 discovery fixture; doc-validation wiring.
+- **PR #543 · Phase B** — `git mv` 24 agents → `agents/core/` (16) + `agents/project/` (8); `setup-harness` flat links; location-agnostic `test-agent-contract`; ~319 refs rewritten.
+- **PR #544 · Phase C** — `git mv` self-improvement → `docs/self-improvement/{,categories/}`; ~135 refs; hardcoded consumers fixed; count drift synced.
+- **PR #545 · Phase D** — `git mv` design → `docs/plans/{active,shipped}` + `BACKLOG_PLANS.md`→`INDEX.md`; `rewrite-plan-paths.sh` (718 refs/269 files) + 166-ref active→shipped correction; `test-plan-ref-integrity.sh`; tombstones.
+- **PR #546 / #547 · setup-harness** — fixed the Windows hang: flat per-agent **hardlinks** (not symbolic, not a recursion-dependent junction); collision warning. (#546 landed the junction interim; #547 re-shipped the flat-hardlink version.)
+- **PR #548 · Phase E** — orphan dirs → `docs/guides/` + `docs/reference/`; root hubs demoted (kebab); completed Phase D's relative-form ref residue.
+- **PR (this) · Phase F** — `docs/STRUCTURE.md` (normative taxonomy + guard map); `test-portable-purity.sh` (baselined) + `test-plan-naming.sh`; process-rules + AGENTS.md pointers; de-Smatchet follow-up filed.
 
 ## Deviations from plan
-*(populated post-ship — what changed/deferred vs this plan, one-line rationale each)*
+
+- **Phase B was far larger than the plan's "cheap, symlink-backed" estimate** — ~319 cross-references (AGENTS.md, ADRs, agent prompts, knowledge-graph) — handled by scripted rewrite (archive excluded).
+- **Agent discovery: flat hardlinks, not a junction** — Windows symbolic `mklink` intermittently hangs; a junction-to-subdirs would depend on unverified harness recursion. Flat hardlinks are reliable + recursion-independent (the maintainer confirmed delegation works).
+- **`agents/project/` has 9, not 8** — `command-system` added; `p4-janitor` kept in `core/` (generic VCS-maintenance, portable to any p4 project), per maintainer.
+- **`test-portable-purity` is baseline-mode, not hard-zero** — the portable *structure* shipped, but the prompts still embed ~157 project literals; full de-Smatchet-ification is a tracked follow-up (`docs/self-improvement/categories/infra.md`). The guard blocks NEW leakage.
+- **Pre-existing dangling refs allowlisted** — refs to never-existed plans (`agentic-{flow,triage,handoff}`, etc.) are allowlisted in `test-plan-ref-integrity`, not fixed here.
+- **`docs/plans/shipped/` declared never-renamed** (252-ref blast radius) — recorded in STRUCTURE.md so no future reorg re-litigates it.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result: passed / failed / not-run)*
+
+- **CI-gated guards (doc-validation.yml) — PASS:** `test-plan-index` (53 indexed), `test-plan-ref-integrity` (72/72 resolve), `test-plan-naming`, `test-portable-purity` (baseline holds), `test-agent-contract` (25/0), `test-doc-anchors` (0 broken), `test-backlog-counts` (8/0), `test-agent-discovery-fixture`, `project.config.schema.json` validation.
+- **Agent discovery — PASS (live):** maintainer confirmed delegation works through the flat `.claude/agents/*.md` links after `setup-harness.sh`.
+- **Phase D rename — PASS:** dual-target build green on #545 (comment-only Source_Core edits; `tests-out-of-band` label); ref-integrity 0 dangling.
+- **`test-markdown-links` (local-only, not CI-gated):** residual breaks are pre-existing (never-existed-plan refs + one pre-existing `delegation.md` relative bug).
+- **Reuse smoke test — NOT-RUN (deferred):** copying the portable tree into a scratch repo + a fresh config is the end-to-end proof; deferred with the de-Smatchet follow-up (portable files still carry baselined literals, so a verbatim copy isn't literal-clean yet).

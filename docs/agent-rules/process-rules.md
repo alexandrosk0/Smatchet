@@ -6,7 +6,9 @@ This file groups the rules that govern **how agents move work through the pipeli
 
 ## Plan-doc family
 
-**Plan location**: every plan / design doc lives under `docs/plans/active/<slug>.md`. No plans in repo root, `backlog/`, `~/.claude/plans/`, or working-tree-only scratch. `backlog/` is for triage lists (CPPCHECK_PLAN, AGENT_SELF_IMPROVEMENT) — not new plans. Naming: kebab-case slug matching the feature (`vs-style-view-menu.md`, `remove-global-project-key.md`).
+**Doc structure**: the normative taxonomy + the portable/project boundary + per-dir enforcing guards live in [`docs/STRUCTURE.md`](../STRUCTURE.md) (reuse guide: [`docs/PORTABILITY.md`](../PORTABILITY.md)). The portable agentic layer (`agents/core/`, `agents/_shared/`, `docs/agent-rules/`, `docs/harness/`) must not hardcode project literals — read them from `project.config.json` (guard: `test-portable-purity`).
+
+**Plan location**: every plan / design doc lives under `docs/plans/active/<slug>.md`; once shipped, `git mv` to `docs/plans/shipped/<slug>.md` (the `INDEX.md` row auto-appears). No plans in repo root, `~/.claude/plans/`, or working-tree-only scratch. Agent self-improvement entries live in `docs/self-improvement/categories/` — not as plans. Naming: kebab-case slug matching the feature (guard: `test-plan-naming`).
 
 **Plan-doc safety**: as soon as a plan is written to `docs/plans/active/<slug>.md`, `git add` + commit it immediately with a `wip(plan): <slug>` prefix before any other work or branch operation. Working-tree-only files are silently lost on `git checkout`, `git reset --hard`, or GitHub Desktop branch switches. Recovery via `git fsck --lost-found` is expensive. Never leave a plan untracked across a session boundary.
 

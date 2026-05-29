@@ -53,3 +53,4 @@
 # - AGENT_SELF_IMPROVEMENT.md: parallel branches MODIFY the same count line with
 #   different values. Union would garble the count.
 docs/self-improvement/categories/applied.md merge=union
+docs/high-integrity/portable-purity-baseline.txt text eol=lf

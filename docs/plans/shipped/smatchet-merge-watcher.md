@@ -2,7 +2,7 @@
 
 > **Slug**: `smatchet-merge-watcher`
 >
-> **Status**: PHASE-1-READY (2026-05-21 evening grill locked all 5 open design decisions). Lands the P1 backlog entry [`docs/backlog/agent-self-improvement/tooling.md`](../self-improvement/categories/tooling.md) — "Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band" (`644f822` 2026-05-21). Per-user registry at `%LOCALAPPDATA%/Smatchet/merge-watch/`; foreground daemon default; 3-attempt triage budget; Smatchet toast + Windows native BurntToast notifications; explicit owner transfer on `register`. See § Open design decisions — LOCKED for the full rationale.
+> **Status**: PHASE-1-READY (2026-05-21 evening grill locked all 5 open design decisions). Lands the P1 backlog entry [`docs/self-improvement/categories/tooling.md`](../../self-improvement/categories/tooling.md) — "Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band" (`644f822` 2026-05-21). Per-user registry at `%LOCALAPPDATA%/Smatchet/merge-watch/`; foreground daemon default; 3-attempt triage budget; Smatchet toast + Windows native BurntToast notifications; explicit owner transfer on `register`. See § Open design decisions — LOCKED for the full rationale.
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -87,7 +87,7 @@ Per [`docs/plans/shipped/pillar-1-2-perf-review-system.md`](pillar-1-2-perf-revi
 4. **Visible-cue bucket-E harness** — **N/A** — Phase 4 adds an INVISIBLE-when-empty surface; no new sync-stall code path.
 5. **Marker inventory** — **N/A** — no new `SMATCHET_UI_PERF_SCOPE` markers (HTTP endpoint runs on worker; UI-thread toast append already inside `SMATCHET_UI_PERF_SCOPE("Toast::AppendOne")` per existing instrumentation).
 
-**Pre-push local check**: for Phase 4 only, run [`docs/guides/perf-workflow.md`](../PERF_WORKFLOW.md) § Gate-check vs baseline (Step 7) against the chosen scenario before opening the PR.
+**Pre-push local check**: for Phase 4 only, run [`docs/guides/perf-workflow.md`](../guides/perf-workflow.md) § Gate-check vs baseline (Step 7) against the chosen scenario before opening the PR.
 
 **Override**: none anticipated; no perf regression expected from a localhost HTTP POST.
 

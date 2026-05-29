@@ -51,6 +51,8 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 
 ## Project rules
 
+**Doc & agentic structure**: the normative taxonomy + the portable/project boundary live in [`docs/STRUCTURE.md`](docs/STRUCTURE.md); project-specific values (build presets, perf budgets, lint zones, env-prefix, …) live in [`project.config.json`](project.config.json). Portable dirs (`agents/core/`, `agents/_shared/`, `docs/agent-rules/`, `docs/harness/`) read values from the config — don't hardcode (guard: `test-portable-purity`).
+
 **Build**: `cmake --build --preset ninja-iter-msvc` (iter), `ninja-debug-msvc` (debug), `ninja-publish-msvc` (publish). Clang equivalents: `ninja-iter-clang`, `ninja-debug-clang`. Exe at `build/<preset>/Smatchet.exe` (the CMake target is `SmatchetStandalone` but `OUTPUT_NAME` ships as `Smatchet`).
 
 **Language**: C++14 hard (Unreal compat). Banned: `string_view`, `optional`, `variant`, structured bindings, `if constexpr`. Must compile on MSVC + Clang.

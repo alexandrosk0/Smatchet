@@ -60,7 +60,7 @@ without movement.
 | bug         | 14  | [self-improvement/categories/bug.md](self-improvement/categories/bug.md) |
 | process     | 25  | [self-improvement/categories/process.md](self-improvement/categories/process.md) |
 | tooling     | 34  | [self-improvement/categories/tooling.md](self-improvement/categories/tooling.md) |
-| infra       | 14  | [self-improvement/categories/infra.md](self-improvement/categories/infra.md) |
+| infra       | 15  | [self-improvement/categories/infra.md](self-improvement/categories/infra.md) |
 | test        | 18  | [self-improvement/categories/test.md](self-improvement/categories/test.md) |
 | security    | 13  | [self-improvement/categories/security.md](self-improvement/categories/security.md) |
 | external    | 1   | [self-improvement/categories/external-blockers.md](self-improvement/categories/external-blockers.md) |
