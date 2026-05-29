@@ -1,6 +1,6 @@
 // PriorityGridScrollScenario — drives the priority-grid scroll at a fixed
 // pixels-per-frame rate for N frames, measuring UI perf row timings.
-// See docs/design/archive/command-system-plan.md §PriorityGridScrollScenario.
+// See docs/plans/shipped/command-system-plan.md §PriorityGridScrollScenario.
 
 #include "Commands/Scenarios/IScenario.h"
 

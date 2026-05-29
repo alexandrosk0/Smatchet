@@ -1,6 +1,6 @@
 name: Perf full-suite
 
-# Slice 4 of docs/design/pillar-1-2-perf-review-system.md. Scheduled weekday-
+# Slice 4 of docs/plans/shipped/pillar-1-2-perf-review-system.md. Scheduled weekday-
 # morning run of all 14 production scenarios against ci-windows-latest
 # baselines. On regression: opens an issue tagged `perf-regression` with the
 # delta table. On improvement: opens a PR via `perf-baseline.sh bump --yes`

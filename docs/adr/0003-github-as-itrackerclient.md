@@ -6,7 +6,7 @@ Accepted (2026-05-18)
 
 # Context
 
-The agentic triage half (see [`docs/design/agentic-flow-implementation.md`](../design/agentic-flow-implementation.md) and the architecture rationale in [`docs/design/agentic-triage-flow.md`](../design/agentic-triage-flow.md)) polls issues from external trackers (Jira, Plane, GitHub) and feeds them into the proposal pipeline. The agent core only talks to one abstraction today — `ITrackerClient` — and the two existing backends (`JiraClient`, `PlaneClient`) implement it. Two paths exist for adding GitHub:
+The agentic triage half (see [`docs/plans/active/agentic-flow-implementation.md`](../design/agentic-flow-implementation.md) and the architecture rationale in [`docs/plans/active/agentic-triage-flow.md`](../design/agentic-triage-flow.md)) polls issues from external trackers (Jira, Plane, GitHub) and feeds them into the proposal pipeline. The agent core only talks to one abstraction today — `ITrackerClient` — and the two existing backends (`JiraClient`, `PlaneClient`) implement it. Two paths exist for adding GitHub:
 
 - (a) add a parallel `IGitHubClient` abstraction tailored to the REST surface (Issues / Comments / PRs / Labels / Assignees / State), or
 - (b) implement GitHub as an `ITrackerClient` backend, mapping the GitHub REST surface onto the existing core methods and returning documented "unsupported" sentinels for methods the agent core never calls against GitHub (JQL, sprints, worklog).

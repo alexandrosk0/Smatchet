@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/design/archive/pillar-1-2-perf-review-system.md § D2 for rationale.",
+  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D2 for rationale.",
   "default": {
     "mean_delta_pct": 10.0,
     "p99_abs_ceiling_ms": 16.67,

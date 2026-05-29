@@ -42,11 +42,11 @@ Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 
 No implementation code unless genuinely trivial. A 30-line design doc that prevents an hour of rework is the win.
 
-**Emit the plan body as your report.** The orchestrator persists it to `docs/design/<slug>.md` (kebab-case slug matching the feature) and commits immediately with `wip(plan): <slug>` per AGENTS.md § Plan-doc safety. You stay `read-only:true` — no `file-edit` capability, no commit. See `docs/design/archive/vs-style-view-menu.md` and `docs/design/archive/remove-global-project-key.md` for shape.
+**Emit the plan body as your report.** The orchestrator persists it to `docs/plans/active/<slug>.md` (kebab-case slug matching the feature) and commits immediately with `wip(plan): <slug>` per AGENTS.md § Plan-doc safety. You stay `read-only:true` — no `file-edit` capability, no commit. See `docs/plans/shipped/vs-style-view-menu.md` and `docs/plans/shipped/remove-global-project-key.md` for shape.
 
 **Verification automation in the plan.** Every `## Verification` section the architect drafts must classify each item into a `test-author` bucket (A CLI / B scenario / C screenshot / D sanitizer / E ImGui Test Engine) — never "user opens window and observes". If a planned step is genuinely interactive today, mark it bucket E with the explicit follow-up "test-author wires ImGui Test Engine before / alongside the slice ships". A plan that ships with un-bucketed verification will get bounced for re-draft. See AGENTS.md § Verification automation.
 
-**Revise the plan as implementation lands.** When a slice from the plan ships, the orchestrator (or the implementing subsystem agent) edits the same `docs/design/<slug>.md` to append:
+**Revise the plan as implementation lands.** When a slice from the plan ships, the orchestrator (or the implementing subsystem agent) edits the same `docs/plans/active/<slug>.md` to append:
 
 - `## Implementation log` — bullet per shipped commit: `<sha> · <one-line summary>`.
 - `## Deviations from plan` — what changed, was removed, or deferred relative to the original plan, with one-line rationale.

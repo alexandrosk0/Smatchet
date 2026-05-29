@@ -184,7 +184,7 @@ setup_claude_code() {
 # current core.hooksPath is unset or already equal to scripts/git-hooks
 # (don't trample a user-set custom hooks path).
 #
-# Plan: docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
+# Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
 install_git_hooks() {
   local target="scripts/git-hooks"
   local current
@@ -246,7 +246,7 @@ if [[ -x "$ROOT/scripts/dev/check-required-tools.sh" ]]; then
 fi
 
 # Dual-VCS opt-in check (per AGENTS.md § Dual-VCS topology + Phase 5/6 of
-# docs/design/archive/git-to-perforce-migration.md). Non-fatal — only warns when the
+# docs/plans/shipped/git-to-perforce-migration.md). Non-fatal — only warns when the
 # session has opted into the p4 layer (`SMATCHET_AGENT_VCS=p4`) but the p4
 # client is unconfigured. Sessions on the default `git` backend see nothing.
 if [[ "${SMATCHET_AGENT_VCS:-git}" == "p4" ]]; then

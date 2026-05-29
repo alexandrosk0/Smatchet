@@ -38,7 +38,7 @@ For **stacked PR sets sharing one lock**: use `lock-slug:` only on the final cut
 
 ## Plan revision (if this PR ships a slice from a multi-PR plan)
 
-Per [AGENTS.md § Plan revision after implementation](../AGENTS.md), the originating `docs/design/<slug>.md` should be updated in the same or next commit with:
+Per [AGENTS.md § Plan revision after implementation](../AGENTS.md), the originating `docs/plans/active/<slug>.md` should be updated in the same or next commit with:
 
 - `## Implementation log` — `<sha> · <one-line summary>` row appended
 - `## Deviations from plan` — what changed vs the plan + one-line rationale

@@ -6,7 +6,7 @@
 // Source_Core/include surface; lives next to its implementation so only
 // GitHubClient.cpp + GitHubIssueSearch.cpp pick it up.
 //
-// PR4 of docs/design/archive/github-tracker-backend.md.
+// PR4 of docs/plans/shipped/github-tracker-backend.md.
 
 #include "CachedTicketTypes.h"
 

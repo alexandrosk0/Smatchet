@@ -13,7 +13,7 @@
 # doesn't see a stale owner record while in the "released, not yet
 # re-claimed" window.
 #
-# Phase 4 of `docs/design/archive/git-to-perforce-migration.md`.
+# Phase 4 of `docs/plans/shipped/git-to-perforce-migration.md`.
 #
 # Usage:
 #   bash scripts/dev/lock-release-p4.sh <slug>

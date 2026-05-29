@@ -7,7 +7,7 @@
 // in `AppController_LuaBindings.cpp` whose top-level `#include "imgui.h"` (line 32)
 // + the `state["__smatchet_app"] = this` capture (line 766) drag the full
 // AppController + ImGui surface — Class C per the Phase 6 InitLuaCore
-// classification in docs/design/_plan-locks.md. Tests instead replicate the
+// classification in docs/plans/active/_plan-locks.md. Tests instead replicate the
 // sandbox closure invariant (which globals are denied) and the timeout invariant
 // (debug-hook count -> luaL_error -> recoverable C++ exception) at the
 // sol::state level, so production's sandbox + timeout policy stays the single
@@ -75,7 +75,7 @@ class LuaHostFixture {
 
     /// Production parity: install a count hook that errors after `count` instructions.
     /// Mirrors `LuaHookGuard` in AppController_LuaBindings.cpp:84-94 (uniform count = 100000
-    /// per docs/design/applied/lua-recorded-cmd-list.md §LuaHookGuard Q7). Tests use a much
+    /// per docs/plans/active/applied/lua-recorded-cmd-list.md §LuaHookGuard Q7). Tests use a much
     /// smaller count so the abort fires in milliseconds; the *mechanism* under test is the
     /// count-hook -> luaL_error -> protected_function_result error path, not the literal
     /// 100000-instruction budget.

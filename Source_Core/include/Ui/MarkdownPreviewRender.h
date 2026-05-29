@@ -118,7 +118,7 @@ struct Options {
     /// When non-empty AND `existingSelCtx == nullptr`, wraps the render in
     /// SelectableText::Begin(selectableId) / End() so prose is drag-selectable
     /// + Ctrl+C-copyable. Code blocks + tables remain non-selectable in MVP.
-    /// See docs/design/archive/markdown-language-definition-for-textedit.md § Slice 4.
+    /// See docs/plans/shipped/markdown-language-definition-for-textedit.md § Slice 4.
     const char* selectableId = nullptr;
     /// When non-null, prose runs register Segments into THIS Context instead
     /// of opening a fresh one. Used by the AI chat surface where one outer

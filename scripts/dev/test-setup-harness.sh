@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-setup-harness.sh — V1 + V7 verification for docs/design/archive/agents-skill-conversion.md.
+# test-setup-harness.sh — V1 + V7 verification for docs/plans/shipped/agents-skill-conversion.md.
 #
 # Covers:
 #   1. setup-harness.sh claude-code creates .claude/skills/perf-measure + .claude/skills/perf-instrument symlinks.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-markdown-links.sh — flag dangling relative markdown links across docs.
 #
-# Why: sed-based path renames (e.g. docs/design/applied/ → archive/) routinely
+# Why: sed-based path renames (e.g. docs/plans/active/applied/ → archive/) routinely
 # update body text but miss `[label](href)` link hrefs when only the label
 # happens to look like the path. PR #496 + #497 each shipped with 3-4
 # CR-caught broken-href findings of exactly this shape; this lint catches
@@ -56,16 +56,16 @@ import subprocess
 
 REPO_ROOT = os.getcwd()
 SCOPE = os.environ.get("SCOPE", "diff")
-# Excluded paths under docs/ (active vs archived): docs/design/applied/ and
-# docs/design/archive/ hold shipped/historical plans whose link-paths drifted
+# Excluded paths under docs/ (active vs archived): docs/plans/active/applied/ and
+# docs/plans/shipped/ hold shipped/historical plans whose link-paths drifted
 # over time without being maintained — they're documentation-history, not
 # active. Scope to docs that ARE actively maintained.
 # Use POSIX separators throughout — git diff --name-only emits forward
 # slashes on every platform, including Windows. Mixing os.sep here would
 # silently misclassify paths in diff scope under cmd/powershell.
 EXCLUDED_PREFIXES = (
-    "docs/design/applied",
-    "docs/design/archive",
+    "docs/plans/active/applied",
+    "docs/plans/shipped",
 )
 
 

@@ -10,7 +10,7 @@
 // at SmatchetPreferencesUi.cpp:231-235 that cancels the in-flight probe on
 // tab/modal close), UPDATE THIS REPLICA to match.
 //
-// Per slice 9 (docs/design/autonomous-debugging-no-creds.md § Slice 9) and
+// Per slice 9 (docs/plans/shipped/autonomous-debugging-no-creds.md § Slice 9) and
 // the per-test isolation contract: ResetDockingState() runs at the top of
 // every TestFunc. No global teardown / engine state mutation.
 

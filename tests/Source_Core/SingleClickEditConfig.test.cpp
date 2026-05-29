@@ -1,5 +1,5 @@
 // SingleClickToEditGridCells config round-trip — covers Save/Load behaviour for the
-// new TrackerConfig bool added by `docs/design/single-click-grid-edit-toggle.md`.
+// new TrackerConfig bool added by `docs/plans/shipped/single-click-grid-edit-toggle.md`.
 //
 // Round-trip path: TrackerConfig field → ConfigManager::Save() writes
 // `single_click_to_edit_grid_cells` key → ConfigManager::Load() reads it back with

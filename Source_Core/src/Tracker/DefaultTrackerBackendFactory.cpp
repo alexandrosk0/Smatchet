@@ -17,7 +17,7 @@ std::unique_ptr<ITrackerBackend> DefaultTrackerBackendFactory::Create(const std:
         return std::make_unique<PlaneClient>();
     }
     if (lower == "github") {
-        // PR2 of docs/design/archive/github-tracker-backend.md — GitHub as third tracker.
+        // PR2 of docs/plans/shipped/github-tracker-backend.md — GitHub as third tracker.
         // Construct with current Config snapshot; runtime PAT/URL rotation
         // requires AppController to recreate the backend via the factory.
         const TrackerConfig cfg = ConfigManager::Load();

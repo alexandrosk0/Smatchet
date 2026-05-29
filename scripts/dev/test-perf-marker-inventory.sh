@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-perf-marker-inventory.sh — Slice 4 of
-# docs/design/archive/pillar-1-2-perf-review-system.md.
+# docs/plans/shipped/pillar-1-2-perf-review-system.md.
 #
 # Behaviour (two-tier):
 #   1. ADVISORY drift check — if docs/perf/MARKER_INVENTORY.md is stale

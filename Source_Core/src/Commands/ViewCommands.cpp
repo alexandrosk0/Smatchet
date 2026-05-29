@@ -1,5 +1,5 @@
 // view.* command group — registered from SmatchetUI once ViewState is ready.
-// See docs/design/archive/command-system-plan.md §"Initial command catalogue – view".
+// See docs/plans/shipped/command-system-plan.md §"Initial command catalogue – view".
 
 #include "Commands/ViewCommands.h"
 

@@ -7,7 +7,7 @@
 # (safety — pending CLs may hold un-shipped agent work).
 #
 # Counterpart to `bash scripts/dev/p4-task-stream.sh` (the allocator).
-# Phase 2 Step 4 of `docs/design/archive/git-to-perforce-migration.md`.
+# Phase 2 Step 4 of `docs/plans/shipped/git-to-perforce-migration.md`.
 #
 # Usage:
 #   bash scripts/dev/p4-task-stream-gc.sh [--older-than-days N] [--dry-run]

@@ -1,7 +1,7 @@
 // ConfigManager_Views — view-store JSON persistence + the `CommentTemplate` ADL
 // serializers declared as friends in `ConfigManager.h`.
 //
-// Split off `ConfigManager.cpp` per `docs/design/large-files-and-phase-2.md` § A3.
+// Split off `ConfigManager.cpp` per `docs/plans/shipped/large-files-and-phase-2.md` § A3.
 // The shared filesystem / IO / lock helpers live in `ConfigManager_PathUtils.cpp`
 // behind the declarations in `ConfigManager_Internal.h`.
 

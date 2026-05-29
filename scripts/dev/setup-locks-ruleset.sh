@@ -2,7 +2,7 @@
 # setup-locks-ruleset.sh — one-time setup of the GitHub Ruleset that
 # protects `refs/locks/*` from unauthorised creation, update, and deletion.
 #
-# Phase 7b of docs/design/archive/git-ref-plan-locks.md. The script is opt-in —
+# Phase 7b of docs/plans/shipped/git-ref-plan-locks.md. The script is opt-in —
 # the ruleset is NOT auto-applied by any workflow. Run this once after
 # Phase 7b's PR merges and after you've decided you want the hardening.
 #

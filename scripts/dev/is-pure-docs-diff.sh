@@ -12,7 +12,7 @@
 # Used by agents/core/git-janitor.md § FF-clean docs-batch exception §
 # Pure-docs sub-exception to skip the test-all.sh gate on pure-doc diffs.
 #
-# Plan: docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md § Slice 2
+# Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 2
 #
 # Usage:
 #   bash scripts/dev/is-pure-docs-diff.sh [base-branch]   # default: develop

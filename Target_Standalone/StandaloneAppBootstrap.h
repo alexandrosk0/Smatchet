@@ -2,7 +2,7 @@
 #define SMATCHET_TARGET_STANDALONE_APP_BOOTSTRAP_H
 
 // Hidden-window GLFW + ImGui + AppController boot shared by light in-process CLI
-// and (future) ephemeral GUI refactor. See docs/design/light-release-unreal-default.md.
+// and (future) ephemeral GUI refactor. See docs/plans/shipped/light-release-unreal-default.md.
 
 #include "ConfigManager.h"
 

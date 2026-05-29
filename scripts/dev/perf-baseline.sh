@@ -9,7 +9,7 @@
 #   bump <scenario> [--host=dev] [--yes] — re-capture an existing baseline +
 #                                          overwrite the checked-in file
 #
-# Baselines are PER-HOST per docs/design/archive/pillar-1-2-perf-review-system.md § D1.
+# Baselines are PER-HOST per docs/plans/shipped/pillar-1-2-perf-review-system.md § D1.
 # Default host=dev (developer machine, advisory). CI workflows pass host=
 # ci-windows-latest for the gating baseline.
 #

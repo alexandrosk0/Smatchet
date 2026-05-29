@@ -1,8 +1,8 @@
 name: Plan-locks render
 
-# Regenerates docs/design/_plan-locks.generated.md from the live state of
+# Regenerates docs/plans/active/_plan-locks.generated.md from the live state of
 # refs/locks/* on origin. The rendered file is the human-readable mirror of
-# the atomic ref-based plan-lock state — see docs/design/git-ref-plan-locks.md
+# the atomic ref-based plan-lock state — see docs/plans/shipped/git-ref-plan-locks.md
 # (Phase 2) and scripts/dev/locks-render-markdown.sh.
 #
 # GitHub's `on: push` event does not fire for non-branch / non-tag refs
@@ -52,14 +52,14 @@ jobs:
 
       - name: Render
         run: |
-          bash scripts/dev/locks-render-markdown.sh > docs/design/_plan-locks.generated.md
+          bash scripts/dev/locks-render-markdown.sh > docs/plans/active/_plan-locks.generated.md
           echo "--- rendered file size:"
-          wc -l docs/design/_plan-locks.generated.md
+          wc -l docs/plans/active/_plan-locks.generated.md
 
       - name: Detect change
         id: diff
         run: |
-          if git diff --quiet -- docs/design/_plan-locks.generated.md; then
+          if git diff --quiet -- docs/plans/active/_plan-locks.generated.md; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No diff — refs/locks/* state matches the file already on develop."
           else
@@ -79,7 +79,7 @@ jobs:
       # checkbox would also work but relaxes the default for every workflow.
       # A fine-grained PAT keeps the relaxation surface to this one step.
       #
-      # PAT setup procedure: see docs/design/git-ref-plan-locks.md
+      # PAT setup procedure: see docs/plans/shipped/git-ref-plan-locks.md
       # § Operational requirements.
       # ---------------------------------------------------------------------
 
@@ -99,7 +99,7 @@ jobs:
           # The branch is bot-owned and exists solely to carry the regenerated
           # file. A human merges the PR or closes it.
           git checkout -B "$BRANCH"
-          git add docs/design/_plan-locks.generated.md
+          git add docs/plans/active/_plan-locks.generated.md
           git commit -m "chore(plan-locks): regenerate _plan-locks.generated.md from refs/locks/*"
           git push -u origin "$BRANCH" --force
 
@@ -117,7 +117,7 @@ jobs:
           BRANCH="bot/plan-locks-sync"
 
           if [ -z "${{ secrets.LOCK_RENDER_PAT }}" ]; then
-            echo "::warning::LOCK_RENDER_PAT secret is not set. Falling back to GITHUB_TOKEN, which is forbidden from creating PRs by default. If this step errors with 'GitHub Actions is not permitted to create or approve pull requests', see docs/design/git-ref-plan-locks.md § Operational requirements for the one-time PAT setup."
+            echo "::warning::LOCK_RENDER_PAT secret is not set. Falling back to GITHUB_TOKEN, which is forbidden from creating PRs by default. If this step errors with 'GitHub Actions is not permitted to create or approve pull requests', see docs/plans/shipped/git-ref-plan-locks.md § Operational requirements for the one-time PAT setup."
           fi
 
           existing=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[].number' || true)
@@ -126,7 +126,7 @@ jobs:
               --base develop \
               --head "$BRANCH" \
               --title "chore(plan-locks): regenerate _plan-locks.generated.md from refs" \
-              --body "Automated regeneration of \`docs/design/_plan-locks.generated.md\` from the current state of \`refs/locks/*\` on origin. Source of truth is the refs themselves; this Markdown is a convenience mirror per [git-ref-plan-locks](../blob/develop/docs/design/git-ref-plan-locks.md) § Phase 2. Safe to merge or close — the workflow will regenerate on schedule."
+              --body "Automated regeneration of \`docs/plans/active/_plan-locks.generated.md\` from the current state of \`refs/locks/*\` on origin. Source of truth is the refs themselves; this Markdown is a convenience mirror per [git-ref-plan-locks](../blob/develop/docs/plans/shipped/git-ref-plan-locks.md) § Phase 2. Safe to merge or close — the workflow will regenerate on schedule."
             echo "::notice::Opened new sync PR."
           else
             echo "::notice::Existing PR #$existing already open against $BRANCH; commit force-pushed onto it."

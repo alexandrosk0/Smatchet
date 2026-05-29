@@ -49,7 +49,7 @@
 // checks this and luaL_errors if Lua tries to draw immediate-mode UI while a
 // cached recording is active — otherwise the script would draw once on cache
 // miss and silently vanish on the next replay.
-// Per docs/design/archive/lua-recorded-cmd-list.md decision #5 + finding #6.
+// Per docs/plans/shipped/lua-recorded-cmd-list.md decision #5 + finding #6.
 thread_local bool g_luaImmediateModeAllowed = true;
 
 std::string TruncateForTrace(const std::string& s, std::size_t maxLen) {
@@ -736,7 +736,7 @@ std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(sol::state_
     // Marshal against the *calling* state `sv`, not the member `lua`: the caller may be an
     // off-UI-thread fresh state (MCP / automation worker). Touching `lua` here would re-introduce
     // cross-thread lua_State access + a cross-state sol::object return. See
-    // docs/design/mcp-lua-fresh-state-race.md.
+    // docs/plans/active/mcp-lua-fresh-state-race.md.
     CachedTicket ticket;
     if (Cache->TryGetTicket(issueId, ticket)) {
         return {sol::make_object(sv, ticket), ""};

@@ -1,5 +1,5 @@
 // WhisperDictationScenario — end-to-end regression gate for the whisper-dictation
-// pipeline. See docs/design/archive/whisper-dictation.md § Phase G.
+// pipeline. See docs/plans/shipped/whisper-dictation.md § Phase G.
 //
 // Exercises the press → capture → transcribe → insert path WITHOUT mic
 // hardware and WITHOUT an OpenAI key by installing a mock-transcription

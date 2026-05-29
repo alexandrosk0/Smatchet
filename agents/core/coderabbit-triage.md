@@ -183,14 +183,14 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 
 ## Watcher-invocation mode
 
-When invoked by `smatchet-merge-watcher` (per `docs/design/archive/smatchet-merge-watcher.md` Phase 3) the dispatch shape is:
+When invoked by `smatchet-merge-watcher` (per `docs/plans/shipped/smatchet-merge-watcher.md` Phase 3) the dispatch shape is:
 
 1. **Watcher** spawns `claude -p AUTO_ACT_PROMPT` (see `scripts/dev/merge-watcher.py:AUTO_ACT_PROMPT` for the literal text). Spawn is gated by `MERGE_WATCH_AUTO_ACT=true` + per-PR / per-head-sha budget; defaults are off to prevent runaway-loop risk.
 2. **Spawned session** invokes this agent (`coderabbit-triage`) first. The watcher passes only PR metadata via the prompt string (`pr`, `owner`, `repo`, `head_sha`, `budget`, `attempt` — see `merge-watcher.py:AUTO_ACT_PROMPT.format(...)`); the agent fetches the CR review body + inline review-thread comments itself via `gh api` (per § Process step 2 above). The agent then runs the 19-rule override table + validation pass, and emits per-finding handoff packets — VALID (with target subsystem named) + REJECT-INVARIANT / REJECT-AMBIGUOUS with rationale.
 3. **Spawned session** routes each VALID packet to its target subsystem agent (`tracker-backend`, `grid-engine`, `mechanic`, etc.) for the actual edits. REJECT findings are skipped outright; rationale surfaces in the commit body.
 4. **Spawned session** commits + pushes once all subsystem dispatches complete.
 5. **Watcher** re-polls on the next cycle; CR re-reviews the new head; the C4 (prongs 1 + 2) gate logic decides whether to merge.
-6. **Watcher (default-on as of 2026-05-28; set `MERGE_WATCH_RESOLVE_CR_THREADS=false` to opt out)** — once the new head's poll shows CR is no longer block-shaped, `maybe_resolve_stuck_cr_threads` enumerates the CR-authored, non-outdated, unresolved review threads on the PR and calls GraphQL `mutation resolveReviewThread` per thread. Closes the gap where CR's per-line threads stay `isResolved:false` on prior commits even after CR's overall review is SUCCESS, which used to keep `cr_open > 0` and wedge the merge gate. See `docs/design/archive/merge-watcher-triage-recovery.md` § sub-bug (b).
+6. **Watcher (default-on as of 2026-05-28; set `MERGE_WATCH_RESOLVE_CR_THREADS=false` to opt out)** — once the new head's poll shows CR is no longer block-shaped, `maybe_resolve_stuck_cr_threads` enumerates the CR-authored, non-outdated, unresolved review threads on the PR and calls GraphQL `mutation resolveReviewThread` per thread. Closes the gap where CR's per-line threads stay `isResolved:false` on prior commits even after CR's overall review is SUCCESS, which used to keep `cr_open > 0` and wedge the merge gate. See `docs/plans/shipped/merge-watcher-triage-recovery.md` § sub-bug (b).
 
 Per the Hand-back contract below, this agent itself is read-only — the file-edit step happens in the dispatched subsystem agents, and the commit + push happens in the spawned session orchestrator. C4 prong 3 (per `docs/evaluation/agentic-infrastructure-2026-05-23.md`) is what wires this multi-step dispatch into `AUTO_ACT_PROMPT`.
 

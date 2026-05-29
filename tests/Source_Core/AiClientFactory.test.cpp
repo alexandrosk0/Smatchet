@@ -106,7 +106,7 @@ TEST_CASE("AiClientFactory: MakeAiClient(DeepSeek) returns a non-null OpenAI-sha
     CHECK(client->GetProviderName() == "openai");
 }
 
-// --- SetTestOverride seam (bucket-E support; see docs/design/ai-client-test-override.md) ----
+// --- SetTestOverride seam (bucket-E support; see docs/plans/shipped/ai-client-test-override.md) ----
 
 namespace {
 

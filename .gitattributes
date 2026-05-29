@@ -39,7 +39,7 @@
 *.blend binary
 
 # Union merge for the backlog archive only.
-# Parallel slices in multi-slice plans (see docs/design/tooling-process-backlog-sweep.md)
+# Parallel slices in multi-slice plans (see docs/plans/active/tooling-process-backlog-sweep.md)
 # each PREPEND new "Resolution:" entries to applied.md. Without `merge=union`, the
 # parallel prepends conflict and require manual resolution per slice (~5 min × N slices).
 # Union concatenates both sides on conflict — correct for prepend, may interleave

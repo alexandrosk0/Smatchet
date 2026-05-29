@@ -56,7 +56,7 @@ If only one worktree exists, drop the `-C <worktree>` lines from every command i
 - **Revert merged PRs** — never. If a regression slipped through, `git-janitor` flags and stops; the user authors the revert.
 - **Squash-merge a PR carrying unvalidated visual commits** — never. Per AGENTS.md § Autonomous ship-loop default § Exceptions § Visual-validation exception, intermediate commits on a draft PR may be unvalidated iterations awaiting user verdict. Before squash-merging, confirm the user has approved the latest visual state (the merge-gates poller's user-comments gate covers this when the user has actually commented; absent a comment, ask).
 - **Push directly to `develop`** — never, except under the narrow FF-clean docs-batch exception below. Every other change lands via PR + squash-merge (use `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash` to bypass the local-checkout requirement of `gh pr merge`).
-- **Skip the regression build** — never. Even if the diff is docs-only, `cmake --build … SmatchetStandalone` is the gate, except under the FF-clean docs-batch exception below (which substitutes `scripts/dev/test-all.sh` for the C++ build because no C++ TU is in the diff). Plan-revision sections in `docs/design/<slug>.md` count as docs but a build failure on `develop` blocks all future work, so the gate is non-negotiable everywhere else.
+- **Skip the regression build** — never. Even if the diff is docs-only, `cmake --build … SmatchetStandalone` is the gate, except under the FF-clean docs-batch exception below (which substitutes `scripts/dev/test-all.sh` for the C++ build because no C++ TU is in the diff). Plan-revision sections in `docs/plans/active/<slug>.md` count as docs but a build failure on `develop` blocks all future work, so the gate is non-negotiable everywhere else.
 
 ### FF-clean docs-batch exception
 
@@ -290,7 +290,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<headRefName>
    ```
 
-7. **Append to plan revision** if the PR shipped a slice from `docs/design/<slug>.md`. Locate the plan via PR title / body; add a bullet to `## Implementation log`:
+7. **Append to plan revision** if the PR shipped a slice from `docs/plans/active/<slug>.md`. Locate the plan via PR title / body; add a bullet to `## Implementation log`:
    ```text
    - <sha-short> · <PR-title>
    ```
@@ -300,7 +300,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 9. **Post-merge backlog sweep**: if `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` lists an entry now meeting the apply threshold (≥ 2 agents cite it, or it blocked ≥ 3 workflows), apply it to the relevant `agents/*.md`, mark the entry `Status: applied` in the backlog. One small PR per applied entry — do not batch large prompt rewrites.
 
-10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/design/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
+10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/plans/active/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
 10.5. **Orphan-scenario sweep** (same shape as step 10's residue check). Walk every scenario `.cpp` under `Source_Core/src/Commands/Scenarios/` and classify it against the orphan tri-condition. Surface every match via one combined `AskUserQuestion` block (one option-set per orphan: `keep` / `archive to docs/scenarios/archived/<name>.md` / `delete .cpp + registry line`). Default = **keep** (orphan detection is advisory, not destructive). The sweep is end-of-session only — never mid-loop.
 
@@ -447,7 +447,7 @@ Worktrees in scope: <git worktree list output>
 
 Bullet list of items the user still owns after cleanup. Each line names the exact command the user runs:
 
-- `git -C "$MAIN_REPO" worktree remove "$WORKTREE"` — only if the user wants the agent worktree gone (defaults kept for inspection per `docs/design/agentic-coding-handoff.md`).
+- `git -C "$MAIN_REPO" worktree remove "$WORKTREE"` — only if the user wants the agent worktree gone (defaults kept for inspection per `docs/plans/active/agentic-coding-handoff.md`).
 - `test-author` follow-up filed for any manual verification step flagged in PR descriptions this round.
 - Backlog entries upgraded P3 → P2 if the same friction recurred ≥3 times in the session.
 - Any merge that surfaced a CodeRabbit review with > 0 unresolved findings.

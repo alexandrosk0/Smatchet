@@ -1,7 +1,7 @@
 #pragma once
 
 // WhisperConsentGate — single pinch point for the four consent invariants in
-// docs/design/whisper-dictation.md § Optional + no-data-without-consent.
+// docs/plans/shipped/whisper-dictation.md § Optional + no-data-without-consent.
 //
 // Centralising the rule means future call sites (Phase D / E surfaces, ad-hoc
 // scripts, scenario harnesses) can not accidentally drift around it: every

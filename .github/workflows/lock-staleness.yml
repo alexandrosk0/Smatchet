@@ -4,7 +4,7 @@ name: Plan-lock staleness sweep
 # GitHub Issue for any lock whose most-recent activity timestamp is older
 # than the staleness threshold (default 14 days).
 #
-# Phase 4 of docs/design/git-ref-plan-locks.md. The bulk of the logic
+# Phase 4 of docs/plans/shipped/git-ref-plan-locks.md. The bulk of the logic
 # lives in scripts/dev/lock-staleness-sweep.sh — keeping the YAML thin
 # avoids the block-scalar parse pitfall where embedded multi-line Python
 # heredocs at column 1 break the `run: |` literal block scalar (the

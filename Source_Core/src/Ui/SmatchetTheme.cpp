@@ -774,7 +774,7 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
     // cache, future per-theme caches) know to invalidate. Increment AFTER the
     // per-theme write completes so a parallel reader doesn't see a half-baked
     // palette tagged with the new revision. Slice 3 of
-    // docs/design/code-syntax-coloring-and-tooltips.md.
+    // docs/plans/active/code-syntax-coloring-and-tooltips.md.
     g_themeRevision.fetch_add(1, std::memory_order_release);
 }
 

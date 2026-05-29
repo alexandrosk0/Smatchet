@@ -1,5 +1,5 @@
 // sync_stall_visible_cue.test.cpp — Slice 5 of
-// docs/design/pillar-1-2-perf-review-system.md.
+// docs/plans/shipped/pillar-1-2-perf-review-system.md.
 //
 // Bucket-E gate for UX Pillar 2 — "UI never freezes without a visible cue".
 // The invariant under test: if the UI thread is about to block synchronously

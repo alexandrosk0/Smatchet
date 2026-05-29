@@ -1,5 +1,5 @@
 // DictationInsertionRouter — Phase A doctest coverage. See
-// docs/design/whisper-dictation.md § Phase A verification.
+// docs/plans/shipped/whisper-dictation.md § Phase A verification.
 //
 // Both gating states (SMATCHET_WITH_WHISPER ON / OFF) must compile this TU.
 // When ON, the real registry is exercised (Register/Unregister round-trip,

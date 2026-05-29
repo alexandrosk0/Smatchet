@@ -1,5 +1,5 @@
 // WhisperConsentGate — Phase C doctest coverage. The three predicates funnel
-// the four consent invariants from docs/design/whisper-dictation.md, so the
+// the four consent invariants from docs/plans/shipped/whisper-dictation.md, so the
 // tests below pin every relevant state transition. Pure logic, no I/O — the
 // clock is faked by passing nowEpochSec directly into CanDownloadModel.
 

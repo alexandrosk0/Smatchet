@@ -1,4 +1,4 @@
-// Slice 2 of docs/design/archive/autonomous-debugging-no-creds.md — see
+// Slice 2 of docs/plans/shipped/autonomous-debugging-no-creds.md — see
 // PlaneFixtureBackend.h for the contract.
 
 #include "PlaneFixtureBackend.h"

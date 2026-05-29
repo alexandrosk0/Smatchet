@@ -2,7 +2,7 @@
 #define SMATCHET_COMMANDS_SCENARIOS_ISCENARIO_H
 
 // Scenario subsystem for the unified Command System.
-// See docs/design/archive/command-system-plan.md §"Scenario subsystem".
+// See docs/plans/shipped/command-system-plan.md §"Scenario subsystem".
 //
 // A scenario is a multi-frame automated test that runs inside the normal
 // render loop. It is driven by ScenarioRunner::Tick (called once per frame

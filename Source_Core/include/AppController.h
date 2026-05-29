@@ -12,7 +12,7 @@
 #include "ILuaBindingHost.h"
 #endif
 // 2b. Lua recorder + replay value types (extracted from this header — see § A5
-//     of docs/design/large-files-and-phase-2.md). Self-guarded by the same
+//     of docs/plans/shipped/large-files-and-phase-2.md). Self-guarded by the same
 //     SMATCHET_WITH_LUA_AUTOMATION macro.
 #include "AppController_LuaTypes.h"
 
@@ -147,7 +147,7 @@ class AppController
     /// Recorded once in `Initialize`; reads are atomic loads — safe from any thread.
     bool IsOnUiThread() const;
 
-    /// Unified Command System registry. See docs/design/archive/command-system-plan.md.
+    /// Unified Command System registry. See docs/plans/shipped/command-system-plan.md.
     /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
     /// MCP plugin's tools/list + tools/call, the Lua `commands.invoke` binding,
     /// and the in-app Ctrl+Shift+P palette.
@@ -184,7 +184,7 @@ class AppController
     /// thread; SmatchetUI::Draw drains them at the top of each frame. Use instead of ad-hoc atomics.
     MainThreadDispatcher mainThreadDispatcher;
 
-    /// Phase 4b of docs/design/archive/smatchet-merge-watcher.md — localhost HTTP receiver for
+    /// Phase 4b of docs/plans/shipped/smatchet-merge-watcher.md — localhost HTTP receiver for
     /// the merge-watcher daemon's in-app toast notifications. Bound 127.0.0.1:7679;
     /// HTTP runs on cpp-httplib worker thread; toast appends post via
     /// mainThreadDispatcher. Started in Initialize(); stopped at the top of
@@ -332,7 +332,7 @@ class AppController
     /// worker) Lua execution: InitLuaCore + the `__smatchet_app_ui` alias. The
     /// returned state shares no lua_State with the UI-thread `lua` member, which
     /// is the whole point — running two threads through one lua_State is UB.
-    /// See docs/design/mcp-lua-fresh-state-race.md.
+    /// See docs/plans/active/mcp-lua-fresh-state-race.md.
     void PrepareFreshLuaState(sol::state& state);
     /// Replay the registered setup scripts (`activeSetupScripts_`) onto `state`
     /// under `sandbox` so global helpers / actions / mcp.register_tool definitions
@@ -384,7 +384,7 @@ class AppController
     std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) override;
     /// Recorded-command-list cell renderer: Lua provider returns a static draw recording that
     /// the C++ side replays every frame until one of the cache-key inputs changes. See
-    /// docs/design/archive/lua-recorded-cmd-list.md.
+    /// docs/plans/shipped/lua-recorded-cmd-list.md.
     void LuaRegisterFieldDisplayCachedBind(const std::string& fieldId, sol::function fn);
     void LuaUnregisterFieldDisplayCachedBind(const std::string& fieldId);
     void LuaRegisterFieldDisplayCachedByNameBind(const std::string& displayName, sol::function fn);
@@ -441,7 +441,7 @@ class AppController
      *
      * Declared outside the SMATCHET_WITH_LUA_AUTOMATION guard so unconditional call sites
      * (TicketFieldEditor) link in the stub build; stub returns false. See
-     * docs/design/archive/lua-recorded-cmd-list.md § Removal of legacy.
+     * docs/plans/shipped/lua-recorded-cmd-list.md § Removal of legacy.
      *
      * @return true if the handler ran and returned a Lua-truthy value (cell fully handled).
      */
@@ -892,8 +892,8 @@ class AppController
     // `AppController::ImCmd` / `LuaFieldCacheEntry` / `LuaWindowEntry` / `PendingLuaWindowOp`
     // qualified names every call site uses (notably the anonymous-namespace `LuaDrawList`
     // class in AppController_LuaBindings.cpp). Members holding these types stay `private`
-    // further down. See docs/design/large-files-and-phase-2.md § A5 and
-    // docs/design/archive/lua-recorded-cmd-list.md.
+    // further down. See docs/plans/shipped/large-files-and-phase-2.md § A5 and
+    // docs/plans/shipped/lua-recorded-cmd-list.md.
   public:
     using ImCmd = smatchet::lua::ImCmd;
     using LuaFieldCacheEntry = smatchet::lua::LuaFieldCacheEntry;
@@ -915,7 +915,7 @@ class AppController
     // cell-providers, ExecuteLuaConsoleSnippet). Off-UI-thread Lua execution (MCP run_lua /
     // registered-tool handlers on httplib workers, the automation worker) MUST run on a fresh
     // per-call sol::state via PrepareFreshLuaState — never `lua`. Two threads through one
-    // lua_State is UB. See docs/design/mcp-lua-fresh-state-race.md.
+    // lua_State is UB. See docs/plans/active/mcp-lua-fresh-state-race.md.
     sol::state lua;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProviders_;
     /** Lowercased Jira field display name (from catalog) -> handler. */

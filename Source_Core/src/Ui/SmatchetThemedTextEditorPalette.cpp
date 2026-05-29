@@ -60,7 +60,7 @@ TextEditor::Palette GetThemedLuaConsolePalette() {
     p[(int)PI::MultiLineComment] = ImU32FromArray4(syn.Comment); // same hue as single-line
     p[(int)PI::Number] = ImU32FromArray4(syn.Number);
     p[(int)PI::Preprocessor] = ImU32FromArray4(syn.Preprocessor);
-    // Slice 6 of docs/design/code-syntax-coloring-and-tooltips.md — identifier
+    // Slice 6 of docs/plans/active/code-syntax-coloring-and-tooltips.md — identifier
     // slot now uses the per-theme Identifier color (was: ImGuiCol_Text, which
     // blended identifiers into plain text). Affects all editor-embedding sites
     // (Lua console, AI chat editor, ticket-field long-text editor) — desired:

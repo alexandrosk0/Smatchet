@@ -26,8 +26,8 @@
   Last-reviewed: 2026-05-21
 
 - 2026-05-21 · architect · [process] · P3 — Plan template should make "dual-target build gate" a mandatory § callout
-  Details: Architect pre-code review of `docs/design/archive/github-tracker-backend.md` flagged the un-gating of `SMATCHET_WITH_AGENTIC` on `GitHubClient*.cpp` as a 🔴 Critical because the plan did not anchor an explicit "must pass dual-target build" check to the un-gate decision. The verification section had `cmake --build … --target SmatchetStandalone SmatchetCore_DX12` listed but it sat in the bulk build-gate list, not at the call-site of the un-gate. Every plan that touches `SMATCHET_WITH_*` source-list gating has this same shape (recurring DX12 pitfall — see ADR 0002 plugin-shim-link-discipline + ADR 0003 github-as-itrackerclient + the `unreal-bridge` agent's existence).
-  Concrete next action: amend `docs/design/_plan-template.md` to add a new mandatory § "Dual-target compile gate" section between § Perf-review-system gates and § Risks. Section asks: "does this diff touch `SMATCHET_WITH_*` source-list gating? if yes, anchor the dual-target build cmd to the specific files touched; if no, fill with `N/A — diff is target-agnostic`". ~15 min template edit. Wins on every multi-TU CMake-gating change.
+  Details: Architect pre-code review of `docs/plans/shipped/github-tracker-backend.md` flagged the un-gating of `SMATCHET_WITH_AGENTIC` on `GitHubClient*.cpp` as a 🔴 Critical because the plan did not anchor an explicit "must pass dual-target build" check to the un-gate decision. The verification section had `cmake --build … --target SmatchetStandalone SmatchetCore_DX12` listed but it sat in the bulk build-gate list, not at the call-site of the un-gate. Every plan that touches `SMATCHET_WITH_*` source-list gating has this same shape (recurring DX12 pitfall — see ADR 0002 plugin-shim-link-discipline + ADR 0003 github-as-itrackerclient + the `unreal-bridge` agent's existence).
+  Concrete next action: amend `docs/plans/active/_plan-template.md` to add a new mandatory § "Dual-target compile gate" section between § Perf-review-system gates and § Risks. Section asks: "does this diff touch `SMATCHET_WITH_*` source-list gating? if yes, anchor the dual-target build cmd to the specific files touched; if no, fill with `N/A — diff is target-agnostic`". ~15 min template edit. Wins on every multi-TU CMake-gating change.
   Status: open
   Last-reviewed: 2026-05-21
 
@@ -104,7 +104,7 @@
   Last-reviewed: 2026-05-17
 
 - 2026-05-20 · orchestrator · [process] · P2 — AI chat panel bucket-E coverage gap (post-feature-completion)
-  Details: `docs/design/archive/ai-chat-claude-desktop-parity.md` § Verification listed 5 mandatory bucket-E ImGui-Test-Engine scenarios (`ai_chat_pin_bookmark`, `ai_chat_copy_clipboard`, `ai_chat_history_persist`, `ai_chat_clear_confirm`, `ai_chat_keyboard_nav`). None authored — feature shipped on visual sign-off + the new `ai-chat-history-render` perf scenario as evidence. AGENTS.md § Verification automation — zero manual steps says "manual residue without a backlog entry is a fail"; this entry closes that loop. Also: bucket-C screenshot golden bootstrap rig still doesn't exist; AI chat user-bubble + pin-strip + theme-token visuals inherit that existing gap.
+  Details: `docs/plans/shipped/ai-chat-claude-desktop-parity.md` § Verification listed 5 mandatory bucket-E ImGui-Test-Engine scenarios (`ai_chat_pin_bookmark`, `ai_chat_copy_clipboard`, `ai_chat_history_persist`, `ai_chat_clear_confirm`, `ai_chat_keyboard_nav`). None authored — feature shipped on visual sign-off + the new `ai-chat-history-render` perf scenario as evidence. AGENTS.md § Verification automation — zero manual steps says "manual residue without a backlog entry is a fail"; this entry closes that loop. Also: bucket-C screenshot golden bootstrap rig still doesn't exist; AI chat user-bubble + pin-strip + theme-token visuals inherit that existing gap.
   Concrete next action: `test-author` to spec the 5 ImGui-Test-Engine scenarios using the existing `tests/ui/views_columns_reorder.test.cpp` shape + `ninja-ui-test-msvc` preset as the reference. Each scenario is ~30-50 lines of ImGui-Test-Engine driver code (open panel → seed messages via `g_ui` mutation or direct dispatch → click via test engine → assert state). Estimated 3-4 hours total. Per-scenario cost amortised because the seed + open-panel scaffolding is shared.
   Status: open
   Last-reviewed: 2026-05-20
@@ -116,7 +116,7 @@
   Last-reviewed: 2026-05-17
 
 - 2026-05-16 · test-rig · [process] · P3 — Parallel-write-fan-in to `tests/CMakeLists.txt` needs sequential-merge stance documented
-  Details: 4 parallel Wave A2 test-rig agents (tracker-labels / datetime / payload / field-catalog) each appended their new test + source `.cpp` to the same lines of `tests/CMakeLists.txt`. Each PR after the first needed manual rebase resolving union-merge — orchestrator absorbed this cost (~5 min per PR). Already documented in `docs/design/test-suite-expansion-completion.md` § Deviations from plan; not in agent-level docs.
+  Details: 4 parallel Wave A2 test-rig agents (tracker-labels / datetime / payload / field-catalog) each appended their new test + source `.cpp` to the same lines of `tests/CMakeLists.txt`. Each PR after the first needed manual rebase resolving union-merge — orchestrator absorbed this cost (~5 min per PR). Already documented in `docs/plans/shipped/test-suite-expansion-completion.md` § Deviations from plan; not in agent-level docs.
   Concrete next action: promote to `agents/core/test-rig.md` § Parallel-with-N-other-agents note — explicit rule "when N siblings touch `tests/CMakeLists.txt`, append at the END only; merge order is serial; orchestrator handles rebase". Saves explanation in every parallel-batch packet. Estimated cost 10 min doc edit.
   Status: open
   Last-reviewed: 2026-05-17
@@ -147,13 +147,13 @@
 
 - 2026-05-24 · orchestrator · [process] · P3 — plan-doc drafts should grep-verify pre-named TUs don't already exist
   Details: Wave-A slice 1 of `autonomous-debugging-no-creds.md` directed the agent to create `Source_Core/{include,src}/GitHubIssueMappingPure.{h,cpp}`. Those names didn't exist, but the equivalent pure helpers had already shipped under different names from PR12 (`GitHubIssueSearchMapping.{h,cpp}` + `GitHubClientHelpers.{h,cpp}` + `GitHubQueryFromJql.{h,cpp}`). Agent caught the duplication via a 30-second sanity grep and reused the existing TUs — correct outcome, but the plan author shouldn't have to depend on per-agent rigour. Low friction this round; high cost the day an agent doesn't catch it and lands a parallel duplicate.
-  Concrete next action: add a one-liner to `docs/design/_plan-template.md` § Files to modify: "Before listing a new `<Foo>.{h,cpp}` here, run `rg -l '<Foo>' Source_Core/` to confirm it doesn't already exist under that or a synonym name." 2-minute edit. Surfaces every time a plan author lists fresh TUs without first grepping the codebase.
+  Concrete next action: add a one-liner to `docs/plans/active/_plan-template.md` § Files to modify: "Before listing a new `<Foo>.{h,cpp}` here, run `rg -l '<Foo>' Source_Core/` to confirm it doesn't already exist under that or a synonym name." 2-minute edit. Surfaces every time a plan author lists fresh TUs without first grepping the codebase.
   Status: open
   Last-reviewed: 2026-05-24
 
 - 2026-05-24 · orchestrator · [process] · P3 — slice coordination paragraphs should call out the "if sibling slice hasn't landed yet" case
   Details: Wave-A slice 2 of `autonomous-debugging-no-creds.md` § Coordination read "your env-hook addition adjacent to Jira's [from slice 1]". Slice 1 hadn't merged when slice 2's agent started; the agent had to design the hook shape from scratch rather than pattern-match. Friction was mild (the hook block is small) but a sibling slice that depended on a non-trivial slice-1 surface would have stalled.
-  Concrete next action: add a one-liner to `docs/design/_plan-template.md` § Per-slice "Coordination" section template: "If your slice depends on or copies a pattern from a sibling slice that hasn't merged yet, include the pattern's intended shape (3-5 lines of code or a fixture-name list) inline in this slice's Coordination paragraph so the agent doesn't have to invent it." 2-minute edit; surfaces every parallel-dispatched plan.
+  Concrete next action: add a one-liner to `docs/plans/active/_plan-template.md` § Per-slice "Coordination" section template: "If your slice depends on or copies a pattern from a sibling slice that hasn't merged yet, include the pattern's intended shape (3-5 lines of code or a fixture-name list) inline in this slice's Coordination paragraph so the agent doesn't have to invent it." 2-minute edit; surfaces every parallel-dispatched plan.
   Status: open
   Last-reviewed: 2026-05-24
 

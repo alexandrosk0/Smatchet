@@ -1,6 +1,6 @@
 # CI required-check pattern — always-report (avoid the path-filter deadlock)
 
-Plan: [`docs/design/gate-enforcement-hardening.md`](../design/gate-enforcement-hardening.md) § Slice 0.
+Plan: [`docs/plans/active/gate-enforcement-hardening.md`](../design/gate-enforcement-hardening.md) § Slice 0.
 
 ## The deadlock
 

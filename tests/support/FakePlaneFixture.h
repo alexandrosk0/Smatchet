@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TESTS_FAKE_PLANE_FIXTURE_H
 #define SMATCHET_TESTS_FAKE_PLANE_FIXTURE_H
 
-// Slice 2 of docs/design/autonomous-debugging-no-creds.md — header-only loader
+// Slice 2 of docs/plans/shipped/autonomous-debugging-no-creds.md — header-only loader
 // that turns a checked-in JSON fixture under tests/fixtures/plane/ into a
 // scripted FakeTrackerClient("Plane") instance. Same shape as the GitHub /
 // Jira fixtures that ship in sibling slices.

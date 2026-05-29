@@ -1,5 +1,5 @@
 // LuaRecorderFuzzScenario — hostile-input fuzz of the recorded-cmd-list path.
-// Plan reference: docs/design/archive/lua-recorded-cmd-list.md §Crash-safety hardening
+// Plan reference: docs/plans/shipped/lua-recorded-cmd-list.md §Crash-safety hardening
 //   §Fuzz test (verification step 14).
 //
 // Registers a Lua provider (`render_fuzz_cell`, defined in

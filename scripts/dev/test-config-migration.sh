@@ -7,7 +7,7 @@
 # `layout_schema_version`) round-trip per spec.
 #
 # Why doctest-via-shell rather than the standalone-exe + fixture-copy loop originally sketched
-# in docs/design/test-suite-expansion-completion.md § Phase 4: ConfigManager does not consult
+# in docs/plans/shipped/test-suite-expansion-completion.md § Phase 4: ConfigManager does not consult
 # any `SMATCHET_USER_DATA` env var on Load(), so a child exe cannot be isolated to a fixture
 # dir without modifying production code (out of scope for Phase 4). The doctest rig achieves
 # the same coverage with per-TEST_CASE isolation via TestEnvGuard.h.

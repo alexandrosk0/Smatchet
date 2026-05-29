@@ -19,8 +19,8 @@
 # shipped, BACKLOG_PLANS.md -> plans/INDEX.md) is a two-line edit here.
 set -uo pipefail
 
-ARCHIVE_DIR="${PLAN_INDEX_ARCHIVE_DIR:-docs/design/archive}"
-INDEX_FILE="${PLAN_INDEX_FILE:-docs/backlog/BACKLOG_PLANS.md}"
+ARCHIVE_DIR="${PLAN_INDEX_ARCHIVE_DIR:-docs/plans/shipped}"
+INDEX_FILE="${PLAN_INDEX_FILE:-docs/plans/INDEX.md}"
 BEGIN_MARK="<!-- BEGIN auto-plan-index -->"
 END_MARK="<!-- END auto-plan-index -->"
 

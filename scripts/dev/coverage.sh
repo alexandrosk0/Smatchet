@@ -3,7 +3,7 @@
 #
 # OpenCppCoverage is Windows-only. POSIX runners fall back to `lcov+gcov` but
 # the gate ships Windows-runner-only per
-# docs/design/archive/test-suite-expansion-completion.md § Locked decisions.
+# docs/plans/shipped/test-suite-expansion-completion.md § Locked decisions.
 # Re-evaluate when a POSIX CI runner is provisioned.
 #
 # Usage:

@@ -2,7 +2,7 @@
 """
 coderabbit-triage — classify CR findings against Smatchet invariants.
 
-Phase 3 of `docs/design/archive/smatchet-merge-watcher.md`. Python port of
+Phase 3 of `docs/plans/shipped/smatchet-merge-watcher.md`. Python port of
 `agents/core/coderabbit-triage.md`'s rejection table (the agent doc stays
 the source-of-truth for the rules; this is the executable mirror).
 
@@ -268,7 +268,7 @@ def format_triage_report(findings: list[Finding], pr: int, attempt: int, budget:
     lines = [
         "## `smatchet-merge-watcher` triage report",
         "",
-        f"_Phase 3 classifier per `docs/design/archive/smatchet-merge-watcher.md`. Attempt {attempt}/{budget}._",
+        f"_Phase 3 classifier per `docs/plans/shipped/smatchet-merge-watcher.md`. Attempt {attempt}/{budget}._",
         "",
     ]
     if not findings:

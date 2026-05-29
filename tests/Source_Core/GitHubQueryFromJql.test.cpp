@@ -1,5 +1,5 @@
 // GitHubQueryFromJql doctest — JQL → GitHub /search/issues `q=` translator.
-// PR5 of docs/design/github-tracker-backend.md.
+// PR5 of docs/plans/shipped/github-tracker-backend.md.
 
 #include "GitHubQueryFromJql.h"
 

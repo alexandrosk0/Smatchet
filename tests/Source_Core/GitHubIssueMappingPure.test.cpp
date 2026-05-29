@@ -1,4 +1,4 @@
-// GitHubIssueMappingPure doctest — slice 1 of docs/design/autonomous-debugging-no-creds.md.
+// GitHubIssueMappingPure doctest — slice 1 of docs/plans/shipped/autonomous-debugging-no-creds.md.
 //
 // This test rig exercises the pure GitHub JSON → CachedTicket mapping path
 // end-to-end against a fixture file loaded by tests/support/FakeGitHubFixture.h

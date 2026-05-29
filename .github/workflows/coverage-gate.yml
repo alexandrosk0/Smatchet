@@ -10,7 +10,7 @@ name: Coverage gate (test-delta)
 # add a test." The numerical coverage threshold (>=70%) is the separate
 # coverage.yml workflow's responsibility and stays advisory during the soak.
 #
-# See docs/design/applied/test-suite-expansion-completion.md § Phase 9.
+# See docs/plans/active/applied/test-suite-expansion-completion.md § Phase 9.
 
 on:
   pull_request:

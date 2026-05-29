@@ -47,7 +47,7 @@ struct CaptureOptions {
     /// `setenv()` so the same allow-list semantic holds. False (the H1
     /// default) keeps the additive-merge behaviour the P4Blame call sites
     /// expect; `ClaudeCodeLocalRunner` flips this on to enforce the agentic-
-    /// flow env allow-list (decision #7 in docs/design/agentic-flow-implementation.md).
+    /// flow env allow-list (decision #7 in docs/plans/active/agentic-flow-implementation.md).
     bool replaceParentEnv = false;
     /// Empty = inherit parent's working directory.
     std::string cwd;

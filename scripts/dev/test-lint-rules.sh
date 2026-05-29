@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-lint-rules.sh — tiered high-integrity C++ enforcement for Smatchet.
 #
-# Plan: docs/design/high-integrity-cpp-enforcement.md (precursor reorg #505).
+# Plan: docs/plans/active/high-integrity-cpp-enforcement.md (precursor reorg #505).
 #
 # Zones (single source of truth = AGENTS.md § Tiered enforcement; the globs
 # below are asserted identical to AGENTS.md by --selftest):
@@ -226,7 +226,7 @@ scan_narrowing() {
     # PCH ("not a valid PCH file") and can't resolve <string> (no clang stdlib
     # paths), yielding only clang-diagnostic-error noise. Until a PCH-free clang
     # db is provisioned in CI this rule is catalogued-only, never gated.
-    # See docs/design/high-integrity-cpp-enforcement.md § Deviations.
+    # See docs/plans/active/high-integrity-cpp-enforcement.md § Deviations.
     if [ "${SMATCHET_LINT_NARROWING:-0}" != "1" ]; then
         echo "test-lint-rules: INFO: narrowing-conversions opt-in (SMATCHET_LINT_NARROWING=1 + clang db); skipped" >&2
         return 0

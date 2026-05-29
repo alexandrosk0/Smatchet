@@ -413,7 +413,7 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
                     "`--file`, captures from the default Windows microphone for `--seconds` (default 5) then "
                     "transcribes. `--mode cloud` is the only mode supported in Phase B; `local` is rejected "
                     "with a clear error; `auto` falls back to cloud. API key resolution mirrors the 5-row "
-                    "fallback rule in docs/design/whisper-dictation.md § API key fallback rule. On success "
+                    "fallback rule in docs/plans/shipped/whisper-dictation.md § API key fallback rule. On success "
                     "returns `{text, elapsed_ms, mode, captured_samples}`; on failure returns a Failure "
                     "result with the transport / parse / key error.";
     c.Destructive = false;
@@ -445,7 +445,7 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
         const std::string mode = args.value("mode", std::string("cloud"));
         const TrackerConfig cfg = ConfigManager::Load();
 
-        // Phase C mode-router decision tree (see docs/design/whisper-dictation.md
+        // Phase C mode-router decision tree (see docs/plans/shipped/whisper-dictation.md
         // § Mode router decision tree). `auto` prefers local-if-present, else
         // falls back to cloud. `local` is hard-gated on a present model. `cloud`
         // unconditionally takes the cloud path. Cloud-on-fallback after a local

@@ -321,7 +321,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
 
                     ImGui::BeginChild("##rawcs_scroll", ImVec2(rawFieldW, 220.f), ImGuiChildFlags_None,
                                       ImGuiWindowFlags_HorizontalScrollbar);
-                    // Slice 7 of docs/design/code-syntax-coloring-and-tooltips.md —
+                    // Slice 7 of docs/plans/active/code-syntax-coloring-and-tooltips.md —
                     // semantic callstack tokenizer recognises the canonical
                     // Module!Class::Method() [Path\File.ext:Line] shape and
                     // emits per-element colours (class = Identifier,
@@ -700,7 +700,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         {
                             const float codeColW = ImGui::GetContentRegionAvail().x;
                             const ImVec2 codeCell0 = ImGui::GetCursorScreenPos();
-                            // Slice 5 of docs/design/code-syntax-coloring-and-tooltips.md —
+                            // Slice 5 of docs/plans/active/code-syntax-coloring-and-tooltips.md —
                             // route the annotate line through CodeColorView with
                             // language inferred from the file being annotated. .lua /
                             // .py / .glsl files now render with their respective

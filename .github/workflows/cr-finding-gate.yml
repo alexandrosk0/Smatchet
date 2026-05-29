@@ -2,7 +2,7 @@ name: CR finding gate
 
 # Promotes CodeRabbit's "0 actionable findings" semantics to a required
 # server-side StatusContext: `CR findings (0 actionable)`. Plan:
-# docs/design/gate-enforcement-hardening.md § Slice 3.
+# docs/plans/active/gate-enforcement-hardening.md § Slice 3.
 #
 # CR-timing race: CodeRabbit reviews asynchronously, so the initial
 # `pull_request` run usually fires BEFORE CR has reviewed the head — the action

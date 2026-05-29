@@ -12,7 +12,7 @@ transition Idle → InFlight → Errored and asserted zero deltas received, one
 error received with HTTP 401.
 
 The scenario was introduced in slice 8 of the `autonomous-debugging-no-creds`
-plan (`docs/design/archive/autonomous-debugging-no-creds.md` § Slice 8) as a
+plan (`docs/plans/shipped/autonomous-debugging-no-creds.md` § Slice 8) as a
 missing-bug-path scenario.
 
 ## Why archived

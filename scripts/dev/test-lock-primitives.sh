@@ -89,7 +89,7 @@ echo "case 1 — claim new slug"
 WS_A="$SANDBOX/ws-a.txt"
 write_set_for "$WS_A"
 if run_in "$CLONE_A" \
-    env AGENT_ID=agent-a LOCK_BRANCH=feat/example LOCK_PLAN=docs/design/example.md \
+    env AGENT_ID=agent-a LOCK_BRANCH=feat/example LOCK_PLAN=docs/plans/active/example.md \
     bash "$SCRIPTS/lock-claim.sh" example-slice "$WS_A" >/dev/null 2>&1
 then
     pass "clone-a claimed example-slice"

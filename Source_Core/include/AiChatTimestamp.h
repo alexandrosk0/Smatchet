@@ -9,7 +9,7 @@ namespace ai {
 /**
  * Pure string-formatting helpers for the AI chat hover action row.
  *
- * Phase 1 of the Claude-Desktop-parity plan (docs/design/archive/ai-chat-claude-desktop-parity.md).
+ * Phase 1 of the Claude-Desktop-parity plan (docs/plans/shipped/ai-chat-claude-desktop-parity.md).
  * No ImGui dependency — TU is exercised by the doctest rig.
  *
  * All times are unix-epoch milliseconds (matches `std::chrono::system_clock`'s

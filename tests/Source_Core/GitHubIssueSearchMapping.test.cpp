@@ -1,5 +1,5 @@
 // GitHubIssueSearchMapping doctest — pure JSON → CachedTicket mapping +
-// per-PR field enrichment helper. PR12 of docs/design/github-tracker-backend.md.
+// per-PR field enrichment helper. PR12 of docs/plans/shipped/github-tracker-backend.md.
 
 #include "GitHubIssueSearchMapping.h"
 

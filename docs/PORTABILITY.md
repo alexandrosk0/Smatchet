@@ -63,7 +63,7 @@ Hardcoded paths that later phases must update (so moves don't break machine cons
 | `scripts/dev/sort-applied-md.sh` | `docs/self-improvement/categories/applied.md` | C |
 | `.understand-anything/*.json` | knowledge-graph node paths | C/D |
 | `scripts/dev/test-plan-index.sh` | `PLAN_INDEX_ARCHIVE_DIR`, `PLAN_INDEX_FILE` (config vars at top) | D |
-| ~252 `Source_Core/**` comments + ADRs + bats | `docs/design/archive/<slug>.md` prose refs | D (via `rewrite-plan-paths.sh`) |
+| ~252 `Source_Core/**` comments + ADRs + bats | `docs/plans/shipped/<slug>.md` prose refs | D (via `rewrite-plan-paths.sh`) |
 | `.github/workflows/*` | `paths:` filters; `doc-validation.yml` guard list | B–F |
 
 ## Gate #1 — agent discovery with subdirs (verified)

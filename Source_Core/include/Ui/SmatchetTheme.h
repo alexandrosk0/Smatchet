@@ -71,7 +71,7 @@ const SmatchetThemeAiColors& GetActiveAiColors();
  *  read-from-render-thread / write-from-ApplyStyle race is well-defined
  *  (ApplyStyle is always UI-thread, render is always UI-thread today, but
  *  the atomic future-proofs against any worker-thread theme audit). Slice 3
- *  of `docs/design/code-syntax-coloring-and-tooltips.md`. */
+ *  of `docs/plans/active/code-syntax-coloring-and-tooltips.md`. */
 std::uint64_t GetThemeRevision();
 
 /** Predefined colors for status and priorities. */

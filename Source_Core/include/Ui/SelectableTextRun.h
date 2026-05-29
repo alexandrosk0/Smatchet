@@ -27,7 +27,7 @@
 //   - Block-boundary newlines via EndBlock().
 //   - Hovered-href accessor for caller-driven link click routing.
 //
-// Deferred (slice-4 follow-ups; see docs/design/archive/markdown-language-definition-for-textedit.md
+// Deferred (slice-4 follow-ups; see docs/plans/shipped/markdown-language-definition-for-textedit.md
 // § Deviations):
 //   - Word-extend (double-click) + line/block-extend (triple-click).
 //   - Keyboard selection (Shift+arrows, Shift+Home/End).

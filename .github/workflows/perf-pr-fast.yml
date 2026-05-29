@@ -1,6 +1,6 @@
 name: Perf PR-fast
 
-# Slice 3 of docs/design/pillar-1-2-perf-review-system.md. Runs the PR-fast
+# Slice 3 of docs/plans/shipped/pillar-1-2-perf-review-system.md. Runs the PR-fast
 # 4-scenario subset (declared in scripts/dev/perf-pr-fast-set.json) on every
 # PR that touches Source_Core / Plugins / Target_Standalone. Compares each
 # scenario's output against the ci-windows-latest baseline at

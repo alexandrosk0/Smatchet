@@ -2,7 +2,7 @@
 """
 merge-watcher — foreground daemon that polls every registered PR.
 
-Phase 1 of `docs/design/archive/smatchet-merge-watcher.md`. Reads the per-user
+Phase 1 of `docs/plans/shipped/smatchet-merge-watcher.md`. Reads the per-user
 registry at `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` (managed
 by `merge-watcher-cli.py`), runs `scripts/dev/merge-gates.sh` for each
 entry per the configured interval, writes per-PR state to
@@ -1231,7 +1231,7 @@ def maybe_pass_cr_none_grace(
 # the next poll lands at GATES_PASSED.
 #
 # Closes the 2026-05-22 P1 entry in docs/self-improvement/categories/
-# tooling.md (line 31), sub-bug (b). See docs/design/merge-watcher-triage-
+# tooling.md (line 31), sub-bug (b). See docs/plans/active/merge-watcher-triage-
 # recovery.md.
 
 _CR_THREADS_QUERY = (

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-ui-sync-stall-visible-cue.sh — bucket-E driver for Slice 5 of
-# docs/design/archive/pillar-1-2-perf-review-system.md.
+# docs/plans/shipped/pillar-1-2-perf-review-system.md.
 #
 # Verifies the Pillar 2 "UI never freezes without a visible cue" invariant
 # by running tests/ui/sync_stall_visible_cue.test.cpp's two variants:

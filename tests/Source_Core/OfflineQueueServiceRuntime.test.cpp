@@ -184,7 +184,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 200 OK deletes row" * do
 // `TickOfflineCreates`, the create path never branches on `IsTrackerTransportErrorText` —
 // only `ShouldArchive(nextAttempts)` decides archive-vs-retry. So a 4xx with attempts < cap
 // keeps the row, increments attempts, populates LastError. Documented as a plan deviation
-// in `docs/design/applied/test-suite-expansion.md`.
+// in `docs/plans/active/applied/test-suite-expansion.md`.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → drain 4xx increments attempts, no dead-letter" *
           doctest::test_suite("[high-risk]")) {
