@@ -66,7 +66,10 @@ if [ "$MODE" = "refresh" ]; then
   exit 0
 fi
 
-base="$( [ -f "$BASELINE" ] && cat "$BASELINE" || true )"
+# Strip CR so a CRLF-checked-out baseline (Windows autocrlf) still matches the
+# LF scan output.
+base="$( [ -f "$BASELINE" ] && tr -d '\r' < "$BASELINE" || true )"
+current="$(printf '%s' "$current" | tr -d '\r')"
 # NEW leakage = current entries not in the baseline.
 new="$(comm -13 <(printf '%s\n' "$base" | sort -u) <(printf '%s\n' "$current" | sort -u) | grep -c . || true)"
 if [ "${new:-0}" -eq 0 ]; then
