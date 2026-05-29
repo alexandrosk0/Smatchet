@@ -71,9 +71,35 @@ mutually exclusive by construction, so the required context reports **exactly
 once** per PR. The two job `name:`s must be byte-identical (that string is the
 required-check context).
 
+## Pattern C — detect-changes job + conditional skip (for EXISTING multi-job workflows)
+
+When a single workflow already carries the required job **and** several
+expensive non-required jobs (e.g. `build-and-test.yml`: `Windows + MSVC` +
+`Windows + MSVC (Smatchet light …)` plus bucket-C/E + sanitizer), converting it
+to Pattern A by no-op-guarding every step is noisy. Instead:
+
+1. Remove the workflow-level `paths-ignore:` so the workflow **always triggers**
+   (the required contexts are always created).
+2. Add a fast `changes` job that diffs the PR and outputs `code` = "did any
+   non-docs path change?" — **defaulting to `true` on any detection
+   uncertainty** (empty/failed diff) so a real code PR can never be wrongly
+   skipped.
+3. Gate each build job with `needs: changes` + `if: needs.changes.outputs.code
+   == 'true'`. Dependent jobs (`needs: <build job>`) cascade-skip automatically.
+
+On a docs-only PR the build jobs are **skipped**, and a skipped required job is
+treated as **success** by branch protection (unlike a path-skipped *workflow*,
+which never reports → wedge). The failure mode is bounded: detection trouble
+defaults to running the build, never to skipping a code PR's required check.
+
+This is the form used by `.github/workflows/build-and-test.yml`.
+
 ## Invariant
 
-For any context in `required_status_checks`, exactly one job emitting that
-context name must run on **every** PR regardless of changed paths. Pattern A
-guarantees it with one workflow; Pattern B with a real+skip pair. Verify by
-opening a docs-only PR and confirming the check reports (not "Expected").
+For any context in `required_status_checks`, a job emitting that context name
+must **report** on **every** PR regardless of changed paths — either by running
+(real verdict) or by being `if:`-skipped (success), never by being
+path-filtered out of existence (perpetual "Expected"). Pattern A guarantees it
+with one always-on job; Pattern B with a real+skip pair; Pattern C with a
+detect-changes gate. Verify by opening a docs-only PR and confirming the check
+reports (not "Expected").
