@@ -231,6 +231,11 @@ std::string GetExePath() {
 #endif
 }
 
+// FindFreePort is used only by the --spawn ephemeral-MCP-instance path, and its
+// socket symbols come from the MCP-guarded <winsock2.h> / httplib includes above.
+// Gate it on the same flag so the Smatchet-light build (MCP OFF) compiles — and
+// so it isn't an unused function there. Caught by CI 'Windows + MSVC (Smatchet light)'.
+#if defined(SMATCHET_WITH_MCP)
 /// Bind to port 0, read back the OS-assigned port, close the socket.
 /// Small TOCTOU race is acceptable for ephemeral test scenarios.
 int FindFreePort() {
@@ -276,6 +281,7 @@ int FindFreePort() {
     return port;
 #endif
 }
+#endif // SMATCHET_WITH_MCP — FindFreePort
 
 /// Poll until the file at outPath exists and is non-empty, or timeoutMs elapses.
 bool WaitForFile(const std::string& outPath, int timeoutMs) {

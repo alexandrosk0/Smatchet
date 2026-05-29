@@ -30,6 +30,14 @@ struct BootstrapContext {
     std::unique_ptr<PluginHost> pluginHost;
     std::unique_ptr<SmatchetUI> mainWindow;
     const char* glslVersion = nullptr;
+    // Ctor + dtor are out-of-line (defined in the .cpp where AppController /
+    // PluginHost / SmatchetUI are complete) so construction/destruction sites
+    // don't need those member types complete. Without the out-of-line ctor the
+    // implicit one's member exception-cleanup forces complete types at every
+    // construction site — which only arrived transitively with MCP/AI ON and
+    // broke the Smatchet-light build (those OFF). Caught by CI 'Windows + MSVC
+    // (Smatchet light)'.
+    BootstrapContext();
     ~BootstrapContext();
 };
 
