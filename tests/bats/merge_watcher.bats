@@ -1329,3 +1329,49 @@ print('last_state:', state.get('last_state'))
     [ "$status" -eq 0 ]
     [[ "$output" != *"PR_CLOSED_OR_MERGED"* ]]
 }
+
+# ---------- prune subcommand (registry janitor) ----------
+#
+# Monkeypatch cli._pr_lifecycle_state (the gh I/O seam) so classification is
+# deterministic + offline — the absolute _GH_BIN resolved at import would hit
+# real gh, and native-Windows shutil.which can't see extensionless PATH stubs.
+
+@test "prune unregisters MERGED/CLOSED, keeps OPEN + unknown" {
+    run watch_cli register 901; [ "$status" -eq 0 ]
+    run watch_cli register 902; [ "$status" -eq 0 ]
+    run watch_cli register 903; [ "$status" -eq 0 ]
+    run watch_cli register 904; [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+spec = importlib.util.spec_from_file_location('cli', r'$SCRIPTS_DIR/merge-watcher-cli.py')
+cli = importlib.util.module_from_spec(spec); sys.modules['cli']=cli; spec.loader.exec_module(cli)
+states = {901: 'MERGED', 902: 'OPEN', 903: 'CLOSED', 904: ''}  # 904 = gh-unknown
+cli._pr_lifecycle_state = lambda pr, clone_path: states.get(int(pr), '')
+rc = cli.main(['prune'])
+print('rc:', rc)
+print('remaining:', sorted(int(e['pr']) for e in cli.read_registry()))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rc: 0"* ]]
+    [[ "$output" == *"pruned #901 (MERGED)"* ]]
+    [[ "$output" == *"pruned #903 (CLOSED)"* ]]
+    [[ "$output" == *"remaining: [902, 904]"* ]]
+}
+
+@test "prune --dry-run reports but does not mutate the registry" {
+    run watch_cli register 901; [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+spec = importlib.util.spec_from_file_location('cli', r'$SCRIPTS_DIR/merge-watcher-cli.py')
+cli = importlib.util.module_from_spec(spec); sys.modules['cli']=cli; spec.loader.exec_module(cli)
+cli._pr_lifecycle_state = lambda pr, clone_path: 'MERGED'
+rc = cli.main(['prune', '--dry-run'])
+print('rc:', rc)
+print('remaining:', sorted(int(e['pr']) for e in cli.read_registry()))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"would prune #901 (MERGED)"* ]]
+    [[ "$output" == *"remaining: [901]"* ]]
+}

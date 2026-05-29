@@ -21,6 +21,7 @@ Usage:
   merge-watch unregister <pr>      # remove PR
   merge-watch status [<pr>]        # show one PR's state or all
   merge-watch list                 # JSON dump of full registry
+  merge-watch prune [--dry-run]    # unregister PRs gh reports MERGED/CLOSED
 """
 
 from __future__ import annotations
@@ -156,6 +157,57 @@ def resolve_clone_path(cwd: str | pathlib.Path | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# gh lifecycle-state probe (for `prune`)
+# ---------------------------------------------------------------------------
+def _resolve_gh() -> str:
+    """Locate the GitHub CLI. A Scheduled Task that runs `prune` inherits a
+    minimal PATH that often lacks the gh install dir, so probe the standard
+    Windows locations after PATH (mirrors merge-watcher.py's _resolve_bin)."""
+    import shutil
+
+    via_path = shutil.which("gh") or shutil.which("gh.exe")
+    if via_path:
+        return via_path
+    for candidate in (
+        r"C:\Program Files\GitHub CLI\gh.exe",
+        r"C:\Program Files (x86)\GitHub CLI\gh.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\GitHub CLI\gh.exe"),
+    ):
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return "gh"  # last resort — subprocess will FileNotFoundError loudly
+
+
+_GH_BIN = _resolve_gh()
+
+
+def _pr_lifecycle_state(pr: int, clone_path: str) -> str:
+    """Return the PR's lifecycle state via `gh pr view --json state` — one of
+    'MERGED' / 'CLOSED' / 'OPEN', or '' when gh is unavailable or errors.
+
+    Isolated so `prune` is unit-testable by monkeypatching this seam (the bats
+    suite cannot reliably stub a `gh` binary on native-Windows Python — its
+    shutil.which skips extensionless PATH stubs). Returning '' on any failure
+    makes `prune` KEEP the entry (fail-safe: never unregister on uncertainty).
+    """
+    try:
+        r = subprocess.run(
+            [_GH_BIN, "pr", "view", str(pr), "--json", "state", "-q", ".state"],
+            cwd=clone_path or None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return ""
+    if r.returncode == 0:
+        return r.stdout.strip().upper()
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 def cmd_register(args: argparse.Namespace) -> int:
@@ -265,6 +317,74 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prune(args: argparse.Namespace) -> int:
+    """Sweep the registry: unregister every PR that gh reports as MERGED or
+    CLOSED (and wipe its per-PR state file).
+
+    Belt-and-suspenders to the daemon's reconcile-on-poll short-circuit: the
+    daemon can only reconcile while it is RUNNING, so a janitor that runs this
+    verb heals the registry even across daemon-down windows (crash, logout,
+    machine off). OPEN PRs and PRs whose state can't be determined (gh
+    error/offline -> '') are KEPT — fail-safe; never unregister on uncertainty.
+
+    `--dry-run` reports the plan without mutating the registry.
+    """
+    dry_run = bool(getattr(args, "dry_run", False))
+    entries = read_registry()
+    if not entries:
+        print("merge-watch prune: registry empty; nothing to do.")
+        return 0
+    # Query gh state OUTSIDE the registry lock — gh calls are slow and we must
+    # not hold the cross-process lock across them. The actual removal re-reads
+    # under the lock and deletes only the keys we resolved here.
+    pruned = []   # (pr, clone_path, state)
+    kept = []     # (pr, clone_path)  — OPEN
+    unknown = []  # (pr, clone_path)  — gh error / offline
+    for e in entries:
+        pr = int(e.get("pr", -1))
+        clone_path = e.get("clone_path", "")
+        state = _pr_lifecycle_state(pr, clone_path)
+        if state in ("MERGED", "CLOSED"):
+            pruned.append((pr, clone_path, state))
+        elif state == "OPEN":
+            kept.append((pr, clone_path))
+        else:
+            unknown.append((pr, clone_path))
+
+    if pruned and not dry_run:
+        prune_keys = {(pr, cp) for pr, cp, _ in pruned}
+        with registry_lock():
+            current = read_registry()
+            remaining = [
+                e
+                for e in current
+                if (int(e.get("pr", -1)), e.get("clone_path", "")) not in prune_keys
+            ]
+            write_registry(remaining)
+            for pr, _cp, _state in pruned:
+                sf = state_dir() / f"{pr}.json"
+                if sf.exists():
+                    try:
+                        sf.unlink()
+                    except OSError:
+                        pass
+
+    verb = "would prune" if dry_run else "pruned"
+    for pr, cp, state in pruned:
+        print(f"merge-watch prune: {verb} #{pr} ({state}) [{pathlib.Path(cp).name}]")
+    for pr, cp in unknown:
+        print(
+            f"merge-watch prune: kept #{pr} (state unknown — gh error/offline) "
+            f"[{pathlib.Path(cp).name}]",
+            file=sys.stderr,
+        )
+    print(
+        f"merge-watch prune: {verb} {len(pruned)}, kept {len(kept)} open, "
+        f"{len(unknown)} unknown."
+    )
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -292,6 +412,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     l = sub.add_parser("list", help="dump full registry as JSON")
     l.set_defaults(func=cmd_list)
+
+    pr = sub.add_parser(
+        "prune",
+        help="unregister PRs that gh reports as MERGED/CLOSED (registry janitor)",
+    )
+    pr.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be pruned without mutating the registry",
+    )
+    pr.set_defaults(func=cmd_prune)
 
     return p
 
