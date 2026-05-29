@@ -33,6 +33,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Validate -At is a strict 24-hour HH:mm so a typo fails here with a clear
+# message instead of deferring to New-ScheduledTaskTrigger (CR #534).
+if ($At -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {
+    Write-Error "-At must be 24-hour HH:mm (e.g. 09:15); got '$At'."
+    exit 1
+}
+
 # Resolve repo root from script location (this file lives at
 # <repo>/scripts/dev/merge-watcher-install-prune-task.ps1).
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -59,6 +66,10 @@ if (-not (Test-Path $PythonExe)) {
 }
 
 # Log dir matches the daemon's watcher_root() resolution.
+if ([string]::IsNullOrEmpty($env:LOCALAPPDATA)) {
+    Write-Error "LOCALAPPDATA is not set; cannot resolve the watcher log dir (matches merge-watcher-cli.py watcher_root)."
+    exit 1
+}
 $logDir = Join-Path $env:LOCALAPPDATA "Smatchet\merge-watch"
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null

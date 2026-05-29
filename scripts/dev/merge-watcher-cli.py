@@ -337,7 +337,7 @@ def cmd_prune(args: argparse.Namespace) -> int:
     # Query gh state OUTSIDE the registry lock — gh calls are slow and we must
     # not hold the cross-process lock across them. The actual removal re-reads
     # under the lock and deletes only the keys we resolved here.
-    pruned = []   # (pr, clone_path, state)
+    pruned = []   # (pr, clone_path, state, registered_at)
     kept = []     # (pr, clone_path)  — OPEN
     unknown = []  # (pr, clone_path)  — gh error / offline
     for e in entries:
@@ -345,23 +345,27 @@ def cmd_prune(args: argparse.Namespace) -> int:
         clone_path = e.get("clone_path", "")
         state = _pr_lifecycle_state(pr, clone_path)
         if state in ("MERGED", "CLOSED"):
-            pruned.append((pr, clone_path, state))
+            pruned.append((pr, clone_path, state, e.get("registered_at")))
         elif state == "OPEN":
             kept.append((pr, clone_path))
         else:
             unknown.append((pr, clone_path))
 
     if pruned and not dry_run:
-        prune_keys = {(pr, cp) for pr, cp, _ in pruned}
+        # Identity includes registered_at so an entry unregistered + re-registered
+        # between the gh probe (above, outside the lock) and this locked delete is
+        # NOT pruned as if it were the original watch (CR #534).
+        prune_keys = {(pr, cp, ra) for pr, cp, _state, ra in pruned}
         with registry_lock():
             current = read_registry()
             remaining = [
                 e
                 for e in current
-                if (int(e.get("pr", -1)), e.get("clone_path", "")) not in prune_keys
+                if (int(e.get("pr", -1)), e.get("clone_path", ""), e.get("registered_at"))
+                not in prune_keys
             ]
             write_registry(remaining)
-            for pr, _cp, _state in pruned:
+            for pr, _cp, _state, _ra in pruned:
                 sf = state_dir() / f"{pr}.json"
                 if sf.exists():
                     try:
@@ -370,7 +374,7 @@ def cmd_prune(args: argparse.Namespace) -> int:
                         pass
 
     verb = "would prune" if dry_run else "pruned"
-    for pr, cp, state in pruned:
+    for pr, cp, state, _ra in pruned:
         print(f"merge-watch prune: {verb} #{pr} ({state}) [{pathlib.Path(cp).name}]")
     for pr, cp in unknown:
         print(
