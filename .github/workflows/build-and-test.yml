@@ -416,7 +416,7 @@ jobs:
         shell: bash
         run: |
           bash scripts/dev/test-lint-rules.sh --catalog --refresh
-          if ! git diff --exit-code docs/backlog/high-integrity-cpp-baseline.md; then
+          if ! git diff --exit-code docs/high-integrity/baseline.md; then
             echo "::error::baseline stale — run 'bash scripts/dev/test-lint-rules.sh --catalog --refresh' locally and commit"
             exit 1
           fi
