@@ -46,7 +46,11 @@ setup() {
 }
 
 teardown() {
-    rm -rf "${SMATCHET_TEST_TMP:-}"
+    # Guard the delete: if setup() aborted before SMATCHET_TEST_TMP was set,
+    # `rm -rf ""` can return non-zero and obscure the real failure (CR #538).
+    if [ -n "${SMATCHET_TEST_TMP:-}" ]; then
+        rm -rf "$SMATCHET_TEST_TMP"
+    fi
 }
 
 watch_cli() {
