@@ -4,7 +4,7 @@
 # generated, README tombstones) are exempt. Keeps the plan tree consistent so
 # the slug == filename == index key (agentic-layer-project-independence § naming).
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)"
+cd "$(git rev-parse --show-toplevel)" || exit 1
 
 bad=()
 while IFS= read -r f; do

@@ -2,7 +2,7 @@
 
 > **Slug**: `smatchet-merge-watcher`
 >
-> **Status**: PHASE-1-READY (2026-05-21 evening grill locked all 5 open design decisions). Lands the P1 backlog entry [`docs/self-improvement/categories/tooling.md`](../self-improvement/categories/tooling.md) — "Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band" (`644f822` 2026-05-21). Per-user registry at `%LOCALAPPDATA%/Smatchet/merge-watch/`; foreground daemon default; 3-attempt triage budget; Smatchet toast + Windows native BurntToast notifications; explicit owner transfer on `register`. See § Open design decisions — LOCKED for the full rationale.
+> **Status**: PHASE-1-READY (2026-05-21 evening grill locked all 5 open design decisions). Lands the P1 backlog entry [`docs/self-improvement/categories/tooling.md`](../../self-improvement/categories/tooling.md) — "Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band" (`644f822` 2026-05-21). Per-user registry at `%LOCALAPPDATA%/Smatchet/merge-watch/`; foreground daemon default; 3-attempt triage budget; Smatchet toast + Windows native BurntToast notifications; explicit owner transfer on `register`. See § Open design decisions — LOCKED for the full rationale.
 >
 > **Mandatory rules cross-link**: see [`AGENTS.md`](../../AGENTS.md) § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 

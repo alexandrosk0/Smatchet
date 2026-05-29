@@ -16,7 +16,7 @@
 #   --refresh           regenerate the baseline from the current tree
 # Baseline: docs/high-integrity/portable-purity-baseline.txt (sorted file:literal).
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)"
+cd "$(git rev-parse --show-toplevel)" || exit 1
 
 BASELINE="docs/high-integrity/portable-purity-baseline.txt"
 PORTABLE_DIRS=(agents/core agents/_shared docs/agent-rules docs/harness)
@@ -34,6 +34,9 @@ terms = set(filter(None, [p.get("name"), p.get("env_prefix")]))
 terms |= set(p.get("literals", []))
 terms |= set(cfg.get("build", {}).get("presets", []))
 terms |= set(cfg.get("vcs", {}).get("p4_streams", []))
+terms = {t for t in terms if t}   # drop empty/None terms (would match everywhere)
+if not terms:
+    sys.exit(0)
 # longest first; whole-token-ish match
 pat = re.compile("|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True)))
 
