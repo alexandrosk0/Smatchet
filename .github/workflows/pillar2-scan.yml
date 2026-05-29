@@ -46,16 +46,18 @@ jobs:
           else
             base="${{ github.event.before }}"
           fi
-          files=$(git diff --name-only "$base"...HEAD 2>/dev/null \
+          # Array (not a space-joined string) so paths with spaces survive as
+          # distinct args to pillar2-scan.sh.
+          mapfile -t files < <(git diff --name-only "$base"...HEAD 2>/dev/null \
                   | grep -E '\.(cpp|h|hpp)$' \
                   | grep -E '^(Source_Core/|Plugins/)' \
                   | grep -v '/ThirdParty/' || true)
-          if [ -z "$files" ]; then
+          if [ "${#files[@]}" -eq 0 ]; then
             echo "Pillar 2 scanner: no first-party C++ changed — pass."
             exit 0
           fi
           echo "Pillar 2 scanner: checking changed files:"
-          printf '  %s\n' $files
+          printf '  %s\n' "${files[@]}"
           # pillar2-scan.sh exits 1 on any CRITICAL (new unannotated UI-thread
           # sync I/O); WARN-tracked backlog sites do not fail it.
-          bash scripts/dev/pillar2-scan.sh $files
+          bash scripts/dev/pillar2-scan.sh "${files[@]}"
