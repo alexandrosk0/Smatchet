@@ -87,7 +87,13 @@ link_agents() {
   for f in agents/core/*.md agents/project/*.md; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"
-    [[ -e "$dest/$base" ]] && continue
+    # $dest was just cleared, so an existing link here means a same-run basename
+    # collision across core/+project/ — warn loudly (the agent would otherwise
+    # vanish from discovery silently).
+    if [[ -e "$dest/$base" ]]; then
+      echo "  WARN  agent basename collision: '$base' in two tiers; '$f' NOT linked (won't be discoverable). Rename one." >&2
+      continue
+    fi
     if [[ "$IS_WINDOWS" == "1" ]]; then
       cmd.exe //c mklink //H "$(to_win_path "$dest/$base")" "$(to_win_path "$ROOT/$f")" >/dev/null 2>&1 \
         || cp "$ROOT/$f" "$dest/$base"
