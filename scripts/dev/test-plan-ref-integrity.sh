@@ -20,7 +20,7 @@ cd "$(git rev-parse --show-toplevel)"
 #   never-existed plans cited in ADRs/agent prompts: agentic-{coding-handoff,
 #     flow-implementation,triage-flow}, visual-regression-bootstrap
 #   stale structure refs: README.md, _plan-locks.md (real file is _plan-locks.generated.md)
-ALLOW_RE='/(example|foo|agentic-coding-handoff|agentic-flow-implementation|agentic-triage-flow|visual-regression-bootstrap|README|_plan-locks)\.md$'
+ALLOW_RE='/(example|foo|bar|baz|agentic-coding-handoff|agentic-flow-implementation|agentic-triage-flow|visual-regression-bootstrap|README|_plan-locks)\.md$'
 
 # Collect every referenced docs/plans/(active|shipped)/<slug>.md across tracked
 # files, then assert each exists.

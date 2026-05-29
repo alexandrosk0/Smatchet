@@ -70,6 +70,6 @@ Hardcoded paths that later phases must update (so moves don't break machine cons
 
 Claude Code links `.claude/agents` → the whole `agents/` dir. The `agents/core/` +
 `agents/project/` split must not hide agents. The mechanism — `setup-harness.sh`
-emits **flat discovery symlinks** in `.claude/agents/` (one per agent, into the
+emits **flat hardlinks** in `.claude/agents/` (one per agent, into the
 subdirs) — is proven by `scripts/dev/test-agent-discovery-fixture.sh` before any
 real move (Phase B). See that test for the fixture.

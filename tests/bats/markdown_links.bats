@@ -110,10 +110,10 @@ for h in hrefs:
 
 # ---------- exclude archived plan dirs ----------
 
-@test "docs/design/applied/ and docs/design/archive/ are excluded from default scan" {
+@test "docs/plans/shipped/ is excluded from default scan (was docs/design/archive/)" {
     run python3 -c "
 import os
-EXCLUDED = ('docs/design/applied', 'docs/design/archive')
+EXCLUDED = ('docs/plans/shipped',)
 def is_active_md(rel_in):
     if not rel_in.endswith('.md'): return False
     rel = rel_in.replace(os.sep, '/')
@@ -123,17 +123,17 @@ def is_active_md(rel_in):
     for p in EXCLUDED:
         if rel == p or rel.startswith(p + '/'): return False
     return True
-print('active:', is_active_md('docs/design/foo.md'))
-print('archived applied:', is_active_md('docs/design/applied/bar.md'))
-print('archived archive:', is_active_md('docs/design/archive/baz.md'))
+print('active:', is_active_md('docs/plans/active/foo.md'))
+
+print('shipped excluded:', is_active_md('docs/plans/shipped/baz.md'))
 print('agents:', is_active_md('agents/whatever.md'))
 print('root agents.md:', is_active_md('AGENTS.md'))
 print('src:', is_active_md('Source_Core/foo.md'))
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"active: True"* ]]
-    [[ "$output" == *"archived applied: False"* ]]
-    [[ "$output" == *"archived archive: False"* ]]
+    
+    [[ "$output" == *"shipped excluded: False"* ]]
     [[ "$output" == *"agents: True"* ]]
     [[ "$output" == *"root agents.md: True"* ]]
     [[ "$output" == *"src: False"* ]]
