@@ -25,6 +25,14 @@ Env knobs:
   MERGE_WATCH_AUTO_ACT_ON_SANITIZER — opt-in (default false). When true, sanitizer
                                       CI failures trigger auto-act with debug-detective
                                       (skips coderabbit-triage).
+  MERGE_WATCH_CR_NONE_GRACE_CYCLES  — poll cycles to wait before treating a NONE +
+                                      status-SUCCESS / NONE + pending CodeRabbit state
+                                      (skipped or absent review) as pass (default 10;
+                                      floored at 1). Mirrors merge-gates.sh CR_GRACE_POLLS
+                                      but measured across real cycles, since the daemon
+                                      drives merge-gates with MAX_POLLS=1 (its in-process
+                                      grace window can never elapse). See
+                                      `maybe_pass_cr_none_grace`.
 """
 
 from __future__ import annotations
@@ -186,9 +194,17 @@ def _resolve_orch_user(clone_path: str) -> str:
     return ""
 
 
-def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
+def poll_one(
+    entry: dict[str, Any], extra_gates_env: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Run merge-gates.sh for one registered PR, parse the last status line,
     return a state dict the daemon writes to state/<pr>.json.
+
+    `extra_gates_env` overrides specific merge-gates env knobs for this single
+    invocation (used by `maybe_pass_cr_none_grace` to collapse the CR grace
+    window via MERGE_GATES_CR_GRACE_POLLS=0 once the watcher has waited the
+    window out across real poll cycles). Overrides win over both the daemon
+    defaults and the inherited env (applied via dict.update, not setdefault).
     """
     pr = int(entry["pr"])
     clone_path = entry["clone_path"]
@@ -291,6 +307,11 @@ def poll_one(entry: dict[str, Any]) -> dict[str, Any]:
             extra_path_parts.append(d)
     if extra_path_parts:
         env["PATH"] = os.pathsep.join(extra_path_parts) + os.pathsep + env.get("PATH", "")
+    # Per-invocation overrides (e.g. MERGE_GATES_CR_GRACE_POLLS=0 from the
+    # CR-NONE grace-elapsed re-poll). update(), not setdefault(), so the
+    # override wins over the daemon defaults above and the inherited env.
+    if extra_gates_env:
+        env.update(extra_gates_env)
     try:
         gates = subprocess.run(
             [BASH_BIN, str(MERGE_GATES_SCRIPT), owner, repo, str(pr)],
@@ -873,6 +894,27 @@ def _looks_like_cr_finding_block(status_line: str) -> bool:
     ) or "changes_requested" in s
 
 
+def _looks_like_cr_none_grace_wait(status_line: str) -> bool:
+    """Detect the CR-NONE grace-wait shapes the merge-gates poller emits when
+    CodeRabbit returned review state NONE and the gate is waiting out its grace
+    window before assuming a status-only / skipped review.
+
+    Two shapes (see merge-gates.sh NONE branch): `NONE+status-SUCCESS-waiting-
+    for-inline (poll N/M)` — CR fired its SUCCESS StatusContext placeholder but
+    posted no inline review (the common "Review skipped" case for trivial
+    diffs) — and `NONE+pending (poll N/M)` — CR hasn't started. Both pass in
+    merge-gates ONLY once its in-process poll index reaches CR_GRACE_POLLS,
+    which is unreachable under the watcher's MERGE_GATES_MAX_POLLS=1 driving;
+    the watcher counts the window across real cycles instead (see
+    `maybe_pass_cr_none_grace`). Excludes finding-shaped blocks (those route to
+    triage) — a NONE state never carries actionable findings, but guard anyway.
+    """
+    s = status_line.lower()
+    if "actionable" in s or "changes_requested" in s:
+        return False
+    return "none+status-success-waiting-for-inline" in s or "none+pending" in s
+
+
 def _looks_like_sanitizer_failure(status_line: str) -> bool:
     """Detect whether the merge-gates Poll line indicates a sanitizer CI failure.
 
@@ -983,6 +1025,121 @@ def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: in
             return ("ok", attempts_after)
         # PR not in registry — shouldn't happen, but treat as dedup-block.
         return ("dedup", None)
+
+
+def _cr_none_grace_cycles() -> int:
+    """Watcher-side CR-NONE grace window, measured in poll CYCLES.
+
+    Default 10 mirrors merge-gates.sh's CR_GRACE_POLLS default so the
+    wall-clock wait (cycles x MERGE_WATCH_POLL_INTERVAL) matches the original
+    in-process grace intent. Override via MERGE_WATCH_CR_NONE_GRACE_CYCLES.
+    Floored at 1 so a misconfigured 0 can't force an instant unreviewed pass.
+    """
+    try:
+        return max(1, int(os.environ.get("MERGE_WATCH_CR_NONE_GRACE_CYCLES", "10")))
+    except ValueError:
+        return 10
+
+
+def _bump_cr_none_grace(
+    pr: int, clone_path: str, new_count: int, head_sha: str
+) -> None:
+    """Persist the per-(PR, head) CR-NONE grace cycle counter in the registry.
+
+    Mirrors `_bump_triage_attempts`. `cr_none_grace_head` pins the counter to a
+    HEAD so a fresh push (CR may review the new commit) restarts the window.
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                e["cr_none_grace_polls"] = new_count
+                e["cr_none_grace_head"] = head_sha
+                break
+        _CLI.write_registry(entries)
+
+
+def maybe_pass_cr_none_grace(
+    entry: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """Cross-cycle CR-NONE grace driver — closes the wedge where a PR whose only
+    blocker is a skipped/absent CodeRabbit review (state NONE + SUCCESS status,
+    no inline comments) never merges.
+
+    Root cause: merge-gates.sh passes NONE+SUCCESS only after its in-process
+    poll index `p >= CR_GRACE_POLLS`, but `poll_one` runs merge-gates with
+    MERGE_GATES_MAX_POLLS=1, so `p` is always 0 — the grace window can never
+    elapse within a single invocation and resets every cycle.
+
+    Fix: count consecutive grace-wait cycles per HEAD in the registry; once the
+    watcher has waited MERGE_WATCH_CR_NONE_GRACE_CYCLES real cycles, re-poll
+    ONCE with MERGE_GATES_CR_GRACE_POLLS=0 so the single poll's grace
+    comparison passes and the gate returns GATES_PASSED (which the daemon
+    routes into handle_pass). Preserves the grace INTENT (wall-clock wait
+    before assuming a status-only / skipped review) while making it reachable.
+
+    Returns a state-delta dict (merged into `state` by the daemon). When the
+    forced re-poll passes it carries `last_state == GATES_PASSED`, so the
+    daemon's existing PASS branch merges. Fail-closed: if the current HEAD
+    can't be resolved, it does NOT force a pass. Only call when
+    `state["last_state"] == "BLOCKED"`.
+    """
+    pr = int(entry["pr"])
+    clone_path = entry["clone_path"]
+    status_line = state.get("last_status_line", "")
+    if not _looks_like_cr_none_grace_wait(status_line):
+        # CR left the grace-wait shape (real review posted, findings, CI block,
+        # etc.) — clear any stale counter so a later NONE-wait starts fresh.
+        if int(entry.get("cr_none_grace_polls", 0)) != 0:
+            _bump_cr_none_grace(pr, clone_path, 0, "")
+            return {
+                "cr_none_grace_polls": 0,
+                "cr_none_grace_action": "reset (CR left NONE-grace-wait state)",
+            }
+        return {}
+    # Resolve current HEAD — fail-closed: without it we can't distinguish a
+    # stale counter (old commit) from a live one, so we must not force a pass.
+    try:
+        meta = _gh_json(
+            ["pr", "view", str(pr), "--json", "headRefOid"], cwd=clone_path
+        )
+        head_sha = meta.get("headRefOid", "") if isinstance(meta, dict) else ""
+    except (RuntimeError, subprocess.TimeoutExpired, OSError):
+        head_sha = ""
+    if not head_sha:
+        return {
+            "cr_none_grace_action": "HEAD fetch failed; not forcing CR grace this cycle"
+        }
+    threshold = _cr_none_grace_cycles()
+    prior = int(entry.get("cr_none_grace_polls", 0))
+    if entry.get("cr_none_grace_head", "") != head_sha:
+        prior = 0  # new commit — CR may yet review it; restart the window
+    new_count = prior + 1
+    _bump_cr_none_grace(pr, clone_path, new_count, head_sha)
+    if new_count < threshold:
+        return {
+            "cr_none_grace_polls": new_count,
+            "cr_none_grace_head": head_sha,
+            "cr_none_grace_action": (
+                f"waiting out CR-NONE grace ({new_count}/{threshold} cycles)"
+            ),
+        }
+    # Grace elapsed across real cycles. Re-poll once with the in-process grace
+    # window collapsed so merge-gates' own NONE pass path fires this poll.
+    forced = poll_one(entry, extra_gates_env={"MERGE_GATES_CR_GRACE_POLLS": "0"})
+    forced["cr_none_grace_polls"] = new_count
+    forced["cr_none_grace_head"] = head_sha
+    if forced.get("last_state") == "GATES_PASSED":
+        forced["cr_none_grace_action"] = (
+            f"CR-NONE grace elapsed ({new_count} cycles on {head_sha[:8]}); "
+            "forced MERGE_GATES_CR_GRACE_POLLS=0 -> GATES_PASSED"
+        )
+    else:
+        forced["cr_none_grace_action"] = (
+            f"CR-NONE grace elapsed ({new_count} cycles); forced grace=0 but gates "
+            f"still {forced.get('last_state')}: {forced.get('last_status_line', '')[:80]}"
+        )
+    return forced
 
 
 # ---------------------------------------------------------------------------
@@ -1517,6 +1674,19 @@ def daemon_loop(poll_interval: int) -> int:
                 print(f"[cycle {cycle}] polling {len(entries)} registered PR(s)")
                 for entry in entries:
                     state = poll_one(entry)
+                    # CR-NONE grace driver — flip BLOCKED -> GATES_PASSED once a
+                    # skipped/absent-review grace window has elapsed across real
+                    # cycles (closes the MAX_POLLS=1 grace wedge). Runs before
+                    # the dispatch so a forced pass routes into handle_pass.
+                    if state.get("last_state") == "BLOCKED":
+                        grace_extras = maybe_pass_cr_none_grace(entry, state)
+                        if grace_extras:
+                            state.update(grace_extras)
+                            if grace_extras.get("cr_none_grace_action"):
+                                print(
+                                    f"  PR#{state['pr']:<6} cr-none-grace: "
+                                    f"{grace_extras['cr_none_grace_action']}"
+                                )
                     # Phase 2 — PASS-branch auto-merge + cascade.
                     if state.get("last_state") == "GATES_PASSED":
                         extras = handle_pass(entry)
