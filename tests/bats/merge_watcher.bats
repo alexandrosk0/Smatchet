@@ -1270,6 +1270,45 @@ print('persisted:', reg.get('cr_none_grace_polls'))
     [[ "$output" == *"persisted: 0"* ]]
 }
 
+# ---------- watch-register-if-enabled.sh (ship-time opt-in auto-register) ----------
+
+@test "watch-register: SMATCHET_WATCH_ALL_PRS unset -> no-op, PR not registered" {
+    run env -u SMATCHET_WATCH_ALL_PRS bash "$SCRIPTS_DIR/watch-register-if-enabled.sh" 951
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not set"* ]]
+    # Registry stays empty — the flag-off path must not touch it.
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[]"* ]]
+}
+
+@test "watch-register: SMATCHET_WATCH_ALL_PRS=1 -> registers the PR" {
+    run env SMATCHET_WATCH_ALL_PRS=1 bash "$SCRIPTS_DIR/watch-register-if-enabled.sh" 951
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, sys, importlib.util
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+spec = importlib.util.spec_from_file_location('cli', r'$SCRIPTS_DIR/merge-watcher-cli.py')
+cli = importlib.util.module_from_spec(spec); sys.modules['cli']=cli; spec.loader.exec_module(cli)
+print('prs:', sorted(int(e['pr']) for e in cli.read_registry()))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"prs: [951]"* ]]
+}
+
+@test "watch-register: flag on + already-registered -> exit 0 (benign)" {
+    run watch_cli register 951; [ "$status" -eq 0 ]
+    run env SMATCHET_WATCH_ALL_PRS=true bash "$SCRIPTS_DIR/watch-register-if-enabled.sh" 951
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already registered"* ]]
+}
+
+@test "watch-register: missing <pr> arg -> exit 2" {
+    run bash "$SCRIPTS_DIR/watch-register-if-enabled.sh"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage:"* ]]
+}
+
 # ---------- Reconcile-on-poll auto-unregister (PR_CLOSED_OR_MERGED short-circuit) ----------
 #
 # These monkeypatch mw._pr_lifecycle_state (the gh I/O seam) rather than
