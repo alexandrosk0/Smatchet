@@ -59,9 +59,11 @@ runs:
         # --- Is CodeRabbit installed? (probe .coderabbit.yaml/.yml) ------------
         # Fall through to PASS when CR is not installed — same posture as
         # merge-gates.sh (a repo without CR must not be blocked by this gate).
+        # Probe at the PR head SHA (not the default branch) so a PR that
+        # adds/removes .coderabbit.y*ml is evaluated against its own state.
         cr_installed=true
-        if ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yaml" >/dev/null 2>&1 \
-           && ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yml" >/dev/null 2>&1; then
+        if ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yaml?ref=${SHA}" >/dev/null 2>&1 \
+           && ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yml?ref=${SHA}" >/dev/null 2>&1; then
           cr_installed=false
         fi
         if [ "$cr_installed" = false ]; then
