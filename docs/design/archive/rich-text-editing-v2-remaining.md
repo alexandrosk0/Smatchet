@@ -1,4 +1,5 @@
 # Rich text editing v2 — remaining backlog
+<!-- index-summary: Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. -->
 
 Tracks gaps versus [`RICH_TEXT_EDITING_V2_PLAN.md`](../RICH_TEXT_EDITING_V2_PLAN.md) after the core grid pipeline landed (`MarkdownConvert`, md4c, `fieldRichValues`, long-text modal, offline 3-way merge, conflict modal).
 

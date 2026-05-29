@@ -1,4 +1,5 @@
 # Plan — large central files + transitional friend access
+<!-- index-summary: Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. -->
 
 ## Context
 

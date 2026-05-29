@@ -1,4 +1,5 @@
 # Plan — Theme-driven C++ syntax highlighting across all code-rendering sites
+<!-- index-summary: Per-theme C++ syntax palette extracted from `BlameUiThemeColors`; generic `CppSyntaxHighlight` TU shared by blame + markdown + field renderers. Fully shipped (see plan § Shipped PRs). -->
 
 ## Context
 

@@ -1,4 +1,5 @@
 # Plan — wire ImGui Test Engine (bucket E) + fix Views→Jira Columns drag-reorder
+<!-- index-summary: Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. -->
 
 > **Plan-location note**: Smatchet's `AGENTS.md` § Plan location requires plans to live at `docs/design/<slug>.md`. This file is the harness-mandated draft location. On the first commit of Phase 1, this content will be promoted to `docs/design/imgui-test-engine-bucket-e-execution.md` (or merged into the existing `docs/design/archive/imgui-test-engine-bucket-e.md` § Execution log, depending on the implementer's preference at commit time). The `wip(plan):` commit lands the doc into the repo immediately per the Plan-doc safety rule before any code-generating commit.
 

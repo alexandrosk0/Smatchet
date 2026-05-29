@@ -1,0 +1,155 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://smatchet/project.config.schema.json",
+  "title": "Project config — the project-specific value table for the portable agentic layer",
+  "description": "Validated in CI. The portable layer (agents/core, agents/_shared, docs/agent-rules, docs/harness, generic scripts) reads ONLY from here; reuse in another project = rewrite project.config.json against this schema. See docs/PORTABILITY.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project", "build", "perf", "lint", "vcs", "ci", "merge_gates", "harness", "agents"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "_doc": { "type": "string" },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "env_prefix", "literals"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "env_prefix": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "literals": {
+          "type": "array",
+          "description": "Project-specific identifiers that must NOT appear in portable files (the portable-purity denylist seed). Names, dirs, target/interface symbols.",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presets", "targets", "exe_path"],
+      "properties": {
+        "presets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "targets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "exe_path": { "type": "string" }
+      }
+    },
+    "perf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame_budget_ms", "fps_floor_ms", "freeze_ms", "baselines_dir", "policy"],
+      "properties": {
+        "frame_budget_ms": { "type": "number", "exclusiveMinimum": 0 },
+        "fps_floor_ms": { "type": "number", "exclusiveMinimum": 0 },
+        "freeze_ms": { "type": "number", "exclusiveMinimum": 0 },
+        "baselines_dir": { "type": "string" },
+        "policy": { "type": "string" }
+      }
+    },
+    "lint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["zones", "rules", "deviation_keyword", "baseline"],
+      "properties": {
+        "zones": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strict", "light", "exempt"],
+          "properties": {
+            "strict": { "type": "array", "items": { "type": "string" } },
+            "light": { "type": "array", "items": { "type": "string" } },
+            "exempt": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "rules": { "type": "array", "items": { "type": "string" } },
+        "deviation_keyword": { "type": "string" },
+        "baseline": { "type": "string" }
+      }
+    },
+    "vcs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary"],
+      "properties": {
+        "primary": { "type": "string" },
+        "optional_layer": { "type": ["string", "null"] },
+        "p4_streams": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ci": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_checks", "path_filters"],
+      "properties": {
+        "required_checks": { "type": "array", "items": { "type": "string" } },
+        "path_filters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code_globs", "docs_ignore"],
+          "properties": {
+            "code_globs": { "type": "array", "items": { "type": "string" } },
+            "docs_ignore": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "merge_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cr_bot_logins", "override_labels"],
+      "properties": {
+        "cr_bot_logins": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "override_labels": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "visual_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "trigger_globs": { "type": "array", "items": { "type": "string" } } }
+    },
+    "golden": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "artifacts_dir": { "type": "string" } }
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["discovery_mode", "supported"],
+      "properties": {
+        "discovery_mode": { "type": "string", "enum": ["flat-symlink", "recursive", "flat"] },
+        "supported": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    },
+    "guards": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "doc_validation": { "type": "array", "items": { "type": "string" } } }
+    },
+    "docs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "taxonomy_exceptions": { "type": "array", "items": { "type": "string" } } }
+    },
+    "subsystems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "agents"],
+        "properties": {
+          "name": { "type": "string" },
+          "agents": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled_project"],
+      "properties": {
+        "enabled_project": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

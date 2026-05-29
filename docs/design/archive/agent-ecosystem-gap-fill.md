@@ -1,4 +1,5 @@
 # Plan: fill 8 gaps from agent-ecosystem comparison
+<!-- index-summary: Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. -->
 
 ## Context
 
