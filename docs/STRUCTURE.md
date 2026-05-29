@@ -4,7 +4,7 @@
 This is the **binding map** of where things live and the **portable / project
 boundary** that lets the agentic layer be reused in another project. Each row
 names the guard that enforces it — doc and lint share one source of truth.
-Reuse guide: [`PORTABILITY.md`](PORTABILITY.md). Plan: [`plans/active/agentic-layer-project-independence.md`](plans/active/agentic-layer-project-independence.md).
+Reuse guide: [`PORTABILITY.md`](PORTABILITY.md). Plan: [`plans/active/agentic-layer-project-independence.md`](plans/shipped/agentic-layer-project-independence.md).
 
 ## The boundary
 
