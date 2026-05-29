@@ -75,6 +75,7 @@ The table below is **auto-generated** by `scripts/dev/test-plan-index.sh` from t
 | [`merge-watcher-triage-recovery`](shipped/merge-watcher-triage-recovery.md) | 2026-05-28 | Plan — merge-watcher triage-budget recovery + CR-thread resolution |
 | [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | 2026-05-28 | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
 | [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | 2026-05-28 | Plan — Shell-script self-review lint |
+| [`agentic-layer-project-independence`](shipped/agentic-layer-project-independence.md) | — | Plan — Documentation + agentic-layer reorganization for **project-independence** |
 <!-- END auto-plan-index -->
 
 ### Notes
