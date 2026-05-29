@@ -1,16 +1,25 @@
 #!/usr/bin/env bats
 # tests/bats/merge_watcher_integration.bats
 # ----------------------------------------------------------------------------
-# Phase 5 of docs/design/smatchet-merge-watcher.md — end-to-end integration
-# coverage. Stubs `gh` on PATH to drive a fake PR through the full lifecycle:
+# Phase-5 end-to-end coverage for the merge-watcher daemon state machine:
 #
-#   register → poll BLOCKED → poll PASSED → squash-merge → cascade → unregister
+#   register -> poll BLOCKED -> handle_pass squash-merge -> cascade -> unregister
 #
 # The unit-level bats (merge_watcher.bats) cover registry CRUD + per-helper
-# behavior; this file exercises the daemon's full state machine against
-# canned `gh api` fixtures.
+# behavior; this file exercises the daemon's full handlers (poll_one /
+# handle_pass) end-to-end.
 #
-# Requires: python3, bats. No jq dep.
+# gh is NOT stubbed on PATH. The daemon resolves an ABSOLUTE GH_BIN at import
+# via shutil.which, and native-Windows Python's shutil.which skips extensionless
+# PATH `gh` stubs (it requires a PATHEXT extension) — so the old PATH-stub
+# approach silently ran the REAL gh on Windows and every case failed (the suite
+# was never gated, so this rotted undetected). Instead we monkeypatch the
+# daemon's named gh seams (_pr_lifecycle_state, _poll_owner_repo,
+# _poll_run_gates, ensure_pr_ready_for_review, _gh_owner_repo,
+# detect_merged_branch_name, squash_merge_pr, find_stacked_children,
+# cascade_update_child) so every case is deterministic + offline on all OSes.
+#
+# Requires: python3, bats. No jq / gh / network dep.
 # ----------------------------------------------------------------------------
 
 setup() {
@@ -18,131 +27,77 @@ setup() {
     export REPO_ROOT
     export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
 
-    # Isolate per-user state via LOCALAPPDATA (the watcher's per-user root).
-    export LOCALAPPDATA="$(mktemp -d)"
+    # Isolate per-user watcher state in a temp sandbox. The watcher root reads
+    # LOCALAPPDATA on Windows; cygpath -m converts the git-bash mktemp path to a
+    # mixed C:/... form (drive letter + forward slashes) that BOTH native-Windows
+    # Python and git-bash filesystem tests accept — without it, native Python
+    # mis-resolves the driveless /c/... path and registry writes/reads diverge
+    # (the bug PR #527 fixed for merge_watcher.bats; the same fix was never
+    # applied to this file, contributing to its Windows breakage).
+    SMATCHET_TEST_TMP="$(mktemp -d)"
+    export SMATCHET_TEST_TMP
+    if command -v cygpath >/dev/null 2>&1; then
+        LOCALAPPDATA="$(cygpath -m "$SMATCHET_TEST_TMP")"
+    else
+        LOCALAPPDATA="$SMATCHET_TEST_TMP"
+    fi
+    export LOCALAPPDATA
     export PYTHONIOENCODING=utf-8
-
-    # Stub gh on PATH with a fixture-driven response set.
-    STUB_BIN_DIR="$(mktemp -d)"
-    export STUB_BIN_DIR
-    cat > "$STUB_BIN_DIR/gh" <<'STUB'
-#!/usr/bin/env bash
-# Stub gh — fixture-driven per $MERGE_WATCHER_TEST_PHASE.
-# Phases:
-#   "register"     — gh repo view + gh rev-parse work normally
-#   "poll-blocked" — gh api graphql for merge-gates returns CR BLOCKED
-#   "poll-passed"  — gh api graphql returns GATES_PASSED
-#   "merged"       — gh api -X PUT /merge returns merged:true
-#   "cascade"      — gh pr list returns one stacked child
-case "$1 $2" in
-    "repo view")
-        echo '{"owner":{"login":"acme"},"name":"smatchet"}'
-        exit 0
-        ;;
-    "api graphql")
-        case "${MERGE_WATCHER_TEST_PHASE:-poll-blocked}" in
-            poll-blocked)
-                # Force gates to BLOCKED state via CR-finding fixture.
-                cat <<JSON
-{"data":{"repository":{"pullRequest":{"state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","headRefOid":"abc123","headRefName":"feat/x","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"pageInfo":{"hasNextPage":false},"nodes":[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true}]}}}}]},"reviews":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"state":"COMMENTED","submittedAt":"2026-05-21T10:00:00Z","commit":{"oid":"abc123"},"body":"**Actionable comments posted: 2**\nFinding details..."}]},"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]},"comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}
-JSON
-                exit 0
-                ;;
-            poll-passed)
-                cat <<JSON
-{"data":{"repository":{"pullRequest":{"state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","headRefOid":"abc123","headRefName":"feat/x","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"pageInfo":{"hasNextPage":false},"nodes":[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true}]}}}}]},"reviews":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"state":"COMMENTED","submittedAt":"2026-05-21T10:00:00Z","commit":{"oid":"abc123"},"body":"**Actionable comments posted: 0**"}]},"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]},"comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}
-JSON
-                exit 0
-                ;;
-        esac
-        ;;
-    "api repos/acme/smatchet/pulls/100/merge")
-        echo '{"merged":true,"sha":"deadbeef1234"}'
-        exit 0
-        ;;
-    "api repos/acme/smatchet/pulls/100")
-        echo '{"head":{"ref":"feat/x"},"number":100}'
-        exit 0
-        ;;
-    "pr list")
-        case "${MERGE_WATCHER_TEST_PHASE:-}" in
-            cascade)
-                echo '[{"number":101,"headRefName":"feat/y","title":"child"}]'
-                ;;
-            *)
-                echo '[]'
-                ;;
-        esac
-        exit 0
-        ;;
-    "api -X")
-        # PUT update-branch
-        echo '{"message":"queued"}'
-        exit 0
-        ;;
-esac
-# Per CodeRabbit on PR #368 — unknown gh invocations must fail loudly so a
-# missing-case in the stub doesn't silently turn into a passing test.
-echo "stub-gh: unhandled invocation: $*" >&2
-exit 1
-STUB
-    chmod +x "$STUB_BIN_DIR/gh"
-    export PATH="$STUB_BIN_DIR:$PATH"
-
-    # Stub the merge-gates.sh path — daemon's poll_one calls it directly.
-    export MERGE_GATES_MAX_POLLS=1
-    export MERGE_GATES_POLL_INTERVAL=0
-    export ORCH_USER=acme
-    export MERGE_GATES_CR_INSTALLED=true
 }
 
 teardown() {
-    rm -rf "${LOCALAPPDATA:-}" "${STUB_BIN_DIR:-}"
+    rm -rf "${SMATCHET_TEST_TMP:-}"
 }
 
 watch_cli() {
     python "$SCRIPTS_DIR/merge-watcher-cli.py" "$@"
 }
 
-@test "integration: poll-blocked CR-finding fixture → daemon lands in BLOCKED state + _bump_triage_attempts increments registry" {
-    # Per CodeRabbit on PR #368 — test name promised triage_attempts assertion
-    # but the original body only checked last_state. Now explicitly bumps the
-    # counter via the helper + verifies via the CLI's list view.
+@test "integration: poll-blocked CR-finding fixture -> daemon lands in BLOCKED + _bump_triage_attempts increments registry" {
     run watch_cli register 100
     [ "$status" -eq 0 ]
 
-    export MERGE_WATCHER_TEST_PHASE=poll-blocked
     run python -c "
-import sys, os, importlib.util, json
+import sys, os, importlib.util, json, types
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-clone = json.load(open(os.path.join(r'$LOCALAPPDATA', 'Smatchet', 'merge-watch', 'active.json')))[0]['clone_path']
-entry = {'pr': 100, 'clone_path': clone, 'triage_attempts': 0}
-state = m.poll_one(entry)
+clone = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]['clone_path']
+# Patch every gh seam poll_one touches so it reaches the gates-parse path
+# deterministically + offline. A CR-finding gates result is returncode 1 -> BLOCKED.
+m._pr_lifecycle_state = lambda pr, cp: 'OPEN'
+m._poll_owner_repo = lambda pr, cp: ('acme', 'smatchet')
+m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
+m._poll_run_gates = lambda owner, repo, pr, env: types.SimpleNamespace(
+    returncode=1,
+    stdout='Poll 1/1 CI: 3/3 pass (0 fail) | CodeRabbit: COMMENTED (2 actionable - block) | User: 0',
+    stderr='')
+state = m.poll_one({'pr': 100, 'clone_path': clone, 'triage_attempts': 0})
 print('last_state:', state['last_state'])
-# Exercise the daemon-loop BLOCKED branch's registry-increment path directly
-# (the full handle_blocked_cr_triage would invoke coderabbit-triage.py subprocess,
-# which needs more gh stub work; the increment helper is what matters here).
 m._bump_triage_attempts(100, clone, 1)
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"last_state: BLOCKED"* ]]
-    # Verify the counter incremented in the registry.
     run watch_cli list
     [ "$status" -eq 0 ]
     [[ "$output" == *'"triage_attempts": 1'* ]]
 }
 
-@test "integration: handle_pass squash-merges via gh api stub + drops from registry" {
+@test "integration: handle_pass squash-merges via stubbed seams + drops from registry" {
     run watch_cli register 100
     [ "$status" -eq 0 ]
 
     run python -c "
-import sys, importlib.util
+import sys, os, importlib.util, json
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-import json, os
-entry = json.load(open(os.path.join(r'$LOCALAPPDATA', 'Smatchet', 'merge-watch', 'active.json')))[0]
+entry = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]
+m._gh_owner_repo = lambda cp: ('acme', 'smatchet')
+m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
+m.detect_merged_branch_name = lambda owner, repo, pr: 'feat/x'
+m.squash_merge_pr = lambda owner, repo, pr: 'deadbeef1234'
+m.find_stacked_children = lambda owner, repo, head: []
 extras = m.handle_pass(entry)
 print('merge_action:', extras.get('merge_action'))
 print('merge_sha:', extras.get('merge_sha'))
@@ -157,57 +112,65 @@ print('merge_sha:', extras.get('merge_sha'))
     [[ "$output" == "[]" ]]
 }
 
-@test "integration: handle_pass cascade detects stacked child via pr list stub" {
+@test "integration: handle_pass cascade detects stacked child via stubbed seam" {
     run watch_cli register 100
     [ "$status" -eq 0 ]
 
-    export MERGE_WATCHER_TEST_PHASE=cascade
     run python -c "
-import sys, importlib.util, json, os
+import sys, os, importlib.util, json
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-entry = json.load(open(os.path.join(r'$LOCALAPPDATA', 'Smatchet', 'merge-watch', 'active.json')))[0]
+entry = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]
+m._gh_owner_repo = lambda cp: ('acme', 'smatchet')
+m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
+m.detect_merged_branch_name = lambda owner, repo, pr: 'feat/x'
+m.squash_merge_pr = lambda owner, repo, pr: 'deadbeef1234'
+m.find_stacked_children = lambda owner, repo, head: [{'number': 101, 'headRefName': 'feat/y', 'title': 'child'}]
+m.cascade_update_child = lambda owner, repo, child_pr: (True, 'queued')
 extras = m.handle_pass(entry)
 print('cascade_count:', len(extras.get('cascade_children', [])))
-if extras.get('cascade_children'):
-    c = extras['cascade_children'][0]
-    print('child_pr:', c['pr'])
-    print('child_head:', c['head'])
+c = extras['cascade_children'][0]
+print('child_pr:', c['pr'])
+print('child_head:', c['head'])
+print('child_ok:', c['ok'])
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"cascade_count: 1"* ]]
     [[ "$output" == *"child_pr: 101"* ]]
     [[ "$output" == *"child_head: feat/y"* ]]
+    [[ "$output" == *"child_ok: True"* ]]
 }
 
-@test "integration: full state-machine walk register → BLOCKED → unregister leaves registry clean" {
-    # Belt-and-suspenders end-to-end smoke. Combines CRUD + poll + cleanup in
-    # one test so a regression to any one stage fails this case.
-    # Per CodeRabbit on PR #368 — every `run` followed by an output assertion
-    # also gets a `[ "$status" -eq 0 ]` guard so the assertion never silently
-    # succeeds on a crashed run.
+@test "integration: full state-machine walk register -> poll -> write_state -> unregister leaves registry clean" {
     run watch_cli register 100
     [ "$status" -eq 0 ]
     run watch_cli list
     [ "$status" -eq 0 ]
     [[ "$output" == *'"pr": 100'* ]]
-    # Poll once (fakeable; we don't care about the result here — just that the
-    # daemon helper doesn't crash on a registered PR with stub gh available).
-    export MERGE_WATCHER_TEST_PHASE=poll-blocked
+
     run python -c "
-import sys, importlib.util, json, os
+import sys, os, importlib.util, json, types
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-entry = json.load(open(os.path.join(r'$LOCALAPPDATA', 'Smatchet', 'merge-watch', 'active.json')))[0]
+entry = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]
+m._pr_lifecycle_state = lambda pr, cp: 'OPEN'
+m._poll_owner_repo = lambda pr, cp: ('acme', 'smatchet')
+m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
+m._poll_run_gates = lambda owner, repo, pr, env: types.SimpleNamespace(
+    returncode=1, stdout='Poll 1/1 CI: 3/3 pass | CodeRabbit: COMMENTED (2 actionable - block)', stderr='')
 state = m.poll_one(entry)
 m.write_state(state)
+print('last_state:', state['last_state'])
 print('OK')
 "
     [ "$status" -eq 0 ]
+    [[ "$output" == *"last_state: BLOCKED"* ]]
     [[ "$output" == *"OK"* ]]
-    # State file should exist.
+    # State file should exist after write_state.
     [ -f "$LOCALAPPDATA/Smatchet/merge-watch/state/100.json" ]
-    # Unregister + verify clean
+    # Unregister wipes the entry + its state file.
     run watch_cli unregister 100
     [ "$status" -eq 0 ]
     [ ! -f "$LOCALAPPDATA/Smatchet/merge-watch/state/100.json" ]
