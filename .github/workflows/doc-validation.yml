@@ -24,9 +24,16 @@ on:
       - 'AGENTS.md'
       - 'agents/**'
       - 'docs/agent-rules/**'
+      - 'docs/backlog/**'
+      - 'docs/design/archive/**'
+      - 'project.config.json'
+      - 'project.config.schema.json'
       - 'scripts/dev/test-doc-anchors.sh'
       - 'scripts/dev/test_doc_anchors.py'
       - 'scripts/dev/test-agent-contract.sh'
+      - 'scripts/dev/test-plan-index.sh'
+      - 'scripts/dev/test-agent-discovery-fixture.sh'
+      - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
   pull_request:
@@ -35,9 +42,16 @@ on:
       - 'AGENTS.md'
       - 'agents/**'
       - 'docs/agent-rules/**'
+      - 'docs/backlog/**'
+      - 'docs/design/archive/**'
+      - 'project.config.json'
+      - 'project.config.schema.json'
       - 'scripts/dev/test-doc-anchors.sh'
       - 'scripts/dev/test_doc_anchors.py'
       - 'scripts/dev/test-agent-contract.sh'
+      - 'scripts/dev/test-plan-index.sh'
+      - 'scripts/dev/test-agent-discovery-fixture.sh'
+      - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
 
@@ -67,3 +81,20 @@ jobs:
 
       - name: test-agent-contract — required headings + frontmatter parity
         run: bash scripts/dev/test-agent-contract.sh
+
+      - name: Validate project.config.json against schema
+        run: |
+          python -m pip install --quiet jsonschema
+          python - <<'PY'
+          import json, jsonschema
+          cfg = json.load(open("project.config.json"))
+          schema = json.load(open("project.config.schema.json"))
+          jsonschema.validate(cfg, schema)
+          print("project.config.json: valid against schema")
+          PY
+
+      - name: test-plan-index — shipped-plan index in sync with archive
+        run: bash scripts/dev/test-plan-index.sh
+
+      - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
+        run: bash scripts/dev/test-agent-discovery-fixture.sh

@@ -1,4 +1,5 @@
 # Plan — First-time setup hardening
+<!-- index-summary: First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. -->
 
 ## Context
 

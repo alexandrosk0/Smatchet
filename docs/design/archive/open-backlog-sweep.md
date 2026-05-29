@@ -1,4 +1,5 @@
 # Plan: sweep open `AGENT_SELF_IMPROVEMENT.md` entries
+<!-- index-summary: Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. -->
 
 ## Context
 

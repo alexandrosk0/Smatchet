@@ -1,0 +1,112 @@
+{
+  "$schema": "./project.config.schema.json",
+  "_doc": "Single home for project-specific values consumed by the portable agentic layer. Reuse in another project = copy the portable tree (agents/core, agents/_shared, docs/agent-rules, docs/harness, the self-improvement framework + generic scripts) and rewrite THIS file. See docs/PORTABILITY.md. Prose in AGENTS.md / docs/agent-rules points here for parameterized facts; scripts source scripts/dev/project-config.sh.",
+  "project": {
+    "name": "Smatchet",
+    "env_prefix": "SMATCHET",
+    "literals": [
+      "Smatchet",
+      "Source_Core",
+      "Target_Standalone",
+      "UnrealPlugins",
+      "SmatchetStandalone",
+      "SmatchetCore_DX12",
+      "DX12",
+      "ITrackerClient"
+    ]
+  },
+  "build": {
+    "presets": ["ninja-iter-msvc", "ninja-test-msvc", "ninja-msvc-asan", "ninja-publish-msvc"],
+    "targets": ["SmatchetStandalone", "SmatchetCore_DX12"],
+    "exe_path": "build/{preset}/Smatchet.exe"
+  },
+  "perf": {
+    "frame_budget_ms": 6.94,
+    "fps_floor_ms": 16.67,
+    "freeze_ms": 100,
+    "baselines_dir": "docs/perf/baselines",
+    "policy": "docs/perf/regression-policy.json"
+  },
+  "lint": {
+    "zones": {
+      "strict": [
+        "Source_Core/src/Tracker/",
+        "Source_Core/src/Sync/",
+        "Source_Core/src/Persistence/",
+        "Source_Core/src/Config/",
+        "Source_Core/src/Commands/",
+        "Plugins/Mcp/src/"
+      ],
+      "light": ["Source_Core/src/Ui/", "Source_Core/include/Ui/", "Target_Standalone/"],
+      "exempt": ["ThirdParty", "build"]
+    },
+    "rules": ["no-printf-stderr", "no-raw-new", "narrowing-conversions", "define-imgui", "deviation-overdue"],
+    "deviation_keyword": "SMATCHET_DEVIATION",
+    "baseline": "docs/high-integrity/baseline.md"
+  },
+  "vcs": {
+    "primary": "git",
+    "optional_layer": "p4",
+    "p4_streams": []
+  },
+  "ci": {
+    "required_checks": [
+      "Test-delta gate",
+      "Windows + MSVC",
+      "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"
+    ],
+    "path_filters": {
+      "code_globs": ["Source_Core/**", "Plugins/**", "Target_Standalone/**"],
+      "docs_ignore": ["**/*.md", "docs/**", "agents/**", ".gitignore", ".gitattributes", ".coderabbit.yaml"]
+    }
+  },
+  "merge_gates": {
+    "cr_bot_logins": ["coderabbitai[bot]", "coderabbitai"],
+    "override_labels": ["tests-out-of-band", "perf-out-of-band", "cr-out-of-band"]
+  },
+  "visual_validation": {
+    "trigger_globs": ["**/SmatchetTheme.cpp", "**/Smatchet*Ui*.cpp", "**/Locales/*.json"]
+  },
+  "golden": {
+    "artifacts_dir": "tests/golden"
+  },
+  "harness": {
+    "discovery_mode": "flat-symlink",
+    "supported": ["claude-code", "codex", "cursor"]
+  },
+  "guards": {
+    "doc_validation": [
+      "test-plan-index",
+      "test-plan-naming",
+      "test-plan-ref-integrity",
+      "test-plan-archived",
+      "test-portable-purity",
+      "test-markdown-links"
+    ]
+  },
+  "docs": {
+    "taxonomy_exceptions": []
+  },
+  "subsystems": [
+    { "name": "tracker", "agents": ["tracker-backend"] },
+    { "name": "grid", "agents": ["grid-engine"] },
+    { "name": "lua", "agents": ["lua-binder"] },
+    { "name": "mcp", "agents": ["mcp-toolsmith"] },
+    { "name": "offline-sync", "agents": ["offline-sync"] },
+    { "name": "unreal", "agents": ["unreal-bridge"] },
+    { "name": "p4-blame", "agents": ["p4-blame"] },
+    { "name": "commands", "agents": ["command-system"] }
+  ],
+  "agents": {
+    "enabled_project": [
+      "tracker-backend",
+      "grid-engine",
+      "lua-binder",
+      "mcp-toolsmith",
+      "offline-sync",
+      "unreal-bridge",
+      "p4-blame",
+      "command-system"
+    ]
+  }
+}

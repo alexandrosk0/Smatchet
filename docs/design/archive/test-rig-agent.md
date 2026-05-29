@@ -1,4 +1,5 @@
 # Add a `test-rig` agent + CTest target for `Source_Core` pure-logic helpers
+<!-- index-summary: Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. -->
 
 ## Context
 

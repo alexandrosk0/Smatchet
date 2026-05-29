@@ -1,4 +1,5 @@
 # Lua recorded ImGui command list — v2 follow-ups
+<!-- index-summary: Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. -->
 
 > **Status**: stub. Tracks the v2 follow-ups enumerated in [`lua-recorded-cmd-list.md`](lua-recorded-cmd-list.md) §Out-of-scope. Each item below has a short context block + open questions; none are scoped to ship yet. Flesh out into a separate `docs/design/<slug>.md` when work starts on a specific item.
 

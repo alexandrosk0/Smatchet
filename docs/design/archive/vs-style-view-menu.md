@@ -1,4 +1,5 @@
 # VS Code shell: classic menu bar + View menu + Command Palette input + locked docking
+<!-- index-summary: VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. -->
 
 ## Context
 

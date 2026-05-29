@@ -1,4 +1,5 @@
 # Smatchet — Unified Command System (CLI + Palette + MCP + Lua)
+<!-- index-summary: Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. -->
 
 ## Context
 
