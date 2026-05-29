@@ -754,6 +754,7 @@ std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() co
 
 std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson,
                                              std::string& outError) {
+    outError.clear(); // deterministic success contract: never leak caller-provided prior error text
     // Fast reject for genuinely-unknown names against the shared registry, before
     // paying fresh-state setup. (The MCP dispatcher already gates on GetLuaMcpTools,
     // so this is defensive.)
@@ -848,6 +849,7 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
 
 std::string AppController::ExecuteLuaSnippetForMcp(const std::string& code, const nlohmann::json& args,
                                                    std::string& outError) {
+    outError.clear(); // deterministic success contract: never leak caller-provided prior error text
     if (code.empty()) {
         outError = "Missing snippet code";
         return "";
@@ -977,6 +979,7 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
 
 std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName, const nlohmann::json& args,
                                                   std::string& outError) {
+    outError.clear(); // deterministic success contract: never leak caller-provided prior error text
     const std::string path = ResolveLuaScriptPath(scriptName);
     if (path.empty()) {
         outError = "Invalid script path";

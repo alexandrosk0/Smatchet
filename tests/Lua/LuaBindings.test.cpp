@@ -205,8 +205,22 @@ TEST_CASE("Lua bindings · smatchet.create_issue marshals its result on the call
     )");
     CHECK_EQ(r.get<std::string>(), std::string("true|NEW-42"));
 
-    // The spec table marshalled inbound on the calling state too (keys recorded).
+    // The spec table marshalled inbound on the calling state too — assert the
+    // actual keys arrived, not just that the call happened.
     REQUIRE_EQ(fx.host.CreateIssueSpecKeys.size(), 1u);
+    const std::vector<std::string>& keys = fx.host.CreateIssueSpecKeys[0];
+    bool sawSummary = false;
+    bool sawProject = false;
+    for (const std::string& k : keys) {
+        if (k == "summary") {
+            sawSummary = true;
+        }
+        if (k == "project") {
+            sawProject = true;
+        }
+    }
+    CHECK(sawSummary);
+    CHECK(sawProject);
 }
 
 // =============================================================================
