@@ -1,3 +1,4 @@
+<!-- tier: portable -->
 # Caveman — output-compression companion
 
 [caveman](https://github.com/JuliusBrussee/caveman) is a multi-harness skill (Claude Code, Codex, Gemini, Cursor, Windsurf, Cline, Copilot, 30+ more) that compresses agent output while preserving technical accuracy. README advertises ~75% output-token cuts and a 65% benchmark average. Preserves code, paths, URLs, and structural elements **byte-for-byte** — validation markers, severity-tagged punch lists, `file:line` references, and the `## Self-improvement` section convention used throughout this repo all survive intact. Only surrounding prose gets compressed.

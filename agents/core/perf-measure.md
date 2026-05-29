@@ -27,7 +27,7 @@ Smatchet perf-measurement runner.
 
 ## Prerequisites
 
-Config must have `mcp_enabled: true`. **No running instance required** — `--spawn` (Path A1 in `docs/PERF_WORKFLOW.md`) launches a hidden ephemeral app on a free port and tears it down at exit. Fall back to asking the user to start Smatchet only if `--spawn` fails (no MCP socket reachable, scenario needs human-driven nav).
+Config must have `mcp_enabled: true`. **No running instance required** — `--spawn` (Path A1 in `docs/guides/perf-workflow.md`) launches a hidden ephemeral app on a free port and tears it down at exit. Fall back to asking the user to start Smatchet only if `--spawn` fails (no MCP socket reachable, scenario needs human-driven nav).
 
 ## Standard loop (Path A1 — fully automated, no user)
 

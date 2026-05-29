@@ -132,7 +132,7 @@ New `.github/workflows/build-and-test.yml`:
 
 Append to **First-time verification** in BUILD.md (Slice 3) — covered by the explicit "~5 minutes" callout. Standalone slice for restricted-network contributors:
 
-New `docs/dev/offline-builds.md`:
+New `docs/guides/offline-builds.md`:
 
 - How to pre-populate `build/<preset>/_deps/` from a peer / mirror.
 - `FETCHCONTENT_SOURCE_DIR_<NAME>` CMake variables for each dependency, with the canonical commit hash from `Source_Core/CMakeLists.txt` (or wherever each `FetchContent_Declare` lives).
@@ -205,7 +205,7 @@ All automation goes through `scripts/dev/test-all.sh` per [AGENTS.md § Verifica
 - `b68bf09` · Slice 4 — `chore(warnings): remove dead file-static helpers in Target_Standalone + Source_Core` (PR [#86](https://github.com/alexandrosk0/Smatchet/pull/86)). Deleted `SmatchetGetStandaloneUserDataDirectory()` from [Target_Standalone/main.cpp](Target_Standalone/main.cpp) and `IsSessionUtilityLayoutKey(const char*)` from [Source_Core/src/SmatchetUI.cpp](Source_Core/src/SmatchetUI.cpp). Both grep-verified dead across `Source_Core/`, `Plugins/`, `UnrealPlugins/`, `Target_Standalone/` before deletion. Added [scripts/dev/test-build-warnings.sh](scripts/dev/test-build-warnings.sh) (bucket-A) — greps iter build log for `-Wunused-*` over the three first-party top-level dirs.
 - `293836b` · Companion — `docs(backlog): file 3 build-doctor self-improvement flags` (PR [#88](https://github.com/alexandrosk0/Smatchet/pull/88)). Routed the three self-improvement flags surfaced during Slices 1-4 (Windows path-separator regex; PS 5.1 `-Command` scope drop; doctor PATH false-fail on JetBrains-bundled MinGW) into [docs/backlog/AGENT_SELF_IMPROVEMENT.md](docs/backlog/AGENT_SELF_IMPROVEMENT.md) per AGENTS.md § Self-improvement loop.
 - `5278798` · Slice 5 — `feat(ci): build + test matrix` (PR [#89](https://github.com/alexandrosk0/Smatchet/pull/89)). New [.github/workflows/build-and-test.yml](.github/workflows/build-and-test.yml) — single windows-2022 + MSYS2 UCRT64 job covering doctor pre-flight → ninja-test-msys2 configure + build + ctest → ninja-iter-msys2 configure + build SmatchetStandalone → non-UI bucket-A test set. README.md gains the Actions status badge for `develop`. Triggers: `push` on develop + `pull_request` targeting develop. Concurrency cancels in-flight runs on new push. Timeout 30 min. First run failed on `doctor.sh` requiring `git` (not installed by `msys2/setup-msys2@v2` by default); fix-forward commit `d073742` added `git` to the MSYS2 install list — second run green.
-- `7ede220` · Slice 6 — `docs(dev): add offline-builds.md FetchContent vendoring guidance` (PR [#90](https://github.com/alexandrosk0/Smatchet/pull/90)). New [docs/dev/offline-builds.md](docs/dev/offline-builds.md) — three options (peer-copy `_deps/`, per-dep `FETCHCONTENT_SOURCE_DIR_<NAME>`, team-share `FETCHCONTENT_BASE_DIR`) + an 11-row dependency inventory table pinned to the live FetchContent declarations across `CMakeLists.txt`, `cmake/ImGuiTestEngine.cmake`, `tests/CMakeLists.txt`.
+- `7ede220` · Slice 6 — `docs(dev): add offline-builds.md FetchContent vendoring guidance` (PR [#90](https://github.com/alexandrosk0/Smatchet/pull/90)). New [docs/guides/offline-builds.md](docs/guides/offline-builds.md) — three options (peer-copy `_deps/`, per-dep `FETCHCONTENT_SOURCE_DIR_<NAME>`, team-share `FETCHCONTENT_BASE_DIR`) + an 11-row dependency inventory table pinned to the live FetchContent declarations across `CMakeLists.txt`, `cmake/ImGuiTestEngine.cmake`, `tests/CMakeLists.txt`.
 
 ## Deviations from plan
 

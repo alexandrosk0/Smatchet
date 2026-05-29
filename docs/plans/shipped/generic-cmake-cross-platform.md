@@ -71,7 +71,7 @@ Implemented in slices: (1) added MSVC and Clang presets + fixed compiler-family 
 
 21. `README.md:82` — rewrite the "Getting Started" section: MSVC and Clang/LLVM as primary paths with `winget` install commands; MSYS2 moved to a "Legacy" subsection with deprecation notice.
 22. `README.md:60` — remove/replace the MSYS2 UCRT64 installation block that currently says `winget install MSYS2.MSYS2`.
-23. `docs/dev/offline-builds.md:1` — update FetchContent cache guidance: key caches by platform + compiler family + preset, not MSYS2 UCRT64.
+23. `docs/guides/offline-builds.md:1` — update FetchContent cache guidance: key caches by platform + compiler family + preset, not MSYS2 UCRT64.
 24. `scripts/dev/test-all.sh:106` — replace hardcoded `ninja-iter-msvc` preset name in error message with the new default preset name (e.g. `ninja-iter-msvc`).
 25. `AGENTS.md` — update `§ Project rules § Build` to list the new primary presets instead of `ninja-iter-msvc` / `ninja-debug-msvc` / `ninja-publish-msvc`.
 
@@ -96,7 +96,7 @@ Implemented in slices: (1) added MSVC and Clang presets + fixed compiler-family 
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-Planned implementation does not touch `Source_Core/` C++ behavior. If portability fixes uncover required source changes under `Source_Core/`, revise this section before editing and run the relevant perf gate from `docs/PERF_WORKFLOW.md`.
+Planned implementation does not touch `Source_Core/` C++ behavior. If portability fixes uncover required source changes under `Source_Core/`, revise this section before editing and run the relevant perf gate from `docs/guides/perf-workflow.md`.
 
 1. **PR-fast CI** — N/A — no runtime code path is planned.
 2. **Pillar 2 static scanner** — N/A — no UI-thread I/O path is planned.

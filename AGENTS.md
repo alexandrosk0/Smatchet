@@ -92,7 +92,7 @@ int w = obj["w"].get<int64_t>();  // suppresses `narrowing-conversions` on this 
 
 `rule` = scanner rule-id (suppresses that rule on the next line). `revisit` calendar markers that have passed emit `deviation-overdue` (a strict rule), forcing the audit loop; slug / `never` don't expire. Legacy markers (`// CLI stdout`, `// pre-logger-init`, `// C-ABI handle`, `// custom-deleter`) stay valid in perpetuity.
 
-**Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/PERF_WORKFLOW.md`](docs/PERF_WORKFLOW.md) and follow it. Don't load it for unrelated tasks.
+**Perf workflow**: when the user asks to optimize / profile / fix FPS / lag / hitch / "slow" / spike, read [`docs/guides/perf-workflow.md`](docs/guides/perf-workflow.md) and follow it. Don't load it for unrelated tasks.
 
 **Golden-image approval contract**: any agent that writes or regenerates a checked-in reference artefact a regression gate diffs against (`tests/golden/*.png`, JSON snapshots, deterministic byte streams) MUST hand the file + launched-app handle to the user and wait for explicit approve-golden verdict before `git add`. Iterate the underlying fix on rejection; never amend the golden to match a buggy state. Full recipe + motivating incident + dual-capture-no-golden preference in [`docs/agent-rules/golden-image-approval.md`](docs/agent-rules/golden-image-approval.md).
 
@@ -198,7 +198,7 @@ Each agent declares a closed set of **capability tags**. The orchestrator (and t
 
 ## Recommended companion — caveman
 
-Output-token compressor (~75% cut, technical content preserved byte-for-byte). Install + use instructions: [`docs/CAVEMAN.md`](docs/CAVEMAN.md). Default: `/caveman full` at session start.
+Output-token compressor (~75% cut, technical content preserved byte-for-byte). Install + use instructions: [`docs/guides/caveman.md`](docs/guides/caveman.md). Default: `/caveman full` at session start.
 
 ## Semantic-search exceptions
 

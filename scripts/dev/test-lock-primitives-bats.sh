@@ -4,7 +4,7 @@
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
 #
-# Per docs/evaluation/agentic-infrastructure-2026-05-23.md punch-list item 6
+# Per docs/reference/agentic-infrastructure-2026-05-23.md punch-list item 6
 # (bats coverage for lock primitives). Complementary to the existing
 # scripts/dev/test-lock-primitives.sh integration test — bats gives
 # per-case isolation so an argument-validation regression doesn't poison

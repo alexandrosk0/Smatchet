@@ -24,7 +24,7 @@ The p4-task-stream branch invariants are the same as the Claude-SDK spawned bran
 
 ## (a) Ship-flow semantic change — P4-gated ship-loop
 
-Add a P4-gated ship-loop variant documented at [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop and [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../design/archive/p4-gated-ship-loop.md).
+Add a P4-gated ship-loop variant documented at [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop and [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../plans/shipped/p4-gated-ship-loop.md).
 
 Fires when `SMATCHET_AGENT_VCS=p4` at session start. Two sub-variants — the orchestrator asks the user once via `AskUserQuestion` which applies:
 
@@ -41,7 +41,7 @@ Rewrite the force-push carve-out exclusion list in [`AGENTS.md`](../../AGENTS.md
 
 Add `agent/<task-stream-id>/*` as a second permitted carve-out namespace alongside `claude/<id>/*`. The carve-out's existing conditions apply unchanged: API-500 recovery only; orchestrator amending an unpushed-since-API-500 commit; ahead-range contains zero non-self commits; `--force-with-lease` (never bare `--force`).
 
-This re-introduces the `agent/<id>` namespace deleted post-`ClaudeCodeLocalRunner` (per v1 of [`docs/plans/shipped/github-tracker-backend.md`](../design/archive/github-tracker-backend.md)), now serving the p4-task-stream surface instead.
+This re-introduces the `agent/<id>` namespace deleted post-`ClaudeCodeLocalRunner` (per v1 of [`docs/plans/shipped/github-tracker-backend.md`](../plans/shipped/github-tracker-backend.md)), now serving the p4-task-stream surface instead.
 
 # Consequences
 
@@ -52,7 +52,7 @@ This re-introduces the `agent/<id>` namespace deleted post-`ClaudeCodeLocalRunne
 - **Pause-loop interaction** — debug-detective triggers (per [`docs/agent-rules/delegation.md`](../agent-rules/delegation.md) § Debug-mode pause-loop) suspend BOTH ship-loop variants. The pause-loop continues to take precedence; p4-mode does not suppress the diagnose-first-then-confirm cycle.
 - **No git-worktree-add in p4-mode** — subagent isolation uses `scripts/dev/p4-task-stream.sh` exclusively. Documented in AGENTS.md § P4-gated ship-loop § Key invariants. Doc-level rule, not script-level enforcement; the follow-up backlog item to add a runtime gate is flagged in the plan's § Out of scope.
 - **Stranded pending CLs persist across sessions** — if a session dies between `--prepare-review-cl` and `--promote-reviewed-cl`, the pending CL stays on the p4 server with its shelf attached. Resume via `--promote-reviewed-cl <CL>` is safe; the user is in the loop on cleanup decisions (the script prints the manual recipe and refuses to auto-clean).
-- **AskUserQuestion fires post-PR with option 3 pre-selected** — only goes away once [`docs/plans/active/merge-gates-ci-coderabbit-comments.md`](../design/merge-gates-ci-coderabbit-comments.md) ships end-to-end. Dependency tracked in the plan's § Dependencies (sequencing).
+- **AskUserQuestion fires post-PR with option 3 pre-selected** — only goes away once [`docs/plans/active/merge-gates-ci-coderabbit-comments.md`](../plans/active/merge-gates-ci-coderabbit-comments.md) ships end-to-end. Dependency tracked in the plan's § Dependencies (sequencing).
 
 ## From (b) carve-out extension
 
@@ -80,7 +80,7 @@ This re-introduces the `agent/<id>` namespace deleted post-`ClaudeCodeLocalRunne
 
 # Cross-references
 
-- Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../design/archive/p4-gated-ship-loop.md).
+- Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../plans/shipped/p4-gated-ship-loop.md).
 - Rule body: [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop + § Force-push carve-out for Claude Code SDK-spawned recovery and p4 task-stream promotion.
 - Phase reference: [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop.
 - Withdrawn prior ADR (carries the original `claude/<id>` safety analysis): [ADR 0005](0005-force-push-carve-out-for-spawned-agent-recovery.md).

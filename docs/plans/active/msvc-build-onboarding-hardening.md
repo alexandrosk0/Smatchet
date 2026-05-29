@@ -48,7 +48,7 @@ Improve runtime feedback by printing the exact executable path and last-write ti
 4. **Visible-cue bucket-E harness** - N/A; no new sync-stall app path.
 5. **Marker inventory** - N/A; no perf markers added.
 
-**Pre-push local check**: N/A because the only `Source_Core` touch is a comment update. If implementation expands into runtime code, rerun the relevant perf gate per `docs/PERF_WORKFLOW.md`.
+**Pre-push local check**: N/A because the only `Source_Core` touch is a comment update. If implementation expands into runtime code, rerun the relevant perf gate per `docs/guides/perf-workflow.md`.
 
 ## Risks / non-goals
 

@@ -1,6 +1,6 @@
 # Perforce agent flows — when to use which verb
 
-> **Plan**: [`docs/plans/shipped/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md) Phases 2–5.
+> **Plan**: [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md) Phases 2–5.
 > **Audience**: agents (or humans driving agents) deciding whether to reach for `git` or `p4` for a given operation.
 > **Prerequisite**: dual-VCS bring-up complete per [`docs/perforce/SETUP.md`](SETUP.md).
 
@@ -10,7 +10,7 @@ This doc is the playbook for what to use when.
 
 ## Topology
 
-Concern-oriented summary of which side owns which agentic-WIP primitive — absorbed from `AGENTS.md` § Dual-VCS topology per [`docs/plans/active/agents-md-reduction.md`](../design/agents-md-reduction.md) D3.
+Concern-oriented summary of which side owns which agentic-WIP primitive — absorbed from `AGENTS.md` § Dual-VCS topology per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md) D3.
 
 | Concern | git path | p4 path |
 |---|---|---|
@@ -100,7 +100,7 @@ SMATCHET_LOCK_BACKEND=p4-counter bash scripts/dev/lock-claim.sh <slug> <write-se
 SMATCHET_LOCK_BACKEND=p4-counter bash scripts/dev/lock-release.sh <slug>
 ```
 
-Backed by `p4 counter --from=<old> --to=<new> smatchet_lock_<slug>` compare-and-swap. Metadata (`{owner, branch, plan, write_set, …}`) stored in sibling counter `smatchet_lock_<slug>_meta`. See [`docs/plans/shipped/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md) § Phase 4 for the atomic-primitive details.
+Backed by `p4 counter --from=<old> --to=<new> smatchet_lock_<slug>` compare-and-swap. Metadata (`{owner, branch, plan, write_set, …}`) stored in sibling counter `smatchet_lock_<slug>_meta`. See [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md) § Phase 4 for the atomic-primitive details.
 
 Same env vars as the git-ref backend (`AGENT_ID`, `LOCK_BRANCH`, `LOCK_PLAN`, `LOCK_NOTES`). Default backend stays `git-ref` — only sessions that set the env see the p4 path.
 
@@ -178,7 +178,7 @@ For all of these, ship via git/GitHub. The Perforce layer is purely for agentic-
 
 ## P4-gated ship-loop
 
-When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a P4-gated ship-loop instead of the default git ship-loop. Documented at [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop; this section is the full phase sequence + invariants. Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../design/archive/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](../adr/0008-p4-gated-ship-loop.md).
+When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a P4-gated ship-loop instead of the default git ship-loop. Documented at [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop; this section is the full phase sequence + invariants. Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../plans/shipped/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](../adr/0008-p4-gated-ship-loop.md).
 
 ### Session-init in p4-mode
 

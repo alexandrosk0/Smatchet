@@ -1,6 +1,6 @@
 # `agents/_shared/token-tracking/`
 
-Canonical sources for the agent token-tracking infrastructure (Layers B / D / C from [`docs/AGENT_TOKEN_TRACKING.md`](../../../docs/AGENT_TOKEN_TRACKING.md)).
+Canonical sources for the agent token-tracking infrastructure (Layers B / D / C from [`docs/guides/agent-token-tracking.md`](../../../docs/guides/agent-token-tracking.md)).
 
 These files are **harness-agnostic in intent**: the Python logic, JSONL schema, pricing table, and CLI report all work without any Claude-Code-specific assumption. The wiring INTO a specific harness is handled by `bash scripts/setup-harness.sh <name>`, which junctions / symlinks the canonical tree into the harness's expected location.
 
@@ -27,4 +27,4 @@ See `AGENTS.md` § Harness adapter for the wider mapping.
 
 ## Design
 
-Full design in [`docs/AGENT_TOKEN_TRACKING.md`](../../../docs/AGENT_TOKEN_TRACKING.md).
+Full design in [`docs/guides/agent-token-tracking.md`](../../../docs/guides/agent-token-tracking.md).

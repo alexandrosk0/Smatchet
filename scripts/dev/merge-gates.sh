@@ -88,7 +88,7 @@ poll_merge_gates() {
 
     # SKIP_MERGE_GATES=true at session init bypasses all gates. Documented in
     # AGENTS.md § Merge gates and docs/agent-rules/merge-gates.md § Override.
-    # Until this guard landed (PR for C1 in docs/evaluation/agentic-infrastructure-2026-05-23.md),
+    # Until this guard landed (PR for C1 in docs/reference/agentic-infrastructure-2026-05-23.md),
     # the override was a pure documentation contract — every caller was trusted
     # to gate the call itself. A miswired delegated invocation could quietly
     # poll regardless. Read FIRST (before ORCH_USER + every other prereq) so

@@ -309,7 +309,7 @@ print('missing in trigger table:', missing)
 - **Output-contract sections mandatory** per agent class (Investigator / Implementer / Helper / Maintenance).
 - **Skeleton over Read for context-only inspection** (Read only when editing).
 - **Version bumps on capability / workflow / output-shape changes only.**
-- **Telemetry `outcome` inferred from transcript tail**, never agent self-report (matches existing layer-A skip rationale in `docs/AGENT_TOKEN_TRACKING.md`).
+- **Telemetry `outcome` inferred from transcript tail**, never agent self-report (matches existing layer-A skip rationale in `docs/guides/agent-token-tracking.md`).
 
 ## Out of scope
 

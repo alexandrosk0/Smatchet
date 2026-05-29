@@ -1,6 +1,6 @@
 # Perforce — Phase 0 runbook
 
-> Plan: [`docs/plans/shipped/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md) Phase 0 — Helix Core bring-up.
+> Plan: [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md) Phase 0 — Helix Core bring-up.
 > Status: **runbook for remote Windows host on LAN**. Smatchet dev box (`Brick`) runs `p4` client only.
 
 ## Topology
@@ -246,7 +246,7 @@ Phase 0 closes when a throwaway client can submit + re-sync a file. This step ge
 
 ## Per-machine perf baseline
 
-Used by the P4-gated ship-loop's perf gate (per [`docs/plans/shipped/p4-gated-ship-loop.md`](../design/archive/p4-gated-ship-loop.md) § Per-machine perf baseline setup) and by the slice-boundary auto-run in [`AGENTS.md`](../../AGENTS.md) § Perf slice-boundary auto-run. Each developer machine that participates in p4-mode work gets its own per-host baseline so a benchmark recorded on a fast desktop doesn't false-fail a regression check on a slower laptop.
+Used by the P4-gated ship-loop's perf gate (per [`docs/plans/shipped/p4-gated-ship-loop.md`](../plans/shipped/p4-gated-ship-loop.md) § Per-machine perf baseline setup) and by the slice-boundary auto-run in [`AGENTS.md`](../../AGENTS.md) § Perf slice-boundary auto-run. Each developer machine that participates in p4-mode work gets its own per-host baseline so a benchmark recorded on a fast desktop doesn't false-fail a regression check on a slower laptop.
 
 **One-time per machine:**
 

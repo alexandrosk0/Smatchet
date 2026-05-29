@@ -1,6 +1,6 @@
 # Process rules
 
-> Lifted from [`AGENTS.md`](../../AGENTS.md) § Project rules per [`docs/plans/active/agents-md-reduction.md`](../design/agents-md-reduction.md). AGENTS.md retains a load-bearing stub at § Process rules naming the three sub-families + the meta-rule so external `AGENTS.md § <subsection>` references continue to resolve. Build / language / quality 1-liners stay inline in AGENTS.md § Project rules. Edit this file directly — no parallel copy in AGENTS.md.
+> Lifted from [`AGENTS.md`](../../AGENTS.md) § Project rules per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md). AGENTS.md retains a load-bearing stub at § Process rules naming the three sub-families + the meta-rule so external `AGENTS.md § <subsection>` references continue to resolve. Build / language / quality 1-liners stay inline in AGENTS.md § Project rules. Edit this file directly — no parallel copy in AGENTS.md.
 
 This file groups the rules that govern **how agents move work through the pipeline** — plan-doc lifecycle, destructive-VCS-op discipline, and cadence/verification rules. The companion files are [`merge-gates.md`](merge-gates.md) (what blocks a squash-merge), [`ship-loops.md`](ship-loops.md) (the turn-level loop shape), and [`delegation.md`](delegation.md) (agent routing + scratchpad / progress / output contracts).
 
@@ -123,7 +123,7 @@ The deferred lint pipeline (`.claude/hooks/lint-cpp.sh` PostToolUse → `.claude
 
 ## Where new rules go
 
-Authored fresh per [`docs/plans/active/agents-md-reduction.md`](../design/agents-md-reduction.md) D7 — the meta-rule that drives where future rules land so the AGENTS.md ↔ `docs/agent-rules/` split doesn't drift.
+Authored fresh per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md) D7 — the meta-rule that drives where future rules land so the AGENTS.md ↔ `docs/agent-rules/` split doesn't drift.
 
 1. **Build / language / quality 1-liner that every agent must see** (Build, Language, Layout, Logging, Lint, etc. shape) → `AGENTS.md` § Project rules inline. These are 1-line invariants; cross-link follow would cost more than inline reading.
 2. **A rule that fits within an existing extracted topic** (`merge-gates.md`, `ux-pillars.md`, `ship-loops.md`, `process-rules.md`) → add to that file. Update the corresponding `AGENTS.md` stub only if the new rule changes the load-bearing essence (the WHAT + must-know invariants the stub names).

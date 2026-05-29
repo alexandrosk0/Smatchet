@@ -127,7 +127,7 @@ Order by leverage (highest first):
    `ensure_pr_ready_for_review` is only called in the merge path, not at
    registration / first poll. Every PR in session 1 needed a manual
    `gh pr ready` before CR would review. Three-pronged fix already designed
-   in [`docs/self-improvement/categories/process.md`](../backlog/agent-self-improvement/process.md)
+   in [`docs/self-improvement/categories/process.md`](../self-improvement/categories/process.md)
    2026-05-21 P0: (a) flip ready in `git-janitor` before merge-gates poll,
    (b) require a non-empty CR review (not just SUCCESS StatusContext),
    (c) route through `coderabbit-triage` automatically. Touches

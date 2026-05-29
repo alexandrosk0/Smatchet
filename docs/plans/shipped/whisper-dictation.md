@@ -233,7 +233,7 @@ Everything under `Plugins/Whisper/` is **CMake-conditional at the directory leve
 | `tests/Source_Core/WhisperApiPayload.test.cpp` | Same as above |
 | `tests/Source_Core/WhisperModeRouter.test.cpp` | Same as above |
 | `Locales/en.json` | No gating — translations are inert when feature is off; tiny disk cost |
-| `docs/PERF_WORKFLOW.md`, `agents/*.md`, plan doc | No gating — documentation
+| `docs/guides/perf-workflow.md`, `agents/*.md`, plan doc | No gating — documentation
 
 ### Threading model — strict Pillar 1 + 2
 

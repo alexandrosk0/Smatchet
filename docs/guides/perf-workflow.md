@@ -1,3 +1,4 @@
+<!-- tier: project -->
 # Smatchet — perf workflow
 
 **When to read this file**: the user has asked to optimize, profile, or fix FPS / lag / hitch / "slow" / dropped frames. If the task is unrelated to performance, do not load this file.

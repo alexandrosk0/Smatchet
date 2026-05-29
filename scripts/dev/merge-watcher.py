@@ -346,7 +346,7 @@ def poll_one(
     # PRs that stay draft skip CR review entirely; the merge-gates then
     # passes via the "NONE + StatusContext=SUCCESS" branch on CR's placeholder
     # status without ever seeing a real review. Documented as C4 in
-    # `docs/evaluation/agentic-infrastructure-2026-05-23.md` and as P0 in
+    # `docs/reference/agentic-infrastructure-2026-05-23.md` and as P0 in
     # `docs/self-improvement/categories/process.md` (2026-05-21).
     #
     # Registering with the watcher = explicit authorization to flip-ready
@@ -554,7 +554,7 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
     a registered PR is to make sure it's non-draft. Without this, two failures:
     1. CodeRabbit's `.coderabbit.yaml` ships `auto_review.drafts: false`, so
        PRs that stay draft skip CR review entirely (C4 — see
-       `docs/evaluation/agentic-infrastructure-2026-05-23.md` § C4).
+       `docs/reference/agentic-infrastructure-2026-05-23.md` § C4).
     2. The eventual REST squash-merge returns HTTP 405 "Pull Request is still
        a draft" if the PR somehow remains draft at merge time.
 
@@ -1447,7 +1447,7 @@ def maybe_resolve_stuck_cr_threads(
 # (address PR #N's CodeRabbit findings) and HOW to get a checkout (gh pr
 # checkout) so it doesn't waste tokens guessing the branch.
 #
-# C4 prong 3 (per docs/evaluation/agentic-infrastructure-2026-05-23.md): the
+# C4 prong 3 (per docs/reference/agentic-infrastructure-2026-05-23.md): the
 # spawned session is explicitly instructed to use the `coderabbit-triage`
 # agent's classification framework (per `agents/core/coderabbit-triage.md`) — that
 # agent specialises in CR-finding triage with hard invariant-rejection

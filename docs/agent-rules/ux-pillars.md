@@ -1,6 +1,6 @@
 # UX Pillars
 
-> Lifted from [`AGENTS.md`](../../AGENTS.md) § UX Pillars per [`docs/plans/active/agents-md-reduction.md`](../design/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming Pillars 1-4 + their owning agents so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
+> Lifted from [`AGENTS.md`](../../AGENTS.md) § UX Pillars per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming Pillars 1-4 + their owning agents so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
 
 Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (category `process`), not a merge block, until the supporting infrastructure lands.
 
@@ -14,7 +14,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 - `perf-detective` regression-fails any commit that lifts steady-state mean above budget on the same scenario.
 - `spike-hunter` regression-fails any commit that introduces a new p99 > 16.67 ms on the UI thread under a previously-clean scenario.
 
-**Tools**: `SMATCHET_UI_PERF_SCOPE("perf_temp:...")` markers per `agents/core/perf-instrument.md`; `perf.reset` → `scenario.run` → `perf.snapshot` loop per `agents/core/perf-measure.md`; `docs/PERF_WORKFLOW.md` for full ladder. **Baseline registry + delta gate** (Slice 1 of `docs/plans/shipped/pillar-1-2-perf-review-system.md`): `bash scripts/dev/perf-run.sh <scenario>` writes a fresh snapshot; `python scripts/dev/perf-compare.py <baseline> <fresh>` exits non-zero on regression beyond `docs/perf/regression-policy.json` thresholds. Baselines live at `docs/perf/baselines/<scenario>.<host>.json` (per-host per § D1 of the plan). Manage via `bash scripts/dev/perf-baseline.sh {list|init|bump}`.
+**Tools**: `SMATCHET_UI_PERF_SCOPE("perf_temp:...")` markers per `agents/core/perf-instrument.md`; `perf.reset` → `scenario.run` → `perf.snapshot` loop per `agents/core/perf-measure.md`; `docs/guides/perf-workflow.md` for full ladder. **Baseline registry + delta gate** (Slice 1 of `docs/plans/shipped/pillar-1-2-perf-review-system.md`): `bash scripts/dev/perf-run.sh <scenario>` writes a fresh snapshot; `python scripts/dev/perf-compare.py <baseline> <fresh>` exits non-zero on regression beyond `docs/perf/regression-policy.json` thresholds. Baselines live at `docs/perf/baselines/<scenario>.<host>.json` (per-host per § D1 of the plan). Manage via `bash scripts/dev/perf-baseline.sh {list|init|bump}`.
 
 ## 2. UI never freezes — predictable visual cue if it must
 
@@ -63,7 +63,7 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 | Pillar | Primary agent | Notes |
 |---|---|---|
-| 1. Performance | `perf-detective` (sustained), `spike-hunter` (intermittent), helpers: `perf-instrument`, `perf-measure` | See `docs/PERF_WORKFLOW.md`. |
+| 1. Performance | `perf-detective` (sustained), `spike-hunter` (intermittent), helpers: `perf-instrument`, `perf-measure` | See `docs/guides/perf-workflow.md`. |
 | 2. UI never freezes | `code-review` (sync-on-UI sniff), `spike-hunter` (p99 enforcement), `debug-detective` (root-cause when a freeze ships) | UI-thread budget: any call reachable from `ImGui::*`-frame stack. |
 | 3. Never crash | `debug-detective` (diagnose), `code-review` (RAII / bounds / nullptr review), `build-doctor` (sanitizer build gate) | Crashes block merge unconditionally. |
 | 4. Accessibility | none today | Flag in backlog; reassess pillar hardening when keyboard-nav / zoom / contrast checks have automated test support. |
