@@ -7,9 +7,15 @@ name: CR finding gate
 # CR-timing race: CodeRabbit reviews asynchronously, so the initial
 # `pull_request` run usually fires BEFORE CR has reviewed the head — the action
 # posts PENDING then (not success), mirroring merge-gates.sh's grace-window
-# block. The check flips green only once CR's review on the current head
-# exists, which is why this also triggers on `pull_request_review` and
-# `pull_request_review_comment` (the events CR emits when it submits).
+# block. The check flips green only once CR has reported on the current head,
+# which is why this also re-triggers on the events CR emits when it finishes:
+#   - pull_request_review / pull_request_review_comment — when CR posts a review
+#     with inline findings;
+#   - issue_comment (CR-bot authored) — when CR has 0 actionable findings it
+#     posts a PR-level summary comment ("No actionable comments…") + flips its
+#     own `CodeRabbit` StatusContext to SUCCESS, leaving NO review node. Without
+#     this trigger the initial PENDING run is never re-run and the gate sticks
+#     on "awaiting CodeRabbit review" forever (observed on PR #536).
 #
 # No on.paths filter — required checks must report on every PR (Pattern A,
 # docs/agent-rules/ci-required-check-pattern.md). The action itself decides
@@ -25,6 +31,8 @@ on:
     branches: [develop]
   pull_request_review:
   pull_request_review_comment:
+  issue_comment:
+    types: [created, edited]
 
 permissions:
   contents: read
@@ -36,7 +44,7 @@ concurrency:
   # cancelled run leaves a red "cancelled" check on the commit. Each run is a
   # few seconds and only posts a status (last write wins), so let them all
   # complete rather than cancel.
-  group: cr-finding-gate-${{ github.event.pull_request.number }}
+  group: cr-finding-gate-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
@@ -44,18 +52,47 @@ jobs:
     name: CR finding gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # All three trigger events carry a pull_request payload; scope to PRs
-    # targeting develop and skip anything without one.
-    if: github.event.pull_request.base.ref == 'develop'
+    # PR events carry a pull_request payload (scope to develop). issue_comment
+    # has only an issue payload — accept it ONLY when it's a CodeRabbit-authored
+    # comment on a PR (that's exactly when CR signals "0 actionable" with no
+    # review node); base-branch is re-checked after PR resolution below.
+    if: >-
+      github.event.pull_request.base.ref == 'develop' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       (github.event.comment.user.login == 'coderabbitai[bot]' ||
+        github.event.comment.user.login == 'coderabbitai'))
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
+      # Resolve PR number + CURRENT head SHA + base ref uniformly across all
+      # trigger events (issue_comment has no pull_request payload). Always reads
+      # the live head via the API so the status lands on the right commit.
+      - name: Resolve PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            num="${{ github.event.issue.number }}"
+          else
+            num="${{ github.event.pull_request.number }}"
+          fi
+          read -r sha base < <(gh api "repos/${{ github.repository }}/pulls/${num}" \
+                                 --jq '"\(.head.sha) \(.base.ref)"' 2>/dev/null || echo " ")
+          echo "num=${num}"   >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}"   >> "$GITHUB_OUTPUT"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+
       - name: Evaluate CR findings
+        if: steps.pr.outputs.base == 'develop' && steps.pr.outputs.sha != ''
         uses: ./.github/actions/cr-finding-gate
         with:
           github-token: ${{ github.token }}
-          pr-number: ${{ github.event.pull_request.number }}
-          head-sha: ${{ github.event.pull_request.head.sha }}
+          pr-number: ${{ steps.pr.outputs.num }}
+          head-sha: ${{ steps.pr.outputs.sha }}
