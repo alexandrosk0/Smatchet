@@ -435,16 +435,30 @@ def cascade_lock(branch: str, timeout_seconds: float = 30.0):
 
 
 def _gh_json(args: list[str], cwd: str | None = None, timeout: int = 30) -> dict | list:
-    """Run a `gh` subcommand expecting JSON on stdout; return parsed."""
-    result = subprocess.run(
-        [GH_BIN, *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-    )
+    """Run a `gh` subcommand expecting JSON on stdout; return parsed.
+
+    Raises RuntimeError on ANY failure — non-zero exit, non-JSON stdout, or a
+    launch/timeout error (gh not on PATH, or an invalid `cwd`). Normalizing
+    launch failures to RuntimeError keeps the single-exception contract every
+    caller already relies on (`except RuntimeError`). Previously a raw OSError
+    from a bad cwd escaped uncaught and crashed the daemon poll — e.g. a
+    stale/moved registered clone_path, or (in tests) a driveless POSIX path on
+    Windows, which CreateProcess rejects with NotADirectoryError [WinError 267].
+    """
+    try:
+        result = subprocess.run(
+            [GH_BIN, *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(
+            f"gh {' '.join(args[:2])} failed to launch (cwd={cwd!r}): {exc}"
+        ) from exc
     if result.returncode != 0:
         raise RuntimeError(
             f"gh {' '.join(args[:2])} exited {result.returncode}: {result.stderr.strip()[:200]}"

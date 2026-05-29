@@ -191,6 +191,40 @@
             }
         },
         {
+            "name": "ninja-ui-test-asan-clang",
+            "inherits": [
+                "_smatchet-clang-base"
+            ],
+            "displayName": "Ninja UI Tests + Clang AddressSanitizer + UBSan",
+            "description": "Bucket-E ImGui Test Engine surface (SMATCHET_BUILD_UI_TESTS=ON) under Clang ASan+UBSan. RelWithDebInfo — clang-cl ASAN requires the release CRT (/MD); Debug (/MDd) is incompatible. Home of the MCP-Lua fresh-state race regression (tests/ui/mcp_lua_fresh_state_race.test.cpp).",
+            "binaryDir": "${sourceDir}/build/ninja-ui-test-asan-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "asan",
+                "SMATCHET_BUILD_UI_TESTS": "ON",
+                "SMATCHET_DEBUG_VISIBLE_CUE_HARNESS": "ON",
+                "SMATCHET_AGENT_DEBUG": "ON"
+            }
+        },
+        {
+            "name": "ninja-ui-test-asan-msvc",
+            "inherits": [
+                "_smatchet-msvc-base"
+            ],
+            "displayName": "Ninja UI Tests + MSVC AddressSanitizer",
+            "description": "Bucket-E ImGui Test Engine surface (SMATCHET_BUILD_UI_TESTS=ON) under MSVC /fsanitize=address (ASan only; MSVC has no UBSan). RelWithDebInfo. Run from a VS Developer Command Prompt pinned to toolset 14.38.",
+            "binaryDir": "${sourceDir}/build/ninja-ui-test-asan-msvc",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "asan",
+                "SMATCHET_BUILD_UI_TESTS": "ON",
+                "SMATCHET_DEBUG_VISIBLE_CUE_HARNESS": "ON",
+                "SMATCHET_AGENT_DEBUG": "ON"
+            }
+        },
+        {
             "name": "ninja-iter-unreal-msvc",
             "inherits": [
                 "_smatchet-msvc-base"
@@ -317,6 +351,22 @@
         {
             "name": "ninja-clang-asan",
             "configurePreset": "ninja-clang-asan",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-ui-test-asan-clang",
+            "configurePreset": "ninja-ui-test-asan-clang",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-ui-test-asan-msvc",
+            "configurePreset": "ninja-ui-test-asan-msvc",
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"

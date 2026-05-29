@@ -1,0 +1,109 @@
+name: Sanitizer nightly
+
+# Nightly ASan + UBSan + ctest on develop (plan:
+# docs/design/gate-enforcement-hardening.md § Slice 4). NOT a per-PR required
+# check — per-PR ASan was rejected during grill as too slow for a solo project.
+# The gate is "last nightly was clean"; a failure auto-opens a `bug` issue.
+# Trade-off (accepted): a UB regression can sit up to ~24 h before this catches
+# it; agent-side debug-detective sanitizer runs are the primary line.
+#
+# Uses ninja-clang-asan — the only preset delivering ASan AND UBSan
+# (ninja-msvc-asan is ASan-only; MSVC lacks UBSan). It compiles with clang-cl,
+# which needs both the MSVC environment and LLVM on PATH (both present on the
+# windows-2022 image).
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC daily
+  workflow_dispatch: {}    # manual trigger for verification
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: sanitizer-nightly
+  cancel-in-progress: false
+
+jobs:
+  sanitizer-nightly:
+    name: Sanitizer nightly (Clang ASan+UBSan)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Put LLVM (clang-cl) on PATH
+        shell: bash
+        run: |
+          # windows-2022 ships LLVM at C:\Program Files\LLVM; ensure clang-cl is
+          # reachable for the ninja-clang-asan preset.
+          echo "C:\\Program Files\\LLVM\\bin" >> "$GITHUB_PATH"
+
+      - name: Verify clang-cl
+        shell: bash
+        run: clang-cl --version
+
+      - name: Cache FetchContent _deps (clang-asan)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ninja-clang-asan/_deps
+          key: ${{ runner.os }}-fetchcontent-clang-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-clang-asan
+        run: cmake --preset ninja-clang-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF
+
+      - name: Build (Clang ASan+UBSan)
+        run: cmake --build --preset ninja-clang-asan
+
+      - name: Run ctest under ASan+UBSan
+        working-directory: build/ninja-clang-asan
+        run: ctest --output-on-failure
+
+      - name: Surface sanitizer report in job summary
+        if: failure()
+        shell: bash
+        run: |
+          echo "## Sanitizer nightly failure (Clang ASan+UBSan)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          log=build/ninja-clang-asan/Testing/Temporary/LastTest.log
+          if [ -f "$log" ]; then
+            grep -A 30 -E 'ERROR: AddressSanitizer|runtime error:|UndefinedBehaviorSanitizer' "$log" \
+              | head -120 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update bug issue on failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          title="Sanitizer nightly failed (ASan+UBSan)"
+          # De-dup: reuse the single open nightly-sanitizer bug issue if present.
+          existing=$(gh issue list --state open --label bug --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          body="The nightly Clang ASan+UBSan build/test on \`develop\` failed.
+
+          Run: ${RUN_URL}
+
+          See the job summary for the AddressSanitizer / UBSan report. This is the
+          safety-net gate from docs/design/gate-enforcement-hardening.md § Slice 4 —
+          a sanitizer regression has landed on develop."
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true
+          else
+            gh issue create --title "$title" --label bug --body "$body" || true
+          fi

@@ -1,0 +1,194 @@
+name: CR finding gate
+description: >-
+  Posts a `CR findings (0 actionable)` commit StatusContext reflecting
+  CodeRabbit's actionable-finding count on the PR's current head. Lifts the
+  "0 actionable" semantics from scripts/dev/merge-gates.sh (client-side) to a
+  server-side required check. Plan: docs/design/gate-enforcement-hardening.md
+  § Slice 3.
+
+inputs:
+  github-token:
+    description: Token with statuses:write + pull-requests:read.
+    required: true
+  pr-number:
+    description: Pull-request number to evaluate.
+    required: true
+  head-sha:
+    description: Head commit SHA the status is posted against.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Evaluate CodeRabbit actionable findings and post status
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ inputs.pr-number }}
+        SHA: ${{ inputs.head-sha }}
+        OWNER: ${{ github.repository_owner }}
+        REPO: ${{ github.event.repository.name }}
+        # The required StatusContext name. Must match the develop branch-
+        # protection entry exactly.
+        CONTEXT: CR findings (0 actionable)
+      run: |
+        # GitHub runs composite-action bash steps with `-e` (errexit) injected:
+        # `bash --noprofile --norc -e -o pipefail`. decide() deliberately
+        # returns non-zero on its retry path, which under -e would abort the job
+        # before any status is posted. Turn errexit OFF explicitly — this script
+        # relies on explicit exit codes + checked returns, not errexit.
+        set +e -uo pipefail
+
+        post() {
+          # $1 state (success|failure|pending|error), $2 description
+          local state="$1" desc="$2"
+          # GitHub truncates description at 140 chars.
+          desc="${desc:0:140}"
+          echo "CR finding gate -> ${state}: ${desc}"
+          gh api "repos/${OWNER}/${REPO}/statuses/${SHA}" \
+            -f state="${state}" \
+            -f context="${CONTEXT}" \
+            -f description="${desc}" >/dev/null \
+            || echo "WARN: gh api statuses POST failed (fork PR / missing statuses:write?)" >&2
+        }
+
+        # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
+        # `cr-out-of-band` lets a maintainer force-pass this gate, consistent
+        # with the tests-out-of-band / perf-out-of-band downgrade mechanism.
+        labels=$(gh api "repos/${OWNER}/${REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
+        if printf '%s\n' "$labels" | grep -qx 'cr-out-of-band'; then
+          post success "cr-out-of-band label set — gate overridden"
+          exit 0
+        fi
+
+        # --- Is CodeRabbit installed? (probe .coderabbit.yaml/.yml) ------------
+        # Fall through to PASS when CR is not installed — same posture as
+        # merge-gates.sh (a repo without CR must not be blocked by this gate).
+        # Probe at the PR head SHA (not the default branch) so a PR that
+        # adds/removes .coderabbit.y*ml is evaluated against its own state.
+        cr_installed=true
+        if ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yaml?ref=${SHA}" >/dev/null 2>&1 \
+           && ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yml?ref=${SHA}" >/dev/null 2>&1; then
+          cr_installed=false
+        fi
+        if [ "$cr_installed" = false ]; then
+          post success "CodeRabbit not installed — gate not applicable"
+          exit 0
+        fi
+
+        # Latest CR review whose commit.oid == headRefOid; CR posts "Actionable
+        # comments posted: N" as the first body line. Also pull the head's
+        # "CodeRabbit" StatusContext so a skipped review (no review node) can
+        # still be resolved.
+        q='query($owner:String!,$repo:String!,$pr:Int!){
+          repository(owner:$owner,name:$repo){
+            pullRequest(number:$pr){
+              headRefOid
+              reviews(first:100){
+                nodes{ author{login} state submittedAt commit{oid} body }
+              }
+              commits(last:1){
+                nodes{ commit{ statusCheckRollup{ contexts(first:100){
+                  nodes{ __typename ... on StatusContext{ context state } }
+                } } } }
+              }
+            }
+          }
+        }'
+
+        # decide(): one evaluation pass. Terminal verdicts call post + exit 0.
+        # Returns 1 (non-terminal) only when CR has not yet settled on this head,
+        # so the poll loop below can retry. ubuntu-latest ships jq; parse the
+        # GraphQL response directly (merge-gates.sh is jq-free only for the local
+        # Windows dev env).
+        decide() {
+          local resp n_reviews cr_ctx first_line n
+          # On a transient GraphQL failure, do NOT post error + exit — that would
+          # bypass the poll loop and leave a false blocking status on a brief API
+          # blip. Return non-terminal so the loop retries; persistent failure is
+          # surfaced as error only after the window is exhausted (see below).
+          if ! resp=$(gh api graphql -f query="$q" \
+                        -F owner="${OWNER}" -F repo="${REPO}" -F pr="${PR}" 2>/dev/null); then
+            return 1
+          fi
+          any_fetch_ok=true
+
+          # Count CR reviews on the current head — distinguishes "not reviewed
+          # yet" (0) from "reviewed, empty body" (>0). Conflating them wedged on
+          # PENDING after an empty-body incremental review.
+          n_reviews=$(printf '%s' "$resp" | jq -r '
+            .data.repository.pullRequest as $pr
+            | ($pr.headRefOid // "") as $oid
+            | [ $pr.reviews.nodes[]
+                | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                         and (.commit.oid // "") == $oid) ] | length
+            ' 2>/dev/null) || n_reviews=0
+          n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
+
+          if [ "$n_reviews" -eq 0 ]; then
+            # No CR review node on this head. Disambiguate via CR's own
+            # "CodeRabbit" StatusContext on the head commit:
+            #   SUCCESS -> CR is done and skipped the review (trivial / workflow
+            #              / docs change). No review node == nothing actionable
+            #              -> PASS. Without this every CR-skipped PR wedges on
+            #              PENDING once the gate is required.
+            #   FAILURE/ERROR -> CR reported a problem -> FAIL.
+            #   else (PENDING/EXPECTED/absent) -> still working -> retry.
+            # The SUCCESS->pass shortcut is reached ONLY with no review node; a
+            # review WITH findings is caught by the n>0 branch (CR's chill
+            # profile keeps its StatusContext green even with findings, so we
+            # never lean on it to detect findings).
+            cr_ctx=$(printf '%s' "$resp" | jq -r '
+              [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+                | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state ] | (.[0] // "ABSENT")
+              ' 2>/dev/null) || cr_ctx="ABSENT"
+            cr_ctx="${cr_ctx//[^A-Z]/}"
+            case "$cr_ctx" in
+              SUCCESS)       post success "CodeRabbit completed with no review on head (skipped/clean)"; exit 0 ;;
+              FAILURE|ERROR) post failure "CodeRabbit check reported ${cr_ctx} on current head"; exit 0 ;;
+              *)             return 1 ;;   # not settled — let the poll loop retry
+            esac
+          fi
+
+          # First body line of the latest on-head CR review (may be empty).
+          first_line=$(printf '%s' "$resp" | jq -r '
+            .data.repository.pullRequest as $pr
+            | ($pr.headRefOid // "") as $oid
+            | [ $pr.reviews.nodes[]
+                | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                         and (.commit.oid // "") == $oid) ]
+            | sort_by(.submittedAt) | last
+            | if . == null then "" else ((.body // "") | split("\n")[0]) end
+            ' 2>/dev/null) || first_line=""
+          first_line="${first_line//$'\r'/}"
+
+          n=$(printf '%s' "$first_line" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
+                | grep -oE '[0-9]+' | head -1 || true)
+          if [ -z "$n" ]; then
+            post success "CodeRabbit reviewed head; no actionable-findings header"; exit 0
+          fi
+          if [ "$n" -gt 0 ]; then
+            post failure "CodeRabbit posted ${n} actionable finding(s) on current head"; exit 0
+          fi
+          post success "CodeRabbit: 0 actionable findings on current head"; exit 0
+        }
+
+        # Poll loop: catches the CR-skip case where CR only flips its
+        # StatusContext (no review/comment event re-triggers this workflow).
+        # ~3 min total — long enough for a skip decision, short of a real
+        # review (those re-trigger via pull_request_review events anyway).
+        any_fetch_ok=false   # set true by decide() on any successful fetch
+        ATTEMPTS=12
+        for i in $(seq 1 "$ATTEMPTS"); do
+          decide   # exits on a terminal verdict; falls through on retry
+          if [ "$i" -lt "$ATTEMPTS" ]; then sleep 15; fi
+        done
+        # Window exhausted. If not a single fetch succeeded, the GraphQL API was
+        # down the whole time -> surface error. Otherwise CR simply hasn't
+        # settled on this head -> PENDING; a later review event or re-run
+        # resolves it.
+        if [ "$any_fetch_ok" = false ]; then
+          post error "GraphQL query failed on every attempt (transient API issue?)"
+        else
+          post pending "awaiting CodeRabbit review on current head"
+        fi

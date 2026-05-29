@@ -98,16 +98,19 @@ static sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& 
     }
 }
 
-static sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
-    return JsonToLuaImpl(luaView, j, 0);
-}
+static sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) { return JsonToLuaImpl(luaView, j, 0); }
 
 static nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
-    if (depth > 64) return nullptr;
-    if (obj.get_type() == sol::type::lua_nil) return nullptr;
-    if (obj.is<bool>()) return obj.as<bool>();
-    if (obj.is<double>()) return obj.as<double>();
-    if (obj.is<std::string>()) return obj.as<std::string>();
+    if (depth > 64)
+        return nullptr;
+    if (obj.get_type() == sol::type::lua_nil)
+        return nullptr;
+    if (obj.is<bool>())
+        return obj.as<bool>();
+    if (obj.is<double>())
+        return obj.as<double>();
+    if (obj.is<std::string>())
+        return obj.as<std::string>();
     if (obj.is<sol::table>()) {
         sol::table t = obj.as<sol::table>();
         bool is_array = true;
@@ -138,16 +141,14 @@ static nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
     return nullptr;
 }
 
-static nlohmann::json LuaToJson(sol::object obj) {
-    return LuaToJsonImpl(obj, 0);
-}
+static nlohmann::json LuaToJson(sol::object obj) { return LuaToJsonImpl(obj, 0); }
 
 // --- Glues with non-UI behaviour. Pre-lift home: AppController_LuaBindings.cpp
 // inside the same namespace. Each body is byte-identical except for the
 // AppController* -> ILuaBindingHost* cast site (`ResolveHost`).
 
 std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket& t, const std::string& fieldId,
-                                                  const std::string& val) {
+                                                 const std::string& val) {
     ILuaBindingHost* host = ResolveHost(L);
     if (!host) {
         return {false, "AppController not available for Ticket:set_field"};
@@ -167,8 +168,7 @@ std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket
     return {ok, err};
 }
 
-std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTicket& t,
-                                                    const std::string& statusName) {
+std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTicket& t, const std::string& statusName) {
     ILuaBindingHost* host = ResolveHost(L);
     if (!host) {
         return {false, "AppController not available for Ticket:transition"};
@@ -186,50 +186,54 @@ std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTick
 
 void LuaLogInfoGlue(sol::this_state L, std::string msg) {
     ILuaBindingHost* host = ResolveHost(L);
-    if (host) host->LuaLogInfoBind(std::move(msg));
+    if (host)
+        host->LuaLogInfoBind(std::move(msg));
 }
 
 std::tuple<sol::object, std::string> LuaGetTicketGlue(sol::this_state L, const std::string& issueId) {
     ILuaBindingHost* host = ResolveHost(L);
-    if (!host) return {sol::object(), "AppController not available for get_ticket"};
-    return host->LuaGetTicketBind(issueId);
+    if (!host)
+        return {sol::object(), "AppController not available for get_ticket"};
+    return host->LuaGetTicketBind(sol::state_view(L), issueId);
 }
 
 std::vector<CachedTicket> LuaGetActiveTicketsGlue(sol::this_state L) {
     ILuaBindingHost* host = ResolveHost(L);
-    if (!host) return {};
+    if (!host)
+        return {};
     return host->LuaGetActiveTicketsBind();
 }
 
 std::tuple<sol::object, std::string> LuaDecodeJsonGlue(sol::this_state L, const std::string& s) {
     ILuaBindingHost* host = ResolveHost(L);
-    if (!host) return {sol::object(), "AppController not available for decode_json"};
-    return host->LuaDecodeJsonBind(s);
+    if (!host)
+        return {sol::object(), "AppController not available for decode_json"};
+    return host->LuaDecodeJsonBind(sol::state_view(L), s);
 }
 
 void LuaMcpRegisterToolGlue(sol::this_state L, sol::table toolDef, sol::function callback) {
     ILuaBindingHost* host = ResolveHost(L);
-    if (host) host->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
+    if (host)
+        host->LuaMcpRegisterToolBind(std::move(toolDef), std::move(callback));
 }
 
 std::tuple<sol::object, std::string> LuaCreateIssueGlue(sol::this_state L, sol::table spec) {
     ILuaBindingHost* host = ResolveHost(L);
-    if (!host) return {sol::object(), "AppController not available for create_issue"};
-    return host->LuaCreateIssueBind(std::move(spec));
+    if (!host)
+        return {sol::object(), "AppController not available for create_issue"};
+    return host->LuaCreateIssueBind(sol::state_view(L), std::move(spec));
 }
 
 // `tracker.get_type` is pure -- reads ConfigManager which has no transitive
 // ImGui / SQLite / cpr dependency.
-std::string LuaTrackerGetTypeGlue() {
-    return TrimCopy(ConfigManager::Load().TrackerType);
-}
+std::string LuaTrackerGetTypeGlue() { return TrimCopy(ConfigManager::Load().TrackerType); }
 
 std::tuple<std::string, std::string> LuaTrackerCreateIssueGlue(sol::this_state L, sol::table fields) {
     ILuaBindingHost* host = ResolveHost(L);
     if (!host) {
         return {std::string(), std::string("AppController not available for tracker.create_issue")};
     }
-    std::tuple<sol::object, std::string> bindRet = host->LuaCreateIssueBind(std::move(fields));
+    std::tuple<sol::object, std::string> bindRet = host->LuaCreateIssueBind(sol::state_view(L), std::move(fields));
     const std::string& preflightErr = std::get<1>(bindRet);
     const sol::object& resObj = std::get<0>(bindRet);
     if (!preflightErr.empty()) {
@@ -314,10 +318,10 @@ void InitLuaCore(sol::state& state, ILuaBindingHost* host) {
     // Expose only the safe time/date subset as a whitelist. A future Lua version
     // adding a new dangerous os.* fn won't silently leak in (blacklist would).
     sol::table osSafe = state.create_table();
-    osSafe.set_function("time",      []() -> std::time_t { return std::time(nullptr); });
-    osSafe.set_function("clock",     []() -> double      { return static_cast<double>(std::clock()) / CLOCKS_PER_SEC; });
-    osSafe.set_function("difftime",  [](std::time_t a, std::time_t b) -> double { return std::difftime(a, b); });
-    osSafe.set_function("date",      [](sol::optional<std::string> fmt, sol::optional<std::time_t> t) -> std::string {
+    osSafe.set_function("time", []() -> std::time_t { return std::time(nullptr); });
+    osSafe.set_function("clock", []() -> double { return static_cast<double>(std::clock()) / CLOCKS_PER_SEC; });
+    osSafe.set_function("difftime", [](std::time_t a, std::time_t b) -> double { return std::difftime(a, b); });
+    osSafe.set_function("date", [](sol::optional<std::string> fmt, sol::optional<std::time_t> t) -> std::string {
         const std::time_t when = t.value_or(std::time(nullptr));
         const std::string format = fmt.value_or(std::string("%c"));
         std::tm tmbuf{};
@@ -345,11 +349,9 @@ void InitLuaCore(sol::state& state, ILuaBindingHost* host) {
     //     through `__smatchet_app`.
     state["__smatchet_app"] = host;
 
-    state.new_usertype<CachedTicket>("Ticket",
-        "id", &CachedTicket::id,
-        "get_field", &CachedTicket::GetFieldValue,
-        "set_field", &smatchet_lua_init_detail::TicketSetFieldGlue,
-        "transition", &smatchet_lua_init_detail::TicketTransitionGlue);
+    state.new_usertype<CachedTicket>("Ticket", "id", &CachedTicket::id, "get_field", &CachedTicket::GetFieldValue,
+                                     "set_field", &smatchet_lua_init_detail::TicketSetFieldGlue, "transition",
+                                     &smatchet_lua_init_detail::TicketTransitionGlue);
 
     sol::table smatchet = state.create_table();
     smatchet.set_function("get_ticket", &smatchet_lua_init_detail::LuaGetTicketGlue);
@@ -373,20 +375,20 @@ void InitLuaCore(sol::state& state, ILuaBindingHost* host) {
     // is destroyed at the end of each job, so any registration on it would be discarded
     // regardless. The real registrations happen against the main `lua` state via OnEarlyInit.
     auto noop = []() {};
-    state.set_function("register_field_display_cached",         noop);
-    state.set_function("unregister_field_display_cached",       noop);
+    state.set_function("register_field_display_cached", noop);
+    state.set_function("unregister_field_display_cached", noop);
     state.set_function("register_field_display_cached_by_name", noop);
     state.set_function("unregister_field_display_cached_by_name", noop);
-    state.set_function("register_field_icon_map",               noop);
-    state.set_function("unregister_field_icon_map",             noop);
+    state.set_function("register_field_icon_map", noop);
+    state.set_function("unregister_field_icon_map", noop);
     sol::table uiNoop = state.create_table();
-    uiNoop.set_function("register_window",            noop);
-    uiNoop.set_function("unregister_window",          noop);
-    uiNoop.set_function("invalidate_window",          noop);
-    uiNoop.set_function("invalidate_field_cache",     noop);
+    uiNoop.set_function("register_window", noop);
+    uiNoop.set_function("unregister_window", noop);
+    uiNoop.set_function("invalidate_window", noop);
+    uiNoop.set_function("invalidate_field_cache", noop);
     uiNoop.set_function("invalidate_field_cache_for", noop);
-    uiNoop.set_function("register_ticket_action",     noop);
-    uiNoop.set_function("register_global_action",     noop);
+    uiNoop.set_function("register_ticket_action", noop);
+    uiNoop.set_function("register_global_action", noop);
     state["ui"] = uiNoop;
 
     sol::table mcp = state.create_table();

@@ -272,6 +272,32 @@ print('merge_action:', extras.get('merge_action'))
     rm -rf "$STUB_BIN"
 }
 
+@test "gh-json: invalid cwd raises RuntimeError (not OSError) so _gh_owner_repo degrades to None" {
+    # Regression: a stale/moved registered clone_path (or a driveless POSIX path
+    # on Windows) makes subprocess cwd= raise NotADirectoryError [WinError 267] /
+    # FileNotFoundError. _gh_json must normalize that to RuntimeError so callers'
+    # `except RuntimeError` (e.g. _gh_owner_repo, maybe_notify) catch it instead
+    # of crashing the daemon poll.
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+bad = '/c/nonexistent-driveless-clone-path-xyz'
+try:
+    mw._gh_json(['repo', 'view', '--json', 'owner,name'], cwd=bad)
+    print('NO_EXCEPTION')
+except RuntimeError:
+    print('runtimeerror')
+except OSError as e:
+    print('leaked_oserror:', e)
+print('owner_repo:', mw._gh_owner_repo(bad))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"runtimeerror"* ]]
+    [[ "$output" != *"leaked_oserror"* ]]
+    [[ "$output" == *"owner_repo: None"* ]]
+}
+
 # ---------- Phase 3: CR-triage classifier ----------
 
 @test "classifier parses CR review body + rejects string_view as invariant violation" {

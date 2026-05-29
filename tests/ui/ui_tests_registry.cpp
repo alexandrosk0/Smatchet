@@ -10,6 +10,9 @@
 
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine);
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+extern "C" void SmatchetRegisterMcpLuaFreshStateRaceTests(ImGuiTestEngine* engine);
+#endif
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDescriptionTooltipMarkdownRenderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine);
@@ -32,6 +35,9 @@ extern "C" void SmatchetRegisterAgentProposalStoreSqliteTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
     SmatchetRegisterCallstackTooltipHoverTests(engine);
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    SmatchetRegisterMcpLuaFreshStateRaceTests(engine);
+#endif
     SmatchetRegisterSyncStallVisibleCueTests(engine);
     SmatchetRegisterDescriptionTooltipMarkdownRenderTests(engine);
     SmatchetRegisterSpawnWarmupDeterministicGateTests(engine);
