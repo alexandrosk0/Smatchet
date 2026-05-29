@@ -194,7 +194,7 @@ When invoked by `smatchet-merge-watcher` (per `docs/design/archive/smatchet-merg
 
 Per the Hand-back contract below, this agent itself is read-only — the file-edit step happens in the dispatched subsystem agents, and the commit + push happens in the spawned session orchestrator. C4 prong 3 (per `docs/evaluation/agentic-infrastructure-2026-05-23.md`) is what wires this multi-step dispatch into `AUTO_ACT_PROMPT`.
 
-The Phase 3 Python port (`scripts/dev/coderabbit-triage.py`) is the canonical implementation reference for the rule body; this `agents/coderabbit-triage.md` file remains the source-of-truth for the 19-rule override table + Smatchet-invariant rejection rules + subsystem-routing decisions. Keep the two in sync — a doctest-style bash check at end-of-CI greps both files for a shared "rules version" marker and fails if they disagree (per the watcher plan-doc § Risks).
+The Phase 3 Python port (`scripts/dev/coderabbit-triage.py`) is the canonical implementation reference for the rule body; this `agents/core/coderabbit-triage.md` file remains the source-of-truth for the 19-rule override table + Smatchet-invariant rejection rules + subsystem-routing decisions. Keep the two in sync — a doctest-style bash check at end-of-CI greps both files for a shared "rules version" marker and fails if they disagree (per the watcher plan-doc § Risks).
 
 ## Cleanup
 

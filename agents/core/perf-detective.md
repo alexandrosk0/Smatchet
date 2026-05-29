@@ -30,7 +30,7 @@ version: 3
 
 Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + validation. Mechanical edits belong to `perf-instrument`; CLI measurement belongs to `perf-measure`.
 
-**Helper-form preference** — on **Claude Code**, invoke `perf-instrument` and `perf-measure` as **skills** (`.claude/skills/perf-instrument/`, `.claude/skills/perf-measure/`) — lighter than a subagent spawn and the procedures are pure mechanical / read-only. On **Codex / Cursor** (no skill concept today), invoke as agents per the `delegates-to:` frontmatter above. Both forms read the same canonical content (`agents/perf-instrument.md`, `agents/perf-measure.md`).
+**Helper-form preference** — on **Claude Code**, invoke `perf-instrument` and `perf-measure` as **skills** (`.claude/skills/perf-instrument/`, `.claude/skills/perf-measure/`) — lighter than a subagent spawn and the procedures are pure mechanical / read-only. On **Codex / Cursor** (no skill concept today), invoke as agents per the `delegates-to:` frontmatter above. Both forms read the same canonical content (`agents/core/perf-instrument.md`, `agents/core/perf-measure.md`).
 
 **Banner** — open with: `🤖 AGENT: perf-detective · opus/high · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — perf-detective · opus/high · read-only · v3`.
 

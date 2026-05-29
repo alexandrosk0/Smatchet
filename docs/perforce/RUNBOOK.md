@@ -2,7 +2,7 @@
 
 > **Plan**: [`docs/design/archive/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md).
 > **Sibling docs**: [`SETUP.md`](SETUP.md) — first-time bring-up. [`AGENT_FLOWS.md`](AGENT_FLOWS.md) — which verb to use when.
-> **Audience**: operator running the Smatchet Perforce server day-to-day. Most agents never read this — `p4-janitor` ([`agents/p4-janitor.md`](../../agents/p4-janitor.md)) handles routine maintenance.
+> **Audience**: operator running the Smatchet Perforce server day-to-day. Most agents never read this — `p4-janitor` ([`agents/core/p4-janitor.md`](../../agents/core/p4-janitor.md)) handles routine maintenance.
 
 The Smatchet `p4d` server is **non-canonical** (git + GitHub remain the ship-line per [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology). Losing the depot is annoyance, not data loss — every shipped change lives on GitHub. The runbook below is therefore optimised for "keep agentic-WIP primitives healthy", not "prevent catastrophic data loss".
 
@@ -46,7 +46,7 @@ p4 verify -q //smatchet/...
 
 Output is empty on success. Any `BAD!` line = archive corruption — restore from the most recent good checkpoint (see § Recovery).
 
-`p4-janitor` runs this on its own schedule per [`agents/p4-janitor.md`](../../agents/p4-janitor.md) § Verification.
+`p4-janitor` runs this on its own schedule per [`agents/core/p4-janitor.md`](../../agents/core/p4-janitor.md) § Verification.
 
 ## Stream + shelve GC
 
@@ -125,6 +125,6 @@ Super stays restricted to the host operator.
 
 ## See also
 
-- [`agents/p4-janitor.md`](../../agents/p4-janitor.md) — automated maintenance agent.
-- [`agents/git-janitor.md`](../../agents/git-janitor.md) — git-side end-of-session cleanup (still load-bearing).
+- [`agents/core/p4-janitor.md`](../../agents/core/p4-janitor.md) — automated maintenance agent.
+- [`agents/core/git-janitor.md`](../../agents/core/git-janitor.md) — git-side end-of-session cleanup (still load-bearing).
 - [`docs/design/archive/git-to-perforce-migration.md`](../design/archive/git-to-perforce-migration.md) — the plan this runbook closes a gap on.

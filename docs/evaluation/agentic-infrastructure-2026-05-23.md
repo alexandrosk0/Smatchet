@@ -48,7 +48,7 @@ findings are addressed in which PR).
 Still on the punch list (highest-leverage first):
 
 - **C4 prong 3** — auto-route non-empty CR `COMMENTED` reviews through
-  `agents/coderabbit-triage.md`. Separate plan-doc needed; larger /
+  `agents/core/coderabbit-triage.md`. Separate plan-doc needed; larger /
   more controversial design decision than prongs 1 + 2. Prongs 1 + 2
   close the bypass; prong 3 makes the recovery path automatic.
 - **H9** — `architect.md` Investigator-vs-Implementer output drift —
@@ -132,7 +132,7 @@ Order by leverage (highest first):
    (b) require a non-empty CR review (not just SUCCESS StatusContext),
    (c) route through `coderabbit-triage` automatically. Touches
    `scripts/dev/merge-watcher.py` line ~782 + `scripts/dev/merge-gates.sh`
-   + `merge-gates.graphql` + `agents/git-janitor.md`. **Will conflict
+   + `merge-gates.graphql` + `agents/core/git-janitor.md`. **Will conflict
    with anything else touching merge-gates.sh** — sequence carefully.
 2. **H2** (~30 min) — `gh_pr_ready_idempotent` at
    `scripts/dev/merge-gates.sh:411` matches English error strings only
@@ -401,7 +401,7 @@ will undercount v2 work for every PR these agents touch. Skill SKILL.md
 files lack `version:` entirely.
 
 ### H8 · Helper-agent required sections not emitted
-`agents/perf-instrument.md:68` + `agents/perf-measure.md:103` — Helper
+`agents/core/perf-instrument.md:68` + `agents/core/perf-measure.md:103` — Helper
 class mandates `## Spec executed` → `## Result` per `delegation.md` §
 Agent output contract. Neither agent's prompt body actually instructs
 the agent to emit either heading. Their `Report:` prose substitutes;
@@ -474,7 +474,7 @@ on an unusual clone.
 | M7 | Skill ↔ agent duplication | `perf-instrument`, `perf-measure`, `perf-gatekeeper` exist as both `agents/*.md` AND `agents/_shared/skills/<name>/SKILL.md`. No parity test ensures they don't drift |
 | M8 | `coderabbit-triage.md:103` | References `CLAUDE.md` for overrides; canonical is `AGENTS.md` per `Agent file locations` |
 | M9 | `_shared/skills/*` SKILL.md files | No `version:` field — telemetry pivot misses skill versions |
-| M10 | `agents/test-author.md:23` | `delegates-to: command-system`, but `command-system` is terminal per `delegation.md:289` |
+| M10 | `agents/core/test-author.md:23` | `delegates-to: command-system`, but `command-system` is terminal per `delegation.md:289` |
 | M11 | Bats coverage gap | Zero bats for `lock-claim*`, `lock-release*`, `p4-task-stream-to-pr.sh`, `is-pure-docs-diff.sh`, `vexp-strip-agents-md.sh`. Lock primitives have only `test-lock-primitives.sh` integration |
 | M12 | `merge-gates.sh:411` `gh_pr_ready_idempotent` | Cross-platform: gh exit codes + error strings differ by OS + version |
 | M13 | Backlog open-issue cross-reference | `infra.md` 64-75 (tracker TU split) and `tooling.md` 2026-05-22 P1 (merge-watcher.py) name agents that aren't aware of the open work |

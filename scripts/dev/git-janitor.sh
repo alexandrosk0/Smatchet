@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/dev/git-janitor.sh — automate the deterministic post-merge cleanup steps.
 #
-# Wraps the manual flow at agents/git-janitor.md § Standard cleanup loop into a
+# Wraps the manual flow at agents/core/git-janitor.md § Standard cleanup loop into a
 # single command. Refuses to act on uncommitted user work; refuses to
 # force-push; refuses to delete branches that aren't merged on GitHub.
 #

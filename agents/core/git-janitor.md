@@ -31,7 +31,7 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
-**See also**: [`agents/p4-janitor.md`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../AGENTS.md) § Dual-VCS topology.
+**See also**: [`agents/core/p4-janitor.md`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../AGENTS.md) § Dual-VCS topology.
 
 **P4-gated ship-loop note**: when the orchestrator hands off to `git-janitor` from the P4-gated ship-loop (per [`AGENTS.md`](../AGENTS.md) § P4-gated ship-loop), `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only. Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic; the watcher polls GitHub PR state and doesn't care whether the PR's commits were produced by direct git workflow or by `scripts/dev/p4-task-stream-to-pr.sh --promote-reviewed-cl`. `git-janitor` NEVER touches p4 shelves, p4 streams, or any p4 server state — that's `p4-janitor`'s remit. If `git-janitor` notices a stranded p4 shelf or task stream during cleanup, it reports the residue per § Residue requiring user action and routes the user to `p4-janitor`.
 
@@ -306,17 +306,17 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
    **Orphan-scenario definition.** A scenario is orphan when **all three** hold:
    - **(i) No recent PR cite** — `git log --grep="<scenario-name>" --since="60.days.ago" --oneline | wc -l` returns zero.
-   - **(ii) Not in any curated set** — name absent from `scripts/dev/perf-pr-fast-set.json`, from `agents/perf-gatekeeper.md` § Curated diff → scenario map, and from `tests/golden/` filenames.
+   - **(ii) Not in any curated set** — name absent from `scripts/dev/perf-pr-fast-set.json`, from `agents/core/perf-gatekeeper.md` § Curated diff → scenario map, and from `tests/golden/` filenames.
    - **(iii) No failing-test reference** — `grep -r "<scenario-name>" tests/` returns zero hits.
 
-   All three must hold. Any single hit disqualifies the scenario from the sweep (it stays kept-silently). This definition is also referenced from `agents/debug-detective.md` § Self-improvement (`missing-scenario` category is the inverse signal — consolidate dups; orphan sweep retires unused). Cross-link: see [`agents/debug-detective.md`](debug-detective.md) § Self-improvement.
+   All three must hold. Any single hit disqualifies the scenario from the sweep (it stays kept-silently). This definition is also referenced from `agents/core/debug-detective.md` § Self-improvement (`missing-scenario` category is the inverse signal — consolidate dups; orphan sweep retires unused). Cross-link: see [`agents/core/debug-detective.md`](debug-detective.md) § Self-improvement.
 
    Sweep recipe:
    ```bash
    for f in Source_Core/src/Commands/Scenarios/*Scenario.cpp; do
        name=$(basename "$f" .cpp | sed 's/Scenario$//' | sed 's/\([A-Z]\)/-\L\1/g' | sed 's/^-//')
        recent=$(git log --grep="$name" --since="60.days.ago" --oneline | wc -l)
-       curated=$({ grep -lF "$name" scripts/dev/perf-pr-fast-set.json agents/perf-gatekeeper.md 2>/dev/null; find tests/golden -type f 2>/dev/null | grep -F "$name" || true; } | wc -l)
+       curated=$({ grep -lF "$name" scripts/dev/perf-pr-fast-set.json agents/core/perf-gatekeeper.md 2>/dev/null; find tests/golden -type f 2>/dev/null | grep -F "$name" || true; } | wc -l)
        intests=$(grep -rlF "$name" tests/ 2>/dev/null | wc -l)
        [ "$recent" -eq 0 ] && [ "$curated" -eq 0 ] && [ "$intests" -eq 0 ] && echo "ORPHAN: $name ($f)"
    done

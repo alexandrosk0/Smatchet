@@ -10,11 +10,11 @@ Smatchet's debug loop today requires three categories of human input that block 
 
 1. **Live credentials** — every tracker backend (Jira / GitHub / Plane), every AI client (OpenAI / Anthropic / Ollama), and the `P4Blame` C++ feature shell out to real services. Reproducing a backend-touching bug needs real keys.
 2. **Interactive verification** — bucket-C screenshot diff + bucket-E ImGui Test Engine are wired but not gated in CI (Windows headless-GL gap). UI bugs require "user opens window and observes."
-3. **Reproducer hand-off** — `agents/debug-detective.md` today accepts a CLI / scenario / Lua snippet as the *preferred* input but falls back to "user repro steps." Falls back too often.
+3. **Reproducer hand-off** — `agents/core/debug-detective.md` today accepts a CLI / scenario / Lua snippet as the *preferred* input but falls back to "user repro steps." Falls back too often.
 
 The autonomous-debug plan closes all three with 11 slices grouped into three waves (Wave A = backend fakes + registry refactor + CI prerequisites + NDJSON helper; Wave B = scenarios + bucket-E densification + contract update; Wave C = sanitizer auto-act loop closure). Most slice-level decisions are mechanical (extract pure helper, add fixture loader, register scenario factory). Three load-bearing meta-decisions are not mechanical — they shape every slice that depends on them and would surprise a future reader looking at the code without the plan-doc to hand.
 
-The grill-with-docs pass (recorded inline on the plan-doc's commit history under wip/plan-autonomous-debugging-no-creds) validated each decision against the existing seams (`ITrackerBackendFactory::SetBackendFactory`, `AiClientFactory::SetTestOverride`, `ScenarioRunner::RegisterFactory`, the existing `tests/support/Fake*.h` shape, `agents/debug-detective.md` v4 contract) and the sibling `deterministic-jira-test-backend.md` plan that anchors the tracker-backend pattern.
+The grill-with-docs pass (recorded inline on the plan-doc's commit history under wip/plan-autonomous-debugging-no-creds) validated each decision against the existing seams (`ITrackerBackendFactory::SetBackendFactory`, `AiClientFactory::SetTestOverride`, `ScenarioRunner::RegisterFactory`, the existing `tests/support/Fake*.h` shape, `agents/core/debug-detective.md` v4 contract) and the sibling `deterministic-jira-test-backend.md` plan that anchors the tracker-backend pattern.
 
 # Decision
 
@@ -38,7 +38,7 @@ A new header-only macro `SMATCHET_AGENT_DEBUG_LOG(category, json_obj)` appends o
 
 **Why per-session file (vs append-across-sessions)**: agents read the NDJSON to diagnose one debug-loop run; cross-session content adds noise. The `<session-id>` = `<unix-epoch>-<pid>` suffix guarantees uniqueness; the spawned-subprocess correlation works via the `SMATCHET_AGENT_DEBUG_SESSION_ID` env var rather than file discovery.
 
-## (c) Reproducer-first contract for `agents/debug-detective.md`
+## (c) Reproducer-first contract for `agents/core/debug-detective.md`
 
 The agent's process gains two new phases before phase 1 (Clarify):
 
@@ -47,7 +47,7 @@ The agent's process gains two new phases before phase 1 (Clarify):
 
 Phase 2 (Reproduce) loses its "user repro steps fallback." If no deterministic reproducer is supplied or discoverable and no existing scenario can be parametrized, the agent's first action is to **add a scenario** that reproduces the bug — on the same branch as the fix. Scenario-add = one new `.cpp` under `Source_Core/src/Commands/Scenarios/` + one line in the slice-5 `SmatchetScenarioRegistry.cpp` table.
 
-The contract is verified by a literal-grep check in `scripts/dev/test-agent-contract.sh` ("reproducer-first contract" must appear in `agents/debug-detective.md`); soft-rewrites that drop the phrase fail the check loudly.
+The contract is verified by a literal-grep check in `scripts/dev/test-agent-contract.sh` ("reproducer-first contract" must appear in `agents/core/debug-detective.md`); soft-rewrites that drop the phrase fail the check loudly.
 
 **Why hard refusal, not soft preference**: the autonomous-debug loop's promise — "at most one user-input point" — only holds if phase 2 doesn't ask. Soft preferences slide into soft fallbacks under deadline pressure ("the agent didn't have a reproducer but we needed the bug fixed, so we let it pause and ask the user"), and once that happens the entire end-state degrades to "interactive debug with extra steps." The hard refusal makes the failure mode visible: missing reproducer → explicit scenario-add commit on the branch, with the bug-class recorded in the self-improvement template's new `missing-scenario` category so the orchestrator's quarterly pattern-mining loop can spot duplicate scenarios across the lifetime of the codebase.
 

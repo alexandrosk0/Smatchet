@@ -9,7 +9,7 @@
 # Exit 1 if any file is outside the allow-list (deny-list catches scripts/,
 # agents/, tests/, .gitignore, .github/, CMake files, C++/Lua/Python/shell).
 #
-# Used by agents/git-janitor.md § FF-clean docs-batch exception §
+# Used by agents/core/git-janitor.md § FF-clean docs-batch exception §
 # Pure-docs sub-exception to skip the test-all.sh gate on pure-doc diffs.
 #
 # Plan: docs/design/archive/process-backlog-tighten-1-2-3-9-11-12.md § Slice 2

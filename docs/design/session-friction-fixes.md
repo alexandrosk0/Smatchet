@@ -85,7 +85,7 @@ Slice 10's C++ build couldn't run from bash (`Cannot open stdio.h`) because the 
 **Files**:
 - `scripts/dev/with-msvc-env.sh` (new) — sub-shell wrapper that sources vcvars64
 - `BUILD.md` — document the wrapper next to the PowerShell entry
-- `agents/build-doctor.md` — cross-link
+- `agents/core/build-doctor.md` — cross-link
 
 **Recipe** (the script's body, corrected after plan review — uses `vswhere.exe` instead of a path glob):
 
@@ -162,7 +162,7 @@ N/A — diff is target-agnostic (no `Source_Core/` C++ touches).
 
 ## Risks / non-goals
 
-- **Risk** (slice 2): union merge may interleave dates if the post-merge sort isn't run. Mitigation: optional sort script + a one-line note in agents/git-janitor.md. Cost of disorder is cosmetic.
+- **Risk** (slice 2): union merge may interleave dates if the post-merge sort isn't run. Mitigation: optional sort script + a one-line note in agents/core/git-janitor.md. Cost of disorder is cosmetic.
 - **Risk** (slice 1): pre-push hook adds latency to every shell-script push. Mitigation: only fires when `scripts/dev/*.sh` is in the diff; SMATCHET_SKIP_SHELL_LINT bypass for emergencies.
 - **Non-goal**: addressing the remaining backlog-sweep slices (3 — merge-watcher, 7 — bucket-E tests). Those are tracked in their original plan and remain open.
 

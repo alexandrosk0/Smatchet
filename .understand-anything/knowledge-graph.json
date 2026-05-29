@@ -174,7 +174,7 @@
         "agent-tooling"
       ],
       "complexity": "moderate",
-      "languageNotes": "Template file expanded at agent-runtime â€” used as a one-shot scaffold by debug-detective per the workflow in agents/debug-detective.md Â§ 4a."
+      "languageNotes": "Template file expanded at agent-runtime â€” used as a one-shot scaffold by debug-detective per the workflow in agents/core/debug-detective.md Â§ 4a."
     },
     {
       "id": "file:agents/_shared/token-tracking/agent-token-log.py",
@@ -547,10 +547,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:agents/architect.md",
+      "id": "document:agents/core/architect.md",
       "type": "document",
       "name": "architect.md",
-      "filePath": "agents/architect.md",
+      "filePath": "agents/core/architect.md",
       "summary": "Subagent prompt for the architect agent: designs new features by producing docs/design/<slug>.md plans, applying the project template, and consulting grill-with-docs for terminology sharpening.",
       "tags": [
         "agent-prompt",
@@ -561,10 +561,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/build-doctor.md",
+      "id": "document:agents/core/build-doctor.md",
       "type": "document",
       "name": "build-doctor.md",
-      "filePath": "agents/build-doctor.md",
+      "filePath": "agents/core/build-doctor.md",
       "summary": "Subagent prompt for build-doctor: triages broken builds via cmake presets (ninja-iter / ninja-debug / ninja-publish / ninja-test) and reports the minimal mutation set to restore green.",
       "tags": [
         "agent-prompt",
@@ -575,10 +575,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/code-review.md",
+      "id": "document:agents/core/code-review.md",
       "type": "document",
       "name": "code-review.md",
-      "filePath": "agents/code-review.md",
+      "filePath": "agents/core/code-review.md",
       "summary": "Subagent prompt for code-review: enforces the Smatchet UX-pillar checklist on the current diff â€” sync-on-UI, RAII, bounds-check, never-crash â€” and produces a structured findings report.",
       "tags": [
         "agent-prompt",
@@ -589,10 +589,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:agents/coderabbit-triage.md",
+      "id": "document:agents/core/coderabbit-triage.md",
       "type": "document",
       "name": "coderabbit-triage.md",
-      "filePath": "agents/coderabbit-triage.md",
+      "filePath": "agents/core/coderabbit-triage.md",
       "summary": "Subagent prompt for coderabbit-triage: classifies CodeRabbit PR findings, applies override rules that reject project-incompatible suggestions, and routes accepted items through a target table.",
       "tags": [
         "agent-prompt",
@@ -603,10 +603,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:agents/command-system.md",
+      "id": "document:agents/project/command-system.md",
       "type": "document",
       "name": "command-system.md",
-      "filePath": "agents/command-system.md",
+      "filePath": "agents/project/command-system.md",
       "summary": "Subagent prompt for command-system: owns the Smatchet command palette wiring and registers new commands following the project's command-system conventions.",
       "tags": [
         "agent-prompt",
@@ -617,10 +617,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/debug-detective.md",
+      "id": "document:agents/core/debug-detective.md",
       "type": "document",
       "name": "debug-detective.md",
-      "filePath": "agents/debug-detective.md",
+      "filePath": "agents/core/debug-detective.md",
       "summary": "Subagent prompt for debug-detective: a 12-step reproduce-hypothesise-instrument-iterate loop for diagnosing crashes, races, and intermittent bugs with a structured mid-loop pause and final hand-off report.",
       "tags": [
         "agent-prompt",
@@ -632,10 +632,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:agents/git-janitor.md",
+      "id": "document:agents/core/git-janitor.md",
       "type": "document",
       "name": "git-janitor.md",
-      "filePath": "agents/git-janitor.md",
+      "filePath": "agents/core/git-janitor.md",
       "summary": "Subagent prompt for git-janitor: end-of-session cleanup loop that polls merge-gates, fast-forwards develop, prunes stale branches, and enforces the FF-clean / pure-docs exceptions.",
       "tags": [
         "agent-prompt",
@@ -647,10 +647,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:agents/grid-engine.md",
+      "id": "document:agents/project/grid-engine.md",
       "type": "document",
       "name": "grid-engine.md",
-      "filePath": "agents/grid-engine.md",
+      "filePath": "agents/project/grid-engine.md",
       "summary": "Subagent prompt for grid-engine: subsystem specialist for the issue-tracker grid view, owning column reorder, sort, filter, and persistence behaviour.",
       "tags": [
         "agent-prompt",
@@ -661,10 +661,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/lua-binder.md",
+      "id": "document:agents/project/lua-binder.md",
       "type": "document",
       "name": "lua-binder.md",
-      "filePath": "agents/lua-binder.md",
+      "filePath": "agents/project/lua-binder.md",
       "summary": "Subagent prompt for lua-binder: subsystem specialist for the optional Lua automation plugin, keeping AppController_LuaBindings.cpp and AppController_LuaStubs.cpp in sync.",
       "tags": [
         "agent-prompt",
@@ -675,10 +675,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/mcp-toolsmith.md",
+      "id": "document:agents/project/mcp-toolsmith.md",
       "type": "document",
       "name": "mcp-toolsmith.md",
-      "filePath": "agents/mcp-toolsmith.md",
+      "filePath": "agents/project/mcp-toolsmith.md",
       "summary": "Subagent prompt for mcp-toolsmith: subsystem specialist for the optional MCP server plugin, adding and refining MCP tools exposed by Smatchet.",
       "tags": [
         "agent-prompt",
@@ -703,10 +703,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:agents/mechanic.md",
+      "id": "document:agents/core/mechanic.md",
       "type": "document",
       "name": "mechanic.md",
-      "filePath": "agents/mechanic.md",
+      "filePath": "agents/core/mechanic.md",
       "summary": "Defines the `mechanic` subagent â€” a Haiku-powered low-complexity executor for fully-specified mechanical edits like symbol renames, clang-format passes, and find-and-replace, with strict rules to halt on any judgement call.",
       "tags": [
         "agent-definition",
@@ -717,10 +717,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:agents/offline-sync.md",
+      "id": "document:agents/project/offline-sync.md",
       "type": "document",
       "name": "offline-sync.md",
-      "filePath": "agents/offline-sync.md",
+      "filePath": "agents/project/offline-sync.md",
       "summary": "Defines the `offline-sync` subagent specializing in the SQLite cache, offline-queue replay, and audit trail subsystem (LocalCacheManager, OfflineQueueService, TicketSyncService, BackendAuditTrail).",
       "tags": [
         "agent-definition",
@@ -731,10 +731,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:agents/p4-blame.md",
+      "id": "document:agents/project/p4-blame.md",
       "type": "document",
       "name": "p4-blame.md",
-      "filePath": "agents/p4-blame.md",
+      "filePath": "agents/project/p4-blame.md",
       "summary": "Defines the `p4-blame` subagent owning Perforce blame integration â€” P4Blame, BlameAnalysisUi, CppSyntaxHighlight, CallstackParser â€” and `p4 annotate`/`p4 describe` invocation plus stack-frame symbolication.",
       "tags": [
         "agent-definition",
@@ -745,10 +745,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:agents/p4-janitor.md",
+      "id": "document:agents/core/p4-janitor.md",
       "type": "document",
       "name": "p4-janitor.md",
-      "filePath": "agents/p4-janitor.md",
+      "filePath": "agents/core/p4-janitor.md",
       "summary": "Defines the `p4-janitor` maintenance subagent for the local Perforce dual-VCS layer â€” purges stale task streams, drops stale plan-lock counters, sweeps abandoned shelves, and runs `p4 verify`; sibling of `git-janitor`.",
       "tags": [
         "agent-definition",
@@ -759,10 +759,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/perf-detective.md",
+      "id": "document:agents/core/perf-detective.md",
       "type": "document",
       "name": "perf-detective.md",
-      "filePath": "agents/perf-detective.md",
+      "filePath": "agents/core/perf-detective.md",
       "summary": "Defines the `perf-detective` subagent owning sustained-performance investigations (frame hitches, low FPS, slow scrolling) via a hypothesis-diagnose-validate loop, delegating instrumentation to perf-instrument and measurement to perf-measure.",
       "tags": [
         "agent-definition",
@@ -773,10 +773,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/perf-gatekeeper.md",
+      "id": "document:agents/core/perf-gatekeeper.md",
       "type": "document",
       "name": "perf-gatekeeper.md",
-      "filePath": "agents/perf-gatekeeper.md",
+      "filePath": "agents/core/perf-gatekeeper.md",
       "summary": "Defines the `perf-gatekeeper` PR-time perf reviewer that classifies touched files via the curated diff-to-scenario map, runs targeted perf-run.sh subsets, compares against baselines, and posts a delta table.",
       "tags": [
         "agent-definition",
@@ -787,10 +787,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/perf-instrument.md",
+      "id": "document:agents/core/perf-instrument.md",
       "type": "document",
       "name": "perf-instrument.md",
-      "filePath": "agents/perf-instrument.md",
+      "filePath": "agents/core/perf-instrument.md",
       "summary": "Defines the `perf-instrument` mechanical editor for inserting and stripping `SMATCHET_UI_PERF_SCOPE(\"perf_temp:...\")` markers per a spec from perf-detective or spike-hunter, with strict overhead and prefix rules.",
       "tags": [
         "agent-definition",
@@ -801,10 +801,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:agents/perf-measure.md",
+      "id": "document:agents/core/perf-measure.md",
       "type": "document",
       "name": "perf-measure.md",
-      "filePath": "agents/perf-measure.md",
+      "filePath": "agents/core/perf-measure.md",
       "summary": "Defines the `perf-measure` runner that executes the Smatchet perf loop (perf.reset â†’ scenario.run â†’ perf.snapshot), parses JSON output, and returns top-N rows by lastTotalMs in two modes (ephemeral spawn or running app).",
       "tags": [
         "agent-definition",
@@ -815,10 +815,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/security-review.md",
+      "id": "document:agents/core/security-review.md",
       "type": "document",
       "name": "security-review.md",
-      "filePath": "agents/security-review.md",
+      "filePath": "agents/core/security-review.md",
       "summary": "Defines the `security-review` adversarial reviewer for pending branch changes covering Smatchet's attack surface (MCP, CLI, Lua, p4, HTTP, SQLite, AI-assistant), wrapping the harness's standard security skill with severity-tagged findings.",
       "tags": [
         "agent-definition",
@@ -829,10 +829,10 @@
       "complexity": "complex"
     },
     {
-      "id": "document:agents/spike-hunter.md",
+      "id": "document:agents/core/spike-hunter.md",
       "type": "document",
       "name": "spike-hunter.md",
-      "filePath": "agents/spike-hunter.md",
+      "filePath": "agents/core/spike-hunter.md",
       "summary": "Defines the `spike-hunter` subagent targeting intermittent UI-thread stalls (p99/max outliers, blocking calls, lock contention, async join points) â€” the spike sibling of perf-detective's sustained-performance focus.",
       "tags": [
         "agent-definition",
@@ -843,10 +843,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/test-author.md",
+      "id": "document:agents/core/test-author.md",
       "type": "document",
       "name": "test-author.md",
-      "filePath": "agents/test-author.md",
+      "filePath": "agents/core/test-author.md",
       "summary": "Defines the `test-author` agent that automates every manual verification step into deterministic CLI / scenario / screenshot / sanitizer / ImGui-Test-Engine assertions across five buckets, with detailed authoring patterns and discipline rules.",
       "tags": [
         "agent-definition",
@@ -858,10 +858,10 @@
       "languageNotes": "Largest agent definition in batch (268 lines) with 19 sections covering five test buckets and four authoring patterns."
     },
     {
-      "id": "document:agents/test-rig.md",
+      "id": "document:agents/core/test-rig.md",
       "type": "document",
       "name": "test-rig.md",
-      "filePath": "agents/test-rig.md",
+      "filePath": "agents/core/test-rig.md",
       "summary": "Defines the `test-rig` agent owning the pure-logic doctest unit-test rig under `tests/` for Source_Core helpers, refusing UI/HTTP/SQLite/ImGui/cpr surfaces which belong to integration tests or bucket-E.",
       "tags": [
         "agent-definition",
@@ -872,10 +872,10 @@
       "complexity": "moderate"
     },
     {
-      "id": "document:agents/tracker-backend.md",
+      "id": "document:agents/project/tracker-backend.md",
       "type": "document",
       "name": "tracker-backend.md",
-      "filePath": "agents/tracker-backend.md",
+      "filePath": "agents/project/tracker-backend.md",
       "summary": "Defines the `tracker-backend` subagent for tracker integration layer work (ITrackerClient, JiraClient, PlaneClient, field catalog, HTTP retries, audit-trail wiring) covering Jira and Plane.so backends.",
       "tags": [
         "agent-definition",
@@ -886,10 +886,10 @@
       "complexity": "simple"
     },
     {
-      "id": "document:agents/unreal-bridge.md",
+      "id": "document:agents/project/unreal-bridge.md",
       "type": "document",
       "name": "unreal-bridge.md",
-      "filePath": "agents/unreal-bridge.md",
+      "filePath": "agents/project/unreal-bridge.md",
       "summary": "Defines the `unreal-bridge` subagent owning dual-target divergence between standalone (GLFW/OpenGL) and Unreal (DX12) builds â€” SmatchetCore_DX12, SmatchetImGuiPlugin, header-pollution, and .uplugin packaging.",
       "tags": [
         "agent-definition",
@@ -14539,7 +14539,7 @@
         "pillar-1"
       ],
       "complexity": "complex",
-      "languageNotes": "Implements the perf.reset / perf.snapshot loop referenced by docs/PERF_WORKFLOW.md and agents/perf-measure.md."
+      "languageNotes": "Implements the perf.reset / perf.snapshot loop referenced by docs/PERF_WORKFLOW.md and agents/core/perf-measure.md."
     },
     {
       "id": "function:Source_Core/src/Commands/Builtin/BuiltinCommands_Perf.cpp:RegisterPerfCommands",
@@ -28950,21 +28950,21 @@
       "weight": 0.5
     },
     {
-      "source": "document:agents/architect.md",
+      "source": "document:agents/core/architect.md",
       "target": "document:agents/_shared/skills/grill-with-docs/SKILL.md",
       "type": "depends_on",
       "direction": "forward",
       "weight": 0.6
     },
     {
-      "source": "document:agents/architect.md",
+      "source": "document:agents/core/architect.md",
       "target": "document:agents/_shared/skills/grill-with-docs/SMATCHET-NOTES.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:agents/debug-detective.md",
+      "source": "document:agents/core/debug-detective.md",
       "target": "file:agents/_shared/templates/SmatchetAgentDebug.h.tmpl",
       "type": "depends_on",
       "direction": "forward",
@@ -28985,176 +28985,176 @@
       "weight": 0.5
     },
     {
-      "source": "document:agents/code-review.md",
-      "target": "document:agents/debug-detective.md",
+      "source": "document:agents/core/code-review.md",
+      "target": "document:agents/core/debug-detective.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:agents/git-janitor.md",
-      "target": "document:agents/coderabbit-triage.md",
+      "source": "document:agents/core/git-janitor.md",
+      "target": "document:agents/core/coderabbit-triage.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/mechanic.md",
+      "target": "document:agents/core/mechanic.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/offline-sync.md",
+      "target": "document:agents/project/offline-sync.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/p4-blame.md",
+      "target": "document:agents/project/p4-blame.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/p4-janitor.md",
+      "target": "document:agents/core/p4-janitor.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/perf-detective.md",
+      "target": "document:agents/core/perf-detective.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/perf-gatekeeper.md",
+      "target": "document:agents/core/perf-gatekeeper.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/perf-instrument.md",
+      "target": "document:agents/core/perf-instrument.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/perf-measure.md",
+      "target": "document:agents/core/perf-measure.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/security-review.md",
+      "target": "document:agents/core/security-review.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/spike-hunter.md",
+      "target": "document:agents/core/spike-hunter.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/test-author.md",
+      "target": "document:agents/core/test-author.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/test-rig.md",
+      "target": "document:agents/core/test-rig.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/tracker-backend.md",
+      "target": "document:agents/project/tracker-backend.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
       "source": "document:agents/README.md",
-      "target": "document:agents/unreal-bridge.md",
+      "target": "document:agents/project/unreal-bridge.md",
       "type": "documents",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:agents/perf-detective.md",
-      "target": "document:agents/perf-instrument.md",
+      "source": "document:agents/core/perf-detective.md",
+      "target": "document:agents/core/perf-instrument.md",
       "type": "depends_on",
       "direction": "forward",
       "weight": 0.6
     },
     {
-      "source": "document:agents/perf-detective.md",
-      "target": "document:agents/perf-measure.md",
+      "source": "document:agents/core/perf-detective.md",
+      "target": "document:agents/core/perf-measure.md",
       "type": "depends_on",
       "direction": "forward",
       "weight": 0.6
     },
     {
-      "source": "document:agents/spike-hunter.md",
-      "target": "document:agents/perf-instrument.md",
+      "source": "document:agents/core/spike-hunter.md",
+      "target": "document:agents/core/perf-instrument.md",
       "type": "depends_on",
       "direction": "forward",
       "weight": 0.6
     },
     {
-      "source": "document:agents/spike-hunter.md",
-      "target": "document:agents/perf-measure.md",
+      "source": "document:agents/core/spike-hunter.md",
+      "target": "document:agents/core/perf-measure.md",
       "type": "depends_on",
       "direction": "forward",
       "weight": 0.6
     },
     {
-      "source": "document:agents/perf-gatekeeper.md",
-      "target": "document:agents/perf-detective.md",
+      "source": "document:agents/core/perf-gatekeeper.md",
+      "target": "document:agents/core/perf-detective.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:agents/perf-gatekeeper.md",
-      "target": "document:agents/spike-hunter.md",
+      "source": "document:agents/core/perf-gatekeeper.md",
+      "target": "document:agents/core/spike-hunter.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:agents/perf-detective.md",
-      "target": "document:agents/perf-gatekeeper.md",
+      "source": "document:agents/core/perf-detective.md",
+      "target": "document:agents/core/perf-gatekeeper.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:agents/spike-hunter.md",
-      "target": "document:agents/perf-gatekeeper.md",
+      "source": "document:agents/core/spike-hunter.md",
+      "target": "document:agents/core/perf-gatekeeper.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
     },
     {
-      "source": "document:agents/test-author.md",
-      "target": "document:agents/test-rig.md",
+      "source": "document:agents/core/test-author.md",
+      "target": "document:agents/core/test-rig.md",
       "type": "related",
       "direction": "forward",
       "weight": 0.5
@@ -50342,31 +50342,31 @@
         "file:agents/_shared/token-tracking/skill-load-log.py",
         "document:agents/_shared/token-tracking/SKILL.md",
         "file:agents/_shared/token-tracking/tests/test_infer_outcome.py",
-        "document:agents/architect.md",
-        "document:agents/build-doctor.md",
-        "document:agents/code-review.md",
-        "document:agents/coderabbit-triage.md",
-        "document:agents/command-system.md",
-        "document:agents/debug-detective.md",
-        "document:agents/git-janitor.md",
-        "document:agents/grid-engine.md",
-        "document:agents/lua-binder.md",
-        "document:agents/mcp-toolsmith.md",
+        "document:agents/core/architect.md",
+        "document:agents/core/build-doctor.md",
+        "document:agents/core/code-review.md",
+        "document:agents/core/coderabbit-triage.md",
+        "document:agents/project/command-system.md",
+        "document:agents/core/debug-detective.md",
+        "document:agents/core/git-janitor.md",
+        "document:agents/project/grid-engine.md",
+        "document:agents/project/lua-binder.md",
+        "document:agents/project/mcp-toolsmith.md",
         "document:agents/README.md",
-        "document:agents/mechanic.md",
-        "document:agents/offline-sync.md",
-        "document:agents/p4-blame.md",
-        "document:agents/p4-janitor.md",
-        "document:agents/perf-detective.md",
-        "document:agents/perf-gatekeeper.md",
-        "document:agents/perf-instrument.md",
-        "document:agents/perf-measure.md",
-        "document:agents/security-review.md",
-        "document:agents/spike-hunter.md",
-        "document:agents/test-author.md",
-        "document:agents/test-rig.md",
-        "document:agents/tracker-backend.md",
-        "document:agents/unreal-bridge.md",
+        "document:agents/core/mechanic.md",
+        "document:agents/project/offline-sync.md",
+        "document:agents/project/p4-blame.md",
+        "document:agents/core/p4-janitor.md",
+        "document:agents/core/perf-detective.md",
+        "document:agents/core/perf-gatekeeper.md",
+        "document:agents/core/perf-instrument.md",
+        "document:agents/core/perf-measure.md",
+        "document:agents/core/security-review.md",
+        "document:agents/core/spike-hunter.md",
+        "document:agents/core/test-author.md",
+        "document:agents/core/test-rig.md",
+        "document:agents/project/tracker-backend.md",
+        "document:agents/project/unreal-bridge.md",
         "document:docs/adr/0001-per-entry-lua-field-cache-invalidation.md",
         "document:docs/adr/0002-plugin-shim-link-discipline.md",
         "document:docs/adr/0003-github-as-itrackerclient.md",

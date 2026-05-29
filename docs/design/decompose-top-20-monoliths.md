@@ -153,7 +153,7 @@ ImGui draw monoliths (slices 9-19; one PR each):
 
 Per `docs/design/archive/pillar-1-2-perf-review-system.md`.
 
-1. **PR-fast CI** — each slice declares the matching scenario in its PR body. Mapping (from `agents/perf-gatekeeper.md` § Curated diff → scenario map):
+1. **PR-fast CI** — each slice declares the matching scenario in its PR body. Mapping (from `agents/core/perf-gatekeeper.md` § Curated diff → scenario map):
    - Slice 1 (`SmatchetPreferencesUi_Whisper.cpp`) → `preferences-whisper-tab-render`.
    - Slice 2 (`ConfigManager.cpp`) → `app-cold-start` (Load is on the boot path).
    - Slice 3 (`McpPlugin.cpp`) → `mcp-server-startup`.

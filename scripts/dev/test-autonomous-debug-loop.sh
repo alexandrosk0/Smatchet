@@ -226,13 +226,13 @@ echo ""
 echo "=== Phase 7: Validate debug-detective reproducer-first contract ==="
 
 check "debug-detective.md contains 'reproducer-first contract'" \
-    grep -q "reproducer-first contract" "$REPO_ROOT/agents/debug-detective.md"
+    grep -q "reproducer-first contract" "$REPO_ROOT/agents/core/debug-detective.md"
 
 check "debug-detective.md contains phase 0 (concreteness check)" \
-    grep -qi "phase 0.*concreteness\|concreteness check" "$REPO_ROOT/agents/debug-detective.md"
+    grep -qi "phase 0.*concreteness\|concreteness check" "$REPO_ROOT/agents/core/debug-detective.md"
 
 check "debug-detective.md contains phase 0.5 (scenario reuse)" \
-    grep -qi "phase 0.5\|existing-scenario reuse" "$REPO_ROOT/agents/debug-detective.md"
+    grep -qi "phase 0.5\|existing-scenario reuse" "$REPO_ROOT/agents/core/debug-detective.md"
 
 # ---------- Phase 8: Validate scenario infrastructure ----------
 

@@ -10,7 +10,7 @@ version: 2
 ---
 
 <!--
-  Claude-Code skill mirror of agents/perf-instrument.md (cross-harness canonical).
+  Claude-Code skill mirror of agents/core/perf-instrument.md (cross-harness canonical).
   Both files must stay in sync — V7 doc-consistency assertion checks this.
   When updating the procedure, edit BOTH files. Codex / Cursor read the agent
   form; Claude Code orchestrator may pick either (skill form is lighter).
@@ -18,7 +18,7 @@ version: 2
 
 # perf-instrument (skill)
 
-Mechanical perf-marker editor for Smatchet. Same procedure as `agents/perf-instrument.md`, minus agent-spawn telemetry (banner / `## Outcome` / `## Self-improvement`).
+Mechanical perf-marker editor for Smatchet. Same procedure as `agents/core/perf-instrument.md`, minus agent-spawn telemetry (banner / `## Outcome` / `## Self-improvement`).
 
 **Tooling** — use **text-search** for exhaustive cleanup enumeration (you need every match). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only when the spec doesn't name a file and you need to locate a call site.
 

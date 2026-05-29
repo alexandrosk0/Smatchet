@@ -21,5 +21,5 @@ When both states are produced at runtime within the same test (see `scripts/dev/
 
 ## Agents that own this
 
-- `test-author` — primary executor; sub-bullet under § Pattern C — Screenshot scan in [`agents/test-author.md`](../../agents/test-author.md).
+- `test-author` — primary executor; sub-bullet under § Pattern C — Screenshot scan in [`agents/core/test-author.md`](../../agents/core/test-author.md).
 - Any other agent that ships a regression-gate artefact (e.g. `debug-detective` shipping a pink-clear sentinel image, `perf-detective` shipping a deterministic perf-snapshot fixture).

@@ -10,7 +10,7 @@ version: 2
 ---
 
 <!--
-  Claude-Code skill mirror of agents/perf-measure.md (cross-harness canonical).
+  Claude-Code skill mirror of agents/core/perf-measure.md (cross-harness canonical).
   Both files must stay in sync — V7 doc-consistency assertion checks this.
   When updating the procedure, edit BOTH files. Codex / Cursor read the agent
   form; Claude Code orchestrator may pick either (skill form is lighter).
@@ -18,7 +18,7 @@ version: 2
 
 # perf-measure (skill)
 
-Smatchet perf-measurement runner. Same procedure as `agents/perf-measure.md`, minus agent-spawn telemetry (banner / `## Outcome` / `## Self-improvement`).
+Smatchet perf-measurement runner. Same procedure as `agents/core/perf-measure.md`, minus agent-spawn telemetry (banner / `## Outcome` / `## Self-improvement`).
 
 **Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 

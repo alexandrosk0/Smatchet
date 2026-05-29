@@ -35,7 +35,7 @@ Per `AGENTS.md` § UX Pillars (1 Performance, 2 UI-never-freezes, 3 Never-crash,
 
 Per `docs/design/archive/pillar-1-2-perf-review-system.md`. For each gate, declare: **fires** (one-line how) or **N/A** (one-line reason). No restating mechanics — link out for the canonical text.
 
-1. **PR-fast CI** — name the scenario most directly exercising the changed path. Map: `agents/perf-gatekeeper.md` § Curated diff → scenario map. Subset declared in `scripts/dev/perf-pr-fast-set.json`.
+1. **PR-fast CI** — name the scenario most directly exercising the changed path. Map: `agents/core/perf-gatekeeper.md` § Curated diff → scenario map. Subset declared in `scripts/dev/perf-pr-fast-set.json`.
 2. **Pillar 2 static scanner** — any new sync-I/O reachable from `ImGui::*`? If yes, worker-thread plan + `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` annotation.
 3. **Dispatcher drain** — touches `MainThreadDispatcher::Drain()`?
 4. **Visible-cue bucket-E harness** — adds a new sync-stall code path > 100 ms?

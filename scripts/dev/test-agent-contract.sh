@@ -7,7 +7,7 @@
 #   3. Every Diagnostic-read-edit agent (debug-detective) has 6 required headings.
 #   4. Every agent prompt contains the `## Outcome:` mandate text.
 #   5. Banner `model/effort` substring matches frontmatter `harness-hints.claude-code.{model,effort}` byte-for-byte.
-#   6. agents/architect.md does NOT contain a `git commit` self-directive.
+#   6. "$(agent_path architect)" does NOT contain a `git commit` self-directive.
 #   7. docs/agent-rules/delegation.md § Agent output contract has 6 class rows (post-H9 Design class added).
 #   7b. architect.md emits the Design-class sections (Goal / Affected components / Interface contracts / Risks / Implementation handoff).
 #   8. agents/_shared/token-tracking/tests/test_infer_outcome.py passes (Python unit cases for the telemetry classifier).
@@ -15,7 +15,7 @@
 #  10. Frontmatter `version: N` matches banner `· vN` (H7 fix from eval doc).
 #  11. Skill ↔ agent SKILL.md sibling parity — same version + same triggers (eval punch-list item 7 + M9).
 #  12. V3.3 — Source_Core/src/P4Blame.cpp has exactly one SubprocessCapture::Run call site.
-#  13. V10.1 — agents/debug-detective.md contains literal "reproducer-first contract" (slice 10).
+#  13. V10.1 — agents/core/debug-detective.md contains literal "reproducer-first contract" (slice 10).
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
@@ -33,13 +33,23 @@ FAILED_CHECKS=()
 check_pass() { PASS=$((PASS+1)); printf '  PASS  %s\n' "$1"; }
 check_fail() { FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); printf '  FAIL  %s\n' "$1"; }
 
+# Agents live under agents/{core,project}/ (the portable/project split) — resolve
+# by name so this contract is location-agnostic. Excludes agents/_shared/.
+agent_path() {
+  find agents -path 'agents/_shared/*' -prune -o -name "$1.md" -print 2>/dev/null | head -1
+}
+# All agent prompt files (both tiers, excluding _shared + the root README).
+agent_files() {
+  find agents/core agents/project -maxdepth 1 -name '*.md' 2>/dev/null | sort
+}
+
 # -------------------------------------------------------------------------
 # 1. Implementer agents — 3 required headings.
 # -------------------------------------------------------------------------
 echo "[1/13] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
 IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-blame unreal-bridge mechanic)
 for a in "${IMPLEMENTERS[@]}"; do
-  f="agents/$a.md"
+  f="$(agent_path "$a")"
   miss=0
   for h in "## Files changed" "## Smoke-test result" "## Manual residue"; do
     if ! grep -qF "$h" "$f"; then miss=$((miss+1)); fi
@@ -54,7 +64,7 @@ echo
 echo "[2/13] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
 MAINTENANCE=(build-doctor test-author git-janitor p4-janitor)
 for a in "${MAINTENANCE[@]}"; do
-  f="agents/$a.md"
+  f="$(agent_path "$a")"
   miss=0
   for h in "## Pre-flight" "## Mutations applied" "## Regression gate" "## Residue requiring user action"; do
     if ! grep -qF "$h" "$f"; then miss=$((miss+1)); fi
@@ -70,7 +80,7 @@ echo "[3/13] Diagnostic read-edit required headings (debug-detective)"
 DD_REQUIRED=("## Hypotheses" "## Evidence" "## Cause" "## Files changed (temp-debug)" "## Cleanup" "## Handoff")
 miss=0
 for h in "${DD_REQUIRED[@]}"; do
-  if ! grep -qF "$h" agents/debug-detective.md; then
+  if ! grep -qF "$h" "$(agent_path debug-detective)"; then
     miss=$((miss+1))
     echo "    missing: $h"
   fi
@@ -83,7 +93,7 @@ if [[ $miss -eq 0 ]]; then check_pass "debug-detective 6/6"; else check_fail "de
 echo
 echo "[4/13] ## Outcome: mandate present in every agent prompt (24 files, README excluded)"
 miss_outcome=()
-for f in agents/*.md; do
+for f in $(agent_files); do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   if ! grep -qF "## Outcome:" "$f"; then miss_outcome+=("$base"); fi
@@ -101,7 +111,7 @@ fi
 echo
 echo "[5/13] Banner ↔ frontmatter model/effort match"
 banner_mismatch=()
-for f in agents/*.md; do
+for f in $(agent_files); do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   fm_model=$(awk '/^harness-hints:/,/^---/' "$f" | grep -E "^    model:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
@@ -121,11 +131,11 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# 6. agents/architect.md does NOT contain a git commit self-directive.
+# 6. "$(agent_path architect)" does NOT contain a git commit self-directive.
 # -------------------------------------------------------------------------
 echo
 echo "[6/13] architect.md emit-only (no self-commit directive)"
-if grep -qE '^[^>`]*Commit immediately with ' agents/architect.md; then
+if grep -qE '^[^>`]*Commit immediately with ' "$(agent_path architect)"; then
   check_fail "architect.md still instructs the agent to commit"
 else
   check_pass "architect.md is emit-only"
@@ -158,7 +168,7 @@ echo
 echo "[7b/13] architect.md emits Design-class sections (Goal / Affected components / Interface contracts / Risks / Implementation handoff)"
 design_miss=0
 for h in "Goal" "Affected components" "Interface contracts" "Risks" "Implementation handoff"; do
-  if ! grep -qE "^(## $h|[0-9]+\. \*\*$h\*\*)" agents/architect.md; then
+  if ! grep -qE "^(## $h|[0-9]+\. \*\*$h\*\*)" "$(agent_path architect)"; then
     design_miss=$((design_miss+1))
     echo "    missing: $h"
   fi
@@ -215,7 +225,7 @@ fi
 echo
 echo "[10/13] Frontmatter version ↔ banner version match"
 version_mismatch=()
-for f in agents/*.md; do
+for f in $(agent_files); do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
   fm_version=$(awk '/^---$/{p=!p;next}p' "$f" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
@@ -301,11 +311,11 @@ fi
 #     rewrites don't silently soften the contract. Same shape as check 7b.
 # -------------------------------------------------------------------------
 echo
-echo "[13/13] V10.1 — agents/debug-detective.md contains literal 'reproducer-first contract'"
-if grep -qF "reproducer-first contract" agents/debug-detective.md; then
+echo "[13/13] V10.1 — agents/core/debug-detective.md contains literal 'reproducer-first contract'"
+if grep -qF "reproducer-first contract" "$(agent_path debug-detective)"; then
   check_pass "V10.1: 'reproducer-first contract' phrase present"
 else
-  check_fail "V10.1: 'reproducer-first contract' phrase missing from agents/debug-detective.md"
+  check_fail "V10.1: 'reproducer-first contract' phrase missing from debug-detective.md"
 fi
 
 # -------------------------------------------------------------------------
