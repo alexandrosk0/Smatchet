@@ -171,7 +171,7 @@ Verified via `grep -rE "AgenticHandoffController|ClaudeCodeLocalRunner|coderabbi
 | `tests/fixtures/github_pr_comments_sample.json` | Fixture for the deleted PR-comment classifier | **DELETE** |
 | `tests/fixtures/github_pr_create_response.json` | Fixture for the deleted runner's PR-open fallback | **DELETE** |
 | `tests/fixtures/github_rerun_workflow_response.json` | Fixture for the deleted CI-react workflow-rerun | **DELETE** |
-| `tests/fixtures/github_issues_sample.json` | **KEEP — useful for future v1-PR2 GitHubClient HTTP fixtures** (per `agents/project/tracker-backend.md` testing patterns); add a `## Usage` README header noting the new ownership |
+| `tests/fixtures/github_issues_sample.json` | Useful for future v1-PR2 GitHubClient HTTP fixtures (per `agents/project/tracker-backend.md` testing patterns); add a `## Usage` README header noting the new ownership | **KEEP** |
 
 12 fixture files. Audit also covered `Plugins/`, `Locales/`, `tools/`, `.github/workflows/` — all clean.
 
