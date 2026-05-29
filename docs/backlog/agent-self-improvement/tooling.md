@@ -238,3 +238,9 @@
   Status: parked
   Last-reviewed: 2026-05-22
 
+
+- 2026-05-28 · orchestrator · [tooling] · P3 — `merge_gates.bats` runs only 22/71 under a non-UTF-8 locale (unicode `→` in test names); force `LC_ALL=C.UTF-8` in the bats invocation
+  Details: `tests/bats/merge_gates.bats` uses `→` (U+2192) in many `@test` names. Under a non-UTF-8 locale (the default in Git Bash on Windows here), bats mis-parses those names — emits `bats: unknown test name` and `Executed 22 instead of expected 71`. Pre-existing (reproduces on `develop` too); surfaced while validating PR #511's gh-bundled-jq refactor. `LC_ALL=C.UTF-8 LANG=C.UTF-8 bats tests/bats/merge_gates.bats` runs all 71 green. Not a correctness issue — CI / UTF-8 shells run the full suite — but a contributor running bats directly silently gets a 22/71 partial run with no clear signal it's truncated.
+  Concrete next action: force a UTF-8 locale around the bats run — either a `scripts/dev/test-merge-gates-bats.sh` wrapper that `export LC_ALL=C.UTF-8` before `bats`, or set it in `test-all.sh`'s bats step. Optionally also de-unicode the test names (`→` → `->`) as belt-and-suspenders. ~15 min.
+  Status: open
+  Last-reviewed: 2026-05-28
