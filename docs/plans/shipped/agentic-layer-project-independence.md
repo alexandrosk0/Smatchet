@@ -1,4 +1,5 @@
 # Plan — Documentation + agentic-layer reorganization for **project-independence**
+<!-- index-summary: Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards -->
 
 > **Slug**: `agentic-layer-project-independence`
 > **Status**: approved (2026-05-29); implementation phased (A–F). This doc is the canonical plan; the session plan-file copy is ephemeral.
