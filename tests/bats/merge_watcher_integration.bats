@@ -19,7 +19,24 @@ setup() {
     export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
 
     # Isolate per-user state via LOCALAPPDATA (the watcher's per-user root).
-    export LOCALAPPDATA="$(mktemp -d)"
+    #
+    # git-bash mktemp yields a driveless POSIX path (/c/Users/...); native
+    # Windows Python — both the CLI subprocess and the in-process module under
+    # test — mis-resolves that for open()/json.load. The python blocks below
+    # read r'$LOCALAPPDATA' verbatim, so a driveless value FileNotFounds the
+    # registry read (the CLI's `register` write lands elsewhere). cygpath -m
+    # converts to a mixed C:/... form (drive letter + forward slashes) that
+    # BOTH native Python and git-bash filesystem tests accept. POSIX has no
+    # cygpath and mktemp already returns a valid path, so use it verbatim there.
+    # Keep the raw POSIX path in SMATCHET_TEST_TMP for teardown's rm. Mirrors
+    # PR #527's fix to merge_watcher.bats.
+    SMATCHET_TEST_TMP="$(mktemp -d)"
+    if command -v cygpath >/dev/null 2>&1; then
+        LOCALAPPDATA="$(cygpath -m "$SMATCHET_TEST_TMP")"
+    else
+        LOCALAPPDATA="$SMATCHET_TEST_TMP"
+    fi
+    export LOCALAPPDATA SMATCHET_TEST_TMP
     export PYTHONIOENCODING=utf-8
 
     # Stub gh on PATH with a fixture-driven response set.
@@ -39,6 +56,10 @@ case "$1 $2" in
         echo '{"owner":{"login":"acme"},"name":"smatchet"}'
         exit 0
         ;;
+    "pr ready")
+        # ensure_pr_ready_for_review — exit 0 ⇒ caller treats PR as non-draft.
+        exit 0
+        ;;
     "api graphql")
         case "${MERGE_WATCHER_TEST_PHASE:-poll-blocked}" in
             poll-blocked)
@@ -56,10 +77,6 @@ JSON
                 ;;
         esac
         ;;
-    "api repos/acme/smatchet/pulls/100/merge")
-        echo '{"merged":true,"sha":"deadbeef1234"}'
-        exit 0
-        ;;
     "api repos/acme/smatchet/pulls/100")
         echo '{"head":{"ref":"feat/x"},"number":100}'
         exit 0
@@ -76,8 +93,18 @@ JSON
         exit 0
         ;;
     "api -X")
-        # PUT update-branch
-        echo '{"message":"queued"}'
+        # `gh api -X PUT <path>` — squash_merge_pr (.../pulls/N/merge) and
+        # cascade_update_child (.../pulls/N/update-branch) share this "$1 $2"
+        # prefix. The merge fixture must return merged:true while update-branch
+        # returns queued, so route on the REST path. Matching "$1 $2" alone is
+        # exactly the rot this gate now catches: the old stub returned queued
+        # for BOTH, so squash_merge_pr saw merged=false and handle_pass
+        # mis-reported merge_failed.
+        case "$*" in
+            *"/merge"*)         echo '{"merged":true,"sha":"deadbeef1234"}' ;;
+            *"/update-branch"*) echo '{"message":"queued"}' ;;
+            *)                  echo '{"message":"queued"}' ;;
+        esac
         exit 0
         ;;
 esac
@@ -87,6 +114,23 @@ echo "stub-gh: unhandled invocation: $*" >&2
 exit 1
 STUB
     chmod +x "$STUB_BIN_DIR/gh"
+
+    # Windows shim. merge-watcher.py resolves GH_BIN via shutil.which("gh") at
+    # import (native Windows Python), then calls subprocess.run([GH_BIN, ...]).
+    # Native CreateProcess cannot exec a POSIX bash-script "gh" and ignores the
+    # extensionless stub entirely — it falls through to the real
+    # C:\Program Files\GitHub CLI\gh.EXE and hits live GitHub (real PR #100 is
+    # merged → PR_CLOSED_OR_MERGED, real branch/sha leak into asserts). A
+    # `gh.cmd` forwarder IS resolvable by shutil.which (PATHEXT includes .CMD)
+    # and, because STUB_BIN_DIR is first on PATH, wins over the real gh.EXE; it
+    # re-dispatches into the bash stub so the in-process module AND the
+    # merge-gates.sh subprocess both see canned fixtures. The stub routes on
+    # "$1 $2" plus the merge/update-branch REST-path token — all space-free —
+    # so cmd→bash arg re-quoting of the remaining args is harmless. POSIX bats
+    # has no .cmd concept and resolves the extensionless `gh` directly, so this
+    # file is inert there. Mirrors merge-watcher.py's gh-resolution path.
+    printf '@echo off\r\nbash "%%~dp0gh" %%*\r\n' > "$STUB_BIN_DIR/gh.cmd"
+
     export PATH="$STUB_BIN_DIR:$PATH"
 
     # Stub the merge-gates.sh path — daemon's poll_one calls it directly.
@@ -97,7 +141,7 @@ STUB
 }
 
 teardown() {
-    rm -rf "${LOCALAPPDATA:-}" "${STUB_BIN_DIR:-}"
+    rm -rf "${SMATCHET_TEST_TMP:-}" "${STUB_BIN_DIR:-}"
 }
 
 watch_cli() {
