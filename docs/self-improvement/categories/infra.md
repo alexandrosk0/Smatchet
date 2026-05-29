@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-05-29 · orchestrator · [infra] · P2 — De-Smatchet-ify the portable agentic layer (close the project-literal baseline)
+  Details: agentic-layer-project-independence shipped the portable/project STRUCTURE (agents/core vs project, project.config.json seam, docs taxonomy) but the portable files still embed ~157 project literals in prose (`docs/high-integrity/portable-purity-baseline.txt`). `test-portable-purity` baselines this and blocks NEW leakage, but reuse today means copy + adapt the prompts, not copy verbatim.
+  Concrete next action: rewrite `agents/core/*` + `docs/agent-rules/*` prose to reference `project.config.json` keys instead of hardcoded `Smatchet`/`Source_Core`/preset literals; shrink the baseline toward zero. Largest chunk is the 15 core-agent prompts. Incremental — drop baselined entries as files are cleaned.
+  Status: open
+  Last-reviewed: 2026-05-29
+
 - 2026-05-28 · deep-audit · [infra] · P2 — Dead CI job `windows-msvc-no-agentic` tests a removed flag (zero differential coverage, burns a runner/PR)
   Details: `.github/workflows/build-and-test.yml:163-190` runs `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_AGENTIC=OFF`, but no `option(SMATCHET_WITH_AGENTIC ...)` exists — the flag was removed in PR #356 (`tests/ui/agent_proposal_store_sqlite.test.cpp:25` says so outright). CMake silently ignores unknown `-D` cache vars, so the job builds the identical default standalone config as the rest of the matrix and asserts nothing, while consuming a windows-2022 runner on every code PR (paths-ignore only skips docs). Contrast `windows-msvc-no-whisper` which flips the real `SMATCHET_WITH_WHISPER` option. Verified (deep-audit, adversarially confirmed).
   Concrete next action: delete the `windows-msvc-no-agentic` job. If a stripped-feature build is still wanted, point it at a flag that actually exists. ~10 min.

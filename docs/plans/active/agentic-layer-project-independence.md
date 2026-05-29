@@ -154,10 +154,28 @@ External review applied. Verdict per point:
 - **#10 mixed-dir labeling — ACCEPTED (lighter form):** per-file `tier:` frontmatter enforced by `test-portable-purity.sh` + `STRUCTURE.md`, rather than forcing `portable/`+`project/` subdirs everywhere.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped phase/PR: `<sha/PR> · <one-line>`)*
+
+- **PR #542 · Phase A** — `project.config.json` + schema + `project-config.sh` loader; `docs/PORTABILITY.md`; `test-plan-index.sh` (closed index drift 16→53); Gate #1 discovery fixture; doc-validation wiring.
+- **PR #543 · Phase B** — `git mv` 24 agents → `agents/core/` (16) + `agents/project/` (8); `setup-harness` flat links; location-agnostic `test-agent-contract`; ~319 refs rewritten.
+- **PR #544 · Phase C** — `git mv` self-improvement → `docs/self-improvement/{,categories/}`; ~135 refs; hardcoded consumers fixed; count drift synced.
+- **PR #545 · Phase D** — `git mv` design → `docs/plans/{active,shipped}` + `BACKLOG_PLANS.md`→`INDEX.md`; `rewrite-plan-paths.sh` (718 refs/269 files) + 166-ref active→shipped correction; `test-plan-ref-integrity.sh`; tombstones.
+- **PR #546 / #547 · setup-harness** — fixed the Windows hang: flat per-agent **hardlinks** (not symbolic, not a recursion-dependent junction); collision warning. (#546 landed the junction interim; #547 re-shipped the flat-hardlink version.)
+- **PR #548 · Phase E** — orphan dirs → `docs/guides/` + `docs/reference/`; root hubs demoted (kebab); completed Phase D's relative-form ref residue.
+- **PR (this) · Phase F** — `docs/STRUCTURE.md` (normative taxonomy + guard map); `test-portable-purity.sh` (baselined) + `test-plan-naming.sh`; process-rules + AGENTS.md pointers; de-Smatchet follow-up filed.
 
 ## Deviations from plan
-*(populated post-ship — what changed/deferred vs this plan, one-line rationale each)*
+
+- **Phase B was far larger than the plan's "cheap, symlink-backed" estimate** — ~319 cross-references (AGENTS.md, ADRs, agent prompts, knowledge-graph) — handled by scripted rewrite (archive excluded).
+- **Agent discovery: flat hardlinks, not a junction** — Windows symbolic `mklink` intermittently hangs; a junction-to-subdirs would depend on unverified harness recursion. Flat hardlinks are reliable + recursion-independent (the maintainer confirmed delegation works).
+- **`agents/project/` has 9, not 8** — `command-system` added; `p4-janitor` kept in `core/` (generic VCS-maintenance, portable to any p4 project), per maintainer.
+- **`test-portable-purity` is baseline-mode, not hard-zero** — the portable *structure* shipped, but the prompts still embed ~157 project literals; full de-Smatchet-ification is a tracked follow-up (`docs/self-improvement/categories/infra.md`). The guard blocks NEW leakage.
+- **Pre-existing dangling refs allowlisted** — refs to never-existed plans (`agentic-{flow,triage,handoff}`, etc.) are allowlisted in `test-plan-ref-integrity`, not fixed here.
+- **`docs/plans/shipped/` declared never-renamed** (252-ref blast radius) — recorded in STRUCTURE.md so no future reorg re-litigates it.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result: passed / failed / not-run)*
+
+- **CI-gated guards (doc-validation.yml) — PASS:** `test-plan-index` (53 indexed), `test-plan-ref-integrity` (72/72 resolve), `test-plan-naming`, `test-portable-purity` (baseline holds), `test-agent-contract` (25/0), `test-doc-anchors` (0 broken), `test-backlog-counts` (8/0), `test-agent-discovery-fixture`, `project.config.schema.json` validation.
+- **Agent discovery — PASS (live):** maintainer confirmed delegation works through the flat `.claude/agents/*.md` links after `setup-harness.sh`.
+- **Phase D rename — PASS:** dual-target build green on #545 (comment-only Source_Core edits; `tests-out-of-band` label); ref-integrity 0 dangling.
+- **`test-markdown-links` (local-only, not CI-gated):** residual breaks are pre-existing (never-existed-plan refs + one pre-existing `delegation.md` relative bug).
+- **Reuse smoke test — NOT-RUN (deferred):** copying the portable tree into a scratch repo + a fresh config is the end-to-end proof; deferred with the de-Smatchet follow-up (portable files still carry baselined literals, so a verbatim copy isn't literal-clean yet).
