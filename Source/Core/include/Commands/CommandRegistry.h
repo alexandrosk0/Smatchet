@@ -13,18 +13,16 @@ namespace smatchet {
 namespace cmd {
 
 /// Thread-safe central registry. One instance lives on `AppController`.
-///
 /// **Feature-gated builds** (ADR 0010): optional surfaces (AI, MCP, Whisper) register
 /// commands only when their `SMATCHET_WITH_*` flag is ON. OFF builds omit those names;
 /// `Dispatch` returns `unknown-command` — no stub “disabled in this build” handlers.
-///
 /// **Reentrancy contract** (see plan): `Dispatch` copies the `Command` struct
 /// (including its `Handler` `std::function`) under the registry mutex, then
 /// releases the lock before invoking the handler. A Lua handler that recurses
 /// back into `commands.invoke` can therefore acquire the mutex again without
 /// deadlock.
 class CommandRegistry {
-public:
+  public:
     CommandRegistry();
     ~CommandRegistry();
 
@@ -54,12 +52,9 @@ public:
     std::vector<std::string> FuzzyMatch(const std::string& query, size_t limit = 5) const;
 
     /// Dispatch entry point. See plan §"Guard order inside `Dispatch`".
-    ///
     /// On `unknown-command`, `Suggestions` is populated with the top 3 fuzzy
     /// matches so agents can self-correct typos.
-    CommandResult Dispatch(const std::string& name,
-                           const nlohmann::json& args,
-                           const CommandContext& ctx);
+    CommandResult Dispatch(const std::string& name, const nlohmann::json& args, const CommandContext& ctx);
 
     /// Push a recent-name onto the bounded ring (front). Drops duplicates by name.
     void RecordRecent(const std::string& name);
@@ -72,7 +67,7 @@ public:
     /// Load recents deque from `<userData>/cmd_recents.json` (silently ignores missing file).
     void LoadRecents();
 
-private:
+  private:
     static constexpr size_t kRecentsMax = 16;
 
     mutable std::mutex mutex_;
@@ -81,7 +76,7 @@ private:
     std::deque<std::string> recents_;
 };
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
-#endif  // SMATCHET_COMMANDS_REGISTRY_H
+#endif // SMATCHET_COMMANDS_REGISTRY_H

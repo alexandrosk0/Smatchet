@@ -9,7 +9,6 @@
 // with per-channel L∞ ≤ 4 tolerance — any new dock gap, palette shift, or
 // shell-chrome regression breaks the diff. Goldens regenerate on first run if
 // absent (bootstrap mode).
-//
 // The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU,
 // but the screenshot capture itself is GL-only (Source/Standalone/main.cpp
 // owns the glReadPixels path); DX12 leaves the request flag untriggered and
@@ -17,7 +16,11 @@
 
 #include <memory>
 
-namespace smatchet { namespace cmd { class IScenario; } }
+namespace smatchet {
+namespace cmd {
+class IScenario;
+}
+} // namespace smatchet
 
 // Factory entry point declared at namespace scope so AppController.cpp can
 // `extern`-declare it inside the existing scenarioRunner_->RegisterFactory

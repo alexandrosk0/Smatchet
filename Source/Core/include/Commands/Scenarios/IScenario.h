@@ -3,12 +3,10 @@
 
 // Scenario subsystem for the unified Command System.
 // See docs/plans/shipped/command-system-plan.md §"Scenario subsystem".
-//
 // A scenario is a multi-frame automated test that runs inside the normal
 // render loop. It is driven by ScenarioRunner::Tick (called once per frame
 // from SmatchetUI::Draw) and lets the perf workflow measure real-frame timings
 // under controlled scroll/interaction patterns without a human driver.
-//
 // Adding a new scenario = one new .cpp + one RegisterFactory line in
 // Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp (the
 // snapshot test in tests/Core/SmatchetScenarioRegistry.test.cpp
@@ -33,7 +31,7 @@ struct CommandResult;
 
 /// Interface every scenario must implement.
 class IScenario {
-public:
+  public:
     virtual ~IScenario() = default;
 
     virtual std::string Name() const = 0;
@@ -67,7 +65,7 @@ public:
 /// Owns the active scenario instance, drives it from SmatchetUI::Draw, and
 /// optionally writes results to disk.
 class ScenarioRunner {
-public:
+  public:
     using Factory = std::function<std::unique_ptr<IScenario>()>;
 
     void RegisterFactory(const std::string& name, Factory f);
@@ -82,7 +80,7 @@ public:
     bool Active() const { return active_ != nullptr; }
     std::vector<std::string> ListNames() const;
 
-private:
+  private:
     std::unique_ptr<IScenario> active_;
     int frame_ = 0;
     std::string outPath_;
@@ -94,7 +92,7 @@ private:
     AppController* app_ = nullptr;
 };
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
-#endif  // SMATCHET_COMMANDS_SCENARIOS_ISCENARIO_H
+#endif // SMATCHET_COMMANDS_SCENARIOS_ISCENARIO_H
