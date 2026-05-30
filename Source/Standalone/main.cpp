@@ -113,6 +113,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 // UiDrawSession is defined in SmatchetUI.cpp (translation-unit global g_ui).
 // main.cpp reads requestFullScreenToggle and cfg.FullScreen after each frame.
 #include "SmatchetUiSession.h"
+#include "ScreenshotCensor.h" // log-a-bug-github — mosaic censor for the screenshot capture
 extern UiDrawSession g_ui;
 
 // GLFW Error Callback
@@ -638,6 +639,8 @@ int main(int argc, char** argv) {
             // raw PPM-P6 on typical UI captures) and is readable by every image tool.
             if (g_ui.requestScreenshot) {
                 g_ui.requestScreenshot = false;
+                const bool censorThisShot = g_ui.requestScreenshotCensor;
+                g_ui.requestScreenshotCensor = false;
                 const std::string screenshotPath = g_ui.requestScreenshotPath;
                 int fw = 0;
                 int fh = 0;
@@ -663,6 +666,12 @@ int main(int argc, char** argv) {
                             dst += 3;
                             src += 4;
                         }
+                    }
+                    // "Log a Bug" censored variant — mosaic the frame so no text is
+                    // readable before it is written/uploaded. Consumed once per request.
+                    if (censorThisShot) {
+                        smatchet::imaging::MosaicCensorInPlace(rgb.data(), fw, fh, 3,
+                                                               smatchet::imaging::RecommendedCensorBlock(fw, fh));
                     }
                     // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
                     // dev hardware) while still cutting the file ~40× vs raw PPM.

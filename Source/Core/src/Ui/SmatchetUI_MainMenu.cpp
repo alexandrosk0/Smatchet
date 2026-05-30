@@ -420,6 +420,10 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
                 smatchet::ui_detail::StartAppUpdateCheck(d, app, true);
             }
+            if (ImGui::MenuItem("Report a Bug...", d.cfg.BugReportHotkey.c_str())) {
+                d.showBugReport = true;
+                d.bugReportOpenLatch = true;
+            }
             ImGui::EndMenu();
         }
         if (trackerLocked)

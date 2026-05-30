@@ -163,3 +163,27 @@ Reuses Slice-2 service + Slice-4 modal; files to the **same fixed dev GitHub rep
 - **orchestrator / hand-built UI** — Slice 4 modal + `ScreenshotCensor` + `TextRedaction` + main-loop wiring.
 - **test-rig** — the doctest files.
 - Phase 2 (deferred) — `debug-detective` / `build-doctor` for crash-handler install + DbgHelp + dump delivery.
+
+---
+
+## Implementation log (2026-05-30 — Phase 1 shipped)
+
+All 4 Phase-1 slices implemented in one pass on `feat/log-a-bug-github-impl`.
+
+- **Slice 1** — `BuildGitHubCreatePayload` + `FormatGitHubIssueKey` in `GitHubClientHelpers.{h,cpp}`; `GitHubClient::BuildCreatePayload`/`CreateIssue` implemented (POST `/repos/{o}/{r}/issues`, Bearer PAT, audit wiring source `"github_client"`, key parse → `owner/repo#N`). Doctests appended to `GitHubClientHelpers.test.cpp`.
+- **Slice 2** — `Privacy/TextRedaction.{h,cpp}`, `Imaging/ScreenshotCensor.{h,cpp}`, `Diagnostics/BugReportService.h` + split `BugReportBody.cpp` (pure: `ResolveBugReportTarget` + `BuildMarkdownBody`) / `BugReportService.cpp` (heavy: `GatherContext` + `SubmitBugReport` + Contents-API screenshot upload to `bug-report-assets` branch). Config fields added to `ConfigManager.{h,cpp}` (PAT DPAPI-encrypted, opt-in persist). Doctests: `BugReportBody.test.cpp`.
+- **Slice 3** — `BuiltinCommands_BugReport.cpp` (`bug.report`: modal/headless/dry-run); registered in `BuiltinCommands_Internal.h` + `BuiltinCommands.cpp`.
+- **Slice 4** — `Ui/ImGuiHotkey.{h,cpp}`, `Ui/SmatchetBugReportUi.{h,cpp}` (modal, async submit via `LaunchBackgroundTask` + `PostToMainThread`); `UiDrawSession` `bugReport*` + `requestScreenshotCensor` state; `SmatchetUI.cpp` hotkey poll + modal draw (outside the `BackendHasBeenReachable` gate); `main.cpp` censor wiring; "Report a Bug…" Help-menu item; CMake include subdirs (`Diagnostics`/`Privacy`/`Imaging`) on the Core INTERFACE + test target.
+
+**Verification done:** dual-target builds clean (`SmatchetStandalone` + `SmatchetCore_DX12`); full doctest suite 867/867 pass (new: 19 cases / 88 assertions across Slice 1+2 pure logic); `test-lint-rules.sh` PASS (no new strict-zone violations). Real-GitHub create + manual-modal + token-degrade verification remain manual (need a live dev repo + token) — see § Verification.
+
+## Deviations from plan
+
+1. **`BuildGitHubCreatePayload` takes primitive fields, not `IssueDraft`.** `IssueDraft.h` pulls SQLite via `LocalCacheManager.h`; taking it would break the helpers-TU "cpr/SQLite-free, doctest-linkable" convention (`GitHubClientHelpers.h:7-10`). `GitHubClient::BuildCreatePayload` extracts `summary`/`description`/`labels`/`assignees` + splits `ProjectKey` → delegates. Same testability, honours the split.
+2. **Service split into two TUs** (`BugReportBody.cpp` pure + `BugReportService.cpp` heavy) rather than one `BugReportService.cpp`. Keeps `ResolveBugReportTarget` + `BuildMarkdownBody` linkable into the doctest rig without cpr/host/AppController. `GatherContext` was made the single non-pure context collector so `BuildMarkdownBody(opts, bundle, screenshotMd)` is a pure function of its inputs.
+3. **PAT is DPAPI-encrypted, not plaintext** (plan called it a "plaintext secret"). Matches the existing `github_pat` path (`ProtectSecretForConfig`/`Unprotect…`); still opt-in (`BugReportPersistPat`, default off) and never written when opt-out.
+4. **`build_tag`** — `SmatchetHost_GetBuildTag()` only links into the Unreal host lib, so it is `#if SMATCHET_EMBEDDED_IN_UNREAL`-guarded; Standalone uses a `__DATE__ __TIME__` tag.
+5. **Hotkey polled OUTSIDE the `BackendHasBeenReachable` gate** (plan's preferred option) so bug reporting works when the tracker is unreachable.
+6. **Screenshot capture handshake** implemented with a `bugReportShotPending` flag + per-frame file-exists poll (the plan's `Idle→AwaitingShot→Submitting` state machine), since the GL read lands post-swap.
+7. **Audit pattern** mirrors `JiraIssueMutation.cpp` (the plan said `JiraClient::CreateIssue` — that method lives in `JiraIssueMutation.cpp`).
+8. **External-distribution token risk** filed as a P1 security backlog entry (`docs/self-improvement/categories/security.md`, 2026-05-30) per the "needs relay" decision — relay/bot required before any external release; no token is bundled.

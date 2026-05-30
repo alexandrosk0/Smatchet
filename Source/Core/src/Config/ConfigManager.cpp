@@ -199,6 +199,16 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["github_base_url"] = config.GitHubBaseUrl;
     j["github_owner"] = config.GitHubOwner;
     j["github_repo"] = config.GitHubRepo;
+    // "Log a Bug" reporter config (docs/plans/active/log-a-bug-github.md).
+    // BugReportGitHubPat is a secret — encrypted below in the saveGithubPat block.
+    j["bugreport_github_owner"] = config.BugReportGitHubOwner;
+    j["bugreport_github_repo"] = config.BugReportGitHubRepo;
+    j["bugreport_github_base_url"] = config.BugReportGitHubBaseUrl;
+    j["bugreport_assets_repo"] = config.BugReportAssetsRepo;
+    j["bugreport_persist_pat"] = config.BugReportPersistPat;
+    j["bugreport_hotkey"] = config.BugReportHotkey;
+    j["bugreport_hotkey_enabled"] = config.BugReportHotkeyEnabled;
+    j["bugreport_screenshot_default"] = config.BugReportScreenshotDefault;
     j["jql"] = config.JqlQuery;
     j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
     j["single_click_to_edit_grid_cells"] = config.SingleClickToEditGridCells;
@@ -403,6 +413,19 @@ void ConfigManager::Save(const TrackerConfig& config) {
         j.erase("github_pat");
     }
     j["github_pat_enc"] = githubPatEnc;
+    // Bug-report PAT — persisted ONLY when the user opted in (BugReportPersistPat);
+    // secret, so DPAPI-encrypted with a plaintext fallback if protection fails.
+    // When opt-out, both keys are erased so no token is ever written to config.
+    j.erase("bugreport_github_pat");
+    j.erase("bugreport_github_pat_enc");
+    if (config.BugReportPersistPat && !config.BugReportGitHubPat.empty()) {
+        const std::string bugPatEnc = ProtectSecretForConfig(config.BugReportGitHubPat);
+        if (!bugPatEnc.empty()) {
+            j["bugreport_github_pat_enc"] = bugPatEnc;
+        } else {
+            j["bugreport_github_pat"] = config.BugReportGitHubPat; // DPAPI failed — keep plaintext fallback
+        }
+    }
     const std::string mcpAuthTokenEnc = ProtectSecretForConfig(config.McpAuthToken);
     // New field migration: keep the legacy plaintext fallback if DPAPI fails instead of dropping the only copy.
     if (config.McpAuthToken.empty() || !mcpAuthTokenEnc.empty()) {
@@ -437,6 +460,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j.erase("token_enc");
     j.erase("plane_api_key_enc");
     j.erase("github_pat_enc");
+    j.erase("bugreport_github_pat_enc");
     j.erase("mcp_auth_token_enc");
     j.erase("ai_api_key_enc");
     j.erase("ai_anthropic_api_key_enc");
@@ -444,6 +468,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["token"] = config.ApiToken;
     j["plane_api_key"] = config.PlaneApiKey;
     j["github_pat"] = config.GitHubPat;
+    j.erase("bugreport_github_pat");
+    if (config.BugReportPersistPat && !config.BugReportGitHubPat.empty()) {
+        j["bugreport_github_pat"] = config.BugReportGitHubPat;
+    }
     j["mcp_auth_token"] = config.McpAuthToken;
     j["ai_api_key"] = config.AiApiKey;
     j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
@@ -635,13 +663,28 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             if (cfg.GitHubPat.empty()) {
                 cfg.GitHubPat = j.value("github_pat", std::string{});
             }
+            // Bug-report PAT — DPAPI + legacy-plaintext, same shape as GitHubPat.
+            cfg.BugReportGitHubPat = UnprotectSecretFieldFromConfig("bugreport_github_pat_enc",
+                                                                    j.value("bugreport_github_pat_enc", std::string{}));
+            if (cfg.BugReportGitHubPat.empty()) {
+                cfg.BugReportGitHubPat = j.value("bugreport_github_pat", std::string{});
+            }
 #else
             cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
             cfg.GitHubPat = j.value("github_pat", std::string{});
+            cfg.BugReportGitHubPat = j.value("bugreport_github_pat", std::string{});
 #endif
             cfg.GitHubBaseUrl = j.value("github_base_url", cfg.GitHubBaseUrl);
             cfg.GitHubOwner = j.value("github_owner", cfg.GitHubOwner);
             cfg.GitHubRepo = j.value("github_repo", cfg.GitHubRepo);
+            cfg.BugReportGitHubOwner = j.value("bugreport_github_owner", cfg.BugReportGitHubOwner);
+            cfg.BugReportGitHubRepo = j.value("bugreport_github_repo", cfg.BugReportGitHubRepo);
+            cfg.BugReportGitHubBaseUrl = j.value("bugreport_github_base_url", cfg.BugReportGitHubBaseUrl);
+            cfg.BugReportAssetsRepo = j.value("bugreport_assets_repo", cfg.BugReportAssetsRepo);
+            cfg.BugReportPersistPat = j.value("bugreport_persist_pat", cfg.BugReportPersistPat);
+            cfg.BugReportHotkey = j.value("bugreport_hotkey", cfg.BugReportHotkey);
+            cfg.BugReportHotkeyEnabled = j.value("bugreport_hotkey_enabled", cfg.BugReportHotkeyEnabled);
+            cfg.BugReportScreenshotDefault = j.value("bugreport_screenshot_default", cfg.BugReportScreenshotDefault);
 
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);

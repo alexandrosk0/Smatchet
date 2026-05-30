@@ -4,6 +4,7 @@
 #include "GitHubClientHelpers.h"
 
 #include <doctest/doctest.h>
+#include <nlohmann/json.hpp>
 
 using namespace smatchet::github;
 
@@ -158,4 +159,71 @@ TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
     CHECK(err.find("out of range") != std::string::npos);
     CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+14:01", err) == 0);
     CHECK(err.find("out of range") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// log-a-bug-github Slice 1 — issue-create payload builder + key formatter.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BuildGitHubCreatePayload — title/body/labels/assignees + __target") {
+    nlohmann::json out;
+    std::string err;
+    REQUIRE(BuildGitHubCreatePayload("Grid freezes when sorting by date", "Steps:\n1. open grid\n2. sort by date",
+                                     "bug, ui", "alice , bob", "acme", "tracker", out, err));
+    CHECK(err.empty());
+    CHECK(out["title"] == "Grid freezes when sorting by date");
+    CHECK(out["body"] == "Steps:\n1. open grid\n2. sort by date");
+    REQUIRE(out["labels"].is_array());
+    CHECK(out["labels"].size() == 2);
+    CHECK(out["labels"][0] == "bug");
+    CHECK(out["labels"][1] == "ui");
+    REQUIRE(out["assignees"].is_array());
+    CHECK(out["assignees"].size() == 2);
+    CHECK(out["assignees"][0] == "alice"); // surrounding whitespace trimmed
+    CHECK(out["assignees"][1] == "bob");
+    REQUIRE(out.contains("__target"));
+    CHECK(out["__target"]["owner"] == "acme");
+    CHECK(out["__target"]["repo"] == "tracker");
+}
+
+TEST_CASE("BuildGitHubCreatePayload — minimal (title only, no body/labels/assignees)") {
+    nlohmann::json out;
+    std::string err;
+    REQUIRE(BuildGitHubCreatePayload("just a title", "", "", "", "o", "r", out, err));
+    CHECK(out["title"] == "just a title");
+    CHECK_FALSE(out.contains("body"));
+    CHECK_FALSE(out.contains("labels"));
+    CHECK_FALSE(out.contains("assignees"));
+    CHECK(out["__target"]["owner"] == "o");
+}
+
+TEST_CASE("BuildGitHubCreatePayload — blank CSV entries are skipped, not emitted") {
+    nlohmann::json out;
+    std::string err;
+    REQUIRE(BuildGitHubCreatePayload("t", "", " , ,, ", "", "o", "r", out, err));
+    // All-blank labels CSV → key omitted entirely.
+    CHECK_FALSE(out.contains("labels"));
+}
+
+TEST_CASE("BuildGitHubCreatePayload — rejects empty summary + empty repo target") {
+    nlohmann::json out;
+    std::string err;
+    CHECK_FALSE(BuildGitHubCreatePayload("", "body", "", "", "o", "r", out, err));
+    CHECK_FALSE(err.empty());
+    err.clear();
+    CHECK_FALSE(BuildGitHubCreatePayload("title", "", "", "", "", "r", out, err));
+    CHECK_FALSE(err.empty());
+    err.clear();
+    CHECK_FALSE(BuildGitHubCreatePayload("title", "", "", "", "o", "", out, err));
+    CHECK_FALSE(err.empty());
+}
+
+TEST_CASE("FormatGitHubIssueKey — composes owner/repo#N (inverse of ParseGitHubIssueKey)") {
+    CHECK(FormatGitHubIssueKey("acme", "tracker", 5) == "acme/tracker#5");
+    // Round-trips through the parser.
+    ParsedIssueKey k;
+    REQUIRE(ParseGitHubIssueKey(FormatGitHubIssueKey("foo", "bar-baz", 123), k));
+    CHECK(k.Owner == "foo");
+    CHECK(k.Repo == "bar-baz");
+    CHECK(k.Number == 123);
 }

@@ -1,7 +1,9 @@
 #include "GitHubClient.h"
 
+#include "BackendAuditTrail.h"
 #include "GitHubClientHelpers.h"
 #include "GitHubIssueSearch.h"
+#include "IssueDraft.h"
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
 #include "TrackerFieldSchema.h"
@@ -427,10 +429,27 @@ bool GitHubClient::BuildFieldPayload(const TrackerField& field, const std::vecto
     return false;
 }
 
-bool GitHubClient::BuildCreatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
-                                      nlohmann::json& /*outPayload*/, std::string& outError) {
-    StubError(outError, "BuildCreatePayload");
-    return false;
+bool GitHubClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& /*catalog*/,
+                                      nlohmann::json& outPayload, std::string& outError) {
+    // catalog ignored — GitHub's create surface is title/body/labels/assignees,
+    // not a configurable customfield schema. Resolve target repo from ProjectKey
+    // ("owner/repo") and delegate the body shape to the cpr-free pure helper.
+    const std::string& projectKey = draft.ProjectKey;
+    const std::size_t slash = projectKey.find('/');
+    if (slash == std::string::npos || slash == 0 || slash + 1 >= projectKey.size()) {
+        outError = "GitHub create requires ProjectKey shaped 'owner/repo' (got '" + projectKey + "')";
+        return false;
+    }
+    const std::string owner = projectKey.substr(0, slash);
+    const std::string repo = projectKey.substr(slash + 1);
+
+    auto fieldOr = [&draft](const char* key) -> std::string {
+        const auto it = draft.FieldValues.find(key);
+        return it == draft.FieldValues.end() ? std::string() : it->second;
+    };
+
+    return smatchet::github::BuildGitHubCreatePayload(fieldOr("summary"), fieldOr("description"), fieldOr("labels"),
+                                                      fieldOr("assignees"), owner, repo, outPayload, outError);
 }
 
 std::string GitHubClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* /*field*/,
@@ -441,9 +460,64 @@ std::string GitHubClient::ResolveDisplayValue(const std::string& fieldId, const 
     return value;
 }
 
-std::string GitHubClient::CreateIssue(const nlohmann::json& /*fields*/, std::string& outError) {
-    StubError(outError, "CreateIssue");
-    return "";
+std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
+    outError.clear();
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-create");
+    BackendAuditTrail::AppendBegin("issue_create", "github_client", std::string(), auditOp,
+                                   nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+
+    if (pat_.empty()) {
+        outError = kPatMissingError;
+        BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
+        return "";
+    }
+    if (!fields.is_object() || !fields.contains("__target")) {
+        outError = "GitHubClient::CreateIssue: payload missing __target (call BuildCreatePayload first)";
+        BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
+        return "";
+    }
+
+    // Extract + strip the out-of-band target before POSTing the body.
+    nlohmann::json body = fields;
+    const nlohmann::json target = body["__target"];
+    body.erase("__target");
+    const std::string owner = target.value("owner", std::string());
+    const std::string repo = target.value("repo", std::string());
+    if (owner.empty() || repo.empty()) {
+        outError = "GitHubClient::CreateIssue: __target missing owner/repo";
+        BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
+        return "";
+    }
+
+    const std::string url = baseUrl_ + "/repos/" + owner + "/" + repo + "/issues";
+    const cpr::Response resp = TrackerPostLogged("GitHubClient", url, BuildGitHubHeaders(pat_), body.dump());
+
+    if (resp.status_code != 201 && resp.status_code != 200) {
+        outError = smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+        LOG_ERROR("GitHubClient::CreateIssue: HTTP %ld — %s", resp.status_code, outError.c_str());
+        BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
+        return "";
+    }
+
+    try {
+        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        const std::int64_t number = j.value("number", static_cast<std::int64_t>(0));
+        if (number <= 0) {
+            outError = "GitHubClient::CreateIssue: response missing issue 'number'";
+            LOG_ERROR("GitHubClient::CreateIssue: %s", outError.c_str());
+            BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
+            return "";
+        }
+        const std::string key = smatchet::github::FormatGitHubIssueKey(owner, repo, number);
+        LOG_INFO("GitHubClient: created GitHub issue %s.", key.c_str());
+        BackendAuditTrail::AppendResult("issue_create", "github_client", key, auditOp, true, std::string());
+        return key;
+    } catch (const std::exception& ex) {
+        outError = std::string("GitHubClient::CreateIssue: failed to parse response: ") + ex.what();
+        LOG_ERROR("GitHubClient::CreateIssue: %s", outError.c_str());
+        BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
+        return "";
+    }
 }
 
 std::string GitHubClient::ExtractProjectFromQuery(const std::string& query) const {

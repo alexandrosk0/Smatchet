@@ -727,6 +727,10 @@ target_include_directories(SmatchetCoreInterface INTERFACE
         Source/Core/include/Persistence
         Source/Core/include/Config
         Source/Core/include/Ui
+        # log-a-bug-github — new Core subsystems (bare #includes in their TUs).
+        Source/Core/include/Diagnostics
+        Source/Core/include/Privacy
+        Source/Core/include/Imaging
         Source/Core/ThirdParty/ImGuiColorTextEdit
         # Vendored Font Awesome 6 icon-name header (zlib licence) from
         # github.com/juliettef/IconFontCppHeaders. Header-only — defines

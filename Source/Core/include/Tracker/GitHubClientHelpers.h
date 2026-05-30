@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include <nlohmann/json_fwd.hpp>
+
 // GitHubClientHelpers — pure helpers consumed by GitHubClient. Slice 1 of
 // docs/plans/shipped/github-tracker-backend.md PR2. Mirrors the JiraIssueSearch /
 // PlaneFieldCatalog split convention (pure helpers live in their own TU so
@@ -80,6 +82,26 @@ bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError);
 /// Falls back to `"HTTP <status>"` when the payload doesn't include a `message`
 /// field. Used by every write path to produce the audit-trail's `errorMessage`.
 std::string ExtractGitHubErrorMessage(int httpStatus, const std::string& body);
+
+/// log-a-bug-github Slice 1 — build the JSON body for POST
+/// /repos/{owner}/{repo}/issues from primitive draft fields. Kept on the
+/// IssueDraft-free / cpr-free / SQLite-free path (IssueDraft.h pulls SQLite via
+/// LocalCacheManager.h, so the `GitHubClient` adapter extracts the fields and
+/// calls this; that keeps the doctest rig honoring the split convention above).
+/// `summary` is required — empty → returns false + sets `outError`. `body` maps
+/// to the issue body when non-empty. `labelsCsv` / `assigneesCsv` are
+/// comma-split into JSON string arrays (surrounding whitespace trimmed, blank
+/// entries skipped; omitted entirely when no non-blank token remains). The
+/// resolved target repo is carried out-of-band as `out["__target"] = {owner,
+/// repo}` so `CreateIssue` can form the POST URL without re-parsing ProjectKey.
+bool BuildGitHubCreatePayload(const std::string& summary, const std::string& body, const std::string& labelsCsv,
+                              const std::string& assigneesCsv, const std::string& owner, const std::string& repo,
+                              nlohmann::json& out, std::string& outError);
+
+/// Inverse of `ParseGitHubIssueKey` — compose the canonical `owner/repo#N` key
+/// string from its parts (used by `GitHubClient::CreateIssue` to return the new
+/// issue key in the shape the rest of Smatchet expects).
+std::string FormatGitHubIssueKey(const std::string& owner, const std::string& repo, std::int64_t number);
 
 /// Parse an ISO-8601 timestamp ("2024-01-15T12:34:56Z") into unix epoch seconds.
 /// Returns 0 + sets `outError` on parse failure. Permissive on offset format
