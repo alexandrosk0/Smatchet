@@ -113,7 +113,6 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
     // the AppController wrapper (which forwards to LocalCacheManager). Until the
     // load completes, `assistantHistoryHydrated = false` gates dispatchSend +
     // pin-toggle so a Send during the hydrate window doesn't insert a duplicate.
-    //
     // Pillar 2 — UI thread budget 6.94 ms. The inline-vs-async split below honours
     // the contract: ≤200-row read is a single SQLite SELECT against the indexed
     // `idx_ai_chat_messages_id_desc`. Phase 3.10 measured 160.6 µs / load average
@@ -717,7 +716,6 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // of ImGui-specific resizable callbacks. Pre-seeded from
     // d.assistantInputBuf the first time the panel renders so Lua-supplied
     // text (Phase E) survives a panel reopen.
-    //
     // Re-seed when (a) first frame, or (b) the model-side `assistantInputBuf`
     // diverged from the char buffer (e.g. Lua glue poked it between frames,
     // or the panel was closed + reopened and external code edited the field).
@@ -1082,7 +1080,6 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     }
 
     // --- Per-turn Model + Effort overrides (chat-window header row 2). ---
-    //
     // Empty `assistantPerTurnModel` / `assistantPerTurnEffort` mean "use the
     // Preferences default for the active provider". The Combos write directly
     // into the session strings; the next Send picks them up via Submit.

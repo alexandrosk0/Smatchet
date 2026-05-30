@@ -40,7 +40,6 @@ TextEditor::Palette GetThemedLuaConsolePalette() {
     // other theme starts from the dark palette. After picking the base, we
     // overlay the active SmatchetThemeSyntaxColors palette onto the five
     // syntax slots so theme switches reach the editor.
-    //
     // The "is this a light theme?" check looks at WindowBg luminance. Cheap,
     // robust against future theme additions, and avoids hard-coding a list of
     // ThemeIds in a TU that should stay theme-agnostic.

@@ -697,13 +697,11 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
     ImGuiStyle& style = ImGui::GetStyle();
 
     // Full-style reset BEFORE the theme override runs. Two layered concerns:
-    //
     //   1) Colors[]: ApplySmatchetDark / ApplyModernDark / ... only write 55 of the ~66
     //      ImGuiCol_* slots. The unwritten slots (TextLink, TreeLines, InputTextCursor,
     //      TabSelectedOverline, TabDimmedSelectedOverline, DragDropTargetBg, UnsavedMarker,
     //      NavCursor + renamed-alias duplicates) keep whatever value the previous theme — or a
     //      leaked PushStyleColor — left in them.
-    //
     //   2) Layout fields (WindowBorderSize, ChildBorderSize, IndentSpacing, TabBarBorderSize,
     //      etc.): NortonCommander zeroes the 7 rounding fields; ApplyCommonStyle resets those
     //      symmetrically. But the ~50 OTHER ImGuiStyle layout fields (DisabledAlpha,
@@ -712,7 +710,6 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
     //      ApplyCommonStyle. Any future per-theme override on one of those fields would leak
     //      across switches — the exact failure mode the user reports as "switching back doesn't
     //      restore SmatchetDark even after the seed-colors fix."
-    //
     // `style = ImGuiStyle{}` invokes ImGui's default ctor — every layout field returns to its
     // ImGui-documented baseline, and the freshly-constructed Colors[] holds the dark seed
     // (per the ctor body in imgui.cpp). We then re-run StyleColorsLight() for the lone light

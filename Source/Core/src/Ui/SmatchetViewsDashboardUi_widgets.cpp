@@ -172,7 +172,6 @@ bool HandleRowReorder(int rowIndex, std::vector<std::string>& order, int* keyboa
     // focused item-ID belongs to the PREVIOUS Selectable widget — after a swap the
     // PushID + label combo at this index is different, so the focus check would fail
     // on every press after the first. Window focus is the correct shortcut scope.
-    //
     // Hot-path: this helper runs once per visible row, every frame. Bail out on the
     // cheapest checks first (focus-row mismatch, then `KeyAlt` test against the cached
     // IO struct) before paying for `IsWindowFocused`. On a typical "no Alt held" frame

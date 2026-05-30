@@ -1,5 +1,4 @@
 // Plan-doc viewer — see SmatchetPlanDocViewerUi.h for the surface contract.
-//
 // Slice 4/5 follow-up: this viewer now uses the rich MarkdownPreviewRender
 // path (md4c → ImGui draw calls with heading scaling, BoldItalic font,
 // fenced-code BeginChild with CppSyntaxHighlight, clickable links) wrapped in

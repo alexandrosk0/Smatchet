@@ -1077,9 +1077,7 @@ void SmatchetImGuiHost::FormatCachedRendererDebugSummary(char* buf, std::size_t 
                   ImplData->OptionsSet.load() ? 1 : 0, ImplData->UiVisible.load() ? 1 : 0);
 }
 
-// -------------------------------------------------------------------------------------------------
 // C ABI wrappers (avoid C++ ABI mismatch between MinGW-built native libs and MSVC-built Unreal module)
-// -------------------------------------------------------------------------------------------------
 #if defined(_WIN32)
 namespace {
 std::mutex gHostHandleSetMutex;

@@ -92,9 +92,7 @@ void AdfWrapTopLevelInlineInParagraph(json* arr) {
     *arr = std::move(result);
 }
 
-// ============================================================================
 // Markdown -> ADF (Atlassian Document Format JSON)
-// ============================================================================
 
 struct AdfBuilder {
     json doc;
@@ -453,9 +451,7 @@ int AdfTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* u
     return 0;
 }
 
-// ============================================================================
 // Markdown -> HTML (Plane subset)
-// ============================================================================
 
 struct HtmlBuilder {
     std::ostringstream out;
@@ -759,9 +755,7 @@ int HtmlTextCallback(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* 
     return 0;
 }
 
-// ============================================================================
 // ADF -> Markdown (recursive walker)
-// ============================================================================
 
 struct AdfWalkState {
     std::ostringstream out;
@@ -1154,9 +1148,7 @@ void EmitAdfBlock(const json& node, AdfWalkState& s) {
     }
 }
 
-// ============================================================================
 // HTML subset -> Markdown (state machine over a small tag allowlist)
-// ============================================================================
 
 const std::unordered_set<std::string>& HtmlAllowedTags() {
     static const std::unordered_set<std::string> tags = {
@@ -1699,9 +1691,7 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
 
 } // namespace
 
-// ============================================================================
 // Public API
-// ============================================================================
 
 nlohmann::json MarkdownToAdf(const std::string& md) {
     AdfBuilder builder;

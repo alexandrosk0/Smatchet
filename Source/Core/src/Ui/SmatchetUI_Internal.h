@@ -2,11 +2,9 @@
 
 // Private implementation header for SmatchetUI — shared by:
 //   SmatchetUI.cpp, SmatchetUI_MainMenu.cpp, SmatchetUI_Layout.cpp.
-//
 // Do NOT include this from any other translation unit; it pulls in the
 // `#define ImGui SmatchetLocalizedImGui` alias which would silently rewrite
 // every ImGui:: call in the including file.
-//
 // Cross-TU helpers that were previously file-scope statics are exposed inside
 // `namespace smatchet { namespace ui_detail { ... } }` with external linkage
 // so the linker resolves them across the new TUs without ODR collisions.

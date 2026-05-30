@@ -948,8 +948,6 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
 // `SmatchetUI::drawMainMenuBar` moved to `SmatchetUI_MainMenu.cpp` per
 // `docs/plans/shipped/large-files-and-phase-2.md` § A4. Only call site is
 // `SmatchetUI::Draw` above (the declaration stays in `SmatchetUI.h`).
-// MOVED_DRAW_MAIN_MENU_BAR_BEGIN
-// MOVED_DRAW_MAIN_MENU_BAR_END
 
 namespace {
 
