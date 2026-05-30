@@ -1,6 +1,6 @@
 # Weekly memory drain
 
-The harness's auto-memory (`~/.claude/projects/<project-slug>/memory/`) is a
+The harness's auto-memory (`~/.claude/projects/<slug>/memory/`) is a
 **transient inbox**, not a durable store. Facts captured there during sessions
 rot: they go stale against the code, duplicate `AGENTS.md`, or stay invisible to
 non-Claude-Code harnesses (Codex / Cursor / Aider read the repo, never user-private

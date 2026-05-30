@@ -24,6 +24,10 @@ set -u
 
 THRESHOLD_COUNT="${SMATCHET_MEMORY_DRAIN_COUNT:-5}"
 THRESHOLD_DAYS="${SMATCHET_MEMORY_DRAIN_DAYS:-7}"
+# Guard against non-numeric env overrides — a bad value must not break the
+# "silent on failure" contract with an `integer expression expected` error.
+case "$THRESHOLD_COUNT" in ''|*[!0-9]*) THRESHOLD_COUNT=5 ;; esac
+case "$THRESHOLD_DAYS" in ''|*[!0-9]*) THRESHOLD_DAYS=7 ;; esac
 
 # Resolve the local auto-memory dir. Explicit override wins; otherwise glob the
 # harness projects dir and pick the memory dir whose project slug names this
