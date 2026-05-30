@@ -7,7 +7,6 @@
 // helper unconditionally on every host; the bare constants below mirror the
 // Win32 `MOD_*` and `VK_*` values byte-for-byte so the consumer can pass the
 // struct fields directly to RegisterHotKey without a translation step.
-//
 // Lives in Source/Plugins/Whisper because the descriptor surface is meaningless when
 // SMATCHET_WITH_WHISPER=OFF — the entire subdirectory is CMake-conditional.
 
@@ -65,7 +64,6 @@ struct Hotkey {
 // human-readable diagnostic (empty input, unknown token, bare-modifier
 // descriptor). Whitespace around `+` separators is trimmed. Tokens are
 // case-insensitive. Recognised:
-//
 //   * Modifiers (any combination, order-independent):
 //     `Ctrl` / `Control`, `Alt`, `Shift`, `Win` / `Meta` / `Super`.
 //   * Single-character keys `A`-`Z` and `0`-`9` (mapped to the ASCII VK).

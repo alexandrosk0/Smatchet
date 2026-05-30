@@ -2,14 +2,12 @@
 
 // WhisperConsentGate — single pinch point for the four consent invariants in
 // docs/plans/shipped/whisper-dictation.md § Optional + no-data-without-consent.
-//
 // Centralising the rule means future call sites (Phase D / E surfaces, ad-hoc
 // scripts, scenario harnesses) can not accidentally drift around it: every
 // mic-access / model-download / cloud-API site funnels through one of the
 // three predicates here. The fourth invariant ("no bundled model files
 // shipped with the exe") is a build-hygiene rule enforced by
 // scripts/dev/test-whisper-consent-gate.sh, not a runtime check.
-//
 // Pure logic — no global state, no filesystem touches. Inputs are a value
 // snapshot of TrackerConfig plus (for the download predicate) a freshness
 // window in seconds. The downstream caller is responsible for sourcing the

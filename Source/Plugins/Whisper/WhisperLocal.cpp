@@ -4,7 +4,6 @@
 // and calls the real `whisper_init_from_file_with_params` + `whisper_full`
 // pair; the OFF branch returns "local backend not built" from LoadModel and
 // no-ops the rest.
-//
 // THREADING — Transcribe is synchronous and may block for hundreds of ms on
 // a 10 s clip. Callers MUST dispatch it via AppController::LaunchBackgroundTask
 // (Pattern A); the Phase E hotkey path will do so, and Phase C's `whisper.

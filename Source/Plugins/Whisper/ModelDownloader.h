@@ -3,14 +3,11 @@
 // ModelDownloader — Pattern A worker that streams a ggml whisper model from
 // the huggingface mirror into `<userData>/whisper/<id>.bin`, with resumable
 // `.partial` staging + post-completion SHA-256 verification.
-//
 // See docs/plans/shipped/whisper-dictation.md § Phase C / ModelDownloader.
-//
 // Consent contract — Start() refuses unless WhisperConsentGate::CanDownloadModel
 // returns true (WhisperEnabled + fresh consent timestamp). Callers should
 // stamp `cfg.WhisperConsentTimestampSec = NowEpochSec()` and save the config
 // before calling Start; the banner + Preferences download buttons do so.
-//
 // Threading — Start() spawns a single background thread via
 // AppController::LaunchBackgroundTask; UI-thread callers poll `GetProgress()`
 // each frame for the progress bar. Cancel() flips the shared cancel atom
@@ -68,7 +65,6 @@ class ModelDownloader {
     ///   - failed consent check against the live TrackerConfig (caller is
     ///     responsible for stamping WhisperConsentTimestampSec; see
     ///     header preamble).
-    ///
     /// Returns true when the worker was successfully dispatched; the
     /// caller polls GetProgress() each frame to drive the UI. Returns
     /// false on validation / consent failure, with the reason in

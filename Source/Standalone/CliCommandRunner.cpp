@@ -65,11 +65,9 @@ constexpr int kExitNotConnected = 6;
 constexpr int kExitTransport = 7;
 // 8 (timeout) + 9 (dry-run-unsupported) are reachable once spawn/dry-run land.
 
-// ============================================================================
 // Safe JSON value extractors — never throw on type mismatch or missing keys.
 // ParseArgs stores every --key=value as a string, and external responses can
 // have any shape; defensive reads avoid type_error.302 from nlohmann.
-// ============================================================================
 
 bool SafeBool(const nlohmann::json& j, const char* key, bool fallback) {
     try {

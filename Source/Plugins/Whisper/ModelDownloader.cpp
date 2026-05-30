@@ -3,7 +3,6 @@
 // streams bytes to disk through a cpr::WriteCallback (cancel atom polled
 // between chunks), then re-opens the completed partial for a streaming
 // SHA-256 pass before renaming onto the final path.
-//
 // Resume support — write set is `<dest>/<id>.bin.partial`. On a fresh
 // invocation we stat that file; if it exists with non-zero size we send
 // `Range: bytes=<size>-` and append. SHA-256 is computed over the whole

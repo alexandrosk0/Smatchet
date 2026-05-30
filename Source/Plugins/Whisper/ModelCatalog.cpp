@@ -3,7 +3,6 @@
 // models is Smatchet allowed to download?". A future model rotation edits
 // this table and bumps the SHA-256 in lockstep; ModelDownloader rejects any
 // downloaded bytes whose hash does not match.
-//
 // Sizes are the byte counts reported by the huggingface mirror at the time
 // of cataloguing; ModelDownloader uses them only as the pre-headers
 // progress-bar estimate (the live Content-Length wins once the response

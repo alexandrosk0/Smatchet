@@ -1,6 +1,5 @@
 // WindowsAudioCapture — WASAPI implementation. See header for the threading
 // contract.
-//
 // WASAPI shared-mode capture loop:
 //   1. CoInitializeEx(MULTITHREADED) on the worker thread.
 //   2. Create IMMDeviceEnumerator -> GetDefaultAudioEndpoint(eCapture, eConsole).
