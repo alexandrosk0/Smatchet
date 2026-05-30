@@ -126,8 +126,13 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
         if (d.bugReportDescBuf.size() < kDescBufCap) {
             d.bugReportDescBuf.assign(kDescBufCap, '\0');
             if (d.bugReportCrashMode) {
-                const char* seed = "Smatchet closed unexpectedly. What were you doing?";
-                std::strncpy(d.bugReportDescBuf.data(), seed, kDescBufCap - 1);
+                // Prefer the assembled crash context (reason + breadcrumb + log tail);
+                // fall back to a plain prompt.
+                const std::string seed =
+                    d.bugReportCrashContext.empty()
+                        ? std::string("Smatchet closed unexpectedly. What were you doing?")
+                        : ("Smatchet closed unexpectedly. What were you doing?\n\n" + d.bugReportCrashContext);
+                std::strncpy(d.bugReportDescBuf.data(), seed.c_str(), kDescBufCap - 1);
             }
         }
         // NOTE: bugReportInclScreenshot / bugReportShotMode are NOT seeded here —

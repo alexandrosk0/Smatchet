@@ -118,6 +118,8 @@ Prerequisite and independently valuable (fixes the new-issue UI for GitHub too).
 
 ---
 
+> **Phase 2 IMPLEMENTED 2026-05-30** (see § Phase-2 implementation log at the end). The design below is retained for reference.
+
 ## Phase 2 — In-process crash reporter (designed, deferred)
 
 Reuses Slice-2 service + Slice-4 modal; files to the **same fixed dev GitHub repo**. A crash report = a pre-populated bug report filed on the **next** launch.
@@ -197,3 +199,21 @@ Added after the "needs relay" decision (2026-05-30) so external/untrusted users 
 8. **External-distribution token risk** filed as a P1 security backlog entry (`docs/self-improvement/categories/security.md`, 2026-05-30) per the "needs relay" decision — relay/bot required before any external release; no token is bundled.
 9. **Slice 5 — relay mode** added (`tools/bug-report-relay/`, config `bugreport_relay_url`/`bugreport_relay_key`) as the secure path for external users — the token lives server-side, never in the binary. Verified live (issue `alexandrosk0/Smatchet#585`).
 10. **Bug reporter never borrows the tracker `cfg.GitHubPat`** (user directive 2026-05-30). Original Slice-2 spec had PAT order `env → cfg.GitHubPat → cfg.BugReportGitHubPat`; the tracker PAT fallback is **removed**. Direct-mode order is now `env SMATCHET_BUGREPORT_GITHUB_TOKEN → cfg.BugReportGitHubPat` only; otherwise use relay mode. Conflating the personal tracker credential with the bug-report identity was the concern.
+
+---
+
+## Phase-2 implementation log (2026-05-30)
+
+In-process crash reporter built on `feat/crash-reporter`.
+
+- **`Core/Diagnostics/CrashSink.{h,cpp}`** — crash-survival substrate. `CrashSinkInit(userDataDir)` builds static path buffers + ensures `<userdata>/crashes/` + rotates old dumps (keep 5). `CrashSinkWriteMarkerAsyncSafe(reason)` is the async-signal-safe marker write (raw `CreateFileA`/`open`, no heap/locks). `CrashSinkBreadcrumb(activity)` records current activity (normal context). Next launch: `CrashSinkHasPending()` / `CrashSinkConsume()` (reads marker + breadcrumb, archives the dump timestamped, deletes the marker so it never loops).
+- **`Standalone/SmatchetCrashHandler.{h,cpp}`** — installs `SetUnhandledExceptionFilter` + `std::set_terminate` + `std::signal(SIGSEGV/SIGABRT/SIGFPE/SIGILL)`. Each writes the marker (async-safe) then a best-effort `MiniDumpWriteDump` (DbgHelp via `#pragma comment(lib,"dbghelp.lib")`) to `crashes/pending_crash.dmp`, then exits. `SmatchetCrashSehFilter` is used by main.cpp's frame-loop `__except` (was a bare `std::exit(1)`).
+- **`main.cpp`** — `CrashSinkInit` + `InstallCrashHandlers` + breadcrumb run **after** the user-data dir is resolved (the planned line-316 spot was too early — `GetUserDataDirectory()` was still empty, so crashes/ landed in CWD; moved after the platform user-data block). Next-launch detection before the render loop seeds `g_ui.bugReportCrashContext` + `bugReportCrashMode` + opens the modal.
+- **`bug.report` modal** — the crash-mode latch seeds the description with `bugReportCrashContext` (reason + breadcrumb + dump path).
+- **`debug.crash` command** (`BuiltinCommands_Debug.cpp`) — `kind=segv|abort|throw`, Destructive + `--yes`, to validate the reporter.
+- **Tests:** `tests/Core/CrashSink.test.cpp` (marker round-trip, consume-clears, dump path).
+
+### Phase-2 deviations
+1. **Log-tail dropped from the crash report.** The plan wanted `Logger::SetFileSinkPath(<userdata>/logs/smatchet.log)` (fixed path) so the next launch tails the crashed log. The existing log sink is **per-PID** (`Smatchet-<pid>.log`) — next launch can't locate the crashed file without a race. v1 carries **reason + breadcrumb + minidump**; the reporting launch's in-memory log covers the rest. Fixed-path crash log = follow-up.
+2. **Crash-dump delivery = local only (v1).** Dump stays in `crashes/` + its path is in the body; Release-asset upload deferred (backlog).
+3. **End-to-end verification is user-side** — headless crash-trigger needs the GUI's MCP, which wouldn't come up reliably in the build shell. Substrate is unit-tested + `CrashSinkInit`/breadcrumb verified live; the full crash→relaunch→modal loop is a manual check (`debug.crash` → relaunch).

@@ -603,6 +603,7 @@ struct UiDrawSession {
     bool bugReportShotReady = false;         // standalone capture path signals completion here (UI-thread only)
     double bugReportShotDeadline = 0.0;      // ImGui::GetTime() deadline — frees the modal if capture never lands
     bool bugReportCrashMode = false;         // phase-2: pre-filled crash report
+    std::string bugReportCrashContext;       // phase-2: crash summary seeded into the description on next launch
     bool bugReportPreviewDirty = true;       // rebuild preview text only when inputs changed
     bool bugReportPreviewSeeded = false;     // preview buffer has been built at least once (drives BodyOverride)
     bool bugReportPreviewUserEdited = false; // user edited the preview — stop auto-regenerating from inputs

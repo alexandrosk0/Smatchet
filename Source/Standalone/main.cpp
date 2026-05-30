@@ -113,7 +113,9 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 // UiDrawSession is defined in SmatchetUI.cpp (translation-unit global g_ui).
 // main.cpp reads requestFullScreenToggle and cfg.FullScreen after each frame.
 #include "SmatchetUiSession.h"
-#include "ScreenshotCensor.h" // log-a-bug-github — mosaic censor for the screenshot capture
+#include "ScreenshotCensor.h"      // log-a-bug-github — mosaic censor for the screenshot capture
+#include "Diagnostics/CrashSink.h" // log-a-bug-github phase 2 — crash marker + minidump survival
+#include "SmatchetCrashHandler.h"  // log-a-bug-github phase 2 — install OS crash handlers
 extern UiDrawSession g_ui;
 
 // GLFW Error Callback
@@ -187,7 +189,8 @@ static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smat
 #if defined(_WIN32) && defined(_MSC_VER)
     __try {
         SmatchetDrawFrame(mainWindow, smatchetApp, pluginHost);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (smatchet::SmatchetCrashSehFilter(GetExceptionInformation())) {
+        // Marker + minidump already written by the filter; next launch reports it.
         std::exit(1);
     }
 #else
@@ -407,6 +410,14 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    // log-a-bug-github phase 2 — install crash handlers now that the user-data dir is
+    // resolved (CrashSinkInit writes its marker/dump there). Runs before any heavy work
+    // so startup crashes are still captured. CrashSinkInit builds the static path buffers
+    // the async handlers use; InstallCrashHandlers wires SEH/terminate/signals.
+    smatchet::diagnostics::CrashSinkInit(ConfigManager::GetUserDataDirectory());
+    smatchet::InstallCrashHandlers();
+    smatchet::diagnostics::CrashSinkBreadcrumb("startup");
+
     // Peek window state from saved config so we can hint MAXIMIZED + initial size.
     const TrackerConfig windowStateCfg = ConfigManager::Load();
     const int initialWindowW = std::max(320, windowStateCfg.WindowWidth);
@@ -541,6 +552,24 @@ int main(int argc, char** argv) {
     int exitCode = 0;
     try {
         SmatchetUI mainWindow;
+
+        // log-a-bug-github phase 2 — if the previous run left a crash marker, open the
+        // bug-report modal pre-filled with the crash context so the user can file it.
+        if (smatchet::diagnostics::CrashSinkHasPending()) {
+            const smatchet::diagnostics::CrashInfo ci = smatchet::diagnostics::CrashSinkConsume();
+            std::string ctx = "Crash: " + ci.Reason;
+            if (!ci.Breadcrumb.empty()) {
+                ctx += "\nLast activity: " + ci.Breadcrumb;
+            }
+            if (!ci.DumpPath.empty()) {
+                ctx += "\nMinidump saved locally: " + ci.DumpPath;
+            }
+            g_ui.bugReportCrashContext = ctx;
+            g_ui.bugReportCrashMode = true;
+            g_ui.showBugReport = true;
+            g_ui.bugReportOpenLatch = true;
+            LOG_WARN("Crash reporter: previous run crashed (%s) — opening pre-filled bug report.", ci.Reason.c_str());
+        }
 
         // 4. The Main Render Loop
         ImVec4 clear_color = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
