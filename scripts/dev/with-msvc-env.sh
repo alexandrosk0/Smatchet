@@ -12,13 +12,16 @@
 #   bash scripts/dev/with-msvc-env.sh cmake --version
 #   bash scripts/dev/with-msvc-env.sh cl                          # prints compiler banner
 #
-# How it works: `vswhere.exe -property installationPath` returns the path of
-# the latest installed VS edition (Community / Professional / Enterprise /
-# BuildTools) without hard-coding a glob. We then invoke `powershell.exe -c
-# 'cmd.exe /c "call vcvars64 && set"'` — PowerShell handles the quote / path
-# escaping cleanly where Git Bash's direct `cmd.exe //c` form gets mangled by
-# MSYS path conversion. Parse the env dump and re-export VS-relevant vars
-# into this bash process.
+# How it works: `vswhere.exe -property installationPath` enumerates installed
+# VS editions (Community / Professional / Enterprise / BuildTools) without
+# hard-coding a glob; we pick the first that ships the pinned MSVC toolset
+# (build.msvc_toolset_pin in project.config.json, or $SMATCHET_VCVARS_VER) and
+# call vcvars64 with `-vcvars_ver=<pin>` so a newer side-by-side toolset can't
+# shadow it (the STL1001 failure mode on multi-VS boxes). We then invoke
+# `powershell.exe -c 'cmd.exe /c "call vcvars64 ... && set"'` — PowerShell
+# handles the quote / path escaping cleanly where Git Bash's direct `cmd.exe
+# //c` form gets mangled by MSYS path conversion. Parse the env dump and
+# re-export VS-relevant vars into this bash process.
 #
 # Exit codes:
 #   0 — pass-through from the wrapped command
@@ -31,6 +34,34 @@ if [ $# -eq 0 ]; then
     exit 2
 fi
 
+# Resolve the MSVC toolset to pin. On a multi-VS box (e.g. VS2022 Community
+# carrying 14.38 side-by-side with a newer VS BuildTools carrying only 14.50),
+# an unpinned vcvars loads the newest STL headers against the cached older
+# cl.exe -> error STL1001. Precedence: $SMATCHET_VCVARS_VER (explicit override)
+# > build.msvc_toolset_pin in project.config.json. project-config.sh resolves
+# the repo root from its own location, so this works from any CWD; the source
+# is non-fatal so the env var alone can still drive selection if the config is
+# unavailable.
+_self="${BASH_SOURCE[0]:-$0}"
+_self_dir="$(cd "$(dirname "$_self")" && pwd)"
+# shellcheck source=scripts/dev/project-config.sh
+. "$_self_dir/project-config.sh" >/dev/null 2>&1 || true
+VCVARS_VER="${SMATCHET_VCVARS_VER:-${PC_BUILD_MSVC_TOOLSET_PIN:-}}"
+# Python-free fallback: a build must not hard-fail just because project-config.sh's
+# python is missing/broken (e.g. a Windows Store python stub). Grep the scalar
+# straight out of project.config.json.
+if [ -z "$VCVARS_VER" ]; then
+    _cfg="$_self_dir/../../project.config.json"
+    if [ -f "$_cfg" ]; then
+        VCVARS_VER="$(grep -oE '"msvc_toolset_pin"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+"' "$_cfg" | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+    fi
+fi
+if [ -z "$VCVARS_VER" ]; then
+    echo "with-msvc-env: no MSVC toolset version resolved." >&2
+    echo "  Set \$SMATCHET_VCVARS_VER or build.msvc_toolset_pin in project.config.json." >&2
+    exit 2
+fi
+
 # vswhere.exe ships with every VS 2017+ install at a stable path. Use it to
 # discover the install path without hard-coding edition / version globs.
 VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
@@ -40,20 +71,47 @@ if [ ! -x "$VSWHERE" ]; then
     exit 2
 fi
 
-# `-latest -products *` covers BuildTools + IDE editions. `-requires
+# `-products *` covers BuildTools + IDE editions. `-requires
 # Microsoft.VisualStudio.Component.VC.Tools.x86.x64` filters out installs that
 # lack the VC toolchain (e.g. a VS instance with only the "ASP.NET and web
-# development" workload) — without the filter, vswhere happily returns such
-# an install and the resulting `vcvars64.bat` lookup fails further downstream
-# with a confusing "file not found" instead of the clear early-exit here.
+# development" workload). We deliberately do NOT pass `-latest`: on a box with
+# VS2022 Community (carrying the pinned 14.38 toolset) plus a newer VS
+# BuildTools (14.50 only), `-latest` returns the BuildTools install, whose
+# vcvars loads 14.50 STL headers and breaks the cached 14.38 cl.exe (STL1001).
+# Instead, enumerate every VC-tools install and pick the first that actually
+# ships the pinned toolset under VC\Tools\MSVC\<ver>* (the on-disk dir is the
+# full 14.38.xxxxx; vcvars accepts the 2-component 14.38 form).
 # -property installationPath returns the absolute install dir (e.g.
 # "C:\Program Files\Microsoft Visual Studio\2022\Community").
-VS_INSTALL="$("$VSWHERE" -latest -products '*' \
+VS_INSTALL=""
+while IFS= read -r _cand; do
+    if [ -z "$_cand" ]; then continue; fi
+    # Convert the Windows install path to a bash path for the [ -d ] glob test.
+    _cand_bash="${_cand//\\//}"
+    case "$_cand_bash" in
+        [A-Za-z]:/*)
+            _d="$(printf '%s' "${_cand_bash:0:1}" | tr 'A-Z' 'a-z')"
+            _cand_bash="/$_d${_cand_bash:2}"
+            ;;
+    esac
+    for _td in "$_cand_bash"/VC/Tools/MSVC/"$VCVARS_VER"*; do
+        if [ -d "$_td" ]; then
+            VS_INSTALL="$_cand"
+            break
+        fi
+    done
+    if [ -n "$VS_INSTALL" ]; then break; fi
+done < <("$VSWHERE" -products '*' \
     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
-    -property installationPath 2>/dev/null | tr -d '\r')"
+    -property installationPath 2>/dev/null | tr -d '\r')
+
 if [ -z "$VS_INSTALL" ]; then
-    echo "with-msvc-env: no Visual Studio install with VC tools detected by vswhere.exe" >&2
-    echo "  (install requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64)" >&2
+    echo "with-msvc-env: no Visual Studio install ships MSVC toolset $VCVARS_VER" >&2
+    echo "  Installs with VC tools (vswhere -products *):" >&2
+    "$VSWHERE" -products '*' \
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
+        -property installationPath 2>/dev/null | tr -d '\r' | sed 's/^/    /' >&2
+    echo "  Install MSVC v$VCVARS_VER build tools, or set \$SMATCHET_VCVARS_VER to an installed toolset." >&2
     exit 2
 fi
 
@@ -72,12 +130,15 @@ if [ ! -f "$VCVARS_BASH" ]; then
     exit 2
 fi
 
+# Announce the resolved selection (stderr — never pollutes stdout pass-through).
+echo "with-msvc-env: $VS_INSTALL (MSVC toolset $VCVARS_VER)" >&2
+
 # Wrap the cmd.exe vcvars64 call in PowerShell. PowerShell handles the
 # quote / path escaping cleanly. Direct `cmd.exe //c "..."` from Git Bash is
 # mangled by MSYS path-conversion in non-obvious ways (the `//` becomes `/`
 # and embedded backslashes in paths can collide with bash escape rules).
 # Tested on Git Bash 2.x + VS 2022 / 2025 + PowerShell 5.1 + pwsh 7.x.
-PS_CMD="cmd.exe /c 'call \"$VCVARS_WIN\" >nul 2>&1 && set'"
+PS_CMD="cmd.exe /c 'call \"$VCVARS_WIN\" -vcvars_ver=$VCVARS_VER >nul 2>&1 && set'"
 
 # Import VS-relevant vars into this bash process. The while loop avoids awk
 # regex on backslash-heavy paths.

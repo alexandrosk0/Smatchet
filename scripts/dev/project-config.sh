@@ -22,9 +22,20 @@ if [ ! -f "$PC_CONFIG_FILE" ]; then
   return 1 2>/dev/null || exit 1
 fi
 
-_pc_python="$(command -v python3 || command -v python || true)"
+# Pick a python that actually RUNS. On Windows, `python3` (and sometimes
+# `python`) can resolve to a non-functional Microsoft Store execution-alias stub
+# that prints "Python was not found" and exits nonzero instead of running — so
+# probe `--version` and require success before accepting a candidate, rather
+# than trusting the first name `command -v` happens to find.
+_pc_python=""
+for _pc_cand in python3 python py; do
+  if command -v "$_pc_cand" >/dev/null 2>&1 && "$_pc_cand" --version >/dev/null 2>&1; then
+    _pc_python="$_pc_cand"
+    break
+  fi
+done
 if [ -z "$_pc_python" ]; then
-  echo "project-config.sh: python not found" >&2
+  echo "project-config.sh: no working python found (tried python3, python, py)" >&2
   return 1 2>/dev/null || exit 1
 fi
 
@@ -65,6 +76,7 @@ b = c.get("build", {})
 emit("BUILD_PRESETS", b.get("presets", []))
 emit("BUILD_TARGETS", b.get("targets", []))
 emit("BUILD_EXE_PATH", b.get("exe_path", ""))
+emit("BUILD_MSVC_TOOLSET_PIN", b.get("msvc_toolset_pin", ""))
 
 pf = c.get("perf", {})
 emit("PERF_BUDGET_MS", pf.get("frame_budget_ms", ""))
