@@ -1,13 +1,11 @@
 // AiModelSignature — pure helper for the F2 "model change auto-clears chat
 // history" rule. The controller caches the previous turn's signature ("provider|model")
 // and asks this helper whether the freshly resolved signature implies a clear.
-//
 // Rules encoded here (all unit-tested in tests/Core/AiModelSignature.test.cpp):
 //   * Empty previous signature -> never clear (first turn, fresh session).
 //   * Identical new signature -> never clear.
 //   * Different provider or different model -> clear.
 //   * Reasoning effort never enters the signature -> effort-only changes never clear.
-//
 // Plain string concatenation suffices for the signature; the chosen separator
 // ("|") is not a legal character in any AiProvider key (lowercase ASCII) or any
 // published model identifier (alphanumerics + `-` + `.` + `_`).

@@ -4,13 +4,11 @@
 #include "Config/ConfigManager.h" // TrackerConfig, AnnotateAnalysisConfig
 
 /// Single-thread coalescing config-save worker.
-///
 /// Replaces the per-save detached-thread shims (`ScheduleConfigSaveDetached` /
 /// `ScheduleAnnotateConfigSaveDetached`) with one background thread that serializes + coalesces
 /// config writes: the latest snapshot **per config-kind** wins (intermediate edits are dropped),
 /// and each write goes through the atomic-RMW `ConfigManager::Save` / `SaveAnnotateAnalysis`
 /// (serialized by `GetConfigRmwMutexRef`, so it can never lose-update against another writer).
-///
 /// Lifecycle: `Start()` once at `AppController` init; `Stop()` (flush-pending-then-join, bounded)
 /// before the `ConfigManager` statics tear down at process exit. After `Stop()`, `Enqueue*` falls
 /// back to a synchronous save so a write is never lost. No `MainThreadDispatcher` — config saves

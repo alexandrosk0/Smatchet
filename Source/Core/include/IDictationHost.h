@@ -6,14 +6,12 @@
 // dictation insertion targets (focused InputText, AI Assistant chat box, grid
 // long-text editor, Command Palette) can receive transcribed text without
 // per-call-site ifdefs.
-//
 // Two concrete implementations live under Source/Core/src/ and are swapped via
 // CMake (mirror of the AppController_LuaBindings.cpp / AppController_LuaStubs.cpp
 // split):
 //   - DictationInsertionRouter_Whisper.cpp — real registry; tracks buffers
 //     and (in future phases) splices transcribed text at cursor.
 //   - DictationInsertionRouter_Stubs.cpp   — same symbols, all no-ops.
-//
 // IsRecording() returns false in stub mode and in router-default state; once
 // the audio-capture path lands (Phase B+) the real impl reflects live state.
 

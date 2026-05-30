@@ -13,14 +13,12 @@
 constexpr std::size_t kAiNdjsonParserMaxBufferBytes = 4u * 1024u * 1024u; // 4 MiB
 
 /// Stateful newline-delimited JSON (NDJSON) byte-stream parser used by `OllamaClient`.
-///
 /// Sibling to `AiSseParser`. Ollama's native `/api/chat` endpoint streams one
 /// complete JSON object per `\n`-terminated line (no `data:` prefix, no blank-line
 /// frame separator). libcurl chunks the byte stream on TCP boundaries, never on
 /// line boundaries, so Feed() may be called with arbitrarily-split bytes. The
 /// parser buffers until a complete line is available, parses it as JSON, then
 /// invokes onLine with the parsed object.
-///
 /// Invalid-JSON lines surface via onError with the raw line so callers can
 /// `LOG_WARN` without breaking the stream — subsequent valid lines still parse.
 /// Blank lines (lone `\n` or `\r\n`) are silently skipped (neither callback).

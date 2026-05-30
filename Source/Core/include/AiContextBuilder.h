@@ -13,14 +13,12 @@
 struct ViewDefinition;
 
 /// Snapshot-builder for the 5 auto-context blocks injected into the AI system prompt.
-///
 /// Threading: **UI-thread only**. Reads from `AppController::GetActiveTicketsSnapshot()`,
 /// `SpreadsheetState::RectSel.Rows`, `SpreadsheetState::ActiveIssueId`, the cached sort
 /// order, and the active view definition. These all live on UI-owned state. The
 /// builder takes a const snapshot once and hands the resulting `std::vector<AiContextBlock>`
 /// to the worker via the controller's queue, which is the threading-safe hand-off
 /// (Phase B's existing `Submit` contract).
-///
 /// Per-block enable flags come from the 5 `cfg.AssistantContextBlock*` toggles already
 /// shipped in Phase A'. The builder skips disabled blocks (empty body) but still emits
 /// the entry so the caller can inspect by `AiContextBlockKind` if needed.
@@ -83,11 +81,9 @@ std::vector<AiContextBlock> BuildAll(const Inputs& in);
 
 /// Convenience: BuildAll + concatenate enabled non-empty bodies with section separators
 /// into one string. Empty if no block has content. Format per block:
-///
 ///     <smatchet_context block="<name>">
 ///     <body>
 ///     </smatchet_context>
-///
 /// Sections are joined with single `\n` between closing/opening tags.
 std::string MergeEnabled(const Inputs& in);
 

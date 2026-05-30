@@ -1,9 +1,7 @@
 // AiPrefsValidator — pure-logic validation of the Assistant Preferences tab.
-//
 // Two severities:
 //   - Errors block save and surface as a red banner.
 //   - Warnings save through and surface as a yellow banner.
-//
 // Inspects only the `Ai*` fields on `TrackerConfig` plus the active provider's
 // model catalog (via AiModelCatalog). No network. No UI dependency. Lives in
 // the doctest rig.

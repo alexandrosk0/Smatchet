@@ -16,7 +16,6 @@
 //     SMATCHET_WITH_LUA_AUTOMATION macro.
 #include "AppController_LuaTypes.h"
 
-// 3. THE REST OF YOUR INCLUDES
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -191,7 +190,6 @@ class AppController
     /// ~AppController BEFORE the dispatcher's BeginShutdown so in-flight POST
     /// callbacks observe a live dispatcher. Best-effort — bind failure logs WARN +
     /// continues (daemon falls back to Windows native toast).
-    ///
     /// Full SmatchetMergeWatchNotifyServer header included below (not forward-
     /// declared) so unique_ptr's destructor instantiation sees the complete
     /// type in every TU that includes AppController.h (some consumers stack-
@@ -910,7 +908,6 @@ class AppController
     // stores `sol::protected_function`. C++ destroys members in reverse declaration order, so
     // the containers below tear down first (their Lua-handle members touch a still-alive
     // state), then `lua` last. Inverting this order is a UAF — see plan §Shutdown ordering.
-    //
     // Threading invariant: `lua` is driven EXCLUSIVELY by the UI thread (DrawLuaWindows,
     // cell-providers, ExecuteLuaConsoleSnippet). Off-UI-thread Lua execution (MCP run_lua /
     // registered-tool handlers on httplib workers, the automation worker) MUST run on a fresh
@@ -1021,7 +1018,6 @@ class AppController
     /// when the producer completes or in `JoinBackgroundTasks` before
     /// destruction — never detached. Post results back to the UI thread via
     /// `mainThreadDispatcher.PostToMainThread` inside `task`.
-    ///
     /// Public so non-member callers (grid field-edit pipeline, etc.) can
     /// dispatch HTTP / SQLite work off the UI thread without re-implementing
     /// thread-bookkeeping.
