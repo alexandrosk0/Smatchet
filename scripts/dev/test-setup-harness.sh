@@ -111,10 +111,12 @@ done
 # -------------------------------------------------------------------- Test 6
 note "Test 6 — V7 doc-consistency: dependent agents mention skill-form availability"
 for agent in perf-detective spike-hunter debug-detective; do
-    if agent_path="$(resolve_agent_md "$agent")" && grep -q "Helper-form preference" "$agent_path"; then
+    if ! agent_path="$(resolve_agent_md "$agent")"; then
+        nope "agents/{core,project}/$agent.md (or legacy agents/$agent.md) missing"
+    elif grep -q "Helper-form preference" "$agent_path"; then
         ok "$agent_path mentions skill-form preference"
     else
-        nope "$agent.md missing Helper-form preference block"
+        nope "$agent_path missing Helper-form preference block"
     fi
 done
 

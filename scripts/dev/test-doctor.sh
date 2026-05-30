@@ -104,7 +104,15 @@ _filtered_parts=()
 for _p in "${_path_parts[@]}"; do
     _drop=0
     for _d in "${_strip_dirs[@]}"; do
-        [ "$_p" = "$_d" ] && _drop=1 && break
+        # Normalize trailing slashes (both seps) and case (Windows PATH is
+        # case-insensitive) before comparing, so neither bypasses stripping.
+        _pn="${_p%/}"
+        _dn="${_d%/}"
+        if [ "$PATH_SEP" = ';' ]; then
+            _pn="${_pn,,}"
+            _dn="${_dn,,}"
+        fi
+        [ "$_pn" = "$_dn" ] && _drop=1 && break
     done
     [ "$_drop" -eq 0 ] && _filtered_parts+=("$_p")
 done

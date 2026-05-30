@@ -74,8 +74,8 @@ for skill_dir in agents/_shared/skills/*/; do
         echo "PASS: $name (skill ↔ agent both present: $agent_md)"
         PASS=$((PASS+1))
     else
-        echo "FAIL: $name — SKILL.md ships at ${skill_md} but no agents/{core,project}/${name}.md exists"
-        echo "  Either add agents/core/${name}.md OR add '$name' to SKILL_ONLY_HELPERS in this script"
+        echo "FAIL: $name — SKILL.md ships at ${skill_md} but no canonical agent file exists (agents/core|agents/project|legacy agents/${name}.md)"
+        echo "  Either add agents/core/${name}.md or agents/project/${name}.md, OR add '$name' to SKILL_ONLY_HELPERS in this script"
         FAIL=$((FAIL+1))
     fi
 done
