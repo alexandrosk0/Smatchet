@@ -1,13 +1,11 @@
 #pragma once
 
 // PR 4b: shared "Project" combobox used by the new-issue draft picker and the bulk-import modal.
-//
 // Hybrid surface (OQ-2):
 //   - Recently used: read directly from FieldCatalogCache::ListCachedProjects(), filtered to the
 //     current backend+endpoint, ordered by lastUsedUnix desc.
 //   - All projects: collapsible. First expand fires ITrackerConnectivity::ListProjects() on a detached
 //     thread; subsequent renders use the cached vector on the picker state.
-//
 // Pure UI helper: no global state, no allocations beyond what the search/render naturally needs.
 // Renders inside the current ImGui scope — caller is responsible for ImGui::SetNextItemWidth
 // upstream if a specific width is desired.

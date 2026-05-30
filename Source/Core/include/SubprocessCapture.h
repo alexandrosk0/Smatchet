@@ -4,7 +4,6 @@
 // P4Annotate.cpp's RunProcessCapture pair (Win32 + POSIX) into a general
 // helper so other call sites can reuse the same stdout/stderr capture,
 // byte caps, timeout, and cancel-token behaviour.
-//
 // Threading: Run() is **synchronous** — it blocks the calling thread
 // until the child exits, the timeout fires, or the cancel token flips.
 // Callers reachable from an ImGui frame MUST wrap this in

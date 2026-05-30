@@ -5,7 +5,6 @@
 // under tests/ can exercise the boundary without dragging the full
 // LocalCacheManager.h / SQLite cascade. See docs/self-improvement/AGENT_SELF_IMPROVEMENT.md
 // entry "2026-05-15 · test-rig · OfflineCreateQueue::kMaxReplayAttempts".
-//
 // Source of truth for the replay-attempt cap. LocalCacheManager.h's
 // OfflineCreateQueue::kMaxReplayAttempts / OfflineFieldEditQueue::kMaxReplayAttempts
 // are kept as aliases to this constant so existing call sites continue to
@@ -21,7 +20,6 @@ constexpr int kMaxReplayAttempts = 5;
 /// Decision boundary for the offline-replay loop: returns true when an entry
 /// that has reached `currentAttempts` attempts has exhausted its budget and
 /// must be archived instead of retried.
-///
 /// Called in two shapes inside OfflineQueueService::TickOfflineFieldEdits /
 /// TickOfflineCreates:
 ///   * Pre-attempt gate — `ShouldArchive(row.Attempts)` short-circuits replay

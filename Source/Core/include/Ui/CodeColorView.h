@@ -2,7 +2,6 @@
 #define SMATCHET_CODE_COLOR_VIEW_H
 
 // CodeColorView — read-only syntax-colored code rendering for Smatchet.
-//
 // Per the slice-1 deliverable of docs/plans/active/code-syntax-coloring-and-tooltips.md.
 // Extends Smatchet's existing C++-only `DrawColoredCppText` (CppSyntaxHighlight.h)
 // to a polymorphic multi-language API. Vendored LDs (CPlusPlus / C / Lua / Glsl /
@@ -10,12 +9,10 @@
 // ImGuiColorTextEdit/TextEditor.h; Python / Bash / Json are hand-rolled in
 // CodeColorView.cpp (same shape as the in-tree Markdown() factory at
 // TextEditor.cpp:3630).
-//
 // Lifecycle: tokenize-once cached by (content_hash, lang) — first render parses,
 // subsequent frames replay. Cache shape mirrors the existing s_messageHeightCache
 // in SmatchetAiAssistantUi.cpp. Slice 3 will extend the key with theme_revision
 // so theme switches invalidate the cache cleanly.
-//
 // This header is intentionally ImGui-free in its public surface so pure-logic
 // doctests can include it without pulling ImGui. The .cpp implementation
 // includes ImGui + TextEditor.h.

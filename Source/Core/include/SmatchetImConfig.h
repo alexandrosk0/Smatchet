@@ -1,10 +1,8 @@
 // SmatchetImConfig.h — single source of ImGui compile-time configuration for Smatchet.
-//
 // Wired in via `IMGUI_USER_CONFIG="SmatchetImConfig.h"` on every target that
 // links ImGuiLib / ImGuiLib_DX12 / SmatchetImGuiTestEngine. When this define is
 // set, `imgui.h` includes this header in place of the default `imconfig.h`,
 // guaranteeing every TU sees the same ImWchar typedef + test-engine hook macros.
-//
 // Hard rule: anything that changes the ImGui ABI (ImWchar size, test-engine
 // hooks, custom callbacks) belongs here, not as ad-hoc PRIVATE/PUBLIC compile
 // definitions sprinkled across targets — that path silently desyncs.
@@ -19,7 +17,6 @@
 // ImGui Test Engine bucket-E hookup. Only enabled when the CMake gate
 // SMATCHET_BUILD_UI_TESTS is ON. Default builds (ninja-iter-msvc, ninja-debug-msvc,
 // ninja-publish-msvc) leave this OFF — production exe carries zero test surface.
-//
 // We replicate the relevant fragment of imgui_test_engine/imgui_te_imconfig.h
 // instead of `#include`-ing it: pinning ourselves to a specific subset lets us
 // disable the capture (PNG/ffmpeg) path which we do not use, and keeps the

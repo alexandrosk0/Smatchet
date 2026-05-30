@@ -10,7 +10,6 @@ struct ViewDefinition;
 /// `AppController::GetAiAssistantController`. Always called every frame from
 /// `SmatchetUI::Draw` — the function itself early-returns when `d.assistantPanelOpen`
 /// is false (the View menu toggles that flag).
-///
 /// `activeView` is the currently-active `ViewDefinition*` from `SmatchetUI::ViewState`
 /// (may be null). Phase C uses it to populate the ActiveView auto-context block; the
 /// pointer is read-only and only valid for the duration of the call.

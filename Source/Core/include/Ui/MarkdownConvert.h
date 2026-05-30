@@ -17,15 +17,12 @@ unsigned Md4cParserFlags() noexcept;
 
 /// Parse Markdown into Atlassian Document Format JSON.
 /// Top-level shape: `{type:"doc", version:1, content:[...]}`.
-///
 /// **Markdown → ADF:** paragraph, heading (1-6), bulletList, orderedList, listItem (incl.
 /// task checkbox prefix in text), codeBlock, blockquote, rule, hardBreak, table
 /// (tableRow / tableHeader / tableCell), inline images as `mediaInline` (external URL).
-///
 /// **ADF → Markdown:** mirrors the above; also emits mentions, `inlineCard` (as URL text),
 /// `media` / `mediaInline` / `mediaSingle`, and tables as pipe Markdown. Nodes with no
 /// Markdown equivalent are listed in `outDroppedNodeTypes` when using `AdfToMarkdown`.
-///
 /// Raw HTML in Markdown is not parsed as HTML (md4c `NOHTML`); it becomes plain text.
 nlohmann::json MarkdownToAdf(const std::string& md);
 
@@ -43,7 +40,6 @@ std::string MarkdownToHtml(const std::string& md);
 
 /// Best-effort HTML-subset to Markdown conversion. Targets the tag set Plane emits in
 /// `description_html` (and the same set MarkdownToHtml produces).
-///
 /// `outFellBack` (if non-null) is set to true when the input contains tags or attributes
 /// outside the recognized allowlist — the caller should switch the modal to raw-mode and
 /// preserve the original HTML verbatim instead of trusting the lossy conversion.
