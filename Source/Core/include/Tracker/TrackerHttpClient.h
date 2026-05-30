@@ -4,7 +4,6 @@
 // and supports retry on transient failures (Transport / RateLimited / ServerError) with
 // exponential backoff. Built on top of the existing TrackerXxxLogged helpers in
 // TrackerHttpUtils so all calls continue to go through NetworkUsageTracker + body-trace logging.
-//
 // Migration plan (BACKLOG_CODE_REVIEW.md §2.3 design proposal #1 / §7 item 15):
 //   - Phase 2A (this PR): introduce the helper + value type. Migrate PlaneClient::ProbeReachability
 //     as the first call site (also fixes the §2.1 P1: raw cpr::Get bypassing logging + 4xx-
@@ -44,10 +43,8 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response);
 /// backing off `kTrackerHttpBaseRetryDelayMs * 2^(attempt-1)` (capped at
 /// `kTrackerHttpMaxRetryDelayMs`) between attempts when the result is `IsRetryable()`
 /// (Transport / RateLimited / ServerError). Non-retryable kinds return on the first attempt.
-///
 /// `cancelled` (optional) is polled before each attempt and after each backoff; when it returns
 /// true, the loop exits with a `Cancelled` TrackerError on whatever the latest response was.
-TrackerHttpResult TrackerHttpRequestWithRetry(
-    const std::function<TrackerHttpResult()>& requestFn,
-    int maxAttempts = kTrackerHttpDefaultMaxAttempts,
-    const std::function<bool()>& cancelled = nullptr);
+TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpResult()>& requestFn,
+                                              int maxAttempts = kTrackerHttpDefaultMaxAttempts,
+                                              const std::function<bool()>& cancelled = nullptr);

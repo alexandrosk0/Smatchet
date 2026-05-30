@@ -4,11 +4,9 @@
 // §2.3 / §6.2 / §7 item 15 to replace the ~80+ `bool foo(..., std::string& outError)` signatures
 // scattered across `ITrackerBackend`, `JiraClient`, `PlaneClient`, `LocalCacheManager`,
 // `IssueCreatePipeline`, `TextMerge`, etc.
-//
 // Phase 1 (this PR): introduce the type + helpers. No signature migrated yet. The intent is
 // that new APIs use TrackerError; existing APIs keep their `bool + string` shape until
 // migrated in follow-up PRs (one subsystem at a time, mechanical).
-//
 // Companion macro `TRACKER_ERR_*` factories sit alongside the type so callers can construct
 // errors at the call site without naming the enum twice.
 

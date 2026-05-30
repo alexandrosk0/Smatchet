@@ -291,20 +291,82 @@ def strip_comments(text):
     return "".join(out)
 
 
+def code_tokens(text):
+    """Literal-aware C++ token list (whitespace + comments dropped).
+
+    Token-equivalence is what the safety gate needs: removing a comment may let clang-format
+    reflow code across lines AND change whitespace around punctuation (`(\\n const` -> `(const`)
+    without changing the token stream. Whitespace-collapse can't see that; a token list can.
+    Rules: a maximal [A-Za-z0-9_] run is one token (so `int x` stays two tokens, never `intx`);
+    string/char/raw-string literals are captured whole; every other non-space char is its own
+    token; comments are skipped (and thus separate adjacent identifier runs).
+    """
+    toks = []
+    cur = []
+    i, n = 0, len(text)
+
+    def flush():
+        if cur:
+            toks.append("".join(cur))
+            del cur[:]
+
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if c.isspace():
+            flush()
+            i += 1
+            continue
+        if c == "/" and nxt == "/":
+            flush()
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and nxt == "*":
+            flush()
+            i += 2
+            while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        if c == '"' and _is_raw_string_start(text, i):
+            flush()
+            j = text.index("(", i)
+            delim = ")" + text[i + 1:j] + '"'
+            end = text.find(delim, j)
+            end = (end + len(delim)) if end != -1 else n
+            toks.append(text[i:end])
+            i = end
+            continue
+        if c == '"' or c == "'":
+            flush()
+            q = c
+            j = i + 1
+            while j < n and text[j] != q:
+                j += 2 if text[j] == "\\" else 1
+            toks.append(text[i:min(j + 1, n)])
+            i = j + 1
+            continue
+        if c.isalnum() or c == "_":
+            cur.append(c)
+            i += 1
+            continue
+        flush()
+        toks.append(c)
+        i += 1
+    flush()
+    return toks
+
+
 def code_token_residue(text):
     """strip_comments + collapse all whitespace runs to single spaces + drop blank lines.
 
     The byte-identical comparison key for assert-code-unchanged: only comment/whitespace
     changes leave this residue unchanged.
     """
-    stripped = strip_comments(text)
-    # collapse each line's whitespace; drop now-empty lines.
-    lines = []
-    for ln in stripped.split("\n"):
-        collapsed = " ".join(ln.split())
-        if collapsed:
-            lines.append(collapsed)
-    return "\n".join(lines)
+    # Space-joined token list: independent of all inter-token whitespace and line grouping, so
+    # comment removal + clang-format reflow compares equal, while any real token change differs.
+    return " ".join(code_tokens(text))
 
 
 if __name__ == "__main__":
@@ -312,7 +374,10 @@ if __name__ == "__main__":
     # `comment_lib.py --residue` : read source on stdin, print its code-token residue.
     # Used by assert-code-unchanged.sh to compare base vs head with comments+whitespace removed.
     if len(_sys.argv) > 1 and _sys.argv[1] == "--residue":
-        _sys.stdout.write(code_token_residue(_sys.stdin.read()))
+        # Read + write as UTF-8 bytes explicitly: source files (and this residue) can contain
+        # non-ASCII, and the platform default stdio encoding (cp1252 on Windows) would crash.
+        data = _sys.stdin.buffer.read().decode("utf-8", errors="replace")
+        _sys.stdout.buffer.write(code_token_residue(data).encode("utf-8"))
     else:
         _sys.stderr.write("usage: comment_lib.py --residue   (reads stdin)\n")
         _sys.exit(2)

@@ -240,7 +240,18 @@ def run_diff_mode(ref):
     return 1 if violations else 0
 
 
+def _utf8_stdio():
+    # Source files (and reports/diffs echoing their comments) contain non-ASCII; force UTF-8 on
+    # stdout/stderr so the platform default (cp1252 on Windows) can't crash with UnicodeEncodeError.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main():
+    _utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", metavar="PATH")
     ap.add_argument("--diff", metavar="REF")

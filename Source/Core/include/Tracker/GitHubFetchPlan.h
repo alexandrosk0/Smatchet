@@ -2,11 +2,9 @@
 #define SMATCHET_GITHUB_FETCH_PLAN_H
 
 // PR4 follow-up of docs/plans/shipped/github-tracker-backend.md.
-//
 // Pure helper deciding which GitHub REST endpoint to hit (cross-repo
 // /search/issues vs repo-scoped /repos/{o}/{r}/issues) and what `q=` to send,
 // given the user's Preferences (Owner, Repo) + the JQL-translator output.
-//
 // Lives in its own TU so the bucket-A test rig can link it without dragging
 // in cpr / LocalCacheManager (the full GitHubIssueSearch.cpp pulls HTTP).
 

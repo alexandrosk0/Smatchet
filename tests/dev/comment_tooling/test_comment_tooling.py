@@ -41,18 +41,24 @@ check(cl.classify_line_kinds('auto s = "a//b/*c*/"; // tail\n')[0] == "trailing"
 check('"a//b/*c*/"' in cl.code_token_residue('auto s = "a//b/*c*/"; // tail\n'),
       "string body with slashes survives residue")
 check(cl.code_token_residue('auto r = R"(x // y /* z */)"; int n;\n') ==
-      'auto r = R"(x // y /* z */)"; int n;',
-      "raw-string body with // and /* survives residue intact")
+      'auto r = R "(x // y /* z */)" ; int n ;',
+      "raw-string body (// and /* inside) is captured as one literal token, never split into comments")
+# the load-bearing property: a raw string is tokenized identically every time, so base==head
+check(cl.code_tokens('R"(a // b)" x') == cl.code_tokens('R"(a // b)"   x'),
+      "raw-string tokenization is whitespace-stable (consistent base vs head)")
 check(cl.classify_line_kinds("char c = '/'; // x\n")[0] == "trailing",
       "char literal '/' is code")
 check(cl.classify_line_kinds("/* a\n * b\n */\nint c;\n") == ["full_comment", "full_comment", "full_comment", "code"],
       "multi-line block comment lines are full_comment; code line is code")
-check(cl.code_token_residue("// whole line\nint x;\n") == "int x;",
-      "full-line comment drops from residue; code remains")
-check(cl.code_token_residue("int a/**/b;\n") == "int a b;",
-      "block comment between tokens becomes a separator (a/**/b -> 'a b', never 'ab')")
-check(cl.code_token_residue("foo(); /* c */\n") == "foo();",
-      "block comment where space already exists collapses cleanly (no spurious diff)")
+check(cl.code_token_residue("// whole line\nint x;\n") == "int x ;",
+      "full-line comment drops from residue; code remains (tokenized)")
+check(cl.code_token_residue("int a/**/b;\n") == "int a b ;",
+      "block comment between tokens separates them (a/**/b -> ['a','b'], never 'ab')")
+# token-equivalence across clang-format reflow: '(' newline 'const'  ==  '(const'
+check(cl.code_token_residue("f(\n    const int x);\n") == cl.code_token_residue("f(const int x);\n"),
+      "reflow around punctuation is token-equivalent ('(\\n const' == '(const')")
+check(cl.code_token_residue("int x;\n") != cl.code_token_residue("int y;\n"),
+      "a real token change (x -> y) still differs")
 # the regression that broke the first build: a // line must not eat following lines
 check(cl.classify_line_kinds("// c1\nint a;\n// c2\nint b;\n") ==
       ["full_comment", "code", "full_comment", "code"],

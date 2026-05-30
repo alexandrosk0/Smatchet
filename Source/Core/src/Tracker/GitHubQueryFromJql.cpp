@@ -244,7 +244,6 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
     // Token-aware ORDER BY clause stripping. JQL allows `ORDER BY <field> <dir>`
     // at the end of the query; GitHub `/search/issues` uses a separate `&sort=`
     // parameter so we drop the clause + emit a warning.
-    //
     // CR finding on PR #387: the prior pre-tokenize `lower.find("order by")`
     // was context-blind and corrupted any quoted string containing the
     // substring (e.g. `text ~ "work order by priority"`). Walking the token

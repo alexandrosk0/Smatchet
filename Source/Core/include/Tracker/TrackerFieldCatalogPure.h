@@ -3,7 +3,6 @@
 // Pure JSON / vector helpers extracted from TrackerFieldCatalog.cpp.
 // Zero ImGui / cpr / SQLite / JiraClient / ITrackerBackend / ConfigManager
 // includes — safe to link from the doctest rig under tests/.
-//
 // Production callers (`Source/Core/src/TrackerFieldCatalog.cpp`) keep their
 // JiraClient.h include for the network-facing catalog-fetch code and route
 // component-merge / sort through these free functions.
@@ -57,7 +56,6 @@ void SortComponentCatalog(std::vector<TrackerField>& fields, std::vector<Tracker
 ///    the project has its own scoped variant (e.g. Story id=10004) — see
 ///    `docs/...` and the BLOOP-103 ship report in the PR that introduced
 ///    this helper.
-///
 /// `outAllowedValues` mirrors the order of `outOptions` after dedup.
 void BuildDedupedIssueTypeOptions(const nlohmann::json& issueTypeArray, std::vector<std::string>& outAllowedValues,
                                   std::vector<TrackerFieldOption>& outOptions);

@@ -4,7 +4,6 @@
 // PR12 of docs/plans/shipped/github-tracker-backend.md — pure-logic JSON → CachedTicket
 // mapping helpers extracted out of GitHubIssueSearch.cpp (which pulls cpr) so
 // the doctest rig can exercise them without HTTP.
-//
 // Two surfaces:
 //   - MapIssueOrPullRequestJsonToCachedTicket: maps a single `/issues` or
 //     `/search/issues` item to a CachedTicket. Detects PR shape via the
@@ -62,7 +61,6 @@ void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json&
 /// `MapIssueOrPullRequestJsonToCachedTicket` consumes. Keeps the existing
 /// mapper pure-logic-tested instead of duplicating its branching for camelCase
 /// + nested `author{login}` / `labels{nodes[]}`.
-///
 /// Inputs use GraphQL conventions:
 ///   - `__typename` is "Issue" or "PullRequest" (drives PR detection)
 ///   - `number`, `title`, `state` ("OPEN"/"CLOSED"/"MERGED"), `body`,
@@ -71,7 +69,6 @@ void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json&
 ///     `milestone.title`
 ///   - PR-only: `headRefName`, `baseRefName`, `mergeable`
 ///     ("MERGEABLE"/"CONFLICTING"/"UNKNOWN"), `isDraft`, `mergedAt`
-///
 /// Output shape matches `/repos/{o}/{r}/issues` items: top-level `number`,
 /// `title`, `state` ("open"/"closed"), `body`, `created_at`, `updated_at`,
 /// `repository_url`, `user{login}`, `assignee{login}`, `labels[]{name}`,
