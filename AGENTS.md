@@ -81,7 +81,7 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 
 **Tiered enforcement** (high-integrity C++; plan [`docs/plans/active/high-integrity-cpp-enforcement.md`](docs/plans/active/high-integrity-cpp-enforcement.md)): `scripts/dev/test-lint-rules.sh` gates the **strict zone** on a delta basis — every NEW `(rule, file, snippet)` vs `origin/develop` fails CI; existing violators are grandfathered (snapshot: [`docs/high-integrity/baseline.md`](docs/high-integrity/baseline.md)). Delta-gated rules: `no-printf-stderr`, `no-raw-new`, `define-imgui`, `deviation-overdue`. `narrowing-conversions` (clang-tidy) is **opt-in / catalogue-only** — excluded from `--diff` (clang-tidy can't parse the MSVC compile-DB); run it with `SMATCHET_LINT_NARROWING=1` + a clang DB. Zones (the scanner asserts this list matches its own copy via `--selftest`):
 
-- **strict** (any violation fails): `Source/Core/src/Tracker/`, `Source/Core/src/Sync/`, `Source/Core/src/Persistence/`, `Source/Core/src/Config/`, `Source/Core/src/Commands/`, `Source/Plugins/Mcp/src/` (+ matching `Source/Core/include/` subdirs).
+- **strict** (any violation fails): `Source/Core/src/Tracker/`, `Source/Core/src/Sync/`, `Source/Core/src/Persistence/`, `Source/Core/src/Config/`, `Source/Core/src/Commands/`, `Source/Plugins/Mcp/` (+ matching `Source/Core/include/` subdirs).
 - **light** (not gated; existing inline exemptions apply): `Source/Core/src/Ui/`, `Source/Standalone/`.
 - **exempt** (not scanned): `ThirdParty/`, `build/`, non-C++ trees.
 

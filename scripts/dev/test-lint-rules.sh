@@ -5,7 +5,7 @@
 #
 # Zones (single source of truth = AGENTS.md § Tiered enforcement; the globs
 # below are asserted identical to AGENTS.md by --selftest):
-#   strict — Source/Core/src/{Tracker,Sync,Persistence,Config,Commands}, Source/Plugins/Mcp/src
+#   strict — Source/Core/src/{Tracker,Sync,Persistence,Config,Commands}, Source/Plugins/Mcp
 #            + matching include/ subdirs. Any rule violation here FAILS.
 #   light  — Source/Core/src/Ui, Source/Standalone. Not gated (existing inline
 #            exemption-comment vocabulary continues to apply).
@@ -66,7 +66,7 @@ STRICT_GLOBS=(
     "Source/Core/include/Persistence/"
     "Source/Core/include/Config/"
     "Source/Core/include/Commands/"
-    "Source/Plugins/Mcp/src/"
+    "Source/Plugins/Mcp/"
 )
 
 # zone_of <path> -> strict|light|exempt
@@ -269,7 +269,7 @@ compute_strict_triples() {
         # (rule, basename, hash) — path-independent — so a legacy-path match
         # cancels its new-path twin exactly.
         git ls-files \
-            'Source/Core/src/**' 'Source/Core/include/**' 'Source/Plugins/Mcp/src/**' \
+            'Source/Core/src/**' 'Source/Core/include/**' 'Source/Plugins/Mcp/**' \
             'Source_Core/src/**'  'Source_Core/include/**'  'Plugins/Mcp/src/**' \
             2>/dev/null \
         | grep -E '\.(cpp|h|hpp)$' || true

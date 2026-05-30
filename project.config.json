@@ -36,7 +36,7 @@
         "Source/Core/src/Persistence/",
         "Source/Core/src/Config/",
         "Source/Core/src/Commands/",
-        "Source/Plugins/Mcp/src/"
+        "Source/Plugins/Mcp/"
       ],
       "light": ["Source/Core/src/Ui/", "Source/Core/include/Ui/", "Source/Standalone/"],
       "exempt": ["ThirdParty", "build"]

@@ -158,7 +158,7 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/src/McpJsonRpcPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
@@ -307,7 +307,6 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit"
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp"
-    "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/src"
     "${CMAKE_SOURCE_DIR}/Source/Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"
 )
