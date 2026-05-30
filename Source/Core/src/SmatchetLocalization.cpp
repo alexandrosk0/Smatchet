@@ -204,7 +204,7 @@ const TranslationEntry kEntries[] = {
     {"prefs.time_estimates", "Time Estimates", u8"Estimations de temps"},
     {"prefs.work_log_templates", "Work Log Templates", u8"Modèles de journal de travail"},
     {"prefs.quick_comments", "Quick Comments", u8"Commentaires rapides"},
-    {"prefs.annotate_comments", "Annotate Comments", u8"Commentaires de annotate"},
+    {"prefs.annotate_comments", "Annotate Comments", u8"Commentaires d’annotation"},
     {"prefs.current_suggestions", "Current Suggestions:", u8"Suggestions actuelles :"},
     {"prefs.add_option", "Add Option", u8"Ajouter une option"},
     {"prefs.add_template", "Add Template", u8"Ajouter un modèle"},
