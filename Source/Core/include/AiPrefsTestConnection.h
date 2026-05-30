@@ -10,14 +10,12 @@ namespace AiPrefsTestConnection {
 
 // Kicks off the async Test-connection probe used by the Preferences > Assistant
 // tab + by bucket-E TU `ai_prefs_autosave_flow.test.cpp`.
-//
 // Lifted from the inline `runProbe` lambda that historically lived inside
 // `SmatchetPreferencesUi.cpp`'s `BeginTabItem("Assistant")`. The extraction
 // lets bucket-E tests drive the probe without traversing
 // `Preferences -> Assistant tab -> Test connection click`, which is not
 // reachable through the engine's `ItemClick` path in the current bucket-E
 // harness (PR #214 hot-lead).
-//
 // Behaviour, verbatim from the original runProbe:
 //   - Snapshots `d.cfg` field values by value (so concurrent UI edits during
 //     the probe don't corrupt the worker's view).
@@ -31,9 +29,7 @@ namespace AiPrefsTestConnection {
 //     `g_ui.*Test*` field (so the cancel-on-prefs-close branch in
 //     `SmatchetDrawPreferencesPanel` can clear state and have the late dispatch
 //     short-circuit).
-//
 // Threading: must be called from the UI thread.
-//
 // DRIFT WARNING: as long as `SmatchetPreferencesUi.cpp`'s `runProbe` lambda
 // remains inline (pending the follow-up PR after whisper-dictation-phase-f
 // merges), this function MUST stay in lock-step with that lambda's body.

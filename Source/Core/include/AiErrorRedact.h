@@ -1,10 +1,8 @@
 // AiErrorRedact.h — sanitise AI-provider HTTP error bodies before they reach
 // user-visible error surfaces (AiStreamError::Message, log lines).
-//
 // Provider 401/403 bodies have been observed echoing the Authorization header
 // verbatim, the request body, and org / project identifiers. Defense-in-depth
 // against that class of leak.
-//
 // Lives in a sibling TU (AiErrorRedact.cpp) — no cpr / cpp-httplib / SQLite
 // includes — so the doctest rig can link it without dragging the HTTP layer.
 // Instance of the Pure-helper TU-split recipe (AGENTS.md § Orchestrator

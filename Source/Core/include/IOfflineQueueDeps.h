@@ -2,18 +2,15 @@
 
 // IOfflineQueueDeps — interface bundle exposing every AppController-side dependency that
 // OfflineQueueService reaches into during replay, queue mutation, and audit wiring.
-//
 // Background: OfflineQueueService was extracted from AppController via `friend` access during
 // the item 12 migration (see OfflineQueueService.h header comment). This interface removes the
 // `friend` seam: AppController constructs `AppControllerDepsAdapter` (which implements this
 // interface) and hands it to `OfflineQueueService`. The service no longer holds an
 // `AppController&` reference and therefore no longer needs trusted-friendship access.
-//
 // Lifetime contract: the implementer (AppControllerDepsAdapter) is owned by AppController and
 // outlives the OfflineQueueService it backs. Methods are called from both the UI thread and
 // background tasks spawned via `LaunchBackgroundTask`; implementations are responsible for
 // any synchronisation their backing state requires.
-//
 // Test fixtures implement this interface directly (see tests/support/FakeOfflineQueueDeps.h)
 // so unit tests can exercise OfflineQueueService without constructing an AppController.
 

@@ -4,7 +4,6 @@
 // `ITicketSyncDeps` that forwards every method to a live `AppController&`. Owned by
 // AppController via `std::unique_ptr`; constructed in `AppController::Initialize` and
 // destroyed before any AppController member it forwards to.
-//
 // Why two interfaces, one adapter: both interfaces surface overlapping AppController state
 // (`Cache`, `Backend`, the connectivity-banner / deferred-notify pair). Implementing both on a
 // single adapter keeps the wiring trivial — AppController owns one adapter, passes the same

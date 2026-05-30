@@ -1,9 +1,7 @@
 // AiModelCatalog — fixed list of public model identifiers per provider.
-//
 // Seeds the Preferences model dropdown and the AiPrefsValidator's
 // unknown-model warning. Pure C++14, no network — keeps the doctest rig
 // link-clean.
-//
 // Catalog is hand-maintained from the providers' public model docs. When a
 // provider rotates models, edit AiModelCatalog.cpp; the validator's
 // "unknown model" warning surface guides users toward valid IDs without

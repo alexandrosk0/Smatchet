@@ -12,7 +12,6 @@
 constexpr std::size_t kAiSseParserMaxBufferBytes = 4u * 1024u * 1024u; // 4 MiB
 
 /// Stateful Server-Sent-Events byte-stream parser shared by OpenAi/Anthropic clients.
-///
 /// SSE frames are terminated by a blank line (`\n\n` or `\r\n\r\n`). libcurl
 /// chunks the byte stream on TCP boundaries, never on SSE frame boundaries, so
 /// Feed() may be called with arbitrarily-split bytes. The parser buffers until

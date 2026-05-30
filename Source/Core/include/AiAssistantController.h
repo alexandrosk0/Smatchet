@@ -24,9 +24,7 @@
 class AppController;
 
 /// Worker-thread-backed coordinator for the Smatchet Assistant side panel.
-///
 /// **Threading invariants** (UX pillar 2 + pillar 3):
-///
 ///   * `Submit` / `Cancel` / `CurrentState` are UI-thread-only. They push work onto the
 ///     internal queue + signal the worker; no blocking I/O ever runs on the UI thread.
 ///   * The worker thread (`WorkerLoop`) is the *only* thread that calls
@@ -42,7 +40,6 @@ class AppController;
 ///     the main-thread dispatcher's `BeginShutdown()` fires. Once `BeginShutdown()`
 ///     runs, `PostToMainThread` no-ops, so any in-flight worker callbacks will
 ///     drop their UI-side deltas — that's harmless because the user is exiting.
-///
 /// **State machine**: `Idle` → (`Submit`) → `InFlight` → (`SendStreaming` returns)
 /// → `Idle` | `Cancelled` | `Errored`. `Cancel` only flips the atom — the worker
 /// observes it on the next `WriteCallback` poll and the state transitions when
@@ -68,13 +65,11 @@ class AiAssistantController {
     /// emit a `LOG_WARN` on the worker side. The UI side surfaces the
     /// drop via `g_ui.assistantLastError` so the user sees a recoverable
     /// error strip instead of a permanently-stuck Send button.
-    ///
     /// The caller is expected to have already updated
     /// `UiDrawSession::assistantTurnGen` to a new value and stashed it into
     /// the matching session field — the controller treats `turnGen` as
     /// opaque and forwards it back through every dispatcher callback so
     /// the UI side can drop stale deltas.
-    ///
     /// `modelOverride` / `effortOverride` are per-turn overrides selected by the chat-
     /// window header Combos. Empty strings mean "use the saved Preferences value for
     /// the active provider". `effortOverride` accepts the same enum as
