@@ -163,7 +163,7 @@ PR #20 replaced `dynamic_cast<McpPlugin*>` with `virtual bool TryGetMcpStatusSna
 ### N14. Annotate config hydrate does sync disk I/O on the UI thread (P2, Pillar 2) — ✅ DONE
 ~~`AnnotateAnalysisUi::ensureSettingsBuffersLoaded()` → `HydrateAnnotateCfgDiskOnce()` calls `ConfigManager::LoadAnnotateAnalysis` synchronously on the UI thread.~~ **Resolved** across PR #568 (`annotate-async-config-hydrate`) + PR #574 (`config-io-safe-coalesced-writes`):
 - **Load**: measured at **0.54 ms** (small once-guarded whole-file JSON read) — kept synchronous with a `PILLAR2_INLINE` annotation per the documented inline-vs-async hydration policy (a background-thread + dispatcher round-trip isn't worth it for a sub-ms one-time read).
-- **Save**: the larger Pillar-2 exposure (per-edit `SaveAnnotateAnalysis` from UI callbacks, surfaced by CodeRabbit on #565) is now off the UI thread via the single coalescing `smatchet::config_save` worker, with `GetConfigRmwMutexRef` serializing the read-modify-write so concurrent writers can't lose-update.
+- **Save**: the larger Pillar-2 exposure (per-edit `SaveAnnotateAnalysis` from UI callbacks, surfaced by CodeRabbit on #565) is now off the UI thread via the single coalescing `smatchet::config_save` worker, with `GetConfigRmwMutexRef` serializing the read-modify-write so concurrent writers can't lose updates.
 
 ---
 
