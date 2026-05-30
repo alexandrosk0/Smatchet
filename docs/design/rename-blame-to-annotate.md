@@ -118,7 +118,7 @@ root-CMake edit**. Only `tests/CMakeLists.txt` (5 hits) lists test files explici
 All identifiers below use the **post-rename** names (`AnnotateAnalysisConfig`,
 `AnnotateAnalysisUi_*`, `annotate_analysis`, …).
 
-### 1. Refactor — collapse the 3 autoselect functions
+## 1. Refactor — collapse the 3 autoselect functions
 `AnnotateAnalysisUi_Config.cpp` has three structurally identical
 `MaybeAutoselect*TrackerField` functions differing only by (target field ref,
 name-match predicate, callstack-hint flag). Extract one internal helper; keep the three
@@ -126,34 +126,34 @@ public wrappers (2 call sites each: `AnnotateAnalysisUi_Window.cpp` + `AnnotateA
 as one-liners. Preserve the defensive misspelling matches (`"last occurances"` /
 `"last occurences"`) — they match real Jira **field names**, not our strings.
 
-### 2. Naming / label consistency (form display text)
+## 2. Naming / label consistency (form display text)
 Normalize prefs-form labels: consistent p4/p4vc casing, spell out "command", and give
 the three Jira combos distinct visible labels (currently all `"Jira field"`).
 
-### 3. UX — persist the raw/table view toggle (`showRaw`)
+## 3. UX — persist the raw/table view toggle (`showRaw`)
 `showRaw` (`AnnotateAnalysisUi_Internal.h`) is ephemeral — toggled at 3 button sites
 (`_Window.cpp:188,197,210`), force-reset on close (`_Modals.cpp:284`), coupled with the
 streamlined-grid flag (`_Window.cpp:173`). Promote: add `bool ShowRawCallstack=false;` to
 `AnnotateAnalysisConfig`, round-trip `"show_raw_callstack"`, seed on hydrate, write back at
 the 3 sites; keep the close-handler runtime reset but leave cfg intact (reopen re-seeds).
 
-### 4. Multi-rule path-remap editor (UI-only)
+## 4. Multi-rule path-remap editor (UI-only)
 `ApplyPathRemaps` (`CallstackParser.cpp:142`) already does multi-rule longest-prefix
 matching (tested, `CallstackParser.test.cpp:162-220`). Only the UI is single-rule. Replace
 the two fixed `remapFrom`/`remapTo` buffers with a per-row editor over the full
 `PathRemaps` vector (add/remove rows), persist whole vector. Drop the single-rule load
 (`AnnotateAnalysisUi.cpp:63-68`) and dead sync (`_Worker.cpp:131-133`).
 
-### 5. Expose the two form-less knobs
+## 5. Expose the two form-less knobs
 `ChangelistCacheMaxEntries` + `UiColors.*` round-trip but have no control. Add
 `InputInt("Changelist cache size")` (clamped 16..8192) and a collapsing "Colors" section
 of seven `ColorEdit4` controls.
 
-### 6. Value-range guards
+## 6. Value-range guards
 Clamp `cl_cache_max` on load too (`ConfigManager.cpp`) so a hand-edited negative can't
 reach `_Worker.cpp:103`. `maxFrames` already clamped; `ColorEdit4` constrains colors.
 
-### Phase-2 out of scope / NOT doing
+## Phase-2 out of scope / NOT doing
 - Defensive misspelling matches stay (match real badly-named Jira fields).
 
 ## Phase-2 files
@@ -166,3 +166,20 @@ Build dual-target; launch exe; confirm: labels clean + distinct Jira combos; raw
 view persists across reopen; multi-rule remap round-trips to `annotate_analysis.path_remaps`
 + `ctest -R CallstackParser` green; `ColorEdit4` recolors live + persists; cache size
 clamps; misspelled-field autoselect still works. Lint pass on edited files.
+
+## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
+
+Both phases touch `Source_Core/`, so the gate **applies** — but every gate is N/A-by-content because there is no hot-path logic change:
+
+- **Phase 1** is a pure mechanical rename (identifiers, file names, config/loc keys, scenario ID). Zero behaviour change; the binary is behaviour-equivalent modulo symbol/string names. Perf-neutral by construction; validated not asserted.
+- **Phase 2** edits the Annotate **preferences** UI (collapse 3 autoselect helpers → 1, add config round-trips, multi-rule remap editor, expose two knobs, clamp-on-load). All of it runs on Preferences-window interaction, not in the steady-state grid / annotate render path — outside the 6.94 ms budget.
+
+1. **PR-fast CI** — N/A by content (no algorithmic change). Run one representative scenario (`annotate-open-entry-tab`) post-change to confirm perf-neutrality rather than assert it. Map: `agents/perf-gatekeeper.md` § Curated diff → scenario map.
+2. **Pillar 2 static scanner** — N/A — no new sync-I/O; neither the rename nor the prefs edits add an `ImGui::*`-reachable blocking call (`pillar2-scan.sh` must stay silent over the renamed tree).
+3. **Dispatcher drain** — N/A — `MainThreadDispatcher::Drain()` untouched.
+4. **Visible-cue bucket-E harness** — N/A — no new sync-stall path > 100 ms.
+5. **Marker inventory** — N/A — no `SMATCHET_UI_PERF_SCOPE` markers added; existing markers move with their renamed TU (string scope-names unchanged by the rename).
+
+**Pre-push local check**: run `docs/PERF_WORKFLOW.md` § Gate-check vs baseline against `annotate-open-entry-tab` once post-rename; expect within-noise.
+
+**Override**: not needed — no intentional regression.
