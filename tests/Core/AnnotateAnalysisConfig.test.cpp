@@ -17,6 +17,8 @@
 
 #include <fstream>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -103,4 +105,36 @@ TEST_CASE("AnnotateAnalysis multi-rule path_remaps round-trip in order") {
     CHECK(reread.PathRemaps[0].FromPrefix == "//depot/a");
     CHECK(reread.PathRemaps[2].FromPrefix == "//depot/c");
     CHECK(reread.PathRemaps[2].ToPrefix == "C:/c");
+}
+
+// N14: SaveAnnotateAnalysis now runs on detached worker threads
+// (ScheduleAnnotateConfigSaveDetached). Concurrent whole-file writes must not corrupt the
+// config — WriteConfigJson serializes via GetIoMutexRef + atomic temp-then-rename. This proves
+// that under contention the file stays valid JSON and reads back as one of the written values
+// (last-writer-wins), never a torn/garbage file.
+TEST_CASE("concurrent SaveAnnotateAnalysis writes leave a valid, parseable config" *
+          doctest::test_suite("[high-risk]")) {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"({"annotate_analysis":{}})");
+
+    constexpr int kThreads = 8;
+    std::vector<std::thread> writers;
+    writers.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        writers.emplace_back([i]() {
+            AnnotateAnalysisConfig c;
+            c.ChangelistCacheMaxEntries = 100 + i; // distinct, all in-range
+            c.ShowRawCallstack = (i % 2) == 0;
+            ConfigManager::SaveAnnotateAnalysis(c);
+        });
+    }
+    for (auto& t : writers) {
+        t.join();
+    }
+    ConfigManager::InvalidateCache();
+
+    // Must parse cleanly (no torn write) and reflect exactly one writer's value.
+    const AnnotateAnalysisConfig got = ConfigManager::LoadAnnotateAnalysis();
+    CHECK(got.ChangelistCacheMaxEntries >= 100);
+    CHECK(got.ChangelistCacheMaxEntries <= 100 + kThreads - 1);
 }

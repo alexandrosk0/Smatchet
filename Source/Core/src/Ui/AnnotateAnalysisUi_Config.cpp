@@ -10,8 +10,28 @@
 #include "TrackerFieldSchema.h"
 
 #include <algorithm>
+#include <thread>
 
 namespace AnnotateInternal {
+
+// Mirror of ScheduleConfigSaveDetached (SmatchetAiAssistantUi.cpp) for the Annotate config.
+// ConfigManager::SaveAnnotateAnalysis does a synchronous JSON encode + atomic file replace;
+// even an edit-commit (focus loss / button) can breach the 6.94 ms UI budget on a slow disk.
+// Push the write to a detached worker. The config snapshot is captured by value so the worker
+// is independent of UI-thread state, and SaveAnnotateAnalysis is static (no owner to outlive),
+// so detached is Pillar-3 safe here. Saves are user-edit-gated and small (a few KB); move to a
+// single coalescing worker if profiling ever shows churn.
+void ScheduleAnnotateConfigSaveDetached(const AnnotateAnalysisConfig& cfg) {
+    AnnotateAnalysisConfig snapshot = cfg;
+    std::thread([snapshot]() {
+        try {
+            ConfigManager::SaveAnnotateAnalysis(snapshot);
+        } catch (...) {
+            // SaveAnnotateAnalysis logs its own diagnostics; swallow so a detached worker
+            // exit can't terminate the process.
+        }
+    }).detach();
+}
 
 void LogAnnotateP4PathsIfChanged(const char* reason) {
     auto& st = State();
@@ -31,6 +51,10 @@ void HydrateAnnotateCfgDiskOnce() {
     if (State().annotateCfgDiskHydrated) {
         return;
     }
+    // PILLAR2_INLINE // est-latency: 0.54ms (measured, small whole-file JSON read+parse of
+    // smatchet_config.json; once-guarded). Per the inline-vs-async hydration policy
+    // (SmatchetAiAssistantUi.cpp), a one-time read this small stays synchronous — a sub-ms
+    // first-frame cost beats the complexity/latency of a background-thread + dispatcher round-trip.
     State().annotateCfg = ConfigManager::LoadAnnotateAnalysis();
     State().annotateCfgDiskHydrated = true;
     SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
@@ -56,7 +80,7 @@ void MaybeAutoselectTrackerField(const AppController& app, std::string& targetFi
     });
     if (it != fields.end()) {
         targetFieldId = it->Id;
-        ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
+        ScheduleAnnotateConfigSaveDetached(State().annotateCfg);
         if (updateCallstackHint) {
             SetCallstackFieldIdHint(targetFieldId);
         }
@@ -94,7 +118,7 @@ void ApplyShowRawCallstack(bool show) {
     State().showRaw = show;
     if (State().annotateCfg.ShowRawCallstack != show) {
         State().annotateCfg.ShowRawCallstack = show;
-        ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
+        ScheduleAnnotateConfigSaveDetached(State().annotateCfg);
     }
 }
 

@@ -14,7 +14,9 @@ namespace AnnotateInternal {
 namespace {
 
 void PersistAnnotateCfg(const char* reason) {
-    ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
+    // Off-thread the file write (JSON encode + atomic replace) so prefs edits never block the
+    // UI thread; the UI-thread-only side-effects (path-change log + callstack-field hint) stay sync.
+    ScheduleAnnotateConfigSaveDetached(State().annotateCfg);
     LogAnnotateP4PathsIfChanged(reason);
     SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
 }

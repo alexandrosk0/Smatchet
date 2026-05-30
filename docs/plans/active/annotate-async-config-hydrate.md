@@ -163,10 +163,31 @@ Diff touches `Source/Core/` → gate **fires**. Intentional Pillar-2 *improvemen
   worker's job).
 
 ## Implementation log
-*(populated post-ship)*
+- Save path: added `AnnotateInternal::ScheduleAnnotateConfigSaveDetached` (`AnnotateAnalysisUi_Config.cpp`),
+  mirroring `ScheduleConfigSaveDetached`; routed all three save chokepoints through it —
+  `PersistAnnotateCfg` (`AnnotateAnalysisUi_Preferences.cpp`, covers every prefs-form edit), the
+  `MaybeAutoselectTrackerField` helper, and `ApplyShowRawCallstack`. UI-thread-only side-effects
+  (`LogAnnotateP4PathsIfChanged`, `SetCallstackFieldIdHint`) left synchronous.
+- Load path: measured the hydrate (temp instrumentation) → kept synchronous + `PILLAR2_INLINE` annotation.
+- Test: extended `tests/Core/AnnotateAnalysisConfig.test.cpp` with a `[high-risk]` concurrent-save case
+  (8 threads hammering `SaveAnnotateAnalysis`) proving the file stays valid JSON under contention.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Load stayed synchronous** (the planned "measure-first" outcome): measured **0.54 ms** for the whole-file
+  JSON load+parse — far under the ~5 ms threshold — so no async/marshal-back machinery was built; the sync
+  read got the documented `PILLAR2_INLINE` annotation instead. The async-load design in § Approach was the
+  contingency and was not needed.
+- Everything else implemented as designed; no IoMutex-RMW refactor, no coalescing worker (both stayed
+  out-of-scope as planned).
 
 ## Verification (actual)
-*(populated post-ship)*
+- Dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`): **pass** (exit 0).
+- doctest full suite **847/0** (incl. new concurrent-save `[high-risk]` case + the existing clamp/showRaw/
+  multi-rule round-trip cases): **pass**.
+- `clang-format` (diff-scoped): clean. Delta-lint gate: **PASS** (no new strict-zone violations).
+- Scenario `annotate-open-entry-tab` (`--spawn`): **ok:true**.
+- Hydrate latency: **0.54 ms** measured (basis for keep-sync decision).
+- ASan / data-race on the detached-save thread: covered by the PR's required **Sanitizer (ASAN via MSVC)**
+  CI job + the 8-thread concurrent-save unit test (passed).
+- Manual residue: prefs-edit-persists-across-reopen visual check still unautomated — deferred-automation
+  `annotate-prefs-persist` bucket-E harness noted (low priority).

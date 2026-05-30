@@ -165,6 +165,10 @@ template <size_t N> inline void CopyToBuffer(char (&dst)[N], const std::string& 
 // --- Config-side helpers (AnnotateAnalysisUi_Config.cpp) ---
 void LogAnnotateP4PathsIfChanged(const char* reason);
 void HydrateAnnotateCfgDiskOnce();
+/// Persist the Annotate config off the UI thread (value-snapshot + detached worker).
+/// Mirrors ScheduleConfigSaveDetached; use instead of ConfigManager::SaveAnnotateAnalysis
+/// from any UI-callback save site.
+void ScheduleAnnotateConfigSaveDetached(const AnnotateAnalysisConfig& cfg);
 void MaybeAutoselectCallstackTrackerField(const AppController& app);
 void MaybeAutoselectLastFoundClTrackerField(const AppController& app);
 void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app);
