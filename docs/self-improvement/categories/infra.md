@@ -7,12 +7,6 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
-- 2026-05-30 · memory-triage · [infra] · P2 — MSVC toolset pin regressed out of `with-msvc-env.sh` (STL1001 risk for bash builds)
-  Details: a 2026-05-29 memory recorded that `scripts/dev/with-msvc-env.sh` was wired to pin the vcvars toolset via `build.msvc_toolset_pin` (`14.38`) read from `project.config.json`, enumerating VS installs and calling `vcvars64.bat -vcvars_ver=14.38` to avoid grabbing the VS18 BuildTools 14.50 toolset over the cached 14.38 `cl.exe`. The current tree (post Source restructure) has **none** of that: `with-msvc-env.sh:51` uses bare `vswhere -latest -products '*'` and calls `vcvars64` with **no** `-vcvars_ver`; there is no `project.config.json` anywhere in the tree and no `SMATCHET_VCVARS_VER` override path. So bash-driven `cmake --build --preset ninja-iter-msvc` can again load 14.50 STL headers against a 14.38-cached compiler → `error C2338 ... STL1001: Unexpected compiler version` on unrelated TUs (McpJsonRpcPure.cpp, WavWriter.cpp, Whisper). Whether it fires today depends on which toolset last regenerated the build cache — verify by building from bash on a box that has both 14.38 and a newer BuildTools.
-  Concrete next action: confirm whether the pin removal was intentional in the restructure; if not, restore toolset selection in `with-msvc-env.sh` (read the pin from wherever project config now lives, select the VS install that actually ships `VC\Tools\MSVC\14.38*`, pass `-vcvars_ver`, honor `$SMATCHET_VCVARS_VER`). ~1 h. Source: memory `project-build-vcvars-toolset` (drained 2026-05-30).
-  Status: open
-  Last-reviewed: 2026-05-30
-
 - 2026-05-29 · orchestrator · [infra] · P2 — De-Smatchet-ify the portable agentic layer (close the project-literal baseline)
   Details: agentic-layer-project-independence shipped the portable/project STRUCTURE (agents/core vs project, project.config.json seam, docs taxonomy) but the portable files still embed ~157 project literals in prose (`docs/high-integrity/portable-purity-baseline.txt`). `test-portable-purity` baselines this and blocks NEW leakage, but reuse today means copy + adapt the prompts, not copy verbatim.
   Concrete next action: rewrite `agents/core/*` + `docs/agent-rules/*` prose to reference `project.config.json` keys instead of hardcoded `Smatchet`/`Source/Core`/preset literals; shrink the baseline toward zero. Largest chunk is the 15 core-agent prompts. Incremental — drop baselined entries as files are cleaned.

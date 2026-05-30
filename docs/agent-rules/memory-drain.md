@@ -46,8 +46,15 @@ the verdict from *toss* to *backlog (regression)*.
 
 ## History
 
-- 2026-05-30 — bootstrap drain. 6 items: implemented `feedback-auto-launch-exe`
-  (→ `ship-loops.md`) + `project-watcher-janitor-branch-swap` (→ `process-rules.md`);
-  backlogged `project-build-vcvars-toolset` (→ infra, regression) +
-  `project-bats-gh-stub-windows` (→ tooling); tossed `project-unreal-msvc-toolset`
-  (guarded in code, PR #508) + `project-python3-stub-windows` (machine-specific).
+- 2026-05-30 — bootstrap drain. 6 items → 2 implemented, 1 backlogged, 3 tossed.
+  Implemented `feedback-auto-launch-exe` (→ `ship-loops.md`) +
+  `project-watcher-janitor-branch-swap` (→ `process-rules.md`). Backlogged
+  `project-bats-gh-stub-windows` (→ tooling). Tossed `project-unreal-msvc-toolset`
+  (guarded in code, PR #508), `project-python3-stub-windows` (machine-specific),
+  and `project-build-vcvars-toolset` (still guarded on develop — `with-msvc-env.sh`
+  reads `msvc_toolset_pin: 14.38` from `project.config.json`). **Verify-first
+  lesson**: an initial read of `with-msvc-env.sh` showed the pin missing and the
+  item was wrongly filed as an infra regression; the read had landed on a
+  watcher-swapped sibling branch, not develop. Always `git show origin/develop:<file>`
+  to verify, never trust the local working tree mid-session (see the very
+  `project-watcher-janitor-branch-swap` rule this drain implemented).
