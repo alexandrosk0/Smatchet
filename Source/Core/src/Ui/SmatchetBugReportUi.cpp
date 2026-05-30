@@ -125,7 +125,9 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
     const char* envTok = std::getenv("SMATCHET_BUGREPORT_GITHUB_TOKEN");
     const smatchet::diagnostics::ResolvedBugTarget target =
         smatchet::diagnostics::ResolveBugReportTarget(d.cfg, envTok ? std::string(envTok) : std::string());
-    if (target.Ok) {
+    if (target.Ok && target.UseRelay) {
+        ImGui::TextDisabled("Destination: relay (%s)", target.RelayUrl.c_str());
+    } else if (target.Ok) {
         ImGui::TextDisabled("Destination: %s/%s", target.Owner.c_str(), target.Repo.c_str());
     } else {
         ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.2f, 1.0f), "Not configured: %s", target.Error.c_str());

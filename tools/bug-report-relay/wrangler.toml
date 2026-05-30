@@ -1,0 +1,17 @@
+# Smatchet bug-report relay — Cloudflare Worker config.
+# Deploy: see README.md. The GitHub token is a SECRET (never put it here) —
+# set it with `wrangler secret put GITHUB_TOKEN`.
+
+name = "smatchet-bug-report-relay"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+# Destination dev repo for filed issues ("owner/repo").
+REPO = "alexandrosk0/smatchet-bugs"
+# Optional separate repo for screenshot assets. Empty/unset = reuse REPO.
+ASSETS_REPO = ""
+# Optional shared access key. When set, the app must send a matching
+# `x-relay-key` header (config key bugreport_relay_key). Leave unset for an
+# open relay (rely on Cloudflare rate-limit rules / WAF instead).
+# RELAY_KEY is set as a SECRET, not here — `wrangler secret put RELAY_KEY`.

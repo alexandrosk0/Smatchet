@@ -175,7 +175,15 @@ All 4 Phase-1 slices implemented in one pass on `feat/log-a-bug-github-impl`.
 - **Slice 3** — `BuiltinCommands_BugReport.cpp` (`bug.report`: modal/headless/dry-run); registered in `BuiltinCommands_Internal.h` + `BuiltinCommands.cpp`.
 - **Slice 4** — `Ui/ImGuiHotkey.{h,cpp}`, `Ui/SmatchetBugReportUi.{h,cpp}` (modal, async submit via `LaunchBackgroundTask` + `PostToMainThread`); `UiDrawSession` `bugReport*` + `requestScreenshotCensor` state; `SmatchetUI.cpp` hotkey poll + modal draw (outside the `BackendHasBeenReachable` gate); `main.cpp` censor wiring; "Report a Bug…" Help-menu item; CMake include subdirs (`Diagnostics`/`Privacy`/`Imaging`) on the Core INTERFACE + test target.
 
-**Verification done:** dual-target builds clean (`SmatchetStandalone` + `SmatchetCore_DX12`); full doctest suite 867/867 pass (new: 19 cases / 88 assertions across Slice 1+2 pure logic); `test-lint-rules.sh` PASS (no new strict-zone violations). Real-GitHub create + manual-modal + token-degrade verification remain manual (need a live dev repo + token) — see § Verification.
+**Verification done:** dual-target builds clean (`SmatchetStandalone` + `SmatchetCore_DX12`); full doctest suite 870/870 pass; `test-lint-rules.sh` PASS (no new strict-zone violations). Real-GitHub create + manual-modal + token-degrade verification remain manual (need a live dev repo + token) — see § Verification.
+
+### Slice 5 — Relay mode (external distribution, secure token handling)
+
+Added after the "needs relay" decision (2026-05-30) so external/untrusted users can file bugs **without the app shipping a GitHub token** (an embedded token is extractable from the binary = a published credential).
+
+- **`tools/bug-report-relay/`** — Cloudflare Worker (`src/index.js`, `wrangler.toml`, `package.json`, README). Holds the GitHub token as a `wrangler secret`; `POST /report` validates an optional `x-relay-key`, creates the issue, uploads the screenshot to a `bug-report-assets` branch + embeds it inline, returns `{ok, issueKey, url}`. 256 KB payload cap; deploy + abuse-guard steps in its README.
+- **App relay-mode** — config keys `bugreport_relay_url` / `bugreport_relay_key` (`ConfigManager`). When `bugreport_relay_url` is set, `ResolveBugReportTarget` returns `UseRelay=true` (no owner/repo/PAT required) and `SubmitViaRelay` (heavy TU) POSTs the report instead of using the direct `GitHubClient` path. Pure `BuildRelayRequest` (doctested). Modal destination indicator + `bug.report --dry-run` surface relay vs direct mode.
+- **Verification:** dual-target builds clean; 870/870 doctests (incl. relay resolver + request-builder cases); lint clean. Live relay test = deploy the Worker + set `bugreport_relay_url`, then run the modal/CLI path (manual, needs deployment).
 
 ## Deviations from plan
 

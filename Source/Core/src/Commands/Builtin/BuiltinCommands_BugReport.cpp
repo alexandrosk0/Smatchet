@@ -42,7 +42,12 @@ void RegisterBugReportCommands(CommandRegistry& reg, AppController& app) {
                     diagnostics::ResolveBugReportTarget(cfg, envTok ? std::string(envTok) : std::string());
                 nlohmann::json out = nlohmann::json::object();
                 out["resolved"] = target.Ok;
-                if (target.Ok) {
+                if (target.Ok && target.UseRelay) {
+                    out["mode"] = "relay";
+                    out["relayUrl"] = target.RelayUrl;
+                    out["relayKeyPresent"] = !target.RelayKey.empty();
+                } else if (target.Ok) {
+                    out["mode"] = "direct";
                     out["owner"] = target.Owner;
                     out["repo"] = target.Repo;
                     out["patPresent"] = !target.Pat.empty();

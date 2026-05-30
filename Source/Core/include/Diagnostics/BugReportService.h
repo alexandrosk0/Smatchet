@@ -45,6 +45,10 @@ struct ContextBundle {
 struct ResolvedBugTarget {
     bool Ok = false;
     std::string Error;
+    // Relay mode — when UseRelay is true the client POSTs to RelayUrl and the
+    // direct GitHub fields below are unused (no token needed on the client).
+    bool UseRelay = false;
+    std::string RelayUrl, RelayKey;
     std::string Owner, Repo, BaseUrl, Pat;
     std::string AssetsOwner, AssetsRepo; // screenshot upload target (defaults to the issue repo)
 };
@@ -75,6 +79,13 @@ ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::st
 /// is inserted verbatim (e.g. `![screenshot](url)` or a local-path note).
 std::string BuildMarkdownBody(const BugReportOptions& opts, const ContextBundle& bundle,
                               const std::string& screenshotMarkdown);
+
+/// Build the JSON payload POSTed to the bug-report relay (`tools/bug-report-relay`).
+/// Pure. `screenshotBase64` is included only when non-empty. The relay re-files
+/// the issue + uploads the screenshot server-side, so no GitHub token is needed
+/// on the client.
+nlohmann::json BuildRelayRequest(const std::string& title, const std::string& body, const std::string& screenshotBase64,
+                                 bool censored);
 
 // ---- heavy (BugReportService.cpp — NOT linked into the doctest rig) ----
 

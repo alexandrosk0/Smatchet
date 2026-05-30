@@ -245,6 +245,67 @@ std::string FirstLine(const std::string& s) {
     return nl == std::string::npos ? s : s.substr(0, nl);
 }
 
+// Relay path — POST the report to the server-side relay (tools/bug-report-relay).
+// The relay holds the GitHub token and does the issue create + screenshot upload,
+// so no GitHub credential is needed on the client.
+SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOptions& opts,
+                            const ContextBundle& bundle) {
+    SubmitResult result;
+
+    // The relay embeds the screenshot server-side, so the body carries no image
+    // markdown here (empty screenshotMarkdown).
+    const std::string body = BuildMarkdownBody(opts, bundle, std::string());
+    const std::string firstLine = FirstLine(opts.UserDescription);
+    const std::string title = std::string("[Bug] ") + (firstLine.empty() ? "Report from Smatchet" : firstLine);
+
+    std::string screenshotBase64;
+    if (opts.IncludeScreenshot && !opts.ScreenshotAbsPath.empty()) {
+        std::vector<unsigned char> bytes;
+        if (ReadFileBytes(opts.ScreenshotAbsPath, bytes)) {
+            screenshotBase64 = Base64EncodeBytes(bytes);
+        } else {
+            LOG_WARN("BugReport: cannot read screenshot for relay: %s", opts.ScreenshotAbsPath.c_str());
+        }
+    }
+
+    const nlohmann::json payload = BuildRelayRequest(title, body, screenshotBase64, opts.Censored);
+
+    cpr::Header headers{{"Content-Type", "application/json"}, {"User-Agent", "Smatchet-BugReport"}};
+    if (!target.RelayKey.empty()) {
+        headers["x-relay-key"] = target.RelayKey;
+    }
+    const cpr::Response resp = TrackerPostLogged("BugReportRelay", target.RelayUrl, headers, payload.dump());
+
+    if (resp.status_code < 200 || resp.status_code >= 300) {
+        std::string msg = "HTTP " + std::to_string(resp.status_code);
+        try {
+            const nlohmann::json j = nlohmann::json::parse(resp.text);
+            if (j.contains("error") && j["error"].is_string()) {
+                msg = j.value("error", msg);
+            }
+        } catch (const std::exception&) {
+            // keep the HTTP-status message
+        }
+        result.Error = "Bug-report relay failed: " + msg;
+        return result;
+    }
+
+    try {
+        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        if (!j.value("ok", false)) {
+            result.Error = "Bug-report relay rejected: " + j.value("error", std::string("unknown error"));
+            return result;
+        }
+        result.Ok = true;
+        result.IssueKey = j.value("issueKey", std::string());
+        result.Url = j.value("url", std::string());
+        return result;
+    } catch (const std::exception& ex) {
+        result.Error = std::string("Bug-report relay: bad response: ") + ex.what();
+        return result;
+    }
+}
+
 } // namespace
 
 ContextBundle GatherContext(const AppController& app, const BugReportOptions& opts) {
@@ -308,6 +369,12 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
     }
 
     const ContextBundle bundle = GatherContext(app, opts);
+
+    // Relay mode — POST the report to the server-side relay (it holds the GitHub
+    // token + does the issue create / screenshot upload). No client-side token.
+    if (target.UseRelay) {
+        return SubmitViaRelay(target, opts, bundle);
+    }
 
     // Screenshot: upload + inline-embed, degrading to local stage on failure.
     std::string screenshotMarkdown;

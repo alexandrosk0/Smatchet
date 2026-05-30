@@ -134,6 +134,39 @@ TEST_CASE("ResolveBugReportTarget — explicit assets repo parsed") {
     CHECK(t.AssetsRepo == "blobs");
 }
 
+TEST_CASE("ResolveBugReportTarget — relay mode overrides direct path, needs no PAT") {
+    TrackerConfig cfg; // no owner/repo, no PAT
+    cfg.BugReportRelayUrl = "https://relay.example.workers.dev/report";
+    cfg.BugReportRelayKey = "shhh";
+    const ResolvedBugTarget t = ResolveBugReportTarget(cfg, "");
+    REQUIRE(t.Ok);
+    CHECK(t.UseRelay);
+    CHECK(t.RelayUrl == "https://relay.example.workers.dev/report");
+    CHECK(t.RelayKey == "shhh");
+    CHECK(t.Pat.empty()); // no client token needed in relay mode
+}
+
+TEST_CASE("ResolveBugReportTarget — relay wins even when direct owner/repo also set") {
+    TrackerConfig cfg = MakeCfg();
+    cfg.GitHubPat = "p";
+    cfg.BugReportRelayUrl = "https://relay.example/report";
+    const ResolvedBugTarget t = ResolveBugReportTarget(cfg, "env-token");
+    REQUIRE(t.Ok);
+    CHECK(t.UseRelay);
+}
+
+TEST_CASE("BuildRelayRequest — title/body/censored; screenshot only when present") {
+    const nlohmann::json a = BuildRelayRequest("[Bug] x", "the body", "", false);
+    CHECK(a["title"] == "[Bug] x");
+    CHECK(a["body"] == "the body");
+    CHECK(a["censored"] == false);
+    CHECK_FALSE(a.contains("screenshotBase64"));
+
+    const nlohmann::json b = BuildRelayRequest("t", "b", "QUJD", true);
+    CHECK(b["censored"] == true);
+    CHECK(b["screenshotBase64"] == "QUJD");
+}
+
 TEST_CASE("ResolveBugReportTarget — error paths: missing repo / no PAT / bad baseUrl") {
     TrackerConfig empty;
     CHECK_FALSE(ResolveBugReportTarget(empty, "tok").Ok); // no owner/repo

@@ -35,6 +35,16 @@ bool SplitOwnerRepo(const std::string& s, std::string& owner, std::string& repo)
 ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::string& envToken) {
     ResolvedBugTarget out;
 
+    // Relay mode (preferred for external distribution) — the server holds the
+    // token, so the client needs no owner/repo/PAT. Overrides the direct path.
+    if (!cfg.BugReportRelayUrl.empty()) {
+        out.UseRelay = true;
+        out.RelayUrl = cfg.BugReportRelayUrl;
+        out.RelayKey = cfg.BugReportRelayKey;
+        out.Ok = true;
+        return out;
+    }
+
     if (cfg.BugReportGitHubOwner.empty() || cfg.BugReportGitHubRepo.empty()) {
         out.Error = "Bug-report dev repo is not configured (set Preferences > Bug Report > owner/repo).";
         return out;
@@ -82,6 +92,18 @@ ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::st
     }
 
     out.Ok = true;
+    return out;
+}
+
+nlohmann::json BuildRelayRequest(const std::string& title, const std::string& body, const std::string& screenshotBase64,
+                                 bool censored) {
+    nlohmann::json out = nlohmann::json::object();
+    out["title"] = title;
+    out["body"] = body;
+    out["censored"] = censored;
+    if (!screenshotBase64.empty()) {
+        out["screenshotBase64"] = screenshotBase64;
+    }
     return out;
 }
 

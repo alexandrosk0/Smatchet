@@ -201,6 +201,8 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["github_repo"] = config.GitHubRepo;
     // "Log a Bug" reporter config (docs/plans/active/log-a-bug-github.md).
     // BugReportGitHubPat is a secret — encrypted below in the saveGithubPat block.
+    j["bugreport_relay_url"] = config.BugReportRelayUrl;
+    j["bugreport_relay_key"] = config.BugReportRelayKey;
     j["bugreport_github_owner"] = config.BugReportGitHubOwner;
     j["bugreport_github_repo"] = config.BugReportGitHubRepo;
     j["bugreport_github_base_url"] = config.BugReportGitHubBaseUrl;
@@ -677,6 +679,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.GitHubBaseUrl = j.value("github_base_url", cfg.GitHubBaseUrl);
             cfg.GitHubOwner = j.value("github_owner", cfg.GitHubOwner);
             cfg.GitHubRepo = j.value("github_repo", cfg.GitHubRepo);
+            cfg.BugReportRelayUrl = j.value("bugreport_relay_url", cfg.BugReportRelayUrl);
+            cfg.BugReportRelayKey = j.value("bugreport_relay_key", cfg.BugReportRelayKey);
             cfg.BugReportGitHubOwner = j.value("bugreport_github_owner", cfg.BugReportGitHubOwner);
             cfg.BugReportGitHubRepo = j.value("bugreport_github_repo", cfg.BugReportGitHubRepo);
             cfg.BugReportGitHubBaseUrl = j.value("bugreport_github_base_url", cfg.BugReportGitHubBaseUrl);
