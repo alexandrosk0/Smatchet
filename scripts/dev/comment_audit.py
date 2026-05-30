@@ -96,12 +96,19 @@ def classify_comment(stripped, raw_line):
 CUT_BUCKETS = ("cut-blank", "cut-decorative")  # mechanically strippable (Wave 1)
 
 
+def _git(args):
+    """Run a git command, raising on non-zero exit (silent git failures would corrupt the
+    baseline count or the regrowth diff into a false-clean result)."""
+    p = subprocess.run(["git"] + args, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise RuntimeError("git %s failed (%d): %s" % (" ".join(args), p.returncode, p.stderr.strip()))
+    return p.stdout
+
+
 def list_files():
-    out = subprocess.run(["git", "ls-files"] + [r + "**" for r in SWEEP_ROOTS],
-                         capture_output=True, text=True).stdout
+    out = _git(["ls-files"] + [r + "**" for r in SWEEP_ROOTS])
     if not out.strip():
-        # fallback: ls-files without glob, filter
-        out = subprocess.run(["git", "ls-files"], capture_output=True, text=True).stdout
+        out = _git(["ls-files"])  # fallback: no glob, filter below
     files = []
     for f in out.splitlines():
         if not f.endswith(CPP_EXT):
@@ -207,8 +214,7 @@ def run_diff_mode(ref):
         "cut-decorative": "comment-decorative-banner",
         "flag-commented-code": "comment-commented-out-code",
     }
-    diff = subprocess.run(["git", "diff", "--unified=0", ref, "--", *[r + "**" for r in SWEEP_ROOTS]],
-                          capture_output=True, text=True).stdout
+    diff = _git(["diff", "--unified=0", ref, "--", *[r + "**" for r in SWEEP_ROOTS]])
     cur_file = None
     cur_line = 0
     violations = []

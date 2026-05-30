@@ -216,6 +216,10 @@ def strip_comments(text):
                 i += 2
                 continue
             if c == "/" and nxt == "*":
+                # Replace the whole block comment with a single space so adjacent tokens never
+                # fuse (`a/**/b` must residue-compare as `a b`, not `ab`). code_token_residue then
+                # collapses whitespace runs, so the lone space is harmless where space already existed.
+                out.append(" ")
                 state = BLOCK_COMMENT
                 i += 2
                 continue

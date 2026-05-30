@@ -49,6 +49,10 @@ check(cl.classify_line_kinds("/* a\n * b\n */\nint c;\n") == ["full_comment", "f
       "multi-line block comment lines are full_comment; code line is code")
 check(cl.code_token_residue("// whole line\nint x;\n") == "int x;",
       "full-line comment drops from residue; code remains")
+check(cl.code_token_residue("int a/**/b;\n") == "int a b;",
+      "block comment between tokens becomes a separator (a/**/b -> 'a b', never 'ab')")
+check(cl.code_token_residue("foo(); /* c */\n") == "foo();",
+      "block comment where space already exists collapses cleanly (no spurious diff)")
 # the regression that broke the first build: a // line must not eat following lines
 check(cl.classify_line_kinds("// c1\nint a;\n// c2\nint b;\n") ==
       ["full_comment", "code", "full_comment", "code"],

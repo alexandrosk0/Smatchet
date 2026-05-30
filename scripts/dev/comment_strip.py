@@ -57,17 +57,27 @@ def strip_file_text(text):
     return new_text, removed
 
 
+def _in_scope(path):
+    """Only sweep first-party C++ under the audited roots; never ThirdParty. Guards against
+    `comment_strip.py --apply .` rewriting files outside the intended sweep scope."""
+    rel = os.path.relpath(path).replace("\\", "/")
+    if any(s in "/" + rel for s in audit.EXCLUDE_SUBSTR):
+        return False
+    return rel.startswith(audit.SWEEP_ROOTS) and rel.endswith(audit.CPP_EXT)
+
+
 def iter_target_files(paths):
     for p in paths:
         if os.path.isdir(p):
             for root, _, names in os.walk(p):
-                if "/ThirdParty/" in root.replace("\\", "/") or root.replace("\\", "/").endswith("ThirdParty"):
-                    continue
                 for nm in names:
-                    if nm.endswith(audit.CPP_EXT):
-                        yield os.path.join(root, nm).replace("\\", "/")
-        elif p.endswith(audit.CPP_EXT):
+                    cand = os.path.join(root, nm).replace("\\", "/")
+                    if _in_scope(cand):
+                        yield cand
+        elif _in_scope(p):
             yield p
+        else:
+            print(f"comment_strip: skipping out-of-scope path {p}", file=sys.stderr)
 
 
 def main():

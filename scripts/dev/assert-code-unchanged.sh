@@ -35,8 +35,20 @@ fail=0
 checked=0
 for f in "${FILES[@]}"; do
     [ -f "$f" ] || continue   # deleted in working tree
-    base_res="$(git show "$BASE:$f" 2>/dev/null | "$PY" "$LIB" --residue 2>/dev/null)"
-    head_res="$("$PY" "$LIB" --residue < "$f" 2>/dev/null)"
+    # A file absent at BASE is newly Added — not a comment-only edit of existing code; the build +
+    # tests cover it. Skip (don't fail) those; the sweep never adds .cpp/.h.
+    if ! base_src="$(git show "$BASE:$f" 2>/dev/null)"; then
+        echo "[assert-code-unchanged] note: $f is new vs $BASE (no base) — skipping residue check" >&2
+        continue
+    fi
+    # FAIL CLOSED on any residue-computation error: a suppressed crash on BOTH sides would yield
+    # two empty strings that compare equal → a false PASS. Surface stderr and treat errors as failures.
+    if ! base_res="$(printf '%s' "$base_src" | "$PY" "$LIB" --residue)"; then
+        echo "CODE-RESIDUE ERROR (base) for $f — failing closed" >&2; fail=1; continue
+    fi
+    if ! head_res="$("$PY" "$LIB" --residue < "$f")"; then
+        echo "CODE-RESIDUE ERROR (head) for $f — failing closed" >&2; fail=1; continue
+    fi
     checked=$((checked + 1))
     if [ "$base_res" != "$head_res" ]; then
         fail=1
