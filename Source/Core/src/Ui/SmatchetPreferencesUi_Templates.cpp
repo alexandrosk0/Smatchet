@@ -375,37 +375,37 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
                                         "Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}");
                     ImGui::Spacing();
 
-                    static std::vector<CommentTemplate> s_blameTemplatesList;
-                    if (!flags.blameTemplatesLoaded) {
-                        s_blameTemplatesList = d.cfg.BlameCommentTemplates;
-                        flags.blameTemplatesLoaded = true;
+                    static std::vector<CommentTemplate> s_annotateTemplatesList;
+                    if (!flags.annotateTemplatesLoaded) {
+                        s_annotateTemplatesList = d.cfg.AnnotateCommentTemplates;
+                        flags.annotateTemplatesLoaded = true;
                     }
-                    static int s_selectedBlameIdx = -1;
-                    if (s_selectedBlameIdx >= static_cast<int>(s_blameTemplatesList.size())) {
-                        s_selectedBlameIdx = static_cast<int>(s_blameTemplatesList.size()) - 1;
+                    static int s_selectedAnnotateIdx = -1;
+                    if (s_selectedAnnotateIdx >= static_cast<int>(s_annotateTemplatesList.size())) {
+                        s_selectedAnnotateIdx = static_cast<int>(s_annotateTemplatesList.size()) - 1;
                     }
 
                     // Render list of current comment templates on top
-                    ImGui::BeginChild("BlameListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders,
+                    ImGui::BeginChild("AnnotateListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders,
                                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
-                    for (size_t i = 0; i < s_blameTemplatesList.size(); ++i) {
+                    for (size_t i = 0; i < s_annotateTemplatesList.size(); ++i) {
                         ImGui::PushID(static_cast<int>(i));
                         ImGui::AlignTextToFramePadding();
                         std::string displayName =
-                            s_blameTemplatesList[i].Title + " (" + s_blameTemplatesList[i].Id + ")";
-                        if (ImGui::Selectable(displayName.c_str(), s_selectedBlameIdx == static_cast<int>(i))) {
-                            s_selectedBlameIdx = static_cast<int>(i);
+                            s_annotateTemplatesList[i].Title + " (" + s_annotateTemplatesList[i].Id + ")";
+                        if (ImGui::Selectable(displayName.c_str(), s_selectedAnnotateIdx == static_cast<int>(i))) {
+                            s_selectedAnnotateIdx = static_cast<int>(i);
                         }
 
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
                         if (i > 0) {
                             if (ImGui::Button("▲")) {
-                                std::swap(s_blameTemplatesList[i], s_blameTemplatesList[i - 1]);
-                                if (s_selectedBlameIdx == static_cast<int>(i))
-                                    s_selectedBlameIdx = static_cast<int>(i - 1);
-                                else if (s_selectedBlameIdx == static_cast<int>(i - 1))
-                                    s_selectedBlameIdx = static_cast<int>(i);
-                                d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                                std::swap(s_annotateTemplatesList[i], s_annotateTemplatesList[i - 1]);
+                                if (s_selectedAnnotateIdx == static_cast<int>(i))
+                                    s_selectedAnnotateIdx = static_cast<int>(i - 1);
+                                else if (s_selectedAnnotateIdx == static_cast<int>(i - 1))
+                                    s_selectedAnnotateIdx = static_cast<int>(i);
+                                d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
                                 MarkPrefsDirty(d);
                             }
                         } else {
@@ -415,14 +415,14 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
                         }
 
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
-                        if (i < s_blameTemplatesList.size() - 1) {
+                        if (i < s_annotateTemplatesList.size() - 1) {
                             if (ImGui::Button("▼")) {
-                                std::swap(s_blameTemplatesList[i], s_blameTemplatesList[i + 1]);
-                                if (s_selectedBlameIdx == static_cast<int>(i))
-                                    s_selectedBlameIdx = static_cast<int>(i + 1);
-                                else if (s_selectedBlameIdx == static_cast<int>(i + 1))
-                                    s_selectedBlameIdx = static_cast<int>(i);
-                                d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                                std::swap(s_annotateTemplatesList[i], s_annotateTemplatesList[i + 1]);
+                                if (s_selectedAnnotateIdx == static_cast<int>(i))
+                                    s_selectedAnnotateIdx = static_cast<int>(i + 1);
+                                else if (s_selectedAnnotateIdx == static_cast<int>(i + 1))
+                                    s_selectedAnnotateIdx = static_cast<int>(i);
+                                d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
                                 MarkPrefsDirty(d);
                             }
                         } else {
@@ -434,13 +434,13 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
                         if (ImGui::Button("✖")) {
-                            s_blameTemplatesList.erase(s_blameTemplatesList.begin() + i);
-                            if (s_selectedBlameIdx == static_cast<int>(i)) {
-                                s_selectedBlameIdx = -1;
-                            } else if (s_selectedBlameIdx > static_cast<int>(i)) {
-                                s_selectedBlameIdx--;
+                            s_annotateTemplatesList.erase(s_annotateTemplatesList.begin() + i);
+                            if (s_selectedAnnotateIdx == static_cast<int>(i)) {
+                                s_selectedAnnotateIdx = -1;
+                            } else if (s_selectedAnnotateIdx > static_cast<int>(i)) {
+                                s_selectedAnnotateIdx--;
                             }
-                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
                             MarkPrefsDirty(d);
                             --i;
                         }
@@ -452,8 +452,9 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
                     ImGui::Spacing();
 
                     // Detail section / Add section
-                    if (s_selectedBlameIdx >= 0 && s_selectedBlameIdx < static_cast<int>(s_blameTemplatesList.size())) {
-                        auto& t = s_blameTemplatesList[s_selectedBlameIdx];
+                    if (s_selectedAnnotateIdx >= 0 &&
+                        s_selectedAnnotateIdx < static_cast<int>(s_annotateTemplatesList.size())) {
+                        auto& t = s_annotateTemplatesList[s_selectedAnnotateIdx];
                         ImGui::TextDisabled("Edit Selected Template details:");
 
                         static char titleBuf[64] = "";
@@ -462,22 +463,22 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
 
                         // Copy to buffer if different to avoid typing overwrites
                         static int lastSelectedIdx = -2;
-                        if (lastSelectedIdx != s_selectedBlameIdx) {
+                        if (lastSelectedIdx != s_selectedAnnotateIdx) {
                             std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1);
                             titleBuf[sizeof(titleBuf) - 1] = '\0';
                             std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1);
                             idBuf[sizeof(idBuf) - 1] = '\0';
                             std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1);
                             textBuf[sizeof(textBuf) - 1] = '\0';
-                            lastSelectedIdx = s_selectedBlameIdx;
+                            lastSelectedIdx = s_selectedAnnotateIdx;
                         }
 
                         ImGui::TextUnformatted("Title:");
                         ImGui::SameLine(60.0f);
                         ImGui::SetNextItemWidth(200.0f);
-                        if (ImGui::InputText("##EditBlameTitle", titleBuf, sizeof(titleBuf))) {
+                        if (ImGui::InputText("##EditAnnotateTitle", titleBuf, sizeof(titleBuf))) {
                             t.Title = titleBuf;
-                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
                             MarkPrefsDirty(d);
                         }
 
@@ -485,17 +486,17 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
                         ImGui::TextUnformatted("ID:");
                         ImGui::SameLine(310.0f);
                         ImGui::SetNextItemWidth(150.0f);
-                        if (ImGui::InputText("##EditBlameId", idBuf, sizeof(idBuf))) {
+                        if (ImGui::InputText("##EditAnnotateId", idBuf, sizeof(idBuf))) {
                             t.Id = idBuf;
-                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
                             MarkPrefsDirty(d);
                         }
 
                         ImGui::TextUnformatted("Body:");
-                        if (ImGui::InputTextMultiline("##EditBlameText", textBuf, sizeof(textBuf),
+                        if (ImGui::InputTextMultiline("##EditAnnotateText", textBuf, sizeof(textBuf),
                                                       ImVec2(-FLT_MIN, 60.0f))) {
                             t.Text = textBuf;
-                            d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                            d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
                             MarkPrefsDirty(d);
                         }
                     } else {
@@ -511,9 +512,9 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
                         t.Title = "New Template";
                         t.Id = "new_template";
                         t.Text = "Template text for {key}";
-                        s_blameTemplatesList.push_back(t);
-                        s_selectedBlameIdx = static_cast<int>(s_blameTemplatesList.size()) - 1;
-                        d.cfg.BlameCommentTemplates = s_blameTemplatesList;
+                        s_annotateTemplatesList.push_back(t);
+                        s_selectedAnnotateIdx = static_cast<int>(s_annotateTemplatesList.size()) - 1;
+                        d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
                         MarkPrefsDirty(d);
                     }
 
@@ -524,7 +525,7 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Annotate")) {
-            ui.DrawBlamePreferencesTabForwarded(app);
+            ui.DrawAnnotatePreferencesTabForwarded(app);
             ImGui::EndTabItem();
         }
 }

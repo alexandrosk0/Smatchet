@@ -74,13 +74,13 @@ class ITrackerCollaboration {
         return false;
     }
 
-    virtual bool AddIssueCommentBlameContext(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
-                                             const std::string& /*p4User*/, const std::string& /*functionName*/,
-                                             const std::string& /*filePath*/, int /*lineNumber*/,
-                                             const std::string& /*changelist*/, const std::string& /*date*/,
-                                             bool /*approximated*/, const std::string& /*codeSnippet*/,
-                                             std::string& outError) {
-        outError = "AddIssueCommentBlameContext is not supported by this backend.";
+    virtual bool AddIssueCommentAnnotateContext(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                                                const std::string& /*p4User*/, const std::string& /*functionName*/,
+                                                const std::string& /*filePath*/, int /*lineNumber*/,
+                                                const std::string& /*changelist*/, const std::string& /*date*/,
+                                                bool /*approximated*/, const std::string& /*codeSnippet*/,
+                                                std::string& outError) {
+        outError = "AddIssueCommentAnnotateContext is not supported by this backend.";
         return false;
     }
 

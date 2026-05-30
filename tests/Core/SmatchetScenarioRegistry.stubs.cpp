@@ -37,7 +37,7 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario() { 
 std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario() { return NullScenario(); }
 // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
-std::unique_ptr<smatchet::cmd::IScenario> MakeBlameOpenEntryTabScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeAnnotateOpenEntryTabScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario() { return NullScenario(); }
 #if defined(SMATCHET_WITH_AI)
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario() { return NullScenario(); }

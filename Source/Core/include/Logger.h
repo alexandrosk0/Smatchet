@@ -34,7 +34,7 @@ class Logger {
     void SetLogTrackerHttpBodies(bool enabled);
     bool GetLogTrackerHttpBodies() const;
 
-    /** When true, P4Blame may log truncated p4 stdout at Trace (stderr always logged on failure). */
+    /** When true, P4Annotate may log truncated p4 stdout at Trace (stderr always logged on failure). */
     void SetLogP4Io(bool enabled);
     bool GetLogP4Io() const;
 

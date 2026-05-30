@@ -37,7 +37,7 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenar
 extern std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario();
 // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
-extern std::unique_ptr<smatchet::cmd::IScenario> MakeBlameOpenEntryTabScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeAnnotateOpenEntryTabScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario();
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario();
@@ -85,7 +85,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // scenario backlog gaps (tooling.md P2 line 178; tooling.md P2 line 56;
     // test.md P2 AI streaming S2/S4/S5; defensive cover for be2b1d9 wrapWidth
     // tooltip regression).
-    runner.RegisterFactory("blame-open-entry-tab", []() { return ::MakeBlameOpenEntryTabScenario(); });
+    runner.RegisterFactory("annotate-open-entry-tab", []() { return ::MakeAnnotateOpenEntryTabScenario(); });
     runner.RegisterFactory("description-tooltip-markdown-render",
                            []() { return ::MakeDescriptionTooltipMarkdownRenderScenario(); });
 #if defined(SMATCHET_WITH_AI)

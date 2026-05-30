@@ -1,4 +1,4 @@
-#include "BlameAnalysisUi_Internal.h"
+#include "AnnotateAnalysisUi_Internal.h"
 
 #include "ConfigManager.h"
 #include "Logger.h"
@@ -14,7 +14,7 @@
 
 #include <string>
 
-namespace BlameInternal {
+namespace AnnotateInternal {
 
 #ifdef _WIN32
 
@@ -82,7 +82,7 @@ std::wstring QuoteWinArgWide(const std::wstring& arg) {
     return out;
 }
 
-std::wstring ResolveP4VcExecutableWide(const BlameAnalysisConfig& cfg) {
+std::wstring ResolveP4VcExecutableWide(const AnnotateAnalysisConfig& cfg) {
     const std::string& exeUtf8 = cfg.P4VcExecutable.empty() ? std::string("p4vc") : cfg.P4VcExecutable;
     std::wstring wexe = Utf8ToWide(exeUtf8);
     if (wexe.find(L'\\') != std::wstring::npos || wexe.find(L'/') != std::wstring::npos) {
@@ -119,7 +119,7 @@ std::string WideToUtf8ForLog(const std::wstring& w) {
 
 } // namespace
 
-bool LaunchP4VcLike(const BlameAnalysisConfig& cfg, const std::string& timelapseTemplate,
+bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timelapseTemplate,
                     const std::string& changeTemplate, bool isTimelapse, const std::string& file, int line,
                     const std::string& cl) {
     const std::wstring workDir = WorkingDirWideForFile(file);
@@ -131,9 +131,10 @@ bool LaunchP4VcLike(const BlameAnalysisConfig& cfg, const std::string& timelapse
     // Require explicit opt-in so a stolen/edited config file cannot auto-exec.
     if (customCmd) {
         const TrackerConfig jiraCfg = ConfigManager::Load();
-        if (!jiraCfg.BlameAllowCustomCommands) {
-            LOG_WARN("LaunchP4VcLike: custom command template present but blame_allow_custom_commands=false; falling "
-                     "back to p4vc.");
+        if (!jiraCfg.AnnotateAllowCustomCommands) {
+            LOG_WARN(
+                "LaunchP4VcLike: custom command template present but annotate_allow_custom_commands=false; falling "
+                "back to p4vc.");
             customCmd = false;
         }
     }
@@ -193,11 +194,11 @@ bool LaunchP4VcLike(const BlameAnalysisConfig& cfg, const std::string& timelapse
 
 #else
 
-bool LaunchP4VcLike(const BlameAnalysisConfig&, const std::string&, const std::string&, bool, const std::string&, int,
-                    const std::string&) {
+bool LaunchP4VcLike(const AnnotateAnalysisConfig&, const std::string&, const std::string&, bool, const std::string&,
+                    int, const std::string&) {
     return false;
 }
 
 #endif
 
-} // namespace BlameInternal
+} // namespace AnnotateInternal

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "BlameAnalysisUi.h"
+#include "AnnotateAnalysisUi.h"
 #include "Commands/CommandPaletteUi.h"
 #include "ConfigManager.h"
 #include "SmatchetThemeIds.h"
@@ -47,7 +47,9 @@ class SmatchetUI {
 
     // Forwarding shims for split-TU helpers in SmatchetPreferencesUi_*.cpp.
     const ViewsStore& GetViewsStore() const { return ViewState.GetStore(); }
-    void DrawBlamePreferencesTabForwarded(const AppController& app) { blameAnalysisUi_.DrawBlamePreferencesTab(app); }
+    void DrawAnnotatePreferencesTabForwarded(const AppController& app) {
+        annotateAnalysisUi_.DrawAnnotatePreferencesTab(app);
+    }
 
     /// Ring-buffer LRU of recently toggled view command ids (capacity 5, oldest-first on read).
     class RecentViewLru {
@@ -101,7 +103,7 @@ class SmatchetUI {
 
   private:
     Views ViewState;
-    BlameAnalysisUi blameAnalysisUi_;
+    AnnotateAnalysisUi annotateAnalysisUi_;
     GridFrameContext gridFrameCtx_;
     smatchet::cmd::CommandPaletteUi commandPalette_;
     // Tracks the palette currently applied to ImGui::GetStyle() so SmatchetUI::Draw can detect

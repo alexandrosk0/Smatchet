@@ -35,7 +35,7 @@ namespace {
 
 // Path resolution — use the CMake-defined SMATCHET_TESTS_REPO_ROOT macro
 // (see tests/CMakeLists.txt ~line 200) so the fixture path is cwd-independent.
-// Same pattern as slice 3's P4Blame*E2E.test.cpp.
+// Same pattern as slice 3's P4Annotate*E2E.test.cpp.
 std::string ResolveFixturePath() {
     return std::string(SMATCHET_TESTS_REPO_ROOT) + "/tests/fixtures/github/basic-search.json";
 }

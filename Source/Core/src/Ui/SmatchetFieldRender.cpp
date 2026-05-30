@@ -7,7 +7,7 @@
 
 namespace {
 
-// Set once at app/blame-config load time. Empty = no field opts into syntax highlight.
+// Set once at app/annotate-config load time. Empty = no field opts into syntax highlight.
 std::string g_callstackFieldId;
 
 bool IsCallstackField(const std::string* fieldId) {

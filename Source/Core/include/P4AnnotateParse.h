@@ -1,20 +1,20 @@
-#ifndef SMATCHET_P4_BLAME_PARSE_H
-#define SMATCHET_P4_BLAME_PARSE_H
+#ifndef SMATCHET_P4_ANNOTATE_PARSE_H
+#define SMATCHET_P4_ANNOTATE_PARSE_H
 
-#include "P4Blame.h"
+#include "P4Annotate.h"
 
 #include <string>
 #include <vector>
 
 /**
- * Pure-logic parsers lifted from P4Blame.cpp's anonymous namespace so they can be unit-tested
+ * Pure-logic parsers lifted from P4Annotate.cpp's anonymous namespace so they can be unit-tested
  * without spawning `p4`. No process spawn, no I/O, no network, no SQLite. Implementations are
  * byte-identical to the originals (regex literals + control flow preserved); the only change
  * is namespace + linkage.
  *
- * Owner: `p4-blame` subsystem. Test surface: tests/Core/P4BlameParse.test.cpp.
+ * Owner: `p4-annotate` subsystem. Test surface: tests/Core/P4AnnotateParse.test.cpp.
  */
-namespace P4BlameParse {
+namespace P4AnnotateParse {
 
 /**
  * Split a `p4`-tool stdout blob into per-line strings. Trims trailing CR/LF and surrounding
@@ -41,19 +41,19 @@ void StripP4UserDomain(std::string& user);
  * `outCode` defaults to the raw line when no format matches and the function returns false.
  * Returns true when one of the four formats matched.
  */
-bool ParseAnnotateTextLine(const std::string& line, std::string& outCl, std::string& outUser,
-                           std::string& outAnnotDate, std::string& outCode);
+bool ParseAnnotateTextLine(const std::string& line, std::string& outCl, std::string& outUser, std::string& outAnnotDate,
+                           std::string& outCode);
 
 /**
  * Parse the header line of `p4 changes -m 1` output to extract the latest changelist + user.
- * Format: `Change <N> on <date> by <user@client> ...`. Returns a `P4LineBlame` with the
- * fields populated and `Approximate = true`. On parse miss the returned blame carries
+ * Format: `Change <N> on <date> by <user@client> ...`. Returns a `P4LineAnnotate` with the
+ * fields populated and `Approximate = true`. On parse miss the returned annotate carries
  * `Error` set to `stderrText` (if non-empty) or `"p4 changes produced no match"`.
  *
  * Empty input → no match → `Error` populated, no UB.
  */
-P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, const std::string& stderrText);
+P4LineAnnotate ParseLatestChangeFromChangesOutput(const std::string& stdoutText, const std::string& stderrText);
 
-} // namespace P4BlameParse
+} // namespace P4AnnotateParse
 
 #endif

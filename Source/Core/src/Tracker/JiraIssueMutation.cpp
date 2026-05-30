@@ -399,15 +399,15 @@ bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKe
     return true;
 }
 
-bool JiraClient::AddIssueCommentBlameContext(const TrackerConfig& cfg, const std::string& issueKey,
-                                             const std::string& p4User, const std::string& functionName,
-                                             const std::string& filePath, const int lineNumber,
-                                             const std::string& changelist, const std::string& date,
-                                             const bool approximated, const std::string& codeSnippet,
-                                             std::string& outError) {
+bool JiraClient::AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const std::string& issueKey,
+                                                const std::string& p4User, const std::string& functionName,
+                                                const std::string& filePath, const int lineNumber,
+                                                const std::string& changelist, const std::string& date,
+                                                const bool approximated, const std::string& codeSnippet,
+                                                std::string& outError) {
     outError.clear();
     const std::string auditOp = BackendAuditTrail::MakeOperationId("comment");
-    const nlohmann::json auditData = nlohmann::json{{"comment_kind", "blame_context"},
+    const nlohmann::json auditData = nlohmann::json{{"comment_kind", "annotate_context"},
                                                     {"p4_user", p4User},
                                                     {"function", functionName},
                                                     {"file", filePath},

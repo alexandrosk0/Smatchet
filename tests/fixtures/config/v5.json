@@ -28,7 +28,7 @@
     "show_mcp_server_window": false,
     "mcp_server_info_panel_height_px": 0.0,
     "mcp_server_activity_panel_height_px": 140.0,
-    "blame_allow_custom_commands": false,
+    "annotate_allow_custom_commands": false,
     "default_issue_type_id": "",
     "default_issue_type_name": "",
     "import_max_concurrent": 4,

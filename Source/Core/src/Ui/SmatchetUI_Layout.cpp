@@ -171,7 +171,7 @@ void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
     d.requestActiveProjectFocus = false;
     d.requestViewsDashboardFocus = false;
     d.showPerformance = false;
-    d.showBlameAnalysis = false;
+    d.showAnnotateAnalysis = false;
     d.showBulkImport = false;
     d.showBulkExport = false;
     d.showAuditTrail = false;
@@ -204,7 +204,7 @@ void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
     d.requestActiveProjectFocus = false;
     d.requestViewsDashboardFocus = false;
     d.showPerformance = false;
-    d.showBlameAnalysis = false;
+    d.showAnnotateAnalysis = false;
     d.showBulkImport = false;
     d.showBulkExport = false;
     d.showAuditTrail = false;

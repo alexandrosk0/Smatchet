@@ -292,9 +292,9 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 d.requestViewsDashboardFocus = true;
                 recentViews_.Touch("view.toggle.views-dashboard");
             }
-            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.showBlameAnalysis)) {
-                d.showBlameAnalysis = !d.showBlameAnalysis;
-                recentViews_.Touch("view.toggle.source-blame");
+            if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.showAnnotateAnalysis)) {
+                d.showAnnotateAnalysis = !d.showAnnotateAnalysis;
+                recentViews_.Touch("view.toggle.source-annotate");
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Log", "Ctrl+Shift+U", d.showLogWindow)) {

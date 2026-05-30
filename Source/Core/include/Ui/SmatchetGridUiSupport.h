@@ -15,9 +15,8 @@ class Views;
 
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
-                                  const std::string& rawValue, const std::string& richValue,
-                                  AppController* app, UiDrawSession* ui, bool readOnlyMode,
-                                  const CachedTicket* rowForBlameMenu);
+                                  const std::string& rawValue, const std::string& richValue, AppController* app,
+                                  UiDrawSession* ui, bool readOnlyMode, const CachedTicket* rowForAnnotateMenu);
 
 void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerField* meta);
 

@@ -90,7 +90,7 @@ Before any tool call that mutates state, classify the incoming bug description a
 
 - **(a) Breaking surface** — the component / scenario / file / panel / command where the failure manifests. "AI assistant streaming" is too broad; "`AiAssistantPanel::RenderMessages` after a 401 response" is concrete.
 - **(b) Observable failure** — an assertion text, exact log line, sanitizer report excerpt, screenshot diff, perf delta, golden-image mismatch, or user-described symptom with the file:line / feature path. "Looks wrong" alone fails; "row index reads 2 after sort instead of following the moved ticket" passes.
-- **(c) Input shape** — CLI args, scenario name, fixture path, Lua snippet, failing-doctest name, or a user click-path that maps to a registered bucket-E ImGui-Test-Engine action. Free-form "click around the UI until it breaks" fails; `scenario.run --name=blame-open-entry-tab --frames=600 --fixture=tests/fixtures/p4/blame-large.json` passes.
+- **(c) Input shape** — CLI args, scenario name, fixture path, Lua snippet, failing-doctest name, or a user click-path that maps to a registered bucket-E ImGui-Test-Engine action. Free-form "click around the UI until it breaks" fails; `scenario.run --name=annotate-open-entry-tab --frames=600 --fixture=tests/fixtures/p4/annotate-large.json` passes.
 
 If **any one** of (a)/(b)/(c) is missing, emit **one** structured `AskUserQuestion` block at threshold-check time naming the missing dimension(s). Do **not** drip-feed mid-debug. This is the **only** user-input point in the entire reproducer-first contract loop — once concrete, the loop proceeds through phases 0.5 → 1 → ... → 12 without further user questions (except `AWAITING USER FEEDBACK` signals at § 7.5).
 
@@ -511,7 +511,7 @@ Once the cause is pinned, hand the implementation to the matching subsystem spec
 - Unified command system (CLI / palette / MCP / Lua / scenarios) → `command-system`.
 - sol2 bindings / `AppController_LuaBindings.cpp` ↔ `_LuaStubs.cpp` parity → `lua-binder`.
 - MCP wire / `Source/Plugins/Mcp/` / tool schemas → `mcp-toolsmith`.
-- Perforce blame / `P4Blame` / callstack parsing → `p4-blame`.
+- Perforce annotate / `P4Annotate` / callstack parsing → `p4-annotate`.
 - DX12 dual-target / `SmatchetCore_DX12` / Unreal packaging → `unreal-bridge`.
 - Cross-cutting design (`ITrackerClient` widening, save-format changes, schema versioning) → `architect`.
 - One symbol across many files, no judgement → `mechanic`.

@@ -1,4 +1,4 @@
-#include "BlameAnalysisUi_Internal.h"
+#include "AnnotateAnalysisUi_Internal.h"
 
 #include "AppController.h"
 #include "SmatchetDockNodeIds.h"
@@ -7,7 +7,7 @@
 #include "CompactDateFormat.h"
 #include "ConfigManager.h"
 #include "Logger.h"
-#include "P4Blame.h"
+#include "P4Annotate.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerFieldSchema.h"
 
@@ -20,12 +20,12 @@
 #include <string>
 #include <vector>
 
-using namespace BlameInternal;
+using namespace AnnotateInternal;
 
-void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::string& selectedJiraIssueKey) {
+void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::string& selectedJiraIssueKey) {
     if (!pOpen || !*pOpen) {
         if (pOpen)
-            CloseBlameModal(pOpen);
+            CloseAnnotateModal(pOpen);
         return;
     }
     constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
@@ -33,51 +33,51 @@ void BlameAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::str
         ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     }
     ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Annotate###BlameAnalysisModal", pOpen, kPanelFlags)) {
+    if (!ImGui::Begin("Annotate###AnnotateAnalysisModal", pOpen, kPanelFlags)) {
         if (!*pOpen) {
-            CloseBlameModal(pOpen);
+            CloseAnnotateModal(pOpen);
         }
         ImGui::End();
         return;
     }
     if (!*pOpen) {
-        CloseBlameModal(pOpen);
+        CloseAnnotateModal(pOpen);
         ImGui::End();
         return;
     }
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        CloseBlameModal(pOpen);
+        CloseAnnotateModal(pOpen);
         ImGui::End();
         return;
     }
     bool wantClose = false;
     DrawContent(app, &wantClose, selectedJiraIssueKey);
     if (wantClose)
-        CloseBlameModal(pOpen);
+        CloseAnnotateModal(pOpen);
     ImGui::End();
 }
 
-void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey) {
+void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey) {
     ensureSettingsBuffersLoaded();
 
     MaybeAutoselectCallstackTrackerField(app);
     MaybeAutoselectLastFoundClTrackerField(app);
     MaybeAutoselectLastOccurrencesTrackerField(app);
 
-    const bool justOpened = !blameOpenPrev_;
-    blameOpenPrev_ = true;
+    const bool justOpened = !annotateOpenPrev_;
+    annotateOpenPrev_ = true;
     if (justOpened || selectedJiraIssueKey != State().lastCallstackIssueKey) {
         State().lastCallstackIssueKey = selectedJiraIssueKey;
         TryFillCallstackFromJira(app, selectedJiraIssueKey);
         TryFillBeforeChangelistAndDateFromJira(app, selectedJiraIssueKey);
     }
 
-    if (State().blamePendingAutoProcess && !State().worker.Running.load()) {
-        RunBlameProcessFromBuffers();
-        State().blamePendingAutoProcess = false;
+    if (State().annotatePendingAutoProcess && !State().worker.Running.load()) {
+        RunAnnotateProcessFromBuffers();
+        State().annotatePendingAutoProcess = false;
     }
 
-    const BlameUiThemeColors& theme = State().blameCfg.UiColors;
+    const AnnotateUiThemeColors& theme = State().annotateCfg.UiColors;
 
     const std::string titleIssue =
         selectedJiraIssueKey.empty() ? std::string("(no issue selected)") : selectedJiraIssueKey;
@@ -94,7 +94,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         if (slack > 0.f) {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + slack);
         }
-        PushBlameLinkButtonColors(theme);
+        PushAnnotateLinkButtonColors(theme);
         if (ImGui::Button("Ask AI")) {
             const std::string payload = BuildAiExport();
             ImGui::SetClipboardText(payload.c_str());
@@ -108,7 +108,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         }
         ImGui::SameLine();
         if (ImGui::Button("Export JSON")) {
-            ImGui::SetClipboardText(BuildBlameExportJson().c_str());
+            ImGui::SetClipboardText(BuildAnnotateExportJson().c_str());
             State().lastUiStatus = "Annotate JSON export copied to clipboard.";
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -116,7 +116,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         }
         ImGui::SameLine();
         if (ImGui::Button("Export CSV")) {
-            ImGui::SetClipboardText(BuildBlameExportCsv().c_str());
+            ImGui::SetClipboardText(BuildAnnotateExportCsv().c_str());
             State().lastUiStatus = "Annotate CSV export copied to clipboard.";
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -124,7 +124,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         }
         ImGui::SameLine();
         if (ImGui::Button("Close")) {
-            PopBlameLinkButtonColors();
+            PopAnnotateLinkButtonColors();
             if (wantClose)
                 *wantClose = true;
             return;
@@ -132,7 +132,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             ImGui::SetTooltip("Close Annotate.");
         }
-        PopBlameLinkButtonColors();
+        PopAnnotateLinkButtonColors();
     }
 
     ImGui::Separator();
@@ -157,7 +157,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         ImGui::Separator();
     }
 
-    std::vector<BlameRow> rowsSnap;
+    std::vector<AnnotateRow> rowsSnap;
     size_t nrow = 0;
     {
         std::lock_guard<std::mutex> lk(State().displayMutex);
@@ -168,9 +168,9 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
     const bool busy = State().worker.Running.load();
     const int prog = State().worker.Progress.load();
 
-    if (ImGui::BeginTabBar("blame_main_tabs", ImGuiTabBarFlags_None)) {
+    if (ImGui::BeginTabBar("annotate_main_tabs", ImGuiTabBarFlags_None)) {
         if (ImGui::BeginTabItem("Callstack")) {
-            const bool streamlinedHide = State().blameStreamlinedFromGrid && !State().showRaw;
+            const bool streamlinedHide = State().annotateStreamlinedFromGrid && !State().showRaw;
 
             ImGui::Text("Callstack Frames: %zu", nrow);
             {
@@ -182,7 +182,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                                           ImGui::CalcTextSize("Show raw callstack…").x + padH));
                 if (!streamlinedHide) {
                     ImGui::SameLine();
-                    PushBlameLinkButtonColors(theme);
+                    PushAnnotateLinkButtonColors(theme);
                     if (State().showRaw) {
                         if (ImGui::Button("Show Table", ImVec2(callstackViewBtnW, 0.f))) {
                             State().showRaw = false;
@@ -202,10 +202,10 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                                 "view). Use Show Table to edit the buffer in the smaller field.");
                         }
                     }
-                    PopBlameLinkButtonColors();
+                    PopAnnotateLinkButtonColors();
                 } else {
                     ImGui::SameLine();
-                    PushBlameLinkButtonColors(theme);
+                    PushAnnotateLinkButtonColors(theme);
                     if (ImGui::Button("Show raw callstack…", ImVec2(callstackViewBtnW, 0.f))) {
                         State().showRaw = true;
                     }
@@ -214,7 +214,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             "Reveal the callstack text, raw/table toggle, before changelist, and Process controls "
                             "(compact layout is used when Annotate is opened from the grid until you click this).");
                     }
-                    PopBlameLinkButtonColors();
+                    PopAnnotateLinkButtonColors();
                 }
             }
 
@@ -255,13 +255,13 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         "on that day (server date window) is written into the field on the left.");
                 }
                 ImGui::SameLine();
-                if (TrackerDateTimeFieldEditor::RenderGenericDatePicker("##blame_before_day", State().beforeDateIso,
+                if (TrackerDateTimeFieldEditor::RenderGenericDatePicker("##annotate_before_day", State().beforeDateIso,
                                                                         false, 228.f)) {
                     ParsedJiraDateTime parsed;
                     if (TryParseJiraDateTime(State().beforeDateIso, parsed)) {
                         std::string cl;
                         std::string err;
-                        if (P4FirstSubmittedChangelistOnCalendarDay(State().blameCfg, parsed.Year, parsed.Month,
+                        if (P4FirstSubmittedChangelistOnCalendarDay(State().annotateCfg, parsed.Year, parsed.Month,
                                                                     parsed.Day, cl, err)) {
                             std::snprintf(State().atClBuf, sizeof(State().atClBuf), "%s", cl.c_str());
                             State().lastUiStatus = "Before changelist set to first submitted CL on that day: " + cl;
@@ -273,9 +273,9 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                     }
                 }
 
-                PushBlameLinkButtonColors(theme);
+                PushAnnotateLinkButtonColors(theme);
                 if (ImGui::Button("Process") && !busy) {
-                    RunBlameProcessFromBuffers();
+                    RunAnnotateProcessFromBuffers();
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !busy) {
                     ImGui::SetTooltip(
@@ -290,16 +290,16 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && busy) {
                     ImGui::SetTooltip("Stop the in-progress Annotate worker.");
                 }
-                PopBlameLinkButtonColors();
+                PopAnnotateLinkButtonColors();
             } else if (busy) {
-                PushBlameLinkButtonColors(theme);
+                PushAnnotateLinkButtonColors(theme);
                 if (ImGui::Button("Cancel") && busy) {
                     State().worker.Cancel = true;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                     ImGui::SetTooltip("Stop the in-progress Annotate worker.");
                 }
-                PopBlameLinkButtonColors();
+                PopAnnotateLinkButtonColors();
             }
 
             if (!streamlinedHide) {
@@ -341,10 +341,10 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 // ScrollY made the whole tab body exceed the viewport so the window scroll bar hid
                 // the controls at the top (Process looked "missing").
                 const float tblScrollH = std::max(ImGui::GetContentRegionAvail().y - 4.f, 80.f);
-                ImGui::BeginChild("##blame_callstack_tbl_scroll", ImVec2(0.f, tblScrollH), ImGuiChildFlags_None,
+                ImGui::BeginChild("##annotate_callstack_tbl_scroll", ImVec2(0.f, tblScrollH), ImGuiChildFlags_None,
                                   ImGuiWindowFlags_None);
                 const float locColW = 250.f;
-                if (ImGui::BeginTable("blame_tbl", 6,
+                if (ImGui::BeginTable("annotate_tbl", 6,
                                       ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable,
                                       ImVec2(-1.f, 0.f))) {
                     ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.f, 0);
@@ -357,7 +357,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
 
                     const float rowH = ImGui::GetTextLineHeightWithSpacing();
                     for (size_t i = 0; i < nrow; ++i) {
-                        const BlameRow& row = rowsSnap[i];
+                        const AnnotateRow& row = rowsSnap[i];
                         const bool pending = busy && static_cast<int>(i) >= prog;
                         ImGui::PushID(static_cast<int>(i));
                         ImGui::TableNextRow();
@@ -365,24 +365,24 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         ImGui::TableSetColumnIndex(0);
                         char idxBuf[16];
                         std::snprintf(idxBuf, sizeof(idxBuf), "%u", static_cast<unsigned>(i + 1));
-                        PushBlameLinkTextOnly(theme);
+                        PushAnnotateLinkTextOnly(theme);
                         ImGui::SelectableRaw(idxBuf, false,
                                              ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
                                              ImVec2(0.f, rowH));
-                        PopBlameLinkTextOnly();
+                        PopAnnotateLinkTextOnly();
                         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                             State().pendingSelectEntryIndex = static_cast<int>(i);
-                            EnsureDetailLoading(i, State().blameCfg, std::string(State().atClBuf));
+                            EnsureDetailLoading(i, State().annotateCfg, std::string(State().atClBuf));
                         }
                         if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
                             ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
-                            ImGui::OpenPopup("blame_cs_row_copy");
+                            ImGui::OpenPopup("annotate_cs_row_copy");
                         }
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                             ImGui::SetTooltip("Left-click: open the Entry tab for this frame and load its annotation.\n"
                                               "Right-click: menu with Copy (this row as TSV).");
                         }
-                        if (ImGui::BeginPopup("blame_cs_row_copy")) {
+                        if (ImGui::BeginPopup("annotate_cs_row_copy")) {
                             if (ImGui::MenuItem("Copy")) {
                                 ImGui::SetClipboardText(BuildCallstackRowTsv(row, i).c_str());
                             }
@@ -395,12 +395,12 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             const char* fn = row.Parsed.Function.c_str();
                             const float colAvail = ImGui::GetContentRegionAvail().x;
                             const float lineH = ImGui::GetTextLineHeight();
-                            PushBlameLinkTextOnly(theme);
+                            PushAnnotateLinkTextOnly(theme);
                             if (ImGui::SelectableRaw(fn, false, ImGuiSelectableFlags_AllowOverlap,
                                                      ImVec2(colAvail, lineH))) {
                                 /* click handled below */
                             }
-                            PopBlameLinkTextOnly();
+                            PopAnnotateLinkTextOnly();
                             if (ImGui::IsItemClicked()) {
                                 ImGui::SetClipboardText(fn);
                             }
@@ -417,12 +417,12 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             const std::string shortPath =
                                 ShortenPathForDisplay(row.PathForP4, std::max(32.f, locCellW - 40.f));
                             const std::string shortLoc = shortPath + ":" + std::to_string(row.Parsed.LineNumber);
-                            PushBlameLinkTextOnly(theme);
+                            PushAnnotateLinkTextOnly(theme);
                             if (ImGui::SelectableRaw(shortLoc.c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
-                                LaunchP4VcLike(State().blameCfg, State().timeTpl, State().changeTpl, true,
-                                               row.PathForP4, row.Parsed.LineNumber, row.Blame.Changelist);
+                                LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, true,
+                                               row.PathForP4, row.Parsed.LineNumber, row.Annotate.Changelist);
                             }
-                            PopBlameLinkTextOnly();
+                            PopAnnotateLinkTextOnly();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 ImGui::SetTooltip("Left-click: open p4vc timelapse for this file and line.\n\n%s",
                                                   fullLoc.c_str());
@@ -434,20 +434,20 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         {
                             const std::string userDisp =
                                 pending ? std::string("...")
-                                        : (row.Blame.User.empty() ? std::string("-") : row.Blame.User);
-                            const bool userActionable =
-                                !pending && !row.Blame.User.empty() && row.Blame.User != "..." && row.Blame.User != "-";
-                            if (pending || row.Blame.User.empty() || row.Blame.User == "-") {
+                                        : (row.Annotate.User.empty() ? std::string("-") : row.Annotate.User);
+                            const bool userActionable = !pending && !row.Annotate.User.empty() &&
+                                                        row.Annotate.User != "..." && row.Annotate.User != "-";
+                            if (pending || row.Annotate.User.empty() || row.Annotate.User == "-") {
                                 ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
                             } else {
-                                PushBlameLinkTextOnly(theme);
+                                PushAnnotateLinkTextOnly(theme);
                             }
                             ImGui::SelectableRaw((userDisp + "##user").c_str(), false,
                                                  ImGuiSelectableFlags_AllowOverlap);
-                            if (pending || row.Blame.User.empty() || row.Blame.User == "-") {
+                            if (pending || row.Annotate.User.empty() || row.Annotate.User == "-") {
                                 ImGui::PopStyleColor();
                             } else {
-                                PopBlameLinkTextOnly();
+                                PopAnnotateLinkTextOnly();
                             }
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 if (pending) {
@@ -455,20 +455,20 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                                 } else if (userActionable) {
                                     ImGui::SetTooltip("Left-click: look up this Perforce user in Jira.\n"
                                                       "Right-click: open the assign dialog for this row.\n%s",
-                                                      row.Blame.Approximate
+                                                      row.Annotate.Approximate
                                                           ? "\nApproximate Annotate (line may not match exact CL)."
                                                           : "");
                                 } else {
                                     ImGui::SetTooltip("No Perforce user on this row.");
                                 }
                             }
-                            if (!pending && ImGui::IsItemClicked() && !row.Blame.User.empty() &&
-                                row.Blame.User != "...") {
-                                OpenTrackerUserProfileForP4User(app, row.Blame.User);
+                            if (!pending && ImGui::IsItemClicked() && !row.Annotate.User.empty() &&
+                                row.Annotate.User != "...") {
+                                OpenTrackerUserProfileForP4User(app, row.Annotate.User);
                             }
                             if (ImGui::IsMouseClicked(1) && ImGui::IsItemHovered()) {
-                                PrepareAssignModal(app, row, pending ? std::string() : row.Blame.User);
-                                ImGui::OpenPopup("blame_assign");
+                                PrepareAssignModal(app, row, pending ? std::string() : row.Annotate.User);
+                                ImGui::OpenPopup("annotate_assign");
                             }
                         }
 
@@ -476,31 +476,32 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         ImGui::SetNextItemAllowOverlap();
                         {
                             const std::string clDisp =
-                                pending ? std::string("...")
-                                        : (row.Blame.Changelist.empty() ? std::string("-") : row.Blame.Changelist);
-                            if (pending || row.Blame.Changelist.empty()) {
+                                pending
+                                    ? std::string("...")
+                                    : (row.Annotate.Changelist.empty() ? std::string("-") : row.Annotate.Changelist);
+                            if (pending || row.Annotate.Changelist.empty()) {
                                 ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
                             } else {
-                                PushBlameLinkTextOnly(theme);
+                                PushAnnotateLinkTextOnly(theme);
                             }
                             ImGui::SelectableRaw((clDisp + "##cl").c_str(), false, ImGuiSelectableFlags_AllowOverlap);
-                            if (pending || row.Blame.Changelist.empty()) {
+                            if (pending || row.Annotate.Changelist.empty()) {
                                 ImGui::PopStyleColor();
                             } else {
-                                PopBlameLinkTextOnly();
+                                PopAnnotateLinkTextOnly();
                             }
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 if (pending) {
                                     ImGui::SetTooltip("Waiting for Annotate results for this row.");
-                                } else if (row.Blame.Changelist.empty()) {
+                                } else if (row.Annotate.Changelist.empty()) {
                                     ImGui::SetTooltip("No changelist on this row.");
                                 } else {
-                                    DrawClTooltipAsync(row.Blame.Changelist, State().blameCfg, theme);
+                                    DrawClTooltipAsync(row.Annotate.Changelist, State().annotateCfg, theme);
                                 }
                             }
-                            if (ImGui::IsItemClicked() && !pending && !row.Blame.Changelist.empty()) {
-                                LaunchP4VcLike(State().blameCfg, State().timeTpl, State().changeTpl, false,
-                                               row.PathForP4, row.Parsed.LineNumber, row.Blame.Changelist);
+                            if (ImGui::IsItemClicked() && !pending && !row.Annotate.Changelist.empty()) {
+                                LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false,
+                                               row.PathForP4, row.Parsed.LineNumber, row.Annotate.Changelist);
                             }
                         }
 
@@ -510,12 +511,12 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
                             ImGui::TextUnformatted("-");
                             ImGui::PopStyleColor();
-                        } else if (row.Blame.Date.empty()) {
+                        } else if (row.Annotate.Date.empty()) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.TextDisabled));
                             ImGui::TextUnformatted("-");
                             ImGui::PopStyleColor();
                         } else {
-                            const std::string dd = NormalizeDateDisplay(row.Blame.Date);
+                            const std::string dd = NormalizeDateDisplay(row.Annotate.Date);
                             ImGui::TextUnformatted(dd.c_str());
                         }
 
@@ -531,7 +532,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
 
         for (size_t ti = 0; ti < nrow; ++ti) {
             char tabName[80];
-            std::snprintf(tabName, sizeof(tabName), "Entry %zu##BlameEntry%zu", ti + 1, ti);
+            std::snprintf(tabName, sizeof(tabName), "Entry %zu##AnnotateEntry%zu", ti + 1, ti);
             ImGuiTabItemFlags tflags = ImGuiTabItemFlags_None;
             if (State().pendingSelectEntryIndex == static_cast<int>(ti)) {
                 tflags = ImGuiTabItemFlags_SetSelected;
@@ -540,8 +541,8 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 if (State().pendingSelectEntryIndex == static_cast<int>(ti)) {
                     State().pendingSelectEntryIndex = -1;
                 }
-                EnsureDetailLoading(ti, State().blameCfg, std::string(State().atClBuf));
-                BlameRow row = rowsSnap[ti];
+                EnsureDetailLoading(ti, State().annotateCfg, std::string(State().atClBuf));
+                AnnotateRow row = rowsSnap[ti];
                 ImGui::Text("File: %s", row.PathForP4.c_str());
                 ImGui::Text("Target Line: %d", row.Parsed.LineNumber);
 
@@ -572,7 +573,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                     auto annRowOpenCopyMenu = []() {
                         if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
                             ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
-                            ImGui::OpenPopup("blame_ann_row_copy");
+                            ImGui::OpenPopup("annotate_ann_row_copy");
                         }
                     };
                     auto annRowHoverTip = []() {
@@ -597,10 +598,10 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             if (hl) {
                                 ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.StatusWarning));
                             }
-                            PushBlameLinkTextOnly(theme);
+                            PushAnnotateLinkTextOnly(theme);
                             ImGui::SelectableRaw(hl ? ">>>" : " ", false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2((std::max)(markW, 1.f), annRowHitH));
-                            PopBlameLinkTextOnly();
+                            PopAnnotateLinkTextOnly();
                             if (hl) {
                                 ImGui::PopStyleColor();
                             }
@@ -613,10 +614,10 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             char lineBuf[32];
                             std::snprintf(lineBuf, sizeof(lineBuf), "%d", ln.SourceLine);
                             const float lineColW = ImGui::GetContentRegionAvail().x;
-                            PushBlameLinkTextOnly(theme);
+                            PushAnnotateLinkTextOnly(theme);
                             ImGui::SelectableRaw(lineBuf, false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2((std::max)(lineColW, 1.f), annRowHitH));
-                            PopBlameLinkTextOnly();
+                            PopAnnotateLinkTextOnly();
                             annRowOpenCopyMenu();
                             annRowHoverTip();
                         }
@@ -633,15 +634,15 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                                 ImGui::SetTooltip("No changelist on this line. Right-click for row menu (Copy).");
                             }
                         } else {
-                            PushBlameLinkTextOnly(theme);
+                            PushAnnotateLinkTextOnly(theme);
                             if (ImGui::SelectableRaw(ln.Changelist.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
                                                      ImVec2(clCellW, annRowHitH))) {
-                                LaunchP4VcLike(State().blameCfg, State().timeTpl, State().changeTpl, false,
+                                LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false,
                                                row.PathForP4, ln.SourceLine, ln.Changelist);
                             }
-                            PopBlameLinkTextOnly();
+                            PopAnnotateLinkTextOnly();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                                DrawClTooltipAsync(ln.Changelist, State().blameCfg, theme);
+                                DrawClTooltipAsync(ln.Changelist, State().annotateCfg, theme);
                             }
                         }
                         annRowOpenCopyMenu();
@@ -656,21 +657,21 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             ImGui::PopStyleColor();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 std::string tip = "No Perforce user on this line. Right-click for row menu (Copy).";
-                                if (hl && row.Blame.Approximate) {
+                                if (hl && row.Annotate.Approximate) {
                                     tip += "\n\nApproximate row: unable to find exact CL and user.";
                                 }
                                 ImGui::SetTooltip("%s", tip.c_str());
                             }
                         } else {
-                            PushBlameLinkTextOnly(theme);
+                            PushAnnotateLinkTextOnly(theme);
                             ImGui::SelectableRaw(ln.User.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
                                                  ImVec2(userCellW, annRowHitH));
-                            PopBlameLinkTextOnly();
+                            PopAnnotateLinkTextOnly();
                             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 std::string tip = "Left-click: look up this Perforce user in Jira.\n"
                                                   "Right-click: row menu - Copy (full line as TSV); Assign... when the "
                                                   "user is eligible (not '-' or '...').";
-                                if (hl && row.Blame.Approximate) {
+                                if (hl && row.Annotate.Approximate) {
                                     tip += "\n\nApproximate row: unable to find exact CL and user.";
                                 }
                                 ImGui::SetTooltip("%s", tip.c_str());
@@ -714,23 +715,23 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                             annRowHoverTip();
                         }
 
-                        if (ImGui::BeginPopup("blame_ann_row_copy")) {
+                        if (ImGui::BeginPopup("annotate_ann_row_copy")) {
                             if (ImGui::MenuItem("Copy")) {
                                 ImGui::SetClipboardText(BuildAnnotatedRowTsv(ln).c_str());
                             }
                             const bool canAssign = !ln.User.empty() && ln.User != "-" && ln.User != "...";
                             if (canAssign) {
                                 if (ImGui::MenuItem("Assign...")) {
-                                    BlameRow br = row;
-                                    br.Blame.User = ln.User;
-                                    br.Blame.Changelist = ln.Changelist;
+                                    AnnotateRow br = row;
+                                    br.Annotate.User = ln.User;
+                                    br.Annotate.Changelist = ln.Changelist;
                                     br.Parsed.LineNumber = ln.SourceLine;
-                                    br.Blame.LineSnippet = ln.Code;
-                                    br.Blame.Date = ln.Date;
-                                    br.Blame.Approximate = false;
+                                    br.Annotate.LineSnippet = ln.Code;
+                                    br.Annotate.Date = ln.Date;
+                                    br.Annotate.Approximate = false;
                                     PrepareAssignModal(app, br, ln.User);
                                     ImGui::CloseCurrentPopup();
-                                    ImGui::OpenPopup("blame_assign");
+                                    ImGui::OpenPopup("annotate_assign");
                                 }
                             }
                             ImGui::EndPopup();
@@ -752,7 +753,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         ImGui::EndTabBar();
     }
 
-    if (ImGui::BeginPopupModal("blame_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal("annotate_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
         const TrackerConfig cfg = ConfigManager::Load();
         const bool readOnlyMode = cfg.ReadOnlyMode || (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
@@ -782,15 +783,15 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
         } else {
             const bool hasJiraAccount = State().assignHasJiraAccount && !State().assignAccountId.empty();
             const bool commitInFlight = State().assignCommitInFlight;
-            PushBlameLinkTextOnly(theme);
+            PushAnnotateLinkTextOnly(theme);
             ImGui::BeginDisabled(readOnlyMode || commitInFlight);
             if (ImGui::Selectable("Assign issue to user", false)) {
                 const TrackerField* f = app.FindFieldById("assignee");
                 if (!hasJiraAccount) {
-                    LOG_ERROR("Blame UI: assign skipped — no Jira account match for this Perforce user.");
+                    LOG_ERROR("Annotate UI: assign skipped — no Jira account match for this Perforce user.");
                     State().lastUiStatus = "No Jira user match for assign.";
                 } else if (!f) {
-                    LOG_ERROR("Blame UI: assignee field not in catalog.");
+                    LOG_ERROR("Annotate UI: assignee field not in catalog.");
                     State().lastUiStatus = "assignee field not in catalog.";
                 } else {
                     // Pillar 2 — finding #7: dispatch SubmitFieldEdit (cpr::Post) off the UI thread.
@@ -805,10 +806,10 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
                             State().assignCommitInFlight = false;
                             if (ok) {
-                                LOG_INFO("Blame UI: assignee set on %s", capturedIssueKey.c_str());
+                                LOG_INFO("Annotate UI: assignee set on %s", capturedIssueKey.c_str());
                                 State().lastUiStatus = "Assignee updated.";
                             } else {
-                                LOG_ERROR("Blame UI: assign failed: %s", err.c_str());
+                                LOG_ERROR("Annotate UI: assign failed: %s", err.c_str());
                                 State().lastUiStatus = err;
                             }
                         });
@@ -817,7 +818,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 }
             }
             ImGui::EndDisabled();
-            PopBlameLinkTextOnly();
+            PopAnnotateLinkTextOnly();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                 ImGui::SetTooltip(
                     "Set the Jira assignee on the selected issue to the Jira user matched from the Perforce user on "
@@ -826,24 +827,24 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
             }
             ImGui::BeginDisabled(readOnlyMode || commitInFlight);
             if (ImGui::Selectable("Add Annotate context comment", false)) {
-                // Pillar 2 — finding #7: AddIssueCommentBlameContext (cpr::Post) → worker.
+                // Pillar 2 — finding #7: AddIssueCommentAnnotateContext (cpr::Post) → worker.
                 State().assignCommitInFlight = true;
                 State().lastUiStatus = "Posting...";
                 const std::string capturedIssueKey = selectedJiraIssueKey;
-                const BlameRow capturedRow = State().assignRow;
+                const AnnotateRow capturedRow = State().assignRow;
                 app.LaunchBackgroundTask([&app, capturedIssueKey, capturedRow]() {
                     std::string err;
-                    const bool ok = app.AddIssueCommentBlameContext(
-                        capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
-                        capturedRow.Parsed.LineNumber, capturedRow.Blame.Changelist, capturedRow.Blame.Date,
-                        capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet, err);
+                    const bool ok = app.AddIssueCommentAnnotateContext(
+                        capturedIssueKey, capturedRow.Annotate.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
+                        capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist, capturedRow.Annotate.Date,
+                        capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet, err);
                     app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
                         State().assignCommitInFlight = false;
                         if (ok) {
-                            LOG_INFO("Blame UI: posted blame context comment for %s.", capturedIssueKey.c_str());
+                            LOG_INFO("Annotate UI: posted annotate context comment for %s.", capturedIssueKey.c_str());
                             State().lastUiStatus = "Annotate context comment posted.";
                         } else {
-                            LOG_ERROR("Blame UI: comment failed: %s", err.c_str());
+                            LOG_ERROR("Annotate UI: comment failed: %s", err.c_str());
                             State().lastUiStatus = err;
                         }
                     });
@@ -856,12 +857,12 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
             ImGui::BeginDisabled(readOnlyMode || commitInFlight);
             {
                 const TrackerConfig jiraCfg = cfg;
-                int blameTplIndex = 0;
-                for (const auto& t : jiraCfg.BlameCommentTemplates) {
+                int annotateTplIndex = 0;
+                for (const auto& t : jiraCfg.AnnotateCommentTemplates) {
                     if (!t.Id.empty()) {
                         ImGui::PushID(t.Id.c_str());
                     } else {
-                        ImGui::PushID(blameTplIndex);
+                        ImGui::PushID(annotateTplIndex);
                     }
                     if (ImGui::SelectableRaw(t.Title.c_str(), false)) {
                         // Pillar 2 — finding #7: AddIssueCommentPlain (cpr::Post) → worker.
@@ -869,8 +870,8 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         State().lastUiStatus = "Posting...";
                         const std::string capturedIssueKey = selectedJiraIssueKey;
                         const std::string capturedTitle = t.Title;
-                        const std::string commentBody = BuildBlameQuickCommentTemplate(
-                            selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.BlameCommentTemplates);
+                        const std::string commentBody = BuildAnnotateQuickCommentTemplate(
+                            selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.AnnotateCommentTemplates);
                         app.LaunchBackgroundTask([&app, capturedIssueKey, capturedTitle, commentBody]() {
                             std::string err;
                             const bool ok = app.AddIssueCommentPlain(capturedIssueKey, commentBody, err);
@@ -886,7 +887,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::PopID();
-                    ++blameTplIndex;
+                    ++annotateTplIndex;
                 }
             }
             ImGui::EndDisabled();
@@ -894,7 +895,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 ImGui::SetTooltip("Disabled while Jira is in read-only mode.");
             }
             if (hasJiraAccount) {
-                PushBlameLinkTextOnly(theme);
+                PushAnnotateLinkTextOnly(theme);
             }
             ImGui::BeginDisabled(!hasJiraAccount || readOnlyMode || commitInFlight);
             if (ImGui::Selectable("Assign and add Annotate context", false)) {
@@ -902,35 +903,35 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 if (!f) {
                     State().lastUiStatus = "assignee field not in catalog.";
                 } else {
-                    // Pillar 2 — finding #7: chain SubmitFieldEdit + AddIssueCommentBlameContext
+                    // Pillar 2 — finding #7: chain SubmitFieldEdit + AddIssueCommentAnnotateContext
                     // on a single worker so the user clicks once and both HTTP calls run off-UI.
                     State().assignCommitInFlight = true;
                     State().lastUiStatus = "Posting...";
                     const std::string capturedIssueKey = selectedJiraIssueKey;
                     const std::string capturedAccountId = State().assignAccountId;
                     const TrackerField fieldCopy = *f;
-                    const BlameRow capturedRow = State().assignRow;
+                    const AnnotateRow capturedRow = State().assignRow;
                     app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy, capturedRow]() {
                         std::string err;
                         const bool assigned =
                             app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
                         bool commented = false;
                         if (assigned) {
-                            commented = app.AddIssueCommentBlameContext(
-                                capturedIssueKey, capturedRow.Blame.User, capturedRow.Parsed.Function,
-                                capturedRow.PathForP4, capturedRow.Parsed.LineNumber, capturedRow.Blame.Changelist,
-                                capturedRow.Blame.Date, capturedRow.Blame.Approximate, capturedRow.Blame.LineSnippet,
-                                err);
+                            commented = app.AddIssueCommentAnnotateContext(
+                                capturedIssueKey, capturedRow.Annotate.User, capturedRow.Parsed.Function,
+                                capturedRow.PathForP4, capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist,
+                                capturedRow.Annotate.Date, capturedRow.Annotate.Approximate,
+                                capturedRow.Annotate.LineSnippet, err);
                         }
                         const bool ok = assigned && commented;
                         app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
                             State().assignCommitInFlight = false;
                             if (ok) {
-                                LOG_INFO("Blame UI: assigned %s and posted blame context comment.",
+                                LOG_INFO("Annotate UI: assigned %s and posted annotate context comment.",
                                          capturedIssueKey.c_str());
                                 State().lastUiStatus = "Assigned and commented.";
                             } else {
-                                LOG_ERROR("Blame UI: assign/comment failed: %s", err.c_str());
+                                LOG_ERROR("Annotate UI: assign/comment failed: %s", err.c_str());
                                 State().lastUiStatus = err;
                             }
                         });
@@ -940,7 +941,7 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
             }
             ImGui::EndDisabled();
             if (hasJiraAccount) {
-                PopBlameLinkTextOnly();
+                PopAnnotateLinkTextOnly();
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                 if (hasJiraAccount) {
@@ -951,14 +952,14 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 }
             }
         }
-        PushBlameLinkButtonColors(theme);
+        PushAnnotateLinkButtonColors(theme);
         if (ImGui::Button("Close")) {
             ImGui::CloseCurrentPopup();
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             ImGui::SetTooltip("Close this dialog without making further changes.");
         }
-        PopBlameLinkButtonColors();
+        PopAnnotateLinkButtonColors();
         ImGui::EndPopup();
     }
 
@@ -985,14 +986,14 @@ void BlameAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std
                 }
             }
         }
-        PushBlameLinkButtonColors(theme);
+        PushAnnotateLinkButtonColors(theme);
         if (ImGui::Button("Close")) {
             ImGui::CloseCurrentPopup();
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             ImGui::SetTooltip("Close the Jira user profile dialog.");
         }
-        PopBlameLinkButtonColors();
+        PopAnnotateLinkButtonColors();
         ImGui::EndPopup();
     }
 }

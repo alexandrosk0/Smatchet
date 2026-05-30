@@ -91,7 +91,7 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 **UI-thread non-blocking** (flag any of these reachable from `SmatchetUI::Draw` or any ImGui render path — these are correctness issues, not "performance" — they cause hitches):
 - `cpr::Get` / `cpr::Post` / `cpr::Put` / `cpr::Delete` directly in render code — must go through `TrackerHttpClient` posted to a worker thread
 - `SQLite::Database` calls inside a render frame — apply via `MainThreadDispatcher::PostToMainThread`; chunk large writes
-- `p4 ...` invocations (any `system()`, `_popen`, child-process spawn) — must be on a `std::thread` worker (see `BlameAnalysisUi.cpp` pattern)
+- `p4 ...` invocations (any `system()`, `_popen`, child-process spawn) — must be on a `std::thread` worker (see `AnnotateAnalysisUi.cpp` pattern)
 - Synchronous file I/O (image decode + upload, font load, attachment download) on the UI thread — use `std::async(std::launch::async, …)` and poll per frame
 - `std::future::get()` without a prior `wait_for(0s)` ready-check — blocks the frame
 - `std::thread::join()` anywhere outside shutdown / destructor paths

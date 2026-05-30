@@ -1,14 +1,14 @@
 #include <doctest/doctest.h>
 
-#include "P4BlameParse.h"
+#include "P4AnnotateParse.h"
 
 #include <string>
 #include <vector>
 
-using P4BlameParse::ParseAnnotateTextLine;
-using P4BlameParse::ParseLatestChangeFromChangesOutput;
-using P4BlameParse::SplitLines;
-using P4BlameParse::StripP4UserDomain;
+using P4AnnotateParse::ParseAnnotateTextLine;
+using P4AnnotateParse::ParseLatestChangeFromChangesOutput;
+using P4AnnotateParse::SplitLines;
+using P4AnnotateParse::StripP4UserDomain;
 
 TEST_CASE("ParseAnnotateTextLine: 4 annotate-line shapes") {
     std::string cl;
@@ -104,8 +104,8 @@ TEST_CASE("ParseAnnotateTextLine: empty input returns false without crashing") {
 
 TEST_CASE("ParseLatestChangeFromChangesOutput: Change N on DATE by USER") {
     SUBCASE("header parse + latest-change extraction") {
-        const P4LineBlame b = ParseLatestChangeFromChangesOutput(
-            "Change 9876 on 2026/03/14 by alice@corp 'commit msg'\n", "");
+        const P4LineAnnotate b =
+            ParseLatestChangeFromChangesOutput("Change 9876 on 2026/03/14 by alice@corp 'commit msg'\n", "");
         CHECK(b.Changelist == "9876");
         CHECK(b.User == "alice");
         CHECK(b.Approximate);
@@ -113,16 +113,15 @@ TEST_CASE("ParseLatestChangeFromChangesOutput: Change N on DATE by USER") {
     }
 
     SUBCASE("multi-line output picks first match") {
-        const std::string out =
-            "Change 1000 on 2026/05/01 by bob@host 'first'\n"
-            "Change 999 on 2026/04/30 by carol@host 'second'\n";
-        const P4LineBlame b = ParseLatestChangeFromChangesOutput(out, "");
+        const std::string out = "Change 1000 on 2026/05/01 by bob@host 'first'\n"
+                                "Change 999 on 2026/04/30 by carol@host 'second'\n";
+        const P4LineAnnotate b = ParseLatestChangeFromChangesOutput(out, "");
         CHECK(b.Changelist == "1000");
         CHECK(b.User == "bob");
     }
 
     SUBCASE("malformed-header rejection falls back to stderr") {
-        const P4LineBlame b = ParseLatestChangeFromChangesOutput("garbage header\n", "p4 says no\n");
+        const P4LineAnnotate b = ParseLatestChangeFromChangesOutput("garbage header\n", "p4 says no\n");
         CHECK(b.Changelist == "");
         CHECK(b.User == "");
         CHECK(b.Approximate);
@@ -130,14 +129,14 @@ TEST_CASE("ParseLatestChangeFromChangesOutput: Change N on DATE by USER") {
     }
 
     SUBCASE("no match + empty stderr → canned error string") {
-        const P4LineBlame b = ParseLatestChangeFromChangesOutput("nothing useful here", "");
+        const P4LineAnnotate b = ParseLatestChangeFromChangesOutput("nothing useful here", "");
         CHECK(b.Changelist == "");
         CHECK(b.Error == "p4 changes produced no match");
     }
 }
 
 TEST_CASE("ParseLatestChangeFromChangesOutput: empty input") {
-    const P4LineBlame b = ParseLatestChangeFromChangesOutput("", "");
+    const P4LineAnnotate b = ParseLatestChangeFromChangesOutput("", "");
     CHECK(b.Changelist == "");
     CHECK(b.User == "");
     CHECK(b.Approximate);

@@ -803,10 +803,10 @@ class AppController
                        const std::string& adjustEstimate, const std::string& workDescription,
                        const std::string& startedDate, std::string& outError);
 
-    bool AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
-                                     const std::string& functionName, const std::string& filePath, int lineNumber,
-                                     const std::string& changelist, const std::string& date, bool approximated,
-                                     const std::string& codeSnippet, std::string& outError);
+    bool AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
+                                        const std::string& functionName, const std::string& filePath, int lineNumber,
+                                        const std::string& changelist, const std::string& date, bool approximated,
+                                        const std::string& codeSnippet, std::string& outError);
 
     bool FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                              std::string& outError) const;

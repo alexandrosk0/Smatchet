@@ -95,7 +95,7 @@
     { "name": "mcp", "agents": ["mcp-toolsmith"] },
     { "name": "offline-sync", "agents": ["offline-sync"] },
     { "name": "unreal", "agents": ["unreal-bridge"] },
-    { "name": "p4-blame", "agents": ["p4-blame"] },
+    { "name": "p4-annotate", "agents": ["p4-annotate"] },
     { "name": "commands", "agents": ["command-system"] }
   ],
   "agents": {
@@ -106,7 +106,7 @@
       "mcp-toolsmith",
       "offline-sync",
       "unreal-bridge",
-      "p4-blame",
+      "p4-annotate",
       "command-system"
     ]
   }

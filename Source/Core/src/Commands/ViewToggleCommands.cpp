@@ -60,7 +60,7 @@ void OnOpenViewsDashboard(UiDrawSession& d) { d.requestViewsDashboardFocus = tru
 
 void OnOpenAuditTrail(UiDrawSession& d) { d.requestAuditTrailFocus = true; }
 
-void OnOpenAnnotate(UiDrawSession& d) { d.showBlameAnalysis = true; }
+void OnOpenAnnotate(UiDrawSession& d) { d.showAnnotateAnalysis = true; }
 
 #if defined(SMATCHET_WITH_MCP)
 void OnOpenMcpServer(UiDrawSession& d) { d.requestMcpServerFocus = true; }
@@ -81,7 +81,7 @@ void RegisterViewToggleCommands(CommandRegistry& reg, AppController& app) {
 
     RegisterToggle(reg, app, "view.toggle.views_dashboard", "Views Dashboard", &UiDrawSession::showViewsDashboard,
                    &OnOpenViewsDashboard);
-    RegisterToggle(reg, app, "view.toggle.source_blame", "Annotate", &UiDrawSession::showBlameAnalysis,
+    RegisterToggle(reg, app, "view.toggle.source_annotate", "Annotate", &UiDrawSession::showAnnotateAnalysis,
                    &OnOpenAnnotate);
     RegisterToggle(reg, app, "view.toggle.log", "Log", &UiDrawSession::showLogWindow, nullptr);
     RegisterToggle(reg, app, "view.toggle.backend_audit", "Backend Audit", &UiDrawSession::showAuditTrail,

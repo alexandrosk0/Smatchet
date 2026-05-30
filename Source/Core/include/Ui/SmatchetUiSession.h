@@ -137,7 +137,7 @@ struct UiDrawSession {
     bool showPerformance = false;
     /// One-frame focus latch for the Performance window. See `requestPreferencesFocus`.
     bool requestPerformanceFocus = false;
-    bool showBlameAnalysis = false;
+    bool showAnnotateAnalysis = false;
     bool showBulkImport = false;
     /// One-frame focus latch for the Bulk Import window. See `requestPreferencesFocus`.
     bool requestBulkImportFocus = false;

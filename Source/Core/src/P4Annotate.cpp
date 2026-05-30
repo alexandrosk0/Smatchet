@@ -1,6 +1,6 @@
-#include "P4Blame.h"
+#include "P4Annotate.h"
 #include "Logger.h"
-#include "P4BlameParse.h"
+#include "P4AnnotateParse.h"
 #include "P4ErrorUtil.h"
 #include "StringUtil.h"
 #include "SubprocessCapture.h"
@@ -21,12 +21,12 @@ constexpr size_t kP4CaptureBytesMax = 4u * 1024u * 1024u;
 
 } // namespace
 
-using P4BlameParse::ParseAnnotateTextLine;
-using P4BlameParse::ParseLatestChangeFromChangesOutput;
-using P4BlameParse::SplitLines;
-using P4BlameParse::StripP4UserDomain;
+using P4AnnotateParse::ParseAnnotateTextLine;
+using P4AnnotateParse::ParseLatestChangeFromChangesOutput;
+using P4AnnotateParse::SplitLines;
+using P4AnnotateParse::StripP4UserDomain;
 
-bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>& args, int& outExitCode,
+bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::string>& args, int& outExitCode,
                   std::string& outStdout, std::string& outStderr) {
     outExitCode = -1;
     outStdout.clear();
@@ -48,7 +48,7 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>
     opts.argv0 = exe;
     opts.args = args;
     opts.timeoutMs = kP4ProcessTimeoutMs;
-    // Preserve P4Blame's historical per-stream cap (4 MB) — matches
+    // Preserve P4Annotate's historical per-stream cap (4 MB) — matches
     // pre-lift kP4CaptureBytesMax behaviour for both stdout and stderr.
     opts.stdoutByteCap = kP4CaptureBytesMax;
     opts.stderrByteCap = kP4CaptureBytesMax;
@@ -80,12 +80,12 @@ bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>
     return true;
 }
 
-P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depotOrPath, int oneBasedLine,
-                        const std::string& atChangelist) {
-    P4LineBlame result;
+P4LineAnnotate P4AnnotateLine(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath, int oneBasedLine,
+                              const std::string& atChangelist) {
+    P4LineAnnotate result;
     if (depotOrPath.empty() || oneBasedLine <= 0) {
         result.Error = "invalid path or line";
-        LOG_WARN("P4BlameLine: invalid input (empty path or line<=0) line=%d", oneBasedLine);
+        LOG_WARN("P4AnnotateLine: invalid input (empty path or line<=0) line=%d", oneBasedLine);
         return result;
     }
 
@@ -93,7 +93,7 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
     if (!atChangelist.empty() && pathArg.find('@') == std::string::npos && pathArg.find('#') == std::string::npos) {
         pathArg += "@" + atChangelist;
     }
-    LOG_DEBUG("P4BlameLine: pathArg=%s line=%d atCl=%s", pathArg.c_str(), oneBasedLine, atChangelist.c_str());
+    LOG_DEBUG("P4AnnotateLine: pathArg=%s line=%d atCl=%s", pathArg.c_str(), oneBasedLine, atChangelist.c_str());
     const std::vector<std::string> args = {"annotate", "-u", "-c", "-q", pathArg};
 
     int code = 0;
@@ -101,12 +101,12 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
     std::string err;
     if (!P4RunCommand(cfg, args, code, out, err)) {
         result.Error = "failed to run p4";
-        LOG_WARN("P4BlameLine: failed to spawn p4 pathArg=%s line=%d", pathArg.c_str(), oneBasedLine);
+        LOG_WARN("P4AnnotateLine: failed to spawn p4 pathArg=%s line=%d", pathArg.c_str(), oneBasedLine);
         return result;
     }
     if (code != 0) {
         result.Error = FormatP4CommandError("p4 annotate failed", code, err);
-        LOG_DEBUG("P4BlameLine: annotate non-zero exit=%d, trying changes fallback pathArg=%s err=%s", code,
+        LOG_DEBUG("P4AnnotateLine: annotate non-zero exit=%d, trying changes fallback pathArg=%s err=%s", code,
                   pathArg.c_str(), TruncateForLog(result.Error, 512).c_str());
         // Fallback: latest change on file
         std::vector<std::string> chArgs = {"changes", "-m", "1", pathArg};
@@ -114,10 +114,10 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
         std::string o2;
         std::string e2;
         if (P4RunCommand(cfg, chArgs, c2, o2, e2) && c2 == 0) {
-            LOG_DEBUG("P4BlameLine: changes fallback success pathArg=%s", pathArg.c_str());
+            LOG_DEBUG("P4AnnotateLine: changes fallback success pathArg=%s", pathArg.c_str());
             return ParseLatestChangeFromChangesOutput(o2, e2);
         }
-        LOG_WARN("P4BlameLine: annotate failed and changes fallback failed pathArg=%s line=%d", pathArg.c_str(),
+        LOG_WARN("P4AnnotateLine: annotate failed and changes fallback failed pathArg=%s line=%d", pathArg.c_str(),
                  oneBasedLine);
         return result;
     }
@@ -125,7 +125,7 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
     const std::vector<std::string> lines = SplitLines(out);
     if (oneBasedLine <= 0 || static_cast<size_t>(oneBasedLine) > lines.size()) {
         result.Approximate = true;
-        LOG_DEBUG("P4BlameLine: line out of annotate range (line=%zu annotateLines=%zu) pathArg=%s",
+        LOG_DEBUG("P4AnnotateLine: line out of annotate range (line=%zu annotateLines=%zu) pathArg=%s",
                   static_cast<size_t>(oneBasedLine), lines.size(), pathArg.c_str());
         std::vector<std::string> chArgs = {"changes", "-m", "1", pathArg};
         int c2 = 0;
@@ -135,7 +135,7 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
             return ParseLatestChangeFromChangesOutput(o2, e2);
         }
         result.Error = "line out of range";
-        LOG_WARN("P4BlameLine: %s pathArg=%s", result.Error.c_str(), pathArg.c_str());
+        LOG_WARN("P4AnnotateLine: %s pathArg=%s", result.Error.c_str(), pathArg.c_str());
         return result;
     }
 
@@ -146,18 +146,18 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
     std::string codeLine;
     if (!ParseAnnotateTextLine(L, cl, user, annDate, codeLine)) {
         result.Approximate = true;
-        LOG_DEBUG("P4BlameLine: unrecognized annotate line, trying changes pathArg=%s raw=%s", pathArg.c_str(),
+        LOG_DEBUG("P4AnnotateLine: unrecognized annotate line, trying changes pathArg=%s raw=%s", pathArg.c_str(),
                   TruncateForLog(L, 200).c_str());
         std::vector<std::string> chArgs = {"changes", "-m", "1", pathArg};
         int c2 = 0;
         std::string o2;
         std::string e2;
         if (P4RunCommand(cfg, chArgs, c2, o2, e2) && c2 == 0) {
-            P4LineBlame fb = ParseLatestChangeFromChangesOutput(o2, e2);
+            P4LineAnnotate fb = ParseLatestChangeFromChangesOutput(o2, e2);
             return fb;
         }
         result.Error = "unrecognized annotate line";
-        LOG_WARN("P4BlameLine: %s pathArg=%s", result.Error.c_str(), pathArg.c_str());
+        LOG_WARN("P4AnnotateLine: %s pathArg=%s", result.Error.c_str(), pathArg.c_str());
         return result;
     }
 
@@ -172,11 +172,11 @@ P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depot
     } else {
         result.LineSnippet = codeLine;
     }
-    LOG_DEBUG("P4BlameLine: success cl=%s user=%s pathArg=%s", cl.c_str(), user.c_str(), pathArg.c_str());
+    LOG_DEBUG("P4AnnotateLine: success cl=%s user=%s pathArg=%s", cl.c_str(), user.c_str(), pathArg.c_str());
     return result;
 }
 
-std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg, const std::string& depotOrPath,
+std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath,
                                             const std::string& atChangelist, std::string& outError) {
     std::vector<P4AnnotatedLine> rows;
     outError.clear();
@@ -264,7 +264,7 @@ static bool SmatchetAddOneUtcCalendarDay(int y, int m, int d, int& oy, int& om, 
     return true;
 }
 
-bool P4FirstSubmittedChangelistOnCalendarDay(const BlameAnalysisConfig& cfg, int year, int month, int day,
+bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, int year, int month, int day,
                                              std::string& outChangelist, std::string& outError) {
     outChangelist.clear();
     outError.clear();
@@ -301,7 +301,7 @@ bool P4FirstSubmittedChangelistOnCalendarDay(const BlameAnalysisConfig& cfg, int
         outError = "no submitted changelists on that calendar day (or no visibility to //...@)";
         return false;
     }
-    const P4LineBlame parsed = ParseLatestChangeFromChangesOutput(out, err);
+    const P4LineAnnotate parsed = ParseLatestChangeFromChangesOutput(out, err);
     if (parsed.Changelist.empty()) {
         outError = parsed.Error.empty() ? "could not parse p4 changes output" : parsed.Error;
         return false;
@@ -344,7 +344,7 @@ void P4ChangelistDescribeCache::Store(const std::string& changelist, P4Changelis
     EvictIfNeeded();
 }
 
-P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const BlameAnalysisConfig& cfg,
+P4ChangelistDetails P4ChangelistDescribeCache::GetOrFetch(const AnnotateAnalysisConfig& cfg,
                                                           const std::string& changelist) {
     if (changelist.empty()) {
         return P4ChangelistDetails();

@@ -37,14 +37,14 @@ add_executable(SmatchetTests
     Core/LocalCacheManagerChat.test.cpp
     Core/BackendAuditTrail.test.cpp
     Core/IssueCreatePipelineIntegration.test.cpp
-    Core/P4BlameParse.test.cpp
+    Core/P4AnnotateParse.test.cpp
     # Slice 3 of autonomous-debugging-no-creds — runner-seam fake exercises
-    # P4Blame.cpp's P4RunCommand path via BlameAnalysisConfig::P4RunOverride,
+    # P4Annotate.cpp's P4RunCommand path via AnnotateAnalysisConfig::P4RunOverride,
     # without spawning the real `p4` binary. FakeP4Runner.h lives in
     # tests/support/ (already on the include path).
-    Core/P4BlameAnnotateE2E.test.cpp
+    Core/P4AnnotateE2E.test.cpp
     Core/P4DescribeCacheE2E.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/P4Blame.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/P4Annotate.cpp"
     Core/TrackerLabelsPure.test.cpp
     Core/TrackerDateTimePure.test.cpp
     Core/TicketFieldEditorLongTextPure.test.cpp
@@ -160,7 +160,7 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpDispatch.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/P4BlameParse.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/P4AnnotateParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"

@@ -47,9 +47,10 @@ inline std::vector<CommentTemplate> GetDefaultQuickCommentTemplates() {
          "Triage handoff for {key}:\n- Current owner: \n- Next action: \n- ETA: \n- Blockers:"}};
 }
 
-inline std::vector<CommentTemplate> GetDefaultBlameCommentTemplates() {
+inline std::vector<CommentTemplate> GetDefaultAnnotateCommentTemplates() {
     return {
-        {"need_repro", "Need repro details", "Need repro details for {key} (blame context: {path}:{line}, CL {cl})."},
+        {"need_repro", "Need repro details",
+         "Need repro details for {key} (annotate context: {path}:{line}, CL {cl})."},
         {"need_logs", "Need logs / diagnostics",
          "Please attach logs/diagnostics for {key} to continue triage.\nReference: {function} @ {path}:{line}."},
         {"handoff", "Triage handoff summary",
@@ -123,7 +124,7 @@ struct TrackerConfig {
     std::string LogMinLevel = "info";
     // When true, tracker backends log truncated HTTP response bodies at Trace.
     bool LogTrackerHttpBodies = false;
-    // When true, P4Blame logs truncated p4 stdout at Trace (plus stderr on non-zero exit).
+    // When true, P4Annotate logs truncated p4 stdout at Trace (plus stderr on non-zero exit).
     bool LogP4Io = false;
     // When true, MCP plugin HTTP server is started.
     bool McpEnabled = false;
@@ -144,9 +145,9 @@ struct TrackerConfig {
     float McpServerInfoPanelHeightPx = 0.f;
     /** Height of the Recent actions copyable block. */
     float McpServerActivityPanelHeightPx = 140.f;
-    // Allow Blame Analysis to launch user-supplied custom `timelapse_cmd` / `change_cmd` templates.
+    // Allow Annotate Analysis to launch user-supplied custom `timelapse_cmd` / `change_cmd` templates.
     // Off by default: these run arbitrary programs; only enable if the config file is trusted.
-    bool BlameAllowCustomCommands = false;
+    bool AnnotateAllowCustomCommands = false;
 
     // Default Jira issue type id for new-issue drafts when we can't infer one
     // from the last displayed ticket (e.g. empty grid). Jira numeric id (e.g. "10001").
@@ -170,9 +171,9 @@ struct TrackerConfig {
     // fires once — the user is free to remove "issuetype" again afterwards.
     bool MigratedInheritIssueTypeV1 = false;
 
-    // Quick comment templates for context menus and blame analysis
+    // Quick comment templates for context menus and annotate analysis
     std::vector<CommentTemplate> QuickCommentTemplates = GetDefaultQuickCommentTemplates();
-    std::vector<CommentTemplate> BlameCommentTemplates = GetDefaultBlameCommentTemplates();
+    std::vector<CommentTemplate> AnnotateCommentTemplates = GetDefaultAnnotateCommentTemplates();
 
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
@@ -426,9 +427,9 @@ struct PathRemapRule {
     std::string ToPrefix;
 };
 
-/** RGBA for Blame Analysis UI status / find / tooltip widgets (ImGui); each array is {r,g,b,a} in 0..1.
+/** RGBA for Annotate Analysis UI status / find / tooltip widgets (ImGui); each array is {r,g,b,a} in 0..1.
  *  C++ syntax colors live on the active theme — see SmatchetTheme::GetSyntaxColors(). */
-struct BlameUiThemeColors {
+struct AnnotateUiThemeColors {
     float StatusInfo[4] = {0.55f, 0.92f, 0.75f, 1.0f};
     float StatusError[4] = {1.0f, 0.55f, 0.35f, 1.0f};
     float StatusWarning[4] = {1.0f, 0.85f, 0.2f, 1.0f};
@@ -438,12 +439,12 @@ struct BlameUiThemeColors {
     float ClTooltipTitle[4] = {0.35f, 1.0f, 0.45f, 1.0f};
 };
 
-/** Settings for the Blame Analysis tool (stored under `blame_analysis` in smatchet_config.json). */
-struct BlameAnalysisConfig {
+/** Settings for the Annotate Analysis tool (stored under `annotate_analysis` in smatchet_config.json). */
+struct AnnotateAnalysisConfig {
     /**
      * Runner seam for `p4` invocations (slice 3 of autonomous-debugging-no-creds).
      * Tests install a `tests/support/FakeP4Runner.h` lambda to drive
-     * `P4Blame.cpp:P4RunCommand` end-to-end without spawning the real binary.
+     * `P4Annotate.cpp:P4RunCommand` end-to-end without spawning the real binary.
      * Empty (default) → real `SubprocessCapture::Run` path; production behaviour
      * preserved.
      */
@@ -462,12 +463,13 @@ struct BlameAnalysisConfig {
     std::vector<std::string> DefaultIgnoreKeywords;
     std::vector<PathRemapRule> PathRemaps;
     int ChangelistCacheMaxEntries = 512;
-    BlameUiThemeColors UiColors{};
-    /** Jira field id (e.g. customfield_10001) whose value populates the blame callstack text. */
+    AnnotateUiThemeColors UiColors{};
+    /** Jira field id (e.g. customfield_10001) whose value populates the annotate callstack text. */
     std::string CallstackTrackerFieldId;
-    /** Jira field id whose value (decimal CL) pre-fills "Before changelist" when blame opens on an issue. */
+    /** Jira field id whose value (decimal CL) pre-fills "Before changelist" when annotate opens on an issue. */
     std::string LastFoundClTrackerFieldId;
-    /** Jira field id (date) pre-filling the "or day" picker when blame opens on an issue; empty if unset or blank. */
+    /** Jira field id (date) pre-filling the "or day" picker when annotate opens on an issue; empty if unset or blank.
+     */
     std::string LastOccurrencesTrackerFieldId;
 };
 
@@ -491,7 +493,7 @@ class ConfigManager {
     // any window docked into a parent node.
     // Bumped to 4: Annotate is now an embedded tab inside Smatchet - Active Project (no
     // longer a separate docked window). Removed dock nodes 0x7 (intermediate X-split) and
-    // 0x3 (former 250px right pane for Annotate/Source Blame). Node 0x2 (Active Project)
+    // 0x3 (former 250px right pane for Annotate/Source Annotate). Node 0x2 (Active Project)
     // is now a direct child of 0x1 alongside 0x8 (Views), giving the grid more width.
     // Bumped to 5: added NoTabBar=1 to central node 0x2 so the dock-node tab header
     // ("Smatchet - Active Project") is suppressed — the in-window Grid / Annotate
@@ -575,8 +577,8 @@ class ConfigManager {
     static void InvalidateCache();
 
     static void Save(const TrackerConfig& config);
-    static BlameAnalysisConfig LoadBlameAnalysis();
-    static void SaveBlameAnalysis(const BlameAnalysisConfig& b);
+    static AnnotateAnalysisConfig LoadAnnotateAnalysis();
+    static void SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b);
 
     static TrackerConfig Load(const CliOverrides& cli = CliOverrides());
 

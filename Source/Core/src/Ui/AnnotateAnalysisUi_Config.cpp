@@ -1,4 +1,4 @@
-#include "BlameAnalysisUi_Internal.h"
+#include "AnnotateAnalysisUi_Internal.h"
 
 #include "AppController.h"
 #include "CompactDateFormat.h"
@@ -11,33 +11,33 @@
 
 #include <algorithm>
 
-namespace BlameInternal {
+namespace AnnotateInternal {
 
-void LogBlameP4PathsIfChanged(const char* reason) {
+void LogAnnotateP4PathsIfChanged(const char* reason) {
     auto& st = State();
-    if (st.blameCfg.P4Executable != st.loggedP4Exe) {
-        LOG_INFO("Blame [%s]: p4_exe \"%s\" -> \"%s\"", reason, st.loggedP4Exe.c_str(),
-                 st.blameCfg.P4Executable.c_str());
-        st.loggedP4Exe = st.blameCfg.P4Executable;
+    if (st.annotateCfg.P4Executable != st.loggedP4Exe) {
+        LOG_INFO("Annotate [%s]: p4_exe \"%s\" -> \"%s\"", reason, st.loggedP4Exe.c_str(),
+                 st.annotateCfg.P4Executable.c_str());
+        st.loggedP4Exe = st.annotateCfg.P4Executable;
     }
-    if (st.blameCfg.P4VcExecutable != st.loggedP4vcExe) {
-        LOG_INFO("Blame [%s]: p4vc_exe \"%s\" -> \"%s\"", reason, st.loggedP4vcExe.c_str(),
-                 st.blameCfg.P4VcExecutable.c_str());
-        st.loggedP4vcExe = st.blameCfg.P4VcExecutable;
+    if (st.annotateCfg.P4VcExecutable != st.loggedP4vcExe) {
+        LOG_INFO("Annotate [%s]: p4vc_exe \"%s\" -> \"%s\"", reason, st.loggedP4vcExe.c_str(),
+                 st.annotateCfg.P4VcExecutable.c_str());
+        st.loggedP4vcExe = st.annotateCfg.P4VcExecutable;
     }
 }
 
-void HydrateBlameCfgDiskOnce() {
-    if (State().blameCfgDiskHydrated) {
+void HydrateAnnotateCfgDiskOnce() {
+    if (State().annotateCfgDiskHydrated) {
         return;
     }
-    State().blameCfg = ConfigManager::LoadBlameAnalysis();
-    State().blameCfgDiskHydrated = true;
-    SetCallstackFieldIdHint(State().blameCfg.CallstackTrackerFieldId);
+    State().annotateCfg = ConfigManager::LoadAnnotateAnalysis();
+    State().annotateCfgDiskHydrated = true;
+    SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
 }
 
 void MaybeAutoselectCallstackTrackerField(const AppController& app) {
-    if (!State().blameCfg.CallstackTrackerFieldId.empty()) {
+    if (!State().annotateCfg.CallstackTrackerFieldId.empty()) {
         return;
     }
     const auto& fields = app.GetAvailableFields();
@@ -47,14 +47,14 @@ void MaybeAutoselectCallstackTrackerField(const AppController& app) {
     auto it = std::find_if(fields.begin(), fields.end(),
                            [](const auto& f) { return ToLowerAsciiCopy(f.Name) == "callstack"; });
     if (it != fields.end()) {
-        State().blameCfg.CallstackTrackerFieldId = it->Id;
-        ConfigManager::SaveBlameAnalysis(State().blameCfg);
-        SetCallstackFieldIdHint(State().blameCfg.CallstackTrackerFieldId);
+        State().annotateCfg.CallstackTrackerFieldId = it->Id;
+        ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
+        SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
     }
 }
 
 void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
-    if (!State().blameCfg.LastFoundClTrackerFieldId.empty()) {
+    if (!State().annotateCfg.LastFoundClTrackerFieldId.empty()) {
         return;
     }
     const auto& fields = app.GetAvailableFields();
@@ -66,13 +66,13 @@ void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
         return n == "last found cl" || n == "lastfoundcl" || n == "last_found_cl";
     });
     if (it != fields.end()) {
-        State().blameCfg.LastFoundClTrackerFieldId = it->Id;
-        ConfigManager::SaveBlameAnalysis(State().blameCfg);
+        State().annotateCfg.LastFoundClTrackerFieldId = it->Id;
+        ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
     }
 }
 
 void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
-    if (!State().blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+    if (!State().annotateCfg.LastOccurrencesTrackerFieldId.empty()) {
         return;
     }
     const auto& fields = app.GetAvailableFields();
@@ -84,8 +84,8 @@ void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
         return n == "last occurrences" || n == "last occurances" || n == "last occurences" || n == "last_occurrences";
     });
     if (it != fields.end()) {
-        State().blameCfg.LastOccurrencesTrackerFieldId = it->Id;
-        ConfigManager::SaveBlameAnalysis(State().blameCfg);
+        State().annotateCfg.LastOccurrencesTrackerFieldId = it->Id;
+        ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
     }
 }
 
@@ -137,27 +137,27 @@ void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std:
         if (t.id != issueKey) {
             continue;
         }
-        if (!State().blameCfg.LastFoundClTrackerFieldId.empty()) {
+        if (!State().annotateCfg.LastFoundClTrackerFieldId.empty()) {
             const std::string cl =
-                SanitizeChangelistDigitsFromField(t.GetFieldValue(State().blameCfg.LastFoundClTrackerFieldId));
+                SanitizeChangelistDigitsFromField(t.GetFieldValue(State().annotateCfg.LastFoundClTrackerFieldId));
             CopyToBuffer(State().atClBuf, cl);
         }
-        if (!State().blameCfg.LastOccurrencesTrackerFieldId.empty()) {
+        if (!State().annotateCfg.LastOccurrencesTrackerFieldId.empty()) {
             State().beforeDateIso =
-                NormalizeJiraDateForBeforePicker(t.GetFieldValue(State().blameCfg.LastOccurrencesTrackerFieldId));
+                NormalizeJiraDateForBeforePicker(t.GetFieldValue(State().annotateCfg.LastOccurrencesTrackerFieldId));
         } else {
             State().beforeDateIso.clear();
         }
         return;
     }
     State().beforeDateIso.clear();
-    if (!State().blameCfg.LastFoundClTrackerFieldId.empty()) {
+    if (!State().annotateCfg.LastFoundClTrackerFieldId.empty()) {
         State().atClBuf[0] = '\0';
     }
 }
 
 void TryFillCallstackFromJira(const AppController& app, const std::string& issueKey) {
-    if (State().blameCfg.CallstackTrackerFieldId.empty() || issueKey.empty()) {
+    if (State().annotateCfg.CallstackTrackerFieldId.empty() || issueKey.empty()) {
         return;
     }
     const auto ticketsSnap = app.GetActiveTicketsSnapshot();
@@ -165,7 +165,7 @@ void TryFillCallstackFromJira(const AppController& app, const std::string& issue
         if (t.id != issueKey) {
             continue;
         }
-        const std::string v = t.GetFieldValue(State().blameCfg.CallstackTrackerFieldId);
+        const std::string v = t.GetFieldValue(State().annotateCfg.CallstackTrackerFieldId);
         if (v.empty()) {
             return;
         }
@@ -207,4 +207,4 @@ std::vector<std::string> SplitIgnoreKeywords(const std::string& multi) {
     return out;
 }
 
-} // namespace BlameInternal
+} // namespace AnnotateInternal
