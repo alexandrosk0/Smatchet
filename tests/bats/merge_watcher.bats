@@ -63,6 +63,51 @@ watch_cli() {
     python "$SCRIPTS_DIR/merge-watcher-cli.py" "$@"
 }
 
+# ---------- cross-poll nudge/STALE persistence (registry-counter, mirrors cr_none_grace) ----------
+
+@test "_parse_gate_carry extracts nudge_head/stale_head/stale_streak; None when absent" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "scripts", "dev")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+got = m._parse_gate_carry("Poll 1/1 — CI: ...\nGATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5\n")
+assert got == {"nudged_head": "abc", "stale_head": "xyz", "stale_streak": 5}, got
+assert m._parse_gate_carry("no carry line here") is None
+g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0")
+assert g2 == {"nudged_head": "", "stale_head": "", "stale_streak": 0}, g2
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "_bump_nudge_state persists nudged_head/stale_head/stale_streak into the registry entry" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    # Single self-contained block: load the module, read the registered entry's
+    # clone_path via its own reader, bump, re-read, assert the round-trip.
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "scripts", "dev")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+entries = m._CLI.read_registry()
+assert entries, "no registry entries after register"
+clone = entries[0]["clone_path"]
+m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4)
+e = m._CLI.read_registry()[0]
+assert e["nudged_head"] == "headSHA999", e
+assert e["stale_head"] == "headSHA999", e
+assert e["stale_streak"] == 4, e
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
 # ---------- empty-state ----------
 
 @test "status on empty registry → 'registry empty'" {

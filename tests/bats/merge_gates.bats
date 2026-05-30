@@ -865,6 +865,87 @@ set_fixture() {
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
 }
 
+# ---------- cross-poll nudge/STALE persistence (MERGE_GATES_PRIOR_* <-> GATE_CARRY) ----------
+# The watcher runs the poller with MERGE_GATES_MAX_POLLS=1 once per cycle, so the
+# in-process once-per-HEAD guard + STALE streak reset every invocation. These
+# assert the env round-trip (GATE_CARRY out, MERGE_GATES_PRIOR_* in) keeps the
+# nudge to once-per-HEAD across cycles and lets the STALE streak accumulate.
+
+@test "nudge guard survives MAX_POLLS=1 cycles via GATE_CARRY round-trip → exactly one post" {
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+
+    # Cycle 1: no prior → nudges once, emits GATE_CARRY carrying the head.
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+    local carry head
+    carry="$(printf '%s\n' "$output" | grep '^GATE_CARRY ')"
+    [ -n "$carry" ]
+    head="$(printf '%s' "$carry" | sed -E 's/.*nudge_head=([^ ]*).*/\1/')"
+    [ -n "$head" ]
+
+    # Cycle 2: seed the prior nudge head → guard matches → still exactly one post.
+    export MERGE_GATES_PRIOR_NUDGE_HEAD="$head"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_PRIOR_NUDGE_HEAD
+}
+
+@test "nudge re-arms when MERGE_GATES_PRIOR_NUDGE_HEAD is a stale (different) head" {
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_PRIOR_NUDGE_HEAD="staleHEAD000"
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    # Prior head != fixture head (abc123) → guard misses → one fresh nudge.
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+    [[ "$output" == *"GATE_CARRY nudge_head=abc123"* ]]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_PRIOR_NUDGE_HEAD
+}
+
+@test "STALE streak persists via MERGE_GATES_PRIOR_STALE_STREAK → STALE nudge fires at threshold" {
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STALE_REREVIEW_POLLS=3
+    local stale_head
+    stale_head="$(jq -r '.data.repository.pullRequest.headRefOid' "$FIXTURES_DIR/merge_gates_cr_stale_findings.json")"
+    export MERGE_GATES_PRIOR_STALE_HEAD="$stale_head"
+    export MERGE_GATES_PRIOR_STALE_STREAK=2
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_stale_findings.json"
+    # Seeded streak 2 + this single poll = 3 = threshold → STALE nudge fires once.
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+    [[ "$output" == *"GATE_CARRY"*"stale_streak=3"* ]]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS \
+          MERGE_GATES_PRIOR_STALE_HEAD MERGE_GATES_PRIOR_STALE_STREAK
+}
+
+@test "GATE_CARRY is emitted on block without disturbing the Poll status line" {
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"GATE_CARRY nudge_head="* ]]
+    [[ "$output" == *"Poll 1/1"* ]]
+    [[ "$output" == *"CodeRabbit:"* ]]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
 # ---------- CR size-skip (CR posts "Review skipped — too many files", NOT a review) ----------
 # A PR over CodeRabbit's file limit gets an auto-generated PR *conversation*
 # comment (not a review object). reviewDecision stays NONE + cr_state computes to

@@ -49,6 +49,13 @@
 #                                  CR=NONE early-nudge (fires on the first
 #                                  blocking NONE poll per HEAD; 0 disables it
 #                                  too).
+#   MERGE_GATES_PRIOR_NUDGE_HEAD — seed the once-per-HEAD nudge guard +
+#   MERGE_GATES_PRIOR_STALE_HEAD    STALE streak from a prior invocation. Set by
+#   MERGE_GATES_PRIOR_STALE_STREAK  smatchet-merge-watcher (which persists them in
+#                                  the registry) so the once-per-HEAD nudge + the
+#                                  STALE re-review survive MERGE_GATES_MAX_POLLS=1
+#                                  cycles. The poll emits the updated values on a
+#                                  `GATE_CARRY` stdout line before `return 1`.
 #
 # Manual CR re-review trigger: post `@coderabbitai review` as a PR comment
 # (`gh pr comment <pr> --body "@coderabbitai review"`) when CR's review is
@@ -196,12 +203,13 @@ poll_merge_gates() {
     # Reset whenever HEAD advances. After STALE_REREVIEW_POLLS, post one
     # `@coderabbitai review` comment to nudge CR into re-reviewing (idempotent
     # per-HEAD — the trigger fires at most once per head SHA).
-    local stale_streak=0
-    local stale_head=""
+    local stale_streak="${MERGE_GATES_PRIOR_STALE_STREAK:-0}"
+    [[ "$stale_streak" =~ ^[0-9]+$ ]] || stale_streak=0
+    local stale_head="${MERGE_GATES_PRIOR_STALE_HEAD:-}"
     # Shared once-per-HEAD guard for the `@coderabbitai review` auto-nudge —
     # both the STALE re-review trigger and the NONE early-nudge dedup on this so
     # at most one comment is posted per head SHA (they never double-post).
-    local rereview_posted_head=""
+    local rereview_posted_head="${MERGE_GATES_PRIOR_NUDGE_HEAD:-}"
 
     # nudge_coderabbit <head_sha> <reason> — post `@coderabbitai review` once per
     # HEAD. Idempotent: subsequent calls for the same head SHA are no-ops. On a
@@ -689,6 +697,15 @@ poll_merge_gates() {
         fi
     done
 
+    # Emit the cross-poll guard/streak state so a single-poll caller (the
+    # watcher runs with MERGE_GATES_MAX_POLLS=1) can persist it and seed the
+    # next cycle via MERGE_GATES_PRIOR_* — the in-process locals reset every
+    # invocation otherwise (same class as the registry-persisted CR-NONE grace
+    # counter). Distinct `GATE_CARRY` prefix; the per-iteration `Poll …` line
+    # above always precedes it on this return path, so a caller parsing the
+    # status line (first `Poll ` line) is unaffected.
+    printf 'GATE_CARRY nudge_head=%s stale_head=%s stale_streak=%s\n' \
+        "$rereview_posted_head" "$stale_head" "$stale_streak"
     return 1
 }
 
