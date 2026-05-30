@@ -76,7 +76,13 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       }
       comments(first: 100) {
         pageInfo { hasNextPage }
-        nodes { author { login __typename } }
+        # body — load-bearing for the CR size-skip detection. When a PR exceeds
+        # CodeRabbit's file limit, CR posts a conversation (issue) comment (NOT a
+        # review object, so reviewDecision stays NONE) carrying the HTML marker
+        # `skip review by coderabbit.ai`. The poller scans coderabbitai-authored
+        # comment bodies for that marker to distinguish "CR skipped review (too
+        # many files)" from a genuinely pending NONE.
+        nodes { author { login __typename } body }
       }
     }
   }
