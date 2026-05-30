@@ -36,55 +36,64 @@ void HydrateAnnotateCfgDiskOnce() {
     SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
 }
 
-void MaybeAutoselectCallstackTrackerField(const AppController& app) {
-    if (!State().annotateCfg.CallstackTrackerFieldId.empty()) {
+namespace {
+
+// Shared body for the three autoselect-Jira-field helpers: if the target field id is
+// unset and a field whose (lowercased) name satisfies `nameMatches` exists, adopt its id,
+// persist, and optionally refresh the callstack-field hint. `nameMatches` receives the
+// already-lowercased field name.
+void MaybeAutoselectTrackerField(const AppController& app, std::string& targetFieldId,
+                                 bool (*nameMatches)(const std::string&), bool updateCallstackHint) {
+    if (!targetFieldId.empty()) {
         return;
     }
     const auto& fields = app.GetAvailableFields();
     if (fields.empty()) {
         return;
     }
-    auto it = std::find_if(fields.begin(), fields.end(),
-                           [](const auto& f) { return ToLowerAsciiCopy(f.Name) == "callstack"; });
+    const auto it = std::find_if(fields.begin(), fields.end(), [nameMatches](const TrackerField& f) {
+        return nameMatches(ToLowerAsciiCopy(f.Name));
+    });
     if (it != fields.end()) {
-        State().annotateCfg.CallstackTrackerFieldId = it->Id;
+        targetFieldId = it->Id;
         ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
-        SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
+        if (updateCallstackHint) {
+            SetCallstackFieldIdHint(targetFieldId);
+        }
     }
+}
+
+} // namespace
+
+void MaybeAutoselectCallstackTrackerField(const AppController& app) {
+    MaybeAutoselectTrackerField(
+        app, State().annotateCfg.CallstackTrackerFieldId, [](const std::string& n) { return n == "callstack"; },
+        /*updateCallstackHint=*/true);
 }
 
 void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
-    if (!State().annotateCfg.LastFoundClTrackerFieldId.empty()) {
-        return;
-    }
-    const auto& fields = app.GetAvailableFields();
-    if (fields.empty()) {
-        return;
-    }
-    const auto it = std::find_if(fields.begin(), fields.end(), [](const TrackerField& f) {
-        const std::string n = ToLowerAsciiCopy(f.Name);
-        return n == "last found cl" || n == "lastfoundcl" || n == "last_found_cl";
-    });
-    if (it != fields.end()) {
-        State().annotateCfg.LastFoundClTrackerFieldId = it->Id;
-        ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
-    }
+    MaybeAutoselectTrackerField(
+        app, State().annotateCfg.LastFoundClTrackerFieldId,
+        [](const std::string& n) { return n == "last found cl" || n == "lastfoundcl" || n == "last_found_cl"; },
+        /*updateCallstackHint=*/false);
 }
 
 void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
-    if (!State().annotateCfg.LastOccurrencesTrackerFieldId.empty()) {
-        return;
-    }
-    const auto& fields = app.GetAvailableFields();
-    if (fields.empty()) {
-        return;
-    }
-    const auto it = std::find_if(fields.begin(), fields.end(), [](const TrackerField& f) {
-        const std::string n = ToLowerAsciiCopy(f.Name);
-        return n == "last occurrences" || n == "last occurances" || n == "last occurences" || n == "last_occurrences";
-    });
-    if (it != fields.end()) {
-        State().annotateCfg.LastOccurrencesTrackerFieldId = it->Id;
+    // Defensive misspelling matches ("last occurances" / "last occurences") intentionally
+    // kept — they match real, badly-named Jira fields, not our own strings.
+    MaybeAutoselectTrackerField(
+        app, State().annotateCfg.LastOccurrencesTrackerFieldId,
+        [](const std::string& n) {
+            return n == "last occurrences" || n == "last occurances" || n == "last occurences" ||
+                   n == "last_occurrences";
+        },
+        /*updateCallstackHint=*/false);
+}
+
+void ApplyShowRawCallstack(bool show) {
+    State().showRaw = show;
+    if (State().annotateCfg.ShowRawCallstack != show) {
+        State().annotateCfg.ShowRawCallstack = show;
         ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
     }
 }
