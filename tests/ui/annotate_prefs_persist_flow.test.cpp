@@ -209,6 +209,18 @@ void RunEditPersistReload(ImGuiTestContext* ctx, const char* typed, int expectPe
         return;
     }
 
+    // Seed an on-disk pre-value DISTINCT from expectPersisted so the wait below can only succeed if
+    // THIS edit's write actually lands — guards against a false positive where the value already
+    // happened to be on disk from a prior run (CR: false-positive persistence check).
+    {
+        const int preValue = (expectPersisted != 64) ? 64 : 128; // in-range [16,8192], != expectPersisted
+        AnnotateAnalysisConfig pre = ConfigManager::LoadAnnotateAnalysis();
+        pre.ChangelistCacheMaxEntries = preValue;
+        ConfigManager::SaveAnnotateAnalysis(pre);
+        ConfigManager::InvalidateCache();
+        IM_CHECK_EQ(ConfigManager::LoadAnnotateAnalysis().ChangelistCacheMaxEntries, preValue);
+    }
+
     ctx->SetRef("SmatchetTest::AnnotatePrefsPersist");
     ctx->Yield();
     ctx->Yield();

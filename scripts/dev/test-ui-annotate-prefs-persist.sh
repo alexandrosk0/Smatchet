@@ -30,7 +30,9 @@ RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
 
 echo "$RAW_OUTPUT" | tail -40
 
-JSON_LINE="$(echo "$RAW_OUTPUT" | grep -oE '\{.*\}' | tail -1 || true)"
+# Grab the ui_test.run envelope by its command marker (the JSON object is emitted on its own line),
+# rather than greedily matching any '{...}' span which can straddle unrelated braces in the log.
+JSON_LINE="$(echo "$RAW_OUTPUT" | grep -E '"command"[[:space:]]*:[[:space:]]*"ui_test\.run"' | tail -1 || true)"
 if [ -z "$JSON_LINE" ]; then
     echo "FAIL: could not extract JSON envelope from ui_test.run output" >&2
     echo "Passed: 0  Failed: 1"
