@@ -49,7 +49,7 @@ struct ToolbarButton {
   std::string IconGlyph;  // resolved UTF-8 glyph (source of truth; renders even if catalog missing)
   std::string Tooltip;    // hover text
   std::string CommandId;  // Kind==Command
-  nlohmann::json Args;     // Kind==Command (param object; default {})
+  nlohmann::json Args = nlohmann::json::object();  // Kind==Command; defaults to {} so dispatch never sees null
   std::string LuaCode;    // Kind==Lua
 };
 
@@ -64,8 +64,10 @@ Per-tracker append — extend `ViewWorkspaceState` (`ConfigManager.h:408`) with
 `std::vector<ToolbarButton> ToolbarAppend;`.
 
 **Effective-toolbar resolution** (pure, unit-testable): `effective = global.Buttons`;
-if the current tracker's `ToolbarAppend` is non-empty, append `[Separator] + ToolbarAppend`;
-no backend connected → global only. Resolved once per frame from the current tracker key.
+if the current tracker's `ToolbarAppend` is non-empty, append `[Separator] + ToolbarAppend`,
+then **collapse adjacent separators and trim any leading/trailing separator** so the bar never
+shows doubled or dangling dividers (covers the case where global already ends in a separator or
+the append list starts with one); no backend connected → global only. Resolved once per frame.
 
 ### Rendering
 
@@ -84,7 +86,7 @@ Unreal (DX12). Must run **after** `drawMainMenuBar()` and **before** the status 
 `BeginViewportSideBar(Down)` so the strips carve in order.
 
 Per button: `ImGui::Button(glyph)` sized to bar height; tooltip on hover; disabled style
-when (Lua & not built) or (command id unknown). Separator = vertical spacer. Fallback
+when (Lua & not built) or (command id unknown). Separator = vertical spacer (consecutive separators collapse to one). Fallback
 when `!SmatchetAreFaIconsLoaded()` → first 2 chars of Tooltip/CommandId.
 
 Click → **Command**: `CommandContext ctx{&app, CommandSource::Internal, false, false, 0};`
@@ -126,12 +128,17 @@ err, summary)`, toast on fail; `#else` disabled + "Lua automation not built" too
 |---|---|---|---|
 | Command palette | `MAGNIFYING_GLASS` | open palette | `ui.command_palette` |
 | New view | `PLUS` | open New View dialog | `ui.view_create` |
-| Refresh / sync | `ARROWS_ROTATE` | sync active view | existing sync cmd (resolve from registry) |
+| Refresh / sync | `ARROWS_ROTATE` | sync active view | resolve concrete id from registry — **see fallback note** |
 | Views list | `LIST` | list / manage views | `view.list` |
 | *— separator —* | | | |
 | Settings | `GEAR` | open settings | `ui.settings` |
 | Read-only toggle | `LOCK` | toggle read-only | `app.set_readonly` (`on` = !current) |
 | Customize toolbar | `SLIDERS` | open editor | `ui.toolbar_customize` |
+
+> **Sync-button fallback**: `Default()` resolves the sync command id from `Commands().All()` at
+> construction. If no global sync command is registered (or ids differ per tracker), **omit the
+> Refresh button** rather than bind an unregistered id — consistent with the unknown-command-id
+> guard (§ UX Pillar 3). Bind it only once a concrete id is confirmed.
 
 Per-tracker append examples (illustrative — map to each tracker's registered commands; if none,
 add one or use a Lua button): **Jira** My Issues `USER`, JQL `MAGNIFYING_GLASS_PLUS`, Boards
@@ -157,7 +164,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 12. `Source/Core/include/Ui/SmatchetUI.h:44-135` — `SmatchetToolbarUi toolbar_;` member.
 13. `Source/Core/src/Ui/SmatchetUI.cpp:499` — call `toolbar_.Draw(app,d)` after `drawMainMenuBar`, inside `if (!d.cfg.ZenMode)`, before status bar; gated on effective `Visible`.
 14. `Source/Core/src/Ui/SmatchetUI_MainMenu.cpp` — View menu: `Show Toolbar` toggle + `Customize Toolbar…`.
-15. `Source/Core/src/Commands/Builtin/BuiltinCommands_*.cpp` — register `ui.command_palette`, `ui.settings`, `ui.view_create`, `ui.toolbar_customize`; optional `CommandSource::Toolbar` (`Command.h:91`).
+15. `Source/Core/src/Commands/Builtin/BuiltinCommands_*.cpp` — register `ui.command_palette`, `ui.settings`, `ui.view_create`, `ui.toolbar_customize`. Toolbar dispatch uses `CommandSource::Internal` in v1; a dedicated `CommandSource::Toolbar` enum (`Command.h:91`) is deferred (§ Out of scope) — not added in v1.
 
 ## Existing utilities reused
 
@@ -212,6 +219,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 - **Multiple named toolbars / importable `.bar` files** — single bar only for v1.
 - **Per-tracker toolbar visibility** — visibility is global-only; per-tracker deferred.
 - **Drag-drop across the global↔append boundary** — reorder stays within a scope.
+- **`CommandSource::Toolbar` telemetry value** — v1 reuses `CommandSource::Internal`; a dedicated source enum is deferred.
 
 ## Implementation log
 *(populated post-ship — `<sha> · <one-line summary>` per shipped commit)*
