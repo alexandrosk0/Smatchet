@@ -7,15 +7,14 @@
 struct TrackerConfig;
 
 /**
- * One backend comment surfaced to the agentic-flow triage half. Backend-agnostic shape so
- * GitHub issue comments, Jira ADF comments, and Plane comments can land in a single
- * AgentProposal.context bucket. Always opaque to UI — UI never renders rich formatting from
- * `Body`; it's plain text for prompt-builder consumption.
+ * One backend issue comment in a backend-agnostic shape, so GitHub issue comments,
+ * Jira ADF comments, and Plane comments can be surfaced through a single type (see
+ * `ITrackerCollaboration::FetchIssueComments`). Always opaque to UI — UI never renders
+ * rich formatting from `Body`; it's plain text.
  *
  * `Id` is `std::string` to fit GitHub's int64 issue-comment id and Jira's stringly-typed
- * `1234`-style id without a discriminator field. Time fields are unix epoch seconds because
- * the consumers (poll cursor in `agent_poll_cursor`, prompt-builder sort) need integer
- * comparison, not formatted strings.
+ * `1234`-style id without a discriminator field. Time fields are unix epoch seconds so
+ * consumers can sort by integer comparison rather than parsing formatted strings.
  */
 struct TrackerIssueComment {
     std::string Id;                // backend-stable comment id
