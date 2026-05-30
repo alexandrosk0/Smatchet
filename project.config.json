@@ -18,7 +18,8 @@
   "build": {
     "presets": ["ninja-iter-msvc", "ninja-test-msvc", "ninja-msvc-asan", "ninja-publish-msvc"],
     "targets": ["SmatchetStandalone", "SmatchetCore_DX12"],
-    "exe_path": "build/{preset}/Smatchet.exe"
+    "exe_path": "build/{preset}/Smatchet.exe",
+    "msvc_toolset_pin": "14.38"
   },
   "perf": {
     "frame_budget_ms": 6.94,

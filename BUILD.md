@@ -120,11 +120,12 @@ Wrapper shortcuts are still available:
 preset is retired. Use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl) instead.
 
 `build_and_run.ps1` handles `vcvars64` env for PowerShell sessions. The
-bash-side equivalent is `scripts/dev/with-msvc-env.sh` — a wrapper that
-discovers the latest VS install via `vswhere.exe`, sources `vcvars64.bat`
-through a PowerShell-mediated cmd.exe invocation (works around Git Bash's
-MSYS path-conversion quirks), and `exec`s the wrapped command with MSVC
-`INCLUDE` / `LIB` / `PATH` populated:
+bash-side equivalent is `scripts/dev/with-msvc-env.sh` — a wrapper that picks
+the VS install carrying the pinned MSVC toolset (`build.msvc_toolset_pin` in
+`project.config.json`, overridable via `$SMATCHET_VCVARS_VER`) via `vswhere.exe`,
+sources `vcvars64.bat -vcvars_ver=<pin>` through a PowerShell-mediated cmd.exe
+invocation (works around Git Bash's MSYS path-conversion quirks), and `exec`s
+the wrapped command with MSVC `INCLUDE` / `LIB` / `PATH` populated:
 
 ```bash
 bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
