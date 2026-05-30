@@ -266,6 +266,11 @@ All 6 items shipped. Files touched: `ConfigManager.{h,cpp}`, `AnnotateAnalysisUi
 6. **Value-range guard** — `ChangelistCacheMaxEntries` now clamped to 16..8192 on load in
    `ConfigManager::LoadAnnotateAnalysis` (a hand-edited negative can no longer reach the worker).
 
+**Tests:** added `tests/Core/AnnotateAnalysisConfig.test.cpp` (3 cases / 17 assertions) covering
+the cl_cache_max clamp-on-load (item 6), `show_raw_callstack` round-trip (item 3), and multi-rule
+`path_remaps` round-trip + empty-`from` drop (item 4) via the `ConfigManager` persistence seam. Full
+suite 846/0. Satisfies the CI Test-delta gate (Source/Core change carries a test delta).
+
 **Deferred (unchanged):** backlog **N14** (move the once-guarded config hydrate off the UI thread)
 remains a separate follow-up — bundling threading work would break this PR's perf-neutral, prefs-only
 scope. The English "annotate context" comment-action label from Phase 1 is left to a copy pass.
