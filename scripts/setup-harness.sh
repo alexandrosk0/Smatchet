@@ -80,8 +80,29 @@ link_dir() {
 # symbolic mklink can prompt for elevation and intermittently HANG; mklink //H
 # needs no elevation and is reliable. Edits to the canonical file are visible
 # through the hardlink (shared inode), same as before.
+# Idempotency probe: true when $dest is already a real dir holding exactly the
+# canonical agent set, each entry byte-identical to its source. Lets link_agents
+# no-op (and stay silent) on an unchanged re-run — matching link_file's contract.
+# A junction/symlink, a count mismatch (agent added/removed), or any content
+# drift (e.g. a stale cp-fallback copy) fails the probe and forces a rebuild.
+_agents_dir_current() {
+  local dest="$1" f base exp=0 got=0
+  [[ -d "$dest" && ! -L "$dest" ]] || return 1
+  for f in agents/core/*.md agents/project/*.md; do [[ -e "$f" ]] && exp=$((exp + 1)); done
+  for f in "$dest"/*.md; do [[ -e "$f" ]] && got=$((got + 1)); done
+  [[ "$got" -eq "$exp" ]] || return 1
+  for f in agents/core/*.md agents/project/*.md; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    cmp -s "$f" "$dest/$base" || return 1
+  done
+  return 0
+}
+
 link_agents() {
   local dest=".claude/agents" f base
+  # Idempotent: skip the clear+relink (and the link-agents echo) when already current.
+  _agents_dir_current "$dest" && return 0
   _clear_dir_link "$dest"
   mkdir -p "$dest"
   for f in agents/core/*.md agents/project/*.md; do
