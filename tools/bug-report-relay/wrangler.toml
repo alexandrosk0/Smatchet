@@ -8,7 +8,7 @@ compatibility_date = "2024-09-23"
 
 [vars]
 # Destination dev repo for filed issues ("owner/repo").
-REPO = "alexandrosk0/smatchet-bugs"
+REPO = "alexandrosk0/Smatchet"
 # Optional separate repo for screenshot assets. Empty/unset = reuse REPO.
 ASSETS_REPO = ""
 # Optional shared access key. When set, the app must send a matching

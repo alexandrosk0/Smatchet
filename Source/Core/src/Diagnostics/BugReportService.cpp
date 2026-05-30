@@ -296,9 +296,15 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
             result.Error = "Bug-report relay rejected: " + j.value("error", std::string("unknown error"));
             return result;
         }
-        result.Ok = true;
         result.IssueKey = j.value("issueKey", std::string());
         result.Url = j.value("url", std::string());
+        if (result.IssueKey.empty()) {
+            // Defend against a malformed relay reply ({ok:true} with no key) — never
+            // report a false-positive "submitted".
+            result.Error = "Bug-report relay returned success but no issue key.";
+            return result;
+        }
+        result.Ok = true;
         return result;
     } catch (const std::exception& ex) {
         result.Error = std::string("Bug-report relay: bad response: ") + ex.what();

@@ -10,7 +10,7 @@ token is extractable by anyone with the binary and is a published credential the
 moment you distribute. See `docs/plans/active/log-a-bug-github.md` and the P1
 entry in `docs/self-improvement/categories/security.md`.
 
-```
+```text
 Smatchet app ──(redacted report JSON, optional x-relay-key)──▶ Worker ──(server PAT)──▶ GitHub
 ```
 

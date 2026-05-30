@@ -65,7 +65,14 @@ async function ensureAssetsBranch(token, repo) {
     headers: h,
     body: JSON.stringify({ ref: `refs/heads/${ASSETS_BRANCH}`, sha }),
   });
-  return created.status === 201;
+  if (created.status === 201) return true;
+  // Concurrent creator may have made the ref between our 404 probe and this POST
+  // (GitHub reports 422, sometimes 409). Re-check rather than failing the upload.
+  if (created.status === 422 || created.status === 409) {
+    const recheck = await fetch(`${base}/git/ref/heads/${ASSETS_BRANCH}`, { headers: h });
+    return recheck.status === 200;
+  }
+  return false;
 }
 
 // Upload a base64 PNG via the Contents API; returns the rendered download URL or "".
@@ -97,8 +104,11 @@ async function handleReport(request, env) {
     return json(401, { ok: false, error: "bad or missing relay key" });
   }
 
-  const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) return json(413, { ok: false, error: "payload too large" });
+  // Measure real bytes, not UTF-16 code units (multibyte input could otherwise
+  // bypass the cap).
+  const rawBuf = await request.arrayBuffer();
+  if (rawBuf.byteLength > MAX_BODY_BYTES) return json(413, { ok: false, error: "payload too large" });
+  const raw = new TextDecoder().decode(rawBuf);
 
   let payload;
   try {
@@ -107,7 +117,8 @@ async function handleReport(request, env) {
     return json(400, { ok: false, error: "invalid JSON" });
   }
 
-  const title = (payload.title || "").trim();
+  // Type-safe: a non-string title (number/object) must not throw a 500.
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
   let body = typeof payload.body === "string" ? payload.body : "";
   if (!title) return json(400, { ok: false, error: "title required" });
 
