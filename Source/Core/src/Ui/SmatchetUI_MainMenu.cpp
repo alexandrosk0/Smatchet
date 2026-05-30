@@ -2,7 +2,6 @@
 // composition extracted out of `SmatchetUI.cpp` per
 // `docs/plans/shipped/large-files-and-phase-2.md` § A4. Only call site is
 // `SmatchetUI::Draw` (root TU).
-//
 // The include + macro setup mirrors `SmatchetUI.cpp` byte-for-byte. We do NOT
 // include `SmatchetUI_Internal.h` here because its `#define ImGui
 // SmatchetLocalizedImGui` after `imgui.h` clashes with `imgui_internal.h`

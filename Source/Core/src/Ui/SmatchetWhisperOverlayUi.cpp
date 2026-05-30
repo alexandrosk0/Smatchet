@@ -1,12 +1,10 @@
 // SmatchetWhisperOverlayUi — see header for design pointers.
-//
 // Renders a small floating window pinned to the top-right of the main
 // viewport while `g_dictationRouter.IsRecording()` is true. Reads the live
 // peak amplitude from `g_dictationRouter.GetLastPeakAmplitude()` (set by the
 // Phase E capture worker) and draws an ImGui ProgressBar. Cancel button
 // flips the router's recording state to false; the WhisperPlugin's release
 // callback observes the next-frame flag drop and stops capture.
-//
 // All strings flow through SmatchetLocalization::T so future locale work
 // only touches SmatchetLocalization.cpp. The TU is added to CORE_SOURCES
 // only when SMATCHET_WITH_WHISPER=ON (root CMakeLists.txt source-list
