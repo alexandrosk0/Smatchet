@@ -31,7 +31,6 @@ extern "C" void SmatchetRegisterAiAssistantPreferencesVerifyOnSaveTests(ImGuiTes
 #if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
 extern "C" void SmatchetRegisterWhisperAiAssistantAutosendTests(ImGuiTestEngine* engine);
 #endif
-extern "C" void SmatchetRegisterAgentProposalStoreSqliteTests(ImGuiTestEngine* engine);
 
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
@@ -57,7 +56,6 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
 #if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
     SmatchetRegisterWhisperAiAssistantAutosendTests(engine);
 #endif
-    SmatchetRegisterAgentProposalStoreSqliteTests(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -120,8 +120,7 @@ void DrawColoredCodeBlock(const char* utf8, CodeLang lang, const std::string& la
 /// doctest drives this through `TokenizeCachedForTest` (below) + a theme
 /// switch + asserts the count increments. Production callers MUST NOT depend
 /// on this counter; named with `ForTest` suffix per Smatchet convention
-/// (mirrors `AgenticHandoffController::SnapshotAllForTests`,
-/// `DictationInsertionRouter::RegisteredCountForTest`).
+/// (mirrors `DictationInsertionRouter::RegisteredCountForTest`).
 std::size_t GetCacheRebuildCountForTest();
 /// Test-only — clear the cache so tests start from a known state.
 void ResetCacheForTest();
