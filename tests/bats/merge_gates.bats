@@ -130,6 +130,7 @@ STUB
 teardown() {
     rm -rf "$STUB_BIN_DIR"
     unset MERGE_GATES_TEST_FIXTURE MERGE_GATES_STUB_GH_FAIL MERGE_GATES_STUB_READY_STDERR MERGE_GATES_STUB_READY_EXIT
+    unset MERGE_GATES_STUB_VIEW_ISDRAFT MERGE_GATES_STUB_VIEW_EXIT
     unset MERGE_GATES_TEST_ANSWER MERGE_GATES_STUB_CR_CONFIG MERGE_GATES_STUB_READY_MARKER
     unset MERGE_GATES_STUB_COMMENT_COUNTER MERGE_GATES_STUB_COMMENT_EXIT
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS MERGE_GATES_STALE_REREVIEW_POLLS
@@ -829,6 +830,27 @@ set_fixture() {
     [ ! -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
+}
+
+@test "CR=NONE nudge: gh pr comment failure leaves guard unset → retries each poll" {
+    # When `gh pr comment` exits non-zero, nudge_coderabbit must NOT mark the
+    # head as posted (guard stays unset), so a later poll on the same head
+    # re-attempts. With a failing stub + 2 polls, the counter file records one
+    # attempt per poll (2), the poller surfaces the retry WARN, and the run
+    # still completes cleanly (exit 1, NONE+pending block).
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_MAX_POLLS=2
+    export MERGE_GATES_STUB_COMMENT_EXIT=1
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"gh pr comment failed posting @coderabbitai review; will retry next poll"* ]]
+    # Failed post → guard never set → one attempt logged per poll (no dedup).
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 2 ]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_MAX_POLLS MERGE_GATES_STUB_COMMENT_EXIT
 }
 
 @test "CR not installed + NONE → no nudge (NONE is steady state)" {
