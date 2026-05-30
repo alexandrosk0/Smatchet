@@ -22,7 +22,7 @@ A **taxonomy-driven, tooling-gated, batched** sweep. Three pieces:
 
 3. **Per-subsystem batches**, one PR each, each running build (dual-target) + lint-delta + tests + the assert-code-unchanged check. Batching by lint **zone** matters: strict-zone trees (`Tracker`, `Sync`, `Persistence`, `Config`, `Commands`, `Mcp`) fail CI on any *new* `(rule, file, snippet)` violation — so removing a `// custom-deleter` marker next to a raw `new` is caught automatically, validating the protect-list against the strongest available net.
 
-Each batch runs in **two passes**: **Pass 1** — the deterministic mechanical stripper (`comment_strip.py`, no judgment, only the unambiguous *cut* buckets); **Pass 2** — the LLM judgment pass (compress verbose rationale, remove self-evident docs). The full sweep is **pilot-gated**: the remaining batches are not started until one slice has run both passes end-to-end and cleared a measured go/no-go threshold (see § Phases).
+The sweep runs as **two global waves**, not two passes welded into each batch: **Wave 1** — the deterministic mechanical stripper (`comment_strip.py`, no judgment, only the unambiguous *cut* buckets) across the whole corpus; **Wave 2** — the LLM judgment pass (compress verbose rationale, remove self-evident docs) across the whole corpus. Each wave is split into reviewable per-subsystem PRs (strict lint-zones first). Wave 1 PRs need near-zero judgment review (deterministic diff + green code-unchanged gate) and merge fast; Wave 2 PRs concentrate human + CodeRabbit attention. The sweep is **pilot-gated**: one slice runs both waves end-to-end first, and Wave 2 rolls out repo-wide only if its *marginal* yield clears a measured go/no-go threshold (see § Phases) — otherwise Wave 1 ships alone and the judgment wave is shelved as low-ROI.
 
 The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) are judgment calls a script cannot make safely, so the LLM pass is load-bearing — mitigated by erring toward keep, small reviewable diffs, CodeRabbit, and the mechanical code-unchanged proof. Lowering the API-doc risk: **no first-party doc-generation pipeline exists** (every `Doxyfile` in the tree belongs to a vendored FetchContent dep; zero `doxygen` references in first-party CMake/scripts), so `///` / `/** */` blocks are consumed only by IDE hover + human reading — removing a self-evident one breaks no published-docs build, it only drops that symbol's editor tooltip.
 
@@ -53,16 +53,20 @@ The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) ar
 
 **Phase 0 — Tooling + baseline (1 PR).** Build `comment_audit.py`, `comment_strip.py`, `assert-code-unchanged.sh`, and their fixture tests. Lock the protect-list. Emit the baseline comment-count report across the whole corpus (also ranks files by noise to prioritise later batches). Ships no product-source comment edits — only `scripts/dev/` + `tests/`.
 
-**Phase 1 — Pilot (1 PR), `Source_Core/{src,include}/Tracker/` (smallest strict zone).** Run **both passes** end-to-end on this slice. Measure comment-lines-removed ÷ slice baseline; inspect diff quality. **Go/no-go gate: proceed to Batches B–F only if ≥ 20% comment-line reduction with clean, behavior-preserving diffs** (threshold provisional — revisit after seeing the Pass-1-only mechanical yield). Below threshold → ship the mechanical-only (Pass 1) result repo-wide and shelve the judgment pass as low-ROI.
+**Phase 1 — Pilot (1–2 PRs), `Source_Core/{src,include}/Tracker/` (smallest strict zone).** Run **both waves** end-to-end on this one slice: mechanical strip, then LLM judgment. Record two numbers — Wave-1 mechanical reduction, and Wave-2 *marginal* reduction on top — each as comment-lines-removed ÷ slice baseline. Inspect Wave-2 diff quality. **Go/no-go gate: roll Wave 2 out repo-wide only if its marginal reduction is ≥ 20% of the slice baseline with clean, behavior-preserving diffs** (threshold provisional). Below threshold → ship Wave 1 alone repo-wide and shelve Wave 2 as low-ROI. Wave 1 proceeds repo-wide regardless (deterministic + low-risk).
 
-**Phases 2–6 — Remaining batches (1 PR each), pilot-gated, lint-zone order (strict first, where the delta-lint net is strongest):**
-- **Batch B** — `Source_Core/{src,include}/{Sync,Persistence,Config}/` (strict zone).
-- **Batch C** — `Source_Core/{src,include}/Commands/` + `Plugins/Mcp/src/` (strict zone).
-- **Batch D** — `Source_Core/{src,include}/Ui/` (light zone; largest corpus — e.g. [SmatchetAiAssistantUi.cpp](Source_Core/src/Ui/SmatchetAiAssistantUi.cpp) 391 lines — **split into sub-PRs** per the batch-size cap in § Risks).
-- **Batch E** — `Source_Core/` root `src` + `include` (`AppController*`, `Ai*`, `Logger`, etc.).
-- **Batch F** — `Plugins/{LuaConsole,Whisper}` + `Target_Standalone/`.
+**Phase 2 — Wave 1, mechanical, repo-wide (batched).** Apply `comment_strip.py` to every remaining subsystem, one reviewable PR per batch, lint-zone order (strict first). Deterministic diffs; each PR carries the green `assert-code-unchanged` proof, so review is fast.
 
-Per-batch pipeline: analyzer report → Pass 1 (mechanical strip, dry-run → apply) → Pass 2 (LLM judgment) → `clang-format -i` → dual-target build → lint-delta gate → `test-all.sh` → `assert-code-unchanged` → PR → CodeRabbit → merge gates.
+**Phase 3 — Wave 2, LLM judgment, repo-wide (batched), pilot-gated.** Only if Phase 1 cleared the gate. Apply the judgment pass to every remaining subsystem, one PR per batch, same lint-zone order. Where review attention concentrates.
+
+**Batch order within each wave** (strict lint-zones first, where the delta-lint net is strongest; Tracker already done by the pilot):
+- `Source_Core/{src,include}/{Sync,Persistence,Config}/` (strict)
+- `Source_Core/{src,include}/Commands/` + `Plugins/Mcp/src/` (strict)
+- `Source_Core/{src,include}/Ui/` (light; largest — **split into sub-PRs** per the batch-size cap in § Risks)
+- `Source_Core/` root `src` + `include` (`AppController*`, `Ai*`, `Logger`, …)
+- `Plugins/{LuaConsole,Whisper}` + `Target_Standalone/`
+
+Per-batch pipeline (both waves): apply pass (Wave 1 = `comment_strip.py` dry-run → apply; Wave 2 = LLM judgment) → `clang-format -i` → dual-target build → lint-delta gate → `test-all.sh` → `assert-code-unchanged` → PR → CodeRabbit → merge gates.
 
 ## Files to modify
 
@@ -72,7 +76,7 @@ Per-batch pipeline: analyzer report → Pass 1 (mechanical strip, dry-run → ap
 3. `scripts/dev/assert-code-unchanged.sh` — wraps a shared comment-stripper to normalize (strip comments + collapse whitespace) the base vs head version of every changed file; non-empty diff = fail. The safety gate.
 4. `tests/dev/comment_tooling/` fixtures + a ctest (or bats) wrapper — one fixture per bucket; assert protect-list survives, noise removed, code-token stream preserved.
 
-**Sweep targets (Phases 1–6), grouped by batch — every first-party `.cpp`/`.h`/`.hpp` under:**
+**Sweep targets — every first-party `.cpp`/`.h`/`.hpp` under, each swept in Wave 1 (mechanical) then Wave 2 (judgment); Tracker is the pilot, then strict-zone batches first:**
 5. `Source_Core/src/Tracker/`, `Source_Core/include/Tracker/` (**Pilot**, Phase 1).
 6. `Source_Core/src/{Sync,Persistence,Config}/`, `Source_Core/include/{Sync,Persistence,Config}/` (Batch B).
 7. `Source_Core/src/Commands/`, `Source_Core/include/Commands/`, `Plugins/Mcp/src/` (Batch C).
