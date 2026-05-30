@@ -821,7 +821,7 @@ function(smatchet_configure_core_impl_target _target)
             Source/Core/src/Persistence
             Source/Core/src/Config
             Source/Core/src/Ui
-            "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/ThirdParty")
     if(SMATCHET_WITH_MCP)
         target_include_directories("${_target}" PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/Source/Plugins/Mcp")

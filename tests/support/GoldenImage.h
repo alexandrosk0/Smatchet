@@ -14,7 +14,7 @@
 //   smatchet::test::LoadPpm("a.png", img, err);   // calls LoadImage; name kept
 //   smatchet::test::PpmImage = GoldenImage;        // typedef
 //
-// Pure C++14, depends on stb_image (vendored at ThirdParty/stb/stb_image.h).
+// Pure C++14, depends on stb_image (vendored at Source/Core/ThirdParty/stb/stb_image.h).
 // stb_image's PNG decoder rejects oversized dims via STBI_MAX_DIMENSIONS (1<<24
 // by default — we cap further at 16384x16384 for defense-in-depth against
 // crafted PNGs).
@@ -42,7 +42,7 @@
 // Use an angle-bracket include so cppcheck (run by the lint hook without a
 // -I flag) treats stb_image.h as a system header and skips scanning into
 // third-party code. The bash driver (scripts/dev/test-screenshot-diff.sh)
-// must pass `-IThirdParty` so g++ resolves it at compile time.
+// must pass `-ISource/Core/ThirdParty` so g++ resolves it at compile time.
 #ifndef SMATCHET_GOLDEN_IMAGE_NO_STB_IMPL
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
