@@ -22,7 +22,10 @@
 # Per-PR label overrides (AGENTS.md § Merge gates § Per-PR overrides):
 #   tests-out-of-band → downgrades `Test-delta gate` FAIL → WARN
 #   perf-out-of-band  → downgrades `Perf PR-fast (...)` FAIL → WARN
-# Downgraded failures are logged on stderr but do NOT contribute to ci_fail.
+#   cr-out-of-band    → downgrades a CodeRabbit block → WARN (CR gate only;
+#                       CI + user-comment gates still bind)
+# Downgraded failures are logged on stderr but do NOT contribute to ci_fail
+# (CI downgrades) / do NOT block the CR gate (cr-out-of-band).
 #
 # Usage:
 #   source scripts/dev/merge-gates.sh
@@ -42,7 +45,10 @@
 #   MERGE_GATES_CR_INSTALLED     — override CR-installed auto-detection
 #   MERGE_GATES_STALE_REREVIEW_POLLS — consecutive STALE polls on same HEAD
 #                                  before auto-posting `@coderabbitai review`
-#                                  (default 5; 0 disables)
+#                                  (default 5; 0 disables). Also gates the
+#                                  CR=NONE early-nudge (fires on the first
+#                                  blocking NONE poll per HEAD; 0 disables it
+#                                  too).
 #
 # Manual CR re-review trigger: post `@coderabbitai review` as a PR comment
 # (`gh pr comment <pr> --body "@coderabbitai review"`) when CR's review is
@@ -123,7 +129,10 @@ poll_merge_gates() {
     # When CR state is STALE_WITH_FINDINGS / STALE_UNKNOWN on the same HEAD for
     # this many consecutive polls, post `@coderabbitai review` once per HEAD to
     # nudge CR into re-reviewing. Default 5 polls (~5 min at default interval).
-    # Set to 0 to disable the auto-trigger.
+    # Set to 0 to disable the auto-trigger. This same knob also gates the
+    # CR=NONE early-nudge below (0 disables both); the NONE nudge fires on the
+    # first blocking NONE poll per HEAD rather than waiting for a streak, so CR
+    # resolves before the grace window instead of after it.
     local STALE_REREVIEW_POLLS="${MERGE_GATES_STALE_REREVIEW_POLLS:-5}"
     if ! [[ "$STALE_REREVIEW_POLLS" =~ ^[0-9]+$ ]]; then
         echo "poll_merge_gates: MERGE_GATES_STALE_REREVIEW_POLLS must be a non-negative integer (got: $STALE_REREVIEW_POLLS)" >&2
@@ -189,7 +198,25 @@ poll_merge_gates() {
     # per-HEAD — the trigger fires at most once per head SHA).
     local stale_streak=0
     local stale_head=""
-    local stale_rereview_posted_head=""
+    # Shared once-per-HEAD guard for the `@coderabbitai review` auto-nudge —
+    # both the STALE re-review trigger and the NONE early-nudge dedup on this so
+    # at most one comment is posted per head SHA (they never double-post).
+    local rereview_posted_head=""
+
+    # nudge_coderabbit <head_sha> <reason> — post `@coderabbitai review` once per
+    # HEAD. Idempotent: subsequent calls for the same head SHA are no-ops. On a
+    # failed `gh pr comment` the guard is left unset so a later poll retries.
+    nudge_coderabbit() {
+        local _head="$1" _reason="$2"
+        [ "$rereview_posted_head" = "$_head" ] && return 0
+        echo "WARN: $_reason; posting @coderabbitai review to nudge re-review." >&2
+        if gh pr comment "$prNumber" --body "@coderabbitai review" >/dev/null 2>&1; then
+            rereview_posted_head="$_head"
+            echo "INFO: @coderabbitai review trigger posted on HEAD ${_head:0:8}." >&2
+        else
+            echo "WARN: gh pr comment failed posting @coderabbitai review; will retry next poll." >&2
+        fi
+    }
 
     local start gh_fails=0
     start=$(date +%s)
@@ -197,14 +224,15 @@ poll_merge_gates() {
     # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
     # — no standalone `jq` binary required (gh is the only dep). One filter
     # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (17 lines) that the poll loop reads with `mapfile`. The exact jq
+    # stream (19 lines) that the poll loop reads with `mapfile`. The exact jq
     # sub-expressions are the same ones the per-field `jq` calls used before;
     # they're just composed into one program. ORCH_USER is spliced in as a
     # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
     # Field order (index): 0 state · 1 headSha · 2 overflow · 3 testsOob ·
     # 4 perfOob · 5 ciTotal · 6 ciFail · 7 ciPend · 8 ciWarnDowngraded ·
     # 9 dgNames · 10 crState · 11 crFirstLine · 12 crOpen · 13 crStatusState ·
-    # 14 crThreadCommentsOnHead · 15 userComments · 16 reviewDecision.
+    # 14 crThreadCommentsOnHead · 15 userComments · 16 reviewDecision ·
+    # 17 mergeStateStatus · 18 crOob (cr-out-of-band label).
     local GATE_FILTER
     GATE_FILTER='
 .data.repository.pullRequest as $pr
@@ -212,6 +240,7 @@ poll_merge_gates() {
 | ([$pr.labels.nodes[]?.name]) as $labels
 | ($labels | any(. == "tests-out-of-band")) as $tests
 | ($labels | any(. == "perf-out-of-band")) as $perf
+| ($labels | any(. == "cr-out-of-band")) as $cr
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
    | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
                    else ["StatusContext", (.context // "")] end)})
@@ -261,7 +290,8 @@ poll_merge_gates() {
      + ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
           and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length)),
     ($pr.reviewDecision // "NONE"),
-    ($pr.mergeStateStatus // "UNKNOWN")
+    ($pr.mergeStateStatus // "UNKNOWN"),
+    ($cr | tostring)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
@@ -295,7 +325,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 17 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 19 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -304,11 +334,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 18 ]; then
-            # Exactly 18 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 19 ]; then
+            # Exactly 19 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 18); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 19); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -337,6 +367,14 @@ poll_merge_gates() {
         # already applied inside the filter's ci_fail / ci_warn_downgraded; these
         # are surfaced only for the WARN line below.
         local has_tests_oob="${fields[3]}" has_perf_oob="${fields[4]}"
+
+        # cr-out-of-band label — when present, a CR block (CHANGES_REQUESTED,
+        # COMMENTED+actionable>0, DISMISSED, STALE_WITH_FINDINGS, STALE_UNKNOWN,
+        # or NONE-after-grace) is downgraded to a WARN (pass). Mirrors the
+        # tests/perf-out-of-band CI downgrade pattern but scoped to the CR gate
+        # only (CI + user-comment gates still bind). Read here; applied in the
+        # CR decision branch below after cr_pass is computed.
+        local has_cr_oob="${fields[18]}"
 
         # CI — required-only, latest-per-name dedup + label downgrades, all done
         # in the filter. Empty → -1, which fails closed at the integer checks.
@@ -456,15 +494,8 @@ poll_merge_gates() {
                         stale_head="$head_sha"
                         stale_streak=1
                     fi
-                    if [ "$stale_streak" -ge "$STALE_REREVIEW_POLLS" ] && \
-                       [ "$stale_rereview_posted_head" != "$head_sha" ]; then
-                        echo "WARN: STALE on HEAD ${head_sha:0:8} for $stale_streak polls; posting @coderabbitai review to nudge re-review." >&2
-                        if gh pr comment "$prNumber" --body "@coderabbitai review" >/dev/null 2>&1; then
-                            stale_rereview_posted_head="$head_sha"
-                            echo "INFO: @coderabbitai review trigger posted on HEAD ${head_sha:0:8}." >&2
-                        else
-                            echo "WARN: gh pr comment failed posting @coderabbitai review; will retry next STALE_REREVIEW_POLLS window." >&2
-                        fi
+                    if [ "$stale_streak" -ge "$STALE_REREVIEW_POLLS" ]; then
+                        nudge_coderabbit "$head_sha" "STALE on HEAD ${head_sha:0:8} for $stale_streak polls"
                     fi
                 fi
                 ;;
@@ -507,6 +538,19 @@ poll_merge_gates() {
                 else
                     cr_state_print="NONE+pending (poll $((p+1))/$CR_GRACE_POLLS)"
                 fi
+                # NONE early-nudge: CR is installed but has posted no review on
+                # this head yet (still within grace → cr_pass=false). Post
+                # `@coderabbitai review` once per HEAD so CR resolves before the
+                # grace window expires rather than relying on the passive
+                # grace-then-pass backstop. Reuses the shared once-per-HEAD guard
+                # (won't double-post with the STALE trigger). Gated on the same
+                # STALE_REREVIEW_POLLS knob (0 disables). Fires on the first
+                # blocking NONE poll — no streak required, since the goal is to
+                # wake CR up early. The grace fall-through above stays as the
+                # backstop for a genuinely stuck integration.
+                if [ "$cr_pass" = false ] && [ "$cr_installed" = true ] && [ "$STALE_REREVIEW_POLLS" -gt 0 ]; then
+                    nudge_coderabbit "$head_sha" "CR=NONE on HEAD ${head_sha:0:8} (no review yet, within grace)"
+                fi
                 ;;
         esac
 
@@ -536,6 +580,21 @@ poll_merge_gates() {
         local cr_open_blocks=false
         if [ "$cr_state" != "APPROVED" ] && [ "$cr_open" -ne 0 ]; then
             cr_open_blocks=true
+        fi
+
+        # cr-out-of-band label: when present, downgrade a CR block to a WARN
+        # (pass) — mirrors the tests/perf-out-of-band CI-downgrade pattern but
+        # scoped to the CR gate ONLY. Covers both CR-gate signals: the state
+        # verdict (cr_pass=false: CHANGES_REQUESTED, COMMENTED+actionable>0,
+        # DISMISSED, STALE_WITH_FINDINGS, STALE_UNKNOWN, NONE-after-grace) and
+        # unresolved CR-authored review threads (cr_open_blocks). CI
+        # (ci_fail / ci_pend) and the user-comment gate (user) are NOT touched —
+        # the label only waives CodeRabbit's own conditions. Like the other
+        # out-of-band labels, it MUST NOT stay on the PR post-merge.
+        if [ "$has_cr_oob" = "true" ] && { [ "$cr_pass" != true ] || [ "$cr_open_blocks" = true ]; }; then
+            echo "WARN: cr-out-of-band label downgraded CR block (${cr_state_print}) to WARN" >&2
+            cr_pass=true
+            cr_open_blocks=false
         fi
 
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \

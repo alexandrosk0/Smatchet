@@ -99,6 +99,16 @@ case "$1" in
             echo "${MERGE_GATES_STUB_VIEW_ISDRAFT:-false}"
             exit 0
         fi
+        if [ "$2" = "comment" ]; then
+            # gh pr comment <pr> --body "@coderabbitai review" — the auto-nudge.
+            # Append one line per invocation to a counter file so a test can
+            # assert the exact call count (the poller redirects our stdout/stderr
+            # to /dev/null, so a file is the only observable side-effect).
+            if [ -n "${MERGE_GATES_STUB_COMMENT_COUNTER:-}" ]; then
+                echo "$*" >> "$MERGE_GATES_STUB_COMMENT_COUNTER"
+            fi
+            exit "${MERGE_GATES_STUB_COMMENT_EXIT:-0}"
+        fi
         ;;
     user)
         # `gh api user --jq .login` mock (only invoked if ORCH_USER missing).
@@ -121,6 +131,8 @@ teardown() {
     rm -rf "$STUB_BIN_DIR"
     unset MERGE_GATES_TEST_FIXTURE MERGE_GATES_STUB_GH_FAIL MERGE_GATES_STUB_READY_STDERR MERGE_GATES_STUB_READY_EXIT
     unset MERGE_GATES_TEST_ANSWER MERGE_GATES_STUB_CR_CONFIG MERGE_GATES_STUB_READY_MARKER
+    unset MERGE_GATES_STUB_COMMENT_COUNTER MERGE_GATES_STUB_COMMENT_EXIT
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS MERGE_GATES_STALE_REREVIEW_POLLS
 }
 
 # ---------- helpers ----------
@@ -675,6 +687,160 @@ set_fixture() {
     [ "$status" -eq 5 ]
     [[ "$output" == *"PAGINATION_OVERFLOW"* ]]
     rm -f "$f"
+}
+
+# ---------- cr-out-of-band label (downgrades a CR block → WARN, CR gate only) ----------
+
+@test "cr-out-of-band label downgrades CR CHANGES_REQUESTED block → pass with WARN" {
+    # merge_gates_cr_changes.json: CR CHANGES_REQUESTED on head + 2 unresolved
+    # CR threads (cr_open=2). The label must waive BOTH the state verdict and
+    # the open-CR-thread block; CI passes + reviewDecision APPROVED so the gate
+    # passes overall.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_changes.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band label downgraded CR block"* ]]
+    [[ "$output" == *"CHANGES_REQUESTED"* ]]
+    rm -f "$f"
+}
+
+@test "cr-out-of-band label downgrades STALE_WITH_FINDINGS block → pass with WARN" {
+    # Covers the stale-family block path. Prior CR review had N>0 findings on an
+    # old SHA (STALE_WITH_FINDINGS — normally a hard block that never passes on
+    # timeout). cr-out-of-band downgrades it to WARN.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_stale_findings.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band label downgraded CR block"* ]]
+    [[ "$output" == *"STALE_WITH_FINDINGS"* ]]
+    rm -f "$f"
+}
+
+@test "cr-out-of-band downgrades NONE-within-grace block (CR installed) → pass with WARN" {
+    # CR installed, NONE, within grace → normally blocks (NONE+pending). The
+    # label downgrades the CR condition so the gate passes immediately without
+    # waiting for the grace window.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    # Disable the auto-nudge so this test isolates the downgrade (no gh pr comment).
+    export MERGE_GATES_STALE_REREVIEW_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band label downgraded CR block"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
+}
+
+@test "cr-out-of-band does NOT bypass a failing CI check (CR gate only)" {
+    # Add the label to a fixture whose Test-delta gate FAILS and which has NO
+    # tests-out-of-band label. cr-out-of-band must NOT touch CI → still blocks.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_ci_fail.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
+@test "cr-out-of-band does NOT bypass a user conversation comment (CR gate only)" {
+    # User comment present + cr-out-of-band label. The label waives only the CR
+    # gate; the user-comment gate still blocks.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_user_comment.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"User: 2"* ]]
+    rm -f "$f"
+}
+
+@test "regression: no cr-out-of-band label → CR CHANGES_REQUESTED still blocks (no downgrade WARN)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_changes.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"CodeRabbit: CHANGES_REQUESTED"* ]]
+    [[ "$output" != *"cr-out-of-band label downgraded"* ]]
+}
+
+# ---------- CR=NONE early auto-nudge (@coderabbitai review, once per HEAD) ----------
+
+@test "CR installed + NONE within grace → posts exactly one @coderabbitai review" {
+    # CR installed, no review yet, within grace → blocks (NONE+pending) AND
+    # fires the early-nudge once. Counter file records each gh pr comment call;
+    # assert exactly one line.
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [ -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+    grep -q "@coderabbitai review" "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR=NONE nudge is idempotent per HEAD — 3 polls on same head still post once" {
+    # Across multiple polls on the same head SHA, the shared once-per-HEAD guard
+    # must keep the post count at exactly one.
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_MAX_POLLS=3
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_MAX_POLLS
+}
+
+@test "CR=NONE nudge disabled when MERGE_GATES_STALE_REREVIEW_POLLS=0 → no post" {
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STALE_REREVIEW_POLLS=0
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [ ! -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
+}
+
+@test "CR not installed + NONE → no nudge (NONE is steady state)" {
+    # cr_installed=false (default 404 probe) → NONE passes, no nudge.
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CodeRabbit: NONE"* ]]
+    [ ! -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
 }
 
 # ---------- gh_pr_ready_idempotent ----------
