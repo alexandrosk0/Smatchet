@@ -15,9 +15,10 @@ Both are solved by relocating the agentic scripts under the existing portable ag
 
 ## Approach
 
-Three-way classification, mirroring `docs/PORTABILITY.md` § Agent split rule:
+Four-way classification, mirroring `docs/PORTABILITY.md` § Agent split rule:
 
-- **`scripts/dev/` (STAYS) — build / dev / run-the-exe.** Any script that compiles, launches, or tests the C++ product, OR is invoked by a CI build job, OR is sourced by such a script. The code repo must build with **no** dependency on the `agents/` tree, so build-invoked utilities stay here even when otherwise "portable" (notably `project-config.sh`, sourced by `with-msvc-env.sh`).
+- **`scripts/dev/` (STAYS) — build / dev / run-the-exe / CI-invoked.** Any script that compiles, launches, or tests the C++ product, OR is invoked by a CI build/test job, OR is sourced by such a script. The code repo must build with **no** dependency on the `agents/` tree, so build-invoked utilities stay here even when otherwise "portable" (notably `project-config.sh`, sourced by `with-msvc-env.sh`).
+- **`scripts/dev/local/` (MOVE within `scripts/dev/`) — human-run, CI-irrelevant.** PowerShell convenience wrappers + local build/lint/package tools + `manual-*` scripts that **no** workflow or action references (verified: 0 CI refs). Changing one cannot alter any CI outcome, so it should not trigger the MSVC build. Unlike `agents/*` (already allow-listed), this needs **one** added line in the `changes` job. Still part of the code repo (not agentic) — just CI-noise.
 - **`agents/scripts/core/` (MOVE) — portable agentic.** Generic ship-line / merge-gate / lock / harness-wiring / plan-doc / agent-meta tooling + the docs/agent-meta test scripts. Mirrors `agents/core/`. Reads project values from `project.config.json`; never compiles or runs the product.
 - **`agents/scripts/project/` (MOVE) — project-bound agentic.** Scripts coupled to *this* project's subsystems/values: `p4-*` (this project's optional VCS layer wiring), `test-lint-rules*` (this project's strict-zone globs), `test-config-migration.sh`. Mirrors `agents/project/`.
 
@@ -27,8 +28,9 @@ Three-way classification, mirroring `docs/PORTABILITY.md` § Agent split rule:
 
 ## Files to modify
 
-**1. New dirs**
-1. `agents/scripts/core/` + `agents/scripts/project/` — new directories (move targets).
+**1. New dirs + the one allow-list edit**
+1. `agents/scripts/core/` + `agents/scripts/project/` + `scripts/dev/local/` — new directories (move targets).
+2. `.github/workflows/build-and-test.yml` `changes` job `case` allow-list — add `scripts/dev/local/*` (the only allow-list edit; `agents/*` already covers the agentic moves).
 
 **2. STAY in `scripts/dev/` (build/dev/run-exe + build-sourced — ~40):** `with-msvc-env.sh`, `project-config.sh` (build dependency — overrides PORTABILITY's "portable" tag; see Deviations), `doctor.sh`, `check-required-tools.sh`, `build_*.ps1`, `build-msvc-asan.ps1`, `build_and_*.ps1`, `package_unreal_plugin_msvc.ps1`, `rebuild_testproject_plugin.ps1`, `attach_unreal_vsjit.ps1`, `run_standalone.ps1`, `run_clang_tidy.ps1`, `run_cppcheck.py`, `relaunch-smatchet.sh`, `coverage*.sh`, `coverage-delta-gate.sh`, `perf-*.{sh,py,json}`, `perf-marker-inventory.sh`, `test-build-*`, `test-doctor.sh`, `test-cppcheck-path-detection.sh`, `test-ui-*.sh`, `test-*-roundtrip.sh`, `test-grid-edit-perf-*.sh`, `test-callstack-tooltip-hover.sh`, `test-tooltip-wrapwidth.sh`, `test-markdown-lang-tag.sh`, `test-theme-*.sh`, `test-whisper-*.sh`, `test-ai-prefs-validator.sh`, `test-lua-error-log.sh`, `manual-*`.
 
@@ -36,10 +38,12 @@ Three-way classification, mirroring `docs/PORTABILITY.md` § Agent split rule:
 
 **4. MOVE → `agents/scripts/project/` (project-bound agentic — ~10):** `p4-git-sync-check.sh`, `p4-reconcile-check.sh`, `p4-task-stream*.sh`, `test-p4-dual-vcs.sh`, `test-lint-rules.sh`, `test-lint-rules-bats.sh`, `test-config-migration.sh`.
 
+**4b. MOVE → `scripts/dev/local/` (human-run, 0 CI refs — ~14):** `build_and_run.ps1`, `build_and_run_ninja_debug.ps1`, `build_and_run_vs_debug.ps1`, `build_and_run_vs_release.ps1`, `build_standalone.ps1`, `build_deploy_and_open_unreal.ps1`, `build_and_deploy_unreal_plugin.ps1`, `run_standalone.ps1`, `attach_unreal_vsjit.ps1`, `rebuild_testproject_plugin.ps1`, `build-msvc-asan.ps1`, `package_unreal_plugin_msvc.ps1`, `run_clang_tidy.ps1`, `run_cppcheck.py`, `manual-*`. (Each verified 0 references under `.github/`.)
+
 **5. Reference sweep (every moved path):**
 - `.github/workflows/*.yml` (esp. `test-all.sh` callers, doc-validation, cr-finding-gate, pillar2-scan, locks-render, lock-*), `.github/actions/*/action.yml`.
 - `.claude/hooks/*` + `.claude/settings.json` (**live, gitignored — needs explicit user authz per self-mod guard**) + `docs/harness/claude-code/settings.json.tmpl` + `docs/harness/claude-code/hooks/*`.
-- `AGENTS.md`, `docs/agent-rules/*.md`, `docs/**` (esp. `docs/PORTABILITY.md` § generic/project script rows + § External path contracts table; `docs/STRUCTURE.md` if it lists script paths), `agents/*.md`.
+- `AGENTS.md`, `docs/agent-rules/*.md`, `docs/**` (esp. `docs/PORTABILITY.md` § generic/project script rows + § External path contracts table; `docs/STRUCTURE.md` if it lists script paths; **`BUILD.md`** + any guide that documents the `build_*.ps1` / `run_*.ps1` invocation paths → new `scripts/dev/local/` prefix), `agents/*.md`, `README.md`.
 - Cross-script `source` / invocation lines (e.g. `test-all.sh` runs most agentic test-*; `merge-watcher.py` calls `merge-gates.sh`; `git-janitor` calls `is-pure-docs-diff.sh`; `with-msvc-env`/build sources `project-config.sh` — stays, no change).
 - `project.config.json` (any `scripts/dev/...` path values).
 - `scripts/dev/setup-harness.sh` self-reference + its `link_*` targets (it moves to core; the SessionStart auto-sync block in `clear-session-context.sh` repaths too).
@@ -76,7 +80,7 @@ N/A — diff touches no `Source/Core/` code (pure tooling/docs move).
 ## Verification
 
 - **Bucket A / E**: N/A — no C++ change.
-- **Bash-driver**: (1) `bash scripts/dev/test-all.sh` (or its new orchestrator path) green after the sweep — exercises every moved test-* at its new path. (2) `bash agents/scripts/core/test-setup-harness.sh` green (harness wiring repaths). (3) `git grep -nE "scripts/(dev/)?(<moved-name>)"` returns **zero** stale hits for every moved script — the sweep gate. (4) Probe PR touching only an `agents/scripts/` file → `Detect code changes` outputs `code=false`, MSVC jobs `skipped`. (5) Probe PR touching a `scripts/dev/` build script → MSVC jobs **run**.
+- **Bash-driver**: (1) `bash scripts/dev/test-all.sh` (or its new orchestrator path) green after the sweep — exercises every moved test-* at its new path. (2) `bash agents/scripts/core/test-setup-harness.sh` green (harness wiring repaths). (3) `git grep -nE "scripts/(dev/)?(<moved-name>)"` returns **zero** stale hits for every moved script — the sweep gate. (4) Probe PR touching only an `agents/scripts/` file → `Detect code changes` outputs `code=false`, MSVC jobs `skipped`. (4b) Probe PR touching only a `scripts/dev/local/` file → same `code=false` / `skipped`. (5) Probe PR touching a `scripts/dev/` build script (e.g. `with-msvc-env.sh`) → MSVC jobs **run**.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — confirms no build-invocation path broke; also confirms the build needs nothing from `agents/scripts/`.
 - **Daemon smoke (Phase 2)**: `SmatchetMergeWatcher` restarts; `merge-watcher-cli.py list` + one poll cycle on a registered PR succeeds from the new path.
 - **Manual residue**: the live `.claude/settings.json` edit (Phase 2) requires user authz — tracked in the phase checklist, not silent.
