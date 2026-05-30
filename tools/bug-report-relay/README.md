@@ -52,6 +52,22 @@ npx wrangler deploy
 #    → prints https://smatchet-bug-report-relay.<your-subdomain>.workers.dev
 ```
 
+> **Two secrets — do not confuse them.**
+>
+> | Secret | What it is | Lives where | Sent by clients? |
+> |---|---|---|---|
+> | `GITHUB_TOKEN` | the GitHub PAT | **only on Cloudflare** (`wrangler secret`) | **never** |
+> | `RELAY_KEY` | a random access key you invent | Cloudflare **and** the app/config | **yes** (`x-relay-key` header / `bugreport_relay_key`) |
+>
+> The `RELAY_KEY` is the one that goes in the `x-relay-key` header and the app
+> config. **Never** put the GitHub PAT in that header — the whole point is that the
+> PAT stays on Cloudflare. Secrets are write-only; if you forget `RELAY_KEY`, just
+> `wrangler secret put RELAY_KEY` again with a new value.
+
+> **The Worker bundles `wrangler.toml` `[vars]` at deploy time.** After editing
+> `REPO` / `ASSETS_REPO`, you **must** `npx wrangler deploy` again for the change to
+> take effect. Same for any `src/index.js` edit.
+
 ## Point the app at it
 
 Set these in `smatchet_config.json` (in the app's user-data dir) — and ship that
@@ -91,3 +107,45 @@ curl -s -X POST localhost:8787/report -H 'content-type: application/json' \
   -H 'x-relay-key: <key>' \
   -d '{"title":"[Bug] test","body":"hello from curl"}'
 ```
+
+## Verify a live deployment
+
+Run against the deployed URL (note the host is
+`<worker-name>.<your-subdomain>.workers.dev`, **not** a bare `<name>.workers.dev`).
+
+**bash / `curl.exe`:**
+
+```bash
+# 1. Reachability (no side effect)
+curl -s https://<worker>.<sub>.workers.dev/health        # → {"ok":true}
+
+# 2. End-to-end — files a real issue (safe to close afterwards)
+curl -s -X POST https://<worker>.<sub>.workers.dev/report \
+  -H 'content-type: application/json' -H 'x-relay-key: <RELAY_KEY>' \
+  -d '{"title":"[Bug] relay smoke test","body":"safe to close"}'
+# → {"ok":true,"issueKey":"owner/repo#N","url":"https://github.com/..."}
+```
+
+**PowerShell** — `curl` is an alias for `Invoke-WebRequest`, so its `-s`/`-w`/`-d`
+flags break. Use `curl.exe` (note the `.exe`) or `Invoke-RestMethod`:
+
+```powershell
+$b = '{"title":"[Bug] relay smoke test","body":"safe to close"}'
+Invoke-RestMethod -Method Post `
+  -Uri "https://<worker>.<sub>.workers.dev/report" `
+  -Headers @{ "x-relay-key" = "<RELAY_KEY>" } `
+  -ContentType "application/json" -Body $b | ConvertTo-Json
+```
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `{"ok":false,"error":"bad or missing relay key"}` (401) | `RELAY_KEY` is set but the request's `x-relay-key` is missing/wrong | Send the matching key. This 401 *confirms* the auth gate works. |
+| `{"ok":false,"error":"GitHub create failed: Not Found"}` (the relay returns 502) | `REPO` points at a repo that **doesn't exist**, or the `GITHUB_TOKEN` lacks access (GitHub returns 404, not 403, for no-access to hide existence) | Verify `REPO` in `wrangler.toml` is a real `owner/repo`; ensure the bot token has **Issues: write** on it (a private repo needs the bot added as a collaborator). Redeploy after editing `REPO`. |
+| `relay REPO var not configured as owner/repo` (500) | `REPO` unset or malformed | Set `[vars].REPO = "owner/repo"` in `wrangler.toml`, redeploy. |
+| Screenshot doesn't render inline; issue still files | Token lacks **Contents: write**, so the asset upload is skipped | Grant Contents: write on the assets repo, or accept text-only reports. |
+| `Could not resolve host` | Wrong URL (bare `<name>.workers.dev`) | Use the full `<worker-name>.<your-subdomain>.workers.dev` that `wrangler deploy` printed. |
+| Edited `REPO` / `index.js` but behaviour unchanged | Vars + code are bundled at deploy time | `npx wrangler deploy` again. |
+
+Verified working 2026-05-30 against a live Worker (filed `alexandrosk0/Smatchet#585`).
