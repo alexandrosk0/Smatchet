@@ -23,10 +23,11 @@ void MosaicCensorInPlace(unsigned char* px, int w, int h, int comp, int block);
 /// enough to base64 under the relay's payload cap (a 1920px frame is ~4x too big).
 void DownscaleToMaxDimension(std::vector<unsigned char>& px, int& w, int& h, int comp, int maxDim);
 
-/// Recommended mosaic block size for a `w`x`h` capture:
-/// `clamp(round(min(w,h)/64), 12, 48)`. The 12px floor guarantees ~13px body
-/// text is unreadable; the 48px ceiling keeps large captures from turning into
-/// a handful of giant squares.
+/// Recommended (light) mosaic block size for a `w`x`h` capture:
+/// `clamp(round(min(w,h)/110), 5, 10)` — ~6px on a 1280px frame. Tuned to blur
+/// fine print (where tokens / PII usually sit) while keeping layout, headings,
+/// and large text legible for debugging. This is a reduce-readability pass, NOT
+/// a guarantee of unreadability; the editable egress preview is the real control.
 int RecommendedCensorBlock(int w, int h);
 
 } // namespace imaging

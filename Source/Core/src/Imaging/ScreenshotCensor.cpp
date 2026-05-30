@@ -86,11 +86,15 @@ void DownscaleToMaxDimension(std::vector<unsigned char>& px, int& w, int& h, int
 
 int RecommendedCensorBlock(int w, int h) {
     if (w <= 0 || h <= 0) {
-        return 12;
+        return 5;
     }
+    // Light pixelation: blur fine print (the usual home of tokens / PII) while
+    // keeping layout + headings + large text legible for debugging. ~6px on a
+    // 1280px capture. NOT a guarantee of unreadability — it's a reduce-readability
+    // pass; the editable egress preview is the real privacy control.
     const int minDim = std::min(w, h);
-    const long scaled = std::lround(static_cast<double>(minDim) / 64.0);
-    const long clamped = std::max(12L, std::min(48L, scaled));
+    const long scaled = std::lround(static_cast<double>(minDim) / 110.0);
+    const long clamped = std::max(5L, std::min(10L, scaled));
     return static_cast<int>(clamped);
 }
 

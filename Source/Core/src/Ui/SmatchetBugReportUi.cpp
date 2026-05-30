@@ -186,13 +186,14 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
         int mode = d.bugReportShotMode;
         ImGui::RadioButton("Full", &mode, 0);
         ImGui::SameLine();
-        ImGui::RadioButton("Censored (no readable text)", &mode, 1);
+        ImGui::RadioButton("Censored (blur fine text)", &mode, 1);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Light pixelation: blurs fine print but keeps layout + larger text\n"
+                              "legible for debugging. Not a privacy guarantee — use the editable\n"
+                              "preview below to remove anything sensitive in the text.");
+        }
         d.bugReportShotMode = mode;
         ImGui::Unindent();
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("The screenshot is uploaded as a repo asset and embedded inline.\n"
-                              "GitHub's drag-drop image store is not accessible to API tokens.");
-        }
     }
 #endif
 

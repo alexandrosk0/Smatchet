@@ -114,11 +114,11 @@ TEST_CASE("DownscaleToMaxDimension — shrinks longest side, updates dims, no-op
     CHECK(big.size() == static_cast<std::size_t>(gw) * gh * 3);
 }
 
-TEST_CASE("RecommendedCensorBlock — clamps to [12,48]") {
-    CHECK(RecommendedCensorBlock(64, 64) == 12);     // 64/64=1 -> floor 12
-    CHECK(RecommendedCensorBlock(800, 600) >= 12);   // min(800,600)/64≈9 -> floor 12
-    CHECK(RecommendedCensorBlock(8000, 6000) == 48); // 6000/64≈94 -> ceil 48
-    CHECK(RecommendedCensorBlock(0, 0) == 12);
+TEST_CASE("RecommendedCensorBlock — light pixelation, clamps to [5,10]") {
+    CHECK(RecommendedCensorBlock(64, 64) == 5);      // tiny -> floor 5
+    CHECK(RecommendedCensorBlock(1280, 672) == 6);   // ~672/110 -> 6 (typical downscaled capture)
+    CHECK(RecommendedCensorBlock(8000, 6000) == 10); // large -> ceil 10
+    CHECK(RecommendedCensorBlock(0, 0) == 5);
 }
 
 // --------------------------------------------------------------------------
