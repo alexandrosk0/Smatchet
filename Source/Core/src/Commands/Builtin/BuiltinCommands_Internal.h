@@ -4,7 +4,6 @@
 // Internal helpers shared across the per-category Builtin TUs. Definitions
 // live in BuiltinCommands_Helpers.cpp. Public surface (RegisterBuiltinCommands)
 // is unchanged — see Commands/BuiltinCommands.h.
-//
 // This header lives next to its only consumers (BuiltinCommands_*.cpp) rather
 // than in Source/Core/include because it is an implementation detail of the
 // builtin-command registration and must not leak into other modules.

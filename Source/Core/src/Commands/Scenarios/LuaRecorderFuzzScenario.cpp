@@ -1,14 +1,12 @@
 // LuaRecorderFuzzScenario — hostile-input fuzz of the recorded-cmd-list path.
 // Plan reference: docs/plans/shipped/lua-recorded-cmd-list.md §Crash-safety hardening
 //   §Fuzz test (verification step 14).
-//
 // Registers a Lua provider (`render_fuzz_cell`, defined in
 // scripts/LuaRecorderFuzz.lua) on a configurable field (default `summary`) and
 // drives the grid scroll for N frames. The provider body randomises calls with
 // every documented hostile-input class (NaN sizes, OOB color indices, oversized
 // strings, unbalanced push/pop, label collisions). Crash-safety hardening must
 // hold across this run.
-//
 // Default frames = 600 (10 s at 60 fps). For a CI smoke job, raise to 3600.
 
 #include "Commands/Scenarios/IScenario.h"

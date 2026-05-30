@@ -1,5 +1,4 @@
 // ai.* - debug commands for AI assistant configuration and HTTP shape.
-//
 // Five operations:
 //   ai.list-models       - list public model catalog for a provider (no network).
 //   ai.dump-request      - build the would-be request (URL + headers + body),
@@ -9,11 +8,9 @@
 //                          collected deltas + final + HTTP status (network).
 //   ai.validate-prefs    - run AiPrefsValidator against ConfigManager::Load()
 //                          (no network).
-//
 // API keys NEVER appear as CLI arguments. All commands read keys from
 // ConfigManager::Load(). ai.dump-request redacts x-api-key / Authorization
 // header values before emitting them.
-//
 // Build-time gate: every command short-circuits with a friendly failure when
 // SMATCHET_WITH_AI is off (the IAiClient layer is absent in that build).
 

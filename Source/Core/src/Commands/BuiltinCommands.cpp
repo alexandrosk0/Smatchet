@@ -1,13 +1,11 @@
 // Built-in commands registered by AppController::Initialize.
 // See docs/plans/shipped/command-system-plan.md for the full catalogue spec.
-//
 // This file is the thin dispatcher: each per-category bucket TU lives under
 // Source/Core/src/Commands/Builtin/ and exposes a single
 // Register<Category>Commands(reg, app) function. The dispatcher calls them in
 // the same order the original monolithic body did. Helper definitions live in
 // Builtin/BuiltinCommands_Helpers.cpp and are surfaced via
 // Builtin/BuiltinCommands_Internal.h.
-//
 // All handlers are AsyncSafe=true unless explicitly marked otherwise. Every
 // handler must be reentrant — handlers may call back into the registry via
 // `Lua commands.invoke` or `commands.invoke` MCP tool.

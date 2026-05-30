@@ -2,7 +2,6 @@
 // shared UiDrawSession. Mirrors the inline View menu items in
 // SmatchetUI::drawMainMenuBar so the Command Palette, CLI, Lua, and MCP can
 // open / close panels from any surface.
-//
 // The handlers mutate `g_ui` which is owned by the UI thread; every handler
 // hops to the UI thread via RunOnUiThreadAsCommandResult.
 

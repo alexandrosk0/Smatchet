@@ -4,7 +4,6 @@
 // `MarkdownPreviewRender::Render` was invoked from a BeginTooltip block
 // without `opts.wrapWidth` set, producing an ultra-narrow vertical strip
 // because the tooltip's GetContentRegionAvail().x is near-zero.
-//
 // What this scenario does:
 //   * Drives `MarkdownPreviewRender::Render` with `opts.mode = Tooltip` +
 //     a representative wrap width over a markdown body, N times per frame,
@@ -15,7 +14,6 @@
 //     zero width when `opts.wrapWidth = 0` (the bug the grep gate guards).
 //     The assertion runs once at OnStart, not per frame — the per-frame
 //     perf loop just keeps the row visible.
-//
 // Render lives outside ImGui::Begin/End — the scenario is a perf driver,
 // not a tooltip-replication test. MarkdownPreviewRender::Render emits raw
 // ImGui draw calls, so when no ImGui window is current we capture nothing
@@ -48,12 +46,11 @@ namespace {
 // markdown plan cache's prose / inline-code / list-item branches without
 // requiring the full md4c table path.
 const std::string& SampleMarkdownBody() {
-    static const std::string kBody =
-        "Issue summary: **render** fails when `wrapWidth=0` because the "
-        "tooltip window's `GetContentRegionAvail().x` is near-zero.\n\n"
-        "- repro 1: hover a description grid cell\n"
-        "- repro 2: observe vertical strip\n"
-        "- fix: pass `opts.wrapWidth` explicitly\n";
+    static const std::string kBody = "Issue summary: **render** fails when `wrapWidth=0` because the "
+                                     "tooltip window's `GetContentRegionAvail().x` is near-zero.\n\n"
+                                     "- repro 1: hover a description grid cell\n"
+                                     "- repro 2: observe vertical strip\n"
+                                     "- fix: pass `opts.wrapWidth` explicitly\n";
     return kBody;
 }
 

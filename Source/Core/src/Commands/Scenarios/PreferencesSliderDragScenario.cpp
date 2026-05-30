@@ -1,17 +1,14 @@
 // PreferencesSliderDragScenario — regression guard for PR #190.
-//
 // PR #190 (`configmanager-save-coalesce`) replaced 31 immediate
 // `ConfigManager::Save` call sites in `SmatchetPreferencesUi.cpp` with a
 // `MarkPrefsDirty(d)` helper that defers the save behind a debounce window
 // (~100 ms). The end-of-frame fire (in `SmatchetUI::Draw` tail) is wrapped in
 // `SMATCHET_UI_PERF_SCOPE("ConfigManager::Save (prefs-debounced)")` so we can
 // observe its call count post-run.
-//
 // This scenario simulates a slider drag by calling `MarkPrefsDirty(g_ui)` every
 // frame for N frames. With the coalesce in place, only ~ (frames / 6) saves
 // should fire (debounce ≈ 100 ms ≈ 6 frames at 60 Hz). Without the coalesce we
 // would see one save per frame.
-//
 // Production code under `SmatchetUI*.cpp` is out of scope for this PR; this
 // scenario reaches it only via the already-exposed `MarkPrefsDirty` inline
 // helper in `SmatchetUiSession.h`.

@@ -1,11 +1,9 @@
 // CellEditBurstScenario — exposes `debug.grid.edit-burst` as a scenario.
-//
 // Verifies PR #186 (grid-cell-edit-perf): grid cell commit must NOT block the
 // UI thread on an HTTP roundtrip — the dispatch hops to a worker via
 // `MainThreadDispatcher`. This scenario lets `scenario.run --name=cell-edit-burst`
 // drive the same headless harness used by
 // `scripts/dev/test-grid-edit-perf-postfix.sh`.
-//
 // Implementation: OnStart dispatches the underlying command synchronously (the
 // scenario runs on the UI thread, so RunOnUiThreadAsCommandResult takes the
 // inline fast path). The result is stashed and returned from OnFinish. The

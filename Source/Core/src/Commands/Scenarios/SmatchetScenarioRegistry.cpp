@@ -1,7 +1,6 @@
 // Slice 5 of docs/plans/shipped/autonomous-debugging-no-creds.md — pure refactor.
 // See Source/Core/include/Commands/Scenarios/SmatchetScenarioRegistry.h for
 // the behaviour contract.
-//
 // Each entry mirrors the pre-refactor `scenarioRunner_->RegisterFactory(...)`
 // call from AppController::Initialize byte-for-byte: same name, same factory,
 // same ifdef gating. The pre-refactor block in AppController.cpp declared each

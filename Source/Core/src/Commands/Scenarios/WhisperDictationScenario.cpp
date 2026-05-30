@@ -1,6 +1,5 @@
 // WhisperDictationScenario — end-to-end regression gate for the whisper-dictation
 // pipeline. See docs/plans/shipped/whisper-dictation.md § Phase G.
-//
 // Exercises the press → capture → transcribe → insert path WITHOUT mic
 // hardware and WITHOUT an OpenAI key by installing a mock-transcription
 // seam in WhisperPlugin (see Source/Plugins/Whisper/WhisperPlugin.h §
@@ -11,13 +10,11 @@
 // with the router before pressing, then polls the buffer each frame until
 // the inserted text matches the canned mock — at which point IsDone returns
 // true and OnFinish reports {passed, expected_text, observed_text}.
-//
 // Threading: scenario callbacks run on the UI thread inside the scenario
 // runner's per-frame Tick. Workers and the MainThreadDispatcher drain are
 // driven by the surrounding SmatchetUI::Draw frame, so each OnFrame sees
 // the state mutations from the prior frame's worker post-back. No
 // scenario-side dispatcher pumping is needed (and would deadlock).
-//
 // The TU is gated by source-list conditional inclusion in CMakeLists.txt
 // (only added to CORE_SOURCES when SMATCHET_WITH_WHISPER=ON); the
 // scenarioRunner_->RegisterFactory site in AppController.cpp wraps the

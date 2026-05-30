@@ -167,12 +167,10 @@ void RegisterPerfCommands(CommandRegistry& reg, AppController& app) {
         // commit pipeline `count` times and reports per-invocation wall-clock
         // statistics. Used by `scripts/dev/test-grid-edit-perf-postfix.sh` to
         // assert the UI thread never blocks for an HTTP roundtrip on edit.
-        //
         // The handler hops to the UI thread (RunOnUiThreadAsCommandResult)
         // because ProcessGridFieldEdits mutates the singleton UiDrawSession
         // (g_ui) which is UI-thread owned. Per-iteration timing is therefore a
         // true measure of UI-thread cost — the same code path the user pays.
-        //
         // With `Backend == nullptr` (typical `--spawn` mode) the worker
         // short-circuits at "no tracker backend"; the regression check is
         // about UI-thread cost, not the HTTP transport. Live-tracker E2E is
