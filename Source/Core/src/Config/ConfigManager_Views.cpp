@@ -1,6 +1,5 @@
 // ConfigManager_Views — view-store JSON persistence + the `CommentTemplate` ADL
 // serializers declared as friends in `ConfigManager.h`.
-//
 // Split off `ConfigManager.cpp` per `docs/plans/shipped/large-files-and-phase-2.md` § A3.
 // The shared filesystem / IO / lock helpers live in `ConfigManager_PathUtils.cpp`
 // behind the declarations in `ConfigManager_Internal.h`.
@@ -25,12 +24,10 @@ using smatchet::config_detail::ScopedFileLock;
 
 namespace {
 
-// ---------------------------------------------------------------------------
 // View-disk JSON helpers (previously the public `SmatchetViewsDiskDetail::*` namespace inline in
 // ConfigManager.h). They had exactly one caller (ConfigManager.cpp) but every TU that included
 // the header re-parsed them; moving them to anonymous namespace here drops that parse cost
 // without changing behaviour.
-// ---------------------------------------------------------------------------
 
 ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
     ViewDefinition view;
@@ -194,11 +191,9 @@ void ViewsStoreToViewWorkspaceImpl(const ViewsStore& slice, ViewWorkspaceState& 
 
 } // namespace
 
-// ---------------------------------------------------------------------------
 // CommentTemplate friend serializers — declared in ConfigManager.h, defined here so the slim
 // header pulls only <nlohmann/json_fwd.hpp>. Lives in the global namespace because that's where
 // the friend declaration injects them; nlohmann::adl_serializer finds them via ADL at call sites.
-// ---------------------------------------------------------------------------
 
 void to_json(nlohmann::json& j, const CommentTemplate& t) {
     j = nlohmann::json{{"id", t.Id}, {"title", t.Title}, {"text", t.Text}};
@@ -210,9 +205,7 @@ void from_json(const nlohmann::json& j, CommentTemplate& t) {
     t.Text = j.value("text", "");
 }
 
-// ===========================================================================
 // ConfigManager — view-store public methods.
-// ===========================================================================
 
 std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerType) {
     std::string t;

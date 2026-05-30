@@ -1,7 +1,6 @@
 // ConfigManager_PathUtils — filesystem / secret / singleton helpers and the path-and-IO
 // half of the public `ConfigManager::*` surface (paths, storage preference, JSON read/write,
 // ImGui default-layout management, NormalizeUiLanguageCode, atomic file replace).
-//
 // Split off `ConfigManager.cpp` per `docs/plans/shipped/large-files-and-phase-2.md` § A3 so the
 // remaining file can focus on `Save(TrackerConfig)` / `Load(CliOverrides)` / annotate-analysis
 // persistence. The helper namespace is `smatchet::config_detail` — declarations in
@@ -45,9 +44,7 @@
 namespace smatchet {
 namespace config_detail {
 
-// ---------------------------------------------------------------------------
 // Platform-specific helpers (Win32 / POSIX) and small string utilities.
-// ---------------------------------------------------------------------------
 
 #if defined(_WIN32)
 std::wstring Utf8ToWide(const std::string& s) {
@@ -166,10 +163,8 @@ bool FileExists(const std::string& path) {
 #endif
 }
 
-// ---------------------------------------------------------------------------
 // ScopedFileLock — cross-process advisory lock on a `<path>.lock` sidecar.
 // Public class lives in ConfigManager_Internal.h.
-// ---------------------------------------------------------------------------
 
 ScopedFileLock::ScopedFileLock(const std::string& path)
     : lockPath_(path + ".lock"),
@@ -238,9 +233,7 @@ void ScopedFileLock::Release() {
 #endif
 }
 
-// ---------------------------------------------------------------------------
 // DPAPI-based secret protection (Windows). Other platforms passthrough.
-// ---------------------------------------------------------------------------
 
 #if defined(_WIN32)
 namespace {
@@ -339,11 +332,9 @@ std::string ProtectSecretForConfig(const std::string& plainText) { return plainT
 std::string UnprotectSecretFromConfig(const std::string& protectedBase64) { return protectedBase64; }
 #endif
 
-// ---------------------------------------------------------------------------
 // Meyers singletons for cross-call state (process-wide IO + cache mutexes,
 // cached config, base directories). Previously private static methods of
 // ConfigManager; semantically unchanged.
-// ---------------------------------------------------------------------------
 
 std::mutex& GetIoMutexRef() {
     static std::mutex s_mutex;
@@ -383,11 +374,9 @@ std::string& GetUserDataDirectoryRef() {
 } // namespace config_detail
 } // namespace smatchet
 
-// ===========================================================================
 // ConfigManager — path / IO / preference / ImGui-settings public methods.
 // Save(TrackerConfig) / Load(CliOverrides) / annotate-analysis live in
 // ConfigManager.cpp; Views statics in ConfigManager_Views.cpp.
-// ===========================================================================
 
 using smatchet::config_detail::EnsureParentDirectoryForFile;
 using smatchet::config_detail::FileExists;
