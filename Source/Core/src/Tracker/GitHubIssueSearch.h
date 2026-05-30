@@ -5,7 +5,6 @@
 // GitHubClient::FetchIssues / FetchIssuesForKeys. Not part of the public
 // Source/Core/include surface; lives next to its implementation so only
 // GitHubClient.cpp + GitHubIssueSearch.cpp pick it up.
-//
 // PR4 of docs/plans/shipped/github-tracker-backend.md.
 
 #include "CachedTicketTypes.h"
@@ -27,7 +26,6 @@ namespace github {
 cpr::Header BuildGitHubHeaders(const std::string& pat);
 
 /// PR4 — paginated fetch entry point used by GitHubClient::FetchIssues.
-///
 /// Two flow shapes selected by owner/repo presence:
 ///   - owner+repo non-empty → GET /repos/{owner}/{repo}/issues?state=all
 ///     (per_page=100, paginate by page=N). The repo-scoped REST endpoint
@@ -36,53 +34,48 @@ cpr::Header BuildGitHubHeaders(const std::string& pat);
 ///   - both empty → GET /search/issues?q=<encoded translated JQL>&per_page=100
 ///     (paginate by page=N). The user is responsible for ensuring their JQL
 ///     scopes the search (cross-repo path).
-///
 /// Soft cap: 10 pages (≈1000 issues). When reached, surfaces a Warning and
 /// returns the partial result rather than failing — matches the
 /// PlaneIssueSearch / JiraIssueSearch convention.
-///
 /// `*outFullSyncCompleted` is true iff the loop exited because the server
 /// returned a short page (last page) AND no fatal error or cap fired.
 /// `*outFetchError` is set on a fatal error (HTTP failure, JSON parse).
 /// `*outWarning` is set on non-fatal degradations (cap hit, repo-path JQL
 /// drop, translator warnings).
 std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat,
-                                                 const std::string& owner, const std::string& repo,
-                                                 const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
-                                                 std::string* outFetchError, std::string* outWarning);
+                                                const std::string& owner, const std::string& repo,
+                                                const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
+                                                std::string* outFetchError, std::string* outWarning);
 
 /// PR12 latency fix — same as `FetchIssuesViaRestApi` but emits each page's
 /// mapped tickets via `onPage` as soon as the page mapping completes (before
 /// the next page's HTTP roundtrip). Used by `GitHubClient::FetchIssuesStreamed`
 /// so the grid populates progressively (t+1.7s, t+3.4s, ...) instead of
 /// all-at-once after the last page returns.
-///
 /// `onPage` is invoked with the mapped + sentinel-stripped tickets for that
 /// page, and `isLast == true` on the final invocation (last page OR cap hit
 /// OR fatal error mid-stream). `isLast` fires exactly once for any non-empty
 /// fetch (zero pages → no callback invocations). When `onPage` is null the
 /// helper accumulates into the return vector with no per-page emission,
 /// matching the legacy single-shot contract.
-///
 /// Return value: same accumulated vector as the legacy overload (for callers
 /// like single-shot tests that still want the all-at-once snapshot). The
 /// streaming callers ignore the return value and consume the per-page batches.
-std::vector<CachedTicket> FetchIssuesViaRestApi(
-    const std::string& baseUrl, const std::string& pat, const std::string& owner, const std::string& repo,
-    const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted, std::string* outFetchError, std::string* outWarning,
-    const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage);
-
+std::vector<CachedTicket>
+FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
+                      const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
+                      std::string* outFetchError, std::string* outWarning,
+                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage);
 
 /// PR4 — single-issue lookup loop used by GitHubClient::FetchIssuesForKeys.
-///
 /// For each key in `issueKeys` (canonical `owner/repo#N` shape), issues a
 /// GET /repos/{owner}/{repo}/issues/{number}. Stops at the first failure
 /// and writes the diagnostic into outError. Returns false on any failure
 /// (some tickets may have been appended to outTickets before the abort —
 /// caller decides whether to keep them or discard).
 bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
-                                   const std::vector<std::string>& issueKeys,
-                                   std::vector<CachedTicket>& outTickets, std::string& outError);
+                                  const std::vector<std::string>& issueKeys, std::vector<CachedTicket>& outTickets,
+                                  std::string& outError);
 
 } // namespace github
 } // namespace smatchet

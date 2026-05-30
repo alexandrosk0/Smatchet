@@ -39,7 +39,6 @@ const char* const kPatMissingError = "GitHub PAT not configured (set Preferences
 // Resolve the GraphQL endpoint from the REST base URL.
 //   - "https://api.github.com"     → "https://api.github.com/graphql"
 //   - "https://<host>/api/v3"      → "https://<host>/api/graphql"
-//
 // GHE convention: REST lives at `/api/v3`, GraphQL lives at `/api/graphql`.
 std::string ResolveGraphQlEndpoint(const std::string& baseUrl) {
     const std::string kApiV3Suffix = "/api/v3";
@@ -401,7 +400,6 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
     // already carries the `repo:owner/repo` prefix when configured) and only
     // fall back to `plan.effectiveQuery` for the cross-repo no-JQL case where
     // it carries the "is:issue is:open" fallback.
-    //
     // Repo-scoped JQL is honoured here (GraphQL search accepts the qualifiers
     // REST /repos/{o}/{r}/issues couldn't). Strategy C deviation from PR12
     // plan, documented in the plan-doc § Deviations.

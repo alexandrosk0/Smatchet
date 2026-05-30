@@ -5,7 +5,6 @@
 // CachedTicket mapping helpers extracted out of PlaneIssueSearch.cpp (which
 // pulls cpr) so the doctest rig can exercise them without HTTP. Mirrors the
 // GitHub backend's PR12 split (`GitHubIssueSearchMapping.{h,cpp}`).
-//
 // Surfaces:
 //   - MapPlaneWorkItemJsonToCachedTicket: maps a single Plane `/work-items`
 //     list entry to a CachedTicket. Honours the same Plane shape branches the

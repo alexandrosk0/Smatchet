@@ -8,7 +8,6 @@
 // credentials. Production-resident (compiled into Source/Core) so it can be
 // instantiated by `AppController::Initialize` when
 // SMATCHET_TEST_PLANE_BACKEND_FIXTURE=<path> is set in the env.
-//
 // Mirrors slice 1's `JiraFixtureBackend` (not yet landed) + slice 4's
 // `StubAiClient` (already shipped via `AiClientFactory::SetTestOverride`). The
 // equivalent test-only fixture loader for the doctest rig lives at

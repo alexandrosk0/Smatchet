@@ -215,6 +215,16 @@ Per `AGENTS.md` § Verification automation — automated wherever physically pos
 - **A prose comment *style guide*** (how to author good comments) — out of scope; the Phase-4 regrowth guard enforces *mechanical noise* limits only, not authorship style. (The regrowth lint rule itself is now in scope — see Phase 4.)
 
 ## Implementation log
+- **Phase 1 — pilot Wave 1** (`Source/Core/{src,include}/Tracker/`). Mechanical strip removed **36
+  comment lines across 17 files** — **2.3%** of the pilot comment baseline (1,581 lines for src+include
+  Tracker; the plan's 738 was src-only/pre-merge). Low yield as predicted for comment-sparse Tracker
+  (safety floor, not yield). Gates green: dual-target build, fixtures, lint-delta (no strict-zone
+  suppressor dropped), **assert-code-unchanged PASS** (comment-only, proven). **Tooling hardening folded
+  in** (two bugs in the merged Phase-0 scripts, surfaced running the pilot on the real corpus): (a) Windows
+  UTF-8 stdio — the scripts crashed on non-ASCII comment chars (`→`); (b) the code-residue is now a
+  literal-aware **token list**, not whitespace-collapse — removing a comment can let clang-format reflow
+  adjacent code across lines + change whitespace around punctuation (`(\n const` → `(const`) without
+  changing tokens, which the old residue false-failed. Gate re-validated PASS-on-comment-only / FAIL-on-code.
 - **Phase 0** — tooling + baseline. Added `scripts/dev/comment_lib.py` (literal-aware tokenizer +
   code-token residue; correctly handles `//`/`/*` inside string/char/raw-string literals and the
   line-comment-resets-at-newline case), `comment_audit.py` (taxonomy classifier + per-subsystem

@@ -245,7 +245,6 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
     // Resolve config + headers + project under the cache lock, then drop the lock before the HTTP
     // POST so UI display-name lookups are not blocked during the round trip. Re-acquire briefly at
     // the end to record `visualKey -> uuid` in `keyToId_`.
-    //
     // Backlog #12: the cfg snapshot and the cache read must happen under the same lock.
     // Snapshotting cfg before the lock would let a concurrent ConfigManager::Save() rotate
     // credentials or workspace identifiers between the snapshot and the cache lookup — the

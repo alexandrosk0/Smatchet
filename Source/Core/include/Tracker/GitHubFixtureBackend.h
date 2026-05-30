@@ -6,12 +6,10 @@
 // payload from disk instead of touching the network. Enables zero-credentials
 // scenario replay (`SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path>` env hook in
 // `AppController::Initialize`).
-//
 // Implementation reuses the pure-logic mapper from
 // `GitHubIssueSearchMapping.{h,cpp}` (PR12 of github-tracker-backend.md), so
 // the deterministic backend exercises the same JSON-to-CachedTicket path as
 // the live GraphQL fetcher — only the HTTP source is replaced.
-//
 // Write paths (`UpdateField`, `CreateIssue`, etc.) succeed as no-ops with a
 // structured log line so debug scenarios that drive UI writes against the
 // fake don't crash. The fixture is read-only by design — debug-detective

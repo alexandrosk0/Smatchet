@@ -81,6 +81,13 @@ def iter_target_files(paths):
 
 
 def main():
+    # Force UTF-8 stdio: the unified diff echoes file comments that may contain non-ASCII; the
+    # platform default (cp1252 on Windows) would crash with UnicodeEncodeError.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("paths", nargs="+")
     ap.add_argument("--apply", action="store_true", help="rewrite files in place")

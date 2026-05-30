@@ -93,10 +93,8 @@ std::vector<std::string> SplitCommaSeparatedTrimmed(const std::string& input);
 /** Normalize a Jira label token: trim + replace ASCII whitespace with '-'. */
 std::string SanitizeJiraLabelToken(std::string s);
 
-// ---------------------------------------------------------------------------
 // Public mirrors of TrackerFieldPayload's pure functions. The production
 // header delegates to these so call sites continue to use the existing facade.
-// ---------------------------------------------------------------------------
 
 /** Identical to TrackerFieldPayload::FieldUsesAdfDocument — see that doc. */
 bool FieldUsesAdfDocument(const TrackerField& field);

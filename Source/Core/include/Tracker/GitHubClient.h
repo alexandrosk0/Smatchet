@@ -14,7 +14,6 @@
 // GitHubClient — third tracker backend (PR2 of
 // docs/plans/shipped/github-tracker-backend.md). Tracker-only — does NOT implement
 // the PR / check-run / GraphQL surface the deleted agentic flow used.
-//
 // Lifecycle: factory-owned `unique_ptr<GitHubClient>` per `Create("github")`
 // call (same shape as JiraClient / PlaneClient). Ctor takes baseUrl + PAT
 // snapshot at construction time; runtime PAT rotation requires a fresh

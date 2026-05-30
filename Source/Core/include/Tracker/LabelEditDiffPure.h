@@ -6,14 +6,12 @@
 
 // LabelEditDiffPure — pure set-diff helper for GitHub-style additive label
 // APIs. Slice 1 of docs/plans/shipped/github-tracker-backend.md PR2.
-//
 // `ITrackerIssueMutations::UpdateField` is set-replace semantically (per CONTEXT.md
 // glossary): callers pass the intended full set after edit. GitHub's native
 // label API is additive (POST .../labels for add, DELETE for remove), so
 // `GitHubClient::UpdateField("labels", ...)` reconciles internally by
 // pre-fetching the current set + computing the diff against the intended set
 // + issuing per-element POST/DELETE.
-//
 // This pure helper holds the diff logic so it can be exhaustively tested
 // without HTTP. Case-sensitive (GitHub labels are case-sensitive); order-
 // independent; tolerant of duplicates in either input (treated as set).
