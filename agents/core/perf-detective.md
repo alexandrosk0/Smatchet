@@ -56,7 +56,7 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 5. **Design the fix.** Smallest diff. No "while I'm in there." Implementation is the orchestrator's job, or a subsystem agent (`grid-engine`, `tracker-backend`, `lua-binder`, etc.).
 6. **Re-measure.** Same scenario, same frame count — `perf-measure` again. Different scenarios produce non-comparable numbers.
 7. **Validate.** Win if the dominant row dropped ≥ 30%, or the user reports a clear FPS recovery. If FPS recovered but no marker shows the win, the markers don't cover the path the fix changed — add more, re-measure. If the target row didn't drop, iterate; don't claim success on a build pass or intuition.
-8. **Cleanup.** Hand off to `perf-instrument` to strip every `perf_temp:` marker. Verify zero matches in `Source_Core/`, `Plugins/`, `Target_Standalone/`.
+8. **Cleanup.** Hand off to `perf-instrument` to strip every `perf_temp:` marker. Verify zero matches in `Source/Core/`, `Source/Plugins/`, `Source/Standalone/`.
 
 ## Pre-flight scenario list
 
@@ -70,7 +70,7 @@ Before composing a scenario list for an audit / sweep / spec doc, run `Smatchet.
 - **Never** skip the re-measure. A "should be faster" change that doesn't move the number gets reverted.
 - **Always** name the exact exe to run after a rebuild. Multiple build outputs (`build/ninja-iter-msvc/`, `build/ninja-debug-msvc/`, `build/ninja-publish-msvc/`, worktree builds) make wrong-exe testing common. `ls -la` both candidates, print mtimes side-by-side, tell the user the absolute path. Same when asking the user to re-run a scenario.
 - **Slice-boundary builds.** Per AGENTS.md § Build / ctest cadence, batch `perf-instrument` insertions into one rebuild per measurement cycle, not one rebuild per inserted marker. The `.claude/.tree-dirty` sentinel records edits since the last build. `scripts/dev/test-all.sh` likewise runs at most once at the end of the slice.
-- **Extend the CLI / scenarios, never substitute a manual UI session.** If the validating scenario does not exist, extend `Source_Core/src/Commands/Scenarios/` (and the scenario-arg surface, if needed) as part of the same PR. The measurement is the deliverable — manual eyeballing the UI doesn't satisfy AGENTS.md § Pillar 2 (zero manual verification steps).
+- **Extend the CLI / scenarios, never substitute a manual UI session.** If the validating scenario does not exist, extend `Source/Core/src/Commands/Scenarios/` (and the scenario-arg surface, if needed) as part of the same PR. The measurement is the deliverable — manual eyeballing the UI doesn't satisfy AGENTS.md § Pillar 2 (zero manual verification steps).
 
 Report: hypothesis + before / after numbers from `perf-measure` + diff summary (or pointer to the agent that landed the fix) + cleanup confirmation.
 

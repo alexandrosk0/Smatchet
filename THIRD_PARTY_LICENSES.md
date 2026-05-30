@@ -14,7 +14,7 @@ shipped alongside the binary as runtime assets, so their licences are inlined he
 
 ---
 
-## IconFontCppHeaders — `Source_Core/ThirdParty/IconsFontAwesome6/IconsFontAwesome6.h`
+## IconFontCppHeaders — `Source/Core/ThirdParty/IconsFontAwesome6/IconsFontAwesome6.h`
 
 Source: <https://github.com/juliettef/IconFontCppHeaders>
 Vendored revision: header generated against Font Awesome 6.x metadata.

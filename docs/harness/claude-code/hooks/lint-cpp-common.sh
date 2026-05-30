@@ -57,15 +57,15 @@ lint_abs_path() {
 # lint_is_first_party <rel_path>
 # Returns 0 if the relative path is a first-party C/C++ source/header,
 # non-zero otherwise. Match list mirrors the prior inline-only hook.
-# Vendored upstream code under Source_Core/ThirdParty/ is excluded so the
+# Vendored upstream code under Source/Core/ThirdParty/ is excluded so the
 # pre-existing findings in third-party TUs (ImGuiColorTextEdit, etc.) don't
 # block edits to small, marked Smatchet patches inside them.
 lint_is_first_party() {
     case "$1" in
-        Source_Core/ThirdParty/*) return 1 ;;
-        Source_Core/*.cpp|Source_Core/*.h|Source_Core/**/*.cpp|Source_Core/**/*.h) return 0 ;;
-        Plugins/*.cpp|Plugins/*.h|Plugins/**/*.cpp|Plugins/**/*.h) return 0 ;;
-        Target_Standalone/*.cpp|Target_Standalone/*.h|Target_Standalone/**/*.cpp|Target_Standalone/**/*.h) return 0 ;;
+        Source/Core/ThirdParty/*) return 1 ;;
+        Source/Core/*.cpp|Source/Core/*.h|Source/Core/**/*.cpp|Source/Core/**/*.h) return 0 ;;
+        Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/**/*.cpp|Source/Plugins/**/*.h) return 0 ;;
+        Source/Standalone/*.cpp|Source/Standalone/*.h|Source/Standalone/**/*.cpp|Source/Standalone/**/*.h) return 0 ;;
         tests/*.cpp|tests/*.h|tests/**/*.cpp|tests/**/*.h) return 0 ;;
         *) return 1 ;;
     esac

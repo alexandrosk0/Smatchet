@@ -96,15 +96,15 @@ print('hits:', hits)
 @test "line-anchor suffix (path:NNN) is stripped before existence check" {
     run python3 -c "
 import re, os
-hrefs = ['Source_Core/include/Foo.h:58', 'Source_Core/src/Bar.cpp:123:7', 'Plain.md']
+hrefs = ['Source/Core/include/Foo.h:58', 'Source/Core/src/Bar.cpp:123:7', 'Plain.md']
 for h in hrefs:
     m = re.match(r'^(.*?):\d+(?::\d+)?$', h)
     stripped = m.group(1) if m else h
     print(f'{h} -> {stripped}')
 "
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Source_Core/include/Foo.h:58 -> Source_Core/include/Foo.h"* ]]
-    [[ "$output" == *"Source_Core/src/Bar.cpp:123:7 -> Source_Core/src/Bar.cpp"* ]]
+    [[ "$output" == *"Source/Core/include/Foo.h:58 -> Source/Core/include/Foo.h"* ]]
+    [[ "$output" == *"Source/Core/src/Bar.cpp:123:7 -> Source/Core/src/Bar.cpp"* ]]
     [[ "$output" == *"Plain.md -> Plain.md"* ]]
 }
 
@@ -128,7 +128,7 @@ print('active:', is_active_md('docs/plans/active/foo.md'))
 print('shipped excluded:', is_active_md('docs/plans/shipped/baz.md'))
 print('agents:', is_active_md('agents/whatever.md'))
 print('root agents.md:', is_active_md('AGENTS.md'))
-print('src:', is_active_md('Source_Core/foo.md'))
+print('src:', is_active_md('Source/Core/foo.md'))
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"active: True"* ]]

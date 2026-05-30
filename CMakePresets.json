@@ -55,7 +55,7 @@
             "binaryDir": "${sourceDir}/build/vs-unreal-msvc",
             "architecture": "x64",
             "cacheVariables": {
-                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
             }
         },
         {
@@ -235,7 +235,7 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet"
             }
         },
         {
@@ -252,7 +252,7 @@
                 "SMATCHET_USE_PCH": "OFF",
                 "SMATCHET_ENABLE_LTO": "ON",
                 "SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME": "ON",
-                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet",
+                "SMATCHET_UNREAL_THIRDPARTY_DIR": "${sourceDir}/Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet",
                 "SMATCHET_BUILD_TESTS": "ON"
             }
         },

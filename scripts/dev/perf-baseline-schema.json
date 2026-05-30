@@ -21,7 +21,7 @@
     },
     "scenarioId": {
       "type": "string",
-      "description": "Matches the scenario name registered via ScenarioRunner::RegisterFactory (see Source_Core/src/Commands/BuiltinCommands.cpp). Example: 'idle', 'priority-grid-scroll'."
+      "description": "Matches the scenario name registered via ScenarioRunner::RegisterFactory (see Source/Core/src/Commands/BuiltinCommands.cpp). Example: 'idle', 'priority-grid-scroll'."
     },
     "captureCommit": {
       "type": "string",

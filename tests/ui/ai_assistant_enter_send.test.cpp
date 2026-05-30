@@ -2,7 +2,7 @@
 // chat input's keyboard contract: Enter submits, Ctrl+Enter inserts newline,
 // empty buffer guards the submit path.
 //
-// Drift warning — IF YOU CHANGE Source_Core/src/SmatchetAiAssistantUi.cpp
+// Drift warning — IF YOU CHANGE Source/Core/src/SmatchetAiAssistantUi.cpp
 // (specifically DrawInputAndButtons at lines 192-291: the
 // ImGuiInputTextFlags_EnterReturnsTrue | CtrlEnterForNewLine combo at
 // 221-222, the InputTextMultiline call at 223, the sendDisabled guard at

@@ -28,15 +28,15 @@ add_executable(SmatchetLuaTests
     # source list, not a static lib). Transitive deps (ConfigManager,
     # FieldEditAuditSource, Logger, Commands::CommandRegistry/Command/FuzzyMatch)
     # are added below.
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager_PathUtils.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config/ConfigManager_Views.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Persistence/FieldEditAuditSource.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Logger.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/Command.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/CommandRegistry.cpp"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Commands/FuzzyMatch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AppController_LuaBindingsCore.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
 )
 
 # AppController_LuaBindingsCore.cpp uses -mcmodel=large in the BFD-ld production
@@ -50,7 +50,7 @@ add_executable(SmatchetLuaTests
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(NOT SMATCHET_LLD_PROGRAM)
         set_source_files_properties(
-            "${CMAKE_SOURCE_DIR}/Source_Core/src/AppController_LuaBindingsCore.cpp"
+            "${CMAKE_SOURCE_DIR}/Source/Core/src/AppController_LuaBindingsCore.cpp"
             PROPERTIES
                 COMPILE_OPTIONS "-mcmodel=large"
                 SKIP_PRECOMPILE_HEADERS ON)
@@ -62,22 +62,22 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 target_include_directories(SmatchetLuaTests PRIVATE
-    "${CMAKE_SOURCE_DIR}/Source_Core/include"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src"   # for ConfigManager_Internal.h
+    "${CMAKE_SOURCE_DIR}/Source/Core/include"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src"   # for ConfigManager_Internal.h
     # Subsystem subdirs from source-core-dir-reorg. All 5 are needed (not just
     # Config/Persistence): moved headers cross-include each other bare — e.g.
     # ConfigManager.h -> SmatchetThemeIds.h (Ui), ILuaBindingHost.h ->
     # TrackerFieldSchema.h (Tracker) — so the full subdir set must be on the path.
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Tracker"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Sync"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Persistence"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Config"
-    "${CMAKE_SOURCE_DIR}/Source_Core/include/Ui"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Tracker"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Sync"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Persistence"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Config"
-    "${CMAKE_SOURCE_DIR}/Source_Core/src/Ui"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/tests/support"
     "${LUA_SRC_DIR}/src"
 )

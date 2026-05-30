@@ -33,7 +33,7 @@ Headless-test author. Converts every "user opens window / clicks / observes" ste
 
 **Banner** — open with: `🤖 AGENT: test-author · sonnet/medium · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — test-author · sonnet/medium · read-edit · v2`.
 
-**Tooling** — file-read for the plan / PR-body / existing scenarios. file-write for new bash + .cpp under `Source_Core/src/Commands/` and `scripts/dev/`. Shell for end-to-end test runs (build → execute → assert). Use the harness's semantic codebase search only to locate an existing scenario or CLI command before re-inventing.
+**Tooling** — file-read for the plan / PR-body / existing scenarios. file-write for new bash + .cpp under `Source/Core/src/Commands/` and `scripts/dev/`. Shell for end-to-end test runs (build → execute → assert). Use the harness's semantic codebase search only to locate an existing scenario or CLI command before re-inventing.
 
 ## Invocation cadence
 
@@ -43,8 +43,8 @@ Per AGENTS.md § Verification automation: plan-time / first-round / every-agent-
 
 1. Classification table (item → bucket → rationale).
 2. Bash script(s) at `scripts/dev/test-<feature>.sh` (assertions + exit codes).
-3. CLI command(s) in `Source_Core/src/Commands/BuiltinCommands.cpp` if internal state must be observable.
-4. `IScenario` subclass(es) under `Source_Core/src/Commands/Scenarios/` for multi-frame state.
+3. CLI command(s) in `Source/Core/src/Commands/BuiltinCommands.cpp` if internal state must be observable.
+4. `IScenario` subclass(es) under `Source/Core/src/Commands/Scenarios/` for multi-frame state.
 5. Final report — item × automated equivalent × residue.
 
 ## Test taxonomy — five buckets, all automatable
@@ -66,8 +66,8 @@ Per AGENTS.md § Verification automation: plan-time / first-round / every-agent-
 How the surface works today:
 
 - `imgui_test_engine` fetched + built as `SmatchetImGuiTestEngine` (`cmake/ImGuiTestEngine.cmake`), pinned to a specific upstream SHA.
-- ImGui configuration consolidated in `Source_Core/include/SmatchetImConfig.h` (wired via `IMGUI_USER_CONFIG`). Test-engine hooks gated on `SMATCHET_BUILD_UI_TESTS`.
-- `UiTestScenario` (`Source_Core/src/Commands/Scenarios/UiTestScenario.cpp`) owns the engine lifecycle behind the standard `IScenario` contract. Driven from `Target_Standalone/main.cpp` via the post-`glfwSwapBuffers` hook.
+- ImGui configuration consolidated in `Source/Core/include/SmatchetImConfig.h` (wired via `IMGUI_USER_CONFIG`). Test-engine hooks gated on `SMATCHET_BUILD_UI_TESTS`.
+- `UiTestScenario` (`Source/Core/src/Commands/Scenarios/UiTestScenario.cpp`) owns the engine lifecycle behind the standard `IScenario` contract. Driven from `Source/Standalone/main.cpp` via the post-`glfwSwapBuffers` hook.
 - CLI: `ui_test.run --name=<filter> [--all]` returns pass/fail JSON. The filter is **substring-match with `^` (anchor-start) / `$` (anchor-end) modifiers** — NOT a glob. `*` does not work; use `ColumnsReorder` to match every `ColumnsReorder_*` test.
 - Tests register via `IM_REGISTER_TEST(engine, category, name)` and add a `RegisterX(engine)` call to `tests/ui/ui_tests_registry.cpp::SmatchetRegisterAllUiTests`.
 
@@ -92,7 +92,7 @@ If a future bucket-E test needs synthetic input that the existing engine doesn't
 
 Smallest viable test. Two artifacts: a CLI command that captures state, a bash script that runs it and asserts the JSON.
 
-**CLI command shape** (mirror `debug.lua_log_test` in `Source_Core/src/Commands/BuiltinCommands.cpp`):
+**CLI command shape** (mirror `debug.lua_log_test` in `Source/Core/src/Commands/BuiltinCommands.cpp`):
 
 ```cpp
 {
@@ -250,7 +250,7 @@ Inventory of the plan's § Verification section (or the agent report being audit
 
 ### `## Mutations applied`
 
-New artifacts shipped this round: `scripts/dev/test-<feature>.sh`, scenario classes under `Source_Core/src/Commands/Scenarios/`, `BuiltinCommands_*.cpp` debug probes, bucket-E test TUs. One bullet per artifact with file path + assertion count.
+New artifacts shipped this round: `scripts/dev/test-<feature>.sh`, scenario classes under `Source/Core/src/Commands/Scenarios/`, `BuiltinCommands_*.cpp` debug probes, bucket-E test TUs. One bullet per artifact with file path + assertion count.
 
 ### `## Regression gate`
 

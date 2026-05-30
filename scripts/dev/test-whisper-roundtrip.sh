@@ -4,7 +4,7 @@
 #
 # Drives the `whisper-dictation-roundtrip` scenario through a spawned
 # Smatchet.exe. The scenario installs a mock-transcription seam in
-# WhisperPlugin (see Plugins/Whisper/WhisperPlugin.h § SetMockTranscription)
+# WhisperPlugin (see Source/Plugins/Whisper/WhisperPlugin.h § SetMockTranscription)
 # so press → release → text-insertion is exercised end-to-end without mic
 # hardware or an OpenAI key. Asserts the scenario's JSON report carries
 # passed=true.

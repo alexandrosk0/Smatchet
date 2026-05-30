@@ -98,7 +98,7 @@ A fully-specified incoming description (CI sanitizer stack + failing-test name, 
 
 ### Phase 0.5 — Existing-scenario reuse search (bug-class consolidation rule)
 
-Before considering scenario-add (phase 1 Reproduce step), search `Source_Core/src/Commands/Scenarios/` for a scenario whose *failure shape* covers this bug-class.
+Before considering scenario-add (phase 1 Reproduce step), search `Source/Core/src/Commands/Scenarios/` for a scenario whose *failure shape* covers this bug-class.
 
 **Bug-class** = the smallest grouping that shares:
 
@@ -108,8 +108,8 @@ Before considering scenario-add (phase 1 Reproduce step), search `Source_Core/sr
 Search recipe (semantic search first, text-search second per AGENTS.md § Semantic codebase search):
 
 ```bash
-ls Source_Core/src/Commands/Scenarios/
-grep -l "<suspect-symbol-or-panel>" Source_Core/src/Commands/Scenarios/*.cpp
+ls Source/Core/src/Commands/Scenarios/
+grep -l "<suspect-symbol-or-panel>" Source/Core/src/Commands/Scenarios/*.cpp
 ```
 
 **If an existing scenario matches**, **parametrize** it (CLI arg / fixture variant / new sub-case in its `OnTick`) rather than fork a near-duplicate. Record the parametrization shape in the § Self-improvement `missing-scenario` entry (below).
@@ -145,8 +145,8 @@ is available — **and** phase 0.5 found no existing scenario whose bug-class co
 
 **Scenario-add mechanics** (per slice 5 — `SmatchetScenarioRegistry` refactor):
 
-- One new `.cpp` under `Source_Core/src/Commands/Scenarios/<NewScenarioName>Scenario.cpp` implementing the `IScenario` interface, with an `OnFinish` rows[] emission shape matching the observable failure (phase 0 dimension b).
-- One new line in `Source_Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp`'s registration table — **no `AppController.cpp` edit** (the registry refactor consolidated that).
+- One new `.cpp` under `Source/Core/src/Commands/Scenarios/<NewScenarioName>Scenario.cpp` implementing the `IScenario` interface, with an `OnFinish` rows[] emission shape matching the observable failure (phase 0 dimension b).
+- One new line in `Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp`'s registration table — **no `AppController.cpp` edit** (the registry refactor consolidated that).
 - The scenario-add lands on the **same branch as the fix**, not a precursor PR.
 - Crash logs, minidumps, stack traces, assertion text, and sanitizer reports remain valid *evidence* — they still feed phase 0 dimension (b) — but they are not, by themselves, a reproducer. The agent still wires a scenario that triggers them deterministically.
 
@@ -281,7 +281,7 @@ Use the project Logger only when the NDJSON helper cannot be used — e.g. instr
 
   Use the harness's text-search tool (Grep / `rg`) — not raw `grep -R`.
 
-- Avoid instrumentation in headers, especially under `Source_Core/include/`.
+- Avoid instrumentation in headers, especially under `Source/Core/include/`.
 - Do not add sleeps to "prove" races.
 - Do not change behaviour unless explicitly doing a temporary diagnostic toggle, and revert it before completion.
 - Keep one instrumentation round small, then build immediately.
@@ -305,7 +305,7 @@ Build after each instrumentation round:
 cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 ```
 
-If the touched code affects `Source_Core/`, also build:
+If the touched code affects `Source/Core/`, also build:
 
 ```bash
 cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
@@ -510,7 +510,7 @@ Once the cause is pinned, hand the implementation to the matching subsystem spec
 - Offline queue / SQLite cache / replay / audit trail → `offline-sync`.
 - Unified command system (CLI / palette / MCP / Lua / scenarios) → `command-system`.
 - sol2 bindings / `AppController_LuaBindings.cpp` ↔ `_LuaStubs.cpp` parity → `lua-binder`.
-- MCP wire / `Plugins/Mcp/` / tool schemas → `mcp-toolsmith`.
+- MCP wire / `Source/Plugins/Mcp/` / tool schemas → `mcp-toolsmith`.
 - Perforce blame / `P4Blame` / callstack parsing → `p4-blame`.
 - DX12 dual-target / `SmatchetCore_DX12` / Unreal packaging → `unreal-bridge`.
 - Cross-cutting design (`ITrackerClient` widening, save-format changes, schema versioning) → `architect`.
@@ -559,7 +559,7 @@ Cleanup has four mandatory steps; do all four before reporting done.
 **12a. Strip `[temp-debug]` markers from source.** Run the harness's text-search tool (Grep / `rg`) against the three managed dirs:
 
 ```bash
-rg -n "\[temp-debug\]" Source_Core/ Plugins/ Target_Standalone/
+rg -n "\[temp-debug\]" Source/Core/ Source/Plugins/ Source/Standalone/
 ```
 
 Expected result: zero hits. Remove every temporary marker, diagnostic toggle, temporary repro artifact, and temporary behavior change unless explicitly approved to keep it.
@@ -593,7 +593,7 @@ Gitignore patterns (`debug-*.log`, `Smatchet-debug-*.log`, `tests/_debug/`) are 
 cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 ```
 
-If `Source_Core/` was touched:
+If `Source/Core/` was touched:
 
 ```bash
 cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
@@ -696,7 +696,7 @@ Decision pre-resolved: <interface deltas, invariant collisions, ownership/thread
 Verification: <build + scenario/repro to rerun + the metric to re-check>
 
 ## Cleanup
-`[temp-debug]` text-search across `Source_Core/`, `Plugins/`, `Target_Standalone/`: 0 hits
+`[temp-debug]` text-search across `Source/Core/`, `Source/Plugins/`, `Source/Standalone/`: 0 hits
 Helper deleted: tests/_debug/SmatchetAgentDebug.h → absent
 NDJSON log deleted: debug-<hex>.log → absent
 Final build: <targets> → <status>

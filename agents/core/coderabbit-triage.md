@@ -93,7 +93,7 @@ First match wins. Cite the rule when rejecting so the orchestrator (and the user
 | # | Suggestion shape | Reject because |
 |---|---|---|
 | 1 | Use `std::string_view`, `std::optional`, `std::variant`, structured bindings, `if constexpr`, designated initialisers | C++14 hard — must compile on MinGW UCRT (`AGENTS.md` § Project rules). |
-| 2 | Add `#include <GLFW/...>` / `<glad/...>` / `<GL/...>` to a header under `Source_Core/include/` | Dual-target — DX12 compiles those headers too. |
+| 2 | Add `#include <GLFW/...>` / `<glad/...>` / `<GL/...>` to a header under `Source/Core/include/` | Dual-target — DX12 compiles those headers too. |
 | 3 | Redefine `IMGUI_USE_WCHAR32` locally | Already PUBLIC on `ImGuiLib`. |
 | 4 | Replace `LOG_*` with `printf` / `std::cerr` / `std::cout` / `fprintf(stderr,…)` | Logger contract. |
 | 5 | Use `obj = {...}` brace-list reassignment on `nlohmann::json` | Won't compile — must be `obj["k"] = v`. |
@@ -105,7 +105,7 @@ First match wins. Cite the rule when rejecting so the orchestrator (and the user
 | 11 | Add a comment explaining WHAT the code does, or that references the current PR / task / fix | Comment discipline (AGENTS.md § Comment discipline). |
 | 12 | Add `try`/`catch` around code with no thrown exception, or validate parameters from internal callers | "Don't add error handling for scenarios that can't happen" (CLAUDE.md). |
 | 13 | Suggest splitting a trivial-visual-only diff into separate PRs, or running bucket-E on a `SmatchetTheme.cpp` / `Locales/*.json` literal swap | AGENTS.md § Trivial-visual-only change envelope. |
-| 14 | Touch a `*_DX12` CMake target / `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/**` file | Unreal-only — `EXCLUDE_FROM_ALL`. |
+| 14 | Touch a `*_DX12` CMake target / `Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/**` file | Unreal-only — `EXCLUDE_FROM_ALL`. |
 | 15 | Add a new third-party dependency that is not already in the FetchContent set (nlohmann/json, cpr, SQLiteCpp, cpp-httplib, md4c, ImGui-docking, GLFW, Lua + sol2, ghc::filesystem) | Out of dependency budget — escalate to `architect`. |
 | 16 | "Drop `const&` and pass by value, the compiler will elide" on a non-trivial type | Convention — explicit `const&` for non-trivial params. |
 | 17 | "Use `std::map` for deterministic order" when insertion-order does not matter | Prefer `std::unordered_map` on hot paths. |
@@ -120,15 +120,15 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 
 | File / symbol pattern | Target agent |
 |---|---|
-| `Source_Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}` · `ITrackerClient.h` · `TrackerHttpClient*` · `TrackerFieldCatalog*` · `TrackerFieldValueParser*` · `TrackerFieldPayload*` | `tracker-backend` |
-| `Source_Core/**/SmatchetGrid*` · `Source_Core/**/SmatchetActiveProjectGridUi*` · `Source_Core/**/SmatchetViewsDashboardUi*` · `Source_Core/**/SmatchetFieldRender*` · `Source_Core/**/TicketGridModel*` · `Source_Core/**/SpreadsheetState*` · `Source_Core/**/TrackerGridFieldDisplay*` | `grid-engine` |
-| `Source_Core/**/LocalCacheManager*` · `OfflineQueueService*` · `SmatchetOfflineQueueUi*` · `TicketSyncService*` · `BackendAuditTrail*` · `FieldEditAuditSource*` | `offline-sync` |
-| `Source_Core/{src,include}/Commands/**` · `BuiltinCommands*` · `ViewCommands*` · `Scenarios/**` · `CommandPaletteUi*` · `FuzzyMatch*` | `command-system` |
-| `Source_Core/src/AppController_LuaBindings.cpp` · `AppController_LuaStubs.cpp` · `Plugins/LuaConsole/**` · `LuaAutomationHost*` · `scripts/**.lua` | `lua-binder` |
-| `Plugins/Mcp/**` · `SmatchetMcpServerUi*` · `McpServerStatus*` | `mcp-toolsmith` |
-| `Source_Core/**/P4Blame*` · `P4ErrorUtil*` · `BlameAnalysisUi*` · `CppSyntaxHighlight*` · `CallstackParser*` · `PathRemaps*` | `p4-blame` |
-| `Source_Core/**/*_DX12*` · `UnrealPlugins/**` · anything gated on `SMATCHET_EMBEDDED_IN_UNREAL` | `unreal-bridge` |
-| `tests/Source_Core/**` · `tests/CMakeLists.txt` · `tests/test_main.cpp` · `SMATCHET_BUILD_TESTS` mentions | `test-rig` |
+| `Source/Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}` · `ITrackerClient.h` · `TrackerHttpClient*` · `TrackerFieldCatalog*` · `TrackerFieldValueParser*` · `TrackerFieldPayload*` | `tracker-backend` |
+| `Source/Core/**/SmatchetGrid*` · `Source/Core/**/SmatchetActiveProjectGridUi*` · `Source/Core/**/SmatchetViewsDashboardUi*` · `Source/Core/**/SmatchetFieldRender*` · `Source/Core/**/TicketGridModel*` · `Source/Core/**/SpreadsheetState*` · `Source/Core/**/TrackerGridFieldDisplay*` | `grid-engine` |
+| `Source/Core/**/LocalCacheManager*` · `OfflineQueueService*` · `SmatchetOfflineQueueUi*` · `TicketSyncService*` · `BackendAuditTrail*` · `FieldEditAuditSource*` | `offline-sync` |
+| `Source/Core/{src,include}/Commands/**` · `BuiltinCommands*` · `ViewCommands*` · `Scenarios/**` · `CommandPaletteUi*` · `FuzzyMatch*` | `command-system` |
+| `Source/Core/src/AppController_LuaBindings.cpp` · `AppController_LuaStubs.cpp` · `Source/Plugins/LuaConsole/**` · `LuaAutomationHost*` · `scripts/**.lua` | `lua-binder` |
+| `Source/Plugins/Mcp/**` · `SmatchetMcpServerUi*` · `McpServerStatus*` | `mcp-toolsmith` |
+| `Source/Core/**/P4Blame*` · `P4ErrorUtil*` · `BlameAnalysisUi*` · `CppSyntaxHighlight*` · `CallstackParser*` · `PathRemaps*` | `p4-blame` |
+| `Source/Core/**/*_DX12*` · `Source/UnrealPlugins/**` · anything gated on `SMATCHET_EMBEDDED_IN_UNREAL` | `unreal-bridge` |
+| `tests/Core/**` · `tests/CMakeLists.txt` · `tests/test_main.cpp` · `SMATCHET_BUILD_TESTS` mentions | `test-rig` |
 | `scripts/dev/test-*.sh` · `scripts/dev/test-all.sh` · scenario JSON / Lua under test harness | `test-author` |
 | `CMakeLists.txt` · `cmake/**` · `CMakePresets.json` · Ninja / lld / LTO / MSVC / Clang / packaging diffs | `build-doctor` |
 | Pure rename, typo, clang-format-only, copyright bump, `.gitignore`, `Locales/*.json` literal | `mechanic` |
@@ -142,14 +142,14 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 ## Triage table
 | # | file:line | severity | applies? | target | reason / rule |
 |---|-----------|----------|----------|--------|---------------|
-| 1 | Source_Core/src/Foo.cpp:123 | High | yes | tracker-backend | Catalog→parser bypass; route fix |
-| 2 | Source_Core/include/Bar.h:42 | Medium | no (override #1) | — | Suggestion used `std::optional`; C++14 hard |
-| 3 | Plugins/Mcp/McpServer.cpp:88 | Low | superseded | — | Code rewritten in commit abc1234 |
+| 1 | Source/Core/src/Foo.cpp:123 | High | yes | tracker-backend | Catalog→parser bypass; route fix |
+| 2 | Source/Core/include/Bar.h:42 | Medium | no (override #1) | — | Suggestion used `std::optional`; C++14 hard |
+| 3 | Source/Plugins/Mcp/McpServer.cpp:88 | Low | superseded | — | Code rewritten in commit abc1234 |
 ...
 
 ## Findings
 
-### #1 — High · `Source_Core/src/Foo.cpp:123` → tracker-backend
+### #1 — High · `Source/Core/src/Foo.cpp:123` → tracker-backend
 **CodeRabbit body (verbatim, trimmed):**
 > <quoted summary, ≤ 4 lines>
 
@@ -157,13 +157,13 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 
 **Handoff packet** (paste into orchestrator → `tracker-backend` prompt):
 - **Scope**: replace direct `cpr::Post` in `Foo::Save` with `TrackerHttpClient::Post` posted to the existing worker thread; wire result back via `MainThreadDispatcher`.
-- **Allowed write set**: `Source_Core/src/Foo.cpp`, `Source_Core/include/Foo.h`.
+- **Allowed write set**: `Source/Core/src/Foo.cpp`, `Source/Core/include/Foo.h`.
 - **Out of scope**: any other tracker file. Do NOT touch `ITrackerClient.h`.
 - **Invariant pre-decisions**: HTTP-through-TrackerHttpClient (override rule #7 — confirmed live, not rejected); UI-thread non-blocking (pillar 2).
-- **Verification**: existing tests in `tests/Source_Core/TrackerHttpClientPure.test.cpp` cover the call shape — no new test required. Manual: none.
+- **Verification**: existing tests in `tests/Core/TrackerHttpClientPure.test.cpp` cover the call shape — no new test required. Manual: none.
 - **Reply to bot** (orchestrator may post once fix lands): `Addressed in <sha>; routed through TrackerHttpClient as suggested.`
 
-### #2 — Medium · `Source_Core/include/Bar.h:42` → REJECTED (override #1)
+### #2 — Medium · `Source/Core/include/Bar.h:42` → REJECTED (override #1)
 **CodeRabbit body:** suggests `std::optional<Bar>` for the return type.
 **Reason:** C++14 hard (AGENTS.md § Project rules). The current `Bar*` + nullable contract is correct.
 **Reply to bot** (orchestrator may post): `Not applicable — this repo is C++14-hard; `std::optional` is banned. The nullable-pointer return is intentional.`

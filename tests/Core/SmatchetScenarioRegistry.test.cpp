@@ -1,0 +1,89 @@
+// Slice 5 of docs/plans/shipped/autonomous-debugging-no-creds.md (V5.1).
+//
+// Snapshot test pinning the set of scenario names registered by
+// RegisterAllScenarios(). Catches accidental adds/removes/renames during the
+// extraction refactor and going forward. Because the underlying storage is a
+// std::unordered_map (ScenarioRunner::factories_), order is not part of the
+// contract — we compare as a set.
+//
+// The factories themselves are lambdas that refer to extern Make*Scenario()
+// symbols defined in each scenario's TU. They are NEVER invoked by this test
+// (we only call ScenarioRunner::ListNames), so the test target does NOT need
+// to link the scenario implementations.
+
+#include <doctest/doctest.h>
+
+#include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/SmatchetScenarioRegistry.h"
+
+#include <algorithm>
+#include <set>
+#include <string>
+#include <vector>
+
+namespace {
+
+// The full, gating-aware expected set. Must match the byte-for-byte name list
+// in Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp.
+std::set<std::string> ExpectedNames() {
+    std::set<std::string> expected;
+    expected.insert("priority-grid-scroll");
+    expected.insert("lua-recorder-fuzz");
+    expected.insert("ui-test");
+    expected.insert("dock-gap-sentinel");
+    expected.insert("command-palette-fuzzy");
+    expected.insert("theme-switch-roundtrip");
+#if defined(SMATCHET_WITH_AI)
+    expected.insert("ai-chat-history-render");
+#endif
+    expected.insert("idle");
+    expected.insert("cell-edit-burst");
+    expected.insert("attachment-preview-open");
+    expected.insert("preferences-slider-drag");
+    expected.insert("long-text-open-large-adf");
+    // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
+    expected.insert("blame-open-entry-tab");
+    expected.insert("description-tooltip-markdown-render");
+#if defined(SMATCHET_WITH_AI)
+    expected.insert("ai-assistant-streaming-happy-path");
+    expected.insert("ai-assistant-streaming-transport-down-within-5s");
+#endif
+#if defined(SMATCHET_WITH_WHISPER)
+    expected.insert("whisper-dictation-roundtrip");
+    expected.insert("whisper-ai-assistant-autosend");
+#endif
+    return expected;
+}
+
+} // namespace
+
+TEST_CASE("RegisterAllScenarios populates the expected scenario set") {
+    smatchet::cmd::ScenarioRunner runner;
+    smatchet::cmd::RegisterAllScenarios(runner);
+
+    const std::vector<std::string> namesVec = runner.ListNames();
+    const std::set<std::string> got(namesVec.begin(), namesVec.end());
+    const std::set<std::string> expected = ExpectedNames();
+
+    // Diff both directions so the failure message names the missing / extra
+    // entries directly (doctest prints CHECK(got == expected) without diff).
+    for (const std::string& name : expected) {
+        INFO("expected name missing from registry: " << name);
+        CHECK(got.count(name) == 1);
+    }
+    for (const std::string& name : got) {
+        INFO("unexpected name registered: " << name);
+        CHECK(expected.count(name) == 1);
+    }
+    CHECK(got.size() == expected.size());
+}
+
+TEST_CASE("RegisterAllScenarios is callable on a fresh runner without crash") {
+    // Smoke — RegisterAllScenarios is documented as one-shot per AppController
+    // init. Re-calling overwrites entries in the unordered_map but must not
+    // throw or assert.
+    smatchet::cmd::ScenarioRunner runner;
+    smatchet::cmd::RegisterAllScenarios(runner);
+    smatchet::cmd::RegisterAllScenarios(runner); // second call: tolerated.
+    CHECK(runner.ListNames().size() >= 6);       // lower bound — gated entries vary.
+}

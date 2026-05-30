@@ -1,6 +1,6 @@
 // Test helper: sleeps for argv[1] milliseconds then exits 0.
 //
-// Used by tests/Source_Core/SubprocessCapture.test.cpp to cover the
+// Used by tests/Core/SubprocessCapture.test.cpp to cover the
 // timeout-fires and cancel-token paths without depending on platform
 // shell builtins (`sleep`). Cross-platform via std::this_thread::sleep_for.
 

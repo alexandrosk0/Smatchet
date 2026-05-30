@@ -169,10 +169,20 @@ Per `AGENTS.md` § Verification automation. Reconfigure first — CMake explicit
 - **Rewriting bare includes to path-qualified (`#include "Tracker/JiraClient.h"`)** — include-hygiene improvement deferred; this plan keeps the flat include namespace.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `c71473d3` · refactor: git mv 5 roots under `Source/` (+ `tests/Source_Core`→`tests/Core`); re-root CMake/presets/project.config/tests-CMake/Build.cs/lint+CI gates/docs/agent prose; Logger.cpp include depth; regen both baselines. 638 files, 1003/1003.
+- `e0d543b8` · fix(tests/CMakeLists): the `Plugins/Mcp` two-kinds (mirror `tests/Plugins/Mcp/*.test.cpp` vs product `${CMAKE_SOURCE_DIR}/Plugins/Mcp/src`) — blanket sed mis-prefixed mirror entries + missed product Mcp/Whisper refs. Path-only.
+- `18ddb03b` · fix(test-lint-rules): delta-gate base-scan now globs legacy roots + canonicalises before `zone_of`, so the `origin/develop` base worktree (old `Source_Core/` layout) is discoverable — else the 3 grandfathered `define-imgui` Tracker violators read as NEW.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **`Plugins/Mcp` had the same two-kinds footgun as `Source_Core`** (mirror `tests/Plugins/Mcp/*.test.cpp` vs product `Plugins/Mcp/src`) — the plan only called out the `Source_Core` two-kinds. Caught by the `ninja-test-msvc` configure (loud failure), fixed in `e0d543b8`.
+- **Delta-gate discovery, not basename-keying, was the lint risk.** Plan § Risks said the move is "basename-safe" so the delta gate stays green; in fact the base-worktree scan couldn't *discover* old-path files (`git ls-files Source/Core/src/**` finds nothing on develop), so grandfathered violators looked NEW. Required a scanner fix (`18ddb03b`), not just `--selftest`. Plan § Verification should run the **delta** gate, not only `--selftest`, before declaring lint green.
+- **MSVC 14.38 toolset pin needed but unpinned in tooling.** `with-msvc-env.sh` calls plain `vcvars64` → VS18 BuildTools 14.50 → STL1001. Built via a throwaway pinned wrapper. Durable fix deferred (backlog) — not in this path-only PR's scope.
+- **`Build.cs` / Unreal packaging not built** (no CMake-gate coverage; no UE on this box) — edits applied (repoRoot +1 level, `"Source","Core"`) but unverified. Backlog: manual UE package build or a `repoRoot` unit assertion.
+- **`.claude/` adapter not re-run** (`setup-harness.sh`) — gitignored, local-only; canonical `docs/harness/` hooks were swept. No commit impact.
 
 ## Verification (actual)
-*(populated post-ship)*
+- **Dual-target build** `ninja-iter-msvc SmatchetStandalone SmatchetCore_DX12` — **PASS** 677/677 (build-doctor, 2026-05-29). Proves no TU dropped/duplicated, all includes re-resolved.
+- **CTest** `ninja-test-msvc` — **PASS** 2/2 (`SmatchetTests` 414/414, `SmatchetLuaTests`). Proves tests-CMake two-kinds re-root.
+- **`test-lint-rules.sh --selftest`** PASS; **delta gate** PASS (after `18ddb03b`). **`test-shell-lint.sh`** PASS. **`test-portable-purity.sh`** PASS (baseline holds; run via working `python`).
+- **Grep guards** — residual old-token scan empty (excl. intentional plan/ADR); corruption sentinel clean (`Source/Source/` fixed in 2 CI files post-sweep).
+- **Not run**: publish build (surface untouched), Unreal package build (no UE/CMake-gate; see Deviations), bucket-E (no UI change).

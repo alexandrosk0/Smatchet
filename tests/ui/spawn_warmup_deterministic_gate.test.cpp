@@ -7,8 +7,8 @@
 // gate that fails loudly if warmup ever needs more than the budgeted frame
 // count so flakes surface in CI rather than as user-visible hangs.
 //
-// Drift warning — IF YOU CHANGE Source_Core/src/Commands/Scenarios/UiTestScenario.cpp
-// (the engine-context-create + per-frame yield body), Target_Standalone/main.cpp
+// Drift warning — IF YOU CHANGE Source/Core/src/Commands/Scenarios/UiTestScenario.cpp
+// (the engine-context-create + per-frame yield body), Source/Standalone/main.cpp
 // (the post-glfwSwapBuffers hook that calls UiTestScenario::OnFrame), OR the
 // scripts/dev/test-ui-* drivers that rely on --spawn timing, UPDATE THIS
 // TEST's frame-budget constants to match. The test exercises a replica gate

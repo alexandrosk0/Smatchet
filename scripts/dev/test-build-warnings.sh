@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-build-warnings.sh — asserts the ninja-iter-msvc build emits zero `-Wunused-*`
-# warnings on Smatchet-owned translation units (Target_Standalone/, Source_Core/,
-# Plugins/). FetchContent dependencies under build/<preset>/_deps/ are excluded —
+# warnings on Smatchet-owned translation units (Source/Standalone/, Source/Core/,
+# Source/Plugins/). FetchContent dependencies under build/<preset>/_deps/ are excluded —
 # their warnings are upstream issues, not ours to gate on.
 #
 # Rationale: dead file-static helpers accumulate silently after refactors. Once
@@ -45,7 +45,7 @@ cmake --build --preset "$PRESET" 2>&1 | tee "$LOG" >/dev/null || {
 # MinGW the separator is "\" so the regex must accept both [\\/].
 OWNED_HITS=$(grep -E 'warning:.*\[-Wunused-' "$LOG" \
     | grep -vE '[\\/]_deps[\\/]' \
-    | grep -E '(Target_Standalone|Source_Core|Plugins)[\\/]' \
+    | grep -E '(Source/Standalone|Source/Core|Plugins)[\\/]' \
     || true)
 
 if [ -n "$OWNED_HITS" ]; then

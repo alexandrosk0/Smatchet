@@ -65,7 +65,7 @@
 
 - 2026-05-20 · handoff-implementer · [tooling] · P2 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
-  Details: `docs/plans/shipped/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Source_Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip.
+  Details: `docs/plans/shipped/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip.
   Concrete next action: add `tests/ui/ai_assistant_model_change_strip.test.cpp` that (1) seeds `g_ui.assistantHistory` with one stub assistant message, (2) flips `cfg.AiProviderKind` between Anthropic and DeepSeek, (3) drives a synthetic Send through `AiClientFactory::SetTestOverride` returning a stub `IAiClient` that ack-streams a one-token reply, (4) asserts the strip renders the expected text after the second turn lands. Register via `IM_REGISTER_TEST` + bash driver `scripts/dev/test-ui-ai-assistant-model-change.sh`. ~2 h.
   Status: open
   Last-reviewed: 2026-05-20
@@ -92,7 +92,7 @@
   Last-reviewed: 2026-05-18
 
 - 2026-05-16 · build-doctor · [tooling] · P2 — Phase 9 coverage threshold (≥70%) advisory soak → blocking flip
-  Details: Phase 9 (`test-phase-9-coverage-gates`) ships `scripts/dev/coverage.sh` + `.github/workflows/coverage.yml` running with `--threshold 0` and `continue-on-error: true` for the first two weeks. Parent plan's § End-state targets calls for ≥70% line coverage on `Source_Core/src/` (excluding ImGui / UI files) as a hard gate. Same advisory→blocking lifecycle as Phase 7's screenshot-diff.
+  Details: Phase 9 (`test-phase-9-coverage-gates`) ships `scripts/dev/coverage.sh` + `.github/workflows/coverage.yml` running with `--threshold 0` and `continue-on-error: true` for the first two weeks. Parent plan's § End-state targets calls for ≥70% line coverage on `Source/Core/src/` (excluding ImGui / UI files) as a hard gate. Same advisory→blocking lifecycle as Phase 7's screenshot-diff.
   Concrete next action: after two consecutive green weeks of `coverage.yml` runs, flip (a) `coverage.yml` `continue-on-error: true` → `false`; (b) `coverage.sh` invocation from `--threshold 0` → `--threshold 70`; (c) consider adding `--threshold 90` carve-out for the high-risk units (IssueCreatePipeline, IssueDraft, TrackerFieldValueParser, CallstackParser, LocalCacheManager, TicketSyncService, ConfigManager migrations, MCP dispatch, Lua bindings) per parent plan. Estimated cost 30 min once the soak baseline is collected.
   Status: open
   Last-reviewed: 2026-05-18
@@ -104,14 +104,14 @@
   Last-reviewed: 2026-05-18
 
 - 2026-05-16 · test-author · [tooling] · P2 — Phase 7 pink-clear dock-gap scan (deferred from Phase 7 scenario set)
-  Details: AGENTS.md § Debug techniques documents the magenta-clear trick (`glClearColor(1, 0, 1, 1)`) for detecting dock-gap leaks. The Phase 7 `DockGapSentinelScenario` originally planned to flip the clear color during its warm-up frames so any visible pink in the captured PPM = real dock gap. Implementation required a new `UiDrawSession::requestClearColor` flag + a `Target_Standalone/main.cpp` consumer — non-trivial surface for marginal coverage given the L∞ diff against a clean golden already catches dock-shift regressions. `smatchet::test::CountPixels(img, 255, 0, 255, tol)` shipped in `tests/support/GoldenImage.h` to enable the scan once the clear-color toggle lands.
+  Details: AGENTS.md § Debug techniques documents the magenta-clear trick (`glClearColor(1, 0, 1, 1)`) for detecting dock-gap leaks. The Phase 7 `DockGapSentinelScenario` originally planned to flip the clear color during its warm-up frames so any visible pink in the captured PPM = real dock gap. Implementation required a new `UiDrawSession::requestClearColor` flag + a `Source/Standalone/main.cpp` consumer — non-trivial surface for marginal coverage given the L∞ diff against a clean golden already catches dock-shift regressions. `smatchet::test::CountPixels(img, 255, 0, 255, tol)` shipped in `tests/support/GoldenImage.h` to enable the scan once the clear-color toggle lands.
   Concrete next action: add `requestClearColor{R,G,B,A}` fields to `UiDrawSession` + restore-on-clear-after-frame consumer in main.cpp; extend `DockGapSentinelScenario` to set pink-clear during warm-up + bash script to run `CountPixels(img, 255, 0, 255, 8) == 0` as a hard assertion. Estimated cost ~1.5 h.
   Status: open
   Last-reviewed: 2026-05-18
 
 - 2026-05-16 · test-author · [tooling] · P2 — lint-hook deferred-drain verification gaps (4 checks deferred)
   Details: `scripts/dev/test-lint-hook-split.sh` ships 14 assertions across 7 of 11 plan-spec checks. Four deferred for follow-up:
-    - Test 4 — issue surfacing with a real cppcheck violation. Requires fault-injection into a real .cpp under `Source_Core/` (write a deliberate `if (x = 1)` and expect drain exit 2). Either author a `tests/fixtures/` first-party-path subtree + carve-out, or run in a real-source mutation harness.
+    - Test 4 — issue surfacing with a real cppcheck violation. Requires fault-injection into a real .cpp under `Source/Core/` (write a deliberate `if (x = 1)` and expect drain exit 2). Either author a `tests/fixtures/` first-party-path subtree + carve-out, or run in a real-source mutation harness.
     - Test 5 — chunked drain across > `SMATCHET_LINT_DRAIN_CHUNK` files. Synthesise 11+ distinct .cpp paths into the queue, run drain, assert remainder re-queued.
     - Test 6 — parallel-subagent per-PID isolation. Stage two `.lint-queue.<distinct-pids>` files with overlapping + disjoint paths, run drain, assert both consumed without data loss.
     - Test 10 — lockfile serialises concurrent drains. Spawn two `lint-cpp-drain.sh` invocations in parallel against a shared queue, assert exactly one processes + the other exits 0 without touching state.
@@ -120,7 +120,7 @@
   Last-reviewed: 2026-05-18
 
 - 2026-05-15 · test-author · [tooling] · P2 — perf-measure scenario `blame-open-entry-tab` does not exist; Pillar 1 regression gate uncovered
-  Details: Item #4 from `~/.claude/plans/make-the-any-presentation-serene-oasis.md` § Verification — "Pillar 1 gate — `perf-measure` on `blame-open-entry-tab` scenario before/after — mean frame ≤ 6.94 ms" — references a scenario name that is not registered with `ScenarioRunner` (only `priority-grid-scroll` + `lua-recorder-fuzz` + `ui-test` exist today; see `Source_Core/src/Commands/Scenarios/`).
+  Details: Item #4 from `~/.claude/plans/make-the-any-presentation-serene-oasis.md` § Verification — "Pillar 1 gate — `perf-measure` on `blame-open-entry-tab` scenario before/after — mean frame ≤ 6.94 ms" — references a scenario name that is not registered with `ScenarioRunner` (only `priority-grid-scroll` + `lua-recorder-fuzz` + `ui-test` exist today; see `Source/Core/src/Commands/Scenarios/`).
   Concrete next action: author `blame-open-entry-tab`: (a) a fake-callstack injection API on `AppController` so the scenario can prime `BlameAnalysisUi::State().callstackBuf` without going through the live Jira fetch path, (b) a scenario class (~100 LoC modelled on `PriorityGridScrollScenario.cpp`) that opens Blame UI → runs `blame.process` → switches to Entry tab → ticks N frames so `UiPerfMonitor` accumulates `DrawColoredCppLine` samples, (c) `OnCancel` cleanup that unwinds the injection. Estimated cost 3 h (1 h injection API, 1.5 h scenario, 0.5 h doc + scripts/dev/test-blame-perf.sh runner). Until then, the tokenizer hot-path lacks a regression gate.
   Status: open
   Last-reviewed: 2026-05-18
@@ -144,7 +144,7 @@
   Last-reviewed: 2026-05-18
 
 - 2026-05-17 · orchestrator · [tooling] · P3 — Lazy-load AI clients to drop spawn-ready timeout (architectural follow-up)
-  Details: The cheap fix from the original P1 entry shipped — `--spawn` ready-timeout bumped 15s→30s with `SMATCHET_SPAWN_READY_MS` env override (`Target_Standalone/CliCommandRunner.cpp:670`). Bucket-E gates unblock. Architectural follow-up remains: profile AI-client init paths (`OpenAiClient`, `AnthropicClient`, `OllamaClient`, `AiNdjsonParser`, Lua glue) and lazy-load so MCP server publishes ready in <15s again, then drop the bump.
+  Details: The cheap fix from the original P1 entry shipped — `--spawn` ready-timeout bumped 15s→30s with `SMATCHET_SPAWN_READY_MS` env override (`Source/Standalone/CliCommandRunner.cpp:670`). Bucket-E gates unblock. Architectural follow-up remains: profile AI-client init paths (`OpenAiClient`, `AnthropicClient`, `OllamaClient`, `AiNdjsonParser`, Lua glue) and lazy-load so MCP server publishes ready in <15s again, then drop the bump.
   Concrete next action: instrument `AppController` ctor + `IAiClient` subclass init with `SMATCHET_UI_PERF_SCOPE` markers; identify which init paths can defer past MCP-ready; refactor. Once mean spawn-ready is <10s on dev machines, revert the timeout to 15s. ~3-4 h.
   Status: parked
   Last-reviewed: 2026-05-18
@@ -162,24 +162,24 @@
   Last-reviewed: 2026-05-18
 
 - 2026-05-17 · code-review · [tooling] · P3 — `MainThreadDispatcher::PostUiTask` sugar for typed worker→UI hand-off
-  Details: `MainThreadDispatcher::PostToMainThread(Task)` takes `std::function<void()>` per `Source_Core/include/MainThreadDispatcher.h:33`. Phase B (PR #163) had to use the pattern "outer lambda captures AppController*, inner lambda references `g_ui` via TU-local `extern`" to reach UI state from a worker callback (`AiAssistantController.cpp` delta + error paths). The shape works but the discoverability is poor — Phase B agent's packet sketched the wrong signature (`function<void(AppController&)>`) on a guess. A typed sugar layer like `PostUiTask([](UiDrawSession& d){ ... })` (or two-arg `(AppController& app, UiDrawSession& d)`) would (a) make worker→UI hand-off self-documenting + (b) centralise the `g_ui` extern shim that AI/MCP/sync currently each replicate.
+  Details: `MainThreadDispatcher::PostToMainThread(Task)` takes `std::function<void()>` per `Source/Core/include/MainThreadDispatcher.h:33`. Phase B (PR #163) had to use the pattern "outer lambda captures AppController*, inner lambda references `g_ui` via TU-local `extern`" to reach UI state from a worker callback (`AiAssistantController.cpp` delta + error paths). The shape works but the discoverability is poor — Phase B agent's packet sketched the wrong signature (`function<void(AppController&)>`) on a guess. A typed sugar layer like `PostUiTask([](UiDrawSession& d){ ... })` (or two-arg `(AppController& app, UiDrawSession& d)`) would (a) make worker→UI hand-off self-documenting + (b) centralise the `g_ui` extern shim that AI/MCP/sync currently each replicate.
   Concrete next action: add `MainThreadDispatcher::PostUiTask(std::function<void(UiDrawSession&)>)` as a thin wrapper that resolves `g_ui` once at the dispatch boundary; deprecate raw `PostToMainThread` for worker callbacks. ~1 h including in-tree replacements of the 3 known worker→UI sites (sync, audit, AI).
   Status: parked
   Last-reviewed: 2026-05-18
 
-- 2026-05-17 · code-review · [tooling] · P3 — `Source_Core/include/IAiClient.h:14` `virtual ~IAiClient() {}` should be `= default`
+- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/include/IAiClient.h:14` `virtual ~IAiClient() {}` should be `= default`
   Details: Defaulted destructor preferred for trivial-destruct interfaces; rule-of-three compliance.
   Concrete next action: `virtual ~IAiClient() = default;` + add rule-of-three (copy/move ctor + assign defaults). Surfaced by retrospective code-review sweep on PR #140.
   Status: parked
   Last-reviewed: 2026-05-18
 
-- 2026-05-17 · code-review · [tooling] · P3 — `Source_Core/src/AiClientFactory.cpp:34,47` fallthrough returns after switch without `default:` will warn `-Wswitch` if `AiProvider` enum grows
+- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/src/AiClientFactory.cpp:34,47` fallthrough returns after switch without `default:` will warn `-Wswitch` if `AiProvider` enum grows
   Details: Future-proof against an enum extension going unhandled.
   Concrete next action: add `default:` arm returning a null-client or assertion. Surfaced by retrospective code-review sweep on PR #140.
   Status: parked
   Last-reviewed: 2026-05-18
 
-- 2026-05-17 · code-review · [tooling] · P3 — `Source_Core/src/OpenAiClient.cpp:18-22` `JoinUrl` does not handle `base` ending `//` or non-leading-slash `path`
+- 2026-05-17 · code-review · [tooling] · P3 — `Source/Core/src/OpenAiClient.cpp:18-22` `JoinUrl` does not handle `base` ending `//` or non-leading-slash `path`
   Details: All call sites safe today; defensive note in case of future refactor.
   Concrete next action: comment or `CHECK` invariants at the function head. Surfaced by retrospective code-review sweep on PR #140.
   Status: parked
@@ -209,27 +209,27 @@
   Status: parked
   Last-reviewed: 2026-05-18
 
-- 2026-05-16 · orchestrator · [tooling] · P3 — `Source_Core/*.cpp` GLOB picks up new TUs for production targets — only test target needs explicit per-file entry
-  Details: Wave A2 agents wrote new pure-helper TUs (`TrackerLabelsPure.cpp`, `TrackerDateTimePure.cpp`, `TrackerFieldPayloadPure.cpp`, `TrackerFieldCatalogPure.cpp`). Production builds (Standalone + DX12) picked them up automatically via the existing `Source_Core/src/*.cpp` GLOB in the root `CMakeLists.txt`. The test target (`tests/CMakeLists.txt`) is **explicit per-file** — needs a per-source `.cpp` entry **and** a per-test `.cpp` entry. Mental-model save: agents otherwise reflexively touch both files.
-  Concrete next action: add a one-line note to `agents/core/test-rig.md` § Workflow: "Production targets auto-pick new `Source_Core/src/*.cpp` via GLOB — only `tests/CMakeLists.txt` needs explicit per-file source list updates."
+- 2026-05-16 · orchestrator · [tooling] · P3 — `Source/Core/*.cpp` GLOB picks up new TUs for production targets — only test target needs explicit per-file entry
+  Details: Wave A2 agents wrote new pure-helper TUs (`TrackerLabelsPure.cpp`, `TrackerDateTimePure.cpp`, `TrackerFieldPayloadPure.cpp`, `TrackerFieldCatalogPure.cpp`). Production builds (Standalone + DX12) picked them up automatically via the existing `Source/Core/src/*.cpp` GLOB in the root `CMakeLists.txt`. The test target (`tests/CMakeLists.txt`) is **explicit per-file** — needs a per-source `.cpp` entry **and** a per-test `.cpp` entry. Mental-model save: agents otherwise reflexively touch both files.
+  Concrete next action: add a one-line note to `agents/core/test-rig.md` § Workflow: "Production targets auto-pick new `Source/Core/src/*.cpp` via GLOB — only `tests/CMakeLists.txt` needs explicit per-file source list updates."
   Status: parked
   Last-reviewed: 2026-05-18
 
 - 2026-05-15 · test-author · [tooling] · P3 — `MarkdownPreviewLangTag` covered (bucket A); rendered-output coverage deferred
-  Details: Added `tests/Source_Core/MarkdownPreviewLangTag.test.cpp` (5 cases / 40 assertions) over the inlined `MarkdownPreviewRender::IsCppLikeLangTag` classifier — covers the C/C++ canonical spellings, case-insensitivity, non-cpp languages (python/js/rust/…), substring rejection (cppreference/ccache/cxxabi must not match), and whitespace-only / empty tags. This proves the decision predicate; what still needs automation is "given a markdown document containing a ` ```cpp ` fence, the leave-block handler actually iterates `codeBuffer` line-by-line through `DrawColoredCppLine`."
+  Details: Added `tests/Core/MarkdownPreviewLangTag.test.cpp` (5 cases / 40 assertions) over the inlined `MarkdownPreviewRender::IsCppLikeLangTag` classifier — covers the C/C++ canonical spellings, case-insensitivity, non-cpp languages (python/js/rust/…), substring rejection (cppreference/ccache/cxxabi must not match), and whitespace-only / empty tags. This proves the decision predicate; what still needs automation is "given a markdown document containing a ` ```cpp ` fence, the leave-block handler actually iterates `codeBuffer` line-by-line through `DrawColoredCppLine`."
   Concrete next action: Bucket B — scenario `markdown-preview-fence-render` that builds a `MarkdownPreviewRender::Render(fixtureMd)` against a fixed input + screenshot-diff the rendered child region (gated on bucket-C harness). Bucket C — pixel-class count assertion against known keyword RGB. Bucket E — ImGui Test Engine fixture that opens the long-text editor modal with a fixed markdown source, asserts the colorized child renders ≥ N pixels of the active theme's keyword color. Estimated cost 30 min once bucket B/C harness from the parent theme entry lands.
   Status: parked
   Last-reviewed: 2026-05-18
 
 - 2026-05-15 · test-author · [tooling] · P3 — Blame UI raw-callstack `showRaw=true` colored-display verification fully deferred
-  Details: Item #3 from `~/.claude/plans/make-the-any-presentation-serene-oasis.md` § Verification — "raw callstack panel with `showRaw=true` is read-only colored; `showRaw=false` still editable" — has no testable seam at the pure-logic layer. The branch is a 2-line `if (State().showRaw)` at `Source_Core/src/BlameAnalysisUi_Window.cpp:316`; one arm calls `DrawColoredCppText(callstackBuf)` inside `BeginChild`, the other calls `InputTextMultiline(... 0)` for editable input. No algorithmic decision to unit-test. Bucket E (ImGui Test Engine) is the right home — open Blame UI with a pre-populated `callstackBuf`, drive the showRaw toggle, snapshot the panel, assert (a) `showRaw=true` panel has zero `InputText`-cursor item by walking the ImGui ID stack, (b) `showRaw=true` paints ≥ N keyword-color pixels in the panel rect, (c) `showRaw=false` panel has an `InputText` item with `ReadOnly=false`. Blocker today: no Blame UI fixture in `tests/ui/`.
+  Details: Item #3 from `~/.claude/plans/make-the-any-presentation-serene-oasis.md` § Verification — "raw callstack panel with `showRaw=true` is read-only colored; `showRaw=false` still editable" — has no testable seam at the pure-logic layer. The branch is a 2-line `if (State().showRaw)` at `Source/Core/src/BlameAnalysisUi_Window.cpp:316`; one arm calls `DrawColoredCppText(callstackBuf)` inside `BeginChild`, the other calls `InputTextMultiline(... 0)` for editable input. No algorithmic decision to unit-test. Bucket E (ImGui Test Engine) is the right home — open Blame UI with a pre-populated `callstackBuf`, drive the showRaw toggle, snapshot the panel, assert (a) `showRaw=true` panel has zero `InputText`-cursor item by walking the ImGui ID stack, (b) `showRaw=true` paints ≥ N keyword-color pixels in the panel rect, (c) `showRaw=false` panel has an `InputText` item with `ReadOnly=false`. Blocker today: no Blame UI fixture in `tests/ui/`.
   Concrete next action: 2 h (fixture + 3 cases). Filing so the gap accumulates evidence; bucket-A path proven by the parent theme test catches the underlying tokenizer + theme switch, so the residue is only the branch-routing layer.
   Status: parked
   Last-reviewed: 2026-05-18
 
 - 2026-05-15 · test-author · [tooling] · P3 — bucket-B/C for theme syntax-highlight verification deferred — no `theme.*` CLI command + no golden-image screenshot diff
-  Details: Manual step "cycle theme via Settings menu and eyeball that keyword/string/comment/number colors change in the Blame Entry tab" is partially covered by `tests/Source_Core/SmatchetThemeSyntaxColors.test.cpp` (bucket A — 7 cases / 28 assertions over the file-static round-trip per theme + pairwise cross-theme keyword inequality). Pixel-level "DrawColoredCppLine actually paints those colors on screen" is not yet automated.
-  Concrete next action: Bucket B requires a `theme.apply <ThemeId>` command in `Source_Core/src/Commands/BuiltinCommands.cpp` (~30 LoC: enum-arg parser + dispatch to `SmatchetTheme::ApplyStyle`) plus a `theme-cycle-blame` scenario that runs `theme.apply` × 5 with `blame.open` + `debug.window.screenshot` in between; pass condition "scenario exits 0 across all 5 themes, no warnings". Bucket C extends B with a pixel-class count assertion ("≥ N pixels match the theme's known keyword RGB in the Blame Entry region"). Estimated cost 1 h for bucket B, +1 h for bucket C with golden PPMs.
+  Details: Manual step "cycle theme via Settings menu and eyeball that keyword/string/comment/number colors change in the Blame Entry tab" is partially covered by `tests/Core/SmatchetThemeSyntaxColors.test.cpp` (bucket A — 7 cases / 28 assertions over the file-static round-trip per theme + pairwise cross-theme keyword inequality). Pixel-level "DrawColoredCppLine actually paints those colors on screen" is not yet automated.
+  Concrete next action: Bucket B requires a `theme.apply <ThemeId>` command in `Source/Core/src/Commands/BuiltinCommands.cpp` (~30 LoC: enum-arg parser + dispatch to `SmatchetTheme::ApplyStyle`) plus a `theme-cycle-blame` scenario that runs `theme.apply` × 5 with `blame.open` + `debug.window.screenshot` in between; pass condition "scenario exits 0 across all 5 themes, no warnings". Bucket C extends B with a pixel-class count assertion ("≥ N pixels match the theme's known keyword RGB in the Blame Entry region"). Estimated cost 1 h for bucket B, +1 h for bucket C with golden PPMs.
   Status: parked
   Last-reviewed: 2026-05-18
 - 2026-05-22 · orchestrator · [tooling] · P3 — `lock-claim-update-p4.sh` not implemented; p4-counter backend forces release+re-claim for write-set growth

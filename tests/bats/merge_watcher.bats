@@ -331,7 +331,7 @@ spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-tr
 m = importlib.util.module_from_spec(spec)
 sys.modules['cr'] = m
 spec.loader.exec_module(m)
-body = '''In \`@Source_Core/src/X.cpp\`:\n- Around line 5: Use std::string_view instead of const std::string& for read-only parameters to avoid heap allocation.'''
+body = '''In \`@Source/Core/src/X.cpp\`:\n- Around line 5: Use std::string_view instead of const std::string& for read-only parameters to avoid heap allocation.'''
 findings = [m.classify_finding(f) for f in m.parse_findings(body)]
 print('count:', len(findings))
 print('verdict:', findings[0].verdict.value if findings else 'NONE')
@@ -350,7 +350,7 @@ spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-tr
 m = importlib.util.module_from_spec(spec)
 sys.modules['cr'] = m
 spec.loader.exec_module(m)
-body = '''In \`@Source_Core/src/X.cpp\`:\n- Around line 5: The function ignores the return value of fclose(), which can mask write errors on buffered streams. Capture the return + LOG_WARN if non-zero so silent data loss is visible.'''
+body = '''In \`@Source/Core/src/X.cpp\`:\n- Around line 5: The function ignores the return value of fclose(), which can mask write errors on buffered streams. Capture the return + LOG_WARN if non-zero so silent data loss is visible.'''
 findings = [m.classify_finding(f) for f in m.parse_findings(body)]
 print('verdict:', findings[0].verdict.value if findings else 'NONE')
 "
@@ -365,7 +365,7 @@ spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-tr
 m = importlib.util.module_from_spec(spec)
 sys.modules['cr'] = m
 spec.loader.exec_module(m)
-body = '''In \`@Source_Core/src/X.cpp\`:\n- Around line 5: short'''
+body = '''In \`@Source/Core/src/X.cpp\`:\n- Around line 5: short'''
 findings = [m.classify_finding(f) for f in m.parse_findings(body)]
 print('verdict:', findings[0].verdict.value if findings else 'NONE')
 "
@@ -380,7 +380,7 @@ spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-tr
 m = importlib.util.module_from_spec(spec)
 sys.modules['cr'] = m
 spec.loader.exec_module(m)
-body = '''In \`@Source_Core/include/X.h\`:\n- Around line 5: Replace the manual loop with a structured binding for iteration to improve readability and avoid the auxiliary index variable.'''
+body = '''In \`@Source/Core/include/X.h\`:\n- Around line 5: Replace the manual loop with a structured binding for iteration to improve readability and avoid the auxiliary index variable.'''
 findings = [m.classify_finding(f) for f in m.parse_findings(body)]
 print('verdict:', findings[0].verdict.value if findings else 'NONE')
 print('reason:', findings[0].reason if findings else 'NONE')
@@ -397,7 +397,7 @@ spec = importlib.util.spec_from_file_location('cr', r'$SCRIPTS_DIR/coderabbit-tr
 m = importlib.util.module_from_spec(spec)
 sys.modules['cr'] = m
 spec.loader.exec_module(m)
-body = '''In \`@Source_Core/src/Y.cpp\`:\n- Around line 5: Replace the std::unique_ptr usage with raw new Foo() for clarity — the explicit allocation makes ownership obvious.'''
+body = '''In \`@Source/Core/src/Y.cpp\`:\n- Around line 5: Replace the std::unique_ptr usage with raw new Foo() for clarity — the explicit allocation makes ownership obvious.'''
 findings = [m.classify_finding(f) for f in m.parse_findings(body)]
 print('verdict:', findings[0].verdict.value if findings else 'NONE')
 print('reason:', findings[0].reason if findings else 'NONE')

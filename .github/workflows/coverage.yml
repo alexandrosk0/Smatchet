@@ -1,7 +1,7 @@
 name: Coverage (advisory)
 
 # Captures OpenCppCoverage line + branch coverage on every PR touching
-# Source_Core/ or tests/. Uploads coverage.xml as a workflow artifact and runs
+# Source/Core/ or tests/. Uploads coverage.xml as a workflow artifact and runs
 # in ADVISORY mode (no threshold, continue-on-error) for the first two weeks
 # after Phase 9 lands — pattern mirrors the Phase 7 screenshot-diff soak.
 #
@@ -13,8 +13,8 @@ on:
   pull_request:
     branches: [develop]
     paths:
-      - 'Source_Core/**'
-      - 'Plugins/**'
+      - 'Source/Core/**'
+      - 'Source/Plugins/**'
       - 'tests/**'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'

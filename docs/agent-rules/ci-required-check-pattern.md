@@ -8,7 +8,7 @@ A **required** status check must report on **every** PR or the PR is wedged
 ("Expected — Waiting for status," unmergeable). GitHub does **not** synthesize a
 success for a workflow that was skipped by a path filter. So if a required
 check's workflow has a positive `on.pull_request.paths:` filter (e.g.
-`perf-pr-fast.yml` filters to `Source_Core/**`), a docs-only PR never triggers
+`perf-pr-fast.yml` filters to `Source/Core/**`), a docs-only PR never triggers
 it → the required context never reports → the PR can never merge. Smatchet ships
 docs-only PRs constantly, so any required check MUST report unconditionally.
 
@@ -36,7 +36,7 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin develop
           files=$(git diff --name-only origin/develop...HEAD \
-                  | grep -E '\.(cpp|h)$' | grep -E '^(Source_Core/|Plugins/)' || true)
+                  | grep -E '\.(cpp|h)$' | grep -E '^(Source/Core/|Source/Plugins/)' || true)
           [ -z "$files" ] && { echo "no first-party C++ changed — pass"; exit 0; }
           bash scripts/dev/<scanner>.sh $files
 ```
@@ -58,7 +58,7 @@ name: <same job name as the real check, e.g. "Perf PR-fast (windows-2022)">
 on:
   pull_request:
     branches: [develop]
-    paths-ignore: ['Source_Core/**', 'Plugins/**', 'Target_Standalone/**']  # inverse of the real filter
+    paths-ignore: ['Source/Core/**', 'Source/Plugins/**', 'Source/Standalone/**']  # inverse of the real filter
 jobs:
   skip:
     name: Perf PR-fast (windows-2022)   # MUST match the real workflow's job name exactly

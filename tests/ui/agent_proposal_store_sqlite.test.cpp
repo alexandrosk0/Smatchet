@@ -11,7 +11,7 @@
 // between sequential bucket-E tests; schema-init idempotent on Reopen();
 // metadata flag round-trips through save → load.
 //
-// Drift warning — IF YOU CHANGE Source_Core/include/LocalCacheManager.h
+// Drift warning — IF YOU CHANGE Source/Core/include/LocalCacheManager.h
 // (the HasCacheMetaFlag / SetCacheMetaFlag pair we use as the proxy
 // store surface), tests/support/SqliteMemFixture.h (the SqliteMemFixture
 // constructor / Reopen contract), OR when the production AgentProposalStore

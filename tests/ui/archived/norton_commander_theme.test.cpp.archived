@@ -15,7 +15,7 @@
 // the `extern "C" SmatchetRegisterNortonCommanderThemeTests` line +
 // registration call to `tests/ui/ui_tests_registry.cpp`, then retune the
 // `IM_CHECK(ChannelsApprox(...))` literals below to match the current
-// `ApplyNortonCommander()` palette in `Source_Core/src/SmatchetTheme.cpp`.
+// `ApplyNortonCommander()` palette in `Source/Core/src/SmatchetTheme.cpp`.
 //
 // Tracked: `docs/backlog/BACKLOG_PLANS.md` § 2.
 // =============================================================================

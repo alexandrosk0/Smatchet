@@ -178,7 +178,7 @@ belong in the user preset file.
 
 `SmatchetPackageUnrealLibs_DX12` packages the DX12-compatible core library,
 ImGui, and public headers into
-`UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` for Unreal Build Tool
+`Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` for Unreal Build Tool
 consumption.
 
 <!-- ship-loop validation: 2026-05-27 -->

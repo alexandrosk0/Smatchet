@@ -43,9 +43,9 @@ A new header-only macro `SMATCHET_AGENT_DEBUG_LOG(category, json_obj)` appends o
 The agent's process gains two new phases before phase 1 (Clarify):
 
 - **Phase 0 — Concreteness check.** The incoming bug description must name (a) the breaking surface, (b) an observable failure, (c) the input shape. If any is missing, the agent emits exactly one `AskUserQuestion`; once concrete, phases 1+ never ask again. This is the *only* user-input point in the loop.
-- **Phase 0.5 — Existing-scenario reuse.** Before considering scenario-add, the agent searches `Source_Core/src/Commands/Scenarios/` for a scenario whose failure shape covers this bug-class (= injection point + render path). When found, the existing scenario is *parametrized* (new CLI arg / fixture variant / new sub-case in `OnTick`) rather than forked into a near-duplicate.
+- **Phase 0.5 — Existing-scenario reuse.** Before considering scenario-add, the agent searches `Source/Core/src/Commands/Scenarios/` for a scenario whose failure shape covers this bug-class (= injection point + render path). When found, the existing scenario is *parametrized* (new CLI arg / fixture variant / new sub-case in `OnTick`) rather than forked into a near-duplicate.
 
-Phase 2 (Reproduce) loses its "user repro steps fallback." If no deterministic reproducer is supplied or discoverable and no existing scenario can be parametrized, the agent's first action is to **add a scenario** that reproduces the bug — on the same branch as the fix. Scenario-add = one new `.cpp` under `Source_Core/src/Commands/Scenarios/` + one line in the slice-5 `SmatchetScenarioRegistry.cpp` table.
+Phase 2 (Reproduce) loses its "user repro steps fallback." If no deterministic reproducer is supplied or discoverable and no existing scenario can be parametrized, the agent's first action is to **add a scenario** that reproduces the bug — on the same branch as the fix. Scenario-add = one new `.cpp` under `Source/Core/src/Commands/Scenarios/` + one line in the slice-5 `SmatchetScenarioRegistry.cpp` table.
 
 The contract is verified by a literal-grep check in `scripts/dev/test-agent-contract.sh` ("reproducer-first contract" must appear in `agents/core/debug-detective.md`); soft-rewrites that drop the phrase fail the check loudly.
 

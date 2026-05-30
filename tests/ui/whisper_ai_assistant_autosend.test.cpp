@@ -25,7 +25,7 @@
 //   - Mirrors the proven Replica pattern from ai_assistant_enter_send.test.cpp
 //     and ai_assistant_panel_dock_swap.test.cpp.
 //
-// Drift warning — IF YOU CHANGE Source_Core/src/SmatchetAiAssistantUi.cpp
+// Drift warning — IF YOU CHANGE Source/Core/src/SmatchetAiAssistantUi.cpp
 // (specifically the lines 253-292 block: ConsumePendingReloadItemId +
 // ImGui::GetInputTextState + ReloadUserBufAndMoveToEnd → InputTextMultiline
 // → mirror back to d.assistantInputBuf), UPDATE THIS REPLICA to match.
@@ -80,8 +80,8 @@ void ResetState() {
 // reload + InputTextMultiline draw. The mirror-back to a std::string and
 // the dispatchSend path are intentionally OUT-of-scope: this test pins the
 // ImGui half of the fix (splice survives the active-widget frame), not
-// the auto-send path (covered by tests/Source_Core/DictationInsertionRouter.test.cpp
-// at the unit level and Source_Core/src/Commands/Scenarios/
+// the auto-send path (covered by tests/Core/DictationInsertionRouter.test.cpp
+// at the unit level and Source/Core/src/Commands/Scenarios/
 // WhisperAiAssistantAutosendScenario.cpp at the integration level).
 void DrawAutosendReplica(AutosendReplicaState& s) {
     if (s.enableReloadFix) {
@@ -176,7 +176,7 @@ void RegisterFixGuardVariant(ImGuiTestEngine* engine) {
 void RegisterRouterProtocolVariant(ImGuiTestEngine* engine) {
     // Companion to the FixGuard variant — pins the router's atomic protocol
     // entirely from TestFunc (no live InputText draw involvement). Doctest
-    // already covers this (tests/Source_Core/DictationInsertionRouter.test.cpp
+    // already covers this (tests/Core/DictationInsertionRouter.test.cpp
     // §`ConsumePendingReloadItemId: AI Assistant composite flow`) but
     // exercising it through the engine surface also confirms the
     // SMATCHET_BUILD_UI_TESTS build links the right router TU

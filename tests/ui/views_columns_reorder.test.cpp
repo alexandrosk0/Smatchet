@@ -15,7 +15,7 @@
 // This test re-creates the exact call-site shape in a test-engine-owned
 // window so we don't have to spin up the real Views → Jira window machinery
 // (which depends on AppController + tracker backend + view storage). The
-// helpers `DrawDragHandle` / `HandleRowReorder` from Source_Core/src are
+// helpers `DrawDragHandle` / `HandleRowReorder` from Source/Core/src are
 // reused verbatim — we are testing the *call site*, not the helpers.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)

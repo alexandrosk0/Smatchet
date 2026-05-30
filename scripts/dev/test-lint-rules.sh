@@ -5,9 +5,9 @@
 #
 # Zones (single source of truth = AGENTS.md § Tiered enforcement; the globs
 # below are asserted identical to AGENTS.md by --selftest):
-#   strict — Source_Core/src/{Tracker,Sync,Persistence,Config,Commands}, Plugins/Mcp/src
+#   strict — Source/Core/src/{Tracker,Sync,Persistence,Config,Commands}, Source/Plugins/Mcp/src
 #            + matching include/ subdirs. Any rule violation here FAILS.
-#   light  — Source_Core/src/Ui, Target_Standalone. Not gated (existing inline
+#   light  — Source/Core/src/Ui, Source/Standalone. Not gated (existing inline
 #            exemption-comment vocabulary continues to apply).
 #   exempt — ThirdParty, build, non-C++ trees. Not scanned.
 #
@@ -56,17 +56,17 @@ BASELINE_FILE="docs/high-integrity/baseline.md"
 
 # --- Zone globs (KEEP IN SYNC with AGENTS.md § Tiered enforcement; --selftest guards) ---
 STRICT_GLOBS=(
-    "Source_Core/src/Tracker/"
-    "Source_Core/src/Sync/"
-    "Source_Core/src/Persistence/"
-    "Source_Core/src/Config/"
-    "Source_Core/src/Commands/"
-    "Source_Core/include/Tracker/"
-    "Source_Core/include/Sync/"
-    "Source_Core/include/Persistence/"
-    "Source_Core/include/Config/"
-    "Source_Core/include/Commands/"
-    "Plugins/Mcp/src/"
+    "Source/Core/src/Tracker/"
+    "Source/Core/src/Sync/"
+    "Source/Core/src/Persistence/"
+    "Source/Core/src/Config/"
+    "Source/Core/src/Commands/"
+    "Source/Core/include/Tracker/"
+    "Source/Core/include/Sync/"
+    "Source/Core/include/Persistence/"
+    "Source/Core/include/Config/"
+    "Source/Core/include/Commands/"
+    "Source/Plugins/Mcp/src/"
 )
 
 # zone_of <path> -> strict|light|exempt
@@ -80,7 +80,7 @@ zone_of() {
         case "$f" in "$g"*) echo strict; return ;; esac
     done
     case "$f" in
-        Source_Core/src/Ui/*|Source_Core/include/Ui/*|Target_Standalone/*) echo light; return ;;
+        Source/Core/src/Ui/*|Source/Core/include/Ui/*|Source/Standalone/*) echo light; return ;;
     esac
     echo exempt
 }
@@ -259,12 +259,32 @@ scan_narrowing() {
 compute_strict_triples() {
     local files=() f
     while IFS= read -r f; do files+=("$f"); done < <(
-        git ls-files 'Source_Core/src/**' 'Source_Core/include/**' 'Plugins/Mcp/src/**' 2>/dev/null \
+        # Discover canonical (Source/…) roots AND the pre-consolidation legacy
+        # roots (Source_Core/…, Plugins/…). The legacy globs let the --diff base
+        # scan — which re-runs THIS scanner against an origin/develop worktree —
+        # find the same grandfathered strict-zone violators while develop still
+        # carries the old layout (refactor/source-root-consolidation). Once
+        # develop adopts the Source/ layout the legacy globs match nothing and
+        # are harmless; remove them in a follow-up cleanup. Triple keys are
+        # (rule, basename, hash) — path-independent — so a legacy-path match
+        # cancels its new-path twin exactly.
+        git ls-files \
+            'Source/Core/src/**' 'Source/Core/include/**' 'Source/Plugins/Mcp/src/**' \
+            'Source_Core/src/**'  'Source_Core/include/**'  'Plugins/Mcp/src/**' \
+            2>/dev/null \
         | grep -E '\.(cpp|h|hpp)$' || true
     )
     local strict_files=()
     for f in "${files[@]}"; do
-        [ "$(zone_of "$f")" = strict ] && strict_files+=("$f")
+        # Classify on the canonicalised path (legacy roots -> Source/ layout) so
+        # zone_of + STRICT_GLOBS stay single-sourced against AGENTS.md and the
+        # --selftest assertion is untouched; scan the REAL path so the file opens.
+        local canon="$f"
+        case "$f" in
+            Source_Core/*) canon="Source/Core/${f#Source_Core/}" ;;
+            Plugins/*)     canon="Source/Plugins/${f#Plugins/}" ;;
+        esac
+        [ "$(zone_of "$canon")" = strict ] && strict_files+=("$f")
     done
     {
         for f in "${strict_files[@]}"; do scan_file_rules "$f"; done
@@ -306,7 +326,7 @@ case "$MODE" in
     miss=0
     for g in "${STRICT_GLOBS[@]}"; do
         # only check the canonical src/* + Mcp globs (include/ mirrors are implied)
-        case "$g" in Source_Core/include/*) continue ;; esac
+        case "$g" in Source/Core/include/*) continue ;; esac
         if ! grep -qF "$g" AGENTS.md; then echo "SELFTEST FAIL: '$g' missing from AGENTS.md" >&2; miss=1; fi
     done
     [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs in sync" || exit 1

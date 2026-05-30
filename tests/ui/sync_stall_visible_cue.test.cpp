@@ -34,7 +34,7 @@
 //
 // Why this test is self-contained:
 //   The icon-fetch path that the plan originally named already runs on a
-//   worker thread (see Source_Core/src/SmatchetFieldIconRender.cpp:309 +
+//   worker thread (see Source/Core/src/SmatchetFieldIconRender.cpp:309 +
 //   :344 — both `app.LaunchBackgroundTask(...)` lambdas). There is no
 //   live UI-thread sync stall in icon fetch to inject; the worker
 //   already removes it. The harness lives in the test file so it

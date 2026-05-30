@@ -49,7 +49,7 @@ setup() {
     export LOCK_BRANCH="develop"
     # Default write-set file — most tests need one.
     export WS_FILE="$SANDBOX/write-set.txt"
-    printf 'Source_Core/include/Foo.h\nSource_Core/src/Foo.cpp\n' > "$WS_FILE"
+    printf 'Source/Core/include/Foo.h\nSource/Core/src/Foo.cpp\n' > "$WS_FILE"
 }
 
 teardown() {
@@ -177,10 +177,10 @@ teardown() {
     mixed_ws="$SANDBOX/mixed-ws.txt"
     cat > "$mixed_ws" <<'EOF'
 # This is a comment
-Source_Core/include/Foo.h
+Source/Core/include/Foo.h
 
 # Another comment
-Source_Core/src/Foo.cpp
+Source/Core/src/Foo.cpp
 
 EOF
     run bash -c "cd '$CLONE' && bash '$SCRIPTS_DIR/lock-claim.sh' mixed-ws-slug '$mixed_ws'"

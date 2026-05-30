@@ -45,10 +45,10 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 
 3. **Static-analysis pass** (parallel via shell, capture stderr):
    - `cppcheck --enable=warning,style,performance,portability --suppress=missingIncludeSystem --quiet <changed-cpp-and-h>`
-   - `clang-tidy <changed-cpp> -- -std=c++14 -ISource_Core/include`
+   - `clang-tidy <changed-cpp> -- -std=c++14 -ISource/Core/include`
    - `clang-format --dry-run --Werror <changed-cpp-and-h>`
 
-   Skip vendored paths: `build/`, `.fetchcontent-src/`, `*-build-dir/`, `UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/`. Don't re-flag findings the lint hook already cleaned in this session. Per AGENTS.md § Build / ctest cadence, the deferred-lint drain (`scripts/dev/lint-flush.sh` or the Stop hook) already ran cppcheck + clang-tidy + dual-target syntax on every edited file — re-running the same tools here is redundant when the drain log showed clean. Only re-run if your review uncovers changed files the drain didn't touch (e.g. files modified in earlier commits on the branch).
+   Skip vendored paths: `build/`, `.fetchcontent-src/`, `*-build-dir/`, `Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/`. Don't re-flag findings the lint hook already cleaned in this session. Per AGENTS.md § Build / ctest cadence, the deferred-lint drain (`scripts/dev/lint-flush.sh` or the Stop hook) already ran cppcheck + clang-tidy + dual-target syntax on every edited file — re-running the same tools here is redundant when the drain log showed clean. Only re-run if your review uncovers changed files the drain didn't touch (e.g. files modified in earlier commits on the branch).
 
 4. **Read changed files at full context.** Don't trust line excerpts. Apply the Smatchet checklist below.
 
@@ -63,10 +63,10 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 - No designated initializers
 - Anything banned by the in-repo `.clang-tidy` config
 
-**Dual-target** (`Source_Core/` compiles into Standalone + DX12):
-- No GLFW / glad / OpenGL headers in `Source_Core/include/*.h`
+**Dual-target** (`Source/Core/` compiles into Standalone + DX12):
+- No GLFW / glad / OpenGL headers in `Source/Core/include/*.h`
 - No `IMGUI_USE_WCHAR32` local redefinition
-- Platform-specific code in `Source_Core/` is gated on `SMATCHET_EMBEDDED_IN_UNREAL` / `SMATCHET_WITH_MCP` / `SMATCHET_WITH_LUA_AUTOMATION`
+- Platform-specific code in `Source/Core/` is gated on `SMATCHET_EMBEDDED_IN_UNREAL` / `SMATCHET_WITH_MCP` / `SMATCHET_WITH_LUA_AUTOMATION`
 - Bindings ↔ stubs parity: every new function in `AppController_LuaBindings.cpp` has a matching stub in `AppController_LuaStubs.cpp`
 - `*_DX12` CMake targets not touched unless the change explicitly asked for it
 
@@ -80,7 +80,7 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 - `LOG_TRACE` / `LOG_DEBUG` in non-trivial branches
 
 **Subsystem invariants:**
-- Backend-specific code (`Jira*`, `Plane*`) must NOT leak into `Source_Core/include/ITrackerClient.h` or other shared interfaces
+- Backend-specific code (`Jira*`, `Plane*`) must NOT leak into `Source/Core/include/ITrackerClient.h` or other shared interfaces
 - HTTP through `TrackerHttpClient` — flag direct `cpr::` usage in feature files
 - Field-value flow: catalog → parser → payload — flag bypasses
 - Tracker writes wire to `OfflineQueueService` + `BackendAuditTrail` / `FieldEditAuditSource`

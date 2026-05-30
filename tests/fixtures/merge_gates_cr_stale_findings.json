@@ -29,7 +29,7 @@
               "state": "COMMENTED",
               "submittedAt": "2026-05-21T10:00:00Z",
               "commit": {"oid": "headSHAOLD"},
-              "body": "**Actionable comments posted: 5**\n\nIn `@Source_Core/src/X.cpp`:\n- Bug 1\n- Bug 2\n- Bug 3\n- Bug 4\n- Bug 5"
+              "body": "**Actionable comments posted: 5**\n\nIn `@Source/Core/src/X.cpp`:\n- Bug 1\n- Bug 2\n- Bug 3\n- Bug 4\n- Bug 5"
             }
           ]
         },

@@ -33,7 +33,7 @@ The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt aft
 3. **Cross-repo or external-service mutations** — anything that writes outside the current repo or calls a third-party API with side effects (posting to Slack, sending email, modifying a Jira ticket the user didn't ask for). Confirm before acting.
 4. **Anything not previously authorised in a durable rule** — durable = recorded in AGENTS.md, CLAUDE.md, or this session's explicit user instructions. Verbal "ok in this conversation" doesn't bind future turns; encode it as a memory or doc edit if it should.
 5. **Visual-validation exception** — fires when **both** conditions hold:
-   1. Diff touches at least one of: `Source_Core/src/SmatchetTheme.cpp`, `Source_Core/src/Smatchet*Ui*.cpp`, `Source_Core/include/SmatchetTheme.h`, `Locales/*.json`, ImGui style constants (`ImVec4` / `ImGuiStyle` literals), dock-layout init paths.
+   1. Diff touches at least one of: `Source/Core/src/SmatchetTheme.cpp`, `Source/Core/src/Smatchet*Ui*.cpp`, `Source/Core/include/SmatchetTheme.h`, `Locales/*.json`, ImGui style constants (`ImVec4` / `ImGuiStyle` literals), dock-layout init paths.
    2. AND no bucket-C screenshot diff or bucket-E ImGui-Test-Engine scenario covers the changed widget.
 
    When both fire, the loop pauses after **build** with the launched exe. Orchestrator presents:

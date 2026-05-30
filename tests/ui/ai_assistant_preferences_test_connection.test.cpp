@@ -3,10 +3,10 @@
 // in-flight flag arms on click, result line populates on success, and result
 // line populates with the error path on a failing probe.
 //
-// Drift warning — IF YOU CHANGE Source_Core/include/AiPrefsTestConnection.h
-// (TriggerProbe signature / behaviour), Source_Core/src/AiPrefsTestConnection.cpp
+// Drift warning — IF YOU CHANGE Source/Core/include/AiPrefsTestConnection.h
+// (TriggerProbe signature / behaviour), Source/Core/src/AiPrefsTestConnection.cpp
 // (the probe worker body that polls cancel + invokes ProbeReachability +
-// SendStreaming), OR Source_Core/include/SmatchetUiSession.h:244-257 (the
+// SendStreaming), OR Source/Core/include/SmatchetUiSession.h:244-257 (the
 // assistantPrefsTest{InFlight,Result,ResultType,Cancel} state members),
 // UPDATE THIS REPLICA / HOST-COUPLED CHECK to match.
 //
@@ -45,7 +45,7 @@ void ResetTestConnState() {
     g_testConnState.clicked = false;
 }
 
-// Replica of the inline TriggerProbe state-mutation prelude (Source_Core/
+// Replica of the inline TriggerProbe state-mutation prelude (Source/Core/
 // src/AiPrefsTestConnection.cpp).
 void StartProbe(TestConnState& s) {
     s.inFlight = true;

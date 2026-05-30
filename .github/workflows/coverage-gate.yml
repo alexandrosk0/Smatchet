@@ -1,6 +1,6 @@
 name: Coverage gate (test-delta)
 
-# Hard-blocking gate from day 1: any PR that touches Source_Core/src/*.cpp
+# Hard-blocking gate from day 1: any PR that touches Source/Core/src/*.cpp
 # without a paired test delta under tests/ is rejected. The `tests-out-of-band`
 # PR label dismisses the gate for legitimate non-behavioural changes
 # (docs-only edits, include-shape fixes, sanitizer flag flips, build-system

@@ -69,10 +69,10 @@ The PR-only-to-`develop` rule is suspended for a single batch when **all** of th
    - `docs/**`
    - `agents/**`
    - `scripts/dev/**`, `scripts/clear-session-context.sh`, `scripts/agent-tokens-report.py`
-   - `tests/**` *(test sources / fixtures only; root `tests/CMakeLists.txt` is permitted because it carries no Source_Core link surface)*
+   - `tests/**` *(test sources / fixtures only; root `tests/CMakeLists.txt` is permitted because it carries no Source/Core link surface)*
    - `backlog/**`
    - `.gitignore`, `AGENTS.md`, root-level `*.md` (README, CLAUDE, CONTEXT)
-3. **Path blacklist.** Zero commits touching any of: `Source_Core/**`, `Plugins/**`, `Target_Standalone/**`, `UnrealPlugins/**`, `cmake/**`, `CMakeLists.txt` (repo root), `CMakePresets.json`. A single hit kicks the whole batch back to PR-only.
+3. **Path blacklist.** Zero commits touching any of: `Source/Core/**`, `Source/Plugins/**`, `Source/Standalone/**`, `Source/UnrealPlugins/**`, `cmake/**`, `CMakeLists.txt` (repo root), `CMakePresets.json`. A single hit kicks the whole batch back to PR-only.
 4. **Gates green.** `bash scripts/dev/test-all.sh` exits 0. The dual-target `SmatchetStandalone + SmatchetCore_DX12` rebuild is **not required** under this exception because no C++ TU is in the diff; it remains mandatory for every other path.
 5. **Branch is `develop` only.** The exception covers `develop`. `main` is never eligible.
 
@@ -88,7 +88,7 @@ esac
 
 # Path audit across the ahead-range.
 touched=$(git -C "$MAIN_REPO" diff --name-only origin/develop..develop)
-disallow='^(Source_Core/|Plugins/|Target_Standalone/|UnrealPlugins/|cmake/|CMakeLists\.txt$|CMakePresets\.json$)'
+disallow='^(Source/Core/|Source/Plugins/|Source/Standalone/|Source/UnrealPlugins/|cmake/|CMakeLists\.txt$|CMakePresets\.json$)'
 if printf '%s\n' "$touched" | grep -E -- "$disallow" >/dev/null; then
     echo "blacklisted path touched; fall back to PR-only"; exit 1
 fi
@@ -302,7 +302,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 10. **Verification-automation handoff check**: if the merged PR's `## Verification` section in `docs/plans/active/<slug>.md` (or the PR body) contains any manual-verification language ("user opens", "click and observe", "visually verify"), append a one-line entry to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` flagging the PR for `test-author` follow-up per AGENTS.md § Verification automation. Do not let manual residue ship un-flagged.
 
-10.5. **Orphan-scenario sweep** (same shape as step 10's residue check). Walk every scenario `.cpp` under `Source_Core/src/Commands/Scenarios/` and classify it against the orphan tri-condition. Surface every match via one combined `AskUserQuestion` block (one option-set per orphan: `keep` / `archive to docs/reference/<name>.md` / `delete .cpp + registry line`). Default = **keep** (orphan detection is advisory, not destructive). The sweep is end-of-session only — never mid-loop.
+10.5. **Orphan-scenario sweep** (same shape as step 10's residue check). Walk every scenario `.cpp` under `Source/Core/src/Commands/Scenarios/` and classify it against the orphan tri-condition. Surface every match via one combined `AskUserQuestion` block (one option-set per orphan: `keep` / `archive to docs/reference/<name>.md` / `delete .cpp + registry line`). Default = **keep** (orphan detection is advisory, not destructive). The sweep is end-of-session only — never mid-loop.
 
    **Orphan-scenario definition.** A scenario is orphan when **all three** hold:
    - **(i) No recent PR cite** — `git log --grep="<scenario-name>" --since="60.days.ago" --oneline | wc -l` returns zero.
@@ -313,7 +313,7 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
    Sweep recipe:
    ```bash
-   for f in Source_Core/src/Commands/Scenarios/*Scenario.cpp; do
+   for f in Source/Core/src/Commands/Scenarios/*Scenario.cpp; do
        name=$(basename "$f" .cpp | sed 's/Scenario$//' | sed 's/\([A-Z]\)/-\L\1/g' | sed 's/^-//')
        recent=$(git log --grep="$name" --since="60.days.ago" --oneline | wc -l)
        curated=$({ grep -lF "$name" scripts/dev/perf-pr-fast-set.json agents/core/perf-gatekeeper.md 2>/dev/null; find tests/golden -type f 2>/dev/null | grep -F "$name" || true; } | wc -l)
@@ -458,6 +458,6 @@ If no residue: write `none`.
 
 When the prompt declares `DRY RUN`: do pre-flight + audit, print each intended mutation command verbatim (`gh api -X PUT`, `gh api -X DELETE`, plan-revision text, backlog appends, branch deletes), skip every mutation, mark report `[DRY RUN — no changes applied]`.
 
-Trigger automatically when ≥3 PRs in batch, any PR touches `Source_Core/` or build files, or dependency order isn't obvious. User then says "go" for real run.
+Trigger automatically when ≥3 PRs in batch, any PR touches `Source/Core/` or build files, or dependency order isn't obvious. User then says "go" for real run.
 
 End with `## Self-improvement` — only on real friction (CLI behaviour surprises, refusal triggered unexpectedly, build gate caught a real regression). Empty is fine. Orchestrator appends to `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.

@@ -24,7 +24,7 @@ Mechanical perf-marker editor for Smatchet. Same procedure as `agents/core/perf-
 
 ## The macro
 
-`SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source_Core/include/UiPerfMonitor.h`. Per-call overhead ~200–500 ns (two `steady_clock::now()`, a mutex lock, an O(N) linear scan).
+`SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source/Core/include/UiPerfMonitor.h`. Per-call overhead ~200–500 ns (two `steady_clock::now()`, a mutex lock, an O(N) linear scan).
 
 ## Hard rules
 
@@ -43,7 +43,7 @@ Mechanical perf-marker editor for Smatchet. Same procedure as `agents/core/perf-
 2. For each tuple:
    - Read the function. Confirm the insertion point is NOT inside an inner per-cell loop unless the spec says so.
    - Insert `SMATCHET_UI_PERF_SCOPE("perf_temp:<name>");` at the requested position. Default: first line of the function body. Sub-scope: as the first line inside the requested `{ ... }` block.
-3. Verify `#include "UiPerfMonitor.h"` is present in the file. Add it (alphabetised with other `Source_Core` includes) if missing.
+3. Verify `#include "UiPerfMonitor.h"` is present in the file. Add it (alphabetised with other `Source/Core` includes) if missing.
 4. Build to confirm no compile errors:
    ```
    cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
@@ -52,7 +52,7 @@ Mechanical perf-marker editor for Smatchet. Same procedure as `agents/core/perf-
 
 ### Cleanup mode (stripping)
 
-1. Text-search for `SMATCHET_UI_PERF_SCOPE\("perf_temp:` across each of `Source_Core/`, `Plugins/`, `Target_Standalone/`.
+1. Text-search for `SMATCHET_UI_PERF_SCOPE\("perf_temp:` across each of `Source/Core/`, `Source/Plugins/`, `Source/Standalone/`.
 2. Delete every matching line (the macro statement; not the surrounding braces).
 3. If a file now has an unused `#include "UiPerfMonitor.h"` (no other `SMATCHET_UI_PERF_SCOPE` calls remain), leave the include — other code in the file may add scopes later, and removing it is a wider judgement call.
 4. Re-search all three directories to confirm zero matches.

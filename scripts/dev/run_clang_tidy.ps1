@@ -1,5 +1,5 @@
 <#.
-    Run clang-tidy on first-party C++ under Source_Core/ and Plugins/ using a CMake build tree
+    Run clang-tidy on first-party C++ under Source/Core/ and Source/Plugins/ using a CMake build tree
     that contains compile_commands.json (CMAKE_EXPORT_COMPILE_COMMANDS=ON).
 
     Prerequisites:
@@ -39,8 +39,8 @@ if (-not (Test-Path -LiteralPath $db -PathType Leaf)) {
 
 $null = Get-Command $ClangTidy -ErrorAction Stop
 
-$coreRoot = Join-Path $repoRoot "Source_Core"
-$pluginsRoot = Join-Path $repoRoot "Plugins"
+$coreRoot = Join-Path $repoRoot "Source/Core"
+$pluginsRoot = Join-Path $repoRoot "Source/Plugins"
 if (-not (Test-Path -LiteralPath $coreRoot -PathType Container)) {
     throw "Expected directory: $coreRoot"
 }
@@ -56,7 +56,7 @@ $cppFiles = @(
 ) | Sort-Object -Unique
 
 if ($cppFiles.Count -eq 0) {
-    throw "No .cpp files found under Source_Core or Plugins."
+    throw "No .cpp files found under Source/Core or Plugins."
 }
 
 $tidyArgs = @("-p", $BuildDir)

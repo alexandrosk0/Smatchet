@@ -45,7 +45,7 @@ Lowercase-kebab for dirs and leaf-doc slugs; `_`-prefix reserved for templates/g
 1. New plan → `docs/plans/active/<slug>.md`, committed immediately (`wip(plan): <slug>`).
 2. Populate `## Implementation log` / `## Deviations` / `## Verification (actual)` post-ship.
 3. `git mv` to `docs/plans/shipped/<slug>.md`. Its row appears in `INDEX.md` automatically (`test-plan-index --fix`); curated one-liner via an `<!-- index-summary: … -->` comment in the plan.
-4. **`docs/plans/shipped/` is never renamed.** ~252 source/ADR/script references cite shipped plans by path; a rename would touch `Source_Core/**` comments for zero functional gain. Decision recorded here so no future reorg re-litigates it.
+4. **`docs/plans/shipped/` is never renamed.** ~252 source/ADR/script references cite shipped plans by path; a rename would touch `Source/Core/**` comments for zero functional gain. Decision recorded here so no future reorg re-litigates it.
 
 ## Decision tree — where does X go?
 

@@ -6,9 +6,9 @@
     "env_prefix": "SMATCHET",
     "literals": [
       "Smatchet",
-      "Source_Core",
-      "Target_Standalone",
-      "UnrealPlugins",
+      "Source/Core",
+      "Source/Standalone",
+      "Source/UnrealPlugins",
       "SmatchetStandalone",
       "SmatchetCore_DX12",
       "DX12",
@@ -30,14 +30,14 @@
   "lint": {
     "zones": {
       "strict": [
-        "Source_Core/src/Tracker/",
-        "Source_Core/src/Sync/",
-        "Source_Core/src/Persistence/",
-        "Source_Core/src/Config/",
-        "Source_Core/src/Commands/",
-        "Plugins/Mcp/src/"
+        "Source/Core/src/Tracker/",
+        "Source/Core/src/Sync/",
+        "Source/Core/src/Persistence/",
+        "Source/Core/src/Config/",
+        "Source/Core/src/Commands/",
+        "Source/Plugins/Mcp/src/"
       ],
-      "light": ["Source_Core/src/Ui/", "Source_Core/include/Ui/", "Target_Standalone/"],
+      "light": ["Source/Core/src/Ui/", "Source/Core/include/Ui/", "Source/Standalone/"],
       "exempt": ["ThirdParty", "build"]
     },
     "rules": ["no-printf-stderr", "no-raw-new", "narrowing-conversions", "define-imgui", "deviation-overdue"],
@@ -56,7 +56,7 @@
       "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"
     ],
     "path_filters": {
-      "code_globs": ["Source_Core/**", "Plugins/**", "Target_Standalone/**"],
+      "code_globs": ["Source/**"],
       "docs_ignore": ["**/*.md", "docs/**", "agents/**", ".gitignore", ".gitattributes", ".coderabbit.yaml"]
     }
   },

@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-TOP_LEVEL_DIRS = ("Source_Core", "Plugins", "Target_Standalone")
+TOP_LEVEL_DIRS = ("Source",)
 
 
 def main() -> int:

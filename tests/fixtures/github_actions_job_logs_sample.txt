@@ -3,7 +3,7 @@
 2026-05-10T14:00:11.001Z ##[endgroup]
 2026-05-10T14:00:11.234Z ##[group]Build SmatchetStandalone
 2026-05-10T14:00:11.901Z cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
-2026-05-10T14:02:30.012Z [124/186] Building CXX object ... Source_Core/src/AppController.cpp.obj
+2026-05-10T14:02:30.012Z [124/186] Building CXX object ... Source/Core/src/AppController.cpp.obj
 2026-05-10T14:03:45.567Z [186/186] Linking CXX executable build/ninja-iter-msvc/Smatchet.exe
 2026-05-10T14:03:45.998Z ##[endgroup]
 2026-05-10T14:03:46.012Z ##[group]Run ctest

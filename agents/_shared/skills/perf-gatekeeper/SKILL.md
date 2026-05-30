@@ -14,7 +14,7 @@ Scenario-aware PR-time perf gatekeeper (Claude Code skill alias of `agents/core/
 
 ## When to invoke
 
-- A PR touches `Source_Core/` / `Plugins/` / `Target_Standalone/` and the orchestrator (or user) wants a targeted perf check before merge.
+- A PR touches `Source/Core/` / `Source/Plugins/` / `Source/Standalone/` and the orchestrator (or user) wants a targeted perf check before merge.
 - An agent (`perf-detective`, `spike-hunter`) wants to verify a fix landed without regressing adjacent scenarios.
 
 ## Workflow
