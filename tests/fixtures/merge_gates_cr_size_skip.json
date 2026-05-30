@@ -1,0 +1,43 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "state": "OPEN",
+        "isDraft": false,
+        "reviewDecision": "APPROVED",
+        "headRefOid": "abc123",
+        "headRefName": "feature/huge-reorg",
+        "commits": {
+          "nodes": [{
+            "commit": {
+              "statusCheckRollup": {
+                "contexts": {
+                  "pageInfo": {"hasNextPage": false},
+                  "nodes": [
+                    {"__typename": "CheckRun", "name": "build", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": true},
+                    {"__typename": "StatusContext", "context": "ci/standalone", "state": "SUCCESS", "isRequired": true}
+                  ]
+                }
+              }
+            }
+          }]
+        },
+        "reviews": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": []
+        },
+        "reviewThreads": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": []
+        },
+        "comments": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": [
+            {"author": {"login": "github-actions", "__typename": "Bot"}, "body": "CI run complete."},
+            {"author": {"login": "coderabbitai[bot]", "__typename": "Bot"}, "body": "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Too many files!\n>\n> This PR contains 300 files, which is 150 over the limit of 150.\n>\n> You can configure the file limit in your settings.\n"}
+          ]
+        }
+      }
+    }
+  }
+}

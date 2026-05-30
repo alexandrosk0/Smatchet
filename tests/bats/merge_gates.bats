@@ -843,6 +843,129 @@ set_fixture() {
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
 }
 
+# ---------- CR size-skip (CR posts "Review skipped — too many files", NOT a review) ----------
+# A PR over CodeRabbit's file limit gets an auto-generated PR *conversation*
+# comment (not a review object). reviewDecision stays NONE + cr_state computes to
+# NONE, so the passive NONE grace-then-pass backstop would otherwise wave a
+# completely-unreviewed PR through. The poller detects the comment's HTML marker
+# (`skip review by coderabbit.ai`) and hard-blocks unless `cr-out-of-band` is set.
+
+@test "CR size-skip + no label → BLOCK (not mergeable + actionable message)" {
+    # CR installed, NONE, CR posted the size-skip comment. Must block regardless
+    # of the NONE grace counter (GRACE_POLLS=0 forces the grace fall-through that
+    # the size-skip guard must override).
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_size_skip.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+size-skip"* ]]
+    [[ "$output" == *"BLOCK: CodeRabbit skipped review — too many files"* ]]
+    [[ "$output" == *"cr-out-of-band"* ]]
+    # The grace fall-through pass WARN must NOT have fired (skip guard short-circuits it).
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" != *"grace-expired"* ]]
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR size-skip via fallback text (Review skipped + Too many files, no HTML marker) → BLOCK" {
+    # Robustness: even if CR drops the HTML comment marker, the fallback
+    # text match (Review skipped AND Too many files) still detects the skip.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
+        "data.repository.pullRequest.comments.nodes.1.body" \
+        '"> [!IMPORTANT]\n> ## Review skipped\n>\n> Too many files!\n>\n> This PR contains 300 files, which is 150 over the limit of 150.\n"')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+size-skip"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR size-skip + cr-out-of-band label → PASS with tailored WARN" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band — CR skipped review (too many files) overridden"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR size-skip → @coderabbitai review auto-nudge is NOT posted (futile re-trigger suppressed)" {
+    # The CR=NONE early-nudge (#554) must be suppressed for a size-skip — nudging
+    # a PR that exceeds CR's file limit just makes CR skip again + spams the
+    # thread. Counter file must have ZERO lines (the stub appends one line per
+    # gh pr comment invocation).
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_size_skip.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+size-skip"* ]]
+    [ ! -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "regression: genuine NONE (no skip comment) still auto-nudges + graces (size-skip does not steal the path)" {
+    # No coderabbitai skip comment → cr_size_skipped=false → the early-nudge
+    # fires exactly once and the gate blocks NONE+pending within grace, exactly
+    # as #554 intended. Proves the size-skip guard is inert on genuine NONE.
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [[ "$output" != *"size-skip"* ]]
+    [ -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "regression: real CR review on head wins over a stale size-skip comment (most-recent CR signal)" {
+    # PR was reduced/split after CR's skip comment; CR then posted a real
+    # COMMENTED review with 0 actionable on the current head. The on-head review
+    # (cr_state=COMMENTED) must take precedence — the case never enters the NONE
+    # branch, so the stale skip comment is ignored and the gate passes.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
+        "data.repository.pullRequest.reviews.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"state":"COMMENTED","submittedAt":"2026-05-29T12:00:00Z","commit":{"oid":"abc123"},"body":"**Actionable comments posted: 0**\n\nLGTM after the split."}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COMMENTED (0 actionable)"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"size-skip"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR size-skip but CR not installed → NONE steady-state pass (skip guard gated on cr_installed)" {
+    # Defensive: a coderabbitai skip comment with cr_installed=false (404 probe)
+    # — the not-installed NONE steady-state pass still applies (no CR gate to
+    # enforce). The size-skip block is gated on cr_installed=true for symmetry.
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_size_skip.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CodeRabbit: NONE"* ]]
+    [[ "$output" != *"size-skip"* ]]
+}
+
 # ---------- gh_pr_ready_idempotent ----------
 
 @test "gh_pr_ready_idempotent: already-ready (not in draft state) returns 0" {

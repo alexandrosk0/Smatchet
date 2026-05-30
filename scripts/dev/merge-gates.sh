@@ -224,7 +224,7 @@ poll_merge_gates() {
     # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
     # — no standalone `jq` binary required (gh is the only dep). One filter
     # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (19 lines) that the poll loop reads with `mapfile`. The exact jq
+    # stream (20 lines) that the poll loop reads with `mapfile`. The exact jq
     # sub-expressions are the same ones the per-field `jq` calls used before;
     # they're just composed into one program. ORCH_USER is spliced in as a
     # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
@@ -232,7 +232,8 @@ poll_merge_gates() {
     # 4 perfOob · 5 ciTotal · 6 ciFail · 7 ciPend · 8 ciWarnDowngraded ·
     # 9 dgNames · 10 crState · 11 crFirstLine · 12 crOpen · 13 crStatusState ·
     # 14 crThreadCommentsOnHead · 15 userComments · 16 reviewDecision ·
-    # 17 mergeStateStatus · 18 crOob (cr-out-of-band label).
+    # 17 mergeStateStatus · 18 crOob (cr-out-of-band label) ·
+    # 19 crSizeSkipped (CR posted a "review skipped — too many files" comment).
     local GATE_FILTER
     GATE_FILTER='
 .data.repository.pullRequest as $pr
@@ -260,6 +261,12 @@ poll_merge_gates() {
    else (([$crall[] | select(.commit.oid == $sha)]) as $cur
          | if ($cur | length) > 0 then ($cur | sort_by(.submittedAt) | .[-1].body // "")
            else ($crall | sort_by(.submittedAt) | .[-1].body // "") end) end) as $crbody
+| ([$pr.comments.nodes[]?
+    | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+    | (.body // "")]
+   | any(
+       contains("skip review by coderabbit.ai")
+       or (contains("Review skipped") and contains("Too many files")))) as $crskip
 | (
     ($pr.state // "UNKNOWN"),
     $sha,
@@ -291,7 +298,8 @@ poll_merge_gates() {
           and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length)),
     ($pr.reviewDecision // "NONE"),
     ($pr.mergeStateStatus // "UNKNOWN"),
-    ($cr | tostring)
+    ($cr | tostring),
+    ($crskip | tostring)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
@@ -325,7 +333,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 19 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 20 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -334,11 +342,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 19 ]; then
-            # Exactly 19 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 20 ]; then
+            # Exactly 20 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 19); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 20); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -375,6 +383,22 @@ poll_merge_gates() {
         # only (CI + user-comment gates still bind). Read here; applied in the
         # CR decision branch below after cr_pass is computed.
         local has_cr_oob="${fields[18]}"
+
+        # cr_size_skipped — true when CodeRabbit posted a PR conversation comment
+        # saying it skipped review because the PR exceeds its file limit (marker:
+        # `skip review by coderabbit.ai`). This is NOT a review object, so
+        # reviewDecision stays NONE and cr_state computes to NONE — meaning the
+        # passive NONE grace-then-pass backstop would otherwise wave a huge,
+        # entirely-unreviewed PR straight through. The NONE branch below treats a
+        # size-skip as a hard block (unless cr-out-of-band waives it) and
+        # suppresses the futile @coderabbitai review auto-nudge. Only consulted
+        # when no real CR review exists on any commit (cr_state == NONE) so a
+        # later genuine review on head always takes precedence over a stale skip
+        # comment. Empty (filter/parse miss) → treated as "not skipped" (the
+        # NONE-grace path still binds; fail-closed is preserved by cr_pass=false
+        # within grace), but a malformed body inflates the field count and routes
+        # through the fail-closed assertion above before we reach here.
+        local cr_size_skipped="${fields[19]}"
 
         # CI — required-only, latest-per-name dedup + label downgrades, all done
         # in the filter. Empty → -1, which fails closed at the integer checks.
@@ -430,6 +454,11 @@ poll_merge_gates() {
 
         local cr_pass=false
         local cr_state_print="$cr_state"
+        # Set true only by the NONE branch when CR posted a "review skipped — too
+        # many files" comment. Hoisted here so it's always defined for the
+        # cr-out-of-band downgrade + nudge-suppression checks below, regardless of
+        # which case branch runs.
+        local cr_size_skip_block=false
         case "$cr_state" in
             APPROVED)
                 # Approval on the current head is always a pass, regardless of body shape.
@@ -500,7 +529,31 @@ poll_merge_gates() {
                 fi
                 ;;
             NONE)
-                if [ "$cr_installed" != true ]; then
+                # cr_size_skipped takes precedence over the entire NONE
+                # grace/status fall-through chain below. CR explicitly told us it
+                # skipped review because the PR is too large — there will never be
+                # a review or inline evidence on this head, so the passive
+                # grace-then-pass backstop must NOT wave it through (that hole let
+                # a 638-file reorg merge with zero CR review). Hard-block here and
+                # short-circuit; the cr-out-of-band downgrade below can still waive
+                # it, and the early-nudge is suppressed (re-triggering review on a
+                # size-skipped PR just makes CR skip again + spams the thread).
+                # Gated on cr_installed for symmetry with the rest of NONE — a
+                # skip comment only exists when CR is installed anyway.
+                #
+                # Precedence note: this lives inside `case NONE` so a genuine CR
+                # review on the current head (cr_state COMMENTED/APPROVED/
+                # CHANGES_REQUESTED) or a stale review on a prior commit (STALE*)
+                # never reaches here — the most-recent real CR signal always wins
+                # over an older size-skip comment. cr_state==NONE means no review
+                # object exists on ANY commit, so the skip comment is the only CR
+                # signal and is authoritative.
+                if [ "$cr_size_skipped" = "true" ] && [ "$cr_installed" = true ]; then
+                    cr_pass=false
+                    cr_size_skip_block=true
+                    cr_state_print="NONE+size-skip (CR skipped review — too many files)"
+                    echo "BLOCK: CodeRabbit skipped review — too many files (exceeds CR file limit); split the PR (coderabbit review --dir <path> / --base) or apply the 'cr-out-of-band' label to merge without CR review." >&2
+                elif [ "$cr_installed" != true ]; then
                     # Repo doesn't have CodeRabbit installed — NONE is the steady state.
                     cr_pass=true
                 elif [ "$cr_status_state" = "SUCCESS" ] && [ "$cr_thread_comments_on_head" -gt 0 ]; then
@@ -548,7 +601,13 @@ poll_merge_gates() {
                 # blocking NONE poll — no streak required, since the goal is to
                 # wake CR up early. The grace fall-through above stays as the
                 # backstop for a genuinely stuck integration.
-                if [ "$cr_pass" = false ] && [ "$cr_installed" = true ] && [ "$STALE_REREVIEW_POLLS" -gt 0 ]; then
+                #
+                # Suppressed when cr_size_skip_block: a size-skip is the one NONE
+                # shape where nudging is futile — re-triggering review on a PR that
+                # exceeds CR's file limit just makes CR skip again and spams the
+                # thread. The nudge stays for genuine NONE (CR still thinking).
+                if [ "$cr_pass" = false ] && [ "$cr_installed" = true ] && \
+                   [ "$cr_size_skip_block" != true ] && [ "$STALE_REREVIEW_POLLS" -gt 0 ]; then
                     nudge_coderabbit "$head_sha" "CR=NONE on HEAD ${head_sha:0:8} (no review yet, within grace)"
                 fi
                 ;;
@@ -592,7 +651,14 @@ poll_merge_gates() {
         # the label only waives CodeRabbit's own conditions. Like the other
         # out-of-band labels, it MUST NOT stay on the PR post-merge.
         if [ "$has_cr_oob" = "true" ] && { [ "$cr_pass" != true ] || [ "$cr_open_blocks" = true ]; }; then
-            echo "WARN: cr-out-of-band label downgraded CR block (${cr_state_print}) to WARN" >&2
+            if [ "$cr_size_skip_block" = true ]; then
+                # Tailored message for the size-skip block — names the actual
+                # cause (CR skipped review, too many files) rather than the
+                # generic "CR block" so the operator's log is unambiguous.
+                echo "WARN: cr-out-of-band — CR skipped review (too many files) overridden" >&2
+            else
+                echo "WARN: cr-out-of-band label downgraded CR block (${cr_state_print}) to WARN" >&2
+            fi
             cr_pass=true
             cr_open_blocks=false
         fi
