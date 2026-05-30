@@ -1,6 +1,5 @@
 // ConfigManager — `Save(TrackerConfig)` / `Load(CliOverrides)` plus the annotate-analysis
 // persistence pair and the embedded default ImGui dock-layout ini.
-//
 // As of `docs/plans/shipped/large-files-and-phase-2.md` § A3 the filesystem / secret / lock
 // helpers and the path-and-IO half of the public surface live in
 // `ConfigManager_PathUtils.cpp`; views persistence + the `CommentTemplate` ADL
@@ -39,10 +38,8 @@ using smatchet::config_detail::ProtectSecretForConfig;
 using smatchet::config_detail::UnprotectSecretFieldFromConfig;
 #endif
 
-// ---------------------------------------------------------------------------
 // Embedded default ImGui dock-layout ini. Used by WriteDefaultImGuiSettingsFile
 // (defined in ConfigManager_PathUtils.cpp) via the public getter below.
-// ---------------------------------------------------------------------------
 
 namespace {
 
@@ -173,9 +170,7 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
 
 const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGuiDockLayoutIni; }
 
-// ===========================================================================
 // ConfigManager — Save(TrackerConfig).
-// ===========================================================================
 
 void ConfigManager::Save(const TrackerConfig& config) {
     {
@@ -461,9 +456,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     WriteConfigJson(j);
 }
 
-// ===========================================================================
 // ConfigManager — annotate-analysis persistence.
-// ===========================================================================
 
 AnnotateAnalysisConfig ConfigManager::LoadAnnotateAnalysis() {
     nlohmann::json j = LoadMergedConfigJson();
@@ -576,9 +569,7 @@ void ConfigManager::SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b) {
     WriteConfigJson(j);
 }
 
-// ===========================================================================
 // ConfigManager — Load(CliOverrides).
-// ===========================================================================
 
 TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
@@ -1045,7 +1036,6 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 
 #if defined(_WIN32)
     // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
-    //
     // Ordering note (backlog #15): this Save(cfg) runs BEFORE the env/CLI override block below, by design.
     // - cfg here reflects what disk contained (with the legacy plaintext token already decoded into cfg.McpAuthToken).
     //   Save() re-encrypts McpAuthToken into mcp_auth_token_enc on disk, which is the whole point of the migration.

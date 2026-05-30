@@ -3,13 +3,11 @@
 
 // Public surface of the Smatchet config persistence layer. The implementation lives in
 // Source/Core/src/ConfigManager.cpp.
-//
 // Build-time win: this header pulls only <nlohmann/json_fwd.hpp> (a ~75 LOC forward-decl
 // header) instead of the full <nlohmann/json.hpp> (~30 k LOC of templated code). Every TU
 // that needs a TrackerConfig field used to pay the json.hpp parse cost; now only the few
 // TUs that actually construct/parse json values (this .cpp, plus call sites that compose
 // `nlohmann::json` directly) include the full header.
-//
 // Friend serializers (CommentTemplate::to_json / from_json) are declared here and defined
 // in the .cpp — nlohmann's adl_serializer finds them via ADL from any TU that includes
 // this header and uses j["…"] = config.QuickCommentTemplates.
@@ -297,7 +295,6 @@ struct TrackerConfig {
 #if defined(SMATCHET_WITH_WHISPER)
     // --- Whisper dictation (push-to-talk) — Phase A schema (additive; no schema bump). ---
     // See docs/plans/shipped/whisper-dictation.md § Config schema additions.
-    //
     // Runtime opt-in gate. Even when SMATCHET_WITH_WHISPER=ON the plugin stays
     // dormant (no mic access, no network, no model download) until this flips to
     // true via the first-run setup dialog (Phase C) or Preferences (Phase F).

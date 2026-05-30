@@ -5,7 +5,6 @@
 // (`ConfigManager.cpp`, `ConfigManager_PathUtils.cpp`, `ConfigManager_Views.cpp`).
 // Not part of the public surface — never include from `Source/Core/include/` headers
 // or non-ConfigManager .cpp files.
-//
 // All helpers live under `smatchet::config_detail` so the linker symbols stay
 // segregated from any other "Utf8ToWide" / "FileExists" that the project may
 // grow elsewhere. The defining TU is `ConfigManager_PathUtils.cpp`.

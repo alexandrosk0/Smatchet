@@ -3,7 +3,6 @@
 // TicketSyncService — owns streaming ticket-sync state (worker thread, batch queue, supersede
 // FSM, stale-deletion bookkeeping) and applies fetched batches to the local SQLite cache.
 // Extracted from `AppController.cpp` per BACKLOG_CODE_REVIEW.md §1.7 / §7 item 11.
-//
 // As of Phase 1C all runtime methods + state live here. AppController's public surface keeps
 // the same shape but its bodies are thin delegators (or de-inlined accessors that call into
 // this service). Phase 2 (this PR) replaces `friend class TicketSyncService;` with the

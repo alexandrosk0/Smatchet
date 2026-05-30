@@ -3,16 +3,13 @@
 // OfflineQueueService — owns the offline-create / offline-field-edit replay queues and the
 // dead-letter management around them. Extracted from `AppController_IssueCreateOffline.cpp`
 // per BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
-//
 // Phase 1A scope (this PR): class skeleton, owned by AppController as a `unique_ptr` member,
 // holds the `legacyPendingStartupBanner_` state and a small first batch of read-only
 // accessors. AppController's public surface is preserved via thin delegators.
-//
 // Future phases migrate the remaining methods cluster-by-cluster:
 //   1B — write methods (`QueueCreateOffline`, `QueueFieldEditOffline`, `Restore*`, `Delete*`).
 //   1C — `Tick*` replay loops + their internal helpers.
 //   1D — field-edit equivalents (`ResolveFieldEditConflict`, `Tick…FieldEdits`).
-//
 // Phase 2 (this PR) replaces the `friend class OfflineQueueService;` access with a small
 // `IOfflineQueueDeps` interface bundle (see IOfflineQueueDeps.h). AppController hands a
 // concrete `AppControllerDepsAdapter` to the service; tests substitute `FakeOfflineQueueDeps`
@@ -62,16 +59,13 @@ class OfflineQueueService {
     std::int64_t QueueCreateOffline(const IssueDraft& draft);
 
     /// Move selected dead-letter rows back to the active offline queue (attempts reset to 0).
-    AppController::DeadLetterRestoreSummary
-    RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds);
+    AppController::DeadLetterRestoreSummary RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds);
 
     /// Permanently remove dead-letter rows by `pending_creates_dead.dead_id`.
-    AppController::DeadLetterDeleteSummary
-    DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
+    AppController::DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
 
     /// Permanently remove active offline-queue rows by `pending_creates.id`.
-    AppController::PendingQueueDeleteSummary
-    DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
+    AppController::PendingQueueDeleteSummary DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
 
     /// Persist a tracker field payload for later replay when connectivity returns.
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
@@ -83,14 +77,11 @@ class OfflineQueueService {
 
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass.
-    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
-                                  const std::string& richKind);
+    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown, const std::string& richKind);
 
-    AppController::PendingFieldEditDeleteSummary
-    DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
+    AppController::PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
 
-    AppController::DeadFieldEditDeleteSummary
-    DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
+    AppController::DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
 
     // --- Phase 1C: replay loops + replay-timer accessors ---------------------------------
     /// Replay queued offline creates. Called from the UI tick. Rate-limited internally via
@@ -125,8 +116,7 @@ class OfflineQueueService {
     ///   3. dead-letter with terminal_reason `legacy_missing_project`
     /// Guarded by the `cache_meta` flag `legacy_project_swept_v1`; subsequent calls return 0
     /// without scanning. Logged at INFO with a per-bucket summary.
-    void RunLegacyProjectSweep(const std::string& legacyJiraProjectKey,
-                               const std::string& legacyPlaneProjectId,
+    void RunLegacyProjectSweep(const std::string& legacyJiraProjectKey, const std::string& legacyPlaneProjectId,
                                const std::string& trackerType);
 
   private:

@@ -85,13 +85,11 @@ class LocalCacheManager {
 
 #if defined(SMATCHET_WITH_AI)
     // ---------------- AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity) ----------------
-    //
     // All writes routed through `smatchet::ai::chat_persist` worker so the UI thread
     // never blocks on SQLite. Schema is additive (`CREATE TABLE IF NOT EXISTS`); old
     // DBs auto-upgrade without a schema-version probe. Failures degrade to in-memory-
     // only — every call wraps in try/catch and logs `LOG_WARN` on failure. Pinned rows
     // are exempt from `TrimChatMessages` so user-bookmarked context survives growth.
-    //
     /// @return newly-inserted row id, or -1 on failure.
     std::int64_t AppendChatMessage(const AiMessage& msg);
     /// Flips the `pinned` column for `id`. No-op + WARN if `id` is absent.
@@ -111,7 +109,6 @@ class LocalCacheManager {
 
     // Cached prepared statements for the hot paths (SaveTicket / TryGetTicket).
     // Lazily initialised on first use; reset+clearBindings before each bind cycle.
-    //
     // SQLite::Statement (and the underlying sqlite3_stmt) is NOT thread-safe per
     // <https://sqlite.org/threadsafe.html> — even when the connection itself was
     // opened with OPEN_FULLMUTEX (which serialises sqlite3_step calls on the

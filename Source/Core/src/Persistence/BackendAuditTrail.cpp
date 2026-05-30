@@ -168,11 +168,9 @@ static std::string GetAuditFallbackPath() {
     return base + "smatchet_backend_audit_fallback.jsonl";
 }
 
-// ---------------------------------------------------------------------------
 // Async file writer — decouples AppendEvent from disk I/O so tracker mutations
 // are not stalled by slow storage (§4.4). Bounded queue drops oldest on overflow.
 // Placed after GetAuditFilePath so the thread lambda can call it without a forward decl.
-// ---------------------------------------------------------------------------
 static constexpr std::size_t kWriterQueueMax = 512;
 
 struct AuditWriter {
