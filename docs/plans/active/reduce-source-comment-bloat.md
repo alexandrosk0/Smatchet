@@ -36,6 +36,11 @@ Counted by the prospective `comment_audit.py` definition: a **comment line** is 
 
 ### Post-implementation diff *(populated post-ship)*
 
+**Phase-0 re-confirmation (2026-05-30, `comment_audit.py` on current develop):** 409 files · 94,380 total ·
+73,635 code · **11,343 comment** · 9,402 blank · **12.0%** — reproduces the original hand-measured baseline
+within rounding (per-subsystem also matches: `include/` 34.4%, `Plugins/` 18.0%, `Ui/` 8.2%, `Tracker/` 4.6%).
+The original § Baseline metrics numbers stand as the reference baseline; the analyzer is validated against them.
+
 Re-run `comment_audit.py` on the final merged state; fill in. Report cumulative + per-wave.
 
 | Metric | Baseline | After Wave 1 | After Wave 2 | Δ (abs) | Δ (%) |
@@ -99,7 +104,7 @@ The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) ar
 
 **Batch order within each wave** (strict lint-zones first, where the delta-lint net is strongest; Tracker already done by the pilot):
 - `Source/Core/{src,include}/{Sync,Persistence,Config}/` (strict)
-- `Source/Core/{src,include}/Commands/` + `Source/Plugins/Mcp/src/` (strict)
+- `Source/Core/{src,include}/Commands/` + `Source/Plugins/Mcp/` (strict)
 - `Source/Core/include/` remaining (highest comment density — prioritise for Wave 2)
 - `Source/Core/src/Ui/` (light; largest by lines — **split into sub-PRs** per the batch-size cap in § Risks)
 - `Source/Core/src/` root (`AppController*`, `Ai*`, `Logger`, …)
@@ -124,7 +129,7 @@ Per-batch pipeline (both waves): apply pass (Wave 1 = `comment_strip.py` dry-run
 **Sweep targets — every first-party `.cpp`/`.h`/`.hpp` under, each swept in Wave 1 (mechanical) then Wave 2 (judgment); Tracker is the pilot, then strict-zone batches first:**
 5. `Source/Core/src/Tracker/`, `Source/Core/include/Tracker/` (**Pilot**, Phase 1).
 6. `Source/Core/src/{Sync,Persistence,Config}/`, `Source/Core/include/{Sync,Persistence,Config}/` (strict).
-7. `Source/Core/src/Commands/`, `Source/Core/include/Commands/`, `Source/Plugins/Mcp/src/` (strict).
+7. `Source/Core/src/Commands/`, `Source/Core/include/Commands/`, `Source/Plugins/Mcp/` (strict). *(Mcp `src/` was flattened to `Source/Plugins/Mcp/` by #556 — path updated.)*
 8. `Source/Core/include/` remaining headers (highest density, 34%).
 9. `Source/Core/src/Ui/` (split into sub-PRs).
 10. `Source/Core/src/` root + `Source/Plugins/{LuaConsole,Whisper}/` + `Source/Standalone/`.
@@ -210,7 +215,16 @@ Per `AGENTS.md` § Verification automation — automated wherever physically pos
 - **A prose comment *style guide*** (how to author good comments) — out of scope; the Phase-4 regrowth guard enforces *mechanical noise* limits only, not authorship style. (The regrowth lint rule itself is now in scope — see Phase 4.)
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- **Phase 0** — tooling + baseline. Added `scripts/dev/comment_lib.py` (literal-aware tokenizer +
+  code-token residue; correctly handles `//`/`/*` inside string/char/raw-string literals and the
+  line-comment-resets-at-newline case), `comment_audit.py` (taxonomy classifier + per-subsystem
+  baseline table + Phase-4 `--diff` regrowth mode), `comment_strip.py` (deterministic Wave-1 stripper:
+  only `//`-line cut-blank/decorative buckets; never block bodies, doc comments, trailing-on-code, or
+  protect-list), `assert-code-unchanged.sh` (the safety gate — base-vs-head code-token residue must be
+  byte-identical), and `tests/dev/comment_tooling/` fixtures + `scripts/dev/test-comment-tooling.sh`
+  (auto-enrolled by `test-all.sh`). Baseline re-confirmed (see § Post-implementation diff). Stale
+  `Source/Plugins/Mcp/src/` path corrected to `Source/Plugins/Mcp/` (#556 flatten). Gate validated:
+  PASS on a comment-only strip, FAIL on an injected code edit. No product-source edits.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
