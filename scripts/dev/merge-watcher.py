@@ -287,6 +287,29 @@ def _poll_run_gates(owner: str, repo: str, pr: int, env: dict):
     )
 
 
+def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
+    """Parse the `GATE_CARRY nudge_head=… stale_head=… stale_streak=…` line the
+    poller emits before its blocked `return 1`. Returns
+    {nudged_head, stale_head, stale_streak}, or None when absent (pass /
+    early-return — the caller carries the prior registry values forward)."""
+    for ln in stdout.splitlines():
+        if ln.startswith("GATE_CARRY "):
+            fields: dict[str, str] = {}
+            for tok in ln[len("GATE_CARRY "):].split():
+                k, _, v = tok.partition("=")
+                fields[k] = v
+            try:
+                streak = int(fields.get("stale_streak", "0") or "0")
+            except ValueError:
+                streak = 0
+            return {
+                "nudged_head": fields.get("nudge_head", ""),
+                "stale_head": fields.get("stale_head", ""),
+                "stale_streak": streak,
+            }
+    return None
+
+
 def poll_one(
     entry: dict[str, Any], extra_gates_env: dict[str, str] | None = None
 ) -> dict[str, Any]:
@@ -393,6 +416,13 @@ def poll_one(
             extra_path_parts.append(d)
     if extra_path_parts:
         env["PATH"] = os.pathsep.join(extra_path_parts) + os.pathsep + env.get("PATH", "")
+    # Seed the cross-poll nudge guard + STALE streak from the registry entry so
+    # the once-per-HEAD @coderabbitai-review nudge + the STALE re-review survive
+    # the watcher's MERGE_GATES_MAX_POLLS=1 model (merge-gates.sh's in-process
+    # locals reset every invocation otherwise). Mirrors the cr_none_grace counter.
+    env["MERGE_GATES_PRIOR_NUDGE_HEAD"] = str(entry.get("nudged_head", "") or "")
+    env["MERGE_GATES_PRIOR_STALE_HEAD"] = str(entry.get("stale_head", "") or "")
+    env["MERGE_GATES_PRIOR_STALE_STREAK"] = str(int(entry.get("stale_streak", 0) or 0))
     # Per-invocation overrides (e.g. MERGE_GATES_CR_GRACE_POLLS=0 from the
     # CR-NONE grace-elapsed re-poll). update(), not setdefault(), so the
     # override wins over the daemon defaults above and the inherited env.
@@ -432,7 +462,7 @@ def poll_one(
         4: "PR_CLOSED_OR_MERGED",
         5: "PAGINATION_OVERFLOW",
     }.get(gates.returncode, f"EXIT_{gates.returncode}")
-    return {
+    result = {
         "pr": pr,
         "clone_path": clone_path,
         "last_poll_unix": int(time.time()),
@@ -440,6 +470,15 @@ def poll_one(
         "last_status_line": last_line,
         "gates_return_code": gates.returncode,
     }
+    # GATE_CARRY — the poll emits "GATE_CARRY nudge_head=… stale_head=… stale_streak=…"
+    # before its blocked return so the watcher can persist the once-per-HEAD nudge
+    # guard + STALE streak across cycles (the in-process locals reset under
+    # MERGE_GATES_MAX_POLLS=1). Absent on pass / early-return → the daemon carries
+    # the prior registry values forward unchanged.
+    nudge_carry = _parse_gate_carry(gates.stdout)
+    if nudge_carry is not None:
+        result["nudge_carry"] = nudge_carry
+    return result
 
 
 def write_state(state: dict[str, Any]) -> None:
@@ -1137,6 +1176,27 @@ def _bump_cr_none_grace(
         _CLI.write_registry(entries)
 
 
+def _bump_nudge_state(
+    pr: int, clone_path: str, nudged_head: str, stale_head: str, stale_streak: int
+) -> None:
+    """Persist the cross-cycle CR-nudge guard + STALE streak in the registry.
+
+    Mirrors `_bump_cr_none_grace`. `nudged_head` pins the once-per-HEAD
+    @coderabbitai-review guard; `stale_head` / `stale_streak` carry the STALE
+    re-review counter. Both survive the MERGE_GATES_MAX_POLLS=1 single-poll model
+    that resets merge-gates.sh's in-process locals every cycle.
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                e["nudged_head"] = nudged_head
+                e["stale_head"] = stale_head
+                e["stale_streak"] = stale_streak
+                break
+        _CLI.write_registry(entries)
+
+
 def maybe_pass_cr_none_grace(
     entry: dict[str, Any], state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1752,6 +1812,20 @@ def daemon_loop(poll_interval: int) -> int:
                 print(f"[cycle {cycle}] polling {len(entries)} registered PR(s)")
                 for entry in entries:
                     state = poll_one(entry)
+                    # Persist the cross-cycle nudge guard + STALE streak the poll
+                    # emitted (GATE_CARRY) so the once-per-HEAD @coderabbitai-review
+                    # nudge doesn't re-fire next cycle and the STALE streak
+                    # accumulates (merge-gates.sh's in-process locals reset under
+                    # MERGE_GATES_MAX_POLLS=1). pop() so it never lands in state/<pr>.json.
+                    nudge_carry = state.pop("nudge_carry", None)
+                    if nudge_carry is not None:
+                        _bump_nudge_state(
+                            int(entry["pr"]),
+                            entry["clone_path"],
+                            nudge_carry["nudged_head"],
+                            nudge_carry["stale_head"],
+                            nudge_carry["stale_streak"],
+                        )
                     # CR-NONE grace driver — flip BLOCKED -> GATES_PASSED once a
                     # skipped/absent-review grace window has elapsed across real
                     # cycles (closes the MAX_POLLS=1 grace wedge). Runs before
