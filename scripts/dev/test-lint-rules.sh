@@ -259,12 +259,32 @@ scan_narrowing() {
 compute_strict_triples() {
     local files=() f
     while IFS= read -r f; do files+=("$f"); done < <(
-        git ls-files 'Source/Core/src/**' 'Source/Core/include/**' 'Source/Plugins/Mcp/src/**' 2>/dev/null \
+        # Discover canonical (Source/…) roots AND the pre-consolidation legacy
+        # roots (Source_Core/…, Plugins/…). The legacy globs let the --diff base
+        # scan — which re-runs THIS scanner against an origin/develop worktree —
+        # find the same grandfathered strict-zone violators while develop still
+        # carries the old layout (refactor/source-root-consolidation). Once
+        # develop adopts the Source/ layout the legacy globs match nothing and
+        # are harmless; remove them in a follow-up cleanup. Triple keys are
+        # (rule, basename, hash) — path-independent — so a legacy-path match
+        # cancels its new-path twin exactly.
+        git ls-files \
+            'Source/Core/src/**' 'Source/Core/include/**' 'Source/Plugins/Mcp/src/**' \
+            'Source_Core/src/**'  'Source_Core/include/**'  'Plugins/Mcp/src/**' \
+            2>/dev/null \
         | grep -E '\.(cpp|h|hpp)$' || true
     )
     local strict_files=()
     for f in "${files[@]}"; do
-        [ "$(zone_of "$f")" = strict ] && strict_files+=("$f")
+        # Classify on the canonicalised path (legacy roots -> Source/ layout) so
+        # zone_of + STRICT_GLOBS stay single-sourced against AGENTS.md and the
+        # --selftest assertion is untouched; scan the REAL path so the file opens.
+        local canon="$f"
+        case "$f" in
+            Source_Core/*) canon="Source/Core/${f#Source_Core/}" ;;
+            Plugins/*)     canon="Source/Plugins/${f#Plugins/}" ;;
+        esac
+        [ "$(zone_of "$canon")" = strict ] && strict_files+=("$f")
     done
     {
         for f in "${strict_files[@]}"; do scan_file_rules "$f"; done
