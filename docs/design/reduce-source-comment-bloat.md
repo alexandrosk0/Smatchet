@@ -22,7 +22,9 @@ A **taxonomy-driven, tooling-gated, batched** sweep. Three pieces:
 
 3. **Per-subsystem batches**, one PR each, each running build (dual-target) + lint-delta + tests + the assert-code-unchanged check. Batching by lint **zone** matters: strict-zone trees (`Tracker`, `Sync`, `Persistence`, `Config`, `Commands`, `Mcp`) fail CI on any *new* `(rule, file, snippet)` violation — so removing a `// custom-deleter` marker next to a raw `new` is caught automatically, validating the protect-list against the strongest available net.
 
-The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) are judgment calls a script cannot make safely, so the LLM pass is load-bearing — mitigated by erring toward keep, small reviewable diffs, CodeRabbit, and the mechanical code-unchanged proof.
+Each batch runs in **two passes**: **Pass 1** — the deterministic mechanical stripper (`comment_strip.py`, no judgment, only the unambiguous *cut* buckets); **Pass 2** — the LLM judgment pass (compress verbose rationale, remove self-evident docs). The full sweep is **pilot-gated**: the remaining batches are not started until one slice has run both passes end-to-end and cleared a measured go/no-go threshold (see § Phases).
+
+The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) are judgment calls a script cannot make safely, so the LLM pass is load-bearing — mitigated by erring toward keep, small reviewable diffs, CodeRabbit, and the mechanical code-unchanged proof. Lowering the API-doc risk: **no first-party doc-generation pipeline exists** (every `Doxyfile` in the tree belongs to a vendored FetchContent dep; zero `doxygen` references in first-party CMake/scripts), so `///` / `/** */` blocks are consumed only by IDE hover + human reading — removing a self-evident one breaks no published-docs build, it only drops that symbol's editor tooltip.
 
 ### Comment taxonomy
 
@@ -38,7 +40,7 @@ The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) ar
 - `@param`/`@return`-style prose that only echoes the signature → drop.
 
 **PROTECT — never touch (hardcoded script whitelist + LLM instruction):**
-- Legacy lint markers + their explanatory tail: `// CLI stdout — product output, not logging`, `// pre-logger-init — LOG_* unavailable`, `// C-ABI handle`, `// custom-deleter — make_unique inapplicable` (42 occurrences, 5 files).
+- Legacy lint markers + their explanatory tail: `// CLI stdout — product output, not logging`, `// pre-logger-init — LOG_* unavailable`, `// C-ABI handle`, `// custom-deleter — make_unique inapplicable`, `// pimpl` (42+ occurrences, 5 files). These are **inline trailing** comments on the code line (e.g. `auto* p = new Foo(); // custom-deleter`); `test-lint-rules.sh:105` (`has_inline_exempt`) matches them on the same line, so stripping the trailing marker reintroduces the suppressed violation. The mechanical pass must never strip a trailing comment off a line it shares with code.
 - `// SMATCHET_DEVIATION(...)` suppressor lines (govern next-line lint).
 - Perf annotations: `/* PILLAR2_WORKER_ONLY */`, `// est-latency: <N>ms`; and `SMATCHET_UI_PERF_SCOPE(...)` (code, not comment — but adjacent, do not disturb).
 - Build-divergence macro comments documenting `SMATCHET_WITH_*` / `SMATCHET_EMBEDDED_IN_UNREAL` / include-order constraints — load-bearing knowledge.
@@ -49,17 +51,18 @@ The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) ar
 
 ### Phases
 
-**Phase 0 — Tooling + baseline (1 PR).** Build the analyzer, the mechanical stripper, the assert-code-unchanged check, and their fixture tests. Lock the protect-list. Emit the baseline comment-count report. This PR ships no product-source comment edits — only `scripts/dev/` + `tests/`.
+**Phase 0 — Tooling + baseline (1 PR).** Build `comment_audit.py`, `comment_strip.py`, `assert-code-unchanged.sh`, and their fixture tests. Lock the protect-list. Emit the baseline comment-count report across the whole corpus (also ranks files by noise to prioritise later batches). Ships no product-source comment edits — only `scripts/dev/` + `tests/`.
 
-**Phases 1–6 — Per-subsystem batches (1 PR each), in lint-zone order (strict first, where the delta-lint net is strongest):**
-- **Batch A** — `Source_Core/{src,include}/Tracker/` (strict zone).
+**Phase 1 — Pilot (1 PR), `Source_Core/{src,include}/Tracker/` (smallest strict zone).** Run **both passes** end-to-end on this slice. Measure comment-lines-removed ÷ slice baseline; inspect diff quality. **Go/no-go gate: proceed to Batches B–F only if ≥ 20% comment-line reduction with clean, behavior-preserving diffs** (threshold provisional — revisit after seeing the Pass-1-only mechanical yield). Below threshold → ship the mechanical-only (Pass 1) result repo-wide and shelve the judgment pass as low-ROI.
+
+**Phases 2–6 — Remaining batches (1 PR each), pilot-gated, lint-zone order (strict first, where the delta-lint net is strongest):**
 - **Batch B** — `Source_Core/{src,include}/{Sync,Persistence,Config}/` (strict zone).
 - **Batch C** — `Source_Core/{src,include}/Commands/` + `Plugins/Mcp/src/` (strict zone).
-- **Batch D** — `Source_Core/{src,include}/Ui/` (light zone; largest corpus — e.g. [SmatchetAiAssistantUi.cpp](Source_Core/src/Ui/SmatchetAiAssistantUi.cpp) 391 lines).
+- **Batch D** — `Source_Core/{src,include}/Ui/` (light zone; largest corpus — e.g. [SmatchetAiAssistantUi.cpp](Source_Core/src/Ui/SmatchetAiAssistantUi.cpp) 391 lines — **split into sub-PRs** per the batch-size cap in § Risks).
 - **Batch E** — `Source_Core/` root `src` + `include` (`AppController*`, `Ai*`, `Logger`, etc.).
 - **Batch F** — `Plugins/{LuaConsole,Whisper}` + `Target_Standalone/`.
 
-Per-batch pipeline: analyzer report → mechanical strip (dry-run → apply) → LLM judgment pass → `clang-format -i` → dual-target build → lint-delta gate → `test-all.sh` → assert-code-unchanged → PR → CodeRabbit → merge gates.
+Per-batch pipeline: analyzer report → Pass 1 (mechanical strip, dry-run → apply) → Pass 2 (LLM judgment) → `clang-format -i` → dual-target build → lint-delta gate → `test-all.sh` → `assert-code-unchanged` → PR → CodeRabbit → merge gates.
 
 ## Files to modify
 
@@ -70,10 +73,10 @@ Per-batch pipeline: analyzer report → mechanical strip (dry-run → apply) →
 4. `tests/dev/comment_tooling/` fixtures + a ctest (or bats) wrapper — one fixture per bucket; assert protect-list survives, noise removed, code-token stream preserved.
 
 **Sweep targets (Phases 1–6), grouped by batch — every first-party `.cpp`/`.h`/`.hpp` under:**
-5. `Source_Core/src/Tracker/`, `Source_Core/include/Tracker/` (Batch A).
+5. `Source_Core/src/Tracker/`, `Source_Core/include/Tracker/` (**Pilot**, Phase 1).
 6. `Source_Core/src/{Sync,Persistence,Config}/`, `Source_Core/include/{Sync,Persistence,Config}/` (Batch B).
 7. `Source_Core/src/Commands/`, `Source_Core/include/Commands/`, `Plugins/Mcp/src/` (Batch C).
-8. `Source_Core/src/Ui/`, `Source_Core/include/Ui/` (Batch D).
+8. `Source_Core/src/Ui/`, `Source_Core/include/Ui/` (Batch D — split into sub-PRs).
 9. `Source_Core/src/*`, `Source_Core/include/*` root (Batch E).
 10. `Plugins/LuaConsole/`, `Plugins/Whisper/`, `Target_Standalone/` (Batch F).
 
@@ -117,7 +120,10 @@ Diff touches `Source_Core/`, so this section is mandatory. All gates resolve **N
 - **Accidental code edit** while removing comments. *Mitigation*: `assert-code-unchanged` (comment-stripped token stream must be byte-identical base vs head) + dual-target build + `test-all.sh`. This is the primary net.
 - **Over-removal of genuine *why*-knowledge** (not catchable by any automated gate). *Mitigation*: "Moderate" depth, LLM errs toward keep, small reviewable diffs, CodeRabbit, human review on each PR.
 - **Tokenizer edge cases** — `//` inside string/char/raw-string literals (`R"(...)"`), line-continuation (`\` at EOL splicing comment into code), comments inside multi-line macros. *Mitigation*: literal-aware tokenizer (shared by analyzer + stripper + code-unchanged check); macro-body comments on protect-list; build gate catches splices.
-- **`clang-format` reflow churn** after removal enlarges diffs. *Mitigation*: format inline per edit; accept (formatting is house policy anyway).
+- **`clang-format` comment reflow** — `.clang-format` sets `ColumnLimit: 120` with `ReflowComments` on, so a Pass-2 single-line comment > 120 chars is auto-re-wrapped back to multiple lines, silently undoing the compression. *Mitigation*: Pass-2 compressed comments stay ≤ 120 chars; analyzer flags any candidate over the limit. (`SortIncludes: Never` + `IncludeBlocks: Preserve` mean removing include-section banners triggers no reorder churn.)
+- **Line-number shift** — deleting comment lines renumbers everything below, changing `__LINE__` expansions (log line info, assert messages), `git blame`, and debug line tables. *Mitigation*: accept as cosmetic (fewer lines is the goal); the lint baseline keys on `(rule, basename, hash)` not line, so it is shift-robust; Phase 0 confirms no in-repo tooling hard-codes source line numbers.
+- **Oversized batch PRs** — the Ui batch alone is ~190 files; one PR would be unreviewable and risk CodeRabbit truncation. *Mitigation*: **batch-size cap** ≈ ≤ 25 files or ≤ ~1500 changed lines per PR; split large batches (esp. Ui) into sub-PRs.
+- **Concurrent branch-swap daemon** — a merge-watcher/janitor process swaps `HEAD` mid-session (observed: branch moved twice while authoring this plan). *Mitigation*: commit early + often; re-verify `HEAD` immediately before every commit and re-checkout the working branch if it moved (per the watcher-janitor branch-swap rule).
 
 **Non-goals:**
 - Not touching ThirdParty, Unreal plugins, generated code, or `tests/`.
@@ -134,7 +140,7 @@ Per `AGENTS.md` § Verification automation — automated wherever physically pos
 - **Lint-delta gate (per batch)**: `scripts/dev/test-lint-rules.sh --diff` — zero new `(rule, file, snippet)` violations vs `origin/develop`. Validates the protect-list preserved all suppressors.
 - **Build gate (per batch)**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target) — catches any line-continuation / macro splice.
 - **Test gate (per batch)**: `scripts/dev/test-all.sh` — sanity; comment changes must not move any test.
-- **Metric**: analyzer before/after comment-line counts per batch + cumulative, reported in each PR body.
+- **Metric + pilot gate**: analyzer before/after comment-line counts per batch + cumulative, reported in each PR body. Pilot go/no-go: **≥ 20%** slice comment-line reduction with clean diffs unlocks Batches B–F; below that, ship Pass-1-only repo-wide and shelve the judgment pass.
 - **Bucket E (ImGui Test Engine)**: N/A — no UI behavior change.
 - **Manual residue**: the "is this comment self-evident / redundant?" judgment is inherently subjective and not fully automatable. *Deferred-automation action plan*: the analyzer's candidate report + `assert-code-unchanged` bound the risk to "only comments changed"; remaining judgment is covered by per-PR human + CodeRabbit review. Add a `docs/backlog/agent-self-improvement/tooling.md` entry if a heuristic for "self-evident doc" proves worth automating after Batch A/B experience.
 
