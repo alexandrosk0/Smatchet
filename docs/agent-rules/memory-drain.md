@@ -8,8 +8,13 @@ memory). The weekly drain converts that inbox into repo-resident truth.
 
 ## Cadence
 
-Weekly (scheduled routine `memory-weekly-drain`). Also run on demand whenever the
-inbox passes ~5 live items or the user asks to "triage memory".
+Event-driven, not calendar. The `SessionStart` hook `scripts/dev/memory-drain-nudge.sh`
+checks the local inbox on every session start and prints a one-line nudge into
+context when the inbox holds ≥ 5 live items **or** any item is > 7 days old
+(thresholds: `SMATCHET_MEMORY_DRAIN_COUNT` / `SMATCHET_MEMORY_DRAIN_DAYS`). Act on
+the nudge with the `/drain-memory` skill, or run it any time the user says
+"drain memory". A remote/cloud routine **cannot** do this — the memory dir is
+machine-local, outside the repo; only a local session sees it.
 
 ## Per-item triage — three verdicts
 
