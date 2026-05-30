@@ -12,6 +12,7 @@ FetchContent_MakeAvailable(doctest)
 add_executable(SmatchetTests
     test_main.cpp
     Core/AnnotateAnalysisConfig.test.cpp
+    Core/AnnotateLocalization.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/JqlProjectScope.test.cpp
     Core/TextMerge.test.cpp

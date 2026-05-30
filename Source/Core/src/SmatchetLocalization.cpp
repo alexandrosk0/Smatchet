@@ -392,9 +392,11 @@ const TranslationEntry kEntries[] = {
     {"annotate.at_changelist", "Before changelist (optional)", u8"Avant la changelist (facultatif)"},
     {"annotate.process", "Process", u8"Traiter"},
     {"annotate.assign_user", "Assign issue to user", u8"Assigner le ticket à l'utilisateur"},
-    {"annotate.add_context_comment", "Add annotate context comment", u8"Ajouter un commentaire de contexte annotate"},
+    {"annotate.add_context_comment", "Add Annotate context comment",
+     u8"Ajouter un commentaire de contexte d'annotation"},
     {"annotate.quick_templates", "Quick comment templates", u8"Modèles de commentaires rapides"},
-    {"annotate.assign_and_comment", "Assign and add annotate context", u8"Assigner et ajouter le contexte annotate"},
+    {"annotate.assign_and_comment", "Assign and add Annotate context",
+     u8"Assigner et ajouter le contexte d'annotation"},
     {"annotate.groups", "Groups (best effort):", u8"Groupes (au mieux) :"},
     {"annotate.none_permitted", "(none or not permitted)", u8"(aucun ou non autorisé)"},
 
