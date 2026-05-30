@@ -100,6 +100,11 @@ struct TrackerConfig {
     // BugReportGitHubPat is a secret — DPAPI-encrypted on Win32, same path as GitHubPat.
     bool BugReportPersistPat = false;
     std::string BugReportGitHubPat;
+    // Censor mosaic block size in pixels on the (downscaled) capture. 0 = auto
+    // (RecommendedCensorBlock, ~6px). Lower = sharper / less pixelated (2-3 is
+    // light), higher = blurrier. Tune to taste — this is a reduce-readability
+    // pass, not a privacy guarantee.
+    int BugReportCensorBlock = 0;
     std::string BugReportHotkey = "Ctrl+Shift+B";
     bool BugReportHotkeyEnabled = true;
     bool BugReportScreenshotDefault = true;

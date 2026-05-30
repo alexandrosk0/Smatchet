@@ -582,6 +582,9 @@ struct UiDrawSession {
     /// log-a-bug-github — when set alongside requestScreenshot, the standalone capture path
     /// mosaic-censors the framebuffer (no readable text) before writing the PNG.
     bool requestScreenshotCensor = false;
+    /// Censor mosaic block size (px) for this request. 0 = auto (RecommendedCensorBlock).
+    /// Seeded from cfg.BugReportCensorBlock when the bug-report modal arms a capture.
+    int requestScreenshotCensorBlock = 0;
     /// log-a-bug-github — set by the bug-report modal when its capture request is for the
     /// report (not a debug/test shot). The standalone capture path echoes completion back
     /// via bugReportShotReady so the modal never polls the filesystem on the UI thread.

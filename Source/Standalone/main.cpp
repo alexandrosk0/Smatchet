@@ -641,6 +641,8 @@ int main(int argc, char** argv) {
                 g_ui.requestScreenshot = false;
                 const bool censorThisShot = g_ui.requestScreenshotCensor;
                 g_ui.requestScreenshotCensor = false;
+                const int censorBlockOverride = g_ui.requestScreenshotCensorBlock; // 0 = auto
+                g_ui.requestScreenshotCensorBlock = 0;
                 // "Log a Bug" capture — own the staging dir + signal completion here (the
                 // capture path is inherently main-thread and already writes to disk), so the
                 // bug-report modal never does UI-thread filesystem I/O.
@@ -685,8 +687,9 @@ int main(int argc, char** argv) {
                     // "Log a Bug" censored variant — mosaic the frame so no text is
                     // readable before it is written/uploaded. Consumed once per request.
                     if (censorThisShot) {
-                        smatchet::imaging::MosaicCensorInPlace(rgb.data(), fw, fh, 3,
-                                                               smatchet::imaging::RecommendedCensorBlock(fw, fh));
+                        const int block = censorBlockOverride > 0 ? censorBlockOverride
+                                                                  : smatchet::imaging::RecommendedCensorBlock(fw, fh);
+                        smatchet::imaging::MosaicCensorInPlace(rgb.data(), fw, fh, 3, block);
                     }
                     // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
                     // dev hardware) while still cutting the file ~40× vs raw PPM. Stride is

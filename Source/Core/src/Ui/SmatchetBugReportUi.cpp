@@ -93,6 +93,7 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
             d.bugReportShotArmed = false;
             d.requestScreenshotPath = d.bugReportStagedShotPath;
             d.requestScreenshotCensor = (d.bugReportShotMode == 1);
+            d.requestScreenshotCensorBlock = d.cfg.BugReportCensorBlock; // 0 = auto
             d.requestScreenshot = true;
             d.requestScreenshotBugReport = true;
             d.bugReportShotReady = false;
