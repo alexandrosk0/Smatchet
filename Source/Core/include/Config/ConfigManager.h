@@ -94,8 +94,9 @@ struct TrackerConfig {
     std::string BugReportGitHubRepo;    // dev-repo name
     std::string BugReportGitHubBaseUrl; // empty -> falls back to GitHubBaseUrl -> api.github.com
     std::string BugReportAssetsRepo;    // "owner/repo" for screenshot uploads; empty -> reuse issue repo
-    // PAT resolution order: env SMATCHET_BUGREPORT_GITHUB_TOKEN -> GitHubPat ->
-    // BugReportGitHubPat (read/written ONLY when BugReportPersistPat == true).
+    // PAT resolution order: env SMATCHET_BUGREPORT_GITHUB_TOKEN -> BugReportGitHubPat
+    // (read/written ONLY when BugReportPersistPat == true). The tracker GitHubPat is
+    // intentionally NOT used by the bug reporter (separate, personal credential).
     // BugReportGitHubPat is a secret — DPAPI-encrypted on Win32, same path as GitHubPat.
     bool BugReportPersistPat = false;
     std::string BugReportGitHubPat;

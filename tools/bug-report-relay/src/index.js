@@ -15,7 +15,7 @@
 
 const GH_API = "https://api.github.com";
 const ASSETS_BRANCH = "bug-report-assets";
-const MAX_BODY_BYTES = 256 * 1024; // hard cap on the whole request payload
+const MAX_BODY_BYTES = 2 * 1024 * 1024; // hard cap on the whole request payload (base64 screenshot inflates ~4/3)
 const UA = "Smatchet-BugReportRelay";
 
 function ghHeaders(token) {

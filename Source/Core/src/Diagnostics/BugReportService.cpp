@@ -253,8 +253,9 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
     SubmitResult result;
 
     // The relay embeds the screenshot server-side, so the body carries no image
-    // markdown here (empty screenshotMarkdown).
-    const std::string body = BuildMarkdownBody(opts, bundle, std::string());
+    // markdown here. WYSIWYG: a user-edited preview overrides the generated body.
+    const std::string body =
+        opts.BodyOverride.empty() ? BuildMarkdownBody(opts, bundle, std::string()) : opts.BodyOverride;
     const std::string firstLine = FirstLine(opts.UserDescription);
     const std::string title = std::string("[Bug] ") + (firstLine.empty() ? "Report from Smatchet" : firstLine);
 
@@ -408,7 +409,17 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
         }
     }
 
-    const std::string body = BuildMarkdownBody(opts, bundle, screenshotMarkdown);
+    // WYSIWYG: when the user edited the egress preview, that text IS the body; we
+    // still append the uploaded-screenshot markdown so the image renders.
+    std::string body;
+    if (!opts.BodyOverride.empty()) {
+        body = opts.BodyOverride;
+        if (!screenshotMarkdown.empty()) {
+            body += "\n\n" + screenshotMarkdown;
+        }
+    } else {
+        body = BuildMarkdownBody(opts, bundle, screenshotMarkdown);
+    }
 
     IssueDraft draft;
     draft.ProjectKey = target.Owner + "/" + target.Repo;

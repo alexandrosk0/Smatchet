@@ -676,6 +676,12 @@ int main(int argc, char** argv) {
                             src += 4;
                         }
                     }
+                    // "Log a Bug" capture: downscale so the base64 PNG fits the relay
+                    // payload cap (a 1920px frame is ~4x too big), THEN censor. Gated on
+                    // bugReportShot so golden/test captures keep their native resolution.
+                    if (bugReportShot) {
+                        smatchet::imaging::DownscaleToMaxDimension(rgb, fw, fh, 3, 1280);
+                    }
                     // "Log a Bug" censored variant — mosaic the frame so no text is
                     // readable before it is written/uploaded. Consumed once per request.
                     if (censorThisShot) {
@@ -683,10 +689,10 @@ int main(int argc, char** argv) {
                                                                smatchet::imaging::RecommendedCensorBlock(fw, fh));
                     }
                     // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
-                    // dev hardware) while still cutting the file ~40× vs raw PPM.
+                    // dev hardware) while still cutting the file ~40× vs raw PPM. Stride is
+                    // recomputed from the (possibly downscaled) width.
                     stbi_write_png_compression_level = 8;
-                    const int rc =
-                        stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), static_cast<int>(rowBytesRgb));
+                    const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), fw * 3);
                     if (rc == 0) {
                         LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
                     } else {

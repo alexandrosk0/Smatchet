@@ -84,6 +84,36 @@ TEST_CASE("MosaicCensorInPlace — null / non-positive args are no-ops") {
     CHECK(px[0] == 1); // unchanged
 }
 
+TEST_CASE("DownscaleToMaxDimension — shrinks longest side, updates dims, no-op when small") {
+    using smatchet::imaging::DownscaleToMaxDimension;
+
+    // 4x2 uniform (value 100), comp=1, maxDim=2 -> 2x1, averages stay 100.
+    std::vector<unsigned char> a(8, 100);
+    int w = 4, h = 2;
+    DownscaleToMaxDimension(a, w, h, 1, 2);
+    CHECK(w == 2);
+    CHECK(h == 1);
+    CHECK(a.size() == 2u);
+    CHECK(a[0] == 100);
+    CHECK(a[1] == 100);
+
+    // Already within maxDim -> no-op.
+    std::vector<unsigned char> b(12, 7); // 2x2 RGB
+    int bw = 2, bh = 2;
+    DownscaleToMaxDimension(b, bw, bh, 3, 64);
+    CHECK(bw == 2);
+    CHECK(bh == 2);
+    CHECK(b.size() == 12u);
+
+    // 1920x1009-ish aspect clamps to 1280 longest side.
+    std::vector<unsigned char> big(static_cast<std::size_t>(1920) * 1009 * 3, 50);
+    int gw = 1920, gh = 1009;
+    DownscaleToMaxDimension(big, gw, gh, 3, 1280);
+    CHECK(gw == 1280);
+    CHECK(gh < 1009);
+    CHECK(big.size() == static_cast<std::size_t>(gw) * gh * 3);
+}
+
 TEST_CASE("RecommendedCensorBlock — clamps to [12,48]") {
     CHECK(RecommendedCensorBlock(64, 64) == 12);     // 64/64=1 -> floor 12
     CHECK(RecommendedCensorBlock(800, 600) >= 12);   // min(800,600)/64≈9 -> floor 12
@@ -104,29 +134,33 @@ static TrackerConfig MakeCfg() {
 
 TEST_CASE("ResolveBugReportTarget — env token wins, defaults assets to issue repo") {
     TrackerConfig cfg = MakeCfg();
-    cfg.GitHubPat = "user-pat";
+    cfg.BugReportGitHubPat = "dedicated-pat";
     const ResolvedBugTarget t = ResolveBugReportTarget(cfg, "env-token");
     REQUIRE(t.Ok);
     CHECK(t.Owner == "acme");
     CHECK(t.Repo == "tracker");
-    CHECK(t.Pat == "env-token"); // env beats cfg.GitHubPat
+    CHECK(t.Pat == "env-token"); // env beats the dedicated PAT
     CHECK(t.BaseUrl == "https://api.github.com");
     CHECK(t.AssetsOwner == "acme"); // defaults to issue repo
     CHECK(t.AssetsRepo == "tracker");
 }
 
-TEST_CASE("ResolveBugReportTarget — falls back env->GitHubPat->BugReportGitHubPat") {
+TEST_CASE("ResolveBugReportTarget — env -> dedicated BugReportGitHubPat ONLY (never tracker GitHubPat)") {
     TrackerConfig cfg = MakeCfg();
-    cfg.GitHubPat = "user-pat";
-    CHECK(ResolveBugReportTarget(cfg, "").Pat == "user-pat");
-    cfg.GitHubPat.clear();
+    // The tracker PAT must NOT be borrowed by the bug reporter.
+    cfg.GitHubPat = "tracker-pat";
+    const ResolvedBugTarget noDedicated = ResolveBugReportTarget(cfg, "");
+    CHECK_FALSE(noDedicated.Ok); // tracker PAT present but unusable -> no token
+    CHECK(noDedicated.Pat.empty());
+
     cfg.BugReportGitHubPat = "dedicated-pat";
     CHECK(ResolveBugReportTarget(cfg, "").Pat == "dedicated-pat");
+    CHECK(ResolveBugReportTarget(cfg, "env-token").Pat == "env-token"); // env still wins
 }
 
 TEST_CASE("ResolveBugReportTarget — explicit assets repo parsed") {
     TrackerConfig cfg = MakeCfg();
-    cfg.GitHubPat = "p";
+    cfg.BugReportGitHubPat = "p";
     cfg.BugReportAssetsRepo = "assets-org/blobs";
     const ResolvedBugTarget t = ResolveBugReportTarget(cfg, "");
     REQUIRE(t.Ok);
@@ -148,7 +182,7 @@ TEST_CASE("ResolveBugReportTarget — relay mode overrides direct path, needs no
 
 TEST_CASE("ResolveBugReportTarget — relay wins even when direct owner/repo also set") {
     TrackerConfig cfg = MakeCfg();
-    cfg.GitHubPat = "p";
+    cfg.BugReportGitHubPat = "p";
     cfg.BugReportRelayUrl = "https://relay.example/report";
     const ResolvedBugTarget t = ResolveBugReportTarget(cfg, "env-token");
     REQUIRE(t.Ok);
@@ -175,7 +209,7 @@ TEST_CASE("ResolveBugReportTarget — error paths: missing repo / no PAT / bad b
     CHECK_FALSE(ResolveBugReportTarget(noPat, "").Ok); // no token anywhere
 
     TrackerConfig badUrl = MakeCfg();
-    badUrl.GitHubPat = "p";
+    badUrl.BugReportGitHubPat = "p";
     badUrl.BugReportGitHubBaseUrl = "http://not-https.example";
     const ResolvedBugTarget t = ResolveBugReportTarget(badUrl, "");
     CHECK_FALSE(t.Ok);
