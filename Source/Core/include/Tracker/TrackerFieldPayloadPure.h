@@ -93,31 +93,23 @@ std::vector<std::string> SplitCommaSeparatedTrimmed(const std::string& input);
 /** Normalize a Jira label token: trim + replace ASCII whitespace with '-'. */
 std::string SanitizeJiraLabelToken(std::string s);
 
-// Public mirrors of TrackerFieldPayload's pure functions. The production
-// header delegates to these so call sites continue to use the existing facade.
+// Public mirrors of TrackerFieldPayload's pure functions (identical behaviour; see that header for
+// per-function docs). The production header delegates to these so call sites keep the existing facade.
 
-/** Identical to TrackerFieldPayload::FieldUsesAdfDocument — see that doc. */
 bool FieldUsesAdfDocument(const TrackerField& field);
 
-/** Identical to TrackerFieldPayload::ExtractIssueKey — see that doc. */
 std::string ExtractIssueKey(const std::string& value);
 
-/** Identical to TrackerFieldPayload::IsArrayLike. */
 bool IsArrayLike(const TrackerField& field);
 
-/** Identical to TrackerFieldPayload::IsSprintField. */
 bool IsSprintField(const TrackerField& field);
 
-/** Identical to TrackerFieldPayload::SplitCommaSeparatedValues. */
 std::vector<std::string> SplitCommaSeparatedValues(const std::string& input);
 
-/** Identical to TrackerFieldPayload::ResolveSprintIdForAgile. */
 std::string ResolveSprintIdForAgile(const TrackerField& field, const std::string& rawValue);
 
-/** Identical to TrackerFieldPayload::ResolveDisplayValueForSubmittedSelection. */
 std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, const std::string& value);
 
-/** Identical to TrackerFieldPayload::BuildValue — pure top-level driver. */
 bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
                 std::string& outError);
 
