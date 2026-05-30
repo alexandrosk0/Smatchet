@@ -1,5 +1,4 @@
 // AnnotateOpenEntryTabScenario — slice 8 of autonomous-debugging-no-creds.
-//
 // Pillar-1 regression gate stand-in for the annotate Entry tab tokenizer hot
 // path. The full backlog ask (tooling.md P2 line 178 / now renamed
 // `annotate-open-entry-tab`) names a fake-callstack injection API on
@@ -8,18 +7,15 @@
 // exist yet — this scenario ships the *driver shape* in advance so the
 // perf-pr-fast scenario subset has a row to compare against, and so the
 // `annotate-open-entry-tab` name resolves at `scenario.run --name=` time.
-//
 // What it does today:
 //   * Snapshot + restore `g_ui.showAnnotateAnalysis` (open / close the panel).
 //   * Run N frames with the panel open so SmatchetUI::Draw's annotate branch
 //     accumulates UiPerfMonitor rows.
 //   * Emit `rows[]` so `perf-gatekeeper` can read it.
-//
 // What it doesn't do (and is explicitly deferred to the backlog follow-up):
 //   * Seed `callstackBuf` with a fake callstack — needs the AppController
 //     fake-callstack injection seam named in tooling.md line 180.
 //   * Switch to the Entry tab via grid selection — needs a live ticket.
-//
 // The scenario is registered as `annotate-open-entry-tab` (kebab convention
 // matching `priority-grid-scroll` / `dock-gap-sentinel` /
 // `command-palette-fuzzy`).

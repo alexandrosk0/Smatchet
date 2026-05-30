@@ -25,10 +25,8 @@ void RegisterScenarioCommands(CommandRegistry& reg, AppController& app) {
     // Register scenario factories on the runner owned by AppController.
     // The PriorityGridScrollScenario is the first built-in; others can be
     // added by appending more RegisterFactory calls here.
-    //
     // (Registration delegated to AppController::Scenarios().RegisterFactory so
     // the runner lives on AppController, not in the registry.)
-    //
     // We register scenario.* CLI commands through the registry as normal;
     // actual execution is delegated to the ScenarioRunner.
 

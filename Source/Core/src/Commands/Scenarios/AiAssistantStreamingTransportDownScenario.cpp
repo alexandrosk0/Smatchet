@@ -5,7 +5,6 @@
 // budget (default 5s — capped well under that for test cadence).
 // Asserts the cancel/error UI path fires within the budget AND that
 // partial deltas were observed before the drop.
-//
 // See AiAssistantStreamingHappyPathScenario.cpp for the inline-stub
 // rationale.
 

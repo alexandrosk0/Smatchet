@@ -1,10 +1,8 @@
 // AttachmentPreviewOpenScenario — regression guard for PR #191.
-//
 // PR #191 moved `SmatchetAttachmentPreviewUi`'s attachment download from a
 // synchronous `cpr::Get` on the UI thread to a worker thread via
 // `LaunchBackgroundTask` + `MainThreadDispatcher`. The visible-cue contract
 // requires no UI-thread hitch > 100 ms while the download is in flight.
-//
 // This scenario reaches the production code only via existing CLI / scope
 // observation — production UI files (`SmatchetAttachmentPreviewUi.cpp`,
 // `AppController*.cpp`) are out of scope for this PR. We run N frames as a

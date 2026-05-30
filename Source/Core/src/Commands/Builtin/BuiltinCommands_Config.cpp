@@ -84,7 +84,6 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
         // file, so it is overridden by SMATCHET_* env vars if both are set simultaneously.
         // Keys marked (restart) require the app or MCP plugin to restart to take effect;
         // all others are picked up on the next ConfigManager::Load() call (next sync, etc.).
-        //
         // Credentials (ApiToken, PlaneApiKey, McpAuthToken) are NOT in this table — use
         // SMATCHET_TRACKER_TOKEN / SMATCHET_MCP_AUTH_TOKEN env vars for secrets.
         struct CfgKey {

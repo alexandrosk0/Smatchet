@@ -3,19 +3,16 @@
 // end-to-end via a deterministic stub `IAiClient` (no real HTTP) and
 // asserts the UI state transition Idle → InFlight → Idle by counting
 // deltas + verifying onError was not fired.
-//
 // Why an inline stub rather than #include "tests/support/StubAiClient.h":
 // scenarios compile into Source/Core which does not include the tests/
 // tree on its include path. The stub shape is duplicated here (kept
 // minimal — just `delta_sequence` driving onDelta + a final IsFinal
 // delta) so the scenario stays inside Source/Core/.
-//
 // The scenario installs the stub via `AiClientFactory::SetTestOverride`,
 // fetches a fresh client (which routes through the override), invokes
 // SendStreaming on a scenario-owned worker thread, ticks N frames so the
 // UI loop continues to render, then joins the worker and asserts the
 // transition shape in `rows[]` + the JSON envelope.
-//
 // Gated on SMATCHET_WITH_AI — the AI factory + IAiClient interface live
 // behind that macro. The DX12 / OFF build registers a no-op stub via the
 // `#else` branch so the registry name still resolves.
@@ -108,8 +105,7 @@ std::unique_ptr<IAiClient> StubFactory(AiProvider /*provider*/) {
     if (!g_stubDeltas) {
         return std::unique_ptr<IAiClient>();
     }
-    return std::unique_ptr<IAiClient>(
-        std::make_unique<StubAiClientStreaming>(*g_stubDeltas, g_stubErrorAtIndex));
+    return std::unique_ptr<IAiClient>(std::make_unique<StubAiClientStreaming>(*g_stubDeltas, g_stubErrorAtIndex));
 }
 
 } // namespace

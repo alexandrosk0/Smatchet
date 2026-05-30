@@ -1,13 +1,11 @@
 // WhisperAiAssistantAutosendScenario — end-to-end regression gate for the
 // PR #249 fix at bf9ce67f (`ReloadUserBuf so ImGui rereads spliced buffer`).
-//
 // The fix lives across the router + AI Assistant TU pair: the router records
 // the focused widget's ItemId in `pendingReloadItemId_` whenever a splice lands
 // while the widget is active, and the AI Assistant draw drains that and calls
 // `ImGuiInputTextState::ReloadUserBufAndMoveToEnd()` before the next
 // InputTextMultiline. Without it, ImGui silently overwrites the freshly-spliced
 // `s_inputCharBuf` with its stale internal `state->TextA`.
-//
 // The pre-existing `whisper-dictation-roundtrip` scenario can't cover this
 // path: it registers its own static buffer (NOT the AI Assistant chat input)
 // and never focuses the AI input as an ImGui widget. This scenario closes the
@@ -21,7 +19,6 @@
 //   3. `SetAiAssistantSendCallback(...)` — observes the auto-send trigger.
 //   4. `ConfigManager::Save(cfg)` with `WhisperAutoSendOnPunctuation=true`,
 //      restored on teardown so the scenario doesn't leak into user preferences.
-//
 // Then drives press → release with `SetMockTranscription` carrying a sentence-
 // ending text and asserts:
 //   - The buf received the mock text (splice landed).
@@ -30,7 +27,6 @@
 //   - The auto-send callback was invoked (cell 3 — auto-send fired).
 //   - The router's transcribing flag toggled true then back to false (cell 4 at
 //     router level — the menu-bar indicator's source of truth).
-//
 // Threading: callbacks run on the UI thread inside the scenario runner's per-
 // frame Tick. Workers + MainThreadDispatcher drain are driven by the
 // surrounding SmatchetUI::Draw frame, identical to WhisperDictationScenario.

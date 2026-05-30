@@ -1,10 +1,8 @@
 // IdleScenario — app at rest baseline.
-//
 // Drives N frames of the normal draw loop with **no** input injected and **no**
 // transient state mutated. Used as the perf-floor reference: any other scenario
 // whose mean-per-frame UI work exceeds this baseline is doing real work. Pair
 // with `priority-grid-scroll` or `cell-edit-burst` to compute the delta.
-//
 // Audit lineage: perf-detective sweep on develop@31e1893 flagged the lack of a
 // "baseline frame floor" scenario — the audit's noise floor had to be inferred
 // from raw mean-per-frame numbers across other scenarios.

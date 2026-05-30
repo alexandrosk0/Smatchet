@@ -3,16 +3,13 @@
 // for N frames so the new `DrawHistoryArea` + `DrawPinStripIfAny` +
 // per-message `renderTurn` paths surface in `UiPerfMonitor` rows, then writes
 // the snapshot to `outPath`. Phase 6.7 of ai-chat-claude-desktop-parity.
-//
 // Pinned ratio is parameterised so the pin-strip scope (`ai_chat.history.
 // pin_strip`) gets exercised in the same run. Off-screen culling kicks in for
 // large history sizes — the scenario intentionally seeds enough to drive the
 // scroll-cull path so both visible-renderTurn and Dummy-skipped-renderTurn
 // branches contribute to the avg.
-//
 // Restores the chat history vector on OnFinish / OnCancel so the user's real
 // chat isn't left polluted with `[bench]` rows.
-//
 // Gated on SMATCHET_WITH_AI — the entire TU compiles as a no-op stub on the
 // DX12 build (which leaves SMATCHET_WITH_AI undefined). Without the gate the
 // `g_ui.assistantHistory` / `assistantHistoryRowIds` / `assistantPanelOpen`

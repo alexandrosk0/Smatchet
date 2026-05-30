@@ -1,12 +1,10 @@
 // LongTextOpenLargeAdfScenario — regression guard for PR #196.
-//
 // PR #196 added `kAsyncRichSeedThresholdBytes = 32 * 1024` to
 // `TicketFieldEditor.cpp::OpenLongTextEditor`: when the raw rich payload is
 // larger than the threshold, the ADF → Markdown seed compute moves to a worker
 // thread via `LaunchBackgroundTask` and the UI shows "Loading description…"
 // instead of blocking. Without this threshold a 32 KB+ ADF stalls the UI for
 // hundreds of ms while `MarkdownConvert::AdfToMarkdown` walks the tree.
-//
 // This scenario reaches the production code only via the already-extracted
 // pure helper `TicketFieldEditorLongTextPure::ComputeLongTextSeed`. We build a
 // synthetic > 32 KB ADF, time the seed compute once on the UI thread (the
@@ -14,7 +12,6 @@
 // the steady-state per-frame stats. The two numbers together tell us the
 // threshold is worth keeping — pre-regression of PR #196 would set
 // `seedComputeMs > frame_budget` while leaving `meanFrameMs` near baseline.
-//
 // Note: this scenario does NOT drive `OpenLongTextEditor` directly because
 // production UI files (`TicketFieldEditor.cpp`, etc.) are out of scope for
 // this PR. The pure compute timing is a proxy for the worker dispatch's win.

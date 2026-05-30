@@ -4,7 +4,6 @@
 // flags on UiDrawSession so Source/Standalone/main.cpp's post-swap handler
 // writes the PPM at the user-supplied output path. The bash driver compares
 // the PPM against tests/golden/dock_gap_sentinel.ppm.
-//
 // Why a scenario and not a one-shot CLI: capturing the screenshot requires
 // the renderer to have already drawn the steady-state dock chrome. A bare
 // `cmd debug.window.screenshot` against a freshly-spawned exe races the

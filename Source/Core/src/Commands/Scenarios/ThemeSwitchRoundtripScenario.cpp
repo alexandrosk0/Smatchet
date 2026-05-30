@@ -180,7 +180,6 @@ class ThemeSwitchRoundtripScenario : public IScenario {
         // CommandPaletteFuzzyScenario — the post-swap handler in
         // Source/Standalone/main.cpp will write the PNG after the next
         // SwapBuffers.
-        //
         // DELIBERATELY DO NOT restore savedTheme_ here. The screenshot fires
         // in the post-swap handler one frame AFTER OnFinish returns. If we
         // flip cfg.Theme back to savedTheme_ now, SmatchetUI::Draw's
@@ -190,7 +189,6 @@ class ThemeSwitchRoundtripScenario : public IScenario {
         // the post-roundtrip SmatchetDark we just spent the scenario landing
         // on. The diff against the golden would then be non-deterministic
         // (depends on whatever cfg.Theme the spawn launched with).
-        //
         // On ephemeral spawn instances this is a non-issue — the process
         // exits immediately after the screenshot fires + cfg is never
         // persisted. On a long-running dev session re-using one Smatchet
