@@ -20,7 +20,6 @@ namespace SubprocessCapturePure {
 /// vector). Backslashes preceding a literal quote must be doubled per
 /// the MSC quoting rules — see MSDN "Parsing C++ command-line arguments"
 /// and ParseCmdLineW.
-///
 /// Returns the input unchanged when it contains no whitespace and no
 /// quote characters (the caller can paste it into a command line
 /// verbatim). Otherwise wraps it in double quotes and escapes embedded
@@ -42,7 +41,6 @@ std::string QuoteArgvPosix(const std::string& arg);
 /// strings are UTF-8; conversion to UTF-16 happens here so non-ASCII
 /// values (Unicode paths, locale-translated user dirs) round-trip
 /// without being corrupted as ANSI.
-///
 /// Order is preserved (Windows itself does not care, but tests assert
 /// it for determinism).
 std::wstring BuildEnvBlockWindows(const std::vector<std::pair<std::string, std::string>>& env);

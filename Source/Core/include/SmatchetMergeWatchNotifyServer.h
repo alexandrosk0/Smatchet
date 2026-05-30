@@ -8,7 +8,6 @@
 // SmatchetMergeWatchNotifyServer — Phase 4b of
 // docs/plans/shipped/smatchet-merge-watcher.md. Localhost HTTP receiver for the
 // merge-watcher daemon's in-app toast notifications.
-//
 // Contract:
 // - Binds 127.0.0.1 ONLY (hard-coded; no env override). Bug here = local RCE
 //   via toast injection — see agents/security-review.md
@@ -18,13 +17,14 @@
 // - Validates payload server-side; rejects 400 on missing/oversized fields.
 // - Posts toast append via MainThreadDispatcher::PostToMainThread (Pillar 2 —
 //   HTTP runs on cpp-httplib worker thread; no sync I/O reaches UI thread).
-//
 // Owned by AppController; started on Initialize(), stopped at the top of
 // ~AppController BEFORE mainThreadDispatcher.BeginShutdown() fires so any
 // in-flight POST callbacks observe a live dispatcher.
 
 class AppController;
-namespace httplib { class Server; }
+namespace httplib {
+class Server;
+}
 
 class SmatchetMergeWatchNotifyServer {
   public:

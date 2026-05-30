@@ -1,7 +1,6 @@
 #pragma once
 
 // LuaAutomationHost — fan-out hub for plugin-registered Lua-log sinks.
-//
 // Scope (post-PR #144): this class owns the plugin-registered log-sink list
 // for the Lua automation surface and nothing else. Ownership of sol2 state,
 // every Lua binding, and the automation worker thread sits on AppController
@@ -11,7 +10,6 @@
 // without migrating ownership across the AppController boundary, so this
 // class stays a thin coordinator rather than the heavyweight owner the
 // original Phase 1B/1C/1D plan envisioned.
-//
 // Lifetime: AppController owns the host via `std::unique_ptr` and outlives
 // it. The host is constructed lazily during `AppController::Initialize` so
 // that plugin `OnEarlyInit` calls to `AddAutomationLogSink` (which may run

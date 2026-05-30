@@ -9,16 +9,13 @@
 #include <vector>
 
 /// Bounded, thread-safe queue of tasks drained once per frame on the main (UI) thread.
-///
 /// Workers post lambdas instead of setting ad-hoc one-shot atomic/bool flags, centralising
 /// the UI-thread-callback contract (BACKLOG_CODE_REVIEW.md §6.1). Drain is called at the head of
 /// SmatchetUI::Draw so tasks execute before any window drawing begins that frame.
-///
 /// Lifetime contract: the dispatcher is typically a member of `AppController`. Callers MUST
 /// stop posting (via `BeginShutdown()`) and join all worker threads before `~AppController`
 /// runs — `BeginShutdown()` flips a shutdown atom so late posts no-op rather than touching
 /// the about-to-be-destroyed mutex.
-///
 /// Bound: `kMaxQueueSize` tasks. On overflow the oldest task is dropped silently. This bound
 /// existed in the original docstring but was not enforced; this implementation enforces it.
 class MainThreadDispatcher {
@@ -53,7 +50,6 @@ class MainThreadDispatcher {
     /// Drain all queued tasks on the calling thread (must be the UI thread). Tasks are moved
     /// out of the queue and each `Task` is released after invocation so captures (especially
     /// shared_ptr / large state) do not live across the whole drain loop.
-    ///
     /// Pillar 1 + 2 perf-review (slice 2 of `docs/plans/shipped/pillar-1-2-perf-review-system.md`):
     /// the drain itself is wrapped in `SMATCHET_UI_PERF_SCOPE("dispatcher.drain")` so an
     /// unbounded posted lambda surfaces in `perf.snapshot` as a single hot row. The

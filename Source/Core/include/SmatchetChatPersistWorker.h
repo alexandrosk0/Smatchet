@@ -13,7 +13,6 @@ class LocalCacheManager;
 class MainThreadDispatcher;
 
 /// Single-thread coalescing persistence worker for the AI chat history.
-///
 /// Replaces the per-write detached-thread pattern (`ScheduleConfigSaveDetached` on
 /// `SmatchetAiAssistantUi.cpp:80`) for the chat-message write path. Detached threads
 /// can outlive `LocalCacheManager` on shutdown (LCM is owned by `AppController`, which
@@ -21,7 +20,6 @@ class MainThreadDispatcher;
 /// single background thread is explicitly joined before LCM destructs, so chat writes
 /// in flight at shutdown either drain within a 250 ms budget or are dropped with a
 /// `LOG_WARN`.
-///
 /// Public surface is process-global (singleton WorkerState behind the namespace) —
 /// the chat panel is a singleton in the app and the lifecycle is owned by
 /// `AppController`, so a single instance is sufficient and avoids threading a

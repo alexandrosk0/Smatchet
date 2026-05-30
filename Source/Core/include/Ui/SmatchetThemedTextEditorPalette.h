@@ -1,7 +1,6 @@
 #pragma once
 
 // Theme-aware TextEditor::Palette builders.
-//
 // Why this exists: AiChatTextEditorView and LuaConsolePlugin each embed a
 // `TextEditor` widget whose color palette is set via SetPalette(). The
 // third-party `TextEditor::GetDarkPalette()` / `GetLightPalette()` return
@@ -10,13 +9,11 @@
 // palette never refreshed when the user switched the Smatchet theme. To the
 // user, that looked like "the chat editor / Lua editor still shows the
 // previous theme's colors after switching back" — a visible residual.
-//
 // The fix here: derive the palette from `SmatchetTheme::GetSyntaxColors()`
 // (which IS theme-tracked — every SmatchetTheme::ApplyStyle helper updates it)
 // and re-apply on every Draw(). The widgets only need a `std::array<ImU32,N>`
 // copy per frame which is O(slots) and a handful of cache lines — negligible
 // against the per-frame ImGui draw cost.
-//
 // The two builders below produce palettes for the two distinct embed sites:
 //   * GetThemedLuaConsolePalette — full code-editor palette (background, line
 //     numbers, cursor, etc.) with syntax slots overridden from the active

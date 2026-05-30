@@ -7,14 +7,12 @@
 #include <set>
 
 // Google-Sheets-style selection model for the ticket grid.
-//
 // Two concurrent components:
 //   1. A rectangular cell selection (AnchorRow/Col..ExtentRow/Col) used for
 //      Shift+drag gestures in the data cells.
 //   2. A set of whole-row selections (Rows) populated when the user interacts
 //      with the key (ID) column, which supports non-contiguous rows a la
 //      Ctrl+click in Sheets.
-//
 // Row/col are indices into the current sort order / columns vector; SortSignature
 // is snapshotted so the selection self-invalidates when the sort order or ticket
 // set changes.
