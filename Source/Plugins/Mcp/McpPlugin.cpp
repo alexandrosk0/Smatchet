@@ -64,7 +64,6 @@ struct McpPlugin::Impl {
     // wait on shutdownCv with a 1s timeout instead of sleeping unconditionally
     // so OnStop() can reclaim worker threads within microseconds rather than
     // up to 1 second per connected client.
-    //
     // Declared BEFORE `svr` on purpose: members destroy in reverse order, and
     // `~Server` joins the worker pool in its destructor. If a worker is still
     // executing the chunked-content lambda when ~Impl begins (svr.stop() does

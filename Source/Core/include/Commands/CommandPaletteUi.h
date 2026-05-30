@@ -3,7 +3,6 @@
 
 // Ctrl+Shift+P command palette modal.
 // See docs/plans/shipped/command-system-plan.md §"Command Palette".
-//
 // This header includes only imgui.h — no GLFW / OpenGL / Win32 — so it
 // compiles into both SmatchetStandalone and SmatchetCore_DX12 (Unreal).
 
@@ -20,7 +19,7 @@ namespace smatchet {
 namespace cmd {
 
 class CommandPaletteUi {
-public:
+  public:
     /// Open/close the palette programmatically (also toggled by Ctrl+Shift+P in Draw).
     void Open();
     void Close();
@@ -35,7 +34,7 @@ public:
     /// renders the BeginPopupModal, and dispatches the selected command.
     void Draw(AppController& app);
 
-private:
+  private:
     bool open_ = false;
 
     /// Text filter buffer.
@@ -64,7 +63,7 @@ private:
     void drawArgForm(AppController& app);
 };
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
-#endif  // SMATCHET_COMMANDS_COMMAND_PALETTE_UI_H
+#endif // SMATCHET_COMMANDS_COMMAND_PALETTE_UI_H

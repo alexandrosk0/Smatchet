@@ -3,14 +3,12 @@
 
 // UiTestScenario — drives the ImGui Test Engine (bucket E) lifecycle through
 // the existing IScenario / ScenarioRunner contract.
-//
 // Two reasons to wrap the engine in a scenario rather than free functions:
 //   1. The engine has multi-frame lifetime — Start, tick across frames via
 //      PostSwap, finish when the queue drains. IScenario already models that.
 //   2. The unified Command System runs scenarios on the UI thread under
 //      `RunOnUiThreadAsCommandResult` for free, side-stepping the
 //      ImGuiContext-touching race that any other dispatch path would create.
-//
 // Build gate: this header is always included so the command surface stays
 // consistent across builds, but the runtime body is gated on
 // SMATCHET_BUILD_UI_TESTS. When the gate is OFF, OnStart returns the

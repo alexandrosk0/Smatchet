@@ -6,14 +6,17 @@
 // snaps the popup's pixel state via debug.window.screenshot. The diff against
 // tests/golden/command_palette_fuzzy.ppm catches regressions in palette
 // placement, font metrics, popup chrome, and fuzzy-match highlighting.
-//
 // The scenario uses the UiDrawSession::requestCommandPaletteOpen flag pair
 // added in the same PR so it never has to reach into SmatchetUI's private
 // commandPalette_ member.
 
 #include <memory>
 
-namespace smatchet { namespace cmd { class IScenario; } }
+namespace smatchet {
+namespace cmd {
+class IScenario;
+}
+} // namespace smatchet
 
 std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario();
 
