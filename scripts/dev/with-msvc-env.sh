@@ -53,7 +53,11 @@ VCVARS_VER="${SMATCHET_VCVARS_VER:-${PC_BUILD_MSVC_TOOLSET_PIN:-}}"
 if [ -z "$VCVARS_VER" ]; then
     _cfg="$_self_dir/../../project.config.json"
     if [ -f "$_cfg" ]; then
-        VCVARS_VER="$(grep -oE '"msvc_toolset_pin"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+"' "$_cfg" | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+        # `|| true`: under `set -euo pipefail`, a no-match grep returns non-zero,
+        # which (via pipefail) would propagate out of the command-substitution and
+        # kill the script BEFORE the empty-check fallback below. Swallow it so an
+        # absent/!matched key falls through to the clear error at line 59.
+        VCVARS_VER="$(grep -oE '"msvc_toolset_pin"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+"' "$_cfg" | grep -oE '[0-9]+\.[0-9]+' | head -1 || true)"
     fi
 fi
 if [ -z "$VCVARS_VER" ]; then

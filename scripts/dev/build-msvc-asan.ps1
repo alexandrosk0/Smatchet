@@ -64,6 +64,11 @@ Write-Host "=== vcvars64 ($vsInstall, MSVC $vcvarsVer) ===" -ForegroundColor Cya
 
 # Load vcvars64 environment via cmd /c, pinned to the resolved toolset.
 $vcvarsResult = cmd /c "`"$vcvarsBat`" -vcvars_ver=$vcvarsVer && set" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "vcvars64 FAILED (exit $LASTEXITCODE) for toolset $vcvarsVer — env not loaded"
+    $vcvarsResult | Write-Host
+    exit $LASTEXITCODE
+}
 foreach ($line in $vcvarsResult) {
     if ($line -match '^([^=]+)=(.*)$') {
         [System.Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
