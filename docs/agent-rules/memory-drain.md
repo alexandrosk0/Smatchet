@@ -11,7 +11,7 @@ memory). The weekly drain converts that inbox into repo-resident truth.
 Event-driven, not calendar. The `SessionStart` hook `scripts/dev/memory-drain-nudge.sh`
 checks the local inbox on every session start and prints a one-line nudge into
 context when the inbox holds ≥ 5 live items **or** any item is > 7 days old
-(thresholds: `SMATCHET_MEMORY_DRAIN_COUNT` / `SMATCHET_MEMORY_DRAIN_DAYS`). Act on
+(both thresholds are env-overridable — see the hook script header). Act on
 the nudge with the `/drain-memory` skill, or run it any time the user says
 "drain memory". A remote/cloud routine **cannot** do this — the memory dir is
 machine-local, outside the repo; only a local session sees it.
@@ -30,8 +30,8 @@ For **every** memory file in the inbox, decide one:
 
 Memories are point-in-time. Before implementing or backlogging, **verify the claim
 against the current tree** — cited file paths, function names, and "fixed in PR #N"
-notes drift. The restructure that renamed `Source/Core` ↔ `Source_Core` and removed
-`project.config.json` already orphaned several memory citations. A memory that says
+notes drift. A recent directory restructure that renamed core source paths and
+moved config files already orphaned several memory citations. A memory that says
 "now wired into tooling" may describe a guard that has since regressed — that flips
 the verdict from *toss* to *backlog (regression)*.
 
