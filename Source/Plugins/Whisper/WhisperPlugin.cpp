@@ -98,7 +98,6 @@ WhisperPlugin::MockTranscription WhisperPlugin::CurrentMockTranscription() {
 }
 
 // --- Phase E state struct definition ---
-//
 // Out-of-class definition of the WhisperPlugin::PhaseEState nested struct,
 // hoisted to the top of the TU so every anonymous-namespace command builder
 // + worker helper below sees the complete type. The struct itself is opaque
@@ -242,7 +241,6 @@ smatchet::cmd::Command BuildStatusCommand(WhisperPlugin::PhaseEState* state) {
 }
 
 // --- Phase C additions: model download / progress / cancel + local mode. ---
-//
 // A single ModelDownloader instance is owned at file scope so download state
 // survives a CLI re-invocation (the user issues `whisper.download-model` and
 // then `whisper.model-progress` repeatedly on the same process). The setup
@@ -572,7 +570,6 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
 // same mode-router + consent + key-resolution branches as
 // `whisper.transcribe-once` but factored out so the hotkey path doesn't
 // duplicate ~100 LOC.
-//
 // Returns true + populates `outText` on success; returns false + sets
 // `outError` on any failure (consent denied, no API key, no model, HTTP
 // error, etc). All branches log so a user-reported "nothing happened on

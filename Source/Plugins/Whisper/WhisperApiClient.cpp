@@ -147,7 +147,6 @@ bool WhisperApiClient::Transcribe(const std::vector<std::uint8_t>& wavBytes,
     // can safely fall out of scope after this Post returns. Content-Type for
     // the file part is "audio/wav" so Whisper's audio-format auto-detect
     // takes the fast path.
-    //
     // Phase F — append a `language` multipart part when the caller supplied a
     // concrete ISO code. "auto" / empty omit the field so the server
     // autodetects from its supported language set.

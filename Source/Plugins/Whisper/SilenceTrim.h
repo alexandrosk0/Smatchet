@@ -5,7 +5,6 @@
 // the algorithm is O(N) on 16 kHz mono int16 samples; trimming a 10 s clip
 // takes < 1 ms on a modern CPU. Worker-thread call site only — never invoked
 // from the UI thread.
-//
 // Algorithm — peak-relative amplitude gate over 100 ms windows:
 //   1. Scan once for the absolute peak amplitude.
 //   2. Pick a per-window energy threshold of `peak * 0.05` (5 % of peak,
@@ -16,7 +15,6 @@
 //      tail.
 //   4. Return the remaining slice. Empty input → empty output. All-silence
 //      input → empty output (every window drops).
-//
 // Header is pure C++14 — no Win32 / WASAPI / whisper.cpp deps — so the
 // doctest rig can link it without dragging the Phase B/C/E transport in.
 
@@ -31,7 +29,6 @@ namespace pure {
 /// `sampleRate` Hz). `windowMs` defaults to 100 ms; `peakRelativeThreshold`
 /// defaults to 0.05f (5 % of the global peak). Both parameters are exposed
 /// so the doctest rig can pin behaviour on synthetic inputs.
-///
 /// Returns the trimmed buffer. Pure — no I/O, no globals, no allocation
 /// beyond the result vector.
 std::vector<std::int16_t> TrimLeadingTrailingSilence(

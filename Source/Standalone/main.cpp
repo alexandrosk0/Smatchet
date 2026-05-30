@@ -48,7 +48,6 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 // can encode PNGs for debug.window.screenshot output (replaces the prior raw
 // PPM dump that bloated tests/golden/* by ~40×). Source/Core/ThirdParty/ is on
 // this target's include path via smatchet_configure_opengl_core_impl_target.
-//
 // stb_image_write emits TGA / BMP / JPG / HDR helpers we never call —
 // suppress -Wunused-function for the impl block so the warnings don't drown
 // out real issues in main.cpp.
@@ -259,7 +258,6 @@ int main(int argc, char** argv) {
     // `Smatchet.exe 2>&1 > out.log` captured only OpenGL banner + whisper.cpp
     // stderr. Every debug-detective investigation paid the cost of wiring a
     // temp file sink mid-investigation; this default removes that tax.
-    //
     // Resolution order: SMATCHET_DEBUG_LOG env wins (operator override); else
     // %LOCALAPPDATA%\Smatchet\Smatchet-<pid>.log on Windows / $TMPDIR fallback.
     // The per-PID suffix means concurrent Smatchet processes (e.g. spawn-mode
@@ -494,13 +492,11 @@ int main(int argc, char** argv) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
 
     // Setup ImGui Style.
-    //
     // StyleColorsDark seeds ImGui's default-dark substrate (#FFFFFF text,
     // #4296FA blue-on-translucent button hover, FramePadding [4,3], rounding
     // 0). SmatchetTheme::ApplyStyle(SmatchetDark) is what actually paints the
     // Smatchet look — #F2F2F2 text on #1F1F24 panels, the #383842 button base
     // with #598CF2 accent, FramePadding [6,4], the 4-6 rounding family.
-    //
     ImGui::StyleColorsDark();
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
 
@@ -567,9 +563,7 @@ int main(int argc, char** argv) {
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
 
-            // ====================================================================
             // THE BRIDGE: Hand control over to your engine-agnostic UI layer
-            // ====================================================================
 
             ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
 
