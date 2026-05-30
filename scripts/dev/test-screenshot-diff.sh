@@ -73,7 +73,7 @@ if [ -z "${SCREENSHOT_DIFF_BIN:-}" ]; then
     fi
     echo "[test-screenshot-diff] compiling diff helper via $GXX..."
     "$GXX" -std=c++14 -O2 -Wall -Wextra -Wpedantic \
-        -Itests/support -IThirdParty \
+        -Itests/support -ISource/Core/ThirdParty \
         -o "$DIFF_BIN" \
         tests/support/ScreenshotDiffMain.cpp
 fi

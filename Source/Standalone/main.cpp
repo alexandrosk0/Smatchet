@@ -46,8 +46,8 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 
 // stb_image_write — single-TU implementation lives here so SmatchetStandalone
 // can encode PNGs for debug.window.screenshot output (replaces the prior raw
-// PPM dump that bloated tests/golden/* by ~40×). ThirdParty/ is on this
-// target's include path via smatchet_configure_opengl_core_impl_target.
+// PPM dump that bloated tests/golden/* by ~40×). Source/Core/ThirdParty/ is on
+// this target's include path via smatchet_configure_opengl_core_impl_target.
 //
 // stb_image_write emits TGA / BMP / JPG / HDR helpers we never call —
 // suppress -Wunused-function for the impl block so the warnings don't drown
@@ -176,7 +176,7 @@ static void SmatchetDrawFrame(SmatchetUI& mainWindow, AppController& smatchetApp
         pluginHost.OnDraw(smatchetApp);
     } catch (const std::exception&) {
         throw;
-    } catch (...) {
+    } catch (...) { // catch-all-ok: rethrow only — propagates to the SEH wrapper, swallows nothing
         throw;
     }
 }
@@ -711,7 +711,7 @@ int main(int argc, char** argv) {
         smatchet::standalone::ShutdownApplication(bootCtx);
         ::fprintf(stderr, "Exception caught in entry point: %s\n", ex.what()); // pre-logger-init — LOG_* unavailable
         exitCode = 1;
-    } catch (...) {
+    } catch (...) { // catch-all-ok: top-level entry-point reporter — fprintf below (logger unavailable at shutdown)
         smatchet::standalone::ShutdownApplication(bootCtx);
         ::fprintf(stderr, "Unknown exception caught in entry point.\n"); // pre-logger-init — LOG_* unavailable
         exitCode = 1;

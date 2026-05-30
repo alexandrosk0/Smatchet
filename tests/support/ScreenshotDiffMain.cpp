@@ -1,7 +1,7 @@
 // screenshot_diff_main.cpp — tiny CLI used by scripts/dev/test-screenshot-
 // diff.sh. Computes the per-channel L∞ between two PNGs and exits 0 (within
 // tolerance) or 1 (above tolerance / dim mismatch / load failure). The bash
-// script g++-compiles this TU on the fly with `-IThirdParty` so stb_image
+// script g++-compiles this TU on the fly with `-ISource/Core/ThirdParty` so stb_image
 // resolves; we don't wire it into CMake so the production build stays
 // untouched.
 //
