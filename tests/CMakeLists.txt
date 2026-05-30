@@ -154,11 +154,11 @@ add_executable(SmatchetTests
     Core/SubprocessCapture.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
-    Source/Plugins/Mcp/McpRequestParser.test.cpp
-    Source/Plugins/Mcp/McpEnvelope.test.cpp
-    Source/Plugins/Mcp/McpToolSchemas.test.cpp
-    Source/Plugins/Mcp/McpDispatch.test.cpp
-    "${CMAKE_SOURCE_DIR}/Plugins/Mcp/src/McpJsonRpcPure.cpp"
+    Plugins/Mcp/McpRequestParser.test.cpp
+    Plugins/Mcp/McpEnvelope.test.cpp
+    Plugins/Mcp/McpToolSchemas.test.cpp
+    Plugins/Mcp/McpDispatch.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/src/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4BlameParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
@@ -278,16 +278,16 @@ if(SMATCHET_WITH_WHISPER)
         Core/SilenceTrim.test.cpp
         Core/WhisperPrefsFields.test.cpp
         Core/WhisperMockSeams.test.cpp
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiKeyResolve.cpp"
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperApiClient.cpp"
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WavWriter.cpp"
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/ModelCatalog.cpp"
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/WhisperConsentGate.cpp"
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/HotkeyParse.cpp"
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper/SilenceTrim.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperApiKeyResolve.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperApiClient.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WavWriter.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/ModelCatalog.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperConsentGate.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/HotkeyParse.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/SilenceTrim.cpp"
     )
     target_include_directories(SmatchetTests PRIVATE
-        "${CMAKE_SOURCE_DIR}/Plugins/Whisper")
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper")
 endif()
 
 target_include_directories(SmatchetTests PRIVATE
@@ -306,8 +306,8 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit"
-    "${CMAKE_SOURCE_DIR}/Plugins/Mcp"
-    "${CMAKE_SOURCE_DIR}/Plugins/Mcp/src"
+    "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp"
+    "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/src"
     "${CMAKE_SOURCE_DIR}/Source/Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"
 )
