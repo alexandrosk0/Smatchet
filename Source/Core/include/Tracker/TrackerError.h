@@ -52,7 +52,6 @@ struct TrackerError {
                Kind == TrackerErrorKind::ServerError;
     }
 
-    /// Empty sentinel.
     static TrackerError Ok() { return TrackerError{}; }
 };
 

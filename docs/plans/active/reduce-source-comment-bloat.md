@@ -215,6 +215,18 @@ Per `AGENTS.md` § Verification automation — automated wherever physically pos
 - **A prose comment *style guide*** (how to author good comments) — out of scope; the Phase-4 regrowth guard enforces *mechanical noise* limits only, not authorship style. (The regrowth lint rule itself is now in scope — see Phase 4.)
 
 ## Implementation log
+- **Phase 1 — pilot Wave 2 + GO/NO-GO GATE** (`Tracker`). LLM judgment pass removed **9 comment lines**
+  (1,545 → 1,536) = **0.57% marginal** of the 1,581 pilot baseline — **far below the 20% gate**. Removals
+  were all self-evident echo-docs in `include/Tracker/` (`/** Identical to X */` clusters, an empty-sentinel
+  doc); zero net rationale-compression cuts. Qualitative finding (the real signal): Tracker comments are
+  **overwhelmingly load-bearing** — contract/units/threading/nullability, plan+ADR cross-refs, why-rationale —
+  and Wave 1 already cleared the mechanical noise, so judgment-yield is minimal. assert-code-unchanged PASS
+  (comment-only, proven). **DECISION: do NOT roll Wave 2 out repo-wide; ship Wave 1 repo-wide alone (Phase 2)
+  and shelve Wave 2 as low-ROI.** Honoring the plan's pilot-density caveat: Wave 2 may be *reconsidered* only
+  if a one-off measurement probe on a high-density `Source/Core/include/` slice (34%) shows ≥20% marginal —
+  but the pilot's evidence (self-evident-doc removal on the include/Tracker headers yielded ~8 lines, rest
+  load-bearing) suggests broad Wave-2 ROI is low. Build gate deferred to CI for this proven-comment-only
+  2-header diff (token-identity ⟹ compilation-identity).
 - **Phase 1 — pilot Wave 1** (`Source/Core/{src,include}/Tracker/`). Mechanical strip removed **36
   comment lines across 17 files** — **2.3%** of the pilot comment baseline (1,581 lines for src+include
   Tracker; the plan's 738 was src-only/pre-merge). Low yield as predicted for comment-sparse Tracker
