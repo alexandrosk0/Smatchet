@@ -3,7 +3,7 @@
 // ImGui default-layout management, NormalizeUiLanguageCode, atomic file replace).
 //
 // Split off `ConfigManager.cpp` per `docs/plans/shipped/large-files-and-phase-2.md` § A3 so the
-// remaining file can focus on `Save(TrackerConfig)` / `Load(CliOverrides)` / blame-analysis
+// remaining file can focus on `Save(TrackerConfig)` / `Load(CliOverrides)` / annotate-analysis
 // persistence. The helper namespace is `smatchet::config_detail` — declarations in
 // `ConfigManager_Internal.h`.
 
@@ -380,7 +380,7 @@ std::string& GetUserDataDirectoryRef() {
 
 // ===========================================================================
 // ConfigManager — path / IO / preference / ImGui-settings public methods.
-// Save(TrackerConfig) / Load(CliOverrides) / blame-analysis live in
+// Save(TrackerConfig) / Load(CliOverrides) / annotate-analysis live in
 // ConfigManager.cpp; Views statics in ConfigManager_Views.cpp.
 // ===========================================================================
 

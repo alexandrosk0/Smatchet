@@ -124,11 +124,12 @@ class JiraClient : public ITrackerBackend,
                     const std::string& timeRemaining, const std::string& adjustEstimate,
                     const std::string& workDescription, const std::string& startedDate, std::string& outError) override;
 
-    /** Blame-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
-    bool AddIssueCommentBlameContext(const TrackerConfig& cfg, const std::string& issueKey, const std::string& p4User,
-                                     const std::string& functionName, const std::string& filePath, int lineNumber,
-                                     const std::string& changelist, const std::string& date, bool approximated,
-                                     const std::string& codeSnippet, std::string& outError) override;
+    /** Annotate-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
+    bool AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const std::string& issueKey,
+                                        const std::string& p4User, const std::string& functionName,
+                                        const std::string& filePath, int lineNumber, const std::string& changelist,
+                                        const std::string& date, bool approximated, const std::string& codeSnippet,
+                                        std::string& outError) override;
 
     /**
      * Best-effort group names for a user (Cloud may return 403; then outGroupNames stays empty).

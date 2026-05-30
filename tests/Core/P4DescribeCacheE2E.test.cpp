@@ -7,7 +7,7 @@
 #include <doctest/doctest.h>
 
 #include "FakeP4Runner.h"
-#include "P4Blame.h"
+#include "P4Annotate.h"
 
 #include <atomic>
 #include <string>
@@ -20,9 +20,9 @@ std::string FixturePath(const char* leaf) {
     return std::string(SMATCHET_TESTS_REPO_ROOT) + "/tests/fixtures/p4/" + leaf;
 }
 
-BlameAnalysisConfig MakeCfgFromFixture(smatchet_tests::FakeP4Runner& runner, const char* leaf) {
+AnnotateAnalysisConfig MakeCfgFromFixture(smatchet_tests::FakeP4Runner& runner, const char* leaf) {
     runner.LoadFromFile(FixturePath(leaf));
-    BlameAnalysisConfig cfg;
+    AnnotateAnalysisConfig cfg;
     cfg.P4RunOverride = runner.AsCallback();
     return cfg;
 }
@@ -31,7 +31,7 @@ BlameAnalysisConfig MakeCfgFromFixture(smatchet_tests::FakeP4Runner& runner, con
 
 TEST_CASE("P4ChangelistDescribeCache: miss then hit re-uses canned describe output") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
 
     P4ChangelistDescribeCache cache(/*maxEntries=*/16);
     P4ChangelistDetails d1 = cache.GetOrFetch(cfg, "1");
@@ -49,7 +49,7 @@ TEST_CASE("P4ChangelistDescribeCache: miss then hit re-uses canned describe outp
 
 TEST_CASE("P4ChangelistDescribeCache: eviction past maxEntries drops the oldest entry") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
 
     P4ChangelistDescribeCache cache(/*maxEntries=*/2);
     cache.GetOrFetch(cfg, "1");
@@ -67,7 +67,7 @@ TEST_CASE("P4ChangelistDescribeCache: eviction past maxEntries drops the oldest 
 
 TEST_CASE("P4ChangelistDescribeCache: p4 describe failure caches an error entry") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
 
     P4ChangelistDescribeCache cache(/*maxEntries=*/16);
     P4ChangelistDetails d = cache.GetOrFetch(cfg, "99999");
@@ -77,7 +77,7 @@ TEST_CASE("P4ChangelistDescribeCache: p4 describe failure caches an error entry"
 
 TEST_CASE("P4ChangelistDescribeCache: two threads asking for the same CL converge") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "describe_cache.json");
 
     P4ChangelistDescribeCache cache(/*maxEntries=*/16);
     std::atomic<int> aliceSeen{0};

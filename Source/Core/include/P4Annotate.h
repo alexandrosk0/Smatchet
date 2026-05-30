@@ -1,5 +1,5 @@
-#ifndef P4_BLAME_H
-#define P4_BLAME_H
+#ifndef P4_ANNOTATE_H
+#define P4_ANNOTATE_H
 
 #include "ConfigManager.h"
 
@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-struct P4LineBlame {
+struct P4LineAnnotate {
     std::string Changelist;
     std::string User;
     std::string Date;
@@ -40,15 +40,15 @@ struct P4ChangelistDetails {
  * Run `p4` with given arguments (executable from config). Uses process environment (P4PORT, etc.).
  * Returns false if spawn fails; stderr may contain p4 messages.
  */
-bool P4RunCommand(const BlameAnalysisConfig& cfg, const std::vector<std::string>& args, int& outExitCode,
+bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::string>& args, int& outExitCode,
                   std::string& outStdout, std::string& outStderr);
 
-/** Blame a single 1-based source line; may set Approximate on fallback. */
-P4LineBlame P4BlameLine(const BlameAnalysisConfig& cfg, const std::string& depotOrPath, int oneBasedLine,
-                        const std::string& atChangelist);
+/** Annotate a single 1-based source line; may set Approximate on fallback. */
+P4LineAnnotate P4AnnotateLine(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath, int oneBasedLine,
+                              const std::string& atChangelist);
 
 /** Full file annotate for detail view (1-based line indices in output). */
-std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg, const std::string& depotOrPath,
+std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath,
                                             const std::string& atChangelist, std::string& outError);
 
 /**
@@ -56,7 +56,7 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const BlameAnalysisConfig& cfg, cons
  * via `p4 changes -r -m 1 -s submitted //...@yyyy/mm/dd,yyyy/mm/dd`. Uses the server's
  * calendar interpretation for the date range (same as other Perforce date rev specs).
  */
-bool P4FirstSubmittedChangelistOnCalendarDay(const BlameAnalysisConfig& cfg, int year, int month, int day,
+bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, int year, int month, int day,
                                              std::string& outChangelist, std::string& outError);
 
 /** LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe. */
@@ -70,7 +70,7 @@ class P4ChangelistDescribeCache {
     void Store(const std::string& changelist, P4ChangelistDetails d);
 
     /** Fetch via p4 describe -s if not cached (blocking). */
-    P4ChangelistDetails GetOrFetch(const BlameAnalysisConfig& cfg, const std::string& changelist);
+    P4ChangelistDetails GetOrFetch(const AnnotateAnalysisConfig& cfg, const std::string& changelist);
 
   private:
     void Touch(const std::string& cl);
@@ -83,9 +83,3 @@ class P4ChangelistDescribeCache {
 };
 
 #endif
-
-
-
-
-
-

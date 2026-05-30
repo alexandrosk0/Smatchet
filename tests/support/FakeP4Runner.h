@@ -2,14 +2,14 @@
 #define SMATCHET_TESTS_FAKE_P4_RUNNER_H
 
 // FakeP4Runner — scripted, in-process replacement for the `p4` CLI used by
-// `Source/Core/src/P4Blame.cpp:P4RunCommand`. Slice 3 of
+// `Source/Core/src/P4Annotate.cpp:P4RunCommand`. Slice 3 of
 // docs/plans/shipped/autonomous-debugging-no-creds.md.
 //
 // Loads canned responses from a JSON fixture under tests/fixtures/p4/ keyed by an
 // "argv-prefix" string (whitespace-joined first-N args; the test fixture's
 // argv_prefix matches any P4RunCommand call whose joined args _start with_ that
-// string). Returns a `BlameAnalysisConfig::P4RunCommandFn` the test installs
-// directly onto `BlameAnalysisConfig::P4RunOverride`. No subprocess spawn, no
+// string). Returns a `AnnotateAnalysisConfig::P4RunCommandFn` the test installs
+// directly onto `AnnotateAnalysisConfig::P4RunOverride`. No subprocess spawn, no
 // PATH dance, no real p4 server.
 //
 // Header-only; tests/support/ is already on the test rig include path.
@@ -78,7 +78,7 @@ class FakeP4Runner {
     /// Build the std::function the test installs onto `cfg.P4RunOverride`. The
     /// returned lambda captures `this` — keep the FakeP4Runner alive for the test
     /// duration. Thread-safe.
-    BlameAnalysisConfig::P4RunCommandFn AsCallback() {
+    AnnotateAnalysisConfig::P4RunCommandFn AsCallback() {
         return [this](const std::vector<std::string>& args, int& outExit, std::string& outStdout,
                       std::string& outStderr) -> bool {
             callCount_.fetch_add(1);

@@ -1269,15 +1269,15 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
     return ok;
 }
 
-bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, const std::string& p4User,
-                                                const std::string& functionName, const std::string& filePath,
-                                                const int lineNumber, const std::string& changelist,
-                                                const std::string& date, const bool approximated,
-                                                const std::string& codeSnippet, std::string& outError) {
+bool AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
+                                                   const std::string& functionName, const std::string& filePath,
+                                                   const int lineNumber, const std::string& changelist,
+                                                   const std::string& date, const bool approximated,
+                                                   const std::string& codeSnippet, std::string& outError) {
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
-        LOG_WARN("AppController::AddIssueCommentBlameContext blocked by read-only mode issue=%s", issueKey.c_str());
+        LOG_WARN("AppController::AddIssueCommentAnnotateContext blocked by read-only mode issue=%s", issueKey.c_str());
         return false;
     }
     if (!Backend) {
@@ -1289,11 +1289,11 @@ bool AppController::AddIssueCommentBlameContext(const std::string& issueKey, con
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok =
-        Backend->Collaboration()->AddIssueCommentBlameContext(cfg, issueKey, p4User, functionName, filePath, lineNumber,
-                                                              changelist, date, approximated, codeSnippet, outError);
+    const bool ok = Backend->Collaboration()->AddIssueCommentAnnotateContext(cfg, issueKey, p4User, functionName,
+                                                                             filePath, lineNumber, changelist, date,
+                                                                             approximated, codeSnippet, outError);
     if (!ok) {
-        LOG_ERROR("AppController::AddIssueCommentBlameContext failed issue=%s err=%s", issueKey.c_str(),
+        LOG_ERROR("AppController::AddIssueCommentAnnotateContext failed issue=%s err=%s", issueKey.c_str(),
                   outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();

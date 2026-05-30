@@ -5,7 +5,7 @@ This directory holds the **single source of truth** for every Smatchet subagent.
 Layout (portable / project split — see [`docs/PORTABILITY.md`](../docs/PORTABILITY.md)):
 
 - `agents/core/<name>.md` — **portable** generic engineering roles (architect, build-doctor, code-review, …), reusable in another project; project-specific values come from [`project.config.json`](../project.config.json).
-- `agents/project/<name>.md` — **project-specific** subsystem-bound agents (tracker-backend, grid-engine, lua-binder, mcp-toolsmith, offline-sync, unreal-bridge, p4-blame, command-system).
+- `agents/project/<name>.md` — **project-specific** subsystem-bound agents (tracker-backend, grid-engine, lua-binder, mcp-toolsmith, offline-sync, unreal-bridge, p4-annotate, command-system).
 - `agents/_shared/skills/` — skill definitions that more than one harness can wire (currently `grill-with-docs`, `scratchpad-recall`).
 
 Harnesses discover agents flatly at `.claude/agents/*.md`; `scripts/setup-harness.sh` materialises that as flat per-agent links into the `core/` + `project/` subdirs. **After pulling this split, re-run `bash scripts/setup-harness.sh claude-code` to regenerate the flat links.**

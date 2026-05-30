@@ -160,6 +160,9 @@ This is the single highest-leverage open item — unblocks B1/B2/B3 and validate
 ### N13. `IPlugin::TryGetMcpStatusSnapshot` couples the host to MCP (P3)
 PR #20 replaced `dynamic_cast<McpPlugin*>` with `virtual bool TryGetMcpStatusSnapshot(McpServerStatus&)`. Cleaner, but the virtual is `#if SMATCHET_WITH_MCP`-gated on the base class — every plugin now ships a conditional v-table slot. Acceptable today; if more plugin-type-specific accessors land, switch to capability tags / `IPluginCapability* GetCapability(CapabilityId)` so the base interface stays MCP-agnostic.
 
+### N14. Annotate config hydrate does sync disk I/O on the UI thread (P2, Pillar 2)
+`AnnotateAnalysisUi::ensureSettingsBuffersLoaded()` → `HydrateAnnotateCfgDiskOnce()` (`Source/Core/src/Ui/AnnotateAnalysisUi.cpp:38`) calls `ConfigManager::LoadAnnotateAnalysis` → `LoadMergedConfigJson` → `LoadJsonFile`, a synchronous file read on the UI thread. Surfaced by CodeRabbit on PR #563 (Blame→Annotate rename) but **pre-existing** — identical logic shipped pre-rename as `HydrateBlameCfgDiskOnce`; the rename is behaviour-equivalent and did not introduce it. Mitigated by the once-only `cfgLoaded_` guard (runs once on first Annotate-window open, not per-frame), so it's not a steady-state hot-path violation, but a large/locked config file could still stall the UI thread on first open. Fix: move the load to a background worker (`std::async` / JobQueue) and marshal the result back via `MainThreadDispatcher`, or add a non-blocking `ConfigManager` async load API. Out of scope for the pure rename PR; candidate to fold into Phase 2 (which already reworks Annotate config round-tripping).
+
 ---
 
 ## Sequencing (revised 2026-05-16)

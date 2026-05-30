@@ -1,4 +1,4 @@
-#include "BlameAnalysisUi_Internal.h"
+#include "AnnotateAnalysisUi_Internal.h"
 
 #include "AppController.h"
 #include "Logger.h"
@@ -16,7 +16,7 @@
 #include <string>
 #include <utility>
 
-namespace BlameInternal {
+namespace AnnotateInternal {
 
 bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User, std::string& accountId,
                             std::string& err) {
@@ -51,15 +51,15 @@ std::string BuildAiExport() {
     std::lock_guard<std::mutex> lk(State().displayMutex);
     std::ostringstream oss;
     for (size_t i = 0; i < State().displayRows.size(); ++i) {
-        const BlameRow& r = State().displayRows[i];
+        const AnnotateRow& r = State().displayRows[i];
         oss << "#" << (i + 1) << " " << r.Parsed.Function << "\n  " << r.PathForP4 << ":" << r.Parsed.LineNumber
-            << "\n  User=" << r.Blame.User << " CL=" << r.Blame.Changelist << " Date=" << r.Blame.Date;
-        if (r.Blame.Approximate) {
+            << "\n  User=" << r.Annotate.User << " CL=" << r.Annotate.Changelist << " Date=" << r.Annotate.Date;
+        if (r.Annotate.Approximate) {
             oss << " [approximate]";
         }
         oss << "\n";
-        if (!r.Blame.LineSnippet.empty()) {
-            oss << "  " << r.Blame.LineSnippet << "\n";
+        if (!r.Annotate.LineSnippet.empty()) {
+            oss << "  " << r.Annotate.LineSnippet << "\n";
         }
         if (i < State().detailData.size() && !State().detailData[i].Lines.empty()) {
             const int target = r.Parsed.LineNumber;
@@ -94,36 +94,36 @@ std::string CsvEscape(const std::string& s) {
     return out;
 }
 
-std::string BuildBlameExportCsv() {
+std::string BuildAnnotateExportCsv() {
     std::lock_guard<std::mutex> lk(State().displayMutex);
     std::ostringstream oss;
     oss << "entry,function,path,line,user,changelist,date,approximate,line_snippet\n";
     for (size_t i = 0; i < State().displayRows.size(); ++i) {
-        const BlameRow& r = State().displayRows[i];
+        const AnnotateRow& r = State().displayRows[i];
         oss << (i + 1) << "," << CsvEscape(r.Parsed.Function) << "," << CsvEscape(r.PathForP4) << ","
-            << r.Parsed.LineNumber << "," << CsvEscape(r.Blame.User) << "," << CsvEscape(r.Blame.Changelist) << ","
-            << CsvEscape(r.Blame.Date) << "," << (r.Blame.Approximate ? "true" : "false") << ","
-            << CsvEscape(r.Blame.LineSnippet) << "\n";
+            << r.Parsed.LineNumber << "," << CsvEscape(r.Annotate.User) << "," << CsvEscape(r.Annotate.Changelist)
+            << "," << CsvEscape(r.Annotate.Date) << "," << (r.Annotate.Approximate ? "true" : "false") << ","
+            << CsvEscape(r.Annotate.LineSnippet) << "\n";
     }
     return oss.str();
 }
 
-std::string BuildBlameExportJson() {
+std::string BuildAnnotateExportJson() {
     std::lock_guard<std::mutex> lk(State().displayMutex);
     nlohmann::json root = nlohmann::json::object();
     root["entries"] = nlohmann::json::array();
     for (size_t i = 0; i < State().displayRows.size(); ++i) {
-        const BlameRow& r = State().displayRows[i];
+        const AnnotateRow& r = State().displayRows[i];
         nlohmann::json entry = nlohmann::json::object();
         entry["entry"] = static_cast<int>(i + 1);
         entry["function"] = r.Parsed.Function;
         entry["path"] = r.PathForP4;
         entry["line"] = r.Parsed.LineNumber;
-        entry["user"] = r.Blame.User;
-        entry["changelist"] = r.Blame.Changelist;
-        entry["date"] = r.Blame.Date;
-        entry["approximate"] = r.Blame.Approximate;
-        entry["line_snippet"] = r.Blame.LineSnippet;
+        entry["user"] = r.Annotate.User;
+        entry["changelist"] = r.Annotate.Changelist;
+        entry["date"] = r.Annotate.Date;
+        entry["approximate"] = r.Annotate.Approximate;
+        entry["line_snippet"] = r.Annotate.LineSnippet;
         entry["nearby_lines"] = nlohmann::json::array();
         if (i < State().detailData.size() && !State().detailData[i].Lines.empty()) {
             const int target = r.Parsed.LineNumber;
@@ -153,8 +153,8 @@ std::string ReplaceStringPlaceholder(std::string str, const std::string& placeho
 
 } // namespace
 
-std::string BuildBlameQuickCommentTemplate(const std::string& issueKey, const std::string& templateId,
-                                           const BlameRow& row, const std::vector<CommentTemplate>& templates) {
+std::string BuildAnnotateQuickCommentTemplate(const std::string& issueKey, const std::string& templateId,
+                                              const AnnotateRow& row, const std::vector<CommentTemplate>& templates) {
     std::string text;
     bool found = false;
     auto it =
@@ -165,7 +165,7 @@ std::string BuildBlameQuickCommentTemplate(const std::string& issueKey, const st
     }
     if (!found) {
         if (templateId == "need_repro") {
-            text = "Need repro details for {key} (blame context: {path}:{line}, CL {cl}).";
+            text = "Need repro details for {key} (annotate context: {path}:{line}, CL {cl}).";
         } else if (templateId == "need_logs") {
             text =
                 "Please attach logs/diagnostics for {key} to continue triage.\nReference: {function} @ {path}:{line}.";
@@ -179,32 +179,32 @@ std::string BuildBlameQuickCommentTemplate(const std::string& issueKey, const st
     text = ReplaceStringPlaceholder(text, "{issueKey}", issueKey);
     text = ReplaceStringPlaceholder(text, "{path}", row.PathForP4);
     text = ReplaceStringPlaceholder(text, "{line}", std::to_string(row.Parsed.LineNumber));
-    text = ReplaceStringPlaceholder(text, "{cl}", row.Blame.Changelist);
+    text = ReplaceStringPlaceholder(text, "{cl}", row.Annotate.Changelist);
     text = ReplaceStringPlaceholder(text, "{function}", row.Parsed.Function);
-    text = ReplaceStringPlaceholder(text, "{user}", row.Blame.User);
+    text = ReplaceStringPlaceholder(text, "{user}", row.Annotate.User);
 
     return text;
 }
 
 ImVec4 ThCol(const float* c) { return ImVec4(c[0], c[1], c[2], c[3]); }
 
-ImVec4 BlameLinkText(const BlameUiThemeColors& theme) { return ThCol(theme.ImportExisting); }
+ImVec4 AnnotateLinkText(const AnnotateUiThemeColors& theme) { return ThCol(theme.ImportExisting); }
 
-void PushBlameLinkButtonColors(const BlameUiThemeColors& theme) {
-    const ImVec4 link = BlameLinkText(theme);
+void PushAnnotateLinkButtonColors(const AnnotateUiThemeColors& theme) {
+    const ImVec4 link = AnnotateLinkText(theme);
     ImGui::PushStyleColor(ImGuiCol_Text, link);
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(link.x * 0.22f, link.y * 0.28f, link.z * 0.42f, 0.9f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(link.x * 0.34f, link.y * 0.42f, link.z * 0.58f, 1.f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(link.x * 0.48f, link.y * 0.54f, link.z * 0.72f, 1.f));
 }
 
-void PopBlameLinkButtonColors() { ImGui::PopStyleColor(4); }
+void PopAnnotateLinkButtonColors() { ImGui::PopStyleColor(4); }
 
-void PushBlameLinkTextOnly(const BlameUiThemeColors& theme) {
-    ImGui::PushStyleColor(ImGuiCol_Text, BlameLinkText(theme));
+void PushAnnotateLinkTextOnly(const AnnotateUiThemeColors& theme) {
+    ImGui::PushStyleColor(ImGuiCol_Text, AnnotateLinkText(theme));
 }
 
-void PopBlameLinkTextOnly() { ImGui::PopStyleColor(1); }
+void PopAnnotateLinkTextOnly() { ImGui::PopStyleColor(1); }
 
 std::string NormalizeDateDisplay(const std::string& raw) {
     if (raw.size() >= 10 && raw[4] == '-' && raw[7] == '-') {
@@ -240,7 +240,7 @@ std::string ShortenPathForDisplay(const std::string& path, float maxWidthPx) {
     return best;
 }
 
-void CloseBlameModal(bool* pOpen) {
+void CloseAnnotateModal(bool* pOpen) {
     if (!pOpen) {
         return;
     }
@@ -279,8 +279,8 @@ void CloseBlameModal(bool* pOpen) {
     State().lastUiStatus.clear();
     State().pendingSelectEntryIndex = -1;
     State().lastCallstackIssueKey.clear();
-    State().blameStreamlinedFromGrid = false;
-    State().blamePendingAutoProcess = false;
+    State().annotateStreamlinedFromGrid = false;
+    State().annotatePendingAutoProcess = false;
     State().showRaw = false;
     *pOpen = false;
 }
@@ -312,8 +312,8 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
         std::string bestEmail;
         std::string bestAccountId;
         if (searchOk && !users.empty()) {
-            auto it = std::find_if(users.begin(), users.end(),
-                                   [](const TrackerUser& u) { return !u.EmailAddress.empty(); });
+            auto it =
+                std::find_if(users.begin(), users.end(), [](const TrackerUser& u) { return !u.EmailAddress.empty(); });
             const TrackerUser& best = (it != users.end()) ? *it : users[0];
             bestDisplayName = best.DisplayName;
             bestEmail = best.EmailAddress;
@@ -346,9 +346,9 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
     });
 }
 
-void PrepareAssignModal(const AppController& app, const BlameRow& row, const std::string& p4UserCell) {
+void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const std::string& p4UserCell) {
     State().assignRow = row;
-    const std::string& pu = p4UserCell.empty() ? row.Blame.User : p4UserCell;
+    const std::string& pu = p4UserCell.empty() ? row.Annotate.User : p4UserCell;
     State().assignAccountId.clear();
     State().assignHasJiraAccount = false;
     if (pu.empty() || pu == "-" || pu == "...") {
@@ -359,7 +359,7 @@ void PrepareAssignModal(const AppController& app, const BlameRow& row, const std
         return;
     }
     // Pillar 2 — finding #5/#6: dispatch SearchUsersByQuery (and ResolveP4UserForAssign's own
-    // SearchUsersByQuery) to a worker. Both share the same blame-row, so a single dispatch
+    // SearchUsersByQuery) to a worker. Both share the same annotate-row, so a single dispatch
     // sequentialises them.
     State().assignInFlight = true;
     State().assignTitle = "Loading...";
@@ -402,10 +402,10 @@ void PrepareAssignModal(const AppController& app, const BlameRow& row, const std
     });
 }
 
-std::string BuildCallstackRowTsv(const BlameRow& row, size_t displayIndex) {
+std::string BuildCallstackRowTsv(const AnnotateRow& row, size_t displayIndex) {
     std::ostringstream o;
     o << (displayIndex + 1) << '\t' << row.Parsed.Function << '\t' << row.PathForP4 << ':' << row.Parsed.LineNumber
-      << '\t' << row.Blame.User << '\t' << row.Blame.Changelist << '\t' << row.Blame.Date;
+      << '\t' << row.Annotate.User << '\t' << row.Annotate.Changelist << '\t' << row.Annotate.Date;
     return o.str();
 }
 
@@ -429,13 +429,13 @@ std::string BuildAnnotatedRowTsv(const P4AnnotatedLine& ln) {
     return o.str();
 }
 
-void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, const BlameUiThemeColors& theme) {
+void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg, const AnnotateUiThemeColors& theme) {
     if (cl.empty()) {
         return;
     }
     if (State().clHoverCl != cl) {
         State().clHoverCl = cl;
-        BlameAnalysisConfig cfgCopy = cfg;
+        AnnotateAnalysisConfig cfgCopy = cfg;
         State().clHoverFut = std::async(std::launch::async, [cfgCopy, cl]() {
                                  return State().tooltipClCache.GetOrFetch(cfgCopy, cl);
                              }).share();
@@ -472,10 +472,10 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
                 }
             }
         } catch (const std::exception& ex) {
-            LOG_WARN("Blame tooltip: changelist detail future exception: %s", ex.what());
+            LOG_WARN("Annotate tooltip: changelist detail future exception: %s", ex.what());
             ImGui::TextUnformatted("Loading CL info...");
         } catch (...) {
-            LOG_WARN("Blame tooltip: changelist detail future unknown exception");
+            LOG_WARN("Annotate tooltip: changelist detail future unknown exception");
             ImGui::TextUnformatted("Loading CL info...");
         }
     }
@@ -483,4 +483,4 @@ void DrawClTooltipAsync(const std::string& cl, const BlameAnalysisConfig& cfg, c
     ImGui::EndTooltip();
 }
 
-} // namespace BlameInternal
+} // namespace AnnotateInternal

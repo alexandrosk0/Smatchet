@@ -2,7 +2,7 @@
 
 namespace FieldEditAuditSource {
 
-/** Grid, ticket editor, blame UI — default when no override is active. */
+/** Grid, ticket editor, annotate UI — default when no override is active. */
 constexpr const char kUi[] = "ui";
 /** Model Context Protocol (`run_lua`, registered MCP tools). */
 constexpr const char kMcp[] = "mcp";

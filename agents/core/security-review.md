@@ -59,7 +59,7 @@ Read-only security reviewer for Smatchet. Adversarial mindset — assume the att
 - **CLI** (`Source/Standalone/CliCommandRunner.cpp`) — JSON args from shell / pipes / `--spawn` scenarios. Defense-in-depth landed recently (`feat(cli): defense-in-depth against bad input — never crash`); verify new commands preserve it.
 - **Lua** (`scripts/*.lua`, console via `Source/Plugins/LuaConsole`) — user code in a sandbox with `lua_sethook` instruction-count timeout. New bindings must respect that.
 - **Tracker HTTP** (`JiraClient`, `PlaneClient`, `TrackerHttpClient`) — server may be hostile (compromised proxy, malicious Plane instance). Parse defensively.
-- **P4 CLI** (`P4Blame`) — depot server may craft data; the CLI itself is invoked with user-config workspace.
+- **P4 CLI** (`P4Annotate`) — depot server may craft data; the CLI itself is invoked with user-config workspace.
 - **Local config / cache** (`ConfigManager`, `LocalCacheManager`, attachment dirs) — files under user control; attacker-with-FS-access scenario.
 - **Image fetches** (`SmatchetImageTextureCache`) — URLs from issue data / hooks; size-capped per `SmatchetHooks.lua` comments.
 - **AI feature surface** — provider HTTP clients (`OpenAiClient`, `AnthropicClient`, `OllamaClient`), streaming parsers (`AiSseParser` / `AiNdjsonParser`), `AgentsMdLoader` (filesystem read into prompt), `AiContextBuilder` (data exfil channel for ticket / view / audit data), `AiAssistantController` (worker thread + cancel atom + Lua glue surface). Per-client checks: URL allow-list / sanitisation (`AiEndpointSanitize`), error-body redaction (`AiErrorRedact` — no API keys in logs), buffer caps on streamed responses, `AgentsMdLoader` path validation (no `..` traversal), Lua `ai.*` rate limit / sandbox-respect, `AssistantContextBlockAuditTrail` default `false` (PII opt-in, not opt-out).
@@ -76,7 +76,7 @@ Read-only security reviewer for Smatchet. Adversarial mindset — assume the att
 ## Smatchet-specific checklist
 
 **Injection / command construction:**
-- `p4 ...` invocation in `P4Blame.cpp` — args passed as argv array, never concatenated into a shell command. Flag `system()` / `popen` / `&&` chains.
+- `p4 ...` invocation in `P4Annotate.cpp` — args passed as argv array, never concatenated into a shell command. Flag `system()` / `popen` / `&&` chains.
 - SQLite queries in `LocalCacheManager` / `OfflineQueueService` — `?` placeholders only. Flag string-concat into SQL.
 - HTTP URLs built from user input (`TrackerHttpClient`) — URL-encoded; no host override from user-controlled fields.
 - File paths from config (`PathRemaps`, attachment download dir, image cache) — flag `..` traversal, absolute paths to system dirs, symlink dereference.

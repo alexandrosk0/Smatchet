@@ -1,7 +1,7 @@
 #pragma once
 
 // Cross-platform synchronous subprocess runner. Lifted from
-// P4Blame.cpp's RunProcessCapture pair (Win32 + POSIX) into a general
+// P4Annotate.cpp's RunProcessCapture pair (Win32 + POSIX) into a general
 // helper so other call sites (handoff implementer, future agentic
 // runners) can reuse the same stdout/stderr capture, byte caps,
 // timeout, and cancel-token behaviour.
@@ -45,7 +45,7 @@ struct CaptureOptions {
     /// On Windows this is the natural CreateProcessW behaviour (envPtr is the
     /// child's full block). On POSIX the runner calls `clearenv()` before
     /// `setenv()` so the same allow-list semantic holds. False (the H1
-    /// default) keeps the additive-merge behaviour the P4Blame call sites
+    /// default) keeps the additive-merge behaviour the P4Annotate call sites
     /// expect; `ClaudeCodeLocalRunner` flips this on to enforce the agentic-
     /// flow env allow-list (decision #7 in docs/plans/active/agentic-flow-implementation.md).
     bool replaceParentEnv = false;
@@ -69,7 +69,7 @@ struct CaptureOptions {
     /// Run(); never marshal directly to ImGui (pillar 2). Lines are also
     /// appended to `CaptureResult::stdoutText` as usual — the callback is
     /// additive, not a redirect. Used by `ClaudeCodeLocalRunner` for
-    /// stream-json NDJSON parsing; an unset callback is the P4Blame
+    /// stream-json NDJSON parsing; an unset callback is the P4Annotate
     /// buffered-capture path (the H1 contract).
     std::function<void(const std::string&)> onStdoutLine;
 };

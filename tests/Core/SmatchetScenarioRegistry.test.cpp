@@ -42,7 +42,7 @@ std::set<std::string> ExpectedNames() {
     expected.insert("preferences-slider-drag");
     expected.insert("long-text-open-large-adf");
     // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
-    expected.insert("blame-open-entry-tab");
+    expected.insert("annotate-open-entry-tab");
     expected.insert("description-tooltip-markdown-render");
 #if defined(SMATCHET_WITH_AI)
     expected.insert("ai-assistant-streaming-happy-path");

@@ -428,7 +428,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         "Save & Sync writes the Tracker tab (and optional Integrations tab when enabled in this build) to "
         "disk and refreshes the tracker connection. MCP runtime status: Automation -> Agent Bridge (MCP).... "
         "Appearance options save immediately when changed. Log level and verbose logging: Inspect -> Runtime Log. The "
-        "Blame "
+        "Annotate "
         "Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();

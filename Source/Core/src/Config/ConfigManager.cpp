@@ -1,4 +1,4 @@
-// ConfigManager — `Save(TrackerConfig)` / `Load(CliOverrides)` plus the blame-analysis
+// ConfigManager — `Save(TrackerConfig)` / `Load(CliOverrides)` plus the annotate-analysis
 // persistence pair and the embedded default ImGui dock-layout ini.
 //
 // As of `docs/plans/shipped/large-files-and-phase-2.md` § A3 the filesystem / secret / lock
@@ -126,7 +126,7 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
     "Collapsed=0\n"
     "DockId=0x0000000A,5\n"
     "\n"
-    "[Window][Annotate###BlameAnalysisModal]\n"
+    "[Window][Annotate###AnnotateAnalysisModal]\n"
     "Pos=0,559\n"
     "Size=1920,450\n"
     "Collapsed=0\n"
@@ -272,7 +272,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["mcp_export_fields"] = config.McpExportFields;
     j["show_mcp_server_window"] = config.ShowMcpServerWindow;
     j["quick_comment_templates"] = config.QuickCommentTemplates;
-    j["blame_comment_templates"] = config.BlameCommentTemplates;
+    j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
     j["duration_suggestions"] = config.DurationSuggestions;
     j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
     j["date_format_option"] = config.DateFormatOption;
@@ -338,7 +338,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j.erase("mcp_server_window_h");
     j["mcp_server_info_panel_height_px"] = config.McpServerInfoPanelHeightPx;
     j["mcp_server_activity_panel_height_px"] = config.McpServerActivityPanelHeightPx;
-    j["blame_allow_custom_commands"] = config.BlameAllowCustomCommands;
+    j["annotate_allow_custom_commands"] = config.AnnotateAllowCustomCommands;
     j["default_issue_type_id"] = config.DefaultIssueTypeId;
     j["default_issue_type_name"] = config.DefaultIssueTypeName;
     j["import_max_concurrent"] = config.ImportMaxConcurrent;
@@ -457,16 +457,16 @@ void ConfigManager::Save(const TrackerConfig& config) {
 }
 
 // ===========================================================================
-// ConfigManager — blame-analysis persistence.
+// ConfigManager — annotate-analysis persistence.
 // ===========================================================================
 
-BlameAnalysisConfig ConfigManager::LoadBlameAnalysis() {
+AnnotateAnalysisConfig ConfigManager::LoadAnnotateAnalysis() {
     nlohmann::json j = LoadMergedConfigJson();
-    BlameAnalysisConfig b;
-    if (!j.contains("blame_analysis") || !j["blame_analysis"].is_object()) {
+    AnnotateAnalysisConfig b;
+    if (!j.contains("annotate_analysis") || !j["annotate_analysis"].is_object()) {
         return b;
     }
-    const nlohmann::json& ba = j["blame_analysis"];
+    const nlohmann::json& ba = j["annotate_analysis"];
     b.P4Executable = ba.value("p4_exe", b.P4Executable);
     b.P4VcExecutable = ba.value("p4vc_exe", b.P4VcExecutable);
     b.TimelapseCommandTemplate = ba.value("timelapse_cmd", std::string());
@@ -523,7 +523,7 @@ BlameAnalysisConfig ConfigManager::LoadBlameAnalysis() {
     return b;
 }
 
-void ConfigManager::SaveBlameAnalysis(const BlameAnalysisConfig& b) {
+void ConfigManager::SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b) {
     nlohmann::json j = LoadMergedConfigJson();
     nlohmann::json ba = nlohmann::json::object();
     ba["p4_exe"] = b.P4Executable;
@@ -556,7 +556,7 @@ void ConfigManager::SaveBlameAnalysis(const BlameAnalysisConfig& b) {
     putRgba("import_existing", b.UiColors.ImportExisting);
     putRgba("cl_tooltip_title", b.UiColors.ClTooltipTitle);
     ba["ui_colors"] = std::move(uc);
-    j["blame_analysis"] = std::move(ba);
+    j["annotate_analysis"] = std::move(ba);
     WriteConfigJson(j);
 }
 
@@ -685,7 +685,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 j.value("mcp_server_info_panel_height_px", static_cast<double>(cfg.McpServerInfoPanelHeightPx)));
             cfg.McpServerActivityPanelHeightPx = static_cast<float>(j.value(
                 "mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
-            cfg.BlameAllowCustomCommands = j.value("blame_allow_custom_commands", cfg.BlameAllowCustomCommands);
+            cfg.AnnotateAllowCustomCommands =
+                j.value("annotate_allow_custom_commands", cfg.AnnotateAllowCustomCommands);
 
             // Smatchet Assistant (AI) — Phase A'. Clamp `ai_provider_kind` to the known enum range;
             // a future-version persisted int (e.g. 99) on an older build degrades to OpenAi (0)
@@ -878,16 +879,16 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 cfg.QuickCommentTemplates = GetDefaultQuickCommentTemplates();
             }
 
-            if (j.contains("blame_comment_templates") && j["blame_comment_templates"].is_array()) {
-                cfg.BlameCommentTemplates.clear();
-                for (const auto& item : j["blame_comment_templates"]) {
+            if (j.contains("annotate_comment_templates") && j["annotate_comment_templates"].is_array()) {
+                cfg.AnnotateCommentTemplates.clear();
+                for (const auto& item : j["annotate_comment_templates"]) {
                     try {
-                        cfg.BlameCommentTemplates.push_back(item.get<CommentTemplate>());
+                        cfg.AnnotateCommentTemplates.push_back(item.get<CommentTemplate>());
                     } catch (...) { // catch-all-ok: skip malformed template entry
                     }
                 }
             } else {
-                cfg.BlameCommentTemplates = GetDefaultBlameCommentTemplates();
+                cfg.AnnotateCommentTemplates = GetDefaultAnnotateCommentTemplates();
             }
 
             if (j.contains("duration_suggestions") && j["duration_suggestions"].is_array()) {

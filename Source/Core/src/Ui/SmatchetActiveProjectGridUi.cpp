@@ -149,8 +149,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
     const std::vector<TicketGridColumn>& columns = gridFrameCtx_.columns;
 
-    blameAnalysisUi_.SetBlamePanelOpen(d.showBlameAnalysis);
-    blameAnalysisUi_.ServiceBackground();
+    annotateAnalysisUi_.SetAnnotatePanelOpen(d.showAnnotateAnalysis);
+    annotateAnalysisUi_.ServiceBackground();
 
     {
         SMATCHET_UI_PERF_SCOPE("activeProject:header");

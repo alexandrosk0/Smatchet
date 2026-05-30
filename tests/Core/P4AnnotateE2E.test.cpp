@@ -1,14 +1,14 @@
-// P4BlameAnnotateE2E — end-to-end exercise of `P4AnnotateFile` against the
+// P4AnnotateE2E — end-to-end exercise of `P4AnnotateFile` against the
 // FakeP4Runner runner-seam fake. Slice 3 of autonomous-debugging-no-creds.
 //
-// Drives the real `P4Blame.cpp:P4RunCommand` → `P4AnnotateFile` parse loop via
-// `BlameAnalysisConfig::P4RunOverride`. Zero subprocess spawn, zero p4 server,
+// Drives the real `P4Annotate.cpp:P4RunCommand` → `P4AnnotateFile` parse loop via
+// `AnnotateAnalysisConfig::P4RunOverride`. Zero subprocess spawn, zero p4 server,
 // zero credentials.
 
 #include <doctest/doctest.h>
 
 #include "FakeP4Runner.h"
-#include "P4Blame.h"
+#include "P4Annotate.h"
 
 #include <string>
 #include <vector>
@@ -20,9 +20,9 @@ std::string FixturePath(const char* leaf) {
     return std::string(SMATCHET_TESTS_REPO_ROOT) + "/tests/fixtures/p4/" + leaf;
 }
 
-BlameAnalysisConfig MakeCfgFromFixture(smatchet_tests::FakeP4Runner& runner, const char* leaf) {
+AnnotateAnalysisConfig MakeCfgFromFixture(smatchet_tests::FakeP4Runner& runner, const char* leaf) {
     runner.LoadFromFile(FixturePath(leaf));
-    BlameAnalysisConfig cfg;
+    AnnotateAnalysisConfig cfg;
     cfg.P4RunOverride = runner.AsCallback();
     return cfg;
 }
@@ -31,7 +31,7 @@ BlameAnalysisConfig MakeCfgFromFixture(smatchet_tests::FakeP4Runner& runner, con
 
 TEST_CASE("P4AnnotateFile: happy path returns one P4AnnotatedLine per source line") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
     std::string err;
     std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/foo.cpp", "", err);
@@ -50,7 +50,7 @@ TEST_CASE("P4AnnotateFile: happy path returns one P4AnnotatedLine per source lin
 
 TEST_CASE("P4AnnotateFile: empty file produces empty row vector with no error") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
     std::string err;
     std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/empty.cpp", "", err);
@@ -60,7 +60,7 @@ TEST_CASE("P4AnnotateFile: empty file produces empty row vector with no error") 
 
 TEST_CASE("P4AnnotateFile: non-zero p4 exit surfaces error and empty rows") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
     std::string err;
     std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/missing.cpp", "", err);
@@ -72,7 +72,7 @@ TEST_CASE("P4AnnotateFile: stdout-capped fixture still parses available lines") 
     // Fake encodes a capped stdout as a stderr note + truncated stdout. The
     // production code logs the cap but still parses whatever stdout it got.
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
     std::string err;
     std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/capped.cpp", "", err);
@@ -84,7 +84,7 @@ TEST_CASE("P4AnnotateFile: stdout-capped fixture still parses available lines") 
 
 TEST_CASE("P4AnnotateFile: timeout (override returns false) surfaces failed-to-run error") {
     smatchet_tests::FakeP4Runner runner;
-    BlameAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
     std::string err;
     std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/timeout.cpp", "", err);

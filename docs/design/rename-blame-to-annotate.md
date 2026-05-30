@@ -138,6 +138,36 @@ root-CMake edit**. Only `tests/CMakeLists.txt` (5 hits) lists test files explici
    (the `.understand-anything/` index is untracked / regenerated) returns **zero** hits.
 7. Lint pass on every edited `.cpp`/`.h` (`Source/Core/src/Config/`, `/Commands/` are strict zones).
 
+## Phase-1 implementation log (executed 2026-05-30)
+
+Executed via `mechanic` agent (text-search driven), orchestrator-verified. 68 files
+changed (18 `git mv` with history), diff-scoped `clang-format` on 14 files. All gates green:
+dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) exit 0; doctest 843 cases /
+5770 assertions / 0 failed + Lua tests pass; `test-agent-contract.sh` 25/0; scenario
+`annotate-open-entry-tab` runs (`ok:true`); delta-lint gate PASS; zero-hit grep clean over
+`Source/Core/ tests/ scripts/ agents/ project.config.json` (sole residual is the
+DO-NOT-TOUCH `tests/ui/archived/*.archived` file).
+
+### Deviations from plan (scope additions discovered during the orchestrator inventory)
+The plan's naming map was incomplete; three live identifiers/strings were renamed in
+addition to the documented map (all consistent with the hard-rename, no-back-compat intent):
+1. **`AddIssueCommentBlameContext` → `AddIssueCommentAnnotateContext`** — a 13-site Jira
+   "blame-context comment" method (`AppController.h`, `ITrackerCollaboration.h`,
+   `JiraClient.h`, `AppController_CatalogAndFieldEdit.cpp`, `JiraIssueMutation.cpp`,
+   `AnnotateAnalysisUi_Window.cpp`) + its "not supported by this backend" error string.
+2. **audit literal `"blame_context"` → `"annotate_context"`** (`JiraIssueMutation.cpp`,
+   `comment_kind` audit value; single site, not test-asserted).
+3. **`project.config.json`** `p4-blame` agent registry + curated-map entries → `p4-annotate`
+   (the plan's step 7 omitted this live config file).
+   Also: `tests/fixtures/config/v5.json` key renamed in lock-step with the loader.
+
+### Deferred to Phase 2 (label-normalization scope)
+Two user-visible display *values* now read awkwardly because the case-aware replace touched
+copy, not just keys: French `prefs.blame_comments` value became `"Commentaires de annotate"`
+(grammatically broken — should be e.g. `"Commentaires d'annotation"`), and the English
+"blame context" action label became "annotate context". These are Phase-2 § 2's job
+(naming / label consistency) — left as-is in Phase 1 to keep it a pure rename.
+
 ---
 
 # PHASE 2 — Annotate UI preferences cleanup (rebased on Phase-1 names)

@@ -85,7 +85,7 @@ CodeLang FromTag(const std::string& tag);
 /// bare basename (`script.py`). Strips everything before the last `/`, `\`,
 /// or `.` separator + delegates the extension to `FromTag`. Unknown
 /// extensions / paths with no extension map to Plain. Used by Slice 5 of
-/// docs/plans/active/code-syntax-coloring-and-tooltips.md — `BlameAnalysisUi`
+/// docs/plans/active/code-syntax-coloring-and-tooltips.md — `AnnotateAnalysisUi`
 /// annotate view + future `SmatchetFieldRender` callstack tooltips that
 /// carry a file-path hint.
 CodeLang LangFromFilePath(const std::string& path);

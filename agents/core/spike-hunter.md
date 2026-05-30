@@ -45,7 +45,7 @@ Smatchet UI-thread spike specialist. Adversarial mindset toward the UI thread: a
   - `TicketSyncService::WorkerThread` — streaming sync
   - `BackendAuditTrail` thread — audit writer
   - `Logger` file-sink thread
-  - `BlameAnalysisUi::WorkerState::Thread` — p4 work
+  - `AnnotateAnalysisUi::WorkerState::Thread` — p4 work
 - One-shot async: `std::async(std::launch::async, ...)` + poll-per-frame via `future.wait_for(0s)`. Used for connectivity probe, audit reload, app-update check, field catalog fetch.
 - `~AppController` calls `BeginShutdown()` + joins workers. Missing join → `std::terminate`.
 
@@ -55,7 +55,7 @@ Smatchet UI-thread spike specialist. Adversarial mindset toward the UI thread: a
 
 1. **Sync HTTP from render code** — `cpr::Get / Post / Put / Delete` reachable from `Draw()`. The canonical path is `TrackerHttpClient` posted to a worker. Direct `cpr::*` in icon resolution, attachment preview, field-meta resolve is the #1 hitch source. **Even with `cpr::Timeout{3000}`** — 3 seconds of stall IS the spike. Known smells: `SmatchetFieldIconRender.cpp` (`cpr::Get` for icon URLs), `JiraIssueMutation.cpp` (`cpr::Post`).
 2. **SQLite from render code** — `SQLite::Database` calls reachable from a frame. `TicketSyncService::ApplyIssueFetchPack` lands writes on the UI thread; verify the batch size budget is honoured.
-3. **`p4 ...` invocation from render code** — `P4Blame` spawns child processes. UI code calls only the cached accessors; spawning must be on the `BlameAnalysisUi::WorkerState::Thread` worker.
+3. **`p4 ...` invocation from render code** — `P4Annotate` spawns child processes. UI code calls only the cached accessors; spawning must be on the `AnnotateAnalysisUi::WorkerState::Thread` worker.
 4. **File I/O from render code** — image decode + upload (`SmatchetImageTextureCache`), font load (`SmatchetImGuiFonts`), attachment download.
 5. **`std::future::get()` without poll** — must be `wait_for(0s)` then `.get()` only when `ready`. Naked `.get()` mid-frame blocks the frame.
 6. **`std::thread::join()` mid-frame** — only legal in shutdown / destructor paths.
@@ -87,9 +87,9 @@ Smatchet UI-thread spike specialist. Adversarial mindset toward the UI thread: a
 6. **Diagnose.** If the spike is on a known main-thread blocker, the fix is to move it off-thread following the existing patterns:
    - HTTP → worker thread; return result via `PostToMainThread`
    - SQLite write → chunk + post across frames; never block UI on the write
-   - p4 → `BlameAnalysisUi.cpp` pattern (worker thread + future polled per-frame)
+   - p4 → `AnnotateAnalysisUi.cpp` pattern (worker thread + future polled per-frame)
    - File I/O → `std::async(std::launch::async, ...)` + poll
-7. **Fix design.** Specify the diff; implementation goes to the orchestrator or the relevant subsystem agent (`tracker-backend`, `grid-engine`, `p4-blame`, etc.). spike-hunter does not implement.
+7. **Fix design.** Specify the diff; implementation goes to the orchestrator or the relevant subsystem agent (`tracker-backend`, `grid-engine`, `p4-annotate`, etc.). spike-hunter does not implement.
 8. **Validate.** Re-measure the same scenario / same duration. The `maxPerCallMs` on the suspect row should drop to drained-on-UI cost (< 1 ms typically). If FPS smooths out but no scope shows the win, the actual cause is elsewhere — back to step 2.
 9. **Cleanup.** `perf-instrument` strip mode.
 

@@ -166,7 +166,7 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
     // (the agentic-flow allow-list shape). Non-empty env with
     // replaceParentEnv=false → merge supplied entries on top of the parent's
     // env (mimic POSIX additive `setenv` semantic so the H1 contract holds
-    // cross-platform for P4Blame-style overrides).
+    // cross-platform for P4Annotate-style overrides).
     // UTF-16 env block — CREATE_UNICODE_ENVIRONMENT below tells CreateProcessW
     // to read this as wide characters. The pure helper handles UTF-8 → UTF-16
     // conversion so non-ASCII values (Unicode paths, locale-translated user
@@ -423,7 +423,7 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
         // Apply env overrides additively in the child via setenv() rather
         // than rebuilding envp — execvpe() is glibc-only, while setenv() +
         // execvp() works on every POSIX. Empty opts.env means "inherit
-        // parent's environment unchanged" (the P4Blame contract).
+        // parent's environment unchanged" (the P4Annotate contract).
         // When replaceParentEnv is set AND env is non-empty, the child sees
         // ONLY the supplied entries — the agentic-flow allow-list path
         // (decision #7). clearenv() is POSIX.1-2024 / glibc; on systems

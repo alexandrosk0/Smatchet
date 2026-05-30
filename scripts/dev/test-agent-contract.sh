@@ -14,7 +14,7 @@
 #   9. agent-token-log.py canonical and .claude/hooks/ copy are byte-identical (link_file drift check per process.md 2026-05-19 P3).
 #  10. Frontmatter `version: N` matches banner `· vN` (H7 fix from eval doc).
 #  11. Skill ↔ agent SKILL.md sibling parity — same version + same triggers (eval punch-list item 7 + M9).
-#  12. V3.3 — Source/Core/src/P4Blame.cpp has exactly one SubprocessCapture::Run call site.
+#  12. V3.3 — Source/Core/src/P4Annotate.cpp has exactly one SubprocessCapture::Run call site.
 #  13. V10.1 — agents/core/debug-detective.md contains literal "reproducer-first contract" (slice 10).
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
@@ -47,7 +47,7 @@ agent_files() {
 # 1. Implementer agents — 3 required headings.
 # -------------------------------------------------------------------------
 echo "[1/13] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
-IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-blame unreal-bridge mechanic)
+IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-annotate unreal-bridge mechanic)
 for a in "${IMPLEMENTERS[@]}"; do
   f="$(agent_path "$a")"
   miss=0
@@ -286,18 +286,18 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# 12. V3.3 (slice 3 of autonomous-debugging-no-creds) — P4Blame.cpp keeps
+# 12. V3.3 (slice 3 of autonomous-debugging-no-creds) — P4Annotate.cpp keeps
 #     exactly one `SubprocessCapture::Run` call site. Any future second spawn
 #     must come with a sibling `cfg.P4RunOverride` consult or this gate trips.
 # -------------------------------------------------------------------------
 echo
-echo "[12/13] V3.3 — Source/Core/src/P4Blame.cpp has exactly one SubprocessCapture::Run call site"
-p4blame_src=Source/Core/src/P4Blame.cpp
-if [[ ! -f "$p4blame_src" ]]; then
-  check_fail "V3.3: $p4blame_src missing"
+echo "[12/13] V3.3 — Source/Core/src/P4Annotate.cpp has exactly one SubprocessCapture::Run call site"
+p4annotate_src=Source/Core/src/P4Annotate.cpp
+if [[ ! -f "$p4annotate_src" ]]; then
+  check_fail "V3.3: $p4annotate_src missing"
 else
-  run_count=$(grep -cE 'SubprocessCapture::Run\(' "$p4blame_src" || true)
-  override_count=$(grep -cE 'cfg\.P4RunOverride' "$p4blame_src" || true)
+  run_count=$(grep -cE 'SubprocessCapture::Run\(' "$p4annotate_src" || true)
+  override_count=$(grep -cE 'cfg\.P4RunOverride' "$p4annotate_src" || true)
   if [[ "$run_count" -eq 1 && "$override_count" -ge 1 ]]; then
     check_pass "V3.3: exactly 1 SubprocessCapture::Run + $override_count P4RunOverride consult(s)"
   else

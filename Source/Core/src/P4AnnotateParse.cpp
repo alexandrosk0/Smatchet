@@ -1,4 +1,4 @@
-#include "P4BlameParse.h"
+#include "P4AnnotateParse.h"
 
 #include "StringUtil.h"
 
@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace P4BlameParse {
+namespace P4AnnotateParse {
 
 std::vector<std::string> SplitLines(const std::string& s) {
     std::vector<std::string> lines;
@@ -73,8 +73,8 @@ bool ParseAnnotateTextLine(const std::string& line, std::string& outCl, std::str
     return false;
 }
 
-P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, const std::string& stderrText) {
-    P4LineBlame b;
+P4LineAnnotate ParseLatestChangeFromChangesOutput(const std::string& stdoutText, const std::string& stderrText) {
+    P4LineAnnotate b;
     b.Approximate = true;
     static const std::regex re(R"(Change\s+(\d+)\s+on\s+[^\s]+\s+by\s+(\S+))");
     std::smatch m;
@@ -96,4 +96,4 @@ P4LineBlame ParseLatestChangeFromChangesOutput(const std::string& stdoutText, co
     return b;
 }
 
-} // namespace P4BlameParse
+} // namespace P4AnnotateParse

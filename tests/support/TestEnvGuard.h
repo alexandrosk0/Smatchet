@@ -2,7 +2,7 @@
 // directory and a minimal `smatchet_config.json` (with `read_only_mode=false`).
 //
 // Why: `ConfigManager` is a process-wide singleton; runtime callers (audit writer,
-// offline queue, sync service, blame analysis, etc.) all read paths through it.
+// offline queue, sync service, annotate analysis, etc.) all read paths through it.
 // Without redirection, parallel test runs would share the user's real config /
 // audit files. Doctest is single-threaded by default so per-TEST_CASE state still
 // works, but we must isolate dirs so adjacent cases never poison each other.

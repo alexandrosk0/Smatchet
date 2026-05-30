@@ -16,7 +16,7 @@ ImGuiID DefaultDockSlotForLayoutKey(const char* layoutKey) {
         {"active", kCentralNode}, {"views", kViewsColumn},       {"preferences", kBottomPanel},
         {"log", kBottomPanel},    {"performance", kBottomPanel}, {"scripting", kBottomPanel},
         {"mcp", kBottomPanel},    {"bulk_import", kBottomPanel}, {"bulk_export", kBottomPanel},
-        {"audit", kBottomPanel},  {"blame", kBottomPanel},       {"plandocs", kBottomPanel},
+        {"audit", kBottomPanel},  {"annotate", kBottomPanel},    {"plandocs", kBottomPanel},
     };
     for (const auto& e : kEntries) {
         if (std::strcmp(layoutKey, e.key) == 0) {

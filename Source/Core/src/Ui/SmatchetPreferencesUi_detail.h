@@ -13,7 +13,7 @@ struct SmatchetPreferencesUiTemplateFlags {
     bool suggestionsLoaded = false;
     bool templatesLoaded = false;
     bool quickTemplatesLoaded = false;
-    bool blameTemplatesLoaded = false;
+    bool annotateTemplatesLoaded = false;
 };
 
 #if defined(SMATCHET_WITH_AI)

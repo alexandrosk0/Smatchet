@@ -28,7 +28,7 @@ delegates-to:
   - command-system
   - lua-binder
   - mcp-toolsmith
-  - p4-blame
+  - p4-annotate
   - unreal-bridge
   - mechanic
   - code-review
@@ -126,7 +126,7 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 | `Source/Core/{src,include}/Commands/**` · `BuiltinCommands*` · `ViewCommands*` · `Scenarios/**` · `CommandPaletteUi*` · `FuzzyMatch*` | `command-system` |
 | `Source/Core/src/AppController_LuaBindings.cpp` · `AppController_LuaStubs.cpp` · `Source/Plugins/LuaConsole/**` · `LuaAutomationHost*` · `scripts/**.lua` | `lua-binder` |
 | `Source/Plugins/Mcp/**` · `SmatchetMcpServerUi*` · `McpServerStatus*` | `mcp-toolsmith` |
-| `Source/Core/**/P4Blame*` · `P4ErrorUtil*` · `BlameAnalysisUi*` · `CppSyntaxHighlight*` · `CallstackParser*` · `PathRemaps*` | `p4-blame` |
+| `Source/Core/**/P4Annotate*` · `P4ErrorUtil*` · `AnnotateAnalysisUi*` · `CppSyntaxHighlight*` · `CallstackParser*` · `PathRemaps*` | `p4-annotate` |
 | `Source/Core/**/*_DX12*` · `Source/UnrealPlugins/**` · anything gated on `SMATCHET_EMBEDDED_IN_UNREAL` | `unreal-bridge` |
 | `tests/Core/**` · `tests/CMakeLists.txt` · `tests/test_main.cpp` · `SMATCHET_BUILD_TESTS` mentions | `test-rig` |
 | `scripts/dev/test-*.sh` · `scripts/dev/test-all.sh` · scenario JSON / Lua under test harness | `test-author` |

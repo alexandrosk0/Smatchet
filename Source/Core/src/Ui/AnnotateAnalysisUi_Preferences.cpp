@@ -1,4 +1,4 @@
-#include "BlameAnalysisUi_Internal.h"
+#include "AnnotateAnalysisUi_Internal.h"
 
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -9,14 +9,14 @@
 #include <algorithm>
 #include <string>
 
-namespace BlameInternal {
+namespace AnnotateInternal {
 
 namespace {
 
-void PersistBlameCfg(const char* reason) {
-    ConfigManager::SaveBlameAnalysis(State().blameCfg);
-    LogBlameP4PathsIfChanged(reason);
-    SetCallstackFieldIdHint(State().blameCfg.CallstackTrackerFieldId);
+void PersistAnnotateCfg(const char* reason) {
+    ConfigManager::SaveAnnotateAnalysis(State().annotateCfg);
+    LogAnnotateP4PathsIfChanged(reason);
+    SetCallstackFieldIdHint(State().annotateCfg.CallstackTrackerFieldId);
 }
 
 template <size_t N> bool CommitTextField(const char (&buf)[N], std::string& cfgField, const char* reason) {
@@ -24,11 +24,11 @@ template <size_t N> bool CommitTextField(const char (&buf)[N], std::string& cfgF
         return false;
     }
     cfgField.assign(buf);
-    PersistBlameCfg(reason);
+    PersistAnnotateCfg(reason);
     return true;
 }
 
-void DrawJiraFieldCombo(const AppController& app, const BlameUiThemeColors& theme, const char* label,
+void DrawJiraFieldCombo(const AppController& app, const AnnotateUiThemeColors& theme, const char* label,
                         const char* tooltip, std::string& cfgField, const char* idSuffix, const char* reason) {
     std::string preview = "(none)";
     if (!cfgField.empty()) {
@@ -36,52 +36,52 @@ void DrawJiraFieldCombo(const AppController& app, const BlameUiThemeColors& them
         preview = (mf && !mf->Name.empty()) ? (mf->Name + " (" + mf->Id + ")") : cfgField;
     }
     const std::string comboId = std::string(label) + "##" + idSuffix;
-    PushBlameLinkButtonColors(theme);
+    PushAnnotateLinkButtonColors(theme);
     const bool open = ImGui::BeginCombo(comboId.c_str(), preview.c_str());
-    PopBlameLinkButtonColors();
+    PopAnnotateLinkButtonColors();
     if (!open) {
         if (tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             ImGui::SetTooltip("%s", tooltip);
         }
         return;
     }
-    PushBlameLinkTextOnly(theme);
+    PushAnnotateLinkTextOnly(theme);
     if (ImGui::Selectable("(none)", cfgField.empty())) {
         cfgField.clear();
-        PersistBlameCfg(reason);
+        PersistAnnotateCfg(reason);
     }
-    PopBlameLinkTextOnly();
+    PopAnnotateLinkTextOnly();
     for (const auto& f : app.GetAvailableFields()) {
         const bool sel = (f.Id == cfgField);
         const std::string lbl = f.Name.empty() ? f.Id : (f.Name + " (" + f.Id + ")");
         const std::string lblWithId = lbl + "##" + idSuffix + "_" + f.Id;
-        PushBlameLinkTextOnly(theme);
+        PushAnnotateLinkTextOnly(theme);
         if (ImGui::SelectableRaw(lblWithId.c_str(), sel)) {
             cfgField = f.Id;
-            PersistBlameCfg(reason);
+            PersistAnnotateCfg(reason);
         }
-        PopBlameLinkTextOnly();
+        PopAnnotateLinkTextOnly();
     }
     ImGui::EndCombo();
 }
 
 } // namespace
 
-void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeColors& theme) {
-    auto& cfg = State().blameCfg;
+void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUiThemeColors& theme) {
+    auto& cfg = State().annotateCfg;
 
     ImGui::InputInt("Max frames", &State().maxFramesVal);
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         State().maxFramesVal = std::max(1, std::min(500, State().maxFramesVal));
         cfg.DefaultMaxFrames = State().maxFramesVal;
-        PersistBlameCfg("edit_max_frames");
+        PersistAnnotateCfg("edit_max_frames");
     }
 
     ImGui::InputTextMultiline("Ignore keywords (comma or newline)", State().ignoreBuf.data(), State().ignoreBuf.size(),
                               ImVec2(-1, 60));
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         cfg.DefaultIgnoreKeywords = SplitIgnoreKeywords(std::string(State().ignoreBuf.data()));
-        PersistBlameCfg("edit_ignore");
+        PersistAnnotateCfg("edit_ignore");
     }
 
     ImGui::InputText("P4 executable", State().p4Exe, sizeof(State().p4Exe));
@@ -135,8 +135,8 @@ void DrawBlamePersistedOptionsForm(const AppController& app, const BlameUiThemeC
         if (State().remapFrom[0] != '\0') {
             cfg.PathRemaps.push_back({State().remapFrom, State().remapTo});
         }
-        PersistBlameCfg("edit_remap");
+        PersistAnnotateCfg("edit_remap");
     }
 }
 
-} // namespace BlameInternal
+} // namespace AnnotateInternal
