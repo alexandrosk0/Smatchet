@@ -97,10 +97,18 @@ Dev-process / CI tooling only — no product-runtime code, no `Source/Core/`. Al
 - **CodeRabbit approve-vs-comment behaviour** — external; no-action.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `fd395b9a` · plan (registry-counter pattern).
+- `a52f92eb` · `merge-gates.sh` seed 3 locals from `MERGE_GATES_PRIOR_*` + emit `GATE_CARRY` before `return 1`; `merge-watcher.py` `_parse_gate_carry` + env-seed in `poll_one` + `_bump_nudge_state` (clone of `_bump_cr_none_grace`) + daemon-loop persist; 6 bats tests.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Store corrected (registry, not `state/<pr>.json`)** — the original draft named `state/<pr>.json` + `notify_dispatched_for_state` as the precedent. The double-check found the daemon reads `entry` from `read_registry()` *before* the poll, and the CR-NONE grace counter (the *identical* `MAX_POLLS=1` bug) is persisted in the **registry** via `_bump_cr_none_grace`. `notify_dispatched_for_state` is a post-poll result flag — wrong precedent. Switched to the registry-counter pattern (no behavioural difference, correct store).
+- **Single emit point, no `RETURN` trap** — under `MAX_POLLS=1` a fired nudge always exits via `return 1` (it only fires when `cr_pass=false`, which can't reach the `return 0` pass) and the per-iteration `Poll` line always precedes it, so one `printf` before `return 1` suffices; the trap was unnecessary.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **merge_gates.bats** — 4 new (`nudge guard survives MAX_POLLS=1 … exactly one post`, `re-arms on stale head`, `STALE streak fires at threshold`, `GATE_CARRY doesn't disturb the Poll status line`) + 93 existing = **all PASS, 0 regressions**.
+- **merge_watcher.bats** — 2 new (`_parse_gate_carry`, `_bump_nudge_state` registry round-trip) + full suite **72 PASS, 0 not-ok**.
+- `bash -n scripts/dev/merge-gates.sh` + `python -m py_compile scripts/dev/merge-watcher.py` clean. `shellcheck` not installed locally (CI runs the shell-lint gate).
+- **Build gate**: N/A — no compile (scripts/ + tests/bats/ only).
