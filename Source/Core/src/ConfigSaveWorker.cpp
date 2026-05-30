@@ -12,9 +12,12 @@ namespace smatchet {
 namespace config_save {
 namespace {
 
-// Bounded drain window on Stop() so a hung disk can't block shutdown (mirrors
-// SmatchetChatPersistWorker's stop budget). Config writes are tiny atomic replaces, so this is
-// generous in practice.
+// Stop() drain window: bounds how long we wait for *queued* (not-yet-started) writes before
+// joining (mirrors SmatchetChatPersistWorker's stop budget). The subsequent join() still waits for
+// an in-flight write to finish — by design: a tiny atomic temp-then-rename completes in ms, and
+// joining (vs detaching) is the Pillar-3-safe choice, since a detached thread writing config as the
+// process tears down would be a use-after-free risk against the ConfigManager statics. So we accept a
+// bounded-in-practice (not hard-capped) join over a real shutdown-race. Config writes are tiny.
 constexpr std::chrono::milliseconds kStopDrainBudget{250};
 
 struct WorkerState {
