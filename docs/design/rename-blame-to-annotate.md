@@ -3,6 +3,22 @@
 > **Status:** WIP plan, ready for a worker to execute. Phase 1 (rename) lands first as
 > its own PR; Phase 2 (prefs cleanup) rebases onto the new names as a follow-up PR.
 
+> **Reviewer corrections (verified against `develop` @ `77b1740`, 2026-05-30).** Every line
+> anchor and exception in this plan was checked against the live tree. Phase-2 anchors are all
+> exact. Five fixes were applied inline; the substantive ones:
+> 1. **Agent paths were flat (`agents/<name>.md`) — actual tree is nested.** `p4-blame` lives at
+>    `agents/project/p4-blame.md`; the 5 cross-referencing agents (`code-review`,
+>    `debug-detective`, `spike-hunter`, `security-review`, `coderabbit-triage`) live under
+>    `agents/core/`. The literal `git mv agents/p4-blame.md …` would have failed.
+> 2. **Config rename was undercounted.** Two more `blame_*` config keys + their C++ members exist
+>    beyond `blame_analysis` — see the expanded map row and step 3. A whole-word symbol pass renames
+>    the members but leaves the JSON key string literals, causing a silent member↔key mismatch.
+> 3. **`Locales/*.json` does not exist** — all localization (incl. the French strings) is in-code in
+>    `SmatchetLocalization.cpp`. References scrubbed.
+> 4. **`Source_Core/` → `Source/Core/`** throughout (the underscore path is non-existent; a
+>    verification grep against it would false-pass on an empty path).
+> 5. **Blast-radius headline corrected** to the measured counts.
+
 ## Context
 
 The Perforce line-attribution feature is **user-labeled "Annotate"** in every display
@@ -31,7 +47,8 @@ User decisions (confirmed):
 
 ## Blast radius (verified)
 
-`grep -c [Bb]lame` = 1442 hits / 100 files. Split:
+`git grep -ci [Bb]lame` = **1499 hits / 107 files** all-in; **980 hits / 105 files** excluding the
+regenerated `.understand-anything/` index. Split:
 - **Rename targets** (~30 source/test/scenario/loc/CMake files + ~10 agent/doc files).
 - **Excluded — regenerated**: `.understand-anything/` (519 hits) — auto-built index,
   regenerates; do not edit.
@@ -58,10 +75,12 @@ root-CMake edit**. Only `tests/CMakeLists.txt` (5 hits) lists test files explici
 | `BlameAnalysisConfig`, `BlameUiThemeColors` | `AnnotateAnalysisConfig`, `AnnotateUiThemeColors` |
 | `MakeBlameOpenEntryTabScenario` + `BlameOpenEntryTabScenario.cpp` | `MakeAnnotateOpenEntryTabScenario` + `AnnotateOpenEntryTabScenario.cpp` |
 | config section `"blame_analysis"` | `"annotate_analysis"` |
+| config key `"blame_comment_templates"` + member `BlameCommentTemplates` | `"annotate_comment_templates"` + `AnnotateCommentTemplates` |
+| config key `"blame_allow_custom_commands"` + member `BlameAllowCustomCommands` | `"annotate_allow_custom_commands"` + `AnnotateAllowCustomCommands` |
 | scenario ID `"blame-open-entry-tab"` | `"annotate-open-entry-tab"` |
 | loc keys `blame.*`, `menu.blame_analysis`, `menu.source_blame`, `prefs.tab.blame_analysis`, `prefs.blame_comments` | `annotate.*`, `menu.annotate_analysis`, `menu.source_annotate`, `prefs.tab.annotate_analysis`, `prefs.annotate_comments` |
 | dock-node id string `"blame"` (`SmatchetDockNodeIds.cpp`) | `"annotate"` |
-| agent `p4-blame` (`agents/p4-blame.md`, frontmatter `name:`) | `p4-annotate` (`agents/p4-annotate.md`) |
+| agent `p4-blame` (`agents/project/p4-blame.md`, frontmatter `name:`) | `p4-annotate` (`agents/project/p4-annotate.md`) |
 
 **Manual-judgment exceptions (do NOT blind-replace):**
 - `P4BlameAnnotateE2E.test.cpp` → **`P4AnnotateE2E.test.cpp`** (blind replace yields the
@@ -76,27 +95,35 @@ root-CMake edit**. Only `tests/CMakeLists.txt` (5 hits) lists test files explici
 1. **Rename files** with `git mv` (preserves history): all `P4Blame*`, `BlameAnalysisUi*`,
    `BlameOpenEntryTabScenario.cpp`, `P4BlameParse.test.cpp`, `P4BlameAnnotateE2E.test.cpp`
    (→ manual name above). Update every `#include "P4Blame.h"` / `BlameAnalysisUi.h` etc.
-2. **Symbol rename** across `Source_Core/{src,include}`, `tests/`, `Plugins/` — whole-word
+2. **Symbol rename** across `Source/Core/{src,include}`, `tests/`, `Plugins/` — whole-word
    `Blame`→`Annotate` for the identifiers in the map. Touches the obvious subsystem files
    plus call sites in `SmatchetUI*.cpp`, `SmatchetPreferencesUi*`, `SmatchetActiveProjectGridUi.cpp`,
    `SmatchetGridUiSupport.{h,cpp}`, `SmatchetFieldRender.cpp`, `AppController*.{h,cpp}`,
    `JiraClient.h`, `JiraIssueMutation.cpp`, `ITrackerCollaboration.h`, `Logger.h`,
    `SubprocessCapture.{h,cpp}`, `FieldEditAuditSource.h`, `CodeColorView.h`, etc.
-3. **Config key** `blame_analysis` → `annotate_analysis` in `ConfigManager.cpp:466-559`
-   (load+save). No back-compat read — old key silently ignored (accepted breakage).
-4. **Localization** `SmatchetLocalization.cpp` — rename ~20 keys + every `LOC("blame.…")` /
-   `LOC("menu.blame_analysis")` call site (grep the key strings, not just the table). Check
-   `Locales/*.json` for the same keys and rename there too.
+3. **Config keys** in `ConfigManager.{cpp,h}` — three JSON keys + their C++ members, NOT just
+   `blame_analysis`. (a) `"blame_analysis"` → `"annotate_analysis"` at `ConfigManager.cpp:466,469,559`
+   (load+save). (b) `"blame_comment_templates"` (`:275,881,883`) + member `BlameCommentTemplates`.
+   (c) `"blame_allow_custom_commands"` (`:341,688`) + member `BlameAllowCustomCommands`. **Trap:** a
+   whole-word symbol pass renames the *members* but leaves the JSON *key string literals* — rename
+   both, in lock-step, or you get a silent member↔key mismatch. No back-compat read — old keys
+   silently ignored (accepted breakage; this now covers all three).
+4. **Localization** `SmatchetLocalization.cpp` (the only loc file — there is **no `Locales/*.json`**;
+   the French strings are in-code here too) — rename ~20 `blame.*` keys + `menu.source_blame`
+   (`:95`), `menu.blame_analysis` (`:104`), `prefs.blame_comments` (`:207`) and every matching
+   `LOC("blame.…")` call site (grep the key strings, not just the table).
 5. **Scenario ID** `"blame-open-entry-tab"` → `"annotate-open-entry-tab"` in
    `SmatchetScenarioRegistry.cpp:88` + the factory decl `:40`; grep tests/Lua/docs for the
    ID string and update.
 6. **Tests** `tests/CMakeLists.txt` (file names + any `ctest -R "…Blame…"` pattern),
    `FakeP4Runner.h`, `P4DescribeCacheE2E.test.cpp`, the renamed test files, scenario stubs.
-7. **Agent infra** — `git mv agents/p4-blame.md agents/p4-annotate.md`; frontmatter `name:`;
-   delegation.md (6 hits), `coderabbit-triage.md` routing regex `BlameAnalysisUi*` →
-   `AnnotateAnalysisUi*` + the `p4-blame` cell, `code-review.md`, `debug-detective.md`,
-   `spike-hunter.md`, `security-review.md`; `scripts/dev/test-agent-contract.sh` (9 hits,
-   asserts agent set). Re-run `bash scripts/setup-harness.sh claude-code` to refresh the
+7. **Agent infra** (note the nested `agents/{core,project}/` layout — paths are NOT flat) —
+   `git mv agents/project/p4-blame.md agents/project/p4-annotate.md`; frontmatter `name:`;
+   `docs/agent-rules/delegation.md` (6 hits), `agents/core/coderabbit-triage.md` routing regex
+   `BlameAnalysisUi*` → `AnnotateAnalysisUi*` (`:129`) + the `p4-blame` cell (`:31`),
+   `agents/core/code-review.md`, `agents/core/debug-detective.md`, `agents/core/spike-hunter.md`,
+   `agents/core/security-review.md`, `agents/README.md`; `scripts/dev/test-agent-contract.sh`
+   (9 hits, asserts agent set). Re-run `bash scripts/setup-harness.sh claude-code` to refresh the
    `.claude/agents/` junction.
 8. **Active docs** — `CLI_GUIDE.md`, `AGENTS.md` if it names the feature, ADR 0009 only if
    it describes the live feature (not the historical decision text).
@@ -107,9 +134,9 @@ root-CMake edit**. Only `tests/CMakeLists.txt` (5 hits) lists test files explici
 3. `scripts/dev/test-agent-contract.sh` green with `p4-annotate`.
 4. Launch exe → Inspect → "Annotate…" opens; Preferences → Annotate tab renders.
 5. Run the renamed scenario: `annotate-open-entry-tab` executes via CLI.
-6. `grep -ri "blame"` over `Source_Core/`, `tests/`, `scripts/`, `agents/` (excluding
-   `.understand-anything/` + `docs/design/archive/`) returns **zero** hits.
-7. Lint pass on every edited `.cpp`/`.h` (`Source_Core/src/Config/`, `/Commands/` are strict zones).
+6. `git grep -ri "blame" -- Source/Core/ tests/ scripts/ agents/ ':(exclude)docs/design/archive/**'`
+   (the `.understand-anything/` index is untracked / regenerated) returns **zero** hits.
+7. Lint pass on every edited `.cpp`/`.h` (`Source/Core/src/Config/`, `/Commands/` are strict zones).
 
 ---
 
@@ -167,14 +194,14 @@ view persists across reopen; multi-rule remap round-trips to `annotate_analysis.
 + `ctest -R CallstackParser` green; `ColorEdit4` recolors live + persists; cache size
 clamps; misspelled-field autoselect still works. Lint pass on edited files.
 
-## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
+## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
 
-Both phases touch `Source_Core/`, so the gate **applies** — but every gate is N/A-by-content because there is no hot-path logic change:
+Both phases touch `Source/Core/`, so the gate **applies** — but every gate is N/A-by-content because there is no hot-path logic change:
 
 - **Phase 1** is a pure mechanical rename (identifiers, file names, config/loc keys, scenario ID). Zero behaviour change; the binary is behaviour-equivalent modulo symbol/string names. Perf-neutral by construction; validated not asserted.
 - **Phase 2** edits the Annotate **preferences** UI (collapse 3 autoselect helpers → 1, add config round-trips, multi-rule remap editor, expose two knobs, clamp-on-load). All of it runs on Preferences-window interaction, not in the steady-state grid / annotate render path — outside the 6.94 ms budget.
 
-1. **PR-fast CI** — N/A by content (no algorithmic change). Run one representative scenario (`annotate-open-entry-tab`) post-change to confirm perf-neutrality rather than assert it. Map: `agents/perf-gatekeeper.md` § Curated diff → scenario map.
+1. **PR-fast CI** — N/A by content (no algorithmic change). Run one representative scenario (`annotate-open-entry-tab`) post-change to confirm perf-neutrality rather than assert it. Map: `agents/core/perf-gatekeeper.md` § Curated diff → scenario map.
 2. **Pillar 2 static scanner** — N/A — no new sync-I/O; neither the rename nor the prefs edits add an `ImGui::*`-reachable blocking call (`pillar2-scan.sh` must stay silent over the renamed tree).
 3. **Dispatcher drain** — N/A — `MainThreadDispatcher::Drain()` untouched.
 4. **Visible-cue bucket-E harness** — N/A — no new sync-stall path > 100 ms.
