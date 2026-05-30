@@ -1,0 +1,13 @@
+{
+  "name": "smatchet-bug-report-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker relay that re-files Smatchet bug reports as GitHub issues under a server-held token.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.95.0"
+  }
+}

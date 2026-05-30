@@ -79,6 +79,30 @@ struct TrackerConfig {
     std::string GitHubOwner;   // e.g. "alexandrosk0"
     std::string GitHubRepo;    // e.g. "Smatchet"
 
+    // "Log a Bug" reporter (docs/plans/active/log-a-bug-github.md). Bug + (phase-2)
+    // crash reports go to ONE fixed dev GitHub repo, independent of the active
+    // tracker. owner/repo + assets target + hotkey config below.
+    // Relay mode (preferred for EXTERNAL distribution): when BugReportRelayUrl is
+    // set, the app POSTs the report to a server-side relay that holds the GitHub
+    // token — no token ships in the binary. Relay mode overrides the direct
+    // owner/repo/PAT path below. BugReportRelayKey is a low-value shared access
+    // key (NOT a GitHub credential; rate-limited + rotatable server-side), safe
+    // to bundle. See tools/bug-report-relay/.
+    std::string BugReportRelayUrl;
+    std::string BugReportRelayKey;
+    std::string BugReportGitHubOwner;   // dev-repo owner; empty disables direct submit
+    std::string BugReportGitHubRepo;    // dev-repo name
+    std::string BugReportGitHubBaseUrl; // empty -> falls back to GitHubBaseUrl -> api.github.com
+    std::string BugReportAssetsRepo;    // "owner/repo" for screenshot uploads; empty -> reuse issue repo
+    // PAT resolution order: env SMATCHET_BUGREPORT_GITHUB_TOKEN -> GitHubPat ->
+    // BugReportGitHubPat (read/written ONLY when BugReportPersistPat == true).
+    // BugReportGitHubPat is a secret — DPAPI-encrypted on Win32, same path as GitHubPat.
+    bool BugReportPersistPat = false;
+    std::string BugReportGitHubPat;
+    std::string BugReportHotkey = "Ctrl+Shift+B";
+    bool BugReportHotkeyEnabled = true;
+    bool BugReportScreenshotDefault = true;
+
     // JQL used when querying Jira; defaults to issues assigned to the current user.
     std::string JqlQuery = "assignee=currentUser()";
     // Jira field keys to extract and cache (e.g. customfield_12345, duedate).

@@ -34,6 +34,12 @@
 #include <unordered_set>
 #include <vector>
 
+namespace smatchet {
+namespace diagnostics {
+struct SubmitResult; // log-a-bug-github — held by shared_ptr in UiDrawSession
+}
+} // namespace smatchet
+
 struct AttachmentCollectionRequest {
     std::vector<AppController::AttachmentDescriptor> Attachments;
 };
@@ -573,6 +579,32 @@ struct UiDrawSession {
     /// Used by the visual-test pipeline to snapshot dock layouts deterministically.
     bool requestScreenshot = false;
     std::string requestScreenshotPath;
+    /// log-a-bug-github — when set alongside requestScreenshot, the standalone capture path
+    /// mosaic-censors the framebuffer (no readable text) before writing the PNG.
+    bool requestScreenshotCensor = false;
+    /// log-a-bug-github — set by the bug-report modal when its capture request is for the
+    /// report (not a debug/test shot). The standalone capture path echoes completion back
+    /// via bugReportShotReady so the modal never polls the filesystem on the UI thread.
+    bool requestScreenshotBugReport = false;
+
+    // --- "Log a Bug" modal (docs/plans/active/log-a-bug-github.md Slice 4) ---
+    // All bugReport* fields are read/written ONLY on the UI thread (the worker posts
+    // its result back via mainThreadDispatcher), so no extra synchronisation is needed.
+    bool showBugReport = false;
+    bool bugReportOpenLatch = false;     // set when newly opened — drives first-frame focus
+    bool bugReportInclScreenshot = true; // attach-screenshot checkbox (seeded from config)
+    bool bugReportPreviewOpen = false;   // egress-preview collapsible open
+    bool bugReportInFlight = false;      // submit in progress (capture handshake or worker)
+    bool bugReportShotPending = false;   // requested a screenshot; waiting for the capture to land
+    bool bugReportShotReady = false;     // standalone capture path signals completion here (UI-thread only)
+    double bugReportShotDeadline = 0.0;  // ImGui::GetTime() deadline — frees the modal if capture never lands
+    bool bugReportCrashMode = false;     // phase-2: pre-filled crash report
+    bool bugReportPreviewDirty = true;   // rebuild preview text only when inputs changed
+    int bugReportShotMode = 0;           // 0 full, 1 censored
+    std::vector<char> bugReportDescBuf;  // lazy multiline description buffer
+    std::string bugReportStagedShotPath; // captured screenshot path (post-swap)
+    std::string bugReportPreviewText;    // cached BuildMarkdownBody output
+    std::shared_ptr<smatchet::diagnostics::SubmitResult> bugReportResult; // posted back from the worker
 
     /// Transient request consumed once per frame in `SmatchetUI::Draw` right before the
     /// command-palette draw call. Lets the bucket-C `CommandPaletteFuzzyScenario` drive

@@ -56,6 +56,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     RegisterUiTestCommands(reg, app);
     RegisterAiCommands(reg, app);
     RegisterAutomationCommands(reg, app);
+    RegisterBugReportCommands(reg, app);
 
     RegisterViewToggleCommands(reg, app);
 

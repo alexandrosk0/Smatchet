@@ -21,6 +21,8 @@
 #include "UiPerfMonitor.h"
 #include "SmatchetPerfUi.h"
 #include "SmatchetPlanDocViewerUi.h"
+#include "SmatchetBugReportUi.h"
+#include "ImGuiHotkey.h"
 #include "SmatchetUiSession.h"
 #include "Win32PickFiles.h"
 #if defined(SMATCHET_WITH_MCP)
@@ -405,6 +407,21 @@ void SmatchetUI::Draw(AppController& app) {
         }
         commandPalette_.Draw(app);
     }
+
+    // "Log a Bug" hotkey + modal — polled OUTSIDE the BackendHasBeenReachable gate
+    // so bug reporting works even when the user's tracker is unreachable (the dev
+    // repo is independent of the active backend).
+    if (g_ui.cfg.BugReportHotkeyEnabled) {
+        smatchet::ui::ImGuiBugHotkey hk;
+        if (smatchet::ui::ParseImGuiHotkey(g_ui.cfg.BugReportHotkey, hk) &&
+            smatchet::ui::MatchHotkey(::ImGui::GetIO(), hk)) {
+            g_ui.showBugReport = true;
+            g_ui.bugReportOpenLatch = true;
+            // Opener owns the screenshot toggle — seed from config (the modal no longer does).
+            g_ui.bugReportInclScreenshot = g_ui.cfg.BugReportScreenshotDefault;
+        }
+    }
+    SmatchetBugReportUi_Draw(app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.

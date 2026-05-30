@@ -102,6 +102,13 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
     Core/GitHubClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
+    # docs/plans/active/log-a-bug-github.md Slice 2 — pure half of the bug-report
+    # service (target/PAT resolution + markdown body) + redaction + censor. The
+    # heavy half (BugReportService.cpp: cpr/host/AppController) is NOT linked here.
+    Core/BugReportBody.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/BugReportBody.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Imaging/ScreenshotCensor.cpp"
     # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
     Core/GitHubQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"
@@ -304,6 +311,10 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+    # log-a-bug-github — new Core subsystems (bare #includes in their tests/TUs).
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Diagnostics"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Imaging"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"

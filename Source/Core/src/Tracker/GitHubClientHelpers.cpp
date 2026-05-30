@@ -207,6 +207,72 @@ bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError) {
     return true;
 }
 
+namespace {
+
+// Comma-split a CSV string into a JSON array of trimmed, non-blank tokens.
+// Returns an empty array when nothing remains (caller decides whether to emit).
+nlohmann::json SplitCsvToJsonArray(const std::string& csv) {
+    nlohmann::json arr = nlohmann::json::array();
+    std::size_t start = 0;
+    while (start <= csv.size()) {
+        const std::size_t comma = csv.find(',', start);
+        const std::size_t end = (comma == std::string::npos) ? csv.size() : comma;
+        std::string token = csv.substr(start, end - start);
+        const std::size_t first = token.find_first_not_of(" \t\r\n");
+        if (first != std::string::npos) {
+            const std::size_t last = token.find_last_not_of(" \t\r\n");
+            arr.push_back(token.substr(first, last - first + 1));
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return arr;
+}
+
+} // namespace
+
+bool BuildGitHubCreatePayload(const std::string& summary, const std::string& body, const std::string& labelsCsv,
+                              const std::string& assigneesCsv, const std::string& owner, const std::string& repo,
+                              nlohmann::json& out, std::string& outError) {
+    if (summary.empty()) {
+        outError = "GitHub issue create requires a non-empty title (summary)";
+        return false;
+    }
+    if (owner.empty() || repo.empty()) {
+        outError = "GitHub issue create requires a target repo (owner/repo)";
+        return false;
+    }
+    out = nlohmann::json::object();
+    out["title"] = summary;
+    if (!body.empty()) {
+        out["body"] = body;
+    }
+    const nlohmann::json labels = SplitCsvToJsonArray(labelsCsv);
+    if (!labels.empty()) {
+        out["labels"] = labels;
+    }
+    const nlohmann::json assignees = SplitCsvToJsonArray(assigneesCsv);
+    if (!assignees.empty()) {
+        out["assignees"] = assignees;
+    }
+    // Out-of-band target so CreateIssue forms the URL without re-parsing ProjectKey.
+    // Stripped (erase) before the body is POSTed.
+    nlohmann::json target = nlohmann::json::object();
+    target["owner"] = owner;
+    target["repo"] = repo;
+    out["__target"] = target;
+    outError.clear();
+    return true;
+}
+
+std::string FormatGitHubIssueKey(const std::string& owner, const std::string& repo, std::int64_t number) {
+    std::ostringstream out;
+    out << owner << "/" << repo << "#" << number;
+    return out.str();
+}
+
 std::string ExtractGitHubErrorMessage(int httpStatus, const std::string& body) {
     if (!body.empty()) {
         try {
