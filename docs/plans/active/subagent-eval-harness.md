@@ -69,9 +69,9 @@ Dev-process tooling only — no product-runtime code. All four N/A.
 - **Pillar 3 (never crash)**: N/A — scorer is pure Python; runner shells the harness in a separate process.
 - **Pillar 4 (accessibility)**: N/A — no UI surface.
 
-## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A`)
+## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A`)
 
-`N/A — diff touches scripts/, tests/, docs/, AGENTS.md only; no Source/Core/.` (Tooling diff, not pure-docs — skips the perf gate but still runs shell-lint + bats.)
+`N/A` — no `Source/Core/` change. The **planned implementation** touches `scripts/`, `tests/`, `docs/`, `AGENTS.md` only; this plan PR itself is docs-only. (Implementation will be a tooling diff — runs shell-lint + bats, skips the perf gate.)
 
 ## Risks / non-goals
 
