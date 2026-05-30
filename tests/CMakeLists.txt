@@ -12,6 +12,7 @@ FetchContent_MakeAvailable(doctest)
 add_executable(SmatchetTests
     test_main.cpp
     Core/AnnotateAnalysisConfig.test.cpp
+    Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/JqlProjectScope.test.cpp
     Core/TextMerge.test.cpp
@@ -184,6 +185,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetTheme.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"

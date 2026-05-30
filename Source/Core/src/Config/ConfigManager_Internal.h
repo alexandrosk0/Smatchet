@@ -66,6 +66,12 @@ std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::str
 // -------- Meyers-singleton process-wide state -----------------------------------------
 
 std::mutex& GetIoMutexRef();
+// Serializes the whole config read-modify-write transaction (LoadMergedConfigJson -> modify ->
+// WriteConfigJson) across the smatchet_config.json writers (Save, SaveAnnotateAnalysis), closing the
+// lost-update window when those run on different threads (e.g. the coalescing config-save worker).
+// DISTINCT from GetIoMutexRef (which WriteConfigJson holds for the atomic file write) so the inner
+// WriteConfigJson never re-locks this — fixed lock order is RMW (outer) then IO (inner), never reversed.
+std::mutex& GetConfigRmwMutexRef();
 std::mutex& GetCacheMutexRef();
 TrackerConfig& GetCachedConfigRef();
 bool& GetHasCachedConfigRef();

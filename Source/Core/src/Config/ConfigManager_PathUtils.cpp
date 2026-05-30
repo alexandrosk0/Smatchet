@@ -350,6 +350,11 @@ std::mutex& GetIoMutexRef() {
     return s_mutex;
 }
 
+std::mutex& GetConfigRmwMutexRef() {
+    static std::mutex s_mutex;
+    return s_mutex;
+}
+
 std::mutex& GetCacheMutexRef() {
     static std::mutex s_mutex;
     return s_mutex;

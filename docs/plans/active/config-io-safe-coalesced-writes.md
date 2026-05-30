@@ -59,6 +59,27 @@ miss; if there is no hot UI-thread re-load path, item 3 is **N/A** (the same "me
 boot-time, leave it" outcome N14's load path reached). If a hot re-load path exists, async it via the
 worker/dispatcher. Treat item 3 as *contingent on the grill finding a real UI-thread load stall*.
 
+## Decisions (from grill, 2026-05-30)
+
+1. **Scope = item 1 + item 2; item 3 = N/A.** `ConfigManager::Load()` is cache-backed (`canUseCache`
+   → in-memory `TrackerConfig`; disk read only at boot / post-`InvalidateCache`). Every UI-thread
+   `Load()` (incl. per-frame `SmatchetFieldIconRender.cpp`) hits the cache, not disk — no hot
+   UI-thread disk-load path to async. (Separate micro-perf note, out of scope: per-frame `Load()`
+   copies the cached struct by value.)
+2. **Item-1 writer set is exactly two**: `ConfigManager::Save(TrackerConfig)` (`ConfigManager.cpp:179`)
+   and `SaveAnnotateAnalysis` (`:534`) — the only `smatchet_config.json` read-modify-write writers.
+   `ConfigManager_Views.cpp` writes a *different* file (`smatchet_views.json`), so it does not race the
+   config RMW and is not in scope (its own serialization is a separate concern).
+3. **Worker shape**: a **pure serialized coalescing writer — no `MainThreadDispatcher`** (config saves
+   have no post-save UI callback, unlike the chat worker's row-id backfill). Two independent
+   per-config-kind pending slots (`TrackerConfig`, `AnnotateAnalysisConfig`) each {snapshot + dirty},
+   guarded by the worker mutex; C++14 → no `std::variant`. Latest-per-kind wins. **Flush-then-join on
+   `Stop`** with a bounded budget (mirror `SmatchetChatPersistWorker`'s 250 ms-then-`LOG_WARN`) so a
+   last-second edit persists but a hung disk can't block shutdown.
+4. Item 2 is **consolidation + coalescing**, not correctness (item 1 alone makes the detached saves
+   race-free; config detached saves are already Pillar-3-safe being static + by-value). Chosen anyway
+   to converge the two ad-hoc detached patterns onto the codebase's stated single-worker direction.
+
 ## Files to modify
 
 1. `Source/Core/src/Config/ConfigManager_PathUtils.cpp` / `ConfigManager_Internal.h` — add
@@ -141,10 +162,31 @@ Touches `Source/Core/` → **fires**. Improvement, not regression.
 - Reworking `ScopedFileLock` cross-process semantics.
 
 ## Implementation log
-*(populated post-ship)*
+- **Item 1**: added `GetConfigRmwMutexRef()` (`ConfigManager_Internal.h` decl + `ConfigManager_PathUtils.cpp`
+  def); held across the read-modify-write in `ConfigManager::Save(TrackerConfig)` and
+  `SaveAnnotateAnalysis` — the only two `smatchet_config.json` writers. Distinct from `GetIoMutexRef`
+  (held by `WriteConfigJson`), fixed lock order outer-RMW → inner-IO → no deadlock.
+- **Item 2**: new `ConfigSaveWorker.{h,cpp}` (`smatchet::config_save` — pure serialized coalescing writer,
+  two per-kind pending slots, flush-then-join bounded 250 ms on `Stop`, synchronous fallback when not
+  running). `AppController` `Start()`s it early in `Initialize` + `Stop()`s it in `~AppController`
+  (not AI-gated). Both `ScheduleConfigSaveDetached` (AI prefs) and `ScheduleAnnotateConfigSaveDetached`
+  now delegate to `Enqueue*` (kept as thin named wrappers; call sites unchanged).
+- **Test**: `tests/Core/ConfigSaveConcurrency.test.cpp` — `[high-risk]` concurrent mixed-writer case
+  (no tear / no deadlock) + worker enqueue→persist→Stop-flush + post-Stop synchronous-fallback.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Item 3 dropped (N/A)**: the grill established `ConfigManager::Load()` is cache-backed — no hot
+  UI-thread disk-load path to async (boot + cache-miss only). No code change.
+- **DX12 build fix mid-implementation**: the `ConfigSaveWorker.h` include was initially placed inside
+  AppController.cpp's `#if defined(SMATCHET_WITH_AI)` block → `config_save` undefined in the AI-off DX12
+  build; moved the include out of the guard. No design impact.
+- Helpers kept as thin wrappers (delegating to `Enqueue*`) rather than deleted + call-sites-inlined —
+  lower-churn, identical behaviour.
 
 ## Verification (actual)
-*(populated post-ship)*
+- Dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`): **pass** (after the include fix).
+- doctest full suite **849/0** (incl. the new concurrency + worker cases; the concurrent RMW case
+  completing proves the lock order is deadlock-free).
+- `clang-format` clean; delta-lint **PASS** (Config/ is a strict zone — no new violations).
+- ASan / data-race on the worker + RMW hand-offs: covered by the PR's required Sanitizer CI job +
+  the 12-thread concurrent-save unit test (passed).
