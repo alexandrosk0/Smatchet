@@ -582,6 +582,10 @@ struct UiDrawSession {
     /// log-a-bug-github — when set alongside requestScreenshot, the standalone capture path
     /// mosaic-censors the framebuffer (no readable text) before writing the PNG.
     bool requestScreenshotCensor = false;
+    /// log-a-bug-github — set by the bug-report modal when its capture request is for the
+    /// report (not a debug/test shot). The standalone capture path echoes completion back
+    /// via bugReportShotReady so the modal never polls the filesystem on the UI thread.
+    bool requestScreenshotBugReport = false;
 
     // --- "Log a Bug" modal (docs/plans/active/log-a-bug-github.md Slice 4) ---
     // All bugReport* fields are read/written ONLY on the UI thread (the worker posts
@@ -592,6 +596,8 @@ struct UiDrawSession {
     bool bugReportPreviewOpen = false;   // egress-preview collapsible open
     bool bugReportInFlight = false;      // submit in progress (capture handshake or worker)
     bool bugReportShotPending = false;   // requested a screenshot; waiting for the capture to land
+    bool bugReportShotReady = false;     // standalone capture path signals completion here (UI-thread only)
+    double bugReportShotDeadline = 0.0;  // ImGui::GetTime() deadline — frees the modal if capture never lands
     bool bugReportCrashMode = false;     // phase-2: pre-filled crash report
     bool bugReportPreviewDirty = true;   // rebuild preview text only when inputs changed
     int bugReportShotMode = 0;           // 0 full, 1 censored

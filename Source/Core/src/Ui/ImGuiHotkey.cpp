@@ -1,6 +1,7 @@
 #include "ImGuiHotkey.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <vector>
 
 namespace smatchet {

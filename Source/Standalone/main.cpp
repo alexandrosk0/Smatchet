@@ -641,7 +641,16 @@ int main(int argc, char** argv) {
                 g_ui.requestScreenshot = false;
                 const bool censorThisShot = g_ui.requestScreenshotCensor;
                 g_ui.requestScreenshotCensor = false;
+                // "Log a Bug" capture — own the staging dir + signal completion here (the
+                // capture path is inherently main-thread and already writes to disk), so the
+                // bug-report modal never does UI-thread filesystem I/O.
+                const bool bugReportShot = g_ui.requestScreenshotBugReport;
+                g_ui.requestScreenshotBugReport = false;
                 const std::string screenshotPath = g_ui.requestScreenshotPath;
+                if (bugReportShot && !screenshotPath.empty()) {
+                    std::error_code mkec;
+                    ghc::filesystem::create_directories(ghc::filesystem::path(screenshotPath).parent_path(), mkec);
+                }
                 int fw = 0;
                 int fh = 0;
                 glfwGetFramebufferSize(window, &fw, &fh);
@@ -685,6 +694,12 @@ int main(int argc, char** argv) {
                     }
                 } else {
                     LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
+                }
+                // Signal the bug-report modal regardless of capture success — on failure the
+                // staged PNG is absent and the worker degrades gracefully; either way the
+                // modal's handshake must unblock (never leave bugReportInFlight stuck).
+                if (bugReportShot) {
+                    g_ui.bugReportShotReady = true;
                 }
             }
 

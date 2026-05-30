@@ -423,6 +423,8 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             if (ImGui::MenuItem("Report a Bug...", d.cfg.BugReportHotkey.c_str())) {
                 d.showBugReport = true;
                 d.bugReportOpenLatch = true;
+                // Opener owns the screenshot toggle — seed from config (the modal no longer does).
+                d.bugReportInclScreenshot = d.cfg.BugReportScreenshotDefault;
             }
             ImGui::EndMenu();
         }

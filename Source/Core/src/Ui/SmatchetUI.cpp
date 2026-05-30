@@ -417,6 +417,8 @@ void SmatchetUI::Draw(AppController& app) {
             smatchet::ui::MatchHotkey(::ImGui::GetIO(), hk)) {
             g_ui.showBugReport = true;
             g_ui.bugReportOpenLatch = true;
+            // Opener owns the screenshot toggle — seed from config (the modal no longer does).
+            g_ui.bugReportInclScreenshot = g_ui.cfg.BugReportScreenshotDefault;
         }
     }
     SmatchetBugReportUi_Draw(app, g_ui);

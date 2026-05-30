@@ -15,18 +15,20 @@
 // Routes all ImGui::* calls in this TU through the localization wrapper.
 #define ImGui SmatchetLocalizedImGui
 
-#include <ghc/filesystem.hpp>
-
 #include <chrono>
 #include <cstring>
 #include <memory>
 #include <string>
 
-namespace fs = ghc::filesystem;
+// NOTE: no <filesystem> here on purpose — sync disk I/O on the UI thread is a
+// CRITICAL violation (Pillar 2). The screenshot capture + staging happens on the
+// standalone capture path (Source/Standalone/main.cpp), which signals completion
+// back via g_ui.bugReportShotReady; this TU never touches the filesystem.
 
 namespace {
 
 const std::size_t kDescBufCap = 64u * 1024u;
+const double kShotCaptureTimeoutSec = 8.0;
 
 std::string DescriptionText(const UiDrawSession& d) {
     if (d.bugReportDescBuf.empty()) {
@@ -69,13 +71,23 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
 } // namespace
 
 void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
-    // Per-frame: if a screenshot was requested, wait for the capture file to land
-    // (standalone writes it post-swap), then launch the worker exactly once.
+    // Per-frame: if a screenshot was requested, the standalone capture path sets
+    // bugReportShotReady once the PNG is written (no UI-thread filesystem poll).
+    // Launch the worker exactly once on the ready edge; time out if it never lands.
     if (d.bugReportInFlight && d.bugReportShotPending) {
-        std::error_code ec;
-        if (!d.bugReportStagedShotPath.empty() && fs::exists(fs::path(d.bugReportStagedShotPath), ec) && !ec) {
+        if (d.bugReportShotReady) {
+            d.bugReportShotReady = false;
             d.bugReportShotPending = false;
             LaunchSubmit(app, d, d.bugReportStagedShotPath);
+        } else if (ImGui::GetTime() > d.bugReportShotDeadline) {
+            // Capture never landed (minimized window, zero-size framebuffer, …) — free the modal.
+            d.bugReportShotPending = false;
+            d.bugReportInFlight = false;
+            d.requestScreenshot = false;
+            d.requestScreenshotBugReport = false;
+            auto fail = std::make_shared<smatchet::diagnostics::SubmitResult>();
+            fail->Error = "Screenshot capture timed out — try again, or submit without a screenshot.";
+            d.bugReportResult = fail;
         }
     }
 
@@ -92,10 +104,14 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
                 std::strncpy(d.bugReportDescBuf.data(), seed, kDescBufCap - 1);
             }
         }
-        d.bugReportInclScreenshot = d.cfg.BugReportScreenshotDefault;
+        // NOTE: bugReportInclScreenshot / bugReportShotMode are NOT seeded here —
+        // the opener owns them (hotkey + menu seed from config; the `bug.report`
+        // command sets them from --screenshot/--censored). Re-seeding here would
+        // clobber command-provided modal args.
         d.bugReportResult.reset();
         d.bugReportInFlight = false;
         d.bugReportShotPending = false;
+        d.bugReportShotReady = false;
         d.bugReportPreviewDirty = true;
     }
 
@@ -194,17 +210,19 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
         d.bugReportResult.reset();
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL
         if (d.bugReportInclScreenshot) {
-            // Request a capture; the per-frame handshake above launches the worker
-            // once the PNG lands.
+            // Request a capture; the standalone capture path (main.cpp) creates the
+            // staging dir, writes the PNG, then sets bugReportShotReady. The per-frame
+            // handshake above launches the worker on that signal (no UI-thread I/O here).
             const std::string path =
                 ConfigManager::GetUserDataDirectory() + "bug_reports/_pending_" + PendingShotStamp() + ".png";
-            std::error_code ec;
-            fs::create_directories(fs::path(ConfigManager::GetUserDataDirectory() + "bug_reports"), ec);
             d.bugReportStagedShotPath = path;
             d.requestScreenshotPath = path;
             d.requestScreenshotCensor = (d.bugReportShotMode == 1);
             d.requestScreenshot = true;
+            d.requestScreenshotBugReport = true;
+            d.bugReportShotReady = false;
             d.bugReportShotPending = true;
+            d.bugReportShotDeadline = ImGui::GetTime() + kShotCaptureTimeoutSec;
         } else {
             d.bugReportShotPending = false;
             LaunchSubmit(app, d, std::string());
