@@ -3,14 +3,18 @@
 #
 # Asserts:
 #   1. Running the doctor on the current host exits 0 (toolchain is wired).
-#   2. Stripping C:\msys64\ucrt64\bin (or its bash equivalent) from PATH
-#      makes the doctor exit >= 2 (WARN or FAIL) AND its output mentions
-#      "MSYS2". Exit code is non-zero either way: 2 when a working gcc
-#      still resolves elsewhere (e.g. JetBrains-bundled MinGW) and only
-#      the PATH check warns, 1 when gcc is also unreachable.
+#   2. Stripping the C++ compiler (cl.exe / clang-cl) from PATH makes the
+#      doctor exit >= 1 (compiler is a hard requirement) AND its output names
+#      the compiler with an actionable install hint.
+#
+# NOTE: PR #463 ("doctor checks Windows MSVC toolchain, not Linux gcc")
+# reworked doctor.sh away from gcc/MSYS2 to cl.exe/clang-cl. Assertion 2 used
+# to strip C:\msys64\ucrt64\bin and grep for "MSYS2"; that concept no longer
+# exists in doctor.sh, so the assertion now targets the actual required tool
+# (the C++ compiler).
 #
 # This catches: (a) the doctor regressing into always-passing or always-failing,
-# (b) the MSYS2-missing path losing its actionable install hint.
+# (b) the missing-compiler path losing its actionable install hint.
 #
 # Final summary line "Passed: N  Failed: M" is consumed by scripts/dev/test-all.sh.
 #
@@ -76,13 +80,20 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# Assertion 2: MSYS2 UCRT64 removed -> doctor must fail and mention MSYS2
+# Assertion 2: C++ compiler removed -> doctor must fail and name the compiler
 # ---------------------------------------------------------------------------
 
-echo "[2/2] doctor with C:\\msys64\\ucrt64\\bin stripped from PATH -- expect exit >= 2 + mentions MSYS2"
+echo "[2/2] doctor with the C++ compiler (cl.exe / clang-cl) stripped from PATH -- expect exit >= 1 + actionable compiler hint"
 
-# Strip every PATH entry whose tail is .../ucrt64/bin (forward or back slashes).
-# Preserve host delimiter style (':' on Unix-like shells, ';' on Windows-style PATH).
+# Locate the dirs hosting cl.exe / clang-cl so we can strip exactly those,
+# forcing doctor's required-compiler check (PR #463) down its failure path.
+_strip_dirs=()
+for _tool in cl.exe clang-cl; do
+    _tp="$(command -v "$_tool" 2>/dev/null || true)"
+    [ -n "$_tp" ] && _strip_dirs+=("$(dirname "$_tp")")
+done
+
+# Preserve host delimiter style (':' on Unix-like shells, ';' on Windows PATH).
 if [[ "$PATH" == *';'* ]]; then
     PATH_SEP=';'
 else
@@ -91,9 +102,11 @@ fi
 IFS="$PATH_SEP" read -r -a _path_parts <<< "$PATH"
 _filtered_parts=()
 for _p in "${_path_parts[@]}"; do
-    if ! echo "$_p" | grep -qEi '(^|[\\/])ucrt64[\\/]bin[\\/]?$'; then
-        _filtered_parts+=("$_p")
-    fi
+    _drop=0
+    for _d in "${_strip_dirs[@]}"; do
+        [ "$_p" = "$_d" ] && _drop=1 && break
+    done
+    [ "$_drop" -eq 0 ] && _filtered_parts+=("$_p")
 done
 NEW_PATH=$(IFS="$PATH_SEP"; echo "${_filtered_parts[*]}")
 OUT_FAIL=$(PATH="$NEW_PATH" bash "$DOCTOR_SH" 2>&1) || RC_FAIL=$?
@@ -101,18 +114,16 @@ RC_FAIL="${RC_FAIL:-0}"
 echo "$OUT_FAIL" | sed 's/^/    /'
 echo "    (exit=$RC_FAIL)"
 
-if [ "$RC_FAIL" -ge 2 ]; then
-    note_pass "doctor exits $RC_FAIL (>= 2) when MSYS2 UCRT64 bin is missing from PATH"
-elif [ "$RC_FAIL" -eq 1 ]; then
-    note_pass "doctor exits 1 when MSYS2 UCRT64 bin is missing from PATH (gcc also unreachable)"
+if [ "$RC_FAIL" -ge 1 ]; then
+    note_pass "doctor exits $RC_FAIL (>= 1) when no C++ compiler is on PATH"
 else
-    note_fail "expected exit >= 2 (or 1) with MSYS2 bin stripped, got $RC_FAIL"
+    note_fail "expected exit >= 1 with cl.exe/clang-cl stripped, got $RC_FAIL"
 fi
 
-if echo "$OUT_FAIL" | grep -qi 'MSYS2'; then
-    note_pass "doctor output mentions 'MSYS2' (actionable install hint present)"
+if echo "$OUT_FAIL" | grep -qiE 'cl\.exe|clang-cl|compiler'; then
+    note_pass "doctor output names the C++ compiler (actionable install hint present)"
 else
-    note_fail "doctor output did not mention 'MSYS2' -- install hint is missing or worded differently"
+    note_fail "doctor output did not mention the C++ compiler -- install hint missing or reworded"
 fi
 
 # ---------------------------------------------------------------------------

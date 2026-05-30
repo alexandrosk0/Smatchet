@@ -2,8 +2,12 @@
 # test-skill-vs-agent-parity.sh — guard against skill / agent mismatch.
 #
 # Smatchet's perf-* helpers ship in two forms:
-#   - `agents/<name>.md` (Codex / Cursor / Aider / generic harness)
+#   - `agents/{core,project}/<name>.md` (Codex / Cursor / Aider / generic harness)
 #   - `agents/_shared/skills/<name>/SKILL.md` (Claude Code skill)
+#
+# NOTE: the agentic reorg (PRs #542-549) split agents into agents/core/ +
+# agents/project/. This test resolves the agent twin in either subdir rather
+# than the pre-reorg flat agents/<name>.md path.
 #
 # This test asserts every skill that names a corresponding agent file
 # actually has one (shape check — catches a renamed agent leaving an
@@ -40,6 +44,21 @@ is_skill_only() {
     return 1
 }
 
+# Resolve an agent's canonical .md across the post-reorg layout. Prints the
+# path and returns 0 if found; returns 1 otherwise. Checks agents/core/ and
+# agents/project/ (and the legacy flat path, for backward compatibility).
+resolve_agent_md() {
+    local name="$1"
+    local candidate
+    for candidate in "agents/core/${name}.md" "agents/project/${name}.md" "agents/${name}.md"; do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 for skill_dir in agents/_shared/skills/*/; do
     [ -d "$skill_dir" ] || continue
     skill_md="$skill_dir/SKILL.md"
@@ -51,13 +70,12 @@ for skill_dir in agents/_shared/skills/*/; do
         continue
     fi
 
-    agent_md="agents/${name}.md"
-    if [ -f "$agent_md" ]; then
-        echo "PASS: $name (skill ↔ agent both present)"
+    if agent_md="$(resolve_agent_md "$name")"; then
+        echo "PASS: $name (skill ↔ agent both present: $agent_md)"
         PASS=$((PASS+1))
     else
-        echo "FAIL: $name — SKILL.md ships at ${skill_md} but agents/${name}.md is missing"
-        echo "  Either add agents/${name}.md OR add '$name' to SKILL_ONLY_HELPERS in this script"
+        echo "FAIL: $name — SKILL.md ships at ${skill_md} but no agents/{core,project}/${name}.md exists"
+        echo "  Either add agents/core/${name}.md OR add '$name' to SKILL_ONLY_HELPERS in this script"
         FAIL=$((FAIL+1))
     fi
 done
