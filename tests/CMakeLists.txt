@@ -251,8 +251,8 @@ target_compile_definitions(SmatchetTests PRIVATE
 # `SMATCHET_WITH_AI` in `LocalCacheManager.cpp`. The chat doctest TU
 # (`LocalCacheManagerChat.test.cpp`) self-gates with the same guard so the
 # rig keeps building when AI is disabled; mirror the parent option here so
-# both surfaces toggle together. Matches the `SMATCHET_WITH_WHISPER` /
-# `SMATCHET_WITH_AGENTIC` precedent above.
+# both surfaces toggle together. Matches the `SMATCHET_WITH_WHISPER`
+# precedent above.
 if(SMATCHET_WITH_AI)
     target_compile_definitions(SmatchetTests PRIVATE SMATCHET_WITH_AI=1)
 endif()
@@ -344,13 +344,11 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     )
 endif()
 
-# Helper executables for SubprocessCapture.test.cpp (H1 — agentic-flow
-# handoff). These are tiny stdlib-only binaries the doctest spawns to
-# exercise exit codes, timeouts, cancel tokens, and stdout caps without
-# depending on platform shell builtins. The resolved binary directory is
-# threaded into SmatchetTests as a compile-time string so the test
-# discovers the helpers without env vars (per the H1 plan's locked
-# decision #10 in agentic-coding-handoff.md).
+# Helper executables for SubprocessCapture.test.cpp. These are tiny
+# stdlib-only binaries the doctest spawns to exercise exit codes, timeouts,
+# cancel tokens, and stdout caps without depending on platform shell
+# builtins. The resolved binary directory is threaded into SmatchetTests as
+# a compile-time string so the test discovers the helpers without env vars.
 add_executable(subproc_helper_exit _helpers/subproc_helper_exit.cpp)
 add_executable(subproc_helper_sleep _helpers/subproc_helper_sleep.cpp)
 add_executable(subproc_helper_flood _helpers/subproc_helper_flood.cpp)
