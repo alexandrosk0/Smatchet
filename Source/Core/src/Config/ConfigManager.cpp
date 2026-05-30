@@ -474,6 +474,14 @@ AnnotateAnalysisConfig ConfigManager::LoadAnnotateAnalysis() {
     b.AiChatUrl = ba.value("ai_chat_url", std::string());
     b.DefaultMaxFrames = ba.value("default_max_frames", b.DefaultMaxFrames);
     b.ChangelistCacheMaxEntries = ba.value("cl_cache_max", b.ChangelistCacheMaxEntries);
+    // Clamp on load so a hand-edited out-of-range value can't reach the worker cache sizing
+    // (AnnotateAnalysisUi_Worker.cpp). Mirrors the UI InputInt range (16..8192).
+    if (b.ChangelistCacheMaxEntries < 16) {
+        b.ChangelistCacheMaxEntries = 16;
+    } else if (b.ChangelistCacheMaxEntries > 8192) {
+        b.ChangelistCacheMaxEntries = 8192;
+    }
+    b.ShowRawCallstack = ba.value("show_raw_callstack", b.ShowRawCallstack);
     b.CallstackTrackerFieldId = ba.value("callstack_jira_field_id", std::string());
     b.LastFoundClTrackerFieldId = ba.value("last_found_cl_jira_field_id", std::string());
     b.LastOccurrencesTrackerFieldId = ba.value("last_occurrences_jira_field_id", std::string());
@@ -533,6 +541,7 @@ void ConfigManager::SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b) {
     ba["ai_chat_url"] = b.AiChatUrl;
     ba["default_max_frames"] = b.DefaultMaxFrames;
     ba["cl_cache_max"] = b.ChangelistCacheMaxEntries;
+    ba["show_raw_callstack"] = b.ShowRawCallstack;
     ba["callstack_jira_field_id"] = b.CallstackTrackerFieldId;
     ba["last_found_cl_jira_field_id"] = b.LastFoundClTrackerFieldId;
     ba["last_occurrences_jira_field_id"] = b.LastOccurrencesTrackerFieldId;

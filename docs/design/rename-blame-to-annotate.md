@@ -240,3 +240,32 @@ Both phases touch `Source/Core/`, so the gate **applies** — but every gate is 
 **Pre-push local check**: run `docs/PERF_WORKFLOW.md` § Gate-check vs baseline against `annotate-open-entry-tab` once post-rename; expect within-noise.
 
 **Override**: not needed — no intentional regression.
+
+## Phase-2 implementation log (executed 2026-05-30)
+
+All 6 items shipped. Files touched: `ConfigManager.{h,cpp}`, `AnnotateAnalysisUi_Internal.h`,
+`_Config.cpp`, `_Preferences.cpp`, `AnnotateAnalysisUi.cpp`, `_Window.cpp`, `_Worker.cpp`.
+
+1. **Autoselect collapse** — three `MaybeAutoselect*TrackerField` bodies replaced by one
+   file-local `MaybeAutoselectTrackerField(app, targetFieldId, nameMatches, updateCallstackHint)`;
+   the three public wrappers are now thin call-throughs. Misspelling matches preserved.
+2. **Labels** — `P4 executable`→`p4 executable` (casing consistent with `p4vc`); `… cmd`→`… command`;
+   the three identically-labelled `"Jira field"` combos are now `Callstack source field` /
+   `Before-changelist field` / `Last-occurrences date field`.
+3. **showRaw persisted** — new `AnnotateAnalysisConfig::ShowRawCallstack` round-tripped as
+   `show_raw_callstack`; seeded per window-open in `_Window.cpp` (`justOpened`); the 3 toggle
+   sites call the new `ApplyShowRawCallstack(bool)` helper (sets runtime flag + cfg + persist);
+   the close-handler runtime reset (`_Modals.cpp`) is intentionally kept (reopen re-seeds from cfg).
+4. **Multi-rule remap editor** — single `remapFrom`/`remapTo` buffers replaced by a per-row editor
+   (`std::vector<RemapEditBuf>` mirroring `cfg.PathRemaps`) with add/Remove; persists the whole
+   vector. Single-rule seed (`AnnotateAnalysisUi.cpp`) and dead worker sync (`_Worker.cpp`) removed.
+   `CallstackParser` untouched (already multi-rule).
+5. **Form-less knobs exposed** — `InputInt("Changelist cache size")` (clamped 16..8192) bound to
+   `ChangelistCacheMaxEntries`; a collapsing **Colors** section of 7 `ColorEdit4` controls bound to
+   `UiColors.*` (recolor live + persist on commit).
+6. **Value-range guard** — `ChangelistCacheMaxEntries` now clamped to 16..8192 on load in
+   `ConfigManager::LoadAnnotateAnalysis` (a hand-edited negative can no longer reach the worker).
+
+**Deferred (unchanged):** backlog **N14** (move the once-guarded config hydrate off the UI thread)
+remains a separate follow-up — bundling threading work would break this PR's perf-neutral, prefs-only
+scope. The English "annotate context" comment-action label from Phase 1 is left to a copy pass.

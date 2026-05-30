@@ -463,6 +463,8 @@ struct AnnotateAnalysisConfig {
     std::vector<std::string> DefaultIgnoreKeywords;
     std::vector<PathRemapRule> PathRemaps;
     int ChangelistCacheMaxEntries = 512;
+    /** Persisted state of the Annotate callstack raw/table view toggle; re-seeded on each window open. */
+    bool ShowRawCallstack = false;
     AnnotateUiThemeColors UiColors{};
     /** Jira field id (e.g. customfield_10001) whose value populates the annotate callstack text. */
     std::string CallstackTrackerFieldId;

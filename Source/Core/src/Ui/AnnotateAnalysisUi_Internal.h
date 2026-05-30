@@ -47,6 +47,13 @@ struct AnnotateRow {
     P4LineAnnotate Annotate;
 };
 
+/// Per-row edit buffers backing the multi-rule path-remap editor in the
+/// Annotate preferences form. Mirror `AnnotateAnalysisConfig::PathRemaps` 1:1.
+struct RemapEditBuf {
+    char from[512]{};
+    char to[512]{};
+};
+
 struct DetailPack {
     std::vector<P4AnnotatedLine> Lines;
     std::string Error;
@@ -78,8 +85,8 @@ struct AnnotateAnalysisUi::AnnotateState {
     char atClBuf[64]{};
     std::string beforeDateIso;
     int maxFramesVal = 64;
-    char remapFrom[512]{};
-    char remapTo[512]{};
+    int clCacheVal = 512;
+    std::vector<RemapEditBuf> remapBufs;
     char p4Exe[260]{};
     char p4vcExe[260]{};
     char timeTpl[1024]{};
@@ -161,6 +168,7 @@ void HydrateAnnotateCfgDiskOnce();
 void MaybeAutoselectCallstackTrackerField(const AppController& app);
 void MaybeAutoselectLastFoundClTrackerField(const AppController& app);
 void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app);
+void ApplyShowRawCallstack(bool show);
 void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std::string& issueKey);
 void TryFillCallstackFromJira(const AppController& app, const std::string& issueKey);
 std::vector<std::string> SplitIgnoreKeywords(const std::string& multi);

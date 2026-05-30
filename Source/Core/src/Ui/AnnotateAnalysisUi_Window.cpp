@@ -66,6 +66,11 @@ void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const 
 
     const bool justOpened = !annotateOpenPrev_;
     annotateOpenPrev_ = true;
+    if (justOpened) {
+        // Re-seed the raw/table toggle from persisted config on each open (the close handler
+        // resets the runtime flag to false; the persisted preference wins on reopen).
+        State().showRaw = State().annotateCfg.ShowRawCallstack;
+    }
     if (justOpened || selectedJiraIssueKey != State().lastCallstackIssueKey) {
         State().lastCallstackIssueKey = selectedJiraIssueKey;
         TryFillCallstackFromJira(app, selectedJiraIssueKey);
@@ -185,7 +190,7 @@ void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const 
                     PushAnnotateLinkButtonColors(theme);
                     if (State().showRaw) {
                         if (ImGui::Button("Show Table", ImVec2(callstackViewBtnW, 0.f))) {
-                            State().showRaw = false;
+                            ApplyShowRawCallstack(false);
                         }
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                             ImGui::SetTooltip(
@@ -194,7 +199,7 @@ void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const 
                         }
                     } else {
                         if (ImGui::Button("Show Raw Text", ImVec2(callstackViewBtnW, 0.f))) {
-                            State().showRaw = true;
+                            ApplyShowRawCallstack(true);
                         }
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                             ImGui::SetTooltip(
@@ -207,7 +212,7 @@ void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const 
                     ImGui::SameLine();
                     PushAnnotateLinkButtonColors(theme);
                     if (ImGui::Button("Show raw callstack…", ImVec2(callstackViewBtnW, 0.f))) {
-                        State().showRaw = true;
+                        ApplyShowRawCallstack(true);
                     }
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                         ImGui::SetTooltip(

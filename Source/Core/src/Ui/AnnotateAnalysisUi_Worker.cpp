@@ -128,10 +128,8 @@ void RunAnnotateProcessFromBuffers() {
     State().annotateCfg.TimelapseCommandTemplate = State().timeTpl;
     State().annotateCfg.ChangeCommandTemplate = State().changeTpl;
     State().annotateCfg.AiChatUrl = State().aiUrl;
-    State().annotateCfg.PathRemaps.clear();
-    if (State().remapFrom[0] != '\0') {
-        State().annotateCfg.PathRemaps.push_back({State().remapFrom, State().remapTo});
-    }
+    // PathRemaps are owned directly by the multi-rule editor (it writes cfg.PathRemaps +
+    // persists on each row edit), so no buffer→cfg rebuild is needed here.
     LogAnnotateP4PathsIfChanged("process");
     std::vector<std::string> keywords = SplitIgnoreKeywords(std::string(State().ignoreBuf.data()));
     if (keywords.empty()) {

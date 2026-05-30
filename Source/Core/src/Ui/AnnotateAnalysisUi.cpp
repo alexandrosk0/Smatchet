@@ -37,6 +37,7 @@ void AnnotateAnalysisUi::ensureSettingsBuffersLoaded() {
     }
     HydrateAnnotateCfgDiskOnce();
     State().maxFramesVal = State().annotateCfg.DefaultMaxFrames;
+    State().clCacheVal = State().annotateCfg.ChangelistCacheMaxEntries;
     CopyToBuffer(State().p4Exe, State().annotateCfg.P4Executable);
     CopyToBuffer(State().p4vcExe, State().annotateCfg.P4VcExecutable);
     CopyToBuffer(State().timeTpl, State().annotateCfg.TimelapseCommandTemplate);
@@ -60,13 +61,9 @@ void AnnotateAnalysisUi::ensureSettingsBuffersLoaded() {
     if (off < State().ignoreBuf.size()) {
         State().ignoreBuf[off] = '\0';
     }
-    if (State().annotateCfg.PathRemaps.empty()) {
-        State().remapFrom[0] = '\0';
-        State().remapTo[0] = '\0';
-    } else {
-        CopyToBuffer(State().remapFrom, State().annotateCfg.PathRemaps[0].FromPrefix);
-        CopyToBuffer(State().remapTo, State().annotateCfg.PathRemaps[0].ToPrefix);
-    }
+    // Path-remap edit buffers are seeded lazily by the multi-rule editor in
+    // AnnotateAnalysisUi_Preferences.cpp (it re-syncs from cfg.PathRemaps whenever the
+    // row count changes), so no single-rule seed is needed here.
     LogAnnotateP4PathsIfChanged("initial_load");
     cfgLoaded_ = true;
 }
