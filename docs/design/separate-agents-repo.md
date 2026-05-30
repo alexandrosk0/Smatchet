@@ -20,7 +20,7 @@ Naming constraint: the repo hosts **generic, reusable** agents. A Smatchet-brand
 
 Layout mirrors today's `agents/` tree:
 
-```
+```text
 <agent-lib-name>/
   README.md
   AGENTS.md                    # generic agent-spec doc (lifted from Smatchet's AGENTS.md core)
@@ -41,7 +41,7 @@ Layout mirrors today's `agents/` tree:
 
 Tracked inside Smatchet. Each file is the **Smatchet-specific delta** for a corresponding upstream agent:
 
-```
+```text
 agents-local/
   <agent>.smatchet.md          # overlay containing Smatchet paths, subsystems, invariants
   _shared/
@@ -58,7 +58,7 @@ Not every upstream agent needs an overlay. Purely generic agents (`mechanic`, `c
 
 `scripts/setup-harness.sh` gains a synth step. For each generic agent `<name>` in `agents/`:
 
-```
+```text
 .claude/agents/<name>.md  :=  agents/<name>.md  +  ("\n\n---\n\n## Smatchet project addendum\n\n" + agents-local/<name>.smatchet.md  if exists)
 ```
 
@@ -206,3 +206,20 @@ End-to-end checklist:
 - Phase 2 + Phase 3 detail. Sketched here; each gets its own `docs/design/separate-agents-repo-phase-{2,3}.md` when Phase 1 ships.
 - Migration of `AGENTS.md` itself into the upstream repo. Deferred — `AGENTS.md` carries enough Smatchet-specific content (UX pillars, merge gates, project rules) that it stays in this repo and references upstream agent docs by URL once they exist.
 - Renaming `agents/` to something else. Decided against — preserves 2,849 path references unchanged.
+
+## Deferred-symbol audit (plan-slimming hygiene)
+
+Per `AGENTS.md` § Process rules § Scope-reduction edits: this plan details Phase 1 and **defers Phase 2 + Phase 3** (plus the `AGENTS.md`-migration and `agents/`-rename items in § Out of scope) to later plan-docs. Grepped every symbol named in the deferred work across `docs/CONTEXT.md`, `docs/adr/`, `agents/*.md`, and `docs/backlog/agent-self-improvement/` to confirm no live doc already describes the deferred work as shipped:
+
+| Deferred symbol | Source (deferred phase) | Hits in audited trees | Action |
+|---|---|---|---|
+| `agents-local/` (overlay tree) | Phase 2/3 mechanism | 0 | none — not yet referenced |
+| `<agent-lib-name>` / `agent-lib` (upstream repo) | bootstrap, named in 2/3 | 0 | none |
+| `agents-resolved/` (codex resolved tree) | Phase 2 open question | 0 | none |
+| `separate-agents-repo-phase-{2,3}.md` (future plan docs) | Phase 2/3 split | 0 | none — created when Phase 1 ships |
+| `synth_overlay()` / overlay-merge synth step | Phase 1.3 + 2 | 0 | none — not yet in `setup-harness.sh` |
+| `no-overlay` marker | Risk 3 mitigation (Phase 2) | 0 | none |
+
+Result: **clean** — the feature is wholly unimplemented, so no `CONTEXT*.md` / ADR / agent / backlog entry yet describes the upstream repo, overlay tree, or submodule split as current truth. Nothing to revise or delete. Re-run this audit when Phase 1 lands (the submodule + `agents-local/` tree become real, and the Phase 2/3 sketches must not leak into live docs as decided).
+
+Note: `agents/_shared/skills/grill-with-docs/SMATCHET-NOTES.md` already exists today and is correctly described (§ Architecture) as moving into the overlay tree — it is not a deferred symbol.
