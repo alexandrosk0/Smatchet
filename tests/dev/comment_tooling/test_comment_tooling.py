@@ -116,6 +116,130 @@ for line, want in cases:
     got = audit.classify_comment(line.strip(), line)
     check(got == want, f"classify {line!r} -> {want} (got {got})")
 
+# --- 4. Phase-4 regrowth guard (diff + ratio modes, against a throwaway git repo) ---
+import contextlib   # noqa: E402
+import io           # noqa: E402
+import subprocess   # noqa: E402
+import tempfile     # noqa: E402
+
+print("[4] Phase-4 regrowth guard (git diff modes)")
+
+REL = "Source/Core/src/Foo/widget.cpp"   # inside SWEEP_ROOTS so the diff filter keeps it
+# Enough real code lines that a clean base sits well under the 0.50 ratio threshold.
+CLEAN = "\n".join(["int f%d() { return %d; }" % (i, i) for i in range(20)]) + "\n"
+
+
+def _run_diff(ref):
+    """Capture (exit_code, stdout) of run_diff_mode in the current cwd."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = audit.run_diff_mode(ref)
+    return rc, buf.getvalue()
+
+
+def _run_ratio(ref):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = audit.run_ratio_warn(ref)
+    return rc, buf.getvalue()
+
+
+def _git_q(repo, *args):
+    subprocess.run(["git", "-C", repo] + list(args), check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _write(repo, rel, text):
+    p = os.path.join(repo, rel.replace("/", os.sep))
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def _commit_base(repo, body):
+    _git_q(repo, "init", "-q")
+    _git_q(repo, "config", "user.email", "t@t")
+    _git_q(repo, "config", "user.name", "t")
+    _write(repo, REL, body)
+    _git_q(repo, "add", "-A")
+    _git_q(repo, "commit", "-q", "-m", "base")
+
+
+def _in_repo(fn):
+    """Run fn(repo) inside a fresh temp git repo, cwd switched to it, then restore + cleanup."""
+    prev = os.getcwd()
+    repo = tempfile.mkdtemp(prefix="cmt-regrowth-")
+    try:
+        os.chdir(repo)
+        return fn(repo)
+    finally:
+        os.chdir(prev)
+        # best-effort recursive cleanup (Windows: drop read-only on .git objects)
+        import shutil
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+# 4a — fresh noise FAILS: base clean, head adds all three noise buckets.
+def case_fresh(repo):
+    _commit_base(repo, CLEAN)
+    noisy = CLEAN + "\n".join([
+        "//",                       # comment-blank-run
+        "// ==================",    # comment-decorative-banner
+        "// oldCall(arg);",         # comment-commented-out-code
+    ]) + "\n"
+    _write(repo, REL, noisy)
+    rc, out = _run_diff("HEAD")
+    check(rc == 1, "fresh noise: diff-mode exits 1")
+    check("comment-blank-run" in out, "fresh noise: flags comment-blank-run")
+    check("comment-decorative-banner" in out, "fresh noise: flags comment-decorative-banner")
+    check("comment-commented-out-code" in out, "fresh noise: flags comment-commented-out-code")
+_in_repo(case_fresh)
+
+# 4b — grandfathered PASSES: identical noise already in base, head changes only code → 0 added comments.
+def case_grandfathered(repo):
+    base = CLEAN + "//\n// ==================\n// oldCall(arg);\n"
+    _commit_base(repo, base)
+    _write(repo, REL, base + "int extra() { return 1; }\n")   # add code only
+    rc, out = _run_diff("HEAD")
+    check(rc == 0, "grandfathered noise (unchanged) passes: diff-mode exits 0")
+    check(out.strip() == "", "grandfathered noise emits no violations")
+_in_repo(case_grandfathered)
+
+# 4c — SMATCHET_DEVIATION SUPPRESSES: noise added but with a deviation on the line above.
+def case_deviation(repo):
+    _commit_base(repo, CLEAN)
+    suppressed = CLEAN + (
+        "// SMATCHET_DEVIATION(rule=comment-commented-out-code; reason=x; owner=y; revisit=never)\n"
+        "// oldCall(arg);\n"
+    )
+    _write(repo, REL, suppressed)
+    rc, out = _run_diff("HEAD")
+    check(rc == 0, "SMATCHET_DEVIATION above the line suppresses the flag (exit 0)")
+    check("comment-commented-out-code" not in out, "deviation: commented-out-code not reported")
+_in_repo(case_deviation)
+
+# 4d — ratio warning is delta-aware AND non-blocking.
+def case_ratio_rise(repo):
+    _commit_base(repo, CLEAN)   # low ratio base
+    # Add far more comment lines than code → ratio rises past 0.50.
+    heavy = CLEAN + "\n".join(["// explanatory note number %d about nothing" % i for i in range(60)]) + "\n"
+    _write(repo, REL, heavy)
+    rc, out = _run_ratio("HEAD")
+    check(rc == 0, "ratio warn never blocks (exit 0) even when it fires")
+    check("[comment-ratio] WARN" in out and REL.split("/")[-1] in out,
+          "ratio warn FIRES when a touched file's comment ratio rises past 0.50")
+_in_repo(case_ratio_rise)
+
+def case_ratio_stable(repo):
+    _commit_base(repo, CLEAN)
+    _write(repo, REL, CLEAN + "int more() { return 2; }\n")   # add code → ratio does not rise
+    rc, out = _run_ratio("HEAD")
+    check(rc == 0, "ratio warn non-blocking on code-only change (exit 0)")
+    check("[comment-ratio] WARN" not in out,
+          "ratio warn delta-aware: silent when ratio does not rise past threshold")
+_in_repo(case_ratio_stable)
+
+
 print()
 if failures:
     print(f"FAILED: {len(failures)} assertion(s)")

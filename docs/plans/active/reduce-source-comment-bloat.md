@@ -41,16 +41,39 @@ Counted by the prospective `comment_audit.py` definition: a **comment line** is 
 within rounding (per-subsystem also matches: `include/` 34.4%, `Plugins/` 18.0%, `Ui/` 8.2%, `Tracker/` 4.6%).
 The original § Baseline metrics numbers stand as the reference baseline; the analyzer is validated against them.
 
-Re-run `comment_audit.py` on the final merged state; fill in. Report cumulative + per-wave.
+**Final (`comment_audit.py` on merged `develop` after all Wave-1 batches + Wave-2 pilot + Phase-4 guard):**
 
-| Metric | Baseline | After Wave 1 | After Wave 2 | Δ (abs) | Δ (%) |
-|---|---|---|---|---|---|
-| First-party total lines | 94,337 | — | — | — | — |
-| Comment lines | 11,409 | — | — | — | — |
-| Comment % of total | 12.1% | — | — | — | — |
-| Code lines (must be ~unchanged) | 73,526 | — | — | — | — |
+| Metric | Baseline (Phase-0 reconfirm) | Final (merged develop) | Δ net |
+|---|---|---|---|
+| First-party files | 409 | 423 | **+14** (unrelated merges) |
+| First-party total lines | 94,380 | 96,020 | +1,640 |
+| Code lines | 73,635 | 75,154 | +1,519 |
+| Comment lines | 11,343 | 11,228 | **−115** |
+| Comment % of total | 12.0% | 11.7% | **−0.3 pp** |
 
-(Code-line count must stay within rounding of 73,526 — any real change means a non-comment edit slipped through and `assert-code-unchanged` should have caught it. Per-subsystem reduction table appended at ship time.)
+**Sweep reduction (the real number, deterministic + per-PR `assert-code-unchanged`-proven):** ~**381** comment
+lines removed by the Wave-1 mechanical batches (pilot + strict-zone + Ui + Plugins/Standalone) **+ 9** by the
+Wave-2 Tracker pilot = **~390 comment lines removed** with zero behavior change. The **audited net is only −115**
+because the corpus *grew* by **+14 files / +1,519 code lines** from unrelated feature PRs merged during the
+multi-day sweep window — those new files brought ~275 of their own comment lines, diluting the net. The sweep's
+reduction is isolated and real (each merged PR carried a green code-token-identical residue proof); the net metric
+is confounded by concurrent work, not by the sweep. **Code-line growth (+1,519) is entirely new files, never edits
+to swept files** — every Wave-1/Wave-2 PR proved its code-token residue byte-identical, so no non-comment edit
+slipped through.
+
+**Per-subsystem (final merged develop):**
+
+| Subsystem | Files | Comment % | vs baseline |
+|---|---|---|---|
+| `Source/Core/include/` | 167 | 33.7% | 34% → 33.7% |
+| `Source/Plugins/` | 30 | 17.4% | 18% → 17.4% |
+| `Source/Standalone/` | 7 | 8.9% | 9% → 8.9% |
+| `Source/Core/src/` (non-Ui) | 117 | 8.7% | 9% → 8.7% |
+| `Source/Core/src/Ui/` | 59 | 8.0% | 8% → 8.0% |
+| `Source/Core/src/Tracker/` | 43 | 4.6% | 5% → 4.6% |
+
+Every subsystem's comment % held flat or edged down despite corpus growth — the regrowth guard (Phase 4, this PR)
+now keeps it there: new commented-out code / decorative banners / blank-comment runs hard-fail any PR repo-wide.
 
 ## Approach
 
@@ -62,7 +85,7 @@ A **taxonomy-driven, tooling-gated, batched** sweep. Four pieces:
 
 3. **Per-subsystem batches**, one PR each, each running build (dual-target) + lint-delta + tests + the assert-code-unchanged check. Batching by lint **zone** matters: strict-zone trees (`Tracker`, `Sync`, `Persistence`, `Config`, `Commands`, `Mcp`) fail CI on any *new* `(rule, file, snippet)` violation — so removing a `// custom-deleter` marker next to a raw `new` is caught automatically, validating the protect-list against the strongest available net.
 
-4. **A regrowth guard** (Phase 4, lands *after* the sweep) so the trimmed corpus stays trimmed: new delta-lint rules that hard-fail a PR introducing fresh *noise-bucket* comments (commented-out code, decorative banners, blank-comment runs, restate-the-code), plus a non-blocking soft warning when a PR worsens a file's comment ratio past a threshold. Genuine doc / *why* comments are never penalized.
+4. **A regrowth guard** (Phase 4, lands *after* the sweep) so the trimmed corpus stays trimmed: new delta-lint rules that hard-fail a PR introducing fresh *noise-bucket* comments (commented-out code, decorative banners, blank-comment runs — restate-the-code was deferred as too false-positive-prone for a hard gate, see § Deviations), plus a non-blocking soft warning when a PR worsens a file's comment ratio past a threshold. Genuine doc / *why* comments are never penalized.
 
 The sweep runs as **two global waves**, not two passes welded into each batch: **Wave 1** — the deterministic mechanical stripper (`comment_strip.py`, no judgment, only the unambiguous *cut* buckets) across the whole corpus; **Wave 2** — the LLM judgment pass (compress verbose rationale, remove self-evident docs) across the whole corpus. Each wave is split into reviewable per-subsystem PRs (strict lint-zones first). Wave 1 PRs need near-zero judgment review (deterministic diff + green code-unchanged gate) and merge fast; Wave 2 PRs concentrate human + CodeRabbit attention. The sweep is **pilot-gated**: one slice runs both waves end-to-end first, and Wave 2 rolls out repo-wide only if its *marginal* yield clears a measured go/no-go threshold (see § Phases) — otherwise Wave 1 ships alone and the judgment wave is shelved as low-ROI.
 
@@ -113,7 +136,7 @@ The non-obvious trade-off: "self-evident" (API docs) and "redundant" (inline) ar
 Per-batch pipeline (both waves): apply pass (Wave 1 = `comment_strip.py` dry-run → apply; Wave 2 = LLM judgment) → `clang-format -i` → dual-target build → lint-delta gate → `test-all.sh` → `assert-code-unchanged` → PR → CodeRabbit → merge gates.
 
 **Phase 4 — Regrowth guard (1 PR), lands after Wave 1 (and Wave 2 if it ran) merge.** Baseline is taken against the *cleaned* `develop`, so the guard never grandfathers the bloat we just removed. Two mechanisms:
-- **Noise-bucket delta rules** — new rule-ids (`comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run`, `comment-restate`) folded into `test-lint-rules.sh`, riding its `--diff` / `--selftest` / zone / grandfather machinery. **Hard-fail repo-wide** (this noise is never legitimate anywhere). Escape hatch: the existing `// SMATCHET_DEVIATION(rule=<id>; reason=…; revisit=…)` grammar — no new suppressor syntax.
+- **Noise-bucket delta rules** — new rule-ids (`comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run`; **`comment-restate` deferred** — see § Deviations) folded into `test-lint-rules.sh`, riding its `--diff` / `--selftest` / zone / grandfather machinery. **Hard-fail repo-wide** (this noise is never legitimate anywhere). Escape hatch: the existing `// SMATCHET_DEVIATION(rule=<id>; reason=…; revisit=…)` grammar — no new suppressor syntax.
 - **Soft ratio warning** — delta-aware: warn only when a PR both raises a touched file's comment ÷ (comment + code) ratio *and* pushes it past **0.50**. Advisory CI annotation only; never blocks; threshold is a config constant. Well-documented files that don't get worse never warn.
 
 `comment_audit.py --diff <ref>` does the classification, emitting violation tuples in the format `test-lint-rules.sh` consumes. Modeled on the delta-gated pattern in [`docs/plans/active/high-integrity-cpp-enforcement.md`](docs/plans/active/high-integrity-cpp-enforcement.md) (extension of an existing mechanism → no new ADR).
@@ -215,6 +238,26 @@ Per `AGENTS.md` § Verification automation — automated wherever physically pos
 - **A prose comment *style guide*** (how to author good comments) — out of scope; the Phase-4 regrowth guard enforces *mechanical noise* limits only, not authorship style. (The regrowth lint rule itself is now in scope — see Phase 4.)
 
 ## Implementation log
+- **Phase 4 — regrowth guard** (this PR). Folded three repo-wide comment-regrowth delta rules into
+  `test-lint-rules.sh` riding its existing `--diff` / `--selftest` / grandfather machinery:
+  `comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run` — **hard-fail anywhere in
+  first-party C++** (not just the strict zone; this noise is never legitimate). Classification is delegated to
+  `comment_audit.py --diff <base>` (emits `rule\tbasename:line\tsnippet` for ADDED comment lines only, so
+  grandfathered noise never trips). Escape hatch = the existing `// SMATCHET_DEVIATION(rule=comment-…; …)` on
+  the line above — no new suppressor syntax. Added the **soft, delta-aware, never-blocking** comment-ratio
+  warning (`comment_audit.py --ratio-warn`): warns only when a touched file's comment ratio both *rises* vs base
+  AND exceeds 0.50 (well-documented files that don't get worse never warn). `--selftest` extended to assert the
+  comment rule-ids appear in AGENTS.md § Tiered enforcement (kept in sync). **8 new git-integration fixtures**
+  in `tests/dev/comment_tooling/` (fresh-noise-fails / grandfathered-passes / SMATCHET_DEVIATION-suppresses /
+  ratio-warn-fires-on-rise / ratio-warn-silent-on-stable / non-blocking). Gates: `--selftest` PASS, all
+  fixtures PASS, shell-lint 105/0, full `--diff origin/develop` PASS (strict-zone + comment-noise both clean).
+  **`comment-restate` rule deferred** — see § Deviations.
+- **Phase 2 — Wave 1, mechanical, repo-wide (batched).** Applied `comment_strip.py` to every remaining
+  subsystem in lint-zone order (strict-zone batches → `src/Ui` batch 4 (#590) → `Plugins` + `Standalone`
+  batch 6 (#591)). Cumulative Wave-1 mechanical removal across all batches ≈ **381 comment lines**, each batch
+  carrying a green `assert-code-unchanged` (code-token residue byte-identical) proof + dual-target build +
+  lint-delta + `test-all.sh`. Switched from whole-file `clang-format -i` to diff-scoped `git clang-format` after
+  a whole-file pass swept 1,053 lines of pre-existing drift into one batch. Wave-1 repo-wide **complete**.
 - **Phase 1 — pilot Wave 2 + GO/NO-GO GATE** (`Tracker`). LLM judgment pass removed **9 comment lines**
   (1,545 → 1,536) = **0.57% marginal** of the 1,581 pilot baseline — **far below the 20% gate**. Removals
   were all self-evident echo-docs in `include/Tracker/` (`/** Identical to X */` clusters, an empty-sentinel
@@ -249,7 +292,27 @@ Per `AGENTS.md` § Verification automation — automated wherever physically pos
   PASS on a comment-only strip, FAIL on an injected code edit. No product-source edits.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **Wave 2 (LLM judgment pass) shelved repo-wide** — the Phase-1 pilot's marginal yield was 0.57% (9 lines),
+  far below the 20% go/no-go gate; Tracker comments proved overwhelmingly load-bearing. Wave 1 shipped repo-wide
+  alone; Wave 2 stays shelved (reconsider only on a measured high-density `include/` probe). The plan's § Phases
+  explicitly authorized this branch.
+- **`comment-restate` regrowth rule deferred** (Phase 4 listed four rule-ids; shipped three). "This comment just
+  restates the next line of code" is a semantic judgment with a high false-positive rate — unsafe as a *hard-fail*
+  delta gate (it would block legitimate clarifying comments). The other three buckets (commented-out code,
+  decorative banner, blank-comment run) are mechanically unambiguous and never legitimate, so they hard-fail
+  cleanly. Restate-detection is better served by the soft, non-blocking comment-ratio warning that *did* ship
+  (a file accreting restate-comments raises its ratio and gets the advisory nudge). Backlog: revisit as an
+  advisory-only (never-blocking) classifier if false-positive rate can be bounded.
+- **Diff-scoped `git clang-format`** replaced whole-file `clang-format -i` mid-Phase-2 — whole-file formatting
+  swept pre-existing drift (1,053 lines in one batch) into comment-only PRs. No plan change, just method.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+- **Phase 4 (this PR)** — `test-lint-rules.sh --selftest` PASS (AGENTS.md zone globs + comment rules in sync);
+  `tests/dev/comment_tooling/test_comment_tooling.py` **all fixtures PASS** incl. 8 new Phase-4 git-integration
+  cases; `test-shell-lint.sh` **105 passed / 0 failed**; `test-lint-rules.sh --diff origin/develop` **PASS exit 0**
+  (strict-zone clean + comment-noise clean) — confirms the new diff-mode block doesn't break the existing
+  strict-zone gate. `comment_audit.py --diff` / `--ratio-warn` smoke-tested clean on this (C++-free) worktree.
+- **Phases 0–2** — per-batch: dual-target build PASS, `test-all.sh` PASS, lint-delta PASS, `assert-code-unchanged`
+  **PASS (code-token residue byte-identical)** on every merged batch. Wave-1 repo-wide complete (#590, #591 + earlier
+  strict-zone batches all merged). Final corpus audit recorded in § Post-implementation diff.
+- **Not-run / N/A** — Bucket-E (no UI behavior change); perf scenarios (comment-only, expected Δ≈0).

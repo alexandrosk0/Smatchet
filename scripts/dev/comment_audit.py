@@ -218,6 +218,21 @@ def run_diff_mode(ref):
     cur_file = None
     cur_line = 0
     violations = []
+    file_cache = {}
+
+    def suppressed(path, line_no, rule_id):
+        # Escape hatch: a `// SMATCHET_DEVIATION(rule=<rule_id>; ...)` on the line ABOVE the
+        # flagged line suppresses it (the existing forward-only deviation grammar; no new syntax).
+        try:
+            if path not in file_cache:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    file_cache[path] = fh.read().split("\n")
+            lines = file_cache[path]
+            prev = lines[line_no - 2] if 2 <= line_no <= len(lines) else ""
+        except OSError:
+            return False
+        return "SMATCHET_DEVIATION" in prev and ("rule=" + rule_id) in prev
+
     for ln in diff.splitlines():
         if ln.startswith("+++ b/"):
             cur_file = ln[6:]
@@ -231,13 +246,50 @@ def run_diff_mode(ref):
                 kinds = cl.classify_line_kinds(body + "\n")
                 if kinds and kinds[0] == "full_comment":
                     b = classify_comment(body.strip(), body)
-                    if b in rule_for:
+                    if b in rule_for and not suppressed(cur_file, cur_line, rule_for[b]):
                         base = os.path.basename(cur_file)
                         violations.append(f"{rule_for[b]}\t{base}:{cur_line}\t{body.strip()[:80]}")
             cur_line += 1
     for v in violations:
         print(v)
     return 1 if violations else 0
+
+
+def _file_ratio(text):
+    """comment / (comment + code) for a file's text; 0.0 if no comment+code lines."""
+    code = comment = 0
+    for k in cl.classify_line_kinds(text):
+        if k == "code" or k == "trailing":
+            code += 1
+        elif k == "full_comment":
+            comment += 1
+    denom = code + comment
+    return (comment / denom) if denom else 0.0
+
+
+def run_ratio_warn(ref, threshold=0.50):
+    """ADVISORY (always exit 0): warn for each changed first-party C++ file whose comment ratio
+    both RISES vs <ref> AND exceeds `threshold`. Well-documented files that don't get worse never
+    warn. Never blocks — this is the soft half of the Phase-4 regrowth guard."""
+    changed = _git(["diff", "--name-only", "--diff-filter=ACMR", ref, "--",
+                    *[r + "**" for r in SWEEP_ROOTS]]).split()
+    warned = 0
+    for f in changed:
+        if not f.endswith(CPP_EXT) or not f.startswith(SWEEP_ROOTS) or any(s in f for s in EXCLUDE_SUBSTR):
+            continue
+        try:
+            with open(f, "r", encoding="utf-8", errors="replace") as fh:
+                head_text = fh.read()
+        except OSError:
+            continue
+        base_p = subprocess.run(["git", "show", "%s:%s" % (ref, f)], capture_output=True, text=True)
+        base_text = base_p.stdout if base_p.returncode == 0 else ""  # new file → base ratio 0
+        hr, br = _file_ratio(head_text), _file_ratio(base_text)
+        if hr > br and hr > threshold:
+            print("[comment-ratio] WARN %s: comment ratio %.0f%% (was %.0f%%) > %.0f%% — consider trimming"
+                  % (f, hr * 100, br * 100, threshold * 100))
+            warned += 1
+    return 0  # advisory: never non-zero
 
 
 def _utf8_stdio():
@@ -255,7 +307,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", metavar="PATH")
     ap.add_argument("--diff", metavar="REF")
+    ap.add_argument("--ratio-warn", metavar="REF")
     args = ap.parse_args()
+    if args.ratio_warn:
+        sys.exit(run_ratio_warn(args.ratio_warn))
     if args.diff:
         sys.exit(run_diff_mode(args.diff))
     grand, per_sub, file_reports = run_audit()
