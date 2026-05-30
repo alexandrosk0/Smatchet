@@ -31,6 +31,7 @@
 
 using smatchet::config_detail::GetCachedConfigRef;
 using smatchet::config_detail::GetCacheMutexRef;
+using smatchet::config_detail::GetConfigRmwMutexRef;
 using smatchet::config_detail::GetHasCachedConfigRef;
 
 #if defined(_WIN32)
@@ -181,6 +182,10 @@ void ConfigManager::Save(const TrackerConfig& config) {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());
         GetHasCachedConfigRef() = false;
     }
+    // Serialize the whole read-modify-write so a concurrent writer (the config-save worker, or
+    // SaveAnnotateAnalysis on another thread) can't lose-update. Distinct from GetIoMutexRef that
+    // WriteConfigJson holds internally — no recursive-lock deadlock.
+    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
     nlohmann::json j = LoadMergedConfigJson();
     j["domain"] = config.Domain;
     j["email"] = config.Email;
@@ -532,6 +537,8 @@ AnnotateAnalysisConfig ConfigManager::LoadAnnotateAnalysis() {
 }
 
 void ConfigManager::SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b) {
+    // Serialize the read-modify-write (see ConfigManager::Save for rationale + lock-order note).
+    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
     nlohmann::json j = LoadMergedConfigJson();
     nlohmann::json ba = nlohmann::json::object();
     ba["p4_exe"] = b.P4Executable;

@@ -1,0 +1,39 @@
+#ifndef SMATCHET_CONFIG_SAVE_WORKER_H
+#define SMATCHET_CONFIG_SAVE_WORKER_H
+
+#include "Config/ConfigManager.h" // TrackerConfig, AnnotateAnalysisConfig
+
+/// Single-thread coalescing config-save worker.
+///
+/// Replaces the per-save detached-thread shims (`ScheduleConfigSaveDetached` /
+/// `ScheduleAnnotateConfigSaveDetached`) with one background thread that serializes + coalesces
+/// config writes: the latest snapshot **per config-kind** wins (intermediate edits are dropped),
+/// and each write goes through the atomic-RMW `ConfigManager::Save` / `SaveAnnotateAnalysis`
+/// (serialized by `GetConfigRmwMutexRef`, so it can never lose-update against another writer).
+///
+/// Lifecycle: `Start()` once at `AppController` init; `Stop()` (flush-pending-then-join, bounded)
+/// before the `ConfigManager` statics tear down at process exit. After `Stop()`, `Enqueue*` falls
+/// back to a synchronous save so a write is never lost. No `MainThreadDispatcher` — config saves
+/// carry no post-save UI callback (unlike `SmatchetChatPersistWorker`).
+namespace smatchet {
+namespace config_save {
+
+/// Start the worker. Idempotent — a second `Start()` while running is logged + ignored.
+void Start();
+
+/// Flush pending writes within a bounded budget, then join the thread. Idempotent — safe when not
+/// running. After return, `Enqueue*` save synchronously on the caller.
+void Stop();
+
+/// Enqueue the latest `TrackerConfig` snapshot (coalesced; only the most recent is written when the
+/// worker wakes). If the worker isn't running (tests / CLI / pre-init / post-shutdown), saves
+/// synchronously on the caller so the write is never lost.
+void EnqueueTrackerConfig(const TrackerConfig& cfg);
+
+/// Enqueue the latest `AnnotateAnalysisConfig` snapshot — see `EnqueueTrackerConfig`.
+void EnqueueAnnotateConfig(const AnnotateAnalysisConfig& cfg);
+
+} // namespace config_save
+} // namespace smatchet
+
+#endif // SMATCHET_CONFIG_SAVE_WORKER_H

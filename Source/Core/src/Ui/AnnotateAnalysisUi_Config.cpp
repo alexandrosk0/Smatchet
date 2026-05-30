@@ -9,28 +9,18 @@
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
 
+#include "ConfigSaveWorker.h"
+
 #include <algorithm>
-#include <thread>
 
 namespace AnnotateInternal {
 
-// Mirror of ScheduleConfigSaveDetached (SmatchetAiAssistantUi.cpp) for the Annotate config.
-// ConfigManager::SaveAnnotateAnalysis does a synchronous JSON encode + atomic file replace;
-// even an edit-commit (focus loss / button) can breach the 6.94 ms UI budget on a slow disk.
-// Push the write to a detached worker. The config snapshot is captured by value so the worker
-// is independent of UI-thread state, and SaveAnnotateAnalysis is static (no owner to outlive),
-// so detached is Pillar-3 safe here. Saves are user-edit-gated and small (a few KB); move to a
-// single coalescing worker if profiling ever shows churn.
+// Hand the Annotate config write to the single coalescing config-save worker (snapshot by value,
+// latest-per-kind wins, serialized + off the UI thread). ConfigManager::SaveAnnotateAnalysis does a
+// synchronous JSON encode + atomic file replace; even an edit-commit can breach the 6.94 ms UI budget
+// on a slow disk. Replaces the former per-save detached-thread shim now that the shared worker exists.
 void ScheduleAnnotateConfigSaveDetached(const AnnotateAnalysisConfig& cfg) {
-    AnnotateAnalysisConfig snapshot = cfg;
-    std::thread([snapshot]() {
-        try {
-            ConfigManager::SaveAnnotateAnalysis(snapshot);
-        } catch (...) {
-            // SaveAnnotateAnalysis logs its own diagnostics; swallow so a detached worker
-            // exit can't terminate the process.
-        }
-    }).detach();
+    smatchet::config_save::EnqueueAnnotateConfig(cfg);
 }
 
 void LogAnnotateP4PathsIfChanged(const char* reason) {

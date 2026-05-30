@@ -94,6 +94,7 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 
 #include "AiTypes.h"
+#include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
 #if defined(SMATCHET_WITH_AI)
 #include "AiAssistantController.h"
 #include "SmatchetChatPersistWorker.h"
@@ -385,6 +386,11 @@ AppController::~AppController() {
     // worker thread. Pillar 3 — no detached thread may outlive `Cache`.
     smatchet::ai::chat_persist::Stop();
 #endif
+
+    // Stop the coalescing config-save worker: flush pending config writes within a bounded budget,
+    // then join. Not AI-gated — config saves happen regardless of feature flags. After this, any
+    // further config save falls back to a synchronous write on the caller.
+    smatchet::config_save::Stop();
 
     mainThreadDispatcher.BeginShutdown();
 
@@ -1082,6 +1088,10 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     uiThreadId_ = std::this_thread::get_id();
 
     LOG_INFO("AppController::Initialize backendType=%s dbPath=%s", backendType.c_str(), dbPath.c_str());
+
+    // Start the coalescing config-save worker before anything can enqueue a save. No deps (no
+    // dispatcher/LCM); Stop()+join runs early in ~AppController. Not AI-gated.
+    smatchet::config_save::Start();
 
     localCacheDbPath_ = dbPath;
 

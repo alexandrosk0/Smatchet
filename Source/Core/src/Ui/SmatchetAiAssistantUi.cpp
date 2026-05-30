@@ -14,6 +14,7 @@
 #include "AiTypes.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetChatPersistWorker.h"
@@ -82,23 +83,10 @@ bool s_autoSendCallbackRegistered = false;
 // UX pillar 2: ConfigManager::Save performs a synchronous JSON encode + atomic
 // file replace; even when the user is only toggling a checkbox the resulting
 // disk write can easily breach the 6.94 ms per-frame UI budget on a slow disk.
-// Push the save to a detached worker thread. The TrackerConfig snapshot is
-// captured by value so the worker is independent of the UI-thread cfg state.
-// Each save is small (a few KB), and the rate of saves is bounded by user
-// input frequency, so spawning a fresh thread per save is acceptable for the
-// scenarios that hit this path (panel toggle, checkbox click, swap button).
-// Move to a single coalescing worker if profiling shows churn.
-void ScheduleConfigSaveDetached(const TrackerConfig& cfg) {
-    TrackerConfig snapshot = cfg;
-    std::thread([snapshot]() {
-        try {
-            ConfigManager::Save(snapshot);
-        } catch (...) {
-            // Save logs its own diagnostics; swallow exceptions so a detached
-            // worker exit doesn't terminate the process.
-        }
-    }).detach();
-}
+// Hand the save to the single coalescing config-save worker (snapshot by value,
+// latest-per-kind wins, write serialized + off the UI thread). Replaces the
+// former per-save detached-thread shim now that the shared worker exists.
+void ScheduleConfigSaveDetached(const TrackerConfig& cfg) { smatchet::config_save::EnqueueTrackerConfig(cfg); }
 
 // Inline-vs-async hydration split. Caps ≤ this threshold load synchronously on
 // first frame; SQLite reads of ~200 rows are well under 5 ms on warm disk so a
