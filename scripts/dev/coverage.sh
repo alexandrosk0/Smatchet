@@ -141,7 +141,7 @@ rm -f "$BIN_TESTS" "$BIN_LUA" "$XML_OUT"
 # OpenCppCoverage uses --source to include / exclude paths. We restrict to
 # Source/Core/ (excluding UI / ImGui-heavy bits is the threshold flip's job
 # downstream; this script captures everything Source/Core for now).
-SOURCE_INCLUDE="Source/Core"
+SOURCE_INCLUDE="Source.Core"
 MODULE_INCLUDE="Smatchet"  # matches both SmatchetTests.exe and SmatchetLuaTests.exe
 
 OCC_FILTER_ARGS=(
@@ -149,7 +149,7 @@ OCC_FILTER_ARGS=(
     --modules "$MODULE_INCLUDE"
     --excluded_sources "_deps"
     --excluded_sources "tests"
-    --excluded_sources "Plugins\\Mcp\\imgui"
+    --excluded_sources "Source.Plugins.Mcp.imgui"
     --excluded_sources "ImGui"
     --excluded_sources "imgui"
 )

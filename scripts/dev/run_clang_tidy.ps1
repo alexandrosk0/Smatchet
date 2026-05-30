@@ -40,7 +40,7 @@ if (-not (Test-Path -LiteralPath $db -PathType Leaf)) {
 $null = Get-Command $ClangTidy -ErrorAction Stop
 
 $coreRoot = Join-Path $repoRoot "Source/Core"
-$pluginsRoot = Join-Path $repoRoot "Plugins"
+$pluginsRoot = Join-Path $repoRoot "Source/Plugins"
 if (-not (Test-Path -LiteralPath $coreRoot -PathType Container)) {
     throw "Expected directory: $coreRoot"
 }

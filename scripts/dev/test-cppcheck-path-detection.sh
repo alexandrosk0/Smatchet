@@ -49,7 +49,7 @@ case "$SCRATCH" in
 esac
 
 # Shadow tree mirroring the parents[2] layout the script expects.
-mkdir -p "$SCRATCH/scripts/dev" "$SCRATCH/Source/Core/src" "$SCRATCH/Plugins/Mcp" "$SCRATCH/Source/Standalone" "$SCRATCH/build"
+mkdir -p "$SCRATCH/scripts/dev" "$SCRATCH/Source/Core/src" "$SCRATCH/Source/Plugins/Mcp" "$SCRATCH/Source/Standalone" "$SCRATCH/build"
 cp "$REPO_ROOT/scripts/dev/run_cppcheck.py" "$SCRATCH/scripts/dev/run_cppcheck.py"
 
 # Resolve the absolute scratch root the way Python's Path.resolve() will.
@@ -68,7 +68,7 @@ db_path = Path(sys.argv[2])
 
 entries = [
     {"directory": str(scratch / "build"), "command": "cc", "file": str(scratch / "Source/Core" / "src" / "AppController.cpp")},
-    {"directory": str(scratch / "build"), "command": "cc", "file": str(scratch / "Plugins" / "Mcp" / "McpServer.cpp")},
+    {"directory": str(scratch / "build"), "command": "cc", "file": str(scratch / "Source" / "Plugins" / "Mcp" / "McpServer.cpp")},
     {"directory": str(scratch / "build"), "command": "cc", "file": str(scratch / "Source/Standalone" / "main.cpp")},
     {"directory": str(scratch / "build"), "command": "cc", "file": str(scratch / "build" / "_deps" / "json-src" / "json.hpp")},
     {"directory": "/tmp", "command": "cc", "file": "/usr/include/stdio.h"},
