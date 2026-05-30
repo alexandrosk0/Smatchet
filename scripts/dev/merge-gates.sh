@@ -210,7 +210,7 @@ poll_merge_gates() {
         local _head="$1" _reason="$2"
         [ "$rereview_posted_head" = "$_head" ] && return 0
         echo "WARN: $_reason; posting @coderabbitai review to nudge re-review." >&2
-        if gh pr comment "$prNumber" --body "@coderabbitai review" >/dev/null 2>&1; then
+        if gh pr comment "$prNumber" --repo "$owner/$repo" --body "@coderabbitai review" >/dev/null 2>&1; then
             rereview_posted_head="$_head"
             echo "INFO: @coderabbitai review trigger posted on HEAD ${_head:0:8}." >&2
         else
