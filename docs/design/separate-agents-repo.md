@@ -197,7 +197,7 @@ End-to-end checklist:
 4. `bash scripts/dev/test-agent-contract.sh` — green; no path regressions for non-touched agents.
 5. `python agents/_shared/token-tracking/tests/test_infer_outcome.py` — green from submodule path.
 6. Smoke test the skill-merge mechanism (Phase 1 scope is skills only — agent `.md` files at top level are unchanged this phase). Invoke the `perf-measure` **skill** via `Skill` tool and confirm `SKILL.md` content surfaces both the upstream generic body and the Smatchet `SMATCHET-NOTES.md` addendum (build preset, perf-scope prefix, scenario list). Repeat for `grill-with-docs`.
-7. CI: `.github/workflows/doc-validation.yml` + `.github/workflows/build-and-test.yml` pass on the PR; upstream repo's own CI passes on `v0.1.0` tag.
+7. CI: `.github/workflows/doc-validation.yml` + `.github/workflows/build-and-test.yml` pass on the PR; upstream GitHub repo's own CI passes on `v0.1.0` tag.
 8. `bash scripts/dev/is-pure-docs-diff.sh develop` correctly classifies the PR's diff — confirms the docs/CI tooling still understands the new tree.
 9. Manual: orchestrator runs a delegated `mechanic` task end-to-end — agent is fully functional from submodule + overlay.
 
