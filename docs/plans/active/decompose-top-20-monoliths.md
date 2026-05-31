@@ -2,23 +2,33 @@
 
 > **Slug**: `decompose-top-20-monoliths`
 
+> **⟳ Refreshed (re-validated against current `develop`).** The original plan was written against the pre-consolidation layout (`Source_Core/`, `Target_Standalone/`, `Plugins/`) — all its file paths + line numbers are stale, one target was renamed + split (`BlameAnalysisUi`→`AnnotateAnalysisUi`), and 2 targets fell under threshold (`SpawnAndRun` 249 / `RunCmdAttach` 219). A fresh measurement sweep confirms the **premise holds and worsened**: 21 of the 23 named functions are still >300-line monoliths (several *grew*), and the tree now has **30 functions >300 lines, not 20**. The ROI, however, is **mixed** (see § ROI) — so this refresh **re-sequences**: the CI size-cap gate **leads** (without it the work erodes — proven: `SmatchetUI::Draw` 589→608, `drawMainMenuBar` 491→504 since the plan was written), the genuinely-valuable non-UI table refactors are Phase A, and the mechanical ImGui-draw decompositions drop to **opportunistic / ride-along** (no dedicated mechanical sweep).
+
 ## Context
 
-A line-count + branch-count sweep of `Source_Core/src/`, `Plugins/`, `Target_Standalone/` (ThirdParty excluded) surfaced 20 functions over 300 lines each. The top 11 are ImGui draw functions (immediate-mode UI naturally accretes); the remaining 9 are setup, config, payload-build, and HTTP-runner monoliths. Every one of them:
+A line-count + branch-count sweep of `Source/Core/src/`, `Source/Plugins/`, `Source/Standalone/` (ThirdParty excluded) surfaces **30** functions over 300 lines each. The bulk are ImGui draw functions (immediate-mode UI naturally accretes); the rest are setup, config, payload-build, fetch, and HTTP-runner monoliths. Each:
 
 - defeats `clang-tidy` cognitive-complexity warnings,
 - forces full-file rereads on every minor edit,
 - couples unrelated concerns (data fetch + layout + side-effect dispatch in one body),
 - multiplies merge-conflict surface across feature branches,
-- inflates per-frame `SMATCHET_UI_PERF_SCOPE` parent-scopes so individual sub-widget costs are invisible to `perf-detective`.
+- *(claimed)* inflates per-frame `SMATCHET_UI_PERF_SCOPE` parent-scopes — **but this benefit is largely illusory under the original approach** (it preserves existing scopes verbatim, so sub-widget cost stays invisible; and several targets have **zero** perf scopes anyway — see § Approach A).
 
-Goal: after this lands, no non-ThirdParty function exceeds **200 lines** and **30 branches**, with a documented ImGui-draw pattern that future authors copy by reflex.
+Goal: no non-ThirdParty function exceeds **200 lines** / **30 branches**, enforced by a CI gate so it *stays* true, with a documented ImGui-draw pattern future authors copy by reflex.
+
+## ROI (why this is re-scoped, not run whole)
+
+- **🟢 Genuine ROI — non-UI table refactors (Phase A).** `ConfigManager` field-table, `BuildUserFieldPayload` dispatch, `HtmlToMarkdown` tag-handler table, `RegisterAiCommands` split. These kill real bug classes (config parallel-duplication on every key add; the 382-line payload branch-tower) **and** make the logic bucket-A testable — value *beyond* line count.
+- **🔴 Low ROI as a sweep — the 12 ImGui-draw decompositions.** Pure mechanical, **no behaviour/feature value**; positional-ImGui (`Begin/End`, `PushID/PopID`) decomposition is regression-prone; conflicts with all in-flight UI work; the perf benefit isn't realised (scopes preserved); and **it regrows without the enforcement gate** (already observed). Doing 12 risky PRs whose result decays is net-negative. → made **ride-along** (decompose a draw fn only when already editing that window for a feature).
+- **The gate is the keystone.** Land the line/branch cap in CI *first*; the rest is then either bug-reducing (Phase A) or free-rider (ride-along), and nothing erodes.
 
 ## Approach
 
 ### A. ImGui draw-function pattern (canonical)
 
-Authors today write a single `void DrawX(...)` that owns window setup, per-section layout, every state mutation, and every action dispatch. The pattern below extracts at the existing **`SMATCHET_UI_PERF_SCOPE` brace-blocks** — those are already the de-facto section boundaries and they're load-bearing for the perf-review system, so reusing them as the decomposition seam keeps perf scopes identical (zero baseline shift).
+Authors today write a single `void DrawX(...)` that owns window setup, per-section layout, every state mutation, and every action dispatch. The pattern below extracts at section seams.
+
+> **⚠ Seam-premise correction (refresh).** The original plan asserted the seam is "the existing `SMATCHET_UI_PERF_SCOPE` brace-blocks — already the de-facto section boundaries." That is **only true where the scopes exist**. Verified counts: `SmatchetUI.cpp` 27 scopes ✓, `SmatchetActiveProjectGridUi.cpp` 8 ✓ — but **`SmatchetViewsDashboardUi.cpp` (778 L) and `SmatchetPreferencesUi_Whisper.cpp` (779 L, the original slice-1 canary) have ZERO**. For those, there is no existing seam to reuse: the author invents section boundaries and (if perf coverage is wanted) *adds* scopes — which **does** shift the baseline + needs a `MARKER_INVENTORY.md` regen. So: **where perf scopes already bracket sections, reuse them verbatim (zero baseline shift); otherwise decompose on logical section boundaries and treat any new scope as an intentional, inventory-tracked addition.** The canary is changed to a scope-bearing function (see § Slice ordering).
 
 Canonical shape per draw function:
 
@@ -62,7 +72,7 @@ Rules of the pattern (codified in `docs/agent-rules/imgui-draw-pattern.md`, adde
 1. **`DrawCtx` struct** holds the per-frame snapshots + references. No more 30-line argument lists; no more `static` locals leaking across windows.
 2. **One responsibility per helper**. Header / body / footer / modals / hotkeys are non-overlapping. A helper that grows past ~80 lines splits again.
 3. **Perf scopes stay at the section boundary**. Helper-internal scopes only if `perf-detective` asks for finer resolution. Scope names match the existing inventory — zero baseline-bump churn.
-4. **Window-state extraction**. Persistent `static` locals (filter buffers, expanded-row sets, last-selection ids) move into a `<Foo>WindowState` member struct on the owning UI object. Caught by `grep "static.*Buf\|static bool s_" Source_Core/src/Smatchet*Ui*.cpp`.
+4. **Window-state extraction**. Persistent `static` locals (filter buffers, expanded-row sets, last-selection ids) move into a `<Foo>WindowState` member struct on the owning UI object. Caught by `grep "static.*Buf\|static bool s_" Source/Core/src/Smatchet*Ui*.cpp`.
 5. **Action handlers** (button click → mutation) move into `OnX()` methods returning `void` or `bool`. Keeps the draw body to layout-only.
 6. **Section-file split when a `.cpp` exceeds 1500 lines** — precedent: `SmatchetViewsDashboardUi.cpp` + `SmatchetViewsDashboardUi_widgets.cpp`. Naming: `<Owner>Ui_<Section>.cpp`.
 
@@ -76,26 +86,32 @@ For `ConfigManager::Load/Save`, `OnStart`, `BuildUserFieldPayload`, `HtmlToMarkd
 - **`HtmlToMarkdown`** → tag-handler table (`{TagName → Renderer fn}`) replacing the if-else chain.
 - **`RegisterAiCommands`** → mechanical: each `MakeCommand(...)` block becomes a free `Register<Foo>Command(CommandRegistry&)` function. Pure cut/paste.
 - **`AiAssistantController::RunRequest`** → split fetch (HTTP) ↔ stream-parse ↔ history-update phases into separate methods, each testable in isolation.
-- **`main` (`Target_Standalone/main.cpp`)** → already partially decomposed; extract remaining `// Boot phase` blocks into `BootApplication()`, `RunFrameLoop()`, `ShutdownApplication()` (`ShutdownApplication` already exists). Goal: `main` ≤ 80 lines.
+- **`main` (`Source/Standalone/main.cpp`)** → already partially decomposed; extract remaining `// Boot phase` blocks into `BootApplication()`, `RunFrameLoop()`, `ShutdownApplication()` (`ShutdownApplication` already exists). Goal: `main` ≤ 80 lines.
 - **`AppController::Initialize`** → split into `InitConfig()`, `InitBackends()`, `InitCommands()`, `InitPlugins()`. Each ≤ 120 lines.
-- **`SpawnAndRun` / `RunCmdAttach`** (`Target_Standalone/CliCommandRunner.cpp`) → already on the queue from the CLI-cleanup backlog; extract `WaitForReady`, `SendQuit`, `WaitForScenario` helpers. ~250 → ~80 lines each.
+- **`SpawnAndRun` / `RunCmdAttach`** (`Source/Standalone/CliCommandRunner.cpp`) → already on the queue from the CLI-cleanup backlog; extract `WaitForReady`, `SendQuit`, `WaitForScenario` helpers. ~250 → ~80 lines each.
 
 ### C. Slice ordering
 
-Slices are sized so each is one shippable PR; slice 1 lands the pattern doc + one canary refactor so the contract is concrete before the bulk work fans out.
+Re-sequenced (refresh): the **gate leads**, the **bug-reducing Phase A** follows, and UI decomposition is **ride-along, not a fanned-out sweep**.
 
-1. **Slice 1 — pattern + canary** (small): write `docs/agent-rules/imgui-draw-pattern.md`. Pick one mid-sized victim (`DrawWhisperPreferencesTab`, ~779 lines, no cross-file deps) and refactor it as the canonical reference. Land both in one PR.
-2. **Slice 2 — `ConfigManager::Load/Save` field table**. Self-contained, no UI thread risk, biggest dev-ergonomics win.
-3. **Slice 3 — `McpPlugin::OnStart`**. Plugin-isolated, easy to test bucket-A.
-4. **Slice 4 — `BuildUserFieldPayload`**. Pure logic, 75 branches → table dispatch. Already covered by `tests/Source_Core/TrackerFieldPayload.test.cpp`-style bucket-A; expand if gaps surface.
-5. **Slice 5 — `HtmlToMarkdown` + `RegisterAiCommands`**. Mechanical, low-risk; bundled.
-6. **Slice 6 — `main` + `AppController::Initialize`**. Bootstrap path. Sanitiser-run + dual-target build gate critical.
-7. **Slice 7 — `AiAssistantController::RunRequest`**. Touches HTTP + streaming; needs the AI-driver bucket-E coverage to stay green.
-8. **Slice 8 — `SpawnAndRun` + `RunCmdAttach`**. CLI-only, test via `tests/bats/cli_*.bats`.
-9. **Slices 9-19 — ImGui draw monoliths**. One PR each, in descending order of pain (start with `drawActiveProjectWindow` once the pattern is battle-tested by slice 1). Group #11 (`drawMainMenuBar`) + #13 (`drawPreferencesWindow`) only if the diff stays under ~600 lines net.
+**Slice 0 — CI size-cap gate (the keystone; was "out of scope", now leads).** Extend `agents/scripts/project/test-lint-rules.sh` (or a sibling) with a `function-too-long` / `function-too-branchy` rule, **delta-gated** (only NEW or grown functions fail; the existing 30 are grandfathered into `docs/high-integrity/baseline.md`, same mechanism as the comment-bloat rules). Without this, every decomposition below regrows. Pairs with the pattern doc. *Pure-logic; no `Source/` change → fast CI.*
 
-Each ImGui-draw slice follows the same recipe:
-1. Inventory existing `SMATCHET_UI_PERF_SCOPE` blocks → those become the section helpers.
+**Slice 1 — pattern doc + a scope-bearing canary** (small). Write `docs/agent-rules/imgui-draw-pattern.md`; refactor **`drawActiveProjectWindow`** (992 L, **8 existing `SMATCHET_UI_PERF_SCOPE` blocks** → real reusable seams, zero baseline shift) as the canonical reference. *(Original canary `DrawWhisperPreferencesTab` is rejected — it has zero perf scopes, so it can't demonstrate the "reuse existing seams" contract.)*
+
+**Phase A — non-UI table refactors (genuine ROI; ship these regardless of the UI work).**
+2. **`ConfigManager::Load/Save` field table** (`Load` 620 L, `Save` 315 L). Self-contained, no UI-thread risk, kills the parallel-duplication bug class on every config-key add. Biggest dev-ergonomics + correctness win.
+3. **`McpPlugin::OnStart`** (687 L) → `RegisterCoreRoutes/ToolRoutes/SseRoutes/StartServer`. Plugin-isolated, bucket-A testable.
+4. **`BuildUserFieldPayload`** (382 L) → `{FieldType → builder fn}` dispatch. Pure logic; expand `tests/Core/Tracker/TrackerFieldPayload*.test.cpp`.
+5. **`HtmlToMarkdown`** (337 L) tag-handler table **+ `RegisterAiCommands`** (325 L) per-command-fn split. Mechanical, low-risk; bundled.
+6. **`main`** (556 L) **+ `AppController::Initialize`** (432 L). Bootstrap path — sanitiser run + dual-target build gate critical.
+7. **`AiAssistantController::RunRequest`** (340 L) → fetch ↔ stream-parse ↔ history-update phases. HTTP + streaming; keep AI-driver bucket-E green.
+
+(`FetchFieldCatalog` 573 L, `FetchIssuesStreamed` 390 L are *new* non-UI monoliths surfaced by the refresh — table/phase-split candidates; fold into Phase A if touched, else they're caught by the Slice-0 gate going forward.)
+
+**Phase B — ImGui-draw decompositions: RIDE-ALONG, not dedicated PRs.** Do **not** open a mechanical PR per draw fn. Instead, when a feature already opens one of these files, decompose that function as part of that PR using § Approach A. Rationale: the marginal cost is ~zero (you're editing it anyway), it avoids the churn/conflict/regression cost of a sweep, and the Slice-0 gate prevents regrowth. Current ride-along candidates (descending size; see § Files to modify for paths/lines): `drawActiveProjectWindow`(992, done as the canary), `AnnotateAnalysisUi::DrawContent`(945), `DrawWhisperPreferencesTab`(779), `drawViewsDashboardWindow`(778), `SmatchetUI::Draw`(608), `DrawUnifiedOfflineQueuesPanel`(606), `DrawAssistantPreferencesTab`(531), `drawMainMenuBar`(504), `DrawTemplatePreferencesTabs`(504), `RenderNewIssueDraftRow`(464), `DrawGridHeaderToolbar`(447), `drawPreferencesWindow`(403), `drawBulkImportWindow`(400), `RenderFieldCell`(382), `LuaConsolePlugin::OnDraw`(381), `RenderLongTextModal`(362). *(`SpawnAndRun` 249 / `RunCmdAttach` 219 dropped — now under threshold.)*
+
+Each draw-fn ride-along follows the same recipe:
+1. **If** the function already has `SMATCHET_UI_PERF_SCOPE` blocks → those become the section helpers (zero baseline shift). **Else** decompose on logical sections; any new scope is an intentional `MARKER_INVENTORY.md`-tracked add.
 2. Hoist `static` locals into a `<Foo>WindowState` member.
 3. Extract action handlers into `OnX()` methods.
 4. Update header with the new private API.
@@ -103,44 +119,51 @@ Each ImGui-draw slice follows the same recipe:
 
 ## Files to modify
 
-Pattern doc + canary (slice 1):
-1. `docs/agent-rules/imgui-draw-pattern.md` (new) — the canonical pattern reference.
-2. `Source_Core/src/SmatchetPreferencesUi_Whisper.cpp:46` — canary refactor of `DrawWhisperPreferencesTab`.
-3. `Source_Core/include/SmatchetPreferencesUi_Whisper.h` (or its existing header) — add the helper API + `WhisperPreferencesWindowState` struct.
-4. `AGENTS.md` § Project rules — one-line cross-link to `imgui-draw-pattern.md` ("ImGui draw functions ≥ 200 lines must use the section-helper pattern — see `docs/agent-rules/imgui-draw-pattern.md`").
+> Paths + line numbers re-measured against current `develop` (refresh). Line numbers drift — treat them as locators, not contracts.
 
-Non-UI monoliths (slices 2-8):
-5. `Source_Core/src/ConfigManager.cpp:179,567` — field-registration table refactor.
-6. `Source_Core/include/ConfigManager.h` — declare `FieldDesc` + table.
-7. `Plugins/Mcp/McpPlugin.cpp:135` — split `OnStart`.
-8. `Source_Core/src/TrackerFieldPayloadPure.cpp:179` — table-driven `BuildUserFieldPayload`.
-9. `Source_Core/src/MarkdownConvert.cpp:1362` — tag-handler table for `HtmlToMarkdown`.
-10. `Source_Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp:234` — `RegisterAiCommands` per-command-fn split.
-11. `Source_Core/src/AiAssistantController.cpp:247` — phase-split `RunRequest`.
-12. `Target_Standalone/main.cpp:232` — extract `BootApplication`/`RunFrameLoop`.
-13. `Source_Core/src/AppController.cpp:1078` — split `Initialize` into 4 phases.
-14. `Target_Standalone/CliCommandRunner.cpp:717,1182` — extract helpers from `SpawnAndRun` + `RunCmdAttach`.
+Gate + pattern (slices 0-1):
+1. `agents/scripts/project/test-lint-rules.sh` (+ `docs/high-integrity/baseline.md` grandfather snapshot) — add the delta-gated `function-too-long` / `function-too-branchy` rule (Slice 0).
+2. `docs/agent-rules/imgui-draw-pattern.md` (new) — the canonical pattern reference (Slice 1).
+3. `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:127` — canary refactor of `drawActiveProjectWindow` (992 L, 8 perf scopes) + its header — add helper API + `ActiveProjectWindowState`.
+4. `AGENTS.md` § Project rules — one-line cross-link ("ImGui draw functions ≥ 200 lines use the section-helper pattern — see `docs/agent-rules/imgui-draw-pattern.md`; enforced by the function-size gate").
 
-ImGui draw monoliths (slices 9-19; one PR each):
-15. `Source_Core/src/SmatchetActiveProjectGridUi.cpp:127` — `drawActiveProjectWindow` (992L).
-16. `Source_Core/src/BlameAnalysisUi_Window.cpp:60` — `BlameAnalysisUi::DrawContent` (939L).
-17. `Source_Core/src/SmatchetViewsDashboardUi.cpp:127` — `drawViewsDashboardWindow` (778L).
-18. `Source_Core/src/SmatchetOfflineQueueUi.cpp:562` — `DrawUnifiedOfflineQueuesPanel` (608L).
-19. `Source_Core/src/SmatchetUI.cpp:258` — `SmatchetUI::Draw` (589L).
-20. `Source_Core/src/SmatchetPreferencesUi_Assistant.cpp:41` — `DrawAssistantPreferencesTab` (534L).
-21. `Source_Core/src/SmatchetUI_MainMenu.cpp:52` — `drawMainMenuBar` (491L).
-22. `Source_Core/src/SmatchetPreferencesUi.cpp:132` — `drawPreferencesWindow` (403L).
-23. `Source_Core/src/SmatchetBulkTicketsUi.cpp:119` — `drawBulkImportWindow` (400L).
-24. `Plugins/LuaConsole/LuaConsolePlugin.cpp:359` — `LuaConsolePlugin::OnDraw` (381L).
-25. `Source_Core/src/TicketFieldEditor_Modal.cpp:177` — `RenderLongTextModal` (362L).
+Phase A — non-UI monoliths (slices 2-7):
+5. `Source/Core/src/Config/ConfigManager.cpp:606` (`Load` 620 L) + `:175` (`Save` 315 L) + its header — field-registration table (`FieldDesc`).
+6. `Source/Plugins/Mcp/McpPlugin.cpp:134` — split `OnStart` (687 L).
+7. `Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp:179` — table-driven `BuildUserFieldPayload` (382 L).
+8. `Source/Core/src/Ui/MarkdownConvert.cpp:1354` — tag-handler table for `HtmlToMarkdown` (337 L).
+9. `Source/Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp:231` — `RegisterAiCommands` per-command-fn split (325 L).
+10. `Source/Core/src/AiAssistantController.cpp:247` — phase-split `RunRequest` (340 L).
+11. `Source/Standalone/main.cpp:235` — extract `BootApplication`/`RunFrameLoop` (556 L).
+12. `Source/Core/src/AppController.cpp:1084` — split `Initialize` into phases (432 L).
+13. *(new, optional Phase A)* `Source/Core/src/Tracker/TrackerFieldCatalog.cpp:77` `FetchFieldCatalog` (573 L); `Source/Core/src/Tracker/PlaneIssueSearch.cpp:112` `FetchIssuesStreamed` (390 L).
+
+Phase B — ImGui-draw monoliths (**ride-along only — no dedicated PR**; touch when already in the file):
+14. `Source/Core/src/Ui/AnnotateAnalysisUi_Window.cpp:60` — `AnnotateAnalysisUi::DrawContent` (945 L). *(was `BlameAnalysisUi_Window.cpp` / `BlameAnalysisUi::DrawContent`, renamed + split per rename-blame-to-annotate.)*
+15. `Source/Core/src/Ui/SmatchetPreferencesUi_Whisper.cpp:46` — `DrawWhisperPreferencesTab` (779 L; **0 perf scopes** → invent seams).
+16. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp:127` — `drawViewsDashboardWindow` (778 L; **0 perf scopes**).
+17. `Source/Core/src/Ui/SmatchetUI.cpp:260` — `SmatchetUI::Draw` (608 L; 27 perf scopes; *grew* from 589).
+18. `Source/Core/src/Ui/SmatchetOfflineQueueUi.cpp:562` — `DrawUnifiedOfflineQueuesPanel` (606 L).
+19. `Source/Core/src/Ui/SmatchetPreferencesUi_Assistant.cpp:41` — `DrawAssistantPreferencesTab` (531 L).
+20. `Source/Core/src/Ui/SmatchetUI_MainMenu.cpp:51` — `drawMainMenuBar` (504 L; *grew* from 491).
+21. `Source/Core/src/Ui/SmatchetPreferencesUi_Templates.cpp:28` — `DrawTemplatePreferencesTabs` (504 L; *new*).
+22. `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp:154` — `RenderNewIssueDraftRow` (464 L; *new*).
+23. `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:42` — `DrawGridHeaderToolbar` (447 L; *new*).
+24. `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:132` — `drawPreferencesWindow` (403 L).
+25. `Source/Core/src/Ui/SmatchetBulkTicketsUi.cpp:119` — `drawBulkImportWindow` (400 L).
+26. `Source/Core/src/TicketFieldEditor.cpp:866` — `RenderFieldCell` (382 L; *new*).
+27. `Source/Plugins/LuaConsole/LuaConsolePlugin.cpp:359` — `LuaConsolePlugin::OnDraw` (381 L).
+28. `Source/Core/src/TicketFieldEditor_Modal.cpp:177` — `RenderLongTextModal` (362 L).
+
+*(Dropped: `SpawnAndRun` 249 L / `RunCmdAttach` 219 L in `Source/Standalone/CliCommandRunner.cpp` — now under the 300 threshold; not monoliths.)*
 
 ## Existing utilities reused
 
-- `SMATCHET_UI_PERF_SCOPE` (`Source_Core/include/UiPerfMonitor.h`) — already demarcates the natural section boundaries; pattern reuses them verbatim.
-- `UiDrawSession` (`Source_Core/include/SmatchetUiSession.h`) — already the per-frame ctx carrier; `DrawCtx` extends, not replaces.
+- `SMATCHET_UI_PERF_SCOPE` (`Source/Core/include/UiPerfMonitor.h`) — already demarcates the natural section boundaries; pattern reuses them verbatim.
+- `UiDrawSession` (`Source/Core/include/SmatchetUiSession.h`) — already the per-frame ctx carrier; `DrawCtx` extends, not replaces.
 - Section-file naming precedent: `SmatchetViewsDashboardUi_widgets.cpp`, `SmatchetPreferencesUi_Whisper.cpp`, `SmatchetPreferencesUi_Assistant.cpp` (already-split files).
-- `MakeCommand` (`Source_Core/include/Commands/Command.h`) — already supports per-command factory; `RegisterAiCommands` split just hoists per-command bodies into free functions.
-- Bucket-A test pattern (`tests/Source_Core/*.test.cpp`) — pure-logic helpers extracted from `BuildUserFieldPayload`, `HtmlToMarkdown`, `ConfigManager::Load` become directly testable.
+- `MakeCommand` (`Source/Core/include/Commands/Command.h`) — already supports per-command factory; `RegisterAiCommands` split just hoists per-command bodies into free functions.
+- Bucket-A test pattern (`tests/Core/*.test.cpp`) — pure-logic helpers extracted from `BuildUserFieldPayload`, `HtmlToMarkdown`, `ConfigManager::Load` become directly testable.
 
 ## UX Pillar callouts
 
@@ -149,7 +172,7 @@ ImGui draw monoliths (slices 9-19; one PR each):
 - **Pillar 3 (never crash)**: each slice gated on dual-target build + sanitizer-clean (`ninja-debug-msvc` ASan/UBSan run for slices touching bootstrap or HTTP paths — slices 6, 7).
 - **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: no change. The pattern preserves hotkey dispatch + tab order; no visual restyling.
 
-## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
+## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
 
 Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
@@ -158,7 +181,7 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
    - Slice 2 (`ConfigManager.cpp`) → `app-cold-start` (Load is on the boot path).
    - Slice 3 (`McpPlugin.cpp`) → `mcp-server-startup`.
    - Slice 4 (`TrackerFieldPayloadPure.cpp`) → `bulk-payload-build-1000`.
-   - Slices 9-19 ImGui draws → matching `<window>-render` scenario per window.
+   - Phase B ride-along draws → the matching `<window>-render` scenario for that window.
 2. **Pillar 2 static scanner** — N/A; no new sync I/O reachable from `ImGui::*`. The refactor is layout reorganisation only.
 3. **Dispatcher drain** — N/A; `MainThreadDispatcher::Drain()` not touched.
 4. **Visible-cue bucket-E harness** — N/A; no new sync-stall path > 100 ms (slices 6 + 7 must double-check during implementation).
@@ -172,11 +195,14 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
 - **Risk: ImGui-draw ordering bugs** — `ImGui::Begin/End` pairing, `PushID/PopID`, `BeginTable/EndTable` are positional. Mitigation: each slice runs bucket-E (ImGui Test Engine) screenshot diff against the pre-refactor golden; any visual delta = revert.
 - **Risk: `static` local hoisting silently changes lifetime semantics** — `static` locals live across windows-of-same-type; member `<Foo>WindowState` is per-instance. For singletons (the common case in Smatchet UI) this is identical; for any future multi-instance window it's an improvement. Mitigation: grep + audit during slice 1; document in the pattern doc.
-- **Risk: per-slice churn vs feature branches** — each slice will conflict with in-flight UI work. Mitigation: slices land in fast cadence (no slice waits more than 48 h once authored); feature branches rebase on the new shape.
-- **Risk: clang-tidy / clang-format thrash** — extracting helpers can re-trigger `readability-function-cognitive-complexity` warnings on the new helpers. Mitigation: target ≤ 80 lines per helper, well under tidy thresholds.
-- **Non-goal**: rewriting the underlying widget logic. Layout, behaviour, state semantics are byte-for-byte preserved. Pure mechanical decomposition.
-- **Non-goal**: introducing a new UI framework / retained-mode layer. Smatchet stays on immediate-mode ImGui.
-- **Non-goal**: enforcing the ≤ 200 lines / ≤ 30 branches budget via CI today. A `clang-tidy` config bump + grep gate are queued as follow-up work, separate plan.
+- **Risk (the big one): erosion without the gate.** Pure decomposition reverts under feature pressure — *already observed* (`SmatchetUI::Draw` 589→608, `drawMainMenuBar` 491→504 since this plan was written). Mitigation: **Slice 0 ships the delta-gated size cap first**; everything after is protected. This is why the gate moved from "out of scope" to slice 0.
+- **Risk: per-slice churn vs feature branches** — a dedicated UI-decomposition sweep conflicts with all in-flight UI work. Mitigation: **don't sweep** — Phase B is ride-along (you're already in the file). Phase A files are non-UI / low-churn.
+- **Risk: seam absence** — not every draw fn has `SMATCHET_UI_PERF_SCOPE` blocks (e.g. Whisper, ViewsDashboard have none). Mitigation: § Approach A seam-premise correction — invent logical seams; any new scope is an intentional `MARKER_INVENTORY.md` add (not a silent baseline shift).
+- **Risk: ImGui-draw ordering bugs** *(restated)* — positional `Begin/End`, `PushID/PopID`. Mitigation: bucket-E screenshot diff vs pre-refactor golden; visual delta = revert.
+- **Risk: clang-tidy / clang-format thrash** — extracted helpers can re-trigger `readability-function-cognitive-complexity`. Mitigation: target ≤ 80 lines per helper.
+- **Non-goal**: rewriting widget logic. Layout/behaviour/state semantics byte-for-byte preserved. Pure mechanical decomposition.
+- **Non-goal**: introducing a new UI framework / retained-mode layer. Smatchet stays immediate-mode ImGui.
+- **(Was a non-goal, now Slice 0 — IN scope)**: the ≤ 200-line / ≤ 30-branch CI cap. It was deferred in the original plan; the refresh promotes it to the **leading** slice because without it the decomposition decays.
 
 ## Verification
 
@@ -184,19 +210,19 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
 
 - **Bucket A (pure-logic ctest, `test-rig`)**:
   - Slice 2 (`ConfigManager::Load/Save`) — add round-trip tests against the field table; one test per field-type.
-  - Slice 4 (`BuildUserFieldPayload`) — expand existing `tests/Source_Core/TrackerFieldPayload*.test.cpp` to cover every dispatch-table entry.
-  - Slice 5 (`HtmlToMarkdown`) — add `tests/Source_Core/MarkdownConvert.test.cpp` per tag-handler entry.
+  - Slice 4 (`BuildUserFieldPayload`) — expand existing `tests/Core/TrackerFieldPayload*.test.cpp` to cover every dispatch-table entry.
+  - Slice 5 (`HtmlToMarkdown`) — add `tests/Core/MarkdownConvert.test.cpp` per tag-handler entry.
   - Slice 7 (`AiAssistantController::RunRequest`) — extract phase methods are bucket-A testable; add one test per phase.
-- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: every ImGui-draw slice (9-19) gated on a screenshot-diff test against the pre-refactor golden. The window's existing scenario coverage is the source of truth; gaps = automation deferral noted in `docs/self-improvement/categories/test.md` per slice.
-- **Bash-driver scenario / screenshot / sanitizer**:
-  - Slices 6 + 7 — ASan/UBSan run via `cmake --build --preset ninja-debug-msvc-asan && scripts/dev/scenario-run.sh app-cold-start`.
-  - Slice 8 — `tests/bats/cli_spawn.bats`, `tests/bats/cli_attach.bats`.
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: every Phase-B ride-along draw decomposition gated on a screenshot-diff test against the pre-refactor golden. The window's existing scenario coverage is the source of truth; gaps = automation deferral noted in `docs/self-improvement/categories/test.md` for that PR.
+- **Bash-driver scenario / sanitizer**:
+  - Slices 6 + 7 (`main`/`Initialize`, `RunRequest`) — ASan/UBSan run on the bootstrap/HTTP paths (`ninja-*-asan` preset + the matching scenario via `scripts/dev/perf-run.sh` / `scenario.run`).
+  - *(CliCommandRunner `cli_*.bats` slice dropped — `SpawnAndRun`/`RunCmdAttach` now under threshold.)*
 - **Build gate**: every slice — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
 - **Manual residue**: if a window has no existing bucket-E coverage, the slice ships the refactor + a `docs/self-improvement/categories/test.md` entry naming the missing scenario. No silent residue.
 
 ## Out of scope (flagged, not designed)
 
-- **CI-enforced size cap** (line/branch budget in clang-tidy or a `test-lint-rules.sh` extension) — follow-up plan, depends on this one landing first so the baseline is reasonable.
+- ~~**CI-enforced size cap** — follow-up plan, depends on this one landing first.~~ **Moved IN scope as Slice 0** (refresh): the gate must *lead*, not follow, or the decomposition decays (see § ROI / § Risks).
 - **Retained-mode UI layer** — explicitly rejected; ImGui stays.
 - **Theming / accessibility audit** — orthogonal; Pillar 4 backlog owns it.
 - **Refactoring functions below the cut (lines 21+ in the worst-functions ranking)** — re-rank after this plan ships; the long tail is short by definition once the head is dealt with.
