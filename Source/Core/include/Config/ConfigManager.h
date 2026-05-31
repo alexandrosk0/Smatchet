@@ -94,11 +94,17 @@ struct TrackerConfig {
     std::string BugReportGitHubRepo;    // dev-repo name
     std::string BugReportGitHubBaseUrl; // empty -> falls back to GitHubBaseUrl -> api.github.com
     std::string BugReportAssetsRepo;    // "owner/repo" for screenshot uploads; empty -> reuse issue repo
-    // PAT resolution order: env SMATCHET_BUGREPORT_GITHUB_TOKEN -> GitHubPat ->
-    // BugReportGitHubPat (read/written ONLY when BugReportPersistPat == true).
+    // PAT resolution order: env SMATCHET_BUGREPORT_GITHUB_TOKEN -> BugReportGitHubPat
+    // (read/written ONLY when BugReportPersistPat == true). The tracker GitHubPat is
+    // intentionally NOT used by the bug reporter (separate, personal credential).
     // BugReportGitHubPat is a secret — DPAPI-encrypted on Win32, same path as GitHubPat.
     bool BugReportPersistPat = false;
     std::string BugReportGitHubPat;
+    // Censor mosaic block size in pixels on the (downscaled) capture. 0 = auto
+    // (RecommendedCensorBlock, ~6px). Lower = sharper / less pixelated (2-3 is
+    // light), higher = blurrier. Tune to taste — this is a reduce-readability
+    // pass, not a privacy guarantee.
+    int BugReportCensorBlock = 0;
     std::string BugReportHotkey = "Ctrl+Shift+B";
     bool BugReportHotkeyEnabled = true;
     bool BugReportScreenshotDefault = true;

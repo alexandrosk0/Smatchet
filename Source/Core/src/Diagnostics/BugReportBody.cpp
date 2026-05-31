@@ -52,16 +52,18 @@ ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::st
     out.Owner = cfg.BugReportGitHubOwner;
     out.Repo = cfg.BugReportGitHubRepo;
 
-    // PAT: env -> user's existing GitHub PAT -> opt-in persisted bug-report PAT.
+    // PAT: env -> opt-in persisted bug-report PAT ONLY. The bug reporter must NEVER
+    // borrow the user's tracker GitHub PAT (cfg.GitHubPat) — that is a separate,
+    // personal credential for a different purpose; conflating them would file under
+    // the wrong identity / leak its scope. Dedicated token, or use relay mode.
     if (!envToken.empty()) {
         out.Pat = envToken;
-    } else if (!cfg.GitHubPat.empty()) {
-        out.Pat = cfg.GitHubPat;
     } else if (!cfg.BugReportGitHubPat.empty()) {
         out.Pat = cfg.BugReportGitHubPat;
     }
     if (out.Pat.empty()) {
-        out.Error = "No GitHub token available for bug reports (set $SMATCHET_BUGREPORT_GITHUB_TOKEN or a GitHub PAT).";
+        out.Error = "No bug-report GitHub token configured (set $SMATCHET_BUGREPORT_GITHUB_TOKEN, a dedicated "
+                    "BugReportGitHubPat, or use relay mode). The tracker GitHub PAT is intentionally NOT used.";
         return out;
     }
 

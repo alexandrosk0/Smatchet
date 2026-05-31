@@ -25,6 +25,9 @@ namespace diagnostics {
 struct BugReportOptions {
     std::string UserDescription;
     std::string ScreenshotAbsPath; // filled by the standalone UI; empty otherwise (no live frame in CLI/MCP)
+    // When non-empty, this exact text is the issue body (the user-edited egress
+    // preview — WYSIWYG consent). When empty, the body is built via BuildMarkdownBody.
+    std::string BodyOverride;
     bool IncludeScreenshot = true;
     bool Censored = false;
     std::size_t MaxLogLines = 200;
@@ -66,10 +69,11 @@ struct SubmitResult {
 /// Resolve the dev-repo target + PAT + assets repo from config. `envToken` is the
 /// caller-supplied value of $SMATCHET_BUGREPORT_GITHUB_TOKEN (empty if unset) —
 /// passed in (not read here) so the resolver stays pure/testable. PAT order:
-/// envToken -> cfg.GitHubPat -> cfg.BugReportGitHubPat. baseUrl order:
+/// envToken -> cfg.BugReportGitHubPat (a DEDICATED bug-report token only). The
+/// tracker GitHub PAT (cfg.GitHubPat) is intentionally NEVER used. baseUrl order:
 /// BugReportGitHubBaseUrl -> GitHubBaseUrl -> https://api.github.com, then
-/// validated with IsValidGitHubBaseUrl. Missing owner/repo, no PAT, or invalid
-/// baseUrl -> Ok=false + a specific Error.
+/// validated with IsValidGitHubBaseUrl. Relay mode (BugReportRelayUrl set) needs
+/// no client token. Missing owner/repo, no PAT, or invalid baseUrl -> Ok=false.
 ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::string& envToken);
 
 /// Build the GitHub-flavored markdown issue body from a gathered bundle. Pure;

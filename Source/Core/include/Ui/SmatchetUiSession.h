@@ -582,6 +582,9 @@ struct UiDrawSession {
     /// log-a-bug-github — when set alongside requestScreenshot, the standalone capture path
     /// mosaic-censors the framebuffer (no readable text) before writing the PNG.
     bool requestScreenshotCensor = false;
+    /// Censor mosaic block size (px) for this request. 0 = auto (RecommendedCensorBlock).
+    /// Seeded from cfg.BugReportCensorBlock when the bug-report modal arms a capture.
+    int requestScreenshotCensorBlock = 0;
     /// log-a-bug-github — set by the bug-report modal when its capture request is for the
     /// report (not a debug/test shot). The standalone capture path echoes completion back
     /// via bugReportShotReady so the modal never polls the filesystem on the UI thread.
@@ -591,19 +594,22 @@ struct UiDrawSession {
     // All bugReport* fields are read/written ONLY on the UI thread (the worker posts
     // its result back via mainThreadDispatcher), so no extra synchronisation is needed.
     bool showBugReport = false;
-    bool bugReportOpenLatch = false;     // set when newly opened — drives first-frame focus
-    bool bugReportInclScreenshot = true; // attach-screenshot checkbox (seeded from config)
-    bool bugReportPreviewOpen = false;   // egress-preview collapsible open
-    bool bugReportInFlight = false;      // submit in progress (capture handshake or worker)
-    bool bugReportShotPending = false;   // requested a screenshot; waiting for the capture to land
-    bool bugReportShotReady = false;     // standalone capture path signals completion here (UI-thread only)
-    double bugReportShotDeadline = 0.0;  // ImGui::GetTime() deadline — frees the modal if capture never lands
-    bool bugReportCrashMode = false;     // phase-2: pre-filled crash report
-    bool bugReportPreviewDirty = true;   // rebuild preview text only when inputs changed
-    int bugReportShotMode = 0;           // 0 full, 1 censored
-    std::vector<char> bugReportDescBuf;  // lazy multiline description buffer
-    std::string bugReportStagedShotPath; // captured screenshot path (post-swap)
-    std::string bugReportPreviewText;    // cached BuildMarkdownBody output
+    bool bugReportOpenLatch = false;         // set when newly opened — drives first-frame focus
+    bool bugReportInclScreenshot = true;     // attach-screenshot checkbox (seeded from config)
+    bool bugReportPreviewOpen = false;       // egress-preview collapsible open
+    bool bugReportInFlight = false;          // submit in progress (capture handshake or worker)
+    bool bugReportShotPending = false;       // requested a screenshot; waiting for the capture to land
+    bool bugReportShotArmed = false;         // submit pressed — arm capture on the NEXT (modal-suppressed) frame
+    bool bugReportShotReady = false;         // standalone capture path signals completion here (UI-thread only)
+    double bugReportShotDeadline = 0.0;      // ImGui::GetTime() deadline — frees the modal if capture never lands
+    bool bugReportCrashMode = false;         // phase-2: pre-filled crash report
+    bool bugReportPreviewDirty = true;       // rebuild preview text only when inputs changed
+    bool bugReportPreviewSeeded = false;     // preview buffer has been built at least once (drives BodyOverride)
+    bool bugReportPreviewUserEdited = false; // user edited the preview — stop auto-regenerating from inputs
+    int bugReportShotMode = 0;               // 0 full, 1 censored
+    std::vector<char> bugReportDescBuf;      // lazy multiline description buffer
+    std::vector<char> bugReportPreviewBuf;   // editable egress preview = exactly what gets sent
+    std::string bugReportStagedShotPath;     // captured screenshot path (post-swap)
     std::shared_ptr<smatchet::diagnostics::SubmitResult> bugReportResult; // posted back from the worker
 
     /// Transient request consumed once per frame in `SmatchetUI::Draw` right before the

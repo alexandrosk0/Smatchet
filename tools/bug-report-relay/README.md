@@ -87,7 +87,7 @@ relay and is rate-limited + rotatable server-side, so bundling it is acceptable.
 
 - `POST /report` — body `{ title, body, screenshotBase64?, censored? }`; returns
   `{ ok, issueKey: "owner/repo#N", url }`. Requires `x-relay-key` when `RELAY_KEY`
-  is set. Payload hard-capped at 256 KB.
+  is set. Payload hard-capped at 2 MB (base64 screenshots inflate ~4/3; the app downscales captures to 1280px first).
 - `GET /health` — `{ ok: true }`.
 
 ## Abuse protection
@@ -95,7 +95,7 @@ relay and is rate-limited + rotatable server-side, so bundling it is acceptable.
 - Set `RELAY_KEY` so the endpoint isn't open to the world.
 - Add a [Cloudflare Rate Limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/)
   on the Worker route (e.g. N requests/min/IP) — the free tier covers basic rules.
-- The 256 KB payload cap bounds screenshot size.
+- The 2 MB payload cap bounds screenshot size (the app downscales to 1280px before upload).
 - Revoke/rotate the bot token any time from GitHub without touching the app.
 
 ## Local test
@@ -143,6 +143,7 @@ Invoke-RestMethod -Method Post `
 |---|---|---|
 | `{"ok":false,"error":"bad or missing relay key"}` (401) | `RELAY_KEY` is set but the request's `x-relay-key` is missing/wrong | Send the matching key. This 401 *confirms* the auth gate works. |
 | `{"ok":false,"error":"GitHub create failed: Not Found"}` (the relay returns 502) | `REPO` points at a repo that **doesn't exist**, or the `GITHUB_TOKEN` lacks access (GitHub returns 404, not 403, for no-access to hide existence) | Verify `REPO` in `wrangler.toml` is a real `owner/repo`; ensure the bot token has **Issues: write** on it (a private repo needs the bot added as a collaborator). Redeploy after editing `REPO`. |
+| `{"ok":false,"error":"payload too large"}` (413) | base64 screenshot exceeds the cap | The app downscales captures to 1280px (≈ well under the 2 MB cap). If you see this, redeploy a Worker built from current `src/index.js` (the cap was raised from 256 KB → 2 MB). |
 | `relay REPO var not configured as owner/repo` (500) | `REPO` unset or malformed | Set `[vars].REPO = "owner/repo"` in `wrangler.toml`, redeploy. |
 | Screenshot doesn't render inline; issue still files | Token lacks **Contents: write**, so the asset upload is skipped | Grant Contents: write on the assets repo, or accept text-only reports. |
 | `Could not resolve host` | Wrong URL (bare `<name>.workers.dev`) | Use the full `<worker-name>.<your-subdomain>.workers.dev` that `wrangler deploy` printed. |
