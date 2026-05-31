@@ -65,16 +65,18 @@ remote="${LOCK_REMOTE:-origin}"
 remote_url=$(git config --get "remote.${remote}.url" || true)
 [ -n "$remote_url" ] || { echo "lock-claim: remote '$remote' not configured" >&2; exit 2; }
 if [ "${SMATCHET_LOCK_BYPASS_REPO_CHECK:-0}" != "1" ]; then
-    # H15: anchor `Smatchet` at a path boundary (`/` for https, `:` for
-    # scp-style git@host:owner/repo). Previously `*[Ss]matchet*` matched
-    # anywhere in the URL — even mid-token like `foo-smatchet-bar` — so a
-    # non-Smatchet repo could pass the safety check just by having the
-    # substring in its path. The `[/:]` requirement narrows to actual
-    # path-or-host segments. Still permissive enough for legitimate forks
-    # (`Smatchet-fork`, `smatchet-experiment`).
-    case "$remote_url" in
-        *[/:][Ss]matchet*) : ;;
-        *) echo "lock-claim: remote URL '$remote_url' does not look like a Smatchet repo (set SMATCHET_LOCK_BYPASS_REPO_CHECK=1 to override)" >&2; exit 2 ;;
+    # Portability: derive the expected repo identifier from project.config.json
+    # (project.name) instead of hardcoding "Smatchet", so the portable agents/
+    # tree works in another project. Falls back to "Smatchet" when the config is
+    # unreadable, so the guard is never weaker than before. Anchored at a path
+    # boundary (`/` https, `:` scp-style) per H15; matched case-insensitively.
+    _proj_cfg="$(git rev-parse --show-toplevel 2>/dev/null)/project.config.json"
+    _proj_name="$( { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["project"]["name"])' "$_proj_cfg" 2>/dev/null \n                    || python -c 'import json,sys;print(json.load(open(sys.argv[1]))["project"]["name"])' "$_proj_cfg" 2>/dev/null; } || printf 'Smatchet' )"
+    _proj_lc="$(printf '%s' "$_proj_name" | tr '[:upper:]' '[:lower:]')"
+    _url_lc="$(printf '%s' "$remote_url" | tr '[:upper:]' '[:lower:]')"
+    case "$_url_lc" in
+        *[/:]"$_proj_lc"*) : ;;
+        *) echo "lock-claim: remote URL '$remote_url' does not look like a $_proj_name repo (set SMATCHET_LOCK_BYPASS_REPO_CHECK=1 to override)" >&2; exit 2 ;;
     esac
 fi
 
