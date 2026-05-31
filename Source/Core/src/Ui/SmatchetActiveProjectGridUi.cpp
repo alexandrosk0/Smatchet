@@ -122,7 +122,194 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
     ImGui::SetScrollX(inner, targetX);
 }
 
+// Rebuild the cached sort-order + filter projection (`d.cachedSortedIndices` →
+// `d.filteredIndices`). Extracted from drawActiveProjectGridSort so that helper stays
+// under the function-size cap; runs only when the projection is dirty AND the streaming
+// debounce permits. Behaviour is byte-for-byte the former inline block.
+static void RebuildGridSortAndFilterProjection(UiDrawSession& d, ImGuiTableSortSpecs* sortSpecs,
+                                               const std::vector<CachedTicket>& tickets,
+                                               const std::vector<TicketGridColumn>& columns,
+                                               const TrackerFieldCatalogIndex& catalogIndex,
+                                               const std::string& fingerprint, std::uint64_t activeTicketsRevision,
+                                               std::uint64_t catalogRevision, char* lastFilter, size_t lastFilterCap) {
+    d.lastGridSortAt = std::chrono::steady_clock::now();
+
+    // 1. Run Sort Spec / Order Indices
+    d.cachedSortedIndices.resize(tickets.size());
+    for (size_t i = 0; i < tickets.size(); ++i) {
+        d.cachedSortedIndices[i] = i;
+    }
+
+    if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
+        // Resolve field meta once per sort spec outside the comparator (§3.4 item 55):
+        // avoids catalogIndex.Find() on every pair comparison in O(N log N) sort.
+        struct SortKey {
+            const TicketGridColumn* col = nullptr;
+            const TrackerField* fieldMeta = nullptr;
+            int dir = 1;
+        };
+        std::vector<SortKey> sortKeys;
+        for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+            const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+            if (!IsPersistableSortDirection(spec.SortDirection))
+                continue;
+            const int ci = spec.ColumnIndex;
+            if (ci < 0 || ci >= static_cast<int>(columns.size()))
+                continue;
+            SortKey sk;
+            sk.col = &columns[static_cast<size_t>(ci)];
+            sk.fieldMeta = catalogIndex.Find(sk.col->FieldId);
+            sk.dir = (spec.SortDirection == ImGuiSortDirection_Ascending) ? 1 : -1;
+            sortKeys.push_back(sk);
+        }
+        const std::vector<CachedTicket>* ticketsPtr = &tickets;
+        std::stable_sort(
+            d.cachedSortedIndices.begin(), d.cachedSortedIndices.end(), [ticketsPtr, &sortKeys](size_t ia, size_t ib) {
+                const auto& tix = *ticketsPtr;
+                for (const auto& sk : sortKeys) {
+                    if (sk.col->ColumnKind == TicketGridColumn::Kind::Id) {
+                        const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
+                        if (less)
+                            return sk.dir > 0;
+                        if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id))
+                            continue;
+                        return sk.dir < 0;
+                    }
+                    const std::string aVal = tix[ia].GetFieldValue(sk.col->FieldId);
+                    const std::string bVal = tix[ib].GetFieldValue(sk.col->FieldId);
+                    const int cmp = CompareFieldValuesForSort(sk.col->FieldId, sk.fieldMeta, aVal, bVal, sk.dir);
+                    if (cmp != 0)
+                        return (cmp * sk.dir) < 0;
+                }
+                return ia < ib;
+            });
+    }
+
+    d.cachedSortFingerprint = fingerprint;
+    d.cachedSortValid = true;
+    d.cachedSortTicketsRevision = activeTicketsRevision;
+    d.cachedSortCatalogRevision = catalogRevision;
+
+    // 2. Run Filter and rebuild d.filteredIndices
+    d.filteredIndices.clear();
+    auto checkMatch = [&](size_t idx) {
+        if (idx >= tickets.size())
+            return false;
+        if (d.gridFilterBuf[0] == '\0')
+            return true;
+        const auto& t = tickets[idx];
+        if (ContainsCaseInsensitive(t.id, d.gridFilterBuf))
+            return true;
+        if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf))
+            return true;
+        return false;
+    };
+
+    for (size_t idx : d.cachedSortedIndices) {
+        if (checkMatch(idx)) {
+            d.filteredIndices.push_back(idx);
+        }
+    }
+
+    // snprintf guarantees null-termination and avoids the strncpy
+    // truncation warning when the source fills the buffer exactly.
+    std::snprintf(lastFilter, lastFilterCap, "%s", d.gridFilterBuf);
+}
+
+// Mirror header-click sort changes back onto the active view definition, marking it
+// dirty only when the rules actually changed (avoids a false-dirty on startup or when
+// the active view is swapped). Extracted from drawActiveProjectGridSort for the cap.
+static void SyncHeaderSortClicksToView(UiDrawSession& d, ImGuiTableSortSpecs* sortSpecs,
+                                       const std::vector<TicketGridColumn>& columns, ViewDefinition& activeView) {
+    std::vector<ViewSortSpec> newSpecs;
+    for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+        const ImGuiTableColumnSortSpecs& sp = sortSpecs->Specs[s];
+        if (sp.ColumnIndex >= 0 && sp.ColumnIndex < static_cast<int>(columns.size()) &&
+            IsPersistableSortDirection(sp.SortDirection)) {
+            ViewSortSpec vs;
+            vs.ColumnKey = columns[sp.ColumnIndex].Key;
+            vs.Direction = static_cast<int>(sp.SortDirection);
+            newSpecs.push_back(vs);
+        }
+    }
+
+    // Only mark dirty if the sorting rules actually changed (prevent startup/view-switch false dirty)
+    bool changed = (newSpecs.size() != activeView.SortSpecs.size());
+    if (!changed) {
+        for (size_t i = 0; i < newSpecs.size(); ++i) {
+            if (newSpecs[i].ColumnKey != activeView.SortSpecs[i].ColumnKey ||
+                newSpecs[i].Direction != activeView.SortSpecs[i].Direction) {
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    if (changed) {
+        // Snapshot pre-change view so Discard can revert sort + widths
+        // + column order + buffers all at once.
+        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, activeView);
+        activeView.SortSpecs = std::move(newSpecs);
+        d.viewSortDirty = true;
+        d.viewsDirty = true;
+    }
+}
+
+// Shift+Space gesture: promote the row containing the active cell to a whole-row
+// selection (added to whatever is already selected). Extracted from
+// drawActiveProjectGridRectSelKeys to keep that helper under the function-size cap.
+template <class RectSelT>
+static void PromoteActiveRowToSelection(UiDrawSession& d, RectSelT& sel, const std::vector<CachedTicket>& tickets,
+                                        std::uint64_t gridSortSig) {
+    int activeRow = -1;
+    if (sel.PrimaryRow >= 0) {
+        activeRow = sel.PrimaryRow;
+    } else if (sel.Active) {
+        activeRow = sel.AnchorRow;
+    } else if (!d.gridState.ActiveIssueId.empty()) {
+        const auto& indices = d.filteredIndices;
+        for (size_t i = 0; i < indices.size(); ++i) {
+            const size_t ti = indices[i];
+            if (ti < tickets.size() && tickets[ti].id == d.gridState.ActiveIssueId) {
+                activeRow = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (activeRow >= 0) {
+        sel.Rows.insert(activeRow);
+        sel.PrimaryRow = activeRow;
+        sel.Active = false;
+        sel.SortSignature = gridSortSig;
+    }
+}
+
 } // namespace
+
+// Shared per-frame state for the drawActiveProjectWindow section helpers (monoliths
+// Slice 1b). Constructed once at the top of drawActiveProjectWindow from orchestrator-
+// owned stack locals; passed by reference into each section helper. Members are
+// references / value-snapshots captured ONCE — helpers must not re-fetch them.
+struct ActiveProjectDrawCtx {
+    AppController& app;
+    UiDrawSession& d;
+    const std::vector<CachedTicket>& tickets;
+    const TrackerFieldCatalogIndex& catalogIndex;
+    const std::vector<TicketGridColumn>& columns;
+    const TrackerConnectivityBannerForUi& trackerBanner;
+    ViewDefinition* activeViewForGrid;
+    bool readOnlyMode;
+    // Bound by reference to an orchestrator local assigned after the header toolbar
+    // runs, so the view-switch bookkeeping observes any active-view change the toolbar
+    // made. The sort helper reads it at table time.
+    bool& gridSortEnvironmentChanged;
+    // Mutable cross-section grid state (produced inside the table body, consumed by the
+    // post-table rect-selection / clear logic). Owned by the orchestrator stack.
+    std::vector<PendingFieldEdit>& pendingEdits;
+    bool& rectCellClickedThisFrame;
+    bool& ticketGridLeftClickInsideTableHit;
+    std::uint64_t& gridSortSig;
+};
 
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestActiveProjectFocus;
@@ -152,10 +339,29 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     annotateAnalysisUi_.SetAnnotatePanelOpen(d.showAnnotateAnalysis);
     annotateAnalysisUi_.ServiceBackground();
 
-    {
-        SMATCHET_UI_PERF_SCOPE("activeProject:header");
-        DrawGridHeaderToolbar(app, d, activeViewForGrid, columns, tickets, readOnlyMode, ViewState, TrackerBanner);
-    }
+    // Orchestrator-owned cross-section state (was function-local in the monolith). These
+    // outlive every section helper and are bound by reference into the DrawCtx below.
+    std::vector<PendingFieldEdit> pendingEdits;
+    bool rectCellClickedThisFrame = false;
+    bool ticketGridLeftClickInsideTableHit = false;
+    std::uint64_t gridSortSig = 0;
+    bool gridSortEnvironmentChanged = false;
+
+    ActiveProjectDrawCtx ctx{app,
+                             d,
+                             tickets,
+                             catalogIndex,
+                             columns,
+                             TrackerBanner,
+                             activeViewForGrid,
+                             readOnlyMode,
+                             gridSortEnvironmentChanged,
+                             pendingEdits,
+                             rectCellClickedThisFrame,
+                             ticketGridLeftClickInsideTableHit,
+                             gridSortSig};
+
+    drawActiveProjectHeader(ctx);
 
     const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != d.lastGridActiveViewId);
     if (viewChanged && activeViewForGrid) {
@@ -181,7 +387,90 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     }
     d.lastGridContextSignature = gridContextSignature;
 
-    const bool gridSortEnvironmentChanged = viewChanged || gridContextChanged;
+    gridSortEnvironmentChanged = viewChanged || gridContextChanged;
+
+    // Unsaved-layout strip + offline-queues panel (the unscoped "above the table"
+    // header UI). All BeginChild/EndChild + BeginPopupModal/EndPopup pairs stay inside
+    // the helper — never split across this boundary.
+    drawActiveProjectUnsavedStrip(ctx);
+
+    const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                                       ImGuiTableFlags_Reorderable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
+                                       ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti |
+                                       ImGuiTableFlags_SortTristate | ImGuiTableFlags_NoSavedSettings;
+
+    ImGui::Separator();
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
+    if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
+        // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
+        // tests can drive the grid position without human input.
+        if (d.scenarioScrollActive && d.scenarioScrollTarget >= 0) {
+            ImGui::SetScrollY(static_cast<float>(d.scenarioScrollTarget));
+        }
+        drawActiveProjectGridSetup(ctx);
+
+        drawActiveProjectGridSort(ctx);
+
+        drawActiveProjectGridRows(ctx);
+
+        drawActiveProjectGridNewIssue(ctx);
+
+        drawActiveProjectGridPost(ctx);
+        // After full table layout: union outer + inner clip so empty scroll body
+        // and padding still count as "inside grid" (OuterRect alone missed H5).
+        if (ImGuiContext* g = ImGui::GetCurrentContext()) {
+            if (ImGuiTable* tb = g->CurrentTable) {
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    ImRect hit(tb->OuterRect);
+                    hit.Add(tb->InnerClipRect);
+                    if (hit.Contains(ImGui::GetIO().MousePos)) {
+                        ticketGridLeftClickInsideTableHit = true;
+                        rectCellClickedThisFrame = true;
+                    }
+                }
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleVar();
+
+    // Google-Sheets-style selection: end drag on mouse release, clear on outside
+    // click, and service Ctrl+C (copy as TSV) / Escape (clear) / Shift+Space (whole
+    // row) while focused. The helper early-returns when no grid was drawn this frame.
+    drawActiveProjectGridRectSelKeys(ctx);
+
+    // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
+    // of view. Edits accepted in the modal are appended to `pendingEdits` and flow through the same
+    // ProcessGridFieldEdits path below.
+    TicketFieldEditor::RenderLongTextModal(pendingEdits);
+
+    ProcessGridFieldEdits(app, d, tickets, pendingEdits, readOnlyMode);
+    MaybeToastGridBannerFromSession(d);
+    ImGui::End();
+}
+
+// Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one
+// pre-existing SMATCHET_UI_PERF_SCOPE seam verbatim. Bodies are byte-for-byte copies of
+// the former inline blocks; the local-alias preamble re-binds the orchestrator-owned ctx
+// members to the bare names the moved code already used, leaving the logic untouched.
+void SmatchetUI::drawActiveProjectHeader(ActiveProjectDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const std::vector<CachedTicket>& tickets = ctx.tickets;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
+    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
+    const bool readOnlyMode = ctx.readOnlyMode;
+    const TrackerConnectivityBannerForUi& TrackerBanner = ctx.trackerBanner;
+
+    SMATCHET_UI_PERF_SCOPE("activeProject:header");
+    DrawGridHeaderToolbar(app, d, activeViewForGrid, columns, tickets, readOnlyMode, ViewState, TrackerBanner);
+}
+
+void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
     // -------- Unsaved layout strip --------
     // Appears whenever d.viewsDirty OR d.viewSortDirty is true — fed by grid column
@@ -260,66 +549,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         ImGui::EndChild();
         ImGui::PopStyleColor();
 
-        // Save-as-new modal: name input + Save / Cancel.
-        if (ImGui::BeginPopupModal("Save view as new", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            static char s_newViewName[128] = {};
-            if (ImGui::IsWindowAppearing()) {
-                std::snprintf(s_newViewName, sizeof(s_newViewName), "%s (copy)", activeViewForGrid->Name.c_str());
-                ImGui::SetKeyboardFocusHere();
-            }
-            ImGui::TextUnformatted("New view name");
-            ImGui::SetNextItemWidth(300.0f);
-            const bool committed = ImGui::InputText("##NewViewName", s_newViewName, sizeof(s_newViewName),
-                                                    ImGuiInputTextFlags_EnterReturnsTrue);
-            const bool disabled = s_newViewName[0] == '\0';
-            if (disabled) {
-                ImGui::BeginDisabled();
-            }
-            const bool saveClicked = ImGui::Button("Save") || committed;
-            if (disabled) {
-                ImGui::EndDisabled();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
-                ImGui::CloseCurrentPopup();
-            }
-            if (saveClicked && !disabled) {
-                ViewDefinition created = *activeViewForGrid;
-                created.Name = s_newViewName;
-                created.Id.clear();
-                if (!d.editingColumnOrder.empty()) {
-                    created.ColumnOrder = d.editingColumnOrder;
-                }
-                const std::vector<std::string> editedFields =
-                    SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
-                if (!editedFields.empty()) {
-                    created.Fields = editedFields;
-                }
-                if (d.viewJqlBuf[0]) {
-                    created.Jql = d.viewJqlBuf;
-                }
-                ViewState.Create(created);
-                const ViewDefinition* nowActive = ViewState.GetActiveView();
-                if (nowActive) {
-                    d.editingViewId = nowActive->Id;
-                    d.lastSyncedColumnOrder = nowActive->ColumnOrder;
-                    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, nowActive->Name);
-                    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, nowActive->Jql);
-                    const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(nowActive->Fields);
-                    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
-                    d.editingColumnOrder = nowActive->ColumnOrder;
-                    d.cfg.JqlQuery = nowActive->Jql;
-                    d.cfg.SelectedFields = nowActive->Fields;
-                    ConfigManager::Save(d.cfg);
-                    SmatchetToastManager::Instance().Push("View created", nowActive->Name, ToastType::Success, 1500);
-                }
-                d.viewsDirty = false;
-                d.viewsHasOriginalSnapshot = false;
-                d.pendingViewStateSave = false;
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        }
+        drawActiveProjectSaveAsNewModal(ctx);
     }
 
     const bool drewOfflineSection = DrawUnifiedOfflineQueuesPanel(app, d);
@@ -328,721 +558,674 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         ImGui::SeparatorText("Ticket grid");
         ImGui::Spacing();
     }
+}
 
-    std::vector<PendingFieldEdit> pendingEdits;
-    // Hoisted above the BeginTable scope so the post-EndTable block can read it
-    // when deciding whether an out-of-selection click should clear the rect.
-    bool rectCellClickedThisFrame = false;
-    // Left click landed inside ticket table hitbox (OuterRect ∪ InnerClipRect)
-    // but no cell set rectCellClickedThisFrame — blocks false outside-clear (H5).
-    bool ticketGridLeftClickInsideTableHit = false;
-    std::uint64_t gridSortSig = 0;
-    const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                       ImGuiTableFlags_Reorderable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
-                                       ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti |
-                                       ImGuiTableFlags_SortTristate | ImGuiTableFlags_NoSavedSettings;
+void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
+    char* s_newViewName = activeProjectState_.newViewNameBuf; // hoisted from `static char s_newViewName[128]`
 
-    ImGui::Separator();
-
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
-    if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
-        // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
-        // tests can drive the grid position without human input.
-        if (d.scenarioScrollActive && d.scenarioScrollTarget >= 0) {
-            ImGui::SetScrollY(static_cast<float>(d.scenarioScrollTarget));
+    // Save-as-new modal: name input + Save / Cancel.
+    if (ImGui::BeginPopupModal("Save view as new", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::IsWindowAppearing()) {
+            std::snprintf(s_newViewName, sizeof(activeProjectState_.newViewNameBuf), "%s (copy)",
+                          activeViewForGrid->Name.c_str());
+            ImGui::SetKeyboardFocusHere();
         }
-        {
-            SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
-            // Materialise column widths once (§3.1 item 56): avoids ColumnWidths.find per column per frame.
-            std::vector<float> colWidths(columns.size());
-            for (size_t ci = 0; ci < columns.size(); ++ci) {
-                float w = (columns[ci].ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
-                if (activeViewForGrid) {
-                    const auto wIt = activeViewForGrid->ColumnWidths.find(columns[ci].Key);
-                    if (wIt != activeViewForGrid->ColumnWidths.end() && wIt->second > 0.0f) {
-                        w = wIt->second;
-                    }
-                }
-                colWidths[ci] = w;
-            }
-            for (size_t ci = 0; ci < columns.size(); ++ci) {
-                ImGui::TableSetupColumn(columns[ci].Label.c_str(), ImGuiTableColumnFlags_WidthFixed, colWidths[ci]);
-            }
-            ImGui::TableSetupScrollFreeze(1, 1);
-            ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-            for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
-                ImGui::TableSetColumnIndex(hci);
-                const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
-
-                // Match ImGui::TableHeadersRow(): TableHeader IDs must be unique even when labels repeat.
-                ImGui::PushID(hci);
-                ImGui::TableHeader(hcol.Label.c_str());
-
-                const TrackerField* hdrMeta =
-                    (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
-                DrawTicketGridHeaderContextMenu(hcol, hdrMeta);
-                ImGui::PopID();
-            }
-
-            // Apply persisted sort from the view only when the grid context changes or the Sort By popup edits it.
-            if (activeViewForGrid) {
-                ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
-                const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
-                const bool shouldApplyPersistedSort = specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs);
-                if (shouldApplyPersistedSort) {
-                    // Re-applying whenever ImGui briefly reports zero specs can override a header click that is
-                    // cycling through tri-state sort directions.
-                    for (int c = 0; c < static_cast<int>(columns.size()); ++c) {
-                        ImGui::TableSetColumnSortDirection(c, ImGuiSortDirection_None, false);
-                    }
-                    if (hasPersistedSort) {
-                        int appliedSortCount = 0;
-                        for (const ViewSortSpec& vs : activeViewForGrid->SortSpecs) {
-                            const ImGuiSortDirection direction = static_cast<ImGuiSortDirection>(vs.Direction);
-                            if (!IsPersistableSortDirection(direction))
-                                continue;
-                            int colIndex = -1;
-                            auto colIt = std::find_if(columns.begin(), columns.end(),
-                                                      [&](const auto& col) { return col.Key == vs.ColumnKey; });
-                            if (colIt != columns.end()) {
-                                colIndex = static_cast<int>(std::distance(columns.begin(), colIt));
-                            }
-                            if (colIndex >= 0) {
-                                ImGui::TableSetColumnSortDirection(colIndex, direction, appliedSortCount > 0);
-                                ++appliedSortCount;
-                            }
-                        }
-                    }
-                }
-            }
+        ImGui::TextUnformatted("New view name");
+        ImGui::SetNextItemWidth(300.0f);
+        const bool committed =
+            ImGui::InputText("##NewViewName", s_newViewName, sizeof(activeProjectState_.newViewNameBuf),
+                             ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool disabled = s_newViewName[0] == '\0';
+        if (disabled) {
+            ImGui::BeginDisabled();
         }
-
-        {
-            SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
-            ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
-            if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
-                d.cachedSortValid = false;
-                d.forceApplySortSpecs = false;
-            }
-            if (sortSpecs && sortSpecs->SpecsDirty) {
-                d.cachedSortValid = false;
-                sortSpecs->SpecsDirty = false;
-
-                // Sync header clicks back to View definition
-                if (activeViewForGrid) {
-                    std::vector<ViewSortSpec> newSpecs;
-                    for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
-                        const ImGuiTableColumnSortSpecs& sp = sortSpecs->Specs[s];
-                        if (sp.ColumnIndex >= 0 && sp.ColumnIndex < static_cast<int>(columns.size()) &&
-                            IsPersistableSortDirection(sp.SortDirection)) {
-                            ViewSortSpec vs;
-                            vs.ColumnKey = columns[sp.ColumnIndex].Key;
-                            vs.Direction = static_cast<int>(sp.SortDirection);
-                            newSpecs.push_back(vs);
-                        }
-                    }
-
-                    // Only mark dirty if the sorting rules actually changed (prevent startup/view-switch false dirty)
-                    bool changed = (newSpecs.size() != activeViewForGrid->SortSpecs.size());
-                    if (!changed) {
-                        for (size_t i = 0; i < newSpecs.size(); ++i) {
-                            if (newSpecs[i].ColumnKey != activeViewForGrid->SortSpecs[i].ColumnKey ||
-                                newSpecs[i].Direction != activeViewForGrid->SortSpecs[i].Direction) {
-                                changed = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (changed) {
-                        // Snapshot pre-change view so Discard can revert sort + widths
-                        // + column order + buffers all at once.
-                        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
-                        activeViewForGrid->SortSpecs = std::move(newSpecs);
-                        d.viewSortDirty = true;
-                        d.viewsDirty = true;
-                    }
-                }
-            }
-            const std::uint64_t activeTicketsRevision = app.GetActiveTicketsRevision();
-            if (activeTicketsRevision != d.cachedSortTicketsRevision) {
-                d.cachedSortValid = false;
-            }
-            const std::uint64_t catalogRevision = app.GetFieldCatalogRevision();
-            if (catalogRevision != d.cachedSortCatalogRevision) {
-                d.cachedSortValid = false;
-            }
-
-            std::string fingerprint;
-            if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
-                fingerprint.reserve(static_cast<size_t>(sortSpecs->SpecsCount) * 48);
-                for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
-                    const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
-                    if (!IsPersistableSortDirection(spec.SortDirection))
-                        continue;
-                    fingerprint += std::to_string(spec.ColumnIndex);
-                    fingerprint.push_back(':');
-                    fingerprint += std::to_string(static_cast<int>(spec.SortDirection));
-                    fingerprint.push_back(':');
-                    fingerprint += std::to_string(static_cast<int>(spec.SortOrder));
-                    fingerprint.push_back('|');
-                }
-            }
-
-            static thread_local char lastFilter[128]{};
-            bool filterChanged = (std::strcmp(lastFilter, d.gridFilterBuf) != 0);
-            if (filterChanged) {
-                d.gridState.RectSel.ClearAll();
-            }
-
-            // Treat sort+filter as one cached projection with a dirty flag and refresh it at a bounded interval (500ms)
-            // during streaming
-            bool needsProjectionRefresh = false;
-            if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
-                d.cachedSortedIndices.size() != tickets.size() ||
-                activeTicketsRevision != d.cachedSortTicketsRevision ||
-                catalogRevision != d.cachedSortCatalogRevision || filterChanged) {
-                needsProjectionRefresh = true;
-            }
-
-            bool okToRefreshProjection = true;
-            if (app.IsStreamingSyncActive() && needsProjectionRefresh) {
-                // Debounce cheap reshuffles while tickets stream, but never delay a user-driven sort change:
-                // header/persist fingerprint differs from last applied projection → apply immediately (fixes header
-                // clicks feeling stuck while Sort By still worked due to slower interaction pacing).
-                const bool sortKeyChanged = (fingerprint != d.cachedSortFingerprint);
-                auto now = std::chrono::steady_clock::now();
-                auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - d.lastGridSortAt).count();
-                if (!sortKeyChanged && elapsedMs < 500) {
-                    okToRefreshProjection = false;
-                }
-            }
-
-            if (needsProjectionRefresh && okToRefreshProjection) {
-                d.lastGridSortAt = std::chrono::steady_clock::now();
-
-                // 1. Run Sort Spec / Order Indices
-                d.cachedSortedIndices.resize(tickets.size());
-                for (size_t i = 0; i < tickets.size(); ++i) {
-                    d.cachedSortedIndices[i] = i;
-                }
-
-                if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
-                    // Resolve field meta once per sort spec outside the comparator (§3.4 item 55):
-                    // avoids catalogIndex.Find() on every pair comparison in O(N log N) sort.
-                    struct SortKey {
-                        const TicketGridColumn* col = nullptr;
-                        const TrackerField* fieldMeta = nullptr;
-                        int dir = 1;
-                    };
-                    std::vector<SortKey> sortKeys;
-                    for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
-                        const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
-                        if (!IsPersistableSortDirection(spec.SortDirection))
-                            continue;
-                        const int ci = spec.ColumnIndex;
-                        if (ci < 0 || ci >= static_cast<int>(columns.size()))
-                            continue;
-                        SortKey sk;
-                        sk.col = &columns[static_cast<size_t>(ci)];
-                        sk.fieldMeta = catalogIndex.Find(sk.col->FieldId);
-                        sk.dir = (spec.SortDirection == ImGuiSortDirection_Ascending) ? 1 : -1;
-                        sortKeys.push_back(sk);
-                    }
-                    const std::vector<CachedTicket>* ticketsPtr = &tickets;
-                    std::stable_sort(d.cachedSortedIndices.begin(), d.cachedSortedIndices.end(),
-                                     [ticketsPtr, &sortKeys](size_t ia, size_t ib) {
-                                         const auto& tix = *ticketsPtr;
-                                         for (const auto& sk : sortKeys) {
-                                             if (sk.col->ColumnKind == TicketGridColumn::Kind::Id) {
-                                                 const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
-                                                 if (less)
-                                                     return sk.dir > 0;
-                                                 if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id))
-                                                     continue;
-                                                 return sk.dir < 0;
-                                             }
-                                             const std::string aVal = tix[ia].GetFieldValue(sk.col->FieldId);
-                                             const std::string bVal = tix[ib].GetFieldValue(sk.col->FieldId);
-                                             const int cmp = CompareFieldValuesForSort(sk.col->FieldId, sk.fieldMeta,
-                                                                                       aVal, bVal, sk.dir);
-                                             if (cmp != 0)
-                                                 return (cmp * sk.dir) < 0;
-                                         }
-                                         return ia < ib;
-                                     });
-                }
-
-                d.cachedSortFingerprint = fingerprint;
-                d.cachedSortValid = true;
-                d.cachedSortTicketsRevision = activeTicketsRevision;
-                d.cachedSortCatalogRevision = catalogRevision;
-
-                // 2. Run Filter and rebuild d.filteredIndices
-                d.filteredIndices.clear();
-                auto checkMatch = [&](size_t idx) {
-                    if (idx >= tickets.size())
-                        return false;
-                    if (d.gridFilterBuf[0] == '\0')
-                        return true;
-                    const auto& t = tickets[idx];
-                    if (ContainsCaseInsensitive(t.id, d.gridFilterBuf))
-                        return true;
-                    if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf))
-                        return true;
-                    return false;
-                };
-
-                for (size_t idx : d.cachedSortedIndices) {
-                    if (checkMatch(idx)) {
-                        d.filteredIndices.push_back(idx);
-                    }
-                }
-
-                // snprintf guarantees null-termination and avoids the strncpy
-                // truncation warning when the source fills the buffer exactly.
-                std::snprintf(lastFilter, sizeof(lastFilter), "%s", d.gridFilterBuf);
-            }
+        const bool saveClicked = ImGui::Button("Save") || committed;
+        if (disabled) {
+            ImGui::EndDisabled();
         }
-
-        // Rectangular selection invalidation: anchor/extent are expressed in
-        // current sort-order row indices, so any change to sort order or ticket
-        // set must clear the selection to avoid nonsense highlights / copies.
-        gridSortSig = ComputeGridSortSignature(d.cachedSortFingerprint, app.GetActiveTicketsRevision(), tickets.size());
-        if (d.gridState.RectSel.HasAnySelection() && d.gridState.RectSel.SortSignature != gridSortSig) {
-            d.gridState.RectSel.ClearAll();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
         }
-
-        // Shared per-cell hit-test + overlay helper. Implements Google-Sheets-
-        // style selection gestures:
-        //   - Key (ID) column: plain click selects a single row; drag selects a
-        //     contiguous range; Shift+click extends from the anchor; Ctrl+click
-        //     toggles individual rows (non-contiguous selections).
-        //   - Data cells: click activates the row and clears row selections.
-        // Dragging continues to update while the mouse stays pressed even if
-        // the user releases the modifier key mid-drag.
-        auto handleCellRectSel = [&](int rowIdx, int colIdx, const ImVec2& cellOrigin, float cellWidth,
-                                     const ImVec2& groupMin, const ImVec2& groupMax, bool isIdCol,
-                                     const std::string& issueId, bool activeIssueWasThisRow) {
-            const bool shiftHeld = ImGuiEffectiveKeyShift();
-            const bool ctrlHeld = ImGuiEffectiveKeyCtrl();
-            const ImVec2 hitMin(cellOrigin.x, groupMin.y);
-            const ImVec2 hitMax(cellOrigin.x + cellWidth, groupMax.y);
-            auto& sel = d.gridState.RectSel;
-            const bool hovering = ImGui::IsMouseHoveringRect(hitMin, hitMax, false);
-            const bool mouseClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-
-            if (hovering && mouseClick && sel.Contains(rowIdx, colIdx)) {
-                rectCellClickedThisFrame = true;
+        if (saveClicked && !disabled) {
+            ViewDefinition created = *activeViewForGrid;
+            created.Name = s_newViewName;
+            created.Id.clear();
+            if (!d.editingColumnOrder.empty()) {
+                created.ColumnOrder = d.editingColumnOrder;
             }
-
-            if (hovering && mouseClick) {
-                if (!issueId.empty()) {
-                    d.gridState.SetActiveIssue(issueId);
-                }
-                if (isIdCol) {
-                    // Row-header gestures on the key column.
-                    if (shiftHeld) {
-                        const int anchorRow = (sel.PrimaryRow >= 0) ? sel.PrimaryRow : rowIdx;
-                        std::set<int> baseBefore = sel.Rows;
-                        const int lo = (anchorRow < rowIdx) ? anchorRow : rowIdx;
-                        const int hi = (anchorRow > rowIdx) ? anchorRow : rowIdx;
-                        for (int i = lo; i <= hi; ++i)
-                            sel.Rows.insert(i);
-                        sel.PrimaryRow = anchorRow;
-                        sel.DragRowMode = true;
-                        sel.DragStartRow = anchorRow;
-                        sel.DragBaseRows = std::move(baseBefore);
-                        sel.Active = false;
-                        sel.Dragging = true;
-                    } else if (ctrlHeld) {
-                        auto it = sel.Rows.find(rowIdx);
-                        const bool wasSelected = (it != sel.Rows.end());
-                        if (!wasSelected) {
-                            sel.Rows.insert(rowIdx);
-                        } else {
-                            sel.Rows.erase(it);
-                            if (activeIssueWasThisRow) {
-                                d.gridState.ActiveIssueId.clear();
-                            }
-                        }
-                        sel.PrimaryRow = rowIdx;
-                        sel.DragRowMode = false;
-                        sel.DragStartRow = -1;
-                        sel.DragBaseRows.clear();
-                        sel.Active = false;
-                        sel.Dragging = false;
-                    } else {
-                        sel.Rows.clear();
-                        sel.Rows.insert(rowIdx);
-                        sel.PrimaryRow = rowIdx;
-                        sel.DragRowMode = true;
-                        sel.DragStartRow = rowIdx;
-                        sel.DragBaseRows.clear();
-                        sel.Active = false;
-                        sel.Dragging = true;
-                    }
-                    sel.SortSignature = gridSortSig;
-                    rectCellClickedThisFrame = true;
-                } else {
-                    sel.ClearAll();
-                    sel.SortSignature = gridSortSig;
-                    rectCellClickedThisFrame = true;
-                }
-            } else if (sel.Dragging && hovering && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                // Drag update: extend the active gesture while the mouse is held.
-                if (sel.DragRowMode) {
-                    const int lo = (sel.DragStartRow < rowIdx) ? sel.DragStartRow : rowIdx;
-                    const int hi = (sel.DragStartRow > rowIdx) ? sel.DragStartRow : rowIdx;
-                    sel.Rows = sel.DragBaseRows;
-                    for (int i = lo; i <= hi; ++i)
-                        sel.Rows.insert(i);
-                } else {
-                    sel.ExtentRow = rowIdx;
-                    sel.ExtentCol = colIdx;
-                }
+            const std::vector<std::string> editedFields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+            if (!editedFields.empty()) {
+                created.Fields = editedFields;
             }
-
-            if (sel.Contains(rowIdx, colIdx)) {
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(hitMin, hitMax, IM_COL32(66, 135, 245, 60));
-                dl->AddRect(hitMin, hitMax, IM_COL32(66, 135, 245, 180));
+            if (d.viewJqlBuf[0]) {
+                created.Jql = d.viewJqlBuf;
             }
-        };
-
-        {
-            SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
-            const size_t oldFilteredCount = d.filteredIndices.size();
-            d.filteredIndices.erase(std::remove_if(d.filteredIndices.begin(), d.filteredIndices.end(),
-                                                   [&](size_t idx) { return idx >= tickets.size(); }),
-                                    d.filteredIndices.end());
-            if (d.filteredIndices.size() != oldFilteredCount) {
-                d.gridState.RectSel.ClearAll();
+            ViewState.Create(created);
+            const ViewDefinition* nowActive = ViewState.GetActiveView();
+            if (nowActive) {
+                d.editingViewId = nowActive->Id;
+                d.lastSyncedColumnOrder = nowActive->ColumnOrder;
+                SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, nowActive->Name);
+                SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, nowActive->Jql);
+                const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(nowActive->Fields);
+                SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
+                d.editingColumnOrder = nowActive->ColumnOrder;
+                d.cfg.JqlQuery = nowActive->Jql;
+                d.cfg.SelectedFields = nowActive->Fields;
+                ConfigManager::Save(d.cfg);
+                SmatchetToastManager::Instance().Push("View created", nowActive->Name, ToastType::Success, 1500);
             }
-            const std::vector<size_t>& indicesToUse = d.filteredIndices;
-
-            // Per-frame cache: raw status string → highlight color. Avoids ToLowerAsciiCopy +
-            // 4 find() per visible row — each unique status value is lowercased only once.
-            std::unordered_map<std::string, ImVec4> statusColorMap;
-            auto StatusRowColor = [&](const std::string& raw) -> ImVec4 {
-                const auto it = statusColorMap.find(raw);
-                if (it != statusColorMap.end())
-                    return it->second;
-                const std::string lower = ToLowerAsciiCopy(raw);
-                ImVec4 color(0, 0, 0, 0);
-                if (lower.find("done") != std::string::npos || lower.find("resolved") != std::string::npos)
-                    color = SmatchetTheme::Colors::StatusDone;
-                else if (lower.find("progress") != std::string::npos)
-                    color = SmatchetTheme::Colors::StatusInProgress;
-                else if (lower.find("todo") != std::string::npos || lower.find("open") != std::string::npos ||
-                         lower.find("backlog") != std::string::npos)
-                    color = SmatchetTheme::Colors::StatusToDo;
-                else if (lower.find("block") != std::string::npos)
-                    color = SmatchetTheme::Colors::StatusBlocked;
-                statusColorMap.emplace(raw, color);
-                return color;
-            };
-
-            ImGuiListClipper clipper;
-            clipper.Begin(static_cast<int>(indicesToUse.size()));
-            while (clipper.Step()) {
-                for (int clippedRow = clipper.DisplayStart; clippedRow < clipper.DisplayEnd; ++clippedRow) {
-                    const size_t r = static_cast<size_t>(clippedRow);
-                    const size_t ticketIndex = indicesToUse[r];
-                    if (ticketIndex >= tickets.size())
-                        continue;
-                    const CachedTicket& ticket = tickets[ticketIndex];
-                    bool isActiveIssue = (d.gridState.ActiveIssueId == ticket.id);
-                    const bool idKeySelectableSelected = d.gridState.RectSel.RowSelected(clippedRow);
-                    const bool activeIssueWasThisRow = isActiveIssue;
-                    if (isActiveIssue && !readOnlyMode) {
-                        app.WarmIssueEditMetaAsync(ticket.id);
-                    }
-                    thread_local char rowPerfLabel[288];
-                    const char* rowPerfScopeName = nullptr;
-                    if (isActiveIssue) {
-                        std::snprintf(rowPerfLabel, sizeof(rowPerfLabel), "activeProject:row[%zu] %s", r,
-                                      ticket.id.c_str());
-                        rowPerfLabel[sizeof(rowPerfLabel) - 1] = '\0';
-                        rowPerfScopeName = rowPerfLabel;
-                    }
-                    SMATCHET_UI_PERF_SCOPE(rowPerfScopeName);
-                    // One line of text + table cell Y padding (compact; close to a single-line InputText without
-                    // TextLineHeightWithSpacing’s extra line gap). Do not use GetContentRegionAvail().y for row height.
-                    const float kTicketGridRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
-                    ImGui::TableNextRow(0, kTicketGridRowH);
-
-                    // Status-based Row Highlighting — color looked up from a per-frame cache so
-                    // ToLowerAsciiCopy + 4 string::find are paid once per unique status value,
-                    // not once per visible row. Cache is a lambda-captured unordered_map.
-                    const ImVec4 statusColor = StatusRowColor(ticket.GetFieldValue("status"));
-                    if (statusColor.w > 0.0f) {
-                        ImGui::TableSetBgColor(
-                            ImGuiTableBgTarget_RowBg0,
-                            ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
-                    }
-
-                    for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
-                        const auto& column = columns[static_cast<size_t>(colIndex)];
-                        if (!ImGui::TableSetColumnIndex(colIndex)) {
-                            if (!d.gridState.IsEditingField(ticket.id, column.FieldId)) {
-                                // Horizontally clipped columns must still contribute layout height or row height
-                                // tracks only visible cells (ImGui::TableSetColumnIndex doc).
-                                ImGui::Dummy(ImVec2(1.0f, kTicketGridRowH));
-                                continue;
-                            }
-                        }
-
-                        // Captured before any widget advances the cursor so rect-
-                        // select hit boxes cover the entire column cell area
-                        // (not just the rendered text / widget extent).
-                        const ImVec2 cellOriginForSel = ImGui::GetCursorScreenPos();
-                        const float cellWidthForSel = ImGui::GetContentRegionAvail().x;
-                        ImVec2 cellGroupMin(0.0f, 0.0f);
-                        ImVec2 cellGroupMax(0.0f, 0.0f);
-
-                        if (column.ColumnKind == TicketGridColumn::Kind::Id) {
-                            ImGui::BeginGroup();
-                            if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected,
-                                                  ImGuiSelectableFlags_AllowDoubleClick)) {
-                                if (!ImGuiEffectiveKeyCtrl()) {
-                                    d.gridState.SetActiveIssue(ticket.id);
-                                }
-                                if (ImGui::IsMouseDoubleClicked(0)) {
-                                    const std::string url = app.BuildIssueBrowseUrl(d.cfg, ticket.id);
-                                    app.OpenUrl(url);
-                                }
-                            }
-                            ImGui::EndGroup();
-                            cellGroupMin = ImGui::GetItemRectMin();
-                            cellGroupMax = ImGui::GetItemRectMax();
-                            DrawGridCellRightClickPopups(BuildCellKey(ticket.id, "id"), ticket.id, std::string(),
-                                                         column.Label, ticket.id, std::string(), &app, &d, readOnlyMode,
-                                                         &ticket);
-                            handleCellRectSel(clippedRow, colIndex, cellOriginForSel, cellWidthForSel, cellGroupMin,
-                                              cellGroupMax, true, ticket.id, activeIssueWasThisRow);
-                            continue;
-                        }
-
-                        const std::string currentValue = ticket.GetFieldValue(column.FieldId);
-                        const TrackerField* fieldMeta = catalogIndex.Find(column.FieldId);
-                        const float cellStartY = ImGui::GetCursorScreenPos().y;
-                        const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidthForSel;
-                        const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
-                        const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
-                        // Skip map lookup when feedback map is empty (common case) — avoids the hash (§3.1 item 57).
-                        const auto feedbackIt =
-                            d.cellFeedbackByKey.empty() ? d.cellFeedbackByKey.end() : d.cellFeedbackByKey.find(cellKey);
-                        const bool isSavingThisCell = feedbackIt != d.cellFeedbackByKey.end() &&
-                                                      feedbackIt->second.State == CellWriteState::Saving;
-
-                        bool showBadge = false;
-                        ImVec4 badgeColor(1.0f, 1.0f, 1.0f, 1.0f);
-                        std::string badgeText;
-                        std::string badgeTooltip;
-                        if (feedbackIt != d.cellFeedbackByKey.end() &&
-                            feedbackIt->second.State == CellWriteState::Error && !feedbackIt->second.Message.empty()) {
-                            showBadge = true;
-                            badgeColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
-                            badgeText = "!";
-                            badgeTooltip = feedbackIt->second.Message;
-                        } else if (feedbackIt != d.cellFeedbackByKey.end() &&
-                                   feedbackIt->second.State == CellWriteState::Success) {
-                            showBadge = true;
-                            badgeColor = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
-                            badgeText = "OK";
-                            badgeTooltip = "Saved";
-                        }
-
-                        if (isSavingThisCell) {
-                            showBadge = true;
-                            badgeColor = ImVec4(0.95f, 0.75f, 0.35f, 1.0f);
-                            badgeText = "...";
-                            badgeTooltip = "Saving...";
-                            ImGui::BeginGroup();
-                            const std::string saveDisplay = DisplayValueForTrackerDateField(
-                                column.FieldId, fieldMeta, currentValue, d.cfg.DateFormatOption,
-                                d.cfg.DateCompactRelativeThresholdDays);
-                            const bool isDescriptionField =
-                                !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
-                                                            column.FieldId.find("Description") != std::string::npos);
-                            // Description tooltip needs the raw markdown source so the markdown
-                            // preview pipeline can parse it; date-like fields show the full ISO.
-                            const std::string* saveTip =
-                                (column.IsDateLike || isDescriptionField) ? &currentValue : nullptr;
-                            RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
-                                                   true, saveTip, isDescriptionField, &column.FieldId);
-                            ImGui::EndGroup();
-                            cellGroupMin = ImGui::GetItemRectMin();
-                            cellGroupMax = ImGui::GetItemRectMax();
-                            DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
-                                                         ticket.GetFieldRichValue(column.FieldId), &app, &d,
-                                                         readOnlyMode, &ticket);
-                        } else {
-                            const bool allowEditsForCell =
-                                !readOnlyMode && column.NeedsAllowEditsCheck &&
-                                app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
-                            ImGui::BeginGroup();
-                            TicketFieldEditor::RenderFieldCell(
-                                app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
-                                d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, d.gridState, pendingEdits,
-                                d.trackerGridAsync, d.cfg.DateFormatOption, d.cfg.DateCompactRelativeThresholdDays,
-                                d.cfg.SingleClickToEditGridCells);
-                            ImGui::EndGroup();
-                            cellGroupMin = ImGui::GetItemRectMin();
-                            cellGroupMax = ImGui::GetItemRectMax();
-                            DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
-                                                         ticket.GetFieldRichValue(column.FieldId), &app, &d,
-                                                         readOnlyMode, &ticket);
-                        }
-
-                        if (showBadge) {
-                            const ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
-                            const float badgeX = (std::max)(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
-                            ImGui::SetCursorScreenPos(ImVec2(badgeX, cellStartY));
-                            ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
-                            ImGui::TextUnformatted(badgeText.c_str());
-                            ImGui::PopStyleColor();
-                            if (!badgeTooltip.empty() && ImGui::IsItemHovered()) {
-                                ImGui::SetTooltip("%s", badgeTooltip.c_str());
-                            }
-                        }
-
-                        handleCellRectSel(clippedRow, colIndex, cellOriginForSel, cellWidthForSel, cellGroupMin,
-                                          cellGroupMax, false, ticket.id, false);
-                    }
-                }
-            }
+            d.viewsDirty = false;
+            d.viewsHasOriginalSnapshot = false;
+            d.pendingViewStateSave = false;
+            ImGui::CloseCurrentPopup();
         }
-
-        if (!readOnlyMode) {
-            SMATCHET_UI_PERF_SCOPE("activeProject:grid.newIssue");
-            const CachedTicket* lastVisibleTicket = nullptr;
-            if (!tickets.empty()) {
-                size_t lastIndex = tickets.size() - 1;
-                if (!d.filteredIndices.empty()) {
-                    lastIndex = d.filteredIndices.back();
-                }
-                if (lastIndex < tickets.size()) {
-                    lastVisibleTicket = &tickets[lastIndex];
-                }
-            }
-            RenderNewIssueDraftRow(app, d, columns, d.cfg, lastVisibleTicket);
-        }
-
-        {
-            SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
-            RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d);
-
-            // Capture column widths and sort specs into the active view IN MEMORY so the
-            // grid renders the user's drag/sort immediately. The full unsaved-layout strip
-            // (see drawActiveProjectWindow above) gates these changes behind Save / Discard;
-            // the snapshot taken on first mutation lets Discard revert.
-            if (activeViewForGrid) {
-                ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
-                if (mutableActive) {
-                    bool metaChanged = false;
-                    ImGuiTable* table = ImGui::GetCurrentTable();
-                    if (table) {
-                        for (int i = 0; i < static_cast<int>(columns.size()); ++i) {
-                            const std::string& key = columns[static_cast<size_t>(i)].Key;
-                            const float width = (i < table->ColumnsCount) ? table->Columns[i].WidthGiven : 0.0f;
-                            const auto oldIt = mutableActive->ColumnWidths.find(key);
-                            const float oldWidth = (oldIt == mutableActive->ColumnWidths.end()) ? 0.0f : oldIt->second;
-                            if (std::abs(oldWidth - width) > 0.5f) {
-                                if (!metaChanged) {
-                                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                                }
-                                mutableActive->ColumnWidths[key] = width;
-                                metaChanged = true;
-                            }
-                        }
-                    }
-                    // Re-fetch sort specs from the table right before persisting so we use current state.
-                    ImGuiTableSortSpecs* currentSortSpecs = ImGui::TableGetSortSpecs();
-                    if (currentSortSpecs && currentSortSpecs->SpecsCount > 0 && currentSortSpecs->Specs != nullptr) {
-                        std::vector<ViewSortSpec> newSortSpecs;
-                        for (int s = 0; s < currentSortSpecs->SpecsCount; ++s) {
-                            const int colIndex = currentSortSpecs->Specs[s].ColumnIndex;
-                            if (colIndex >= 0 && colIndex < static_cast<int>(columns.size()) &&
-                                IsPersistableSortDirection(currentSortSpecs->Specs[s].SortDirection)) {
-                                ViewSortSpec vs;
-                                vs.ColumnKey = columns[static_cast<size_t>(colIndex)].Key;
-                                vs.Direction = static_cast<int>(currentSortSpecs->Specs[s].SortDirection);
-                                newSortSpecs.push_back(vs);
-                            }
-                        }
-                        if (newSortSpecs != mutableActive->SortSpecs) {
-                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                            mutableActive->SortSpecs = std::move(newSortSpecs);
-                            metaChanged = true;
-                        }
-                    } else {
-                        if (!mutableActive->SortSpecs.empty()) {
-                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                            mutableActive->SortSpecs.clear();
-                            metaChanged = true;
-                        }
-                    }
-                    if (metaChanged) {
-                        // Bump revision so the grid frame context rebuilds with new widths/sort
-                        // next frame. Surface as dirty so the user can Save / Discard. No
-                        // debounced disk write here — explicit Save commits everything.
-                        ViewState.BumpRevision();
-                        d.viewsDirty = true;
-                    }
-
-                    // Capture user-driven column reorder (drag the header) into the
-                    // editing buffer; mark the view dirty so the unsaved-layout strip
-                    // appears. Don't autosave: column order changes are destructive,
-                    // unlike width/sort which the user can revert with another drag.
-                    ImGuiTable* tableForOrder = ImGui::GetCurrentTable();
-                    if (tableForOrder && tableForOrder->ColumnsCount > 0) {
-                        std::vector<std::string> visualOrder;
-                        visualOrder.reserve(columns.size());
-                        for (int v = 0; v < tableForOrder->ColumnsCount; ++v) {
-                            // DisplayOrderToIndex is an ImSpan<short> sized to ColumnsCount.
-                            if (v >= tableForOrder->DisplayOrderToIndex.size()) {
-                                break;
-                            }
-                            const int logical = tableForOrder->DisplayOrderToIndex[v];
-                            if (logical < 0 || logical >= static_cast<int>(columns.size())) {
-                                continue;
-                            }
-                            visualOrder.push_back(columns[static_cast<size_t>(logical)].Key);
-                        }
-                        if (!visualOrder.empty() && visualOrder != mutableActive->ColumnOrder) {
-                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                            d.editingColumnOrder = visualOrder;
-                            d.viewsDirty = true;
-                        }
-                    }
-                }
-            }
-        }
-        // After full table layout: union outer + inner clip so empty scroll body
-        // and padding still count as "inside grid" (OuterRect alone missed H5).
-        if (ImGuiContext* g = ImGui::GetCurrentContext()) {
-            if (ImGuiTable* tb = g->CurrentTable) {
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    ImRect hit(tb->OuterRect);
-                    hit.Add(tb->InnerClipRect);
-                    if (hit.Contains(ImGui::GetIO().MousePos)) {
-                        ticketGridLeftClickInsideTableHit = true;
-                        rectCellClickedThisFrame = true;
-                    }
-                }
-            }
-        }
-        ImGui::EndTable();
+        ImGui::EndPopup();
     }
-    ImGui::PopStyleVar();
+}
 
-    // Google-Sheets-style selection: end drag on mouse release, clear when the
-    // user clicks outside the current selection, and service Ctrl+C (copy as
-    // TSV), Escape (clear), and Shift+Space (select whole row of active cell)
-    // while the Active Project window is focused. Only runs when the grid was
-    // drawn this frame (otherwise there is no valid sort signature).
+void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
+    const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
+    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
+    const bool gridSortEnvironmentChanged = ctx.gridSortEnvironmentChanged;
+
+    SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
+    // Materialise column widths once (§3.1 item 56): avoids ColumnWidths.find per column per frame.
+    std::vector<float> colWidths(columns.size());
+    for (size_t ci = 0; ci < columns.size(); ++ci) {
+        float w = (columns[ci].ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
+        if (activeViewForGrid) {
+            const auto wIt = activeViewForGrid->ColumnWidths.find(columns[ci].Key);
+            if (wIt != activeViewForGrid->ColumnWidths.end() && wIt->second > 0.0f) {
+                w = wIt->second;
+            }
+        }
+        colWidths[ci] = w;
+    }
+    for (size_t ci = 0; ci < columns.size(); ++ci) {
+        ImGui::TableSetupColumn(columns[ci].Label.c_str(), ImGuiTableColumnFlags_WidthFixed, colWidths[ci]);
+    }
+    ImGui::TableSetupScrollFreeze(1, 1);
+    ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+    for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
+        ImGui::TableSetColumnIndex(hci);
+        const TicketGridColumn& hcol = columns[static_cast<size_t>(hci)];
+
+        // Match ImGui::TableHeadersRow(): TableHeader IDs must be unique even when labels repeat.
+        ImGui::PushID(hci);
+        ImGui::TableHeader(hcol.Label.c_str());
+
+        const TrackerField* hdrMeta =
+            (hcol.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalogIndex.Find(hcol.FieldId);
+        DrawTicketGridHeaderContextMenu(hcol, hdrMeta);
+        ImGui::PopID();
+    }
+
+    // Apply persisted sort from the view only when the grid context changes or the Sort By popup edits it.
+    if (activeViewForGrid) {
+        ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
+        const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
+        const bool shouldApplyPersistedSort = specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs);
+        if (shouldApplyPersistedSort) {
+            // Re-applying whenever ImGui briefly reports zero specs can override a header click that is
+            // cycling through tri-state sort directions.
+            for (int c = 0; c < static_cast<int>(columns.size()); ++c) {
+                ImGui::TableSetColumnSortDirection(c, ImGuiSortDirection_None, false);
+            }
+            if (hasPersistedSort) {
+                int appliedSortCount = 0;
+                for (const ViewSortSpec& vs : activeViewForGrid->SortSpecs) {
+                    const ImGuiSortDirection direction = static_cast<ImGuiSortDirection>(vs.Direction);
+                    if (!IsPersistableSortDirection(direction))
+                        continue;
+                    int colIndex = -1;
+                    auto colIt = std::find_if(columns.begin(), columns.end(),
+                                              [&](const auto& col) { return col.Key == vs.ColumnKey; });
+                    if (colIt != columns.end()) {
+                        colIndex = static_cast<int>(std::distance(columns.begin(), colIt));
+                    }
+                    if (colIndex >= 0) {
+                        ImGui::TableSetColumnSortDirection(colIndex, direction, appliedSortCount > 0);
+                        ++appliedSortCount;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const std::vector<CachedTicket>& tickets = ctx.tickets;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
+    const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
+    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
+    const bool gridSortEnvironmentChanged = ctx.gridSortEnvironmentChanged;
+    char* lastFilter = activeProjectState_.lastFilterBuf; // hoisted from `static thread_local char lastFilter[128]`
+
+    SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
+    ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
+    if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
+        d.cachedSortValid = false;
+        d.forceApplySortSpecs = false;
+    }
+    if (sortSpecs && sortSpecs->SpecsDirty) {
+        d.cachedSortValid = false;
+        sortSpecs->SpecsDirty = false;
+
+        // Sync header clicks back to View definition
+        if (activeViewForGrid) {
+            SyncHeaderSortClicksToView(d, sortSpecs, columns, *activeViewForGrid);
+        }
+    }
+    const std::uint64_t activeTicketsRevision = app.GetActiveTicketsRevision();
+    if (activeTicketsRevision != d.cachedSortTicketsRevision) {
+        d.cachedSortValid = false;
+    }
+    const std::uint64_t catalogRevision = app.GetFieldCatalogRevision();
+    if (catalogRevision != d.cachedSortCatalogRevision) {
+        d.cachedSortValid = false;
+    }
+
+    std::string fingerprint;
+    if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
+        fingerprint.reserve(static_cast<size_t>(sortSpecs->SpecsCount) * 48);
+        for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+            const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+            if (!IsPersistableSortDirection(spec.SortDirection))
+                continue;
+            fingerprint += std::to_string(spec.ColumnIndex);
+            fingerprint.push_back(':');
+            fingerprint += std::to_string(static_cast<int>(spec.SortDirection));
+            fingerprint.push_back(':');
+            fingerprint += std::to_string(static_cast<int>(spec.SortOrder));
+            fingerprint.push_back('|');
+        }
+    }
+
+    bool filterChanged = (std::strcmp(lastFilter, d.gridFilterBuf) != 0);
+    if (filterChanged) {
+        d.gridState.RectSel.ClearAll();
+    }
+
+    // Treat sort+filter as one cached projection with a dirty flag and refresh it at a bounded interval (500ms)
+    // during streaming
+    bool needsProjectionRefresh = false;
+    if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
+        d.cachedSortedIndices.size() != tickets.size() || activeTicketsRevision != d.cachedSortTicketsRevision ||
+        catalogRevision != d.cachedSortCatalogRevision || filterChanged) {
+        needsProjectionRefresh = true;
+    }
+
+    bool okToRefreshProjection = true;
+    if (app.IsStreamingSyncActive() && needsProjectionRefresh) {
+        // Debounce cheap reshuffles while tickets stream, but never delay a user-driven sort change:
+        // header/persist fingerprint differs from last applied projection → apply immediately (fixes header
+        // clicks feeling stuck while Sort By still worked due to slower interaction pacing).
+        const bool sortKeyChanged = (fingerprint != d.cachedSortFingerprint);
+        auto now = std::chrono::steady_clock::now();
+        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - d.lastGridSortAt).count();
+        if (!sortKeyChanged && elapsedMs < 500) {
+            okToRefreshProjection = false;
+        }
+    }
+
+    if (needsProjectionRefresh && okToRefreshProjection) {
+        RebuildGridSortAndFilterProjection(d, sortSpecs, tickets, columns, catalogIndex, fingerprint,
+                                           activeTicketsRevision, catalogRevision, lastFilter,
+                                           sizeof(activeProjectState_.lastFilterBuf));
+    }
+}
+
+void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const std::vector<CachedTicket>& tickets = ctx.tickets;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
+    const bool readOnlyMode = ctx.readOnlyMode;
+    std::uint64_t& gridSortSig = ctx.gridSortSig;
+
+    // Rectangular selection invalidation: anchor/extent are expressed in
+    // current sort-order row indices, so any change to sort order or ticket
+    // set must clear the selection to avoid nonsense highlights / copies.
+    gridSortSig = ComputeGridSortSignature(d.cachedSortFingerprint, app.GetActiveTicketsRevision(), tickets.size());
+    if (d.gridState.RectSel.HasAnySelection() && d.gridState.RectSel.SortSignature != gridSortSig) {
+        d.gridState.RectSel.ClearAll();
+    }
+
+    SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
+    const size_t oldFilteredCount = d.filteredIndices.size();
+    d.filteredIndices.erase(std::remove_if(d.filteredIndices.begin(), d.filteredIndices.end(),
+                                           [&](size_t idx) { return idx >= tickets.size(); }),
+                            d.filteredIndices.end());
+    if (d.filteredIndices.size() != oldFilteredCount) {
+        d.gridState.RectSel.ClearAll();
+    }
+    const std::vector<size_t>& indicesToUse = d.filteredIndices;
+
+    // Per-frame cache: raw status string → highlight color. Avoids ToLowerAsciiCopy +
+    // 4 find() per visible row — each unique status value is lowercased only once.
+    std::unordered_map<std::string, ImVec4> statusColorMap;
+    auto StatusRowColor = [&](const std::string& raw) -> ImVec4 {
+        const auto it = statusColorMap.find(raw);
+        if (it != statusColorMap.end())
+            return it->second;
+        const std::string lower = ToLowerAsciiCopy(raw);
+        ImVec4 color(0, 0, 0, 0);
+        if (lower.find("done") != std::string::npos || lower.find("resolved") != std::string::npos)
+            color = SmatchetTheme::Colors::StatusDone;
+        else if (lower.find("progress") != std::string::npos)
+            color = SmatchetTheme::Colors::StatusInProgress;
+        else if (lower.find("todo") != std::string::npos || lower.find("open") != std::string::npos ||
+                 lower.find("backlog") != std::string::npos)
+            color = SmatchetTheme::Colors::StatusToDo;
+        else if (lower.find("block") != std::string::npos)
+            color = SmatchetTheme::Colors::StatusBlocked;
+        statusColorMap.emplace(raw, color);
+        return color;
+    };
+
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(indicesToUse.size()));
+    while (clipper.Step()) {
+        for (int clippedRow = clipper.DisplayStart; clippedRow < clipper.DisplayEnd; ++clippedRow) {
+            const size_t r = static_cast<size_t>(clippedRow);
+            const size_t ticketIndex = indicesToUse[r];
+            if (ticketIndex >= tickets.size())
+                continue;
+            const CachedTicket& ticket = tickets[ticketIndex];
+            bool isActiveIssue = (d.gridState.ActiveIssueId == ticket.id);
+            const bool idKeySelectableSelected = d.gridState.RectSel.RowSelected(clippedRow);
+            const bool activeIssueWasThisRow = isActiveIssue;
+            if (isActiveIssue && !readOnlyMode) {
+                app.WarmIssueEditMetaAsync(ticket.id);
+            }
+            thread_local char rowPerfLabel[288];
+            const char* rowPerfScopeName = nullptr;
+            if (isActiveIssue) {
+                std::snprintf(rowPerfLabel, sizeof(rowPerfLabel), "activeProject:row[%zu] %s", r, ticket.id.c_str());
+                rowPerfLabel[sizeof(rowPerfLabel) - 1] = '\0';
+                rowPerfScopeName = rowPerfLabel;
+            }
+            SMATCHET_UI_PERF_SCOPE(rowPerfScopeName);
+            // One line of text + table cell Y padding (compact; close to a single-line InputText without
+            // TextLineHeightWithSpacing’s extra line gap). Do not use GetContentRegionAvail().y for row height.
+            const float kTicketGridRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+            ImGui::TableNextRow(0, kTicketGridRowH);
+
+            // Status-based Row Highlighting — color looked up from a per-frame cache so
+            // ToLowerAsciiCopy + 4 string::find are paid once per unique status value,
+            // not once per visible row. Cache is a lambda-captured unordered_map.
+            const ImVec4 statusColor = StatusRowColor(ticket.GetFieldValue("status"));
+            if (statusColor.w > 0.0f) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
+            }
+
+            for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
+                drawActiveProjectGridCell(ctx, ticket, columns[static_cast<size_t>(colIndex)], clippedRow, colIndex,
+                                          idKeySelectableSelected, activeIssueWasThisRow, kTicketGridRowH);
+            }
+        }
+    }
+}
+
+void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const CachedTicket& ticket,
+                                           const TicketGridColumn& column, int clippedRow, int colIndex,
+                                           bool idKeySelectableSelected, bool activeIssueWasThisRow, float rowHeight) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
+    const bool readOnlyMode = ctx.readOnlyMode;
+    std::vector<PendingFieldEdit>& pendingEdits = ctx.pendingEdits;
+
+    if (!ImGui::TableSetColumnIndex(colIndex)) {
+        if (!d.gridState.IsEditingField(ticket.id, column.FieldId)) {
+            // Horizontally clipped columns must still contribute layout height or row height
+            // tracks only visible cells (ImGui::TableSetColumnIndex doc).
+            ImGui::Dummy(ImVec2(1.0f, rowHeight));
+            return;
+        }
+    }
+
+    // Captured before any widget advances the cursor so rect-
+    // select hit boxes cover the entire column cell area
+    // (not just the rendered text / widget extent).
+    const ImVec2 cellOriginForSel = ImGui::GetCursorScreenPos();
+    const float cellWidthForSel = ImGui::GetContentRegionAvail().x;
+    ImVec2 cellGroupMin(0.0f, 0.0f);
+    ImVec2 cellGroupMax(0.0f, 0.0f);
+
+    if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+        ImGui::BeginGroup();
+        if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (!ImGuiEffectiveKeyCtrl()) {
+                d.gridState.SetActiveIssue(ticket.id);
+            }
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                const std::string url = app.BuildIssueBrowseUrl(d.cfg, ticket.id);
+                app.OpenUrl(url);
+            }
+        }
+        ImGui::EndGroup();
+        cellGroupMin = ImGui::GetItemRectMin();
+        cellGroupMax = ImGui::GetItemRectMax();
+        DrawGridCellRightClickPopups(BuildCellKey(ticket.id, "id"), ticket.id, std::string(), column.Label, ticket.id,
+                                     std::string(), &app, &d, readOnlyMode, &ticket);
+        handleActiveProjectCellRectSel(ctx, clippedRow, colIndex, cellOriginForSel.x, cellWidthForSel, cellGroupMin.y,
+                                       cellGroupMax.y, true, ticket.id, activeIssueWasThisRow);
+        return;
+    }
+
+    const std::string currentValue = ticket.GetFieldValue(column.FieldId);
+    const TrackerField* fieldMeta = catalogIndex.Find(column.FieldId);
+    const float cellStartY = ImGui::GetCursorScreenPos().y;
+    const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidthForSel;
+    const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
+    const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
+    // Skip map lookup when feedback map is empty (common case) — avoids the hash (§3.1 item 57).
+    const auto feedbackIt = d.cellFeedbackByKey.empty() ? d.cellFeedbackByKey.end() : d.cellFeedbackByKey.find(cellKey);
+    const bool isSavingThisCell =
+        feedbackIt != d.cellFeedbackByKey.end() && feedbackIt->second.State == CellWriteState::Saving;
+
+    bool showBadge = false;
+    ImVec4 badgeColor(1.0f, 1.0f, 1.0f, 1.0f);
+    std::string badgeText;
+    std::string badgeTooltip;
+    if (feedbackIt != d.cellFeedbackByKey.end() && feedbackIt->second.State == CellWriteState::Error &&
+        !feedbackIt->second.Message.empty()) {
+        showBadge = true;
+        badgeColor = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+        badgeText = "!";
+        badgeTooltip = feedbackIt->second.Message;
+    } else if (feedbackIt != d.cellFeedbackByKey.end() && feedbackIt->second.State == CellWriteState::Success) {
+        showBadge = true;
+        badgeColor = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
+        badgeText = "OK";
+        badgeTooltip = "Saved";
+    }
+
+    if (isSavingThisCell) {
+        showBadge = true;
+        badgeColor = ImVec4(0.95f, 0.75f, 0.35f, 1.0f);
+        badgeText = "...";
+        badgeTooltip = "Saving...";
+        ImGui::BeginGroup();
+        const std::string saveDisplay = DisplayValueForTrackerDateField(
+            column.FieldId, fieldMeta, currentValue, d.cfg.DateFormatOption, d.cfg.DateCompactRelativeThresholdDays);
+        const bool isDescriptionField =
+            !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
+                                        column.FieldId.find("Description") != std::string::npos);
+        // Description tooltip needs the raw markdown source so the markdown
+        // preview pipeline can parse it; date-like fields show the full ISO.
+        const std::string* saveTip = (column.IsDateLike || isDescriptionField) ? &currentValue : nullptr;
+        RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip,
+                               isDescriptionField, &column.FieldId);
+        ImGui::EndGroup();
+        cellGroupMin = ImGui::GetItemRectMin();
+        cellGroupMax = ImGui::GetItemRectMax();
+        DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
+                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket);
+    } else {
+        const bool allowEditsForCell = !readOnlyMode && column.NeedsAllowEditsCheck &&
+                                       app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
+        ImGui::BeginGroup();
+        TicketFieldEditor::RenderFieldCell(app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
+                                           d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, d.gridState,
+                                           pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
+                                           d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells);
+        ImGui::EndGroup();
+        cellGroupMin = ImGui::GetItemRectMin();
+        cellGroupMax = ImGui::GetItemRectMax();
+        DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
+                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket);
+    }
+
+    if (showBadge) {
+        const ImVec2 textSize = ImGui::CalcTextSize(badgeText.c_str());
+        const float badgeX = (std::max)(ImGui::GetCursorScreenPos().x, cellRightX - textSize.x);
+        ImGui::SetCursorScreenPos(ImVec2(badgeX, cellStartY));
+        ImGui::PushStyleColor(ImGuiCol_Text, badgeColor);
+        ImGui::TextUnformatted(badgeText.c_str());
+        ImGui::PopStyleColor();
+        if (!badgeTooltip.empty() && ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", badgeTooltip.c_str());
+        }
+    }
+
+    handleActiveProjectCellRectSel(ctx, clippedRow, colIndex, cellOriginForSel.x, cellWidthForSel, cellGroupMin.y,
+                                   cellGroupMax.y, false, ticket.id, false);
+}
+
+// Google-Sheets-style per-cell selection gesture (formerly the handleCellRectSel lambda).
+// Cell geometry arrives as floats (cellOriginX / cellWidth / groupMinY / groupMaxY) so the
+// declaration needs no imgui include in the header.
+void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx, float cellOriginX,
+                                                float cellWidth, float groupMinY, float groupMaxY, bool isIdCol,
+                                                const std::string& issueId, bool activeIssueWasThisRow) {
+    UiDrawSession& d = ctx.d;
+    bool& rectCellClickedThisFrame = ctx.rectCellClickedThisFrame;
+    const std::uint64_t gridSortSig = ctx.gridSortSig;
+
+    const bool shiftHeld = ImGuiEffectiveKeyShift();
+    const bool ctrlHeld = ImGuiEffectiveKeyCtrl();
+    const ImVec2 hitMin(cellOriginX, groupMinY);
+    const ImVec2 hitMax(cellOriginX + cellWidth, groupMaxY);
+    auto& sel = d.gridState.RectSel;
+    const bool hovering = ImGui::IsMouseHoveringRect(hitMin, hitMax, false);
+    const bool mouseClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+
+    if (hovering && mouseClick && sel.Contains(rowIdx, colIdx)) {
+        rectCellClickedThisFrame = true;
+    }
+
+    if (hovering && mouseClick) {
+        if (!issueId.empty()) {
+            d.gridState.SetActiveIssue(issueId);
+        }
+        if (isIdCol) {
+            // Row-header gestures on the key column.
+            if (shiftHeld) {
+                const int anchorRow = (sel.PrimaryRow >= 0) ? sel.PrimaryRow : rowIdx;
+                std::set<int> baseBefore = sel.Rows;
+                const int lo = (anchorRow < rowIdx) ? anchorRow : rowIdx;
+                const int hi = (anchorRow > rowIdx) ? anchorRow : rowIdx;
+                for (int i = lo; i <= hi; ++i)
+                    sel.Rows.insert(i);
+                sel.PrimaryRow = anchorRow;
+                sel.DragRowMode = true;
+                sel.DragStartRow = anchorRow;
+                sel.DragBaseRows = std::move(baseBefore);
+                sel.Active = false;
+                sel.Dragging = true;
+            } else if (ctrlHeld) {
+                auto it = sel.Rows.find(rowIdx);
+                const bool wasSelected = (it != sel.Rows.end());
+                if (!wasSelected) {
+                    sel.Rows.insert(rowIdx);
+                } else {
+                    sel.Rows.erase(it);
+                    if (activeIssueWasThisRow) {
+                        d.gridState.ActiveIssueId.clear();
+                    }
+                }
+                sel.PrimaryRow = rowIdx;
+                sel.DragRowMode = false;
+                sel.DragStartRow = -1;
+                sel.DragBaseRows.clear();
+                sel.Active = false;
+                sel.Dragging = false;
+            } else {
+                sel.Rows.clear();
+                sel.Rows.insert(rowIdx);
+                sel.PrimaryRow = rowIdx;
+                sel.DragRowMode = true;
+                sel.DragStartRow = rowIdx;
+                sel.DragBaseRows.clear();
+                sel.Active = false;
+                sel.Dragging = true;
+            }
+            sel.SortSignature = gridSortSig;
+            rectCellClickedThisFrame = true;
+        } else {
+            sel.ClearAll();
+            sel.SortSignature = gridSortSig;
+            rectCellClickedThisFrame = true;
+        }
+    } else if (sel.Dragging && hovering && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        // Drag update: extend the active gesture while the mouse is held.
+        if (sel.DragRowMode) {
+            const int lo = (sel.DragStartRow < rowIdx) ? sel.DragStartRow : rowIdx;
+            const int hi = (sel.DragStartRow > rowIdx) ? sel.DragStartRow : rowIdx;
+            sel.Rows = sel.DragBaseRows;
+            for (int i = lo; i <= hi; ++i)
+                sel.Rows.insert(i);
+        } else {
+            sel.ExtentRow = rowIdx;
+            sel.ExtentCol = colIdx;
+        }
+    }
+
+    if (sel.Contains(rowIdx, colIdx)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(hitMin, hitMax, IM_COL32(66, 135, 245, 60));
+        dl->AddRect(hitMin, hitMax, IM_COL32(66, 135, 245, 180));
+    }
+}
+
+void SmatchetUI::drawActiveProjectGridNewIssue(ActiveProjectDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const std::vector<CachedTicket>& tickets = ctx.tickets;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
+    const bool readOnlyMode = ctx.readOnlyMode;
+
+    if (!readOnlyMode) {
+        SMATCHET_UI_PERF_SCOPE("activeProject:grid.newIssue");
+        const CachedTicket* lastVisibleTicket = nullptr;
+        if (!tickets.empty()) {
+            size_t lastIndex = tickets.size() - 1;
+            if (!d.filteredIndices.empty()) {
+                lastIndex = d.filteredIndices.back();
+            }
+            if (lastIndex < tickets.size()) {
+                lastVisibleTicket = &tickets[lastIndex];
+            }
+        }
+        RenderNewIssueDraftRow(app, d, columns, d.cfg, lastVisibleTicket);
+    }
+}
+
+void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
+    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
+
+    SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
+    RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d);
+
+    // Capture column widths and sort specs into the active view IN MEMORY so the
+    // grid renders the user's drag/sort immediately. The unsaved-layout strip gates
+    // these changes behind Save / Discard; the snapshot on first mutation lets Discard
+    // revert.
+    if (activeViewForGrid) {
+        ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
+        if (mutableActive) {
+            bool metaChanged = false;
+            ImGuiTable* table = ImGui::GetCurrentTable();
+            if (table) {
+                for (int i = 0; i < static_cast<int>(columns.size()); ++i) {
+                    const std::string& key = columns[static_cast<size_t>(i)].Key;
+                    const float width = (i < table->ColumnsCount) ? table->Columns[i].WidthGiven : 0.0f;
+                    const auto oldIt = mutableActive->ColumnWidths.find(key);
+                    const float oldWidth = (oldIt == mutableActive->ColumnWidths.end()) ? 0.0f : oldIt->second;
+                    if (std::abs(oldWidth - width) > 0.5f) {
+                        if (!metaChanged) {
+                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                        }
+                        mutableActive->ColumnWidths[key] = width;
+                        metaChanged = true;
+                    }
+                }
+            }
+            // Re-fetch sort specs from the table right before persisting so we use current state.
+            ImGuiTableSortSpecs* currentSortSpecs = ImGui::TableGetSortSpecs();
+            if (currentSortSpecs && currentSortSpecs->SpecsCount > 0 && currentSortSpecs->Specs != nullptr) {
+                std::vector<ViewSortSpec> newSortSpecs;
+                for (int s = 0; s < currentSortSpecs->SpecsCount; ++s) {
+                    const int colIndex = currentSortSpecs->Specs[s].ColumnIndex;
+                    if (colIndex >= 0 && colIndex < static_cast<int>(columns.size()) &&
+                        IsPersistableSortDirection(currentSortSpecs->Specs[s].SortDirection)) {
+                        ViewSortSpec vs;
+                        vs.ColumnKey = columns[static_cast<size_t>(colIndex)].Key;
+                        vs.Direction = static_cast<int>(currentSortSpecs->Specs[s].SortDirection);
+                        newSortSpecs.push_back(vs);
+                    }
+                }
+                if (newSortSpecs != mutableActive->SortSpecs) {
+                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                    mutableActive->SortSpecs = std::move(newSortSpecs);
+                    metaChanged = true;
+                }
+            } else {
+                if (!mutableActive->SortSpecs.empty()) {
+                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                    mutableActive->SortSpecs.clear();
+                    metaChanged = true;
+                }
+            }
+            if (metaChanged) {
+                // Bump revision so the grid frame context rebuilds with new widths/sort
+                // next frame. Surface as dirty so the user can Save / Discard. No
+                // debounced disk write here — explicit Save commits everything.
+                ViewState.BumpRevision();
+                d.viewsDirty = true;
+            }
+
+            // Capture user-driven column reorder (drag the header) into the
+            // editing buffer; mark the view dirty so the unsaved-layout strip
+            // appears. Don't autosave: column order changes are destructive,
+            // unlike width/sort which the user can revert with another drag.
+            ImGuiTable* tableForOrder = ImGui::GetCurrentTable();
+            if (tableForOrder && tableForOrder->ColumnsCount > 0) {
+                std::vector<std::string> visualOrder;
+                visualOrder.reserve(columns.size());
+                for (int v = 0; v < tableForOrder->ColumnsCount; ++v) {
+                    // DisplayOrderToIndex is an ImSpan<short> sized to ColumnsCount.
+                    if (v >= tableForOrder->DisplayOrderToIndex.size()) {
+                        break;
+                    }
+                    const int logical = tableForOrder->DisplayOrderToIndex[v];
+                    if (logical < 0 || logical >= static_cast<int>(columns.size())) {
+                        continue;
+                    }
+                    visualOrder.push_back(columns[static_cast<size_t>(logical)].Key);
+                }
+                if (!visualOrder.empty() && visualOrder != mutableActive->ColumnOrder) {
+                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                    d.editingColumnOrder = visualOrder;
+                    d.viewsDirty = true;
+                }
+            }
+        }
+    }
+}
+
+void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    const std::vector<CachedTicket>& tickets = ctx.tickets;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
+    const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
+    const bool rectCellClickedThisFrame = ctx.rectCellClickedThisFrame;
+    const bool ticketGridLeftClickInsideTableHit = ctx.ticketGridLeftClickInsideTableHit;
+    const std::uint64_t gridSortSig = ctx.gridSortSig;
+
     if (!columns.empty()) {
         SMATCHET_UI_PERF_SCOPE("activeProject:grid.rectSel.keys");
         auto& sel = d.gridState.RectSel;
@@ -1083,36 +1266,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         // Shift+Space: promote the row containing the active cell to a whole-
         // row selection (in addition to whatever is already selected).
         if (windowFocused && !io.WantTextInput && effShift && !effCtrl && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-            int activeRow = -1;
-            if (sel.PrimaryRow >= 0) {
-                activeRow = sel.PrimaryRow;
-            } else if (sel.Active) {
-                activeRow = sel.AnchorRow;
-            } else if (!d.gridState.ActiveIssueId.empty()) {
-                const auto& indices = d.filteredIndices;
-                for (size_t i = 0; i < indices.size(); ++i) {
-                    const size_t ti = indices[i];
-                    if (ti < tickets.size() && tickets[ti].id == d.gridState.ActiveIssueId) {
-                        activeRow = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-            if (activeRow >= 0) {
-                sel.Rows.insert(activeRow);
-                sel.PrimaryRow = activeRow;
-                sel.Active = false;
-                sel.SortSignature = gridSortSig;
-            }
+            PromoteActiveRowToSelection(d, sel, tickets, gridSortSig);
         }
     }
-
-    // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
-    // of view. Edits accepted in the modal are appended to `pendingEdits` and flow through the same
-    // ProcessGridFieldEdits path below.
-    TicketFieldEditor::RenderLongTextModal(pendingEdits);
-
-    ProcessGridFieldEdits(app, d, tickets, pendingEdits, readOnlyMode);
-    MaybeToastGridBannerFromSession(d);
-    ImGui::End();
 }
