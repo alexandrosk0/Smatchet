@@ -33,7 +33,12 @@ for a in "$@"; do
   esac
 done
 
-PY="$(command -v python3 || command -v python || true)"
+# command -v alone is insufficient on Windows: the python3 Store-alias stub passes it
+# but exits 49 when run. Probe each candidate; take the first that actually executes.
+PY=""; for _c in python3 python py; do
+    _p="$(command -v "$_c" 2>/dev/null)" || continue
+    if "$_p" -c "" >/dev/null 2>&1; then PY="$_p"; break; fi
+done
 [ -z "$PY" ] && { echo "test-plan-index: python not found" >&2; exit 2; }
 
 "$PY" - "$ARCHIVE_DIR" "$INDEX_FILE" "$BEGIN_MARK" "$END_MARK" "$MODE" <<'PY'

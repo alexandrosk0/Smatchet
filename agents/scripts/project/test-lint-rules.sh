@@ -43,6 +43,18 @@ set -euo pipefail
 # scanner logic (not origin/develop's older copy) against the base worktree.
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
+# Resolve a WORKING python interpreter on stdout (empty + rc 1 if none). `command -v`
+# alone is insufficient on Windows: the python3 "App Execution Alias" stub passes
+# `command -v` but exits 49 ("Python was not found") when run — probe each candidate.
+resolve_python() {
+    local cand p
+    for cand in python3 python py; do
+        p="$(command -v "$cand" 2>/dev/null)" || continue
+        if "$p" -c "" >/dev/null 2>&1; then printf '%s\n' "$p"; return 0; fi
+    done
+    return 1
+}
+
 # --root <dir> scans an arbitrary tree (used to scan the --diff baseline worktree
 # with the current scanner). Default root = repo root relative to this script.
 if [ "${1:-}" = "--root" ]; then
@@ -144,7 +156,7 @@ ratio_warn_for() {
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
     local base="$1" aud py
     aud="$REPO_ROOT/agents/scripts/core/comment_audit.py"
-    py="$(command -v python3 || command -v python || true)"
+    py="$(resolve_python || true)"
     [ -n "$py" ] || return 0          # advisory-only; silently skip if no python interpreter
     [ -f "$aud" ] && "$py" "$aud" --ratio-warn "$base" 2>/dev/null || true
     return 0
@@ -437,10 +449,11 @@ case "$MODE" in
     # `// SMATCHET_DEVIATION(rule=comment-...)` on the line above escapes a flagged line.
     # Fail CLOSED: a hard-fail gate that silently no-ops (missing python / missing script / crash)
     # would pass dirty PRs as false-clean. comment_audit.py's exit contract: 0=clean, 1=violations
-    # (on stdout), >=2=infra error. Resolve python3 OR python (Windows CI ships `python`).
+    # (on stdout), >=2=infra error. resolve_python validates the interpreter actually
+    # runs (skips the Windows python3 Store-alias stub that exits 49).
     cr_out=""
     cr_aud="$REPO_ROOT/agents/scripts/core/comment_audit.py"
-    cr_py="$(command -v python3 || command -v python || true)"
+    cr_py="$(resolve_python || true)"
     if [ -z "$cr_py" ]; then
         echo "test-lint-rules: ERROR: no python interpreter; cannot enforce comment-regrowth gate" >&2
         exit 2

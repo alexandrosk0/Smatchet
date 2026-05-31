@@ -17,7 +17,12 @@
 # regexes only match the OLD docs/design / docs/backlog prefixes).
 set -uo pipefail
 
-PY="$(command -v python3 || command -v python || true)"
+# command -v alone is insufficient on Windows: the python3 Store-alias stub passes it
+# but exits 49 when run. Probe each candidate; take the first that actually executes.
+PY=""; for _c in python3 python py; do
+    _p="$(command -v "$_c" 2>/dev/null)" || continue
+    if "$_p" -c "" >/dev/null 2>&1; then PY="$_p"; break; fi
+done
 [ -z "$PY" ] && { echo "rewrite-plan-paths: python not found" >&2; exit 2; }
 
 "$PY" - <<'PY'

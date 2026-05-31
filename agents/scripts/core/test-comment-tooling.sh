@@ -6,7 +6,15 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-PY="${PYTHON:-python3}"
+# Honor $PYTHON override; else probe for a python that actually runs (the Windows
+# python3 Store-alias stub passes command -v but exits 49 when invoked).
+PY="${PYTHON:-}"
+if [ -z "$PY" ]; then
+    for _c in python3 python py; do
+        _p="$(command -v "$_c" 2>/dev/null)" || continue
+        if "$_p" -c "" >/dev/null 2>&1; then PY="$_p"; break; fi
+    done
+fi
 
 command -v "$PY" >/dev/null 2>&1 || { echo "test-comment-tooling: $PY not found" >&2; exit 2; }
 
