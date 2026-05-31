@@ -330,7 +330,7 @@ class AppController
     /// worker) Lua execution: InitLuaCore + the `__smatchet_app_ui` alias. The
     /// returned state shares no lua_State with the UI-thread `lua` member, which
     /// is the whole point — running two threads through one lua_State is UB.
-    /// See docs/plans/active/mcp-lua-fresh-state-race.md.
+    /// See docs/plans/shipped/mcp-lua-fresh-state-race.md.
     void PrepareFreshLuaState(sol::state& state);
     /// Replay the registered setup scripts (`activeSetupScripts_`) onto `state`
     /// under `sandbox` so global helpers / actions / mcp.register_tool definitions
@@ -912,7 +912,7 @@ class AppController
     // cell-providers, ExecuteLuaConsoleSnippet). Off-UI-thread Lua execution (MCP run_lua /
     // registered-tool handlers on httplib workers, the automation worker) MUST run on a fresh
     // per-call sol::state via PrepareFreshLuaState — never `lua`. Two threads through one
-    // lua_State is UB. See docs/plans/active/mcp-lua-fresh-state-race.md.
+    // lua_State is UB. See docs/plans/shipped/mcp-lua-fresh-state-race.md.
     sol::state lua;
     std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProviders_;
     /** Lowercased Jira field display name (from catalog) -> handler. */

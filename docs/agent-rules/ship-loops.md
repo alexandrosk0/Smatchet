@@ -1,6 +1,6 @@
 # Ship loops
 
-> Lifted from [`AGENTS.md`](../../AGENTS.md) § Autonomous ship-loop default per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the default sequence + exceptions + post-ship turn-end menu so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
+> Lifted from [`AGENTS.md`](../../AGENTS.md) § Autonomous ship-loop default per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the default sequence + exceptions + post-ship turn-end menu so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
 
 ## Autonomous ship-loop default
 
@@ -69,7 +69,7 @@ When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a **P4-gated ship-loop** 
 - **`code-review` agent dispatched ONCE per task** at the end-gate / shelf step (cumulative diff). Not per slice.
 - Pure-docs slice skip still applies. Trivial-visual-only envelope still applies, with `p4 sync` + `p4 edit -t +l` substituting for `git stash` race-recovery.
 - Plan-lock backend auto-flips to `p4-counter` **only when unset** — `export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"` (no colon — empty-string setting is preserved per `agents/scripts/project/test-p4-dual-vcs.sh` scenario 2 line 149 + scenario 6 line 369).
-- Post-ship `AskUserQuestion` ALWAYS fires with option 3 ("Register with watcher") pre-selected; when `docs/plans/active/merge-gates-ci-coderabbit-comments.md` ships end-to-end the `AskUserQuestion` goes away entirely in p4-mode.
+- Post-ship `AskUserQuestion` ALWAYS fires with option 3 ("Register with watcher") pre-selected; when `docs/plans/shipped/merge-gates-ci-coderabbit-comments.md` ships end-to-end the `AskUserQuestion` goes away entirely in p4-mode.
 
 Full phase sequence + invariants + exception rules in [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../plans/shipped/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](../adr/0008-p4-gated-ship-loop.md).
 

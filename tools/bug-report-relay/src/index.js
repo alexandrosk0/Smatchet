@@ -1,7 +1,7 @@
 // Smatchet bug-report relay — Cloudflare Worker.
 //
 // Holds the GitHub token SERVER-SIDE so the desktop app never ships a credential
-// (see docs/plans/active/log-a-bug-github.md + the P1 security backlog entry).
+// (see docs/plans/shipped/log-a-bug-github.md + the P1 security backlog entry).
 // The app POSTs a redacted report here; this Worker re-files it as a GitHub issue
 // under a server-held PAT and returns { ok, issueKey, url } in the shape
 // BugReportService::SubmitViaRelay expects.

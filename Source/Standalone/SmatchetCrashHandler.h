@@ -4,7 +4,7 @@
 // Standalone crash-handler install. Wires the OS-level crash seams
 // (SetUnhandledExceptionFilter / set_terminate / signals) to CrashSink so a
 // crash leaves a marker + best-effort minidump for the next-launch reporter.
-// docs/plans/active/log-a-bug-github.md § Phase 2. Standalone only — the Unreal
+// docs/plans/shipped/log-a-bug-github.md § Phase 2. Standalone only — the Unreal
 // host owns crash handling in the embedded build.
 
 namespace smatchet {

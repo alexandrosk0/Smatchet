@@ -199,7 +199,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["github_base_url"] = config.GitHubBaseUrl;
     j["github_owner"] = config.GitHubOwner;
     j["github_repo"] = config.GitHubRepo;
-    // "Log a Bug" reporter config (docs/plans/active/log-a-bug-github.md).
+    // "Log a Bug" reporter config (docs/plans/shipped/log-a-bug-github.md).
     // BugReportGitHubPat is a secret — encrypted below in the saveGithubPat block.
     j["bugreport_relay_url"] = config.BugReportRelayUrl;
     j["bugreport_relay_key"] = config.BugReportRelayKey;

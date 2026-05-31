@@ -15,7 +15,7 @@
 // unit-testable without network, and the heavy pieces (context gather, HTTP
 // submit, screenshot upload) live in a separate TU that the doctest rig skips.
 //
-// docs/plans/active/log-a-bug-github.md.
+// docs/plans/shipped/log-a-bug-github.md.
 
 class AppController;
 

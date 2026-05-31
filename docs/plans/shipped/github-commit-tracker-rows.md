@@ -140,7 +140,7 @@ Browse behavior:
 
 ## Implementation log
 
-- *(pending squash sha)* - commit rows as a GitHub row kind: commit-key parser + URL helpers, `MapCommitJsonToCachedTicket`, REST commit fetch orchestrated beside the GraphQL issue/PR search, `type:commit`/`all`/`any` JQL, read-only editmeta + mutation rejection, commit browse URLs, commit catalog fields, and bucket-A tests across all four pure-logic seams.
+- `74b1708e` · #504 (2026-05-28) - commit rows as a GitHub row kind: commit-key parser + URL helpers, `MapCommitJsonToCachedTicket`, REST commit fetch orchestrated beside the GraphQL issue/PR search, `type:commit`/`all`/`any` JQL, read-only editmeta + mutation rejection, commit browse URLs, commit catalog fields, and bucket-A tests across all four pure-logic seams.
 
 ## Deviations from plan
 

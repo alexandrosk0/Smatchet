@@ -253,7 +253,7 @@ N/A — diff is `AGENTS.md`, `docs/**`, `agents/**`, `scripts/dev/p4-task-stream
 
 ## Dependencies (sequencing)
 
-- **`docs/plans/active/merge-gates-ci-coderabbit-comments.md`** — referenced 3× by this plan. If shipped → `AskUserQuestion` removal in p4-mode enforceable. If unshipped → option 3 pre-selected but `AskUserQuestion` still fires.
+- **`docs/plans/shipped/merge-gates-ci-coderabbit-comments.md`** — referenced 3× by this plan. If shipped → `AskUserQuestion` removal in p4-mode enforceable. If unshipped → option 3 pre-selected but `AskUserQuestion` still fires.
 - **`docs/plans/shipped/smatchet-merge-watcher.md`** — option 3 registration uses `merge-watch register`. Confirm watcher Phase 1+ shipped before option-3 pre-selection is meaningful.
 - **`scripts/dev/test-p4-dual-vcs.sh`** — tests `SMATCHET_LOCK_BACKEND=""` behaviour (lines 126, 136). Auto-flip rule MUST use `${VAR:-default}` form to respect empty-string test case.
 - **`grill-with-docs` skill** — per AGENTS.md § Plan stress-test, run before sealing the plan + the two ADR decisions.

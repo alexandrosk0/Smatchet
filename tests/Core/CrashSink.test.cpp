@@ -1,5 +1,5 @@
 // CrashSink doctest — marker round-trip + consume semantics.
-// docs/plans/active/log-a-bug-github.md § Phase 2.
+// docs/plans/shipped/log-a-bug-github.md § Phase 2.
 
 #include "CrashSink.h"
 

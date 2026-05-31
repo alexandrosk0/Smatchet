@@ -209,10 +209,14 @@ Verified via `grep -rE "AgenticHandoffController|ClaudeCodeLocalRunner|coderabbi
 - **Touching tracker code** — v1 PR2 already shipped the clean GitHub tracker.
 
 ## Implementation log
-*(populated post-ship)*
+- `a05a5ff0` · #361 (2026-05-21) — agentic ripout doc cleanup: 32 deletions + 9 modifications in one squashed PR, matching this plan's Sequencing step 5. Deleted `agents/handoff-implementer.md`, `agents/pr-iterator.md`, `docs/plans/active/agentic-{coding-handoff,flow-implementation,triage-flow}.md`, the `docs/agentic/` dir, 11 `test-*.sh` scripts, and 12 fixtures. Surgically edited `agents/core/coderabbit-triage.md` + `agents/core/security-review.md`; marked `docs/plans/shipped/coderabbit-react-loop.md` HISTORICAL; withdrew ADR 0004 + 0005; trimmed AGENTS.md / `docs/CONTEXT.md` / delegation doc.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Plan-doc paths drifted post-ship.** Phase B (#543) + Phase D (#545) later relocated `docs/design/` → `docs/plans/` and flattened agent paths, so the historical commit references the pre-rename flat `agents/*.md` / `docs/design/*` layout. No content impact — git history is the authoritative archive.
+- **Residual C++ orphans were a separate cleanup.** Follow-up #567 (`0060fff3`, 2026-05-30) removed leftover C++ orphans; out of this plan's doc-only scope.
 
 ## Verification (actual)
-*(populated post-ship)*
+- **Deletions confirmed** present-then-gone via git (all 32 targets absent from the tree).
+- **Cross-link integrity:** AGENTS.md doc-anchor audit passed (the named risk) — no dangling links after the section deletions.
+- **ADR state:** 0004 → "Withdrawn (2026-05-21)", 0005 → "Withdrawn-as-partial (2026-05-21)" — both verified in `docs/adr/`.
+- **Build gate:** N/A — docs + scripts + fixtures only.
