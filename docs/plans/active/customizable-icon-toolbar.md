@@ -224,7 +224,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 ## Implementation log
 
 - `2aa35ea` · Slice 1 — config data model (`ToolbarConfig.h/.cpp`) + persistence (`TrackerConfig.Toolbar`, `ViewWorkspaceState.ToolbarAppend`) + 8 doctest cases.
-- (slice 2/3, this PR) — icon catalog + `SmatchetIconPickerUi`, `SmatchetToolbarUi` (render under menu via `BeginViewportSideBar(Up)`, command/Lua/`ui.*` dispatch, right-click menu, editor with drag-drop reorder + command/icon pickers + `ConfigManager::Save` write-through), `SmatchetUI` integration, View-menu toggle, `SmatchetLuaTests` link fix.
+- `91b08cc` · Slice 2/3 — icon catalog + `SmatchetIconPickerUi`, `SmatchetToolbarUi` (render under menu via `BeginViewportSideBar(Up)`, command/Lua/`ui.*` dispatch, right-click menu, editor with drag-drop reorder + command/icon pickers + `ConfigManager::Save` write-through), `SmatchetUI` integration, View-menu toggle, `SmatchetLuaTests` link fix.
 
 ## Deviations from plan
 
@@ -239,7 +239,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 
 ## Verification (actual)
 
-- **Bucket A**: `SmatchetTests --test-case=*Toolbar*` → 8/8 cases, 30 assertions (Slice 1; re-run after Slice 2/3).
+- **Bucket A**: `SmatchetTests --test-case=*Toolbar*` → 8/8 cases, 30 assertions; `SmatchetLuaTests` → 30/30, 167 assertions (both re-run green on the Slice 2/3 head).
 - **Dual-target build**: `SmatchetStandalone` (OpenGL exe) + `SmatchetCore_DX12` (Unreal lib) compile + link clean (MSVC, isolated worktree).
 - **`SmatchetLuaTests` link**: fixed (added `ToolbarConfig.cpp` to its source list — the original PR #603 CI break).
-- **Manual / visual + Bucket-E**: NOT yet done — toolbar look/feel + interaction is visual-validation residue (deferred-automation: bucket-E ImGui-Test-Engine drive + screenshot golden, logged to backlog).
+- **Manual / visual**: PASSED — user visually validated the Standalone build (`91b08cc`): toolbar renders below the menu bar, FA icons load, default buttons + hover tooltips, Customize editor (add / drag-drop reorder / icon picker / Save), View-menu Show-Toolbar toggle. **Bucket-E** (ImGui-Test-Engine drive + screenshot golden) still backlogged as deferred-automation.
