@@ -7,7 +7,6 @@
 // reporter (docs/plans/active/log-a-bug-github.md § Phase 2). Split so the
 // async-signal-safe write path is tiny and dependency-free; the OS crash
 // handlers that call it live in Source/Standalone/SmatchetCrashHandler.cpp.
-//
 // Contract: the *_AsyncSafe path runs inside a crash handler — NO heap, NO
 // locks, NO logger, NO std::string. It only touches pre-built static buffers and
 // raw OS file calls. Everything else (Init / Breadcrumb / Consume) runs in normal

@@ -127,8 +127,8 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
         if (d.bugReportDescBuf.size() < kDescBufCap) {
             d.bugReportDescBuf.assign(kDescBufCap, '\0');
             if (d.bugReportCrashMode) {
-                // Prefer the assembled crash context (reason + breadcrumb + log tail);
-                // fall back to a plain prompt.
+                // Prefer the assembled crash context — reason, breadcrumb, and log
+                // tail — falling back to a plain prompt.
                 const std::string seed =
                     d.bugReportCrashContext.empty()
                         ? std::string("Smatchet closed unexpectedly. What were you doing?")

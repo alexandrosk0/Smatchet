@@ -334,7 +334,7 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
         }
     }
 
-    // Crash minidump (phase 2) — the relay uploads it as a Release asset server-side.
+    // Phase-2 crash path. The relay uploads the minidump server-side as a Release asset.
     std::string dumpBase64, dumpName;
     if (!opts.DumpAbsPath.empty()) {
         std::vector<unsigned char> bytes;
@@ -487,7 +487,7 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
         }
     }
 
-    // Crash minidump (phase 2) — upload as a Release asset, link in the body.
+    // Phase-2 crash path. Upload the minidump as a Release asset and link it in the body.
     std::string dumpMarkdown;
     if (!opts.DumpAbsPath.empty()) {
         const std::string dumpName = fs::path(opts.DumpAbsPath).filename().string();

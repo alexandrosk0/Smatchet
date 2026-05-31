@@ -15,7 +15,7 @@ void InstallCrashHandlers();
 #if defined(_WIN32) && defined(_MSC_VER)
 // SEH filter for main.cpp's __try/__except around the frame loop. Writes the
 // crash marker + minidump, then returns EXCEPTION_EXECUTE_HANDLER so the existing
-// handler body (std::exit) still runs. `exceptionInfo` is GetExceptionInformation().
+// handler body still runs. exceptionInfo is the GetExceptionInformation result.
 long SmatchetCrashSehFilter(void* exceptionInfo) noexcept;
 #endif
 

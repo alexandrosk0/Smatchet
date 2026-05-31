@@ -324,8 +324,8 @@ void RegisterDebugCommands(CommandRegistry& reg, AppController& app) {
 
     {
         // debug.crash — deliberately crash the process to validate the phase-2 crash
-        // reporter (next launch should open a pre-filled bug report). Destructive;
-        // requires --yes. `kind`: segv (null deref) | abort | throw.
+        // reporter. Next launch should open a pre-filled bug report. Destructive, so
+        // it needs --yes. kind selects segv null-deref, abort, or throw.
         Command c =
             MakeCommand("debug.crash", "Deliberately crash the process (tests the crash reporter). Requires --yes.",
                         [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
