@@ -168,52 +168,39 @@ Reuses Slice-2 service + Slice-4 modal; files to the **same fixed dev GitHub rep
 
 ---
 
-## Implementation log (2026-05-30 — Phase 1 shipped)
 
-All 4 Phase-1 slices implemented in one pass on `feat/log-a-bug-github-impl`.
+## Implementation log
 
-- **Slice 1** — `BuildGitHubCreatePayload` + `FormatGitHubIssueKey` in `GitHubClientHelpers.{h,cpp}`; `GitHubClient::BuildCreatePayload`/`CreateIssue` implemented (POST `/repos/{o}/{r}/issues`, Bearer PAT, audit wiring source `"github_client"`, key parse → `owner/repo#N`). Doctests appended to `GitHubClientHelpers.test.cpp`.
-- **Slice 2** — `Privacy/TextRedaction.{h,cpp}`, `Imaging/ScreenshotCensor.{h,cpp}`, `Diagnostics/BugReportService.h` + split `BugReportBody.cpp` (pure: `ResolveBugReportTarget` + `BuildMarkdownBody`) / `BugReportService.cpp` (heavy: `GatherContext` + `SubmitBugReport` + Contents-API screenshot upload to `bug-report-assets` branch). Config fields added to `ConfigManager.{h,cpp}` (PAT DPAPI-encrypted, opt-in persist). Doctests: `BugReportBody.test.cpp`.
-- **Slice 3** — `BuiltinCommands_BugReport.cpp` (`bug.report`: modal/headless/dry-run); registered in `BuiltinCommands_Internal.h` + `BuiltinCommands.cpp`.
-- **Slice 4** — `Ui/ImGuiHotkey.{h,cpp}`, `Ui/SmatchetBugReportUi.{h,cpp}` (modal, async submit via `LaunchBackgroundTask` + `PostToMainThread`); `UiDrawSession` `bugReport*` + `requestScreenshotCensor` state; `SmatchetUI.cpp` hotkey poll + modal draw (outside the `BackendHasBeenReachable` gate); `main.cpp` censor wiring; "Report a Bug…" Help-menu item; CMake include subdirs (`Diagnostics`/`Privacy`/`Imaging`) on the Core INTERFACE + test target.
+Shipped across three PRs (newest last):
 
-**Verification done:** dual-target builds clean (`SmatchetStandalone` + `SmatchetCore_DX12`); full doctest suite 870/870 pass; `test-lint-rules.sh` PASS (no new strict-zone violations). Real-GitHub create + manual-modal + token-degrade verification remain manual (need a live dev repo + token) — see § Verification.
-
-### Slice 5 — Relay mode (external distribution, secure token handling)
-
-Added after the "needs relay" decision (2026-05-30) so external/untrusted users can file bugs **without the app shipping a GitHub token** (an embedded token is extractable from the binary = a published credential).
-
-- **`tools/bug-report-relay/`** — Cloudflare Worker (`src/index.js`, `wrangler.toml`, `package.json`, README). Holds the GitHub token as a `wrangler secret`; `POST /report` validates an optional `x-relay-key`, creates the issue, uploads the screenshot to a `bug-report-assets` branch + embeds it inline, returns `{ok, issueKey, url}`. 256 KB payload cap; deploy + abuse-guard steps in its README.
-- **App relay-mode** — config keys `bugreport_relay_url` / `bugreport_relay_key` (`ConfigManager`). When `bugreport_relay_url` is set, `ResolveBugReportTarget` returns `UseRelay=true` (no owner/repo/PAT required) and `SubmitViaRelay` (heavy TU) POSTs the report instead of using the direct `GitHubClient` path. Pure `BuildRelayRequest` (doctested). Modal destination indicator + `bug.report --dry-run` surface relay vs direct mode.
-- **Verification:** dual-target builds clean; 870/870 doctests (incl. relay resolver + request-builder cases); lint clean. Live relay test = deploy the Worker + set `bugreport_relay_url`, then run the modal/CLI path (manual, needs deployment).
+- **`6eab3dbc` · #578 — Phase 1: hotkey + modal + GitHub create + relay.** GitHub issue create (`BuildGitHubCreatePayload`/`FormatGitHubIssueKey`; `GitHubClient::BuildCreatePayload`/`CreateIssue` — POST issues, Bearer PAT, audit, `owner/repo#N`). Pure core: `Privacy/TextRedaction`, `Imaging/ScreenshotCensor`, `Diagnostics/BugReportService` split pure (`BugReportBody.cpp`) / heavy (`BugReportService.cpp`); config fields (PAT DPAPI-encrypted, opt-in). `bug.report` command (modal/headless/dry-run). `Ui/ImGuiHotkey` + `SmatchetBugReportUi` modal (async submit), hotkey poll, censor wiring, Help-menu item. **Relay mode** (`tools/bug-report-relay/` Worker + `bugreport_relay_url`/`_key`) — token server-side, never bundled.
+- **`7268d13d` · #596 — polish.** Clean capture (modal excluded via arm→request + suppress), downscale to 1280px, editable egress preview (`BodyOverride`), lighter + configurable censor (`bugreport_censor_block`, default 2), and the bug reporter **never borrows the tracker `GitHubPat`**. Relay `index.js` hardened (byte-cap, branch-race, title-safety); payload cap 256 KB → 2 MB.
+- **#599 (in review) — Phase 2 crash reporter + follow-ups.** `Core/Diagnostics/CrashSink.{h,cpp}` (async-signal-safe marker + breadcrumb + next-launch consume + crashed-session **log-tail** via `session_log.txt` stash-before-overwrite). `Standalone/SmatchetCrashHandler.{h,cpp}` (`SetUnhandledExceptionFilter` + `set_terminate` + signals + `MiniDumpWriteDump`; frame-loop `__except` writes marker+dump). `main.cpp` install (after user-data dir resolves) + next-launch pre-filled modal. **Minidump → GitHub Release asset** (`crash-dumps` prerelease; direct `UploadCrashDumpRelease` + relay `uploadCrashDump`). `debug.crash` command + `CrashSink.test.cpp`. CR-round fixes: preview gen moved to a worker (no UI-thread audit I/O), relay `atob` try/catch, `UrlEncode(dumpName)`.
 
 ## Deviations from plan
 
-1. **`BuildGitHubCreatePayload` takes primitive fields, not `IssueDraft`.** `IssueDraft.h` pulls SQLite via `LocalCacheManager.h`; taking it would break the helpers-TU "cpr/SQLite-free, doctest-linkable" convention (`GitHubClientHelpers.h:7-10`). `GitHubClient::BuildCreatePayload` extracts `summary`/`description`/`labels`/`assignees` + splits `ProjectKey` → delegates. Same testability, honours the split.
-2. **Service split into two TUs** (`BugReportBody.cpp` pure + `BugReportService.cpp` heavy) rather than one `BugReportService.cpp`. Keeps `ResolveBugReportTarget` + `BuildMarkdownBody` linkable into the doctest rig without cpr/host/AppController. `GatherContext` was made the single non-pure context collector so `BuildMarkdownBody(opts, bundle, screenshotMd)` is a pure function of its inputs.
-3. **PAT is DPAPI-encrypted, not plaintext** (plan called it a "plaintext secret"). Matches the existing `github_pat` path (`ProtectSecretForConfig`/`Unprotect…`); still opt-in (`BugReportPersistPat`, default off) and never written when opt-out.
-4. **`build_tag`** — `SmatchetHost_GetBuildTag()` only links into the Unreal host lib, so it is `#if SMATCHET_EMBEDDED_IN_UNREAL`-guarded; Standalone uses a `__DATE__ __TIME__` tag.
-5. **Hotkey polled OUTSIDE the `BackendHasBeenReachable` gate** (plan's preferred option) so bug reporting works when the tracker is unreachable.
-6. **Screenshot capture handshake** implemented with a `bugReportShotPending` flag + per-frame file-exists poll (the plan's `Idle→AwaitingShot→Submitting` state machine), since the GL read lands post-swap.
-7. **Audit pattern** mirrors `JiraIssueMutation.cpp` (the plan said `JiraClient::CreateIssue` — that method lives in `JiraIssueMutation.cpp`).
-8. **External-distribution token risk** filed as a P1 security backlog entry (`docs/self-improvement/categories/security.md`, 2026-05-30) per the "needs relay" decision — relay/bot required before any external release; no token is bundled.
-9. **Slice 5 — relay mode** added (`tools/bug-report-relay/`, config `bugreport_relay_url`/`bugreport_relay_key`) as the secure path for external users — the token lives server-side, never in the binary. Verified live (issue `alexandrosk0/Smatchet#585`).
-10. **Bug reporter never borrows the tracker `cfg.GitHubPat`** (user directive 2026-05-30). Original Slice-2 spec had PAT order `env → cfg.GitHubPat → cfg.BugReportGitHubPat`; the tracker PAT fallback is **removed**. Direct-mode order is now `env SMATCHET_BUGREPORT_GITHUB_TOKEN → cfg.BugReportGitHubPat` only; otherwise use relay mode. Conflating the personal tracker credential with the bug-report identity was the concern.
+1. `BuildGitHubCreatePayload` takes primitive fields, not `IssueDraft` (IssueDraft pulls SQLite; keeps the helpers TU cpr/SQLite-free).
+2. Service split into pure `BugReportBody.cpp` + heavy `BugReportService.cpp`; `BuildMarkdownBody` is a pure function of a `GatherContext` bundle.
+3. PAT is DPAPI-encrypted, not plaintext (matches `github_pat`); opt-in persist, default off.
+4. `build_tag` — `SmatchetHost_GetBuildTag()` only links in the Unreal host; Standalone uses a `__DATE__ __TIME__` tag (guarded).
+5. Hotkey polled OUTSIDE the `BackendHasBeenReachable` gate (works when the tracker is unreachable).
+6. Screenshot capture: `bugReportShotArmed` → request-next-frame + modal-suppressed (clean shot); main-thread `bugReportShotReady` signal (no UI-thread filesystem poll).
+7. Audit pattern mirrors `JiraIssueMutation.cpp` (plan said `JiraClient::CreateIssue`).
+8. External-token risk filed P1 security backlog → resolved by relay (token never bundled).
+9. Bug reporter never borrows the tracker `cfg.GitHubPat` (user directive) — `env → BugReportGitHubPat` only, else relay.
+10. Censor mosaic made configurable (`bugreport_censor_block`, default 2) after "too blurry" feedback. *(Follow-up plan `bug-report-font-redaction-censor.md` replaces the mosaic with font-redaction — not in this feature.)*
+11. Crash log-tail **implemented** (not dropped) via the `session_log.txt` stash-before-overwrite trick (sidesteps the per-PID can't-locate-next-launch race).
+12. Crash-dump delivery **implemented** as a GitHub Release asset (not local-only).
 
----
+## Verification (actual)
 
-## Phase-2 implementation log (2026-05-30)
+- **Builds:** dual-target (`SmatchetStandalone` + `SmatchetCore_DX12`) clean at each slice.
+- **Unit:** full doctest suite green (877/877 at the Phase-2 close) — create-payload/key, redaction, mosaic/downscale, markdown body, `ResolveBugReportTarget` (never-tracker-PAT), `BuildRelayRequest` (+dump), `CrashSink` (marker round-trip + log-tail).
+- **Lint:** `test-lint-rules.sh` PASS (no new strict-zone violations) at each slice.
+- **Relay, live ✓:** Worker at `smatchet-bug-report-relay.smatchet.workers.dev`; `/health` 200; `/report` no-key → 401 (gate); keyed → filed `alexandrosk0/Smatchet#585`. 404-from-nonexistent-REPO diagnosed+fixed; 413 fixed via 1280px downscale + 2 MB cap (redeployed).
+- **Modal, live ✓:** Ctrl+Shift+B → describe → attach → submit filed `#587`/`#588`; editable preview + clean-capture (no modal in shot) confirmed.
+- **Token-degrade ✓:** the app PAT had Issues:write but not Contents:write → screenshot degraded to a local-save note (graceful), as designed. Inline-screenshot render still pending a Contents:write token.
+- **Crash pipeline ✓:** `CrashSink` unit tests pass; `CrashSinkInit` + breadcrumb verified live in the real user-data dir; planted-marker relaunch → detect → consume → archive dump → pre-filled modal + log WARN confirmed; `debug.crash` provably kills the process. Real-fault → marker is standard Win32 (substrate unit-verified); real-crash → modal end-to-end is a user manual check.
+- **Censor ✓:** lighter + config-tunable block accepted by the user.
 
-In-process crash reporter built on `feat/crash-reporter`.
-
-- **`Core/Diagnostics/CrashSink.{h,cpp}`** — crash-survival substrate. `CrashSinkInit(userDataDir)` builds static path buffers + ensures `<userdata>/crashes/` + rotates old dumps (keep 5). `CrashSinkWriteMarkerAsyncSafe(reason)` is the async-signal-safe marker write (raw `CreateFileA`/`open`, no heap/locks). `CrashSinkBreadcrumb(activity)` records current activity (normal context). Next launch: `CrashSinkHasPending()` / `CrashSinkConsume()` (reads marker + breadcrumb, archives the dump timestamped, deletes the marker so it never loops).
-- **`Standalone/SmatchetCrashHandler.{h,cpp}`** — installs `SetUnhandledExceptionFilter` + `std::set_terminate` + `std::signal(SIGSEGV/SIGABRT/SIGFPE/SIGILL)`. Each writes the marker (async-safe) then a best-effort `MiniDumpWriteDump` (DbgHelp via `#pragma comment(lib,"dbghelp.lib")`) to `crashes/pending_crash.dmp`, then exits. `SmatchetCrashSehFilter` is used by main.cpp's frame-loop `__except` (was a bare `std::exit(1)`).
-- **`main.cpp`** — `CrashSinkInit` + `InstallCrashHandlers` + breadcrumb run **after** the user-data dir is resolved (the planned line-316 spot was too early — `GetUserDataDirectory()` was still empty, so crashes/ landed in CWD; moved after the platform user-data block). Next-launch detection before the render loop seeds `g_ui.bugReportCrashContext` + `bugReportCrashMode` + opens the modal.
-- **`bug.report` modal** — the crash-mode latch seeds the description with `bugReportCrashContext` (reason + breadcrumb + dump path).
-- **`debug.crash` command** (`BuiltinCommands_Debug.cpp`) — `kind=segv|abort|throw`, Destructive + `--yes`, to validate the reporter.
-- **Tests:** `tests/Core/CrashSink.test.cpp` (marker round-trip, consume-clears, dump path).
-
-### Phase-2 deviations
-1. ~~Log-tail dropped~~ **DONE (follow-up).** Instead of a fixed-path sink, CrashSink records the active per-PID log path to `crashes/session_log.txt` and **stashes the previous value at Init before overwriting — only when a crash is pending** (avoids the can't-locate-next-launch race). `CrashSinkConsume` tails + `RedactLogText`s the crashed log into `CrashInfo.LogTail`, seeded into the crash report body.
-2. ~~Crash-dump local only~~ **DONE (follow-up).** The minidump is uploaded as a GitHub **Release asset** (tag `crash-dumps`, prerelease) — direct mode via `UploadCrashDumpRelease` (Releases API), relay mode via the Worker (`dumpBase64` → `uploadCrashDump`). Body links `[Crash minidump](url)`; degrades to a local-path note on failure.
-3. **End-to-end verification is user-side** — headless crash-trigger needs the GUI's MCP, which wouldn't come up reliably in the build shell. Substrate is unit-tested + `CrashSinkInit`/breadcrumb verified live; the full crash→relaunch→modal loop is a manual check (`debug.crash` → relaunch).
+> **Status:** Phase 1 (#578) + polish (#596) merged to `develop`; Phase 2 (#599) in review. Move this plan `active → shipped/` once #599 merges.
