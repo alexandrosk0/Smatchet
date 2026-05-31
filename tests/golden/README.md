@@ -13,6 +13,7 @@ prior clone should be deleted and rebootstrapped.
 |---|---|---|
 | `dock-gap-sentinel.png` | `dock-gap-sentinel` | Standalone main window after dock-builder settle. Regression on any dock-gap leak, shell-chrome shift, theme retune. |
 | `command-palette-fuzzy.png` | `command-palette-fuzzy` | Command palette modal opened with the `scenario.` substring filter pre-applied. Regression on palette placement, fuzzy-match highlight, modal chrome. |
+| `code-syntax-coloring.png` | `code-syntax-coloring` | Multi-language code blocks (C++ / Python / Lua / Bash / JSON / Plain) rendered via `CodeColorView::DrawColoredCodeBlock`. Regression on per-language keyword/string/comment/number/identifier colouring, the theme syntax palette, or the language-badge layout. |
 
 ## Bootstrap protocol
 

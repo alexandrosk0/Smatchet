@@ -27,6 +27,7 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario() { return
 std::unique_ptr<smatchet::cmd::IScenario> MakeUiTestScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeDockGapSentinelScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeCodeSyntaxColoringScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario() { return NullScenario(); }
 #if defined(SMATCHET_WITH_AI)
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario() { return NullScenario(); }

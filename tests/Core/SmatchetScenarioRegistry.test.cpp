@@ -32,6 +32,7 @@ std::set<std::string> ExpectedNames() {
     expected.insert("ui-test");
     expected.insert("dock-gap-sentinel");
     expected.insert("command-palette-fuzzy");
+    expected.insert("code-syntax-coloring");
     expected.insert("theme-switch-roundtrip");
 #if defined(SMATCHET_WITH_AI)
     expected.insert("ai-chat-history-render");

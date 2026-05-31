@@ -9,10 +9,11 @@
 // ImGuiColorTextEdit/TextEditor.h; Python / Bash / Json are hand-rolled in
 // CodeColorView.cpp (same shape as the in-tree Markdown() factory at
 // TextEditor.cpp:3630).
-// Lifecycle: tokenize-once cached by (content_hash, lang) — first render parses,
-// subsequent frames replay. Cache shape mirrors the existing s_messageHeightCache
-// in SmatchetAiAssistantUi.cpp. Slice 3 will extend the key with theme_revision
-// so theme switches invalidate the cache cleanly.
+// Lifecycle: tokenize-once cached by (content_hash, lang, theme_revision) —
+// first render parses, subsequent frames replay; a theme switch bumps
+// SmatchetTheme::GetThemeRevision() so the key misses and the palette is
+// re-resolved (slice 3). Cache shape mirrors the existing s_messageHeightCache
+// in SmatchetAiAssistantUi.cpp.
 // This header is intentionally ImGui-free in its public surface so pure-logic
 // doctests can include it without pulling ImGui. The .cpp implementation
 // includes ImGui + TextEditor.h.
