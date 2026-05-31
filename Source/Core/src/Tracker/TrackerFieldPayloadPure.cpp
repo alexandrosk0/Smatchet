@@ -146,9 +146,8 @@ bool TryBuildFieldOptionPayload(const TrackerField& field, const std::string& se
 }
 
 bool IsDigitsOnly(const std::string& value) {
-    return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) {
-        return std::isdigit(c) != 0;
-    });
+    return !value.empty() &&
+           std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
 }
 
 nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, const std::string& scalarValue) {
@@ -240,9 +239,8 @@ bool LooksLikeIssueKey(const std::string& value) {
             return false;
         }
     }
-    if (!std::all_of(value.begin() + static_cast<ptrdiff_t>(dash) + 1, value.end(), [](unsigned char c) {
-        return std::isdigit(c) != 0;
-    })) {
+    if (!std::all_of(value.begin() + static_cast<ptrdiff_t>(dash) + 1, value.end(),
+                     [](unsigned char c) { return std::isdigit(c) != 0; })) {
         return false;
     }
     return true;
@@ -271,9 +269,7 @@ std::vector<std::string> SplitCommaSeparatedTrimmed(const std::string& input) {
 
 std::string SanitizeJiraLabelToken(std::string s) {
     s = TrimCopy(s);
-    std::replace_if(s.begin(), s.end(), [](char c) {
-        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-    }, '-');
+    std::replace_if(s.begin(), s.end(), [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }, '-');
     return s;
 }
 
@@ -387,66 +383,252 @@ std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, 
     return resolved.empty() ? value : resolved;
 }
 
+// Per-shape builders for BuildValue's array path. Each appends to an array.
+namespace {
+
+bool ArrayItemUsesStructuredFamily(const TrackerField& field) {
+    return field.Family == TrackerFieldFamily::StructuredMulti || field.Family == TrackerFieldFamily::IssueType ||
+           field.Family == TrackerFieldFamily::Status || field.Family == TrackerFieldFamily::CascadingSelect;
+}
+
+bool ArrayItemIsSelectable(const TrackerField& field) {
+    return field.ItemsType == "option" || field.ItemsType == "component" || !field.AllowedValueOptions.empty();
+}
+
+void AppendArrayItem(const TrackerField& field, const std::string& value, nlohmann::json& outArray) {
+    if (field.IsUserType) {
+        nlohmann::json one;
+        BuildUserFieldPayload(field, value, one);
+        if (!one.is_null()) {
+            outArray.push_back(std::move(one));
+        }
+        return;
+    }
+    if (ArrayItemUsesStructuredFamily(field)) {
+        nlohmann::json optionPayload;
+        if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
+            outArray.push_back(std::move(optionPayload));
+        } else if (ArrayItemIsSelectable(field)) {
+            outArray.push_back(FallbackPayloadForSelectableField(field, value));
+        } else {
+            outArray.push_back(value);
+        }
+        return;
+    }
+    if (ArrayItemIsSelectable(field)) {
+        nlohmann::json optionPayload;
+        if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
+            outArray.push_back(std::move(optionPayload));
+        } else {
+            outArray.push_back(FallbackPayloadForSelectableField(field, value));
+        }
+        return;
+    }
+    outArray.push_back(value);
+}
+
+void BuildLabelsValue(const std::vector<std::string>& values, nlohmann::json& outValue) {
+    // Grid stores labels as comma-separated text; Jira expects an array of separate label strings.
+    outValue = nlohmann::json::array();
+    for (const auto& value : values) {
+        for (const std::string& seg : SplitCommaSeparatedTrimmed(value)) {
+            const std::string fixed = SanitizeJiraLabelToken(seg);
+            if (!fixed.empty()) {
+                outValue.push_back(fixed);
+            }
+        }
+    }
+    if (outValue.empty()) {
+        outValue = nullptr;
+    }
+}
+
+void BuildArrayValue(const TrackerField& field, const std::vector<std::string>& values, nlohmann::json& outValue) {
+    outValue = nlohmann::json::array();
+    for (const auto& value : values) {
+        AppendArrayItem(field, value, outValue);
+    }
+}
+
+// Scalar dispatch table: each per-type builder produces byte-identical output
+// to the original inline branch. A builder returns true when it claims the
+// field (writing outValue / outError); false to fall through to the next.
+using ScalarBuilderFn = bool (*)(const TrackerField&, const std::string&, nlohmann::json&, std::string&);
+
+bool BuildParentScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                       std::string& /*outError*/) {
+    if (field.Id != "parent") {
+        return false;
+    }
+    const std::string parentKey = ExtractIssueKey(scalarValue);
+    outValue = parentKey.empty() ? nlohmann::json(scalarValue) : nlohmann::json{{"key", parentKey}};
+    return true;
+}
+
+bool BuildProjectScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                        std::string& /*outError*/) {
+    if (field.Id != "project") {
+        return false;
+    }
+    // Create payload: project identified by key (Jira also accepts id).
+    outValue = nlohmann::json{{"key", scalarValue}};
+    return true;
+}
+
+bool BuildUserScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                     std::string& /*outError*/) {
+    if (!field.IsUserType) {
+        return false;
+    }
+    BuildUserFieldPayload(field, scalarValue, outValue);
+    return true;
+}
+
+bool BuildStructuredSelectScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                                 std::string& /*outError*/) {
+    if (!(field.Family == TrackerFieldFamily::StructuredSingle || field.Family == TrackerFieldFamily::IssueType ||
+          field.Family == TrackerFieldFamily::Status || field.Family == TrackerFieldFamily::CascadingSelect ||
+          field.Family == TrackerFieldFamily::SelectSingle)) {
+        return false;
+    }
+    if (!TryBuildFieldOptionPayload(field, scalarValue, outValue)) {
+        outValue = FallbackPayloadForSelectableField(field, scalarValue);
+    }
+    return true;
+}
+
+bool BuildOptionComponentScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                                std::string& /*outError*/) {
+    if (!(field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty())) {
+        return false;
+    }
+    outValue = nlohmann::json{{"id", scalarValue}};
+    return true;
+}
+
+// REST v3 expects structured objects for priority/securitylevel; id when digits-only else name.
+bool BuildPriorityLikeScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                             std::string& /*outError*/) {
+    const std::string typeLower = ToLowerAsciiCopy(field.Type);
+    if (!(typeLower == "priority" || field.Id == "priority" || typeLower == "securitylevel")) {
+        return false;
+    }
+    nlohmann::json optPayload;
+    if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
+        outValue = std::move(optPayload);
+        return true;
+    }
+    const std::string t = TrimCopy(scalarValue);
+    outValue = IsDigitsOnly(t) ? nlohmann::json{{"id", t}} : nlohmann::json{{"name", t}};
+    return true;
+}
+
+// version / resolution: structured option if catalogued, else {name: trimmed}.
+bool BuildNamedOptionScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                            std::string& /*outError*/) {
+    const std::string typeLower = ToLowerAsciiCopy(field.Type);
+    if (!(typeLower == "version" || typeLower == "resolution")) {
+        return false;
+    }
+    nlohmann::json optPayload;
+    if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
+        outValue = std::move(optPayload);
+        return true;
+    }
+    outValue = nlohmann::json{{"name", TrimCopy(scalarValue)}};
+    return true;
+}
+
+bool BuildGroupScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                      std::string& /*outError*/) {
+    if (ToLowerAsciiCopy(field.Type) != "group") {
+        return false;
+    }
+    outValue = nlohmann::json{{"name", TrimCopy(scalarValue)}};
+    return true;
+}
+
+bool BuildAdfScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                    std::string& /*outError*/) {
+    if (!FieldUsesAdfDocument(field)) {
+        return false;
+    }
+    // The long-text modal editor produces Markdown for ADF fields (description, environment,
+    // textarea / wiki-renderer customfields). MarkdownToAdf preserves headings, lists, code
+    // blocks, links, and inline emphasis. Plain-text input still works (no Markdown features =
+    // a single paragraph). See RICH_TEXT_EDITING_V2_PLAN.md.
+    outValue = MarkdownConvert::MarkdownToAdf(scalarValue);
+    return true;
+}
+
+bool BuildDateScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                     std::string& outError) {
+    if (!(field.Type == "date" || field.Type == "datetime")) {
+        return false;
+    }
+    ParsedJiraDateTime parsed;
+    if (!TryParseJiraDateTime(scalarValue, parsed)) {
+        outError = "Invalid date/datetime value: " + scalarValue;
+        return true;
+    }
+    outValue = FormatJiraDateOrDateTimeForApi(field.Type == "date", parsed);
+    return true;
+}
+
+bool BuildNumberScalar(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                       std::string& outError) {
+    if (field.Type != "number") {
+        return false;
+    }
+    if (!TryParseNumberValue(scalarValue, outValue)) {
+        outError = "Invalid numeric value: " + scalarValue;
+    }
+    return true;
+}
+
+// Ordered scalar dispatch table — first builder to claim the field wins, exactly
+// mirroring the original top-to-bottom if/else tower's precedence.
+const ScalarBuilderFn kScalarBuilders[] = {
+    &BuildParentScalar,
+    &BuildProjectScalar,
+    &BuildUserScalar,
+    &BuildStructuredSelectScalar,
+    &BuildOptionComponentScalar,
+    &BuildPriorityLikeScalar,
+    &BuildNamedOptionScalar,
+    &BuildGroupScalar,
+    &BuildAdfScalar,
+    &BuildDateScalar,
+    &BuildNumberScalar,
+};
+
+bool BuildScalarValue(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue,
+                      std::string& outError) {
+    for (ScalarBuilderFn builder : kScalarBuilders) {
+        if (builder(field, scalarValue, outValue, outError)) {
+            return outError.empty();
+        }
+    }
+    outValue = scalarValue;
+    return true;
+}
+
+} // namespace
+
 bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
                 std::string& outError) {
     outError.clear();
     std::vector<std::string> values;
     values.reserve(rawValues.size());
-    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values), [](const std::string& value) {
-        return !value.empty();
-    });
+    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
+                 [](const std::string& value) { return !value.empty(); });
 
-    // Grid stores labels as comma-separated text; Jira expects an array of separate label strings.
     if (field.Id == "labels" || field.Family == TrackerFieldFamily::Labels) {
-        outValue = nlohmann::json::array();
-        for (const auto& value : values) {
-            for (const std::string& seg : SplitCommaSeparatedTrimmed(value)) {
-                const std::string fixed = SanitizeJiraLabelToken(seg);
-                if (!fixed.empty()) {
-                    outValue.push_back(fixed);
-                }
-            }
-        }
-        if (outValue.empty()) {
-            outValue = nullptr;
-        }
+        BuildLabelsValue(values, outValue);
         return true;
     }
-
     if (field.IsArray) {
-        outValue = nlohmann::json::array();
-        for (const auto& value : values) {
-            if (field.IsUserType) {
-                nlohmann::json one;
-                BuildUserFieldPayload(field, value, one);
-                if (!one.is_null()) {
-                    outValue.push_back(std::move(one));
-                }
-            } else if (field.Family == TrackerFieldFamily::StructuredMulti ||
-                       field.Family == TrackerFieldFamily::IssueType ||
-                       field.Family == TrackerFieldFamily::Status ||
-                       field.Family == TrackerFieldFamily::CascadingSelect) {
-                nlohmann::json optionPayload;
-                if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
-                    outValue.push_back(std::move(optionPayload));
-                } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
-                           !field.AllowedValueOptions.empty()) {
-                    outValue.push_back(FallbackPayloadForSelectableField(field, value));
-                } else {
-                    outValue.push_back(value);
-                }
-            } else if (field.ItemsType == "option" || field.ItemsType == "component" ||
-                       !field.AllowedValueOptions.empty()) {
-                nlohmann::json optionPayload;
-                if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
-                    outValue.push_back(std::move(optionPayload));
-                } else {
-                    outValue.push_back(FallbackPayloadForSelectableField(field, value));
-                }
-            } else {
-                outValue.push_back(value);
-            }
-        }
+        BuildArrayValue(field, values, outValue);
         return true;
     }
 
@@ -455,106 +637,7 @@ bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawVa
         outValue = nullptr;
         return true;
     }
-    if (field.Id == "parent") {
-        const std::string parentKey = ExtractIssueKey(scalarValue);
-        outValue = parentKey.empty() ? nlohmann::json(scalarValue) : nlohmann::json{{"key", parentKey}};
-        return true;
-    }
-    if (field.Id == "project") {
-        // Create payload: project identified by key (Jira also accepts id).
-        outValue = nlohmann::json{{"key", scalarValue}};
-        return true;
-    }
-    if (field.IsUserType) {
-        BuildUserFieldPayload(field, scalarValue, outValue);
-        return true;
-    }
-    if (field.Family == TrackerFieldFamily::StructuredSingle || field.Family == TrackerFieldFamily::IssueType ||
-        field.Family == TrackerFieldFamily::Status || field.Family == TrackerFieldFamily::CascadingSelect ||
-        field.Family == TrackerFieldFamily::SelectSingle) {
-        if (!TryBuildFieldOptionPayload(field, scalarValue, outValue)) {
-            outValue = FallbackPayloadForSelectableField(field, scalarValue);
-        }
-        return true;
-    }
-    if (field.Type == "option" || field.Type == "component" || !field.AllowedValueOptions.empty()) {
-        outValue = nlohmann::json{{"id", scalarValue}};
-        return true;
-    }
-
-    // REST v3 expects structured objects for these schema types; plain strings 400.
-    const std::string typeLower = ToLowerAsciiCopy(field.Type);
-    if (typeLower == "priority" || field.Id == "priority") {
-        nlohmann::json optPayload;
-        if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
-            outValue = std::move(optPayload);
-            return true;
-        }
-        const std::string t = TrimCopy(scalarValue);
-        const bool digitsOnly = IsDigitsOnly(t);
-        outValue = digitsOnly ? nlohmann::json{{"id", t}} : nlohmann::json{{"name", t}};
-        return true;
-    }
-    if (typeLower == "version") {
-        nlohmann::json optPayload;
-        if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
-            outValue = std::move(optPayload);
-            return true;
-        }
-        outValue = nlohmann::json{{"name", TrimCopy(scalarValue)}};
-        return true;
-    }
-    if (typeLower == "resolution") {
-        nlohmann::json optPayload;
-        if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
-            outValue = std::move(optPayload);
-            return true;
-        }
-        outValue = nlohmann::json{{"name", TrimCopy(scalarValue)}};
-        return true;
-    }
-    if (typeLower == "securitylevel") {
-        nlohmann::json optPayload;
-        if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
-            outValue = std::move(optPayload);
-            return true;
-        }
-        const std::string t = TrimCopy(scalarValue);
-        const bool digitsOnly = IsDigitsOnly(t);
-        outValue = digitsOnly ? nlohmann::json{{"id", t}} : nlohmann::json{{"name", t}};
-        return true;
-    }
-    if (typeLower == "group") {
-        outValue = nlohmann::json{{"name", TrimCopy(scalarValue)}};
-        return true;
-    }
-
-    if (FieldUsesAdfDocument(field)) {
-        // The long-text modal editor produces Markdown for ADF fields (description, environment,
-        // textarea / wiki-renderer customfields). MarkdownToAdf preserves headings, lists, code
-        // blocks, links, and inline emphasis. Plain-text input still works (no Markdown features =
-        // a single paragraph). See RICH_TEXT_EDITING_V2_PLAN.md.
-        outValue = MarkdownConvert::MarkdownToAdf(scalarValue);
-        return true;
-    }
-    if (field.Type == "date" || field.Type == "datetime") {
-        ParsedJiraDateTime parsed;
-        if (!TryParseJiraDateTime(scalarValue, parsed)) {
-            outError = "Invalid date/datetime value: " + scalarValue;
-            return false;
-        }
-        outValue = FormatJiraDateOrDateTimeForApi(field.Type == "date", parsed);
-        return true;
-    }
-    if (field.Type == "number") {
-        if (!TryParseNumberValue(scalarValue, outValue)) {
-            outError = "Invalid numeric value: " + scalarValue;
-            return false;
-        }
-        return true;
-    }
-    outValue = scalarValue;
-    return true;
+    return BuildScalarValue(field, scalarValue, outValue, outError);
 }
 
 } // namespace TrackerFieldPayloadPure

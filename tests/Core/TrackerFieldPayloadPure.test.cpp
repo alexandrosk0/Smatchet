@@ -110,7 +110,7 @@ TEST_CASE("BuildValue: option family — structured payload vs label fallback") 
     TrackerField f = MakeField("customfield_10010");
     f.Family = TrackerFieldFamily::SelectSingle;
     f.AllowedValueOptions.push_back(MakeOption("10001", "High", "{\"id\":\"10001\",\"value\":\"High\"}"));
-    f.AllowedValueOptions.push_back(MakeOption("10002", "Low"));  // no PayloadJson -> fallback path
+    f.AllowedValueOptions.push_back(MakeOption("10002", "Low")); // no PayloadJson -> fallback path
 
     json out;
     std::string err;
@@ -332,15 +332,138 @@ TEST_CASE("BuildValue: priority / version / resolution / group — structured sh
     }
 }
 
+TEST_CASE("BuildValue: per-builder dispatch table — one group per scalar field type") {
+    json out;
+    std::string err;
+
+    SUBCASE("resolution (no catalog) uses {name}") {
+        TrackerField f = MakeField("resolution", "resolution");
+        REQUIRE(BuildValue(f, {"Fixed"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["name"].get<std::string>() == "Fixed");
+    }
+
+    SUBCASE("version (no catalog) uses {name}") {
+        TrackerField f = MakeField("fixVersion", "version");
+        REQUIRE(BuildValue(f, {"v2"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["name"].get<std::string>() == "v2");
+    }
+
+    SUBCASE("securitylevel digits-only uses {id}") {
+        TrackerField f = MakeField("security", "securitylevel");
+        REQUIRE(BuildValue(f, {"42"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["id"].get<std::string>() == "42");
+    }
+
+    SUBCASE("securitylevel non-digits uses {name}") {
+        TrackerField f = MakeField("security", "securitylevel");
+        REQUIRE(BuildValue(f, {"Internal"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["name"].get<std::string>() == "Internal");
+    }
+
+    SUBCASE("priority digits-only (no catalog) uses {id}") {
+        TrackerField f = MakeField("priority", "priority");
+        REQUIRE(BuildValue(f, {"3"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["id"].get<std::string>() == "3");
+    }
+
+    SUBCASE("catalogued field with allowed-options is claimed by option-branch first") {
+        // Allowed-options precedence: the option/component branch produces {id: scalarValue}
+        // BEFORE the priority/version/resolution type branches are ever reached. This mirrors
+        // the original tower's top-to-bottom ordering exactly.
+        TrackerField f = MakeField("priority", "priority");
+        f.AllowedValueOptions.push_back(MakeOption("3", "Medium", "{\"id\":\"3\"}"));
+        REQUIRE(BuildValue(f, {"Medium"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["id"].get<std::string>() == "Medium");
+    }
+
+    SUBCASE("ADF field (description) emits doc payload from markdown") {
+        TrackerField f = MakeField("description", "string");
+        REQUIRE(BuildValue(f, {"Hello"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["type"].get<std::string>() == "doc");
+    }
+
+    SUBCASE("date field formats valid date") {
+        TrackerField f = MakeField("duedate", "date");
+        REQUIRE(BuildValue(f, {"2026-05-31"}, out, err));
+        CHECK(err.empty());
+        CHECK(out.is_string());
+        CHECK(out.get<std::string>().find("2026-05-31") != std::string::npos);
+    }
+
+    SUBCASE("date field rejects invalid value with error") {
+        TrackerField f = MakeField("duedate", "date");
+        CHECK_FALSE(BuildValue(f, {"not-a-date"}, out, err));
+        CHECK(err.find("Invalid date/datetime") != std::string::npos);
+    }
+
+    SUBCASE("option-type without family uses {id} passthrough") {
+        TrackerField f = MakeField("customfield_opt", "option");
+        REQUIRE(BuildValue(f, {"7"}, out, err));
+        REQUIRE(out.is_object());
+        CHECK(out["id"].get<std::string>() == "7");
+    }
+
+    SUBCASE("unknown plain type falls through to raw string") {
+        TrackerField f = MakeField("customfield_misc", "weirdtype");
+        REQUIRE(BuildValue(f, {"raw value"}, out, err));
+        CHECK(out.is_string());
+        CHECK(out.get<std::string>() == "raw value");
+    }
+}
+
+TEST_CASE("BuildValue: array path — user, structured-multi, plain string items") {
+    json out;
+    std::string err;
+
+    SUBCASE("array of user values builds accountId objects, skipping empties") {
+        TrackerField f = MakeField("multiUser");
+        f.IsArray = true;
+        f.IsUserType = true;
+        REQUIRE(BuildValue(f, {"acc1", "", "acc2"}, out, err));
+        REQUIRE(out.is_array());
+        REQUIRE(out.size() == 2);
+        CHECK(out[0]["accountId"].get<std::string>() == "acc1");
+        CHECK(out[1]["accountId"].get<std::string>() == "acc2");
+    }
+
+    SUBCASE("array structured-multi family resolves catalogued option payloads") {
+        TrackerField f = MakeField("multiSelect");
+        f.IsArray = true;
+        f.Family = TrackerFieldFamily::StructuredMulti;
+        f.AllowedValueOptions.push_back(MakeOption("a", "Alpha", "{\"id\":\"a\"}"));
+        REQUIRE(BuildValue(f, {"Alpha"}, out, err));
+        REQUIRE(out.is_array());
+        REQUIRE(out.size() == 1);
+        CHECK(out[0]["id"].get<std::string>() == "a");
+    }
+
+    SUBCASE("array plain (no options) pushes raw strings") {
+        TrackerField f = MakeField("multiText");
+        f.IsArray = true;
+        REQUIRE(BuildValue(f, {"x", "y"}, out, err));
+        REQUIRE(out.is_array());
+        REQUIRE(out.size() == 2);
+        CHECK(out[0].get<std::string>() == "x");
+        CHECK(out[1].get<std::string>() == "y");
+    }
+}
+
 TEST_CASE("ExtractIssueKey: shape detection") {
     CHECK(ExtractIssueKey("PROJ-1") == "PROJ-1");
     CHECK(ExtractIssueKey("ABC-42 - summary") == "ABC-42");
     CHECK(ExtractIssueKey("  WS_2-9  ") == "WS_2-9"); // underscore + digits allowed in prefix
     CHECK(ExtractIssueKey("not-a-key") == "");
-    CHECK(ExtractIssueKey("lowercase-1") == "");      // prefix must be upper/digit/underscore
+    CHECK(ExtractIssueKey("lowercase-1") == ""); // prefix must be upper/digit/underscore
     CHECK(ExtractIssueKey("") == "");
-    CHECK(ExtractIssueKey("PROJ-") == "");            // suffix must be non-empty digits
-    CHECK(ExtractIssueKey("PROJ-1a") == "");          // suffix must be all digits
+    CHECK(ExtractIssueKey("PROJ-") == "");   // suffix must be non-empty digits
+    CHECK(ExtractIssueKey("PROJ-1a") == ""); // suffix must be all digits
 }
 
 TEST_CASE("SplitCommaSeparatedValues: tokeniser") {
@@ -421,9 +544,7 @@ TEST_CASE("ResolveDisplayValueForSubmittedSelection: label resolution") {
     TrackerField f;
     f.AllowedValueOptions.push_back(MakeOption("10", "Bug"));
 
-    SUBCASE("value id resolves to display label") {
-        CHECK(ResolveDisplayValueForSubmittedSelection(f, "10") == "Bug");
-    }
+    SUBCASE("value id resolves to display label") { CHECK(ResolveDisplayValueForSubmittedSelection(f, "10") == "Bug"); }
 
     SUBCASE("unknown value passes through unchanged") {
         CHECK(ResolveDisplayValueForSubmittedSelection(f, "unknown") == "unknown");
