@@ -129,15 +129,19 @@ class CodeSyntaxColoringScenario : public IScenario {
         ImGui::SetNextWindowSize(
             ImVec2(static_cast<float>(captureSize_.Width), static_cast<float>(captureSize_.Height)),
             ImGuiCond_Always);
+        // Fully opaque + raised above the dockspace every frame — otherwise the
+        // main UI's full-viewport dockspace draws over this window and the
+        // screenshot captures the app chrome instead of the code blocks.
+        ImGui::SetNextWindowBgAlpha(1.0f);
+        ImGui::SetNextWindowFocus();
         ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                                 ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus;
+                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav;
         if (ImGui::Begin("##scenario_code_syntax_coloring", nullptr, flags)) {
             const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
             for (const LangSample& s : Samples()) {
                 ImGui::TextDisabled("%s", smatchet::code_color::CanonicalName(s.lang));
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-                ImGui::BeginChild(s.tag[0] ? s.tag : "plain", ImVec2(-FLT_MIN, 92.0f), true);
+                ImGui::BeginChild(s.tag[0] ? s.tag : "plain", ImVec2(-FLT_MIN, 132.0f), true);
                 if (fonts.Mono)
                     ImGui::PushFont(fonts.Mono);
                 smatchet::code_color::DrawColoredCodeBlock(s.code, s.lang, s.tag);
