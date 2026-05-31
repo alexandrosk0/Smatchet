@@ -280,11 +280,25 @@ scan_narrowing() {
             --checks='-*,cppcoreguidelines-narrowing-conversions' \
             --quiet "$f" 2>/dev/null || true)"
         # clang-tidy lines: <file>:<line>:<col>: warning: ... [cppcoreguidelines-narrowing-conversions]
-        printf '%s\n' "$out" | grep -E 'narrowing-conversions\]$' | while IFS= read -r w; do
-            local loc; loc="$(printf '%s' "$w" | cut -d: -f1-2)"
+        # `grep || true`: a file with no narrowing match must NOT make this pipe
+        # exit non-zero — under the caller's `set -e -o pipefail` that would abort
+        # the whole strict scan at the first clean TU (false PASS: most TUs unscanned).
+        { printf '%s\n' "$out" | grep -E 'narrowing-conversions\]$' || true; } | while IFS= read -r w; do
+            # Greedy path match so a Windows drive-letter colon (C:\…) is not
+            # truncated the way `cut -d:` would; then backslash->slash and strip to
+            # a repo-relative Source/… path so the triple basename + hash match the
+            # line-rule shape (and stay path-portable across head/base).
+            local loc; loc="$(printf '%s' "$w" | sed -E 's@^(.*):([0-9]+):[0-9]+: warning:.*@\1:\2@; s@\\@/@g; s@^.*/(Source/)@\1@')"
+            # First-party strict sources only: drop anything that did not normalise
+            # under Source/ (FetchContent / system headers) and any vendored
+            # ThirdParty header — e.g. stb_image.h compiled into a strict TU via
+            # STB_IMAGE_IMPLEMENTATION is not first-party narrowing debt.
+            case "$loc" in Source/*) ;; *) continue ;; esac
+            case "$loc" in *ThirdParty*) continue ;; esac
             printf 'narrowing-conversions\t%s\t%s\n' "$loc" "$w"
         done
     done
+    return 0
 }
 
 # Produce the full strict-zone violator triple-set for a working tree.
@@ -327,6 +341,26 @@ compute_strict_triples() {
     done | sort -u
 }
 
+# First-party C++ violations for the always-on (absolute) rules. `no-raw-new` and
+# `deviation-overdue` are enforced at 0 across ALL first-party C++ — not just the
+# strict zone — over the comment_audit.py SWEEP_ROOTS (Source/Core, Source/Plugins,
+# Source/Standalone; ThirdParty + tests excluded). Emits `<rule>\t<path>:<line>`.
+# Exemption markers (// C-ABI handle / // custom-deleter / // pimpl) and
+# SMATCHET_DEVIATION(rule=...) still suppress — that handling lives in scan_file_rules.
+compute_wide_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
+            2>/dev/null \
+        | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_file_rules "$f"; done \
+        | awk -F'\t' '$1=="no-raw-new" || $1=="deviation-overdue" { print $1"\t"$2 }'
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Modes
 # ---------------------------------------------------------------------------
@@ -344,9 +378,10 @@ case "${1:-}" in
     --scan-file)   MODE=scanfile; ARG="${2:-}" ;;
     --scan-file=*) MODE=scanfile; ARG="${1#--scan-file=}" ;;
     --full)        MODE=full ;;
+    --scan-wide)   MODE=scanwide ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--scan-file[=]<f>|--full|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--scan-file[=]<f>|--full|--scan-wide|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -378,6 +413,12 @@ case "$MODE" in
     compute_strict_triples | sed 's/^/  /'
     n=$(compute_strict_triples | wc -l)
     echo "strict-zone violations (grandfather candidates): $n"
+    ;;
+
+  scanwide)
+    # First-party-wide no-raw-new / deviation-overdue set (debug + bats harness).
+    # `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_wide_violations
     ;;
 
   catalog)
@@ -502,6 +543,27 @@ case "$MODE" in
         echo "  Delete the noise, or add SMATCHET_DEVIATION(rule=<comment-id>; reason=...; owner=...; revisit=...) above it."
     else
         echo "[test-lint-rules] PASS — no new comment-noise vs $BASE"
+    fi
+
+    # --- first-party-wide absolute rules (no-raw-new, deviation-overdue) ---
+    # Enforced at 0 across ALL first-party C++ (Source/Core, Source/Plugins,
+    # Source/Standalone — the comment_audit.py SWEEP_ROOTS), not just the strict
+    # zone: every raw `new` must use make_unique or carry an exemption marker, and
+    # no SMATCHET_DEVIATION may sit past its revisit= date, ANYWHERE. Absolute (no
+    # grandfathering) — the tree is clean today, so any hit is a regression. The
+    # other two grep rules stay strict-only: both have legitimate first-party uses
+    # outside the strict zone (no-printf-stderr → Standalone CLI stdout; define-imgui
+    # → the ImGui localization-alias macro in Ui).
+    wide_out="$(compute_wide_violations)"
+    if [ -n "$wide_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: first-party no-raw-new / deviation-overdue (enforced everywhere, not just the strict zone):"
+        printf '%s\n' "$wide_out" | sed 's/^/  /'
+        echo "  Use std::unique_ptr + make_unique (or an exemption marker: // C-ABI handle / // custom-deleter / // pimpl),"
+        echo "  revisit the overdue SMATCHET_DEVIATION, or add SMATCHET_DEVIATION(rule=no-raw-new; reason=...; owner=...; revisit=...) above the line."
+    else
+        echo "[test-lint-rules] PASS — no first-party no-raw-new / deviation-overdue (whole tree)"
     fi
 
     # --- function-size rules (repo-wide, delta-gated; decompose-top-20-monoliths Slice 0) ---

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Adversarial Code Review"
+  short_description: "Review diffs and PRs for real, actionable bugs."
+  default_prompt: "Use adversarial-code-review to review this diff or PR for real bugs."

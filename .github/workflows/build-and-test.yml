@@ -436,3 +436,54 @@ jobs:
             exit 1
           fi
           echo "high-integrity baseline in sync"
+
+  high-integrity-narrowing:
+    name: High-integrity narrowing (clang)
+    # develop post-merge only: cppcoreguidelines-narrowing-conversions needs a
+    # *clang* compile-DB with the PCH disabled — clang-tidy can't load the project
+    # PCH (cmake_pch.cxx.pch) and clang-cl targets the MSVC ABI, so this is
+    # Windows-only. Mirrors high-integrity-baseline-drift: develop-push gated,
+    # read-only, fails forward post-merge rather than blocking every PR on a clang
+    # configure. See docs/plans/active/high-integrity-cpp-enforcement.md § Deviations.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure ninja-iter-clang (PCH-free, compile-DB only)
+        # No build: clang-tidy parses each strict TU straight from compile_commands.json.
+        # PCH disabled so there is no unbuilt cmake_pch.cxx.pch to load. Whisper off
+        # (not in the strict zone; skips a large FetchContent pull).
+        run: cmake --preset ninja-iter-clang -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON -DSMATCHET_WITH_WHISPER=OFF
+
+      - name: Verify clang toolchain + compile-DB present
+        # Fail CLOSED: a missing clang-tidy / db would make scan_narrowing warn-skip
+        # and the gate would pass without checking anything (silent false-clean).
+        shell: bash
+        run: |
+          command -v clang-tidy >/dev/null 2>&1 || { echo "::error::clang-tidy not on PATH"; exit 1; }
+          test -f build/ninja-iter-clang/compile_commands.json || { echo "::error::clang compile_commands.json missing"; exit 1; }
+
+      - name: Enforce zero first-party strict-zone narrowing
+        # --catalog (not --full): runs the per-TU clang-tidy sweep ONCE. --full
+        # computes the triple set twice (display + count) — a needless second
+        # serial clang-tidy pass over the whole strict zone.
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$(SMATCHET_LINT_NARROWING=1 bash agents/scripts/project/test-lint-rules.sh --catalog)"
+          printf '%s\n' "$out"
+          n="$(printf '%s\n' "$out" | grep -oE 'narrowing-conversions \([0-9]+ entries\)' | grep -oE '[0-9]+' | head -1)"
+          if [ "${n:-1}" != "0" ]; then
+            echo "::error::first-party strict-zone narrowing-conversions found (${n:-unknown}) — fix the cast (static_cast<std::ptrdiff_t> / std::next); do not grandfather:"
+            printf '%s\n' "$out" | sed -n '/narrowing-conversions (/,/^## /p'
+            exit 1
+          fi
+          echo "strict-zone narrowing-conversions: clean (0 first-party)"
