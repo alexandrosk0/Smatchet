@@ -59,6 +59,8 @@ add_executable(SmatchetTests
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp
+    Core/IconCatalog.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetIconCatalog.cpp"
     Core/SingleClickEditConfig.test.cpp
     Core/AiSseParser.test.cpp
     # autonomous-debugging-no-creds § Slice 4 — verifies the StubAiClient

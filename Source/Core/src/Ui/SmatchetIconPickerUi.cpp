@@ -1,45 +1,17 @@
-// Font-Awesome icon picker + full FA6 catalog for the customizable toolbar.
+// Searchable Font-Awesome icon picker modal for the customizable toolbar. The catalog
+// data + name->glyph lookup live in the ImGui-free SmatchetIconCatalog.cpp; this TU only
+// renders the grid (virtualized with ImGuiListClipper) over that shared catalog.
 
 #include "SmatchetIconPickerUi.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <unordered_map>
+#include <string>
 #include <vector>
 
-#include "IconsFontAwesome6.h"
 #include "SmatchetImGuiFonts.h"
 #include "imgui.h"
-
-namespace {
-
-// Full Font-Awesome 6 catalog (name slug + glyph), generated from the FA header by
-// scripts/dev/gen-fa-catalog.py. Backs both the name->glyph lookup and the picker grid.
-const std::vector<SmatchetToolbarIconEntry>& Catalog() {
-    static const std::vector<SmatchetToolbarIconEntry> kCatalog = {
-#include "IconsFontAwesome6_Catalog.inl"
-    };
-    return kCatalog;
-}
-
-}  // namespace
-
-const std::vector<SmatchetToolbarIconEntry>& SmatchetToolbarIconCatalog() { return Catalog(); }
-
-std::string SmatchetToolbarIconGlyph(const std::string& name) {
-    if (name.empty()) {
-        return std::string();
-    }
-    static std::unordered_map<std::string, std::string> index;
-    if (index.empty()) {
-        for (const SmatchetToolbarIconEntry& e : Catalog()) {
-            index[e.Name] = e.Glyph;
-        }
-    }
-    const std::unordered_map<std::string, std::string>::const_iterator it = index.find(name);
-    return it == index.end() ? std::string() : it->second;
-}
 
 void SmatchetIconPickerUi::Open() { requestOpen_ = true; }
 
@@ -65,7 +37,7 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
         // Build the visible list once per frame, then draw it with ImGuiListClipper so only
         // on-screen rows cost time. Slugs are stored lowercase, so a lowercased search box
         // matches by plain substring. About 1400 glyphs total — UX Pillar 1, 6.94 ms budget.
-        const std::vector<SmatchetToolbarIconEntry>& catalog = Catalog();
+        const std::vector<SmatchetToolbarIconEntry>& catalog = SmatchetToolbarIconCatalog();
         std::vector<int> matches;
         matches.reserve(catalog.size());
         for (int i = 0; i < static_cast<int>(catalog.size()); ++i) {
