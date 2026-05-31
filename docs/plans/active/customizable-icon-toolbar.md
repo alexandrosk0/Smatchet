@@ -225,6 +225,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 
 - `2aa35ea` · Slice 1 — config data model (`ToolbarConfig.h/.cpp`) + persistence (`TrackerConfig.Toolbar`, `ViewWorkspaceState.ToolbarAppend`) + 8 doctest cases.
 - `91b08cc` · Slice 2/3 — icon catalog + `SmatchetIconPickerUi`, `SmatchetToolbarUi` (render under menu via `BeginViewportSideBar(Up)`, command/Lua/`ui.*` dispatch, right-click menu, editor with drag-drop reorder + command/icon pickers + `ConfigManager::Save` write-through), `SmatchetUI` integration, View-menu toggle, `SmatchetLuaTests` link fix.
+- `feat/full-fa-icon-catalog` · Slice 4 — replaced the curated ~50-icon catalog with the full Font-Awesome 6 set: `scripts/dev/gen-fa-catalog.py` parses `IconsFontAwesome6.h` and emits the checked-in `IconsFontAwesome6_Catalog.inl` (1402 `{slug, ICON_FA_*}` rows); `SmatchetIconPickerUi` `#include`s it for both the `SmatchetToolbarIconGlyph` lookup and the picker grid, which is now virtualized with `ImGuiListClipper` (UX Pillar 1 — the prior grid had no clipper).
 
 ## Deviations from plan
 
@@ -234,7 +235,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 - **`ui.*` as toolbar-layer pseudo-actions** (not registered `BuiltinCommands`) — toolbar intercepts `ui.command_palette` (reuses existing `g_ui.requestCommandPaletteOpen`), `ui.settings` (`cfg.ShowPreferencesWindow`), `ui.toolbar_customize` (own editor). Avoids strict-zone Commands→UI coupling. `ui.view_create` dropped from defaults.
 - **Per-button right-click context menu deferred** — only empty-bar right-click (Customize / Hide); edit/move/delete live in the editor. (backlog)
 - **Editor per-tracker append scope selector deferred** — editor edits the global toolbar only; per-tracker `ToolbarAppend` still renders (separator-joined) when present in config. (backlog)
-- **Curated ~50-icon catalog** instead of generated 2500-glyph `.inl` + clipper — `SmatchetToolbarIconGlyph(name)` lookup; no `gen-fa-catalog.py` shipped. (backlog)
+- ~~**Curated ~50-icon catalog** instead of generated 2500-glyph `.inl` + clipper — `SmatchetToolbarIconGlyph(name)` lookup; no `gen-fa-catalog.py` shipped. (backlog)~~ — **resolved (Slice 4)**: `gen-fa-catalog.py` ships, `IconsFontAwesome6_Catalog.inl` holds the full FA6 set (1402 glyphs), picker grid clipped with `ImGuiListClipper`.
 - **`imgui_internal.h`** required for `BeginViewportSideBar` (matches `SmatchetStatusBarUi.cpp`).
 
 ## Verification (actual)
