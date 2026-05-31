@@ -28,12 +28,15 @@ std::string SmatchetToolbarIconGlyph(const std::string& name) {
     if (name.empty()) {
         return std::string();
     }
-    static std::unordered_map<std::string, std::string> index;
-    if (index.empty()) {
+    // Magic-static: the map is built exactly once, thread-safe under C++11+ static-init
+    // rules, so concurrent callers never observe a half-filled index.
+    static const std::unordered_map<std::string, std::string> index = []() {
+        std::unordered_map<std::string, std::string> m;
         for (const SmatchetToolbarIconEntry& e : Catalog()) {
-            index[e.Name] = e.Glyph;
+            m[e.Name] = e.Glyph;
         }
-    }
+        return m;
+    }();
     const std::unordered_map<std::string, std::string>::const_iterator it = index.find(name);
     return it == index.end() ? std::string() : it->second;
 }

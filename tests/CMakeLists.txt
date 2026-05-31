@@ -328,6 +328,9 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit"
+    # IconCatalog.test.cpp links SmatchetIconCatalog.cpp, which includes the FA6
+    # header + generated catalog (parity with the production SmatchetCoreInterface).
+    "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/IconsFontAwesome6"
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp"
     "${CMAKE_SOURCE_DIR}/Source/Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"
