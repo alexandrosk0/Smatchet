@@ -444,7 +444,7 @@ jobs:
     # PCH (cmake_pch.cxx.pch) and clang-cl targets the MSVC ABI, so this is
     # Windows-only. Mirrors high-integrity-baseline-drift: develop-push gated,
     # read-only, fails forward post-merge rather than blocking every PR on a clang
-    # configure. See docs/plans/active/high-integrity-cpp-enforcement.md § Deviations.
+    # configure. See docs/plans/shipped/high-integrity-cpp-enforcement.md § Deviations.
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: windows-2022
     timeout-minutes: 30
