@@ -1,5 +1,6 @@
 ---
 name: adversarial-code-review
+version: 1
 description: Adversarial code review of a diff or PR to surface real bugs the author would actually want to fix, with a high bar and no theater. Use when the user asks to "review this", "review the diff", "review my changes", "review this PR", "any bugs in this?", "adversarial review", "tear this apart", "code review", or similar. Also use proactively before opening a PR or after a substantial set of changes.
 ---
 
