@@ -240,6 +240,71 @@ std::string UploadScreenshotAsset(const std::string& baseUrl, const std::string&
     return "";
 }
 
+// Upload a minidump as a GitHub Release asset (binaries off the git tree).
+// Ensures a `crash-dumps` prerelease exists, then uploads the .dmp. Returns the
+// browser download URL, or "" on any failure. cloud + Enterprise both work — the
+// upload host comes from the release JSON's `upload_url`.
+std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string& pat, const std::string& owner,
+                                   const std::string& repo, const std::string& dumpPath, const std::string& dumpName) {
+    std::vector<unsigned char> bytes;
+    if (!ReadFileBytes(dumpPath, bytes)) {
+        LOG_WARN("BugReport: cannot read crash dump for upload: %s", dumpPath.c_str());
+        return "";
+    }
+    const cpr::Header headers = BugReportGitHubHeaders(pat);
+    const std::string relBase = baseUrl + "/repos/" + owner + "/" + repo + "/releases";
+
+    // Ensure the crash-dumps release exists; capture its upload_url.
+    std::string uploadUrl;
+    {
+        const cpr::Response existing = TrackerGetLogged("BugReport", relBase + "/tags/crash-dumps", headers);
+        if (existing.status_code == 200) {
+            try {
+                uploadUrl = nlohmann::json::parse(existing.text).value("upload_url", std::string());
+            } catch (const std::exception&) {
+            }
+        } else if (existing.status_code == 404) {
+            nlohmann::json create = nlohmann::json::object();
+            create["tag_name"] = "crash-dumps";
+            create["name"] = "Crash dumps";
+            create["body"] = "Minidumps attached automatically by the Smatchet crash reporter.";
+            create["prerelease"] = true;
+            const cpr::Response made = TrackerPostLogged("BugReport", relBase, headers, create.dump());
+            if (made.status_code == 201) {
+                try {
+                    uploadUrl = nlohmann::json::parse(made.text).value("upload_url", std::string());
+                } catch (const std::exception&) {
+                }
+            } else {
+                LOG_WARN("BugReport: create crash-dumps release HTTP %ld", made.status_code);
+            }
+        }
+    }
+    if (uploadUrl.empty()) {
+        return "";
+    }
+    // upload_url is a URI template ".../assets{?name,label}" — strip the template + add name.
+    const std::size_t brace = uploadUrl.find('{');
+    if (brace != std::string::npos) {
+        uploadUrl = uploadUrl.substr(0, brace);
+    }
+    uploadUrl += "?name=" + UrlEncode(dumpName); // encode spaces / specials in the filename
+
+    cpr::Header up = headers;
+    up["Content-Type"] = "application/octet-stream";
+    const std::string bin(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    const cpr::Response resp = TrackerPostLogged("BugReport", uploadUrl, up, bin);
+    if (resp.status_code != 201 && resp.status_code != 200) {
+        LOG_WARN("BugReport: crash-dump asset upload HTTP %ld", resp.status_code);
+        return "";
+    }
+    try {
+        return nlohmann::json::parse(resp.text).value("browser_download_url", std::string());
+    } catch (const std::exception&) {
+        return "";
+    }
+}
+
 std::string FirstLine(const std::string& s) {
     const std::size_t nl = s.find('\n');
     return nl == std::string::npos ? s : s.substr(0, nl);
@@ -269,7 +334,20 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
         }
     }
 
-    const nlohmann::json payload = BuildRelayRequest(title, body, screenshotBase64, opts.Censored);
+    // Phase-2 crash path. The relay uploads the minidump server-side as a Release asset.
+    std::string dumpBase64, dumpName;
+    if (!opts.DumpAbsPath.empty()) {
+        std::vector<unsigned char> bytes;
+        if (ReadFileBytes(opts.DumpAbsPath, bytes)) {
+            dumpBase64 = Base64EncodeBytes(bytes);
+            dumpName = fs::path(opts.DumpAbsPath).filename().string();
+        } else {
+            LOG_WARN("BugReport: cannot read crash dump for relay: %s", opts.DumpAbsPath.c_str());
+        }
+    }
+
+    const nlohmann::json payload =
+        BuildRelayRequest(title, body, screenshotBase64, opts.Censored, dumpBase64, dumpName);
 
     cpr::Header headers{{"Content-Type", "application/json"}, {"User-Agent", "Smatchet-BugReport"}};
     if (!target.RelayKey.empty()) {
@@ -409,8 +487,18 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
         }
     }
 
+    // Phase-2 crash path. Upload the minidump as a Release asset and link it in the body.
+    std::string dumpMarkdown;
+    if (!opts.DumpAbsPath.empty()) {
+        const std::string dumpName = fs::path(opts.DumpAbsPath).filename().string();
+        const std::string url = UploadCrashDumpRelease(target.BaseUrl, target.Pat, target.AssetsOwner,
+                                                       target.AssetsRepo, opts.DumpAbsPath, dumpName);
+        dumpMarkdown = url.empty() ? ("_Crash minidump at `" + opts.DumpAbsPath + "` (upload failed)._")
+                                   : ("[Crash minidump](" + url + ")");
+    }
+
     // WYSIWYG: when the user edited the egress preview, that text IS the body; we
-    // still append the uploaded-screenshot markdown so the image renders.
+    // still append the uploaded-screenshot + minidump markdown so they render.
     std::string body;
     if (!opts.BodyOverride.empty()) {
         body = opts.BodyOverride;
@@ -419,6 +507,9 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
         }
     } else {
         body = BuildMarkdownBody(opts, bundle, screenshotMarkdown);
+    }
+    if (!dumpMarkdown.empty()) {
+        body += "\n\n" + dumpMarkdown;
     }
 
     IssueDraft draft;

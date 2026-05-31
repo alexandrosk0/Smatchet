@@ -18,7 +18,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -317,6 +319,37 @@ void RegisterDebugCommands(CommandRegistry& reg, AppController& app) {
             PString("path", "Output file path (PNG if extension is .png, PPM otherwise).", /*required*/ true),
         };
         c.Idempotent = false;
+        reg.Register(std::move(c));
+    }
+
+    {
+        // debug.crash — deliberately crash the process to validate the phase-2 crash
+        // reporter. Next launch should open a pre-filled bug report. Destructive, so
+        // it needs --yes. kind selects segv null-deref, abort, or throw.
+        Command c =
+            MakeCommand("debug.crash", "Deliberately crash the process (tests the crash reporter). Requires --yes.",
+                        [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
+                            const std::string kind = args.value("kind", std::string("segv"));
+                            if (ctx.DryRun) {
+                                return CommandResult::Success({{"wouldCrash", kind}});
+                            }
+                            LOG_ERROR("debug.crash: intentionally crashing the process (kind=%s)", kind.c_str());
+                            if (kind == "abort") {
+                                std::abort();
+                            } else if (kind == "throw") {
+                                throw std::runtime_error("debug.crash: intentional unhandled exception");
+                            }
+                            // Default: null dereference -> SIGSEGV / access violation.
+                            volatile int* p = nullptr;
+                            *p = 42;
+                            return CommandResult::Success({{"crashed", false}}); // unreachable
+                        });
+        c.Params = {
+            PString("kind", "Crash kind: segv (default) | abort | throw."),
+        };
+        c.Destructive = true;
+        c.Idempotent = false;
+        c.DryRunSupported = true;
         reg.Register(std::move(c));
     }
 }
