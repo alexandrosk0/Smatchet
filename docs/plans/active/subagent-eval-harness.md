@@ -18,9 +18,9 @@ Prompted by the video *"The maturity phases of running evals"* (Phil Hetzel, Bra
 
 ## Approach
 
-Mirror the perf pipeline one level up the stack — agent **decision quality** instead of frame latency — reusing the perf-gate shape verbatim wherever possible. Three artifacts:
+Mirror the perf pipeline one level up the stack — agent **decision quality** instead of frame latency — reusing the perf-gate shape verbatim wherever possible. Three core artifacts (Phase 1):
 
-1. **Frozen golden case sets** — `tests/agent-eval/<agent>/*.json`. Each case = `{ input, referenceOutcome, dimensions[] }` (input = a frozen diff / bug repro / scenario; reference = the finding/diagnosis that actually mattered; dimensions = the rubric axes to score). Seeded from **real prior runs** harvested out of session archives + transcripts.
+1. **Frozen golden case sets** — `tests/agent-eval/<agent>/*.json`. Each case = `{ input, referenceOutcome, dimensions[] }` (input = a frozen diff / bug repro / scenario; reference = the finding/diagnosis that actually mattered; dimensions = the rubric axes to score). Seeded from **real prior runs** — hand-picked in Phase 1, auto-harvested in Phase 2 (see § Approach Phasing).
 2. **Runner** — `scripts/dev/agent-eval-run.sh <agent> <case>`: invokes ONE agent headlessly (`claude -p` print mode / Agent SDK), runs `N` trials, captures the agent's final output to a result JSON. This is the only harness-coupled piece — a thin adapter, swappable per harness exactly like `scripts/setup-harness.sh`.
 3. **Scorer** — `scripts/dev/agent-eval-score.py`: LLM-as-judge with a calibrated rubric **plus** code-based checks (e.g. "did the finding cite the correct `file:line`?"), emits per-dimension scores, a markdown delta table, and exits non-zero on a threshold breach vs `docs/agent-eval/scoring-policy.json`. Pure Python stdlib, harness-agnostic — a near-direct clone of `perf-compare.py`.
 
@@ -88,7 +88,7 @@ Dev-process tooling only — no product-runtime code. All four N/A.
 
 - **RISK — non-determinism**: LLM agents vary run-to-run → flaky gate. *Mitigation*: N-trial averaging + tolerance thresholds + a min-trials floor (mirror `min_baseline_calls`); gate starts as WARN, graduates to BLOCK only after calibration.
 - **RISK — token cost**: each eval run spends real tokens (spawns a live agent). *Mitigation*: tiny case sets (5-10), manual / PR-scoped trigger only (NOT every push), 3 agents not 30.
-- **RISK — judge drift**: LLM-as-judge mis-scores. *Mitigation*: periodic human calibration (the video's Phase-3 step); keep code-based checks wherever objective (`file:line` match, severity enum, finding count).
+- **RISK — judge drift**: LLM-as-judge mis-scores. *Mitigation*: periodic human calibration (the video's refine-evals loop — not our deferred milestone Phase 3; calibration runs inside Phase 1); keep code-based checks wherever objective (`file:line` match, severity enum, finding count).
 - **RISK — harness coupling**: runner needs `claude -p`. *Mitigation*: isolate it in the `.sh` adapter; case format + scorer stay portable per § Harness adapter — a Codex/Cursor runner is a drop-in sibling.
 - **SECURITY — secret / PII leakage (Phase 2)**: session transcripts + archives can carry tokens, API keys, emails, Jira / p4 content. *Mitigation*: mandatory redaction pass in the harvester before any candidate is written; candidates stage in `_candidates/` and enter the committed set only through human PR review; run `security-review` on the harvester before it ships.
 - **RISK — curation burden / candidate quality (Phase 2)**: auto-harvested traces are noisy. *Mitigation*: harvester emits *proposals* only — a human attaches `referenceOutcome` and promotes; a per-run candidate cap keeps review tractable.
