@@ -1,0 +1,4 @@
+interface:
+  display_name: "But For Real"
+  short_description: "Run a skeptical proof pass before declaring work done."
+  default_prompt: "Use but-for-real to audit your latest changes before finalizing."
