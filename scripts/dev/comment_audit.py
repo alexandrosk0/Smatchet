@@ -11,7 +11,7 @@ Usage:
   comment_audit.py --json out.json # machine report
   comment_audit.py --diff <ref>    # Phase-4 regrowth mode: emit noise-bucket violation tuples
                                     #   rule<TAB>basename:line<TAB>snippet  (added lines vs <ref>)
-See docs/plans/active/reduce-source-comment-bloat.md.
+See docs/plans/shipped/reduce-source-comment-bloat.md.
 """
 
 import argparse
