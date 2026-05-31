@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-lint-bash.sh — shellcheck gate for scripts/dev/*.sh.
+# test-lint-bash.sh — shellcheck gate for scripts/dev/ + agents/scripts/{core,project}.
 #
 # Per `docs/reference/agentic-infrastructure-2026-05-23.md` punch-list item 5
 # (bash-lint sweep). Encodes the failing-rule policy from the eval doc:
@@ -48,10 +48,10 @@ fi
 # sees the residue without the gate going red over style-level findings.
 FAIL_RULES="SC2086,SC2046,SC2155"
 
-# Targets — every shell script the eval doc audited. The dev/ glob expands to
-# the same set the eval surveyed; expand to scripts/ root if more glue lands
-# outside dev/.
-TARGETS=(scripts/dev/*.sh)
+# Targets — build/infra scripts in scripts/dev/ plus the agentic scripts that
+# #609 relocated to agents/scripts/{core,project}/ (previously unscanned). Flat
+# globs (non-recursive), matching the historical scripts/dev/*.sh behaviour.
+TARGETS=(scripts/dev/*.sh agents/scripts/core/*.sh agents/scripts/project/*.sh)
 
 # Phase 1 — strict pass on the fail-set. Non-zero exit means real findings.
 strict_out=$(shellcheck --include="$FAIL_RULES" --severity=warning "${TARGETS[@]}" 2>&1 || true)
