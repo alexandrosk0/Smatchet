@@ -104,9 +104,15 @@ BASH_BIN = _resolve_bin(
     r"C:\Program Files (x86)\Git\bin\bash.exe",
     r"C:\msys64\usr\bin\bash.exe",
 )
-# If shutil.which picked up WSL bash, override with the Git Bash path even
-# though the resolution looked successful — WSL bash isn't usable here.
-if BASH_BIN.lower().endswith(r"system32\bash.exe"):
+# If shutil.which picked up the WSL bash launcher, override with the Git Bash
+# path even though the resolution looked successful — WSL bash isn't usable here
+# (it mangles Windows C:\ paths into C:DevSmatchet... and has its own /bin/bash).
+# The launcher ships from two locations: %SystemRoot%\System32\bash.exe and the
+# newer WindowsApps store shim (...\Microsoft\WindowsApps\bash.exe) — catch both,
+# else a Scheduled-Task launch (minimal PATH, no Git\bin prepend) resolves the
+# store shim and every poll fails EXIT_127.
+_bash_lower = BASH_BIN.lower()
+if _bash_lower.endswith(r"system32\bash.exe") or "\\windowsapps\\" in _bash_lower:
     for candidate in (
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
