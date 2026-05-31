@@ -72,6 +72,254 @@ bool MergeProjectComponentsFromEndpoint(const TrackerConfig& /*cfg*/, const std:
     return mergedAny;
 }
 
+using IndexByIdMap = std::unordered_map<std::string, size_t>;
+
+// Project-agnostic enrichment: priority + status + issuetype options come from global endpoints, so
+// run them even without a projectKey. Without this the grid renders priority/status as text instead
+// of a combo dropdown until the user opens a project-scoped view.
+void EnrichGlobalCatalogFields(const std::string& base, const cpr::Header& headers, const IndexByIdMap& fieldIndexById,
+                               std::vector<TrackerField>& outFields) {
+    try {
+        const auto priorityFieldIt = fieldIndexById.find("priority");
+        if (priorityFieldIt != fieldIndexById.end()) {
+            auto priorityResp = TrackerGetLogged("JiraClient", base + "/rest/api/3/priority", headers);
+            if (priorityResp.status_code == 200) {
+                auto priorityJson = nlohmann::json::parse(priorityResp.text);
+                TrackerFieldCatalogPure::BuildSimpleCatalogOptions(priorityJson, outFields[priorityFieldIt->second]);
+            } else {
+                LOG_WARN("JiraClient: priority catalog enrichment failed. HTTP %d", priorityResp.status_code);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: priority catalog parse failed: %s", ex.what());
+    }
+
+    try {
+        const auto issueTypeFieldIt = fieldIndexById.find("issuetype");
+        if (issueTypeFieldIt != fieldIndexById.end()) {
+            auto issueTypeResp = TrackerGetLogged("JiraClient", base + "/rest/api/3/issuetype", headers);
+            if (issueTypeResp.status_code == 200) {
+                auto issueTypeJson = nlohmann::json::parse(issueTypeResp.text);
+                if (issueTypeJson.is_array()) {
+                    TrackerField& issueTypeField = outFields[issueTypeFieldIt->second];
+                    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(issueTypeJson, issueTypeField.AllowedValues,
+                                                                          issueTypeField.AllowedValueOptions);
+                    issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
+                }
+            } else {
+                LOG_WARN("JiraClient: issuetype catalog enrichment failed. HTTP %d", issueTypeResp.status_code);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: issuetype catalog parse failed: %s", ex.what());
+    }
+
+    try {
+        const auto statusFieldIt = fieldIndexById.find("status");
+        if (statusFieldIt != fieldIndexById.end()) {
+            auto statusResp = TrackerGetLogged("JiraClient", base + "/rest/api/3/status", headers);
+            if (statusResp.status_code == 200) {
+                auto statusJson = nlohmann::json::parse(statusResp.text);
+                TrackerFieldCatalogPure::BuildSimpleCatalogOptions(statusJson, outFields[statusFieldIt->second]);
+            } else {
+                LOG_WARN("JiraClient: status catalog enrichment failed. HTTP %d", statusResp.status_code);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: status catalog parse failed: %s", ex.what());
+    }
+}
+
+// Createmeta enrichment: per-issue-type required-field flags + allowedValues merge, plus the
+// authoritative project component endpoint (createmeta only returns create-screen components).
+void EnrichFromCreateMeta(const TrackerConfig& cfg, const std::string& projectKey, const std::string& base,
+                          const cpr::Header& headers, const IndexByIdMap& fieldIndexById,
+                          std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
+                          std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta,
+                          std::set<std::string>& outUniqueIssueTypes) {
+    const std::string metaUrl = base + "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(projectKey) +
+                                "&expand=projects.issuetypes.fields";
+    auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
+    if (metaResponse.status_code == 200) {
+        try {
+            auto metaJson = nlohmann::json::parse(metaResponse.text);
+            TrackerFieldCatalogPure::ApplyCreateMetaToCatalog(metaJson, projectKey, fieldIndexById, outFields,
+                                                              outComponents, outIssueTypeMeta, outUniqueIssueTypes);
+        } catch (const std::exception& ex) {
+            LOG_WARN("JiraClient: createmeta parse failed: %s", ex.what());
+        }
+    } else {
+        LOG_WARN("JiraClient: createmeta enrichment failed. HTTP %d", metaResponse.status_code);
+    }
+
+    try {
+        (void)MergeProjectComponentsFromEndpoint(cfg, projectKey, base, headers, outFields, outComponents);
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: project components enrichment failed: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("JiraClient: project components enrichment failed (unknown exception).");
+    }
+}
+
+// Issue type: createmeta often lists only one type (e.g. Epic). Prefer GET /project/{key} issueTypes
+// (full list + real ids for PUT). Fall back to the createmeta name-only set if both global enrichments
+// failed — the name-only fallback loses real IDs needed for PUT, so it is the last resort.
+void EnrichIssueTypeFromProject(const std::string& projectKey, const std::string& base, const cpr::Header& headers,
+                                const IndexByIdMap& fieldIndexById, std::vector<TrackerField>& outFields,
+                                const std::set<std::string>& uniqueIssueTypes) {
+    const auto issueTypeIt = fieldIndexById.find("issuetype");
+    if (issueTypeIt == fieldIndexById.end()) {
+        return;
+    }
+    TrackerField& issueTypeField = outFields[issueTypeIt->second];
+    bool filledFromProject = false;
+    try {
+        const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(projectKey);
+        auto projectResp = TrackerGetLogged("JiraClient", projectUrl, headers);
+        if (projectResp.status_code == 200) {
+            auto projectJson = nlohmann::json::parse(projectResp.text);
+            std::vector<TrackerFieldOption> opts;
+            if (TrackerFieldCatalogPure::BuildIssueTypeOptionsFromProjectJson(projectJson, opts)) {
+                issueTypeField.AllowedValueOptions = std::move(opts);
+                RefreshTrackerAllowedValuesFromOptions(issueTypeField);
+                issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
+                filledFromProject = true;
+            }
+        } else {
+            LOG_WARN("JiraClient: project fetch for issue types failed. HTTP %d", projectResp.status_code);
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: project issueTypes parse failed: %s", ex.what());
+    }
+
+    if (!filledFromProject && !uniqueIssueTypes.empty() && issueTypeField.AllowedValueOptions.empty()) {
+        issueTypeField.AllowedValues.assign(uniqueIssueTypes.begin(), uniqueIssueTypes.end());
+        std::sort(issueTypeField.AllowedValues.begin(), issueTypeField.AllowedValues.end());
+        issueTypeField.AllowedValueOptions.clear();
+        for (const auto& issueTypeName : issueTypeField.AllowedValues) {
+            TrackerFieldOption option;
+            option.Id = issueTypeName;
+            option.Value = issueTypeName;
+            issueTypeField.AllowedValueOptions.push_back(option);
+        }
+        issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
+    }
+}
+
+// Discover Jira Agile boards for the project, paging until isLast.
+std::vector<int> DiscoverSprintBoardIds(const std::string& projectKey, const std::string& base,
+                                        const cpr::Header& headers) {
+    std::vector<int> boardIds;
+    std::set<int> seenBoardIds;
+    const int kBoardsPerPage = 50;
+    const int kMaxBoardPages = 20;
+    for (int page = 0; page < kMaxBoardPages; ++page) {
+        const int startAt = page * kBoardsPerPage;
+        const std::string boardsUrl = base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(projectKey) +
+                                      "&maxResults=" + std::to_string(kBoardsPerPage) +
+                                      "&startAt=" + std::to_string(startAt);
+        auto boardsResp = TrackerGetLogged("JiraClient", boardsUrl, headers);
+        if (boardsResp.status_code != 200) {
+            LOG_WARN("JiraClient: sprint board discovery failed (HTTP %d).", boardsResp.status_code);
+            break;
+        }
+        auto boardsJson = nlohmann::json::parse(boardsResp.text);
+        if (!boardsJson.is_object() || !boardsJson.contains("values") || !boardsJson["values"].is_array()) {
+            LOG_WARN("JiraClient: sprint board discovery response missing values array.");
+            break;
+        }
+        if (TrackerFieldCatalogPure::ExtractSprintBoardIdsFromPage(boardsJson, seenBoardIds, boardIds)) {
+            break;
+        }
+    }
+    return boardIds;
+}
+
+// Enrich sprint custom fields with selectable sprint options (active/future) from Jira Agile.
+void EnrichSprintFields(const std::vector<std::string>& sprintFieldIds, const std::string& projectKey,
+                        const std::string& base, const cpr::Header& headers, const IndexByIdMap& fieldIndexById,
+                        std::vector<TrackerField>& outFields) {
+    if (sprintFieldIds.empty() || projectKey.empty()) {
+        return;
+    }
+    try {
+        const std::vector<int> boardIds = DiscoverSprintBoardIds(projectKey, base, headers);
+
+        std::vector<TrackerFieldOption> sprintOptions;
+        std::set<std::string> seenSprintIds;
+        for (int boardId : boardIds) {
+            const std::string sprintUrl = base + "/rest/agile/1.0/board/" + std::to_string(boardId) +
+                                          "/sprint?state=active,future&maxResults=100";
+            auto sprintResp = TrackerGetLogged("JiraClient", sprintUrl, headers);
+            if (sprintResp.status_code != 200) {
+                continue;
+            }
+            auto sprintJson = nlohmann::json::parse(sprintResp.text);
+            TrackerFieldCatalogPure::CollectSprintOptionsFromPage(sprintJson, seenSprintIds, sprintOptions);
+        }
+
+        if (sprintOptions.empty()) {
+            return;
+        }
+        std::sort(sprintOptions.begin(), sprintOptions.end(),
+                  [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
+        for (const auto& sprintFieldId : sprintFieldIds) {
+            const auto fit = fieldIndexById.find(sprintFieldId);
+            if (fit == fieldIndexById.end()) {
+                continue;
+            }
+            TrackerField& targetField = outFields[fit->second];
+            if (targetField.AllowedValueOptions.empty()) {
+                targetField.AllowedValueOptions = sprintOptions;
+            } else {
+                for (const auto& opt : sprintOptions) {
+                    MergeTrackerFieldOption(targetField.AllowedValueOptions, opt);
+                }
+                std::sort(targetField.AllowedValueOptions.begin(), targetField.AllowedValueOptions.end(),
+                          [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
+            }
+            RefreshTrackerAllowedValuesFromOptions(targetField);
+            targetField.Family = ClassifyTrackerFieldFamily(targetField);
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("JiraClient: sprint enrichment failed: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("JiraClient: sprint enrichment failed (unknown exception).");
+    }
+}
+
+// Fetch + parse the global /field list into the catalog, collecting sprint custom-field ids.
+bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers, std::vector<TrackerField>& outFields,
+                            std::vector<std::string>& outSprintFieldIds, std::string& outError) {
+    const std::string fieldsListUrl = base + "/rest/api/3/field";
+    auto fieldsResponse = TrackerGetLogged("JiraClient", fieldsListUrl, headers);
+    if (fieldsResponse.status_code != 200) {
+        outError = "Failed to fetch fields: HTTP " + std::to_string(fieldsResponse.status_code);
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+
+    try {
+        auto response = nlohmann::json::parse(fieldsResponse.text);
+        if (!response.is_array()) {
+            outError = "Unexpected /field response shape.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(fieldsResponse.text, 300).c_str());
+            return false;
+        }
+        for (const auto& field : response) {
+            TrackerField parsedField;
+            if (TrackerFieldCatalogPure::ParseFieldDefinition(field, parsedField, outSprintFieldIds)) {
+                outFields.push_back(std::move(parsedField));
+            }
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("Failed to parse /field response: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
@@ -135,81 +383,8 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
     const cpr::Header headers = BuildTrackerHeaders(cfg);
     std::vector<std::string> sprintFieldIds;
 
-    const std::string fieldsListUrl = base + "/rest/api/3/field";
-    auto fieldsResponse = TrackerGetLogged("JiraClient", fieldsListUrl, headers);
-    if (fieldsResponse.status_code != 200) {
-        outError = "Failed to fetch fields: HTTP " + std::to_string(fieldsResponse.status_code);
-        LOG_ERROR("JiraClient: %s", outError.c_str());
-        return false;
-    }
-
-    try {
-        auto response = nlohmann::json::parse(fieldsResponse.text);
-        if (!response.is_array()) {
-            outError = "Unexpected /field response shape.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(fieldsResponse.text, 300).c_str());
-            return false;
-        }
-
-        for (const auto& field : response) {
-            if (!field.contains("id") || !field.contains("name") || !field["id"].is_string() ||
-                !field["name"].is_string()) {
-                continue;
-            }
-
-            const std::string fieldId = field["id"].get<std::string>();
-
-            TrackerField TrackerField;
-            TrackerField.Id = fieldId;
-            TrackerField.Name = field["name"].get<std::string>();
-            TrackerField.Type = "unknown";
-            TrackerField.ReadOnly = field.value("isLocked", false);
-
-            if (field.contains("schema") && field["schema"].is_object()) {
-                const auto& schema = field["schema"];
-                if (schema.contains("type") && schema["type"].is_string()) {
-                    TrackerField.Type = schema["type"].get<std::string>();
-                }
-                TrackerField.SchemaSystem = (schema.contains("system") && schema["system"].is_string())
-                                                ? schema["system"].get<std::string>()
-                                                : std::string();
-                TrackerField.SchemaCustom = (schema.contains("custom") && schema["custom"].is_string())
-                                                ? schema["custom"].get<std::string>()
-                                                : std::string();
-
-                TrackerField.IsArray = (TrackerField.Type == "array");
-                if (TrackerField.IsArray && schema.contains("items")) {
-                    if (schema["items"].is_string()) {
-                        TrackerField.ItemsType = schema["items"].get<std::string>();
-                    } else if (schema["items"].is_object() && schema["items"].contains("type") &&
-                               schema["items"]["type"].is_string()) {
-                        TrackerField.ItemsType = schema["items"]["type"].get<std::string>();
-                    }
-                }
-                TrackerField.IsUserType =
-                    (TrackerField.Type == "user") || (TrackerField.IsArray && TrackerField.ItemsType == "user");
-                if (!TrackerField.SchemaCustom.empty() &&
-                    TrackerField.SchemaCustom.find("gh-sprint") != std::string::npos) {
-                    sprintFieldIds.push_back(fieldId);
-                }
-            }
-
-            TrackerField.IsCustom = (fieldId.find("customfield_") == 0);
-            TrackerField.Family = ClassifyTrackerFieldFamily(TrackerField);
-            try {
-                TrackerField.RawFieldDefinitionJson = field.dump(2);
-            } catch (const std::exception& ex) {
-                LOG_DEBUG("JiraClient: field definition dump failed field=%s err=%s", fieldId.c_str(), ex.what());
-                TrackerField.RawFieldDefinitionJson.clear();
-            } catch (...) {
-                LOG_DEBUG("JiraClient: field definition dump failed field=%s (unknown)", fieldId.c_str());
-                TrackerField.RawFieldDefinitionJson.clear();
-            }
-            outFields.push_back(std::move(TrackerField));
-        }
-    } catch (const std::exception& ex) {
-        outError = std::string("Failed to parse /field response: ") + ex.what();
-        LOG_ERROR("JiraClient: %s", outError.c_str());
+    // Phase 1: fetch + parse the global /field list.
+    if (!FetchAndParseFieldList(base, headers, outFields, sprintFieldIds, outError)) {
         return false;
     }
 
@@ -218,471 +393,22 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
         fieldIndexById[outFields[i].Id] = i;
     }
 
-    // Project-agnostic enrichment: priority + status options come from global endpoints, so
-    // run them even without a projectKey. Without this the grid renders priority/status as
-    // text instead of a combo dropdown until the user opens a project-scoped view.
-    try {
-        const auto priorityFieldIt = fieldIndexById.find("priority");
-        if (priorityFieldIt != fieldIndexById.end()) {
-            const std::string priorityCatalogUrl = base + "/rest/api/3/priority";
-            auto priorityResp = TrackerGetLogged("JiraClient", priorityCatalogUrl, headers);
-            if (priorityResp.status_code == 200) {
-                auto priorityJson = nlohmann::json::parse(priorityResp.text);
-                if (priorityJson.is_array()) {
-                    TrackerField& priorityField = outFields[priorityFieldIt->second];
-                    priorityField.AllowedValues.clear();
-                    priorityField.AllowedValueOptions.clear();
-                    std::set<std::string> seenIds;
-                    for (const auto& priorityObj : priorityJson) {
-                        if (!priorityObj.is_object()) {
-                            continue;
-                        }
-                        std::string priorityId;
-                        if (priorityObj.contains("id")) {
-                            if (priorityObj["id"].is_string()) {
-                                priorityId = priorityObj["id"].get<std::string>();
-                            } else if (priorityObj["id"].is_number_integer()) {
-                                priorityId = std::to_string(priorityObj["id"].get<long long>());
-                            } else if (priorityObj["id"].is_number_unsigned()) {
-                                priorityId = std::to_string(priorityObj["id"].get<unsigned long long>());
-                            }
-                        }
-                        const std::string priorityName = priorityObj.value("name", std::string());
-                        if (priorityId.empty() || priorityName.empty() || !seenIds.insert(priorityId).second) {
-                            continue;
-                        }
-                        priorityField.AllowedValues.push_back(priorityName);
-                        TrackerFieldOption option;
-                        option.Id = priorityId;
-                        option.Value = priorityName;
-                        try {
-                            option.PayloadJson = priorityObj.dump();
-                        } catch (...) {
-                            option.PayloadJson.clear();
-                        }
-                        priorityField.AllowedValueOptions.push_back(std::move(option));
-                    }
-                    priorityField.Family = ClassifyTrackerFieldFamily(priorityField);
-                }
-            } else {
-                LOG_WARN("JiraClient: priority catalog enrichment failed. HTTP %d", priorityResp.status_code);
-            }
-        }
-    } catch (const std::exception& ex) {
-        LOG_WARN("JiraClient: priority catalog parse failed: %s", ex.what());
-    }
-
-    try {
-        const auto issueTypeFieldIt = fieldIndexById.find("issuetype");
-        if (issueTypeFieldIt != fieldIndexById.end()) {
-            const std::string issueTypeCatalogUrl = base + "/rest/api/3/issuetype";
-            auto issueTypeResp = TrackerGetLogged("JiraClient", issueTypeCatalogUrl, headers);
-            if (issueTypeResp.status_code == 200) {
-                auto issueTypeJson = nlohmann::json::parse(issueTypeResp.text);
-                if (issueTypeJson.is_array()) {
-                    TrackerField& issueTypeField = outFields[issueTypeFieldIt->second];
-                    TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(issueTypeJson, issueTypeField.AllowedValues,
-                                                                          issueTypeField.AllowedValueOptions);
-                    issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
-                }
-            } else {
-                LOG_WARN("JiraClient: issuetype catalog enrichment failed. HTTP %d", issueTypeResp.status_code);
-            }
-        }
-    } catch (const std::exception& ex) {
-        LOG_WARN("JiraClient: issuetype catalog parse failed: %s", ex.what());
-    }
-
-    try {
-        const auto statusFieldIt = fieldIndexById.find("status");
-        if (statusFieldIt != fieldIndexById.end()) {
-            const std::string statusCatalogUrl = base + "/rest/api/3/status";
-            auto statusResp = TrackerGetLogged("JiraClient", statusCatalogUrl, headers);
-            if (statusResp.status_code == 200) {
-                auto statusJson = nlohmann::json::parse(statusResp.text);
-                if (statusJson.is_array()) {
-                    TrackerField& statusField = outFields[statusFieldIt->second];
-                    statusField.AllowedValues.clear();
-                    statusField.AllowedValueOptions.clear();
-                    std::set<std::string> seenIds;
-                    for (const auto& statusObj : statusJson) {
-                        if (!statusObj.is_object()) {
-                            continue;
-                        }
-                        std::string statusId;
-                        if (statusObj.contains("id")) {
-                            if (statusObj["id"].is_string()) {
-                                statusId = statusObj["id"].get<std::string>();
-                            } else if (statusObj["id"].is_number_integer()) {
-                                statusId = std::to_string(statusObj["id"].get<long long>());
-                            } else if (statusObj["id"].is_number_unsigned()) {
-                                statusId = std::to_string(statusObj["id"].get<unsigned long long>());
-                            }
-                        }
-                        const std::string statusName = statusObj.value("name", std::string());
-                        if (statusId.empty() || statusName.empty() || !seenIds.insert(statusId).second) {
-                            continue;
-                        }
-                        statusField.AllowedValues.push_back(statusName);
-                        TrackerFieldOption option;
-                        option.Id = statusId;
-                        option.Value = statusName;
-                        try {
-                            option.PayloadJson = statusObj.dump();
-                        } catch (...) {
-                            option.PayloadJson.clear();
-                        }
-                        statusField.AllowedValueOptions.push_back(std::move(option));
-                    }
-                    statusField.Family = ClassifyTrackerFieldFamily(statusField);
-                }
-            } else {
-                LOG_WARN("JiraClient: status catalog enrichment failed. HTTP %d", statusResp.status_code);
-            }
-        }
-    } catch (const std::exception& ex) {
-        LOG_WARN("JiraClient: status catalog parse failed: %s", ex.what());
-    }
+    // Phase 2: project-agnostic enrichment (priority / issuetype / status global catalogs).
+    EnrichGlobalCatalogFields(base, headers, fieldIndexById, outFields);
 
     if (projectKey.empty()) {
         LOG_INFO("JiraClient: skipping createmeta enrichment because project key is empty.");
         return true;
     }
 
-    const std::string metaUrl = base + "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(projectKey) +
-                                "&expand=projects.issuetypes.fields";
-    auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
+    // Phase 3: project-scoped enrichment (createmeta + components, project issue types, sprints).
     std::set<std::string> uniqueIssueTypes;
-    if (metaResponse.status_code == 200) {
-        try {
-            auto metaJson = nlohmann::json::parse(metaResponse.text);
-            std::unordered_map<std::string, std::size_t> issueTypeMetaIndexByKey;
-            const auto issueTypeMetaKey = [](const TrackerIssueTypeCreateMeta& m) -> std::string {
-                if (!m.IssueTypeId.empty()) {
-                    return m.ProjectKey + '\x1f' + m.IssueTypeId;
-                }
-                return m.ProjectKey + '\x1f' + m.IssueTypeName;
-            };
-            const auto upsertIssueTypeMeta = [&](TrackerIssueTypeCreateMeta entry) {
-                if (entry.IssueTypeId.empty() && entry.IssueTypeName.empty()) {
-                    return;
-                }
-                const std::string k = issueTypeMetaKey(entry);
-                const auto found = issueTypeMetaIndexByKey.find(k);
-                if (found == issueTypeMetaIndexByKey.end()) {
-                    issueTypeMetaIndexByKey[k] = outIssueTypeMeta.size();
-                    outIssueTypeMeta.push_back(std::move(entry));
-                    return;
-                }
-                TrackerIssueTypeCreateMeta& dst = outIssueTypeMeta[found->second];
-                dst.RequiredFieldIds.insert(entry.RequiredFieldIds.begin(), entry.RequiredFieldIds.end());
-                if (dst.IssueTypeName.empty() && !entry.IssueTypeName.empty()) {
-                    dst.IssueTypeName = entry.IssueTypeName;
-                }
-                if (dst.IssueTypeId.empty() && !entry.IssueTypeId.empty()) {
-                    dst.IssueTypeId = entry.IssueTypeId;
-                }
-                dst.IsSubtask = dst.IsSubtask || entry.IsSubtask;
-            };
+    EnrichFromCreateMeta(cfg, projectKey, base, headers, fieldIndexById, outFields, outComponents, outIssueTypeMeta,
+                         uniqueIssueTypes);
+    EnrichIssueTypeFromProject(projectKey, base, headers, fieldIndexById, outFields, uniqueIssueTypes);
+    EnrichSprintFields(sprintFieldIds, projectKey, base, headers, fieldIndexById, outFields);
 
-            if (metaJson.contains("projects") && metaJson["projects"].is_array()) {
-                std::set<std::string> uniqueComponentIds;
-                for (const auto& project : metaJson["projects"]) {
-                    std::string projectKeyForIssueType = project.value("key", projectKey);
-                    if (!project.contains("issuetypes") || !project["issuetypes"].is_array()) {
-                        continue;
-                    }
-
-                    for (const auto& issueType : project["issuetypes"]) {
-                        if (issueType.contains("name") && issueType["name"].is_string()) {
-                            uniqueIssueTypes.insert(issueType["name"].get<std::string>());
-                        }
-
-                        TrackerIssueTypeCreateMeta metaEntry;
-                        metaEntry.ProjectKey = projectKeyForIssueType;
-                        metaEntry.IsSubtask = issueType.value("subtask", false);
-                        if (issueType.contains("id")) {
-                            if (issueType["id"].is_string()) {
-                                metaEntry.IssueTypeId = issueType["id"].get<std::string>();
-                            } else if (issueType["id"].is_number_integer()) {
-                                metaEntry.IssueTypeId = std::to_string(issueType["id"].get<long long>());
-                            } else if (issueType["id"].is_number_unsigned()) {
-                                metaEntry.IssueTypeId = std::to_string(issueType["id"].get<unsigned long long>());
-                            }
-                        }
-                        metaEntry.IssueTypeName = issueType.value("name", std::string());
-
-                        if (!issueType.contains("fields") || !issueType["fields"].is_object()) {
-                            upsertIssueTypeMeta(std::move(metaEntry));
-                            continue;
-                        }
-
-                        // Pass 1: collect per-screen "required" flags from createmeta field schemas.
-                        for (auto it = issueType["fields"].begin(); it != issueType["fields"].end(); ++it) {
-                            const std::string requiredFieldId = it.key();
-                            if (it.value().is_object() && it.value().value("required", false)) {
-                                metaEntry.RequiredFieldIds.insert(requiredFieldId);
-                            }
-                        }
-
-                        // Pass 2: merge allowedValues into the global field catalog (and collect components).
-                        for (auto it = issueType["fields"].begin(); it != issueType["fields"].end(); ++it) {
-                            const std::string fieldId = it.key();
-                            const auto& fieldObj = it.value();
-
-                            if (fieldId == "components" && fieldObj.contains("allowedValues") &&
-                                fieldObj["allowedValues"].is_array()) {
-                                for (const auto& val : fieldObj["allowedValues"]) {
-                                    if (val.contains("id") && val.contains("name") && val["id"].is_string() &&
-                                        val["name"].is_string()) {
-                                        const std::string componentId = val["id"].get<std::string>();
-                                        if (uniqueComponentIds.insert(componentId).second) {
-                                            TrackerComponent component;
-                                            component.Id = componentId;
-                                            component.Name = val["name"].get<std::string>();
-                                            outComponents.push_back(component);
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (!fieldObj.contains("allowedValues") || !fieldObj["allowedValues"].is_array()) {
-                                continue;
-                            }
-
-                            const auto indexIt = fieldIndexById.find(fieldId);
-                            if (indexIt == fieldIndexById.end()) {
-                                continue;
-                            }
-
-                            // issuetype allowedValues in createmeta are per-screen (e.g. Epic may only list Epic).
-                            // Use the full project issue type name set after this loop instead.
-                            if (fieldId == "issuetype") {
-                                continue;
-                            }
-
-                            TrackerField& targetField = outFields[indexIt->second];
-                            for (const auto& val : fieldObj["allowedValues"]) {
-                                TrackerFieldOption option = TrackerFieldOptionFromJson(val);
-                                if (!option.Value.empty() || !option.Id.empty()) {
-                                    MergeTrackerFieldOption(targetField.AllowedValueOptions, option);
-                                }
-                            }
-                            RefreshTrackerAllowedValuesFromOptions(targetField);
-                            targetField.Family = ClassifyTrackerFieldFamily(targetField);
-                        }
-
-                        upsertIssueTypeMeta(std::move(metaEntry));
-                    }
-                }
-            }
-        } catch (const std::exception& ex) {
-            LOG_WARN("JiraClient: createmeta parse failed: %s", ex.what());
-        }
-    } else {
-        LOG_WARN("JiraClient: createmeta enrichment failed. HTTP %d", metaResponse.status_code);
-    }
-
-    // Createmeta only returns components that are available on create screens. The project component endpoint is the
-    // authoritative project catalog and keeps the grid editor useful even when createmeta is sparse.
-    try {
-        (void)MergeProjectComponentsFromEndpoint(cfg, projectKey, base, headers, outFields, outComponents);
-    } catch (const std::exception& ex) {
-        LOG_WARN("JiraClient: project components enrichment failed: %s", ex.what());
-    } catch (...) {
-        LOG_WARN("JiraClient: project components enrichment failed (unknown exception).");
-    }
-
-    // Issue type: createmeta often lists only one type (e.g. Epic). Prefer GET /project/{key}
-    // issueTypes (full list + real ids for PUT). Fall back to createmeta names if needed.
-    {
-        const auto issueTypeIt = fieldIndexById.find("issuetype");
-        if (issueTypeIt != fieldIndexById.end()) {
-            TrackerField& issueTypeField = outFields[issueTypeIt->second];
-            bool filledFromProject = false;
-            try {
-                const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(projectKey);
-                auto projectResp = TrackerGetLogged("JiraClient", projectUrl, headers);
-                if (projectResp.status_code == 200) {
-                    auto projectJson = nlohmann::json::parse(projectResp.text);
-                    if (projectJson.contains("issueTypes") && projectJson["issueTypes"].is_array()) {
-                        std::vector<TrackerFieldOption> opts;
-                        for (const auto& it : projectJson["issueTypes"]) {
-                            if (!it.is_object()) {
-                                continue;
-                            }
-                            std::string tid;
-                            if (it.contains("id")) {
-                                if (it["id"].is_string()) {
-                                    tid = it["id"].get<std::string>();
-                                } else if (it["id"].is_number_integer()) {
-                                    tid = std::to_string(it["id"].get<long long>());
-                                } else if (it["id"].is_number_unsigned()) {
-                                    tid = std::to_string(it["id"].get<unsigned long long>());
-                                }
-                            }
-                            const std::string tname = it.value("name", std::string());
-                            if (tid.empty() || tname.empty()) {
-                                continue;
-                            }
-                            TrackerFieldOption option;
-                            option.Id = std::move(tid);
-                            option.Value = tname;
-                            try {
-                                option.PayloadJson = it.dump();
-                            } catch (...) {
-                                option.PayloadJson.clear();
-                            }
-                            opts.push_back(std::move(option));
-                        }
-                        if (!opts.empty()) {
-                            std::sort(opts.begin(), opts.end(),
-                                      [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
-                                          return a.Value < b.Value;
-                                      });
-                            issueTypeField.AllowedValueOptions = std::move(opts);
-                            RefreshTrackerAllowedValuesFromOptions(issueTypeField);
-                            issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
-                            filledFromProject = true;
-                        }
-                    }
-                } else {
-                    LOG_WARN("JiraClient: project fetch for issue types failed. HTTP %d", projectResp.status_code);
-                }
-            } catch (const std::exception& ex) {
-                LOG_WARN("JiraClient: project issueTypes parse failed: %s", ex.what());
-            }
-
-            // Only fall back to the createmeta name-only list if we have no options at all
-            // (e.g. /rest/api/3/issuetype + /project/{key} issueTypes both failed). The name-only
-            // fallback loses real IDs needed for PUT, so prefer the richer global enrichment.
-            if (!filledFromProject && !uniqueIssueTypes.empty() && issueTypeField.AllowedValueOptions.empty()) {
-                issueTypeField.AllowedValues.assign(uniqueIssueTypes.begin(), uniqueIssueTypes.end());
-                std::sort(issueTypeField.AllowedValues.begin(), issueTypeField.AllowedValues.end());
-                issueTypeField.AllowedValueOptions.clear();
-                for (const auto& issueTypeName : issueTypeField.AllowedValues) {
-                    TrackerFieldOption option;
-                    option.Id = issueTypeName;
-                    option.Value = issueTypeName;
-                    issueTypeField.AllowedValueOptions.push_back(option);
-                }
-                issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
-            }
-        }
-    }
-
-    // Enrich sprint custom fields with selectable sprint options (active/future) from Jira Agile.
-    if (!sprintFieldIds.empty() && !projectKey.empty()) {
-        try {
-            std::vector<int> boardIds;
-            std::set<int> seenBoardIds;
-            const int kBoardsPerPage = 50;
-            const int kMaxBoardPages = 20;
-            for (int page = 0; page < kMaxBoardPages; ++page) {
-                const int startAt = page * kBoardsPerPage;
-                const std::string boardsUrl = base + "/rest/agile/1.0/board?projectKeyOrId=" + UrlEncode(projectKey) +
-                                              "&maxResults=" + std::to_string(kBoardsPerPage) +
-                                              "&startAt=" + std::to_string(startAt);
-                auto boardsResp = TrackerGetLogged("JiraClient", boardsUrl, headers);
-                if (boardsResp.status_code != 200) {
-                    LOG_WARN("JiraClient: sprint board discovery failed (HTTP %d).", boardsResp.status_code);
-                    break;
-                }
-                auto boardsJson = nlohmann::json::parse(boardsResp.text);
-                if (!boardsJson.is_object() || !boardsJson.contains("values") || !boardsJson["values"].is_array()) {
-                    LOG_WARN("JiraClient: sprint board discovery response missing values array.");
-                    break;
-                }
-
-                const auto& values = boardsJson["values"];
-                for (const auto& board : values) {
-                    if (!board.is_object() || !board.contains("id")) {
-                        continue;
-                    }
-                    const int bid = ParseJsonIntLoose(board["id"], -1);
-                    if (bid > 0 && seenBoardIds.insert(bid).second) {
-                        boardIds.push_back(bid);
-                    }
-                }
-
-                const bool isLast = boardsJson.value("isLast", false);
-                if (isLast || values.empty()) {
-                    break;
-                }
-            }
-
-            std::vector<TrackerFieldOption> sprintOptions;
-            std::set<std::string> seenSprintIds;
-            for (int boardId : boardIds) {
-                const std::string sprintUrl = base + "/rest/agile/1.0/board/" + std::to_string(boardId) +
-                                              "/sprint?state=active,future&maxResults=100";
-                auto sprintResp = TrackerGetLogged("JiraClient", sprintUrl, headers);
-                if (sprintResp.status_code != 200) {
-                    continue;
-                }
-                auto sprintJson = nlohmann::json::parse(sprintResp.text);
-                if (!sprintJson.is_object() || !sprintJson.contains("values") || !sprintJson["values"].is_array()) {
-                    continue;
-                }
-                for (const auto& sprint : sprintJson["values"]) {
-                    if (!sprint.is_object() || !sprint.contains("id")) {
-                        continue;
-                    }
-                    std::string sprintId;
-                    if (sprint["id"].is_string()) {
-                        sprintId = sprint["id"].get<std::string>();
-                    } else {
-                        const int sid = ParseJsonIntLoose(sprint["id"], -1);
-                        if (sid > 0) {
-                            sprintId = std::to_string(sid);
-                        }
-                    }
-                    const std::string sprintName = sprint.value("name", std::string());
-                    if (sprintId.empty() || sprintName.empty() || !seenSprintIds.insert(sprintId).second) {
-                        continue;
-                    }
-                    TrackerFieldOption opt;
-                    opt.Id = sprintId;
-                    opt.Value = sprintName;
-                    try {
-                        opt.PayloadJson = sprint.dump();
-                    } catch (...) {
-                        opt.PayloadJson.clear();
-                    }
-                    sprintOptions.push_back(std::move(opt));
-                }
-            }
-
-            if (!sprintOptions.empty()) {
-                std::sort(sprintOptions.begin(), sprintOptions.end(),
-                          [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
-                for (const auto& sprintFieldId : sprintFieldIds) {
-                    const auto fit = fieldIndexById.find(sprintFieldId);
-                    if (fit == fieldIndexById.end()) {
-                        continue;
-                    }
-                    TrackerField& targetField = outFields[fit->second];
-                    if (targetField.AllowedValueOptions.empty()) {
-                        targetField.AllowedValueOptions = sprintOptions;
-                    } else {
-                        for (const auto& opt : sprintOptions) {
-                            MergeTrackerFieldOption(targetField.AllowedValueOptions, opt);
-                        }
-                        std::sort(
-                            targetField.AllowedValueOptions.begin(), targetField.AllowedValueOptions.end(),
-                            [](const TrackerFieldOption& a, const TrackerFieldOption& b) { return a.Value < b.Value; });
-                    }
-                    RefreshTrackerAllowedValuesFromOptions(targetField);
-                    targetField.Family = ClassifyTrackerFieldFamily(targetField);
-                }
-            }
-        } catch (const std::exception& ex) {
-            LOG_WARN("JiraClient: sprint enrichment failed: %s", ex.what());
-        } catch (...) {
-            LOG_WARN("JiraClient: sprint enrichment failed (unknown exception).");
-        }
-    }
-
+    // Phase 4: finalize families + component ordering.
     for (auto& field : outFields) {
         field.Family = ClassifyTrackerFieldFamily(field);
     }
