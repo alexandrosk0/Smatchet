@@ -329,16 +329,16 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
             monoFont = io.Fonts->AddFontFromFileTTF(kConsolasPath, fontSizePixels, &variant_cfg, glyph_ranges.Data);
         }
 
-        // Bug-report censor font: bake ONLY the U+2588 block glyph from the body
-        // TTF, merge FA so icons survive, and set FallbackChar = U+2588 so every
-        // text codepoint falls back to a block. Used to redact the whole UI for the
-        // bug-report screenshot capture frame.
+        // Bug-report censor font. ImGui 1.92 bakes glyphs ON DEMAND, so restricting
+        // the glyph range does NOT stop other glyphs loading — instead we load the
+        // body font + merged FA normally, then AddRemapChar() every TEXT codepoint to
+        // U+2588 (█). When this font is active the whole UI renders as blocks while FA
+        // icons stay real. Used for the bug-report screenshot capture frame.
         ImFont* redactFont = nullptr;
         {
-            static const ImWchar kBlockRange[] = {0x2588, 0x2588, 0};
             ImFontConfig redact_cfg;
-            redact_cfg.GlyphRanges = kBlockRange;
-            redactFont = io.Fonts->AddFontFromFileTTF(path, fontSizePixels, &redact_cfg, kBlockRange);
+            redact_cfg.GlyphRanges = glyph_ranges.Data;
+            redactFont = io.Fonts->AddFontFromFileTTF(path, fontSizePixels, &redact_cfg, glyph_ranges.Data);
             if (redactFont != nullptr) {
                 const std::string faRedactPath = ResolveAssetTtfPath("fa-solid-900.ttf");
                 if (!faRedactPath.empty()) {
@@ -350,6 +350,16 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
                     io.Fonts->AddFontFromFileTTF(faRedactPath.c_str(), fontSizePixels, &fa_redact, kFontAwesomeRange);
                 }
                 redactFont->FallbackChar = static_cast<ImWchar>(0x2588);
+                // Point every text codepoint at the block glyph; keep the FA icon
+                // range (0xe005..0xf8ff) and the block itself real.
+                for (const ImWchar* gr = glyph_ranges.Data; gr[0] != 0 && gr[1] != 0; gr += 2) {
+                    for (unsigned cp = gr[0]; cp <= gr[1]; ++cp) {
+                        if ((cp >= 0xe005 && cp <= 0xf8ff) || cp == 0x2588) {
+                            continue;
+                        }
+                        redactFont->AddRemapChar(static_cast<ImWchar>(cp), static_cast<ImWchar>(0x2588));
+                    }
+                }
             }
         }
 

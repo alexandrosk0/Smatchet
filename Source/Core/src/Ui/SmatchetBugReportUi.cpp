@@ -183,8 +183,8 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
 
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL
     // Screenshot toggle — standalone only (DX12 has no GL capture path). The shot is
-    // ALWAYS text-redacted (every glyph rendered as a block on the capture frame);
-    // layout, colour, and icons stay sharp.
+    // always text-redacted: every glyph renders as a block on the capture frame, so
+    // layout, colour, and icons stay sharp while text is unreadable.
     if (ImGui::Checkbox("Attach screenshot (text redacted)", &d.bugReportInclScreenshot)) {
         d.bugReportPreviewDirty = true;
     }

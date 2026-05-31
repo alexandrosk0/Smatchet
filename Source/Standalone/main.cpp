@@ -712,9 +712,10 @@ int main(int argc, char** argv) {
                         }
                     }
                     // "Log a Bug" capture: downscale so the base64 PNG fits the relay
-                    // payload cap (a 1920px frame is ~4x too big). Text redaction was
-                    // already done at render time via the font swap — no CPU filter here.
-                    // Gated on bugReportShot so golden/test captures keep native resolution.
+                    // payload cap. A full-size frame is several times too big. Text
+                    // redaction already happened at render time via the font swap, so
+                    // there is no CPU filter here. Gated on bugReportShot so golden and
+                    // test captures keep their native resolution.
                     if (bugReportShot) {
                         smatchet::imaging::DownscaleToMaxDimension(rgb, fw, fh, 3, 1280);
                     }
