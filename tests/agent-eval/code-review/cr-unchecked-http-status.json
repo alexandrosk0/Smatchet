@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "caseId": "cr-unchecked-http-status",
+  "agent": "code-review",
+  "description": "Seed case: a tracker HTTP call whose status code is ignored, so a 4xx/5xx body is parsed as if it were a success payload. Verifies code-review flags the unchecked status and the resulting mis-parse.",
+  "repoRef": "fdccba25",
+  "baseBranch": "develop",
+  "files": [
+    "Source/Core/src/Tracker/JiraIssueSearch.cpp",
+    "Source/Core/src/Tracker/TrackerHttpClient.cpp"
+  ],
+  "toolPosture": "read-only",
+  "delegationPacket": "Review the staged diff across the two listed files for correctness bugs. The change issues a tracker search request and parses the response body. Pay attention to error handling on the HTTP response. Report each finding with file:line, a severity (critical/high/medium/low/info), and a one-line summary.",
+  "dimensions": [
+    { "key": "correctness", "kind": "judge", "description": "Did the agent identify the ignored HTTP status and the mis-parse it causes?" },
+    { "key": "actionability", "kind": "judge", "description": "Is each finding specific and actionable (names the call + the fix shape), not vague?" },
+    { "key": "cited_file_line", "kind": "objective", "check": "cited_file_line", "description": "Every finding cites a concrete file:line." },
+    { "key": "severity_enum", "kind": "objective", "check": "severity_enum", "description": "Severities are drawn from the allowed enum." },
+    { "key": "finding_count", "kind": "objective", "check": "finding_count", "description": "Finding count is close to the reference count." }
+  ],
+  "referenceOutcome": {
+    "expectedFindingCount": 2,
+    "allowedSeverities": ["critical", "high", "medium", "low", "info"],
+    "expectedFindings": [
+      {
+        "file": "Source/Core/src/Tracker/JiraIssueSearch.cpp",
+        "severity": "high",
+        "summary": "HTTP status code is never checked before the body is JSON-parsed; a 4xx/5xx body is treated as a result set."
+      },
+      {
+        "file": "Source/Core/src/Tracker/TrackerHttpClient.cpp",
+        "severity": "medium",
+        "summary": "The client returns the raw body without surfacing non-2xx status to the caller, hiding the error."
+      }
+    ],
+    "notes": "Seed case for the MVP contract proof — replace with a harvested real trace in Phase 2. Two related findings; the actionability dimension guards against vague 'add error handling' non-answers."
+  }
+}

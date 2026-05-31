@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "description": "Per-dimension regression thresholds for scripts/dev/agent-eval-score.py. Mirrors docs/perf/regression-policy.json (default + perScenario) one level up the stack: here the override axes are perAgent and perDimension. A dimension REGRESSES when head_score drops below base_score by more than max_score_drop. Scores are normalised to [0,1] (higher is better). Precedence (later overlays earlier): default -> perAgent[agent] -> perDimension[dimension]. Advisory in the MVP — a regression WARNs, it does not BLOCK (plan § Approach step 6, docs/agent-rules/subagent-eval.md).",
+  "default": {
+    "max_score_drop": 0.05,
+    "min_trials": 1
+  },
+  "perAgent": {
+    "comment": "Override the default for a specific agent. Empty means inherit default. Tune ONLY when a real-world signal (judge noise, agent variance) justifies it; document the rationale in the override entry."
+  },
+  "perDimension": {
+    "comment": "Override per dimension key (most specific, applied last). e.g. tighten 'cited_file_line' since it is a deterministic objective check with no judge noise.",
+    "cited_file_line": {
+      "max_score_drop": 0.0
+    }
+  }
+}
