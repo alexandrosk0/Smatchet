@@ -1,6 +1,6 @@
 # Subagent eval (advisory)
 
-Eval-driven development for the **development agents** (`agents/*.md` — the orchestrator + the delegated subagents), NOT the Smatchet product or any in-app AI-assistant surface. Mirrors the perf pipeline one level up the stack: instead of frame latency, it scores agent **decision quality** base-vs-head so a prompt edit ships on data, not judgment.
+Eval-driven development for the **development agents** (`agents/*.md` — the orchestrator + the delegated subagents), NOT the product under development or any in-app AI-assistant surface. Mirrors the perf pipeline one level up the stack: instead of frame latency, it scores agent **decision quality** base-vs-head so a prompt edit ships on data, not judgment.
 
 Plan: [`../plans/active/subagent-eval-harness.md`](../plans/active/subagent-eval-harness.md). Phase-1 MVP — `code-review` only, **advisory**. The trace flywheel (auto-grown golden set) is the separate follow-up [`../plans/active/subagent-eval-flywheel.md`](../plans/active/subagent-eval-flywheel.md).
 
@@ -37,7 +37,7 @@ Each case declares scored `dimensions` (see `case-schema.json`):
   - `cited_file_line` — fraction of findings that cite a concrete `file:line`.
   - `severity_enum` — fraction of findings whose severity is in the allowed enum.
   - `finding_count` — closeness of the finding count to `referenceOutcome.expectedFindingCount`.
-- **judge** — graded by an **external** judge command, named by `--judge-cmd` or `$SMATCHET_AGENT_EVAL_JUDGE_CMD`. The scorer pipes `{case, output, dimension, referenceOutcome}` JSON to the command's stdin and reads `{"score": 0..1}` from its stdout. Keeping the judge external is what keeps `agent-eval-score.py` **pure stdlib + deterministic + unit-testable** — the bats suite injects a fake judge with no model in the loop.
+- **judge** — graded by an **external** judge command, named by `--judge-cmd` (or its environment-variable fallback — the project env-prefix + `_AGENT_EVAL_JUDGE_CMD`; see `agent-eval-score.py --help` and the `AGENTS.md` pointer for the exact name). The scorer pipes `{case, output, dimension, referenceOutcome}` JSON to the command's stdin and reads `{"score": 0..1}` from its stdout. Keeping the judge external is what keeps `agent-eval-score.py` **pure stdlib + deterministic + unit-testable** — the bats suite injects a fake judge with no model in the loop.
 
 Scores normalise to `[0,1]` (higher is better). The scorer averages each dimension across trials.
 
