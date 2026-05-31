@@ -1,11 +1,11 @@
-# scripts/dev/merge-watcher-uninstall-autostart.ps1
+# agents/scripts/core/merge-watcher-uninstall-autostart.ps1
 # ----------------------------------------------------------------------------
 # Counterpart to merge-watcher-install-autostart.ps1. Removes the Scheduled
 # Task + stops the running daemon (if any). Phase 4c of
 # docs/plans/shipped/smatchet-merge-watcher.md.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-uninstall-autostart.ps1
+#   powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-uninstall-autostart.ps1
 #
 # Idempotent -- silently succeeds if the task doesn't exist.
 #

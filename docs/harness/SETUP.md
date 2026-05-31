@@ -10,12 +10,12 @@ Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitign
 
 | Harness | Setup command | Details |
 |---|---|---|
-| Claude Code | `bash scripts/setup-harness.sh claude-code` | [claude-code/setup.md](claude-code/setup.md) |
-| Codex / OpenAI Agents | `bash scripts/setup-harness.sh codex` (no-op confirmation) | [codex/setup.md](codex/setup.md) |
-| Cursor | `bash scripts/setup-harness.sh cursor` | [cursor/setup.md](cursor/setup.md) |
+| Claude Code | `bash agents/scripts/core/setup-harness.sh claude-code` | [claude-code/setup.md](claude-code/setup.md) |
+| Codex / OpenAI Agents | `bash agents/scripts/core/setup-harness.sh codex` (no-op confirmation) | [codex/setup.md](codex/setup.md) |
+| Cursor | `bash agents/scripts/core/setup-harness.sh cursor` | [cursor/setup.md](cursor/setup.md) |
 | Aider / generic | Manual — paste agent files from `agents/` as needed. No adapter dir. | — |
 
-Windows users can substitute `pwsh scripts/setup-harness.ps1 <name>`.
+Windows users can substitute `pwsh agents/scripts/core/setup-harness.ps1 <name>`.
 
 ## Required CLI tools
 
@@ -91,6 +91,6 @@ POSIX runners would fall back to `lcov` + `gcov` for the same purpose — that p
 
 1. Create `docs/harness/<name>/setup.md` with the recreation steps.
 2. If the harness needs template files, place them under `docs/harness/<name>/`.
-3. Add a `setup_<name>()` function to `scripts/setup-harness.sh` + `.ps1`.
+3. Add a `setup_<name>()` function to `agents/scripts/core/setup-harness.sh` + `.ps1`.
 4. Add a row to the table above.
 5. Add `.<name>/` to `.gitignore`.

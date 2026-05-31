@@ -3,9 +3,9 @@
 Generated locally at `.claude/` by:
 
 ```bash
-bash scripts/setup-harness.sh claude-code
+bash agents/scripts/core/setup-harness.sh claude-code
 # or, on Windows-native PowerShell:
-pwsh scripts/setup-harness.ps1 claude-code
+pwsh agents/scripts/core/setup-harness.ps1 claude-code
 ```
 
 Idempotent. Run it after every clone and any time the canonical templates change. The script never overwrites a user-modified template — it prints `skip-copy` and leaves your local edits alone.
@@ -49,7 +49,7 @@ The lint hooks (`lint-cpp.sh`, `vexp-guard.sh`, `lint-syntax-both.py`) are copie
 
 `.claude/settings.json` wires these hook surfaces:
 
-- **SessionStart** — `scripts/clear-session-context.sh` archives the prior session scratchpad.
+- **SessionStart** — `agents/scripts/core/clear-session-context.sh` archives the prior session scratchpad.
 - **PreToolUse** (Grep/Glob/Regex) — `.claude/hooks/vexp-guard.sh` blocks raw text-search when the vexp daemon is running.
 - **PostToolUse** (Edit/Write) — `.claude/hooks/lint-cpp.sh` runs `clang-format`, `cppcheck`, `clang-tidy` on edited C++ files.
 - **PostToolUse** (Bash) — `.claude/hooks/autoregister-pr.sh` registers a newly-created PR (`gh pr create`) with smatchet-merge-watcher so the daemon owns it (gate-poll + auto-merge).
@@ -59,7 +59,7 @@ The lint hooks (`lint-cpp.sh`, `vexp-guard.sh`, `lint-syntax-both.py`) are copie
 
 ## Refreshing after a `git pull`
 
-Re-run `bash scripts/setup-harness.sh claude-code`:
+Re-run `bash agents/scripts/core/setup-harness.sh claude-code`:
 
 - New shared skill or token-tracking change → the link target already points at the new content; no action needed beyond the link existing.
 - Updated template (`CLAUDE.md.tmpl`, `settings.json.tmpl`, lint hook) → script copies it if you haven't locally modified the file, otherwise prints `skip-copy`.

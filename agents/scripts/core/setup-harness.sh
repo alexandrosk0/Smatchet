@@ -11,13 +11,13 @@
 # tweaks don't propagate back to the tracked template.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../../.."
 ROOT="$(pwd)"
 
 HARNESS="${1:-}"
 if [[ -z "$HARNESS" || "$HARNESS" == "-h" || "$HARNESS" == "--help" ]]; then
   cat <<'EOF'
-Usage: bash scripts/setup-harness.sh <harness>
+Usage: bash agents/scripts/core/setup-harness.sh <harness>
 
 Harnesses:
   claude-code   Generate .claude/ with junctions/symlinks into agents/ +
@@ -261,7 +261,7 @@ setup_cursor() {
     echo "  error: .cursor/rules exists as a file (not a directory)." >&2
     echo "         Move it aside so this script can use the .mdc-rules layout:" >&2
     echo "           mv .cursor/rules .cursor/rules.bak" >&2
-    echo "         Then re-run: bash scripts/setup-harness.sh cursor" >&2
+    echo "         Then re-run: bash agents/scripts/core/setup-harness.sh cursor" >&2
     exit 1
   fi
   copy_template "docs/harness/cursor/rules/agents.mdc" ".cursor/rules/agents.mdc"
@@ -309,7 +309,7 @@ case "$HARNESS" in
   cursor)      setup_cursor ;;
   *)
     echo "error: unknown harness '$HARNESS'. Supported: claude-code | codex | cursor" >&2
-    echo "Run: bash scripts/setup-harness.sh --help" >&2
+    echo "Run: bash agents/scripts/core/setup-harness.sh --help" >&2
     exit 1
     ;;
 esac

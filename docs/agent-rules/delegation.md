@@ -26,7 +26,7 @@ Each packet should include:
 - **File-split closure rule**: when delegating a multi-file split of a monolithic `.cpp` (`AnnotateAnalysisUi.cpp` shape), the packet must state the *closure rule* — "everything `<target-fn>` calls that isn't already in another TU goes to `<bucket>`" — not enumerate symbols from memory. Enumeration misses transitive callees (export builders, modal helpers); a closure rule does not.
 - **Post-split include-replication rule**: after creating the shared internal header for a split, scan the original `.cpp`'s include list and replicate every non-self include into the internal header. Includes that were only in the original `.cpp` are silent until build — eliminate them up-front.
 - **Plan-time production-file existence check**: before finalising any test-coverage plan (or any plan whose write set names specific production `.h` / `.cpp` files), the orchestrator runs a one-liner Glob / skeleton scan to confirm every named production file actually exists at the stated path. Five seconds of pre-flight catches plan / tree drift (renamed file, file moved during a refactor, name aliased an older path) that otherwise costs the delegated agent ~10 min of cross-walk per phase before deferral entries can be written confidently.
-- **Subagent progress markers reminder** (per § Subagent progress markers): every delegation packet must include the literal sentence: *"Emit one-line progress markers to `.progress.log` via `bash scripts/dev/agent-progress.sh "<phase>: <text>"` at each major step (start, lock, design, code, test, gate, commit, push, pr, end) so `tail-agent.sh` shows live progress."*
+- **Subagent progress markers reminder** (per § Subagent progress markers): every delegation packet must include the literal sentence: *"Emit one-line progress markers to `.progress.log` via `bash agents/scripts/core/agent-progress.sh "<phase>: <text>"` at each major step (start, lock, design, code, test, gate, commit, push, pr, end) so `tail-agent.sh` shows live progress."*
 - **Pure-helper TU-split recipe**: when a delegation targets a unit whose pure helpers sit in an anonymous namespace inside a `.cpp` whose top-of-file pulls banned deps (cpr / httplib / SQLite / ImGui / GLFW / Unreal headers), pre-authorise the production-side split in the packet. Allowed write set includes `Source/Core/{include,src}/<Unit>Pure.{h,cpp}` (or `<Unit>Parse.{h,cpp}` for parsers — Phase 1 `IssueCreatePipelineHelpers` + `P4AnnotateParse` shape). Recipe — extract pure helpers to the new TU under namespace `smatchet::<unit>::pure`; rewire call sites in the original `.cpp` via `using` decls inside the anon namespace; the new TU must have zero banned-header includes (verify with grep guard). Without this pre-authorisation, the agent's auto-mode classifier denies the split. Instances applied: `IssueCreatePipelineHelpers`, `P4AnnotateParse`, `McpJsonRpcPure`, `ILuaBindingHost` + `AppController_LuaBindingsCore`. Live instances awaiting the same lift: `IsTrackerTransportErrorText`, the 4 Phase-1-deferred tracker units (Labels / DateTime / Payload / Catalog) — see `docs/self-improvement/categories/infra.md`.
 
 ### File-level table re-verify (before sealing)
@@ -61,7 +61,7 @@ Run two or more subagents in a **single tool-use block** (multiple `Agent` calls
 
 ## Session scratchpad protocol
 
-A per-session orchestrator scratchpad lives at `.session-context.md` at the repo root (gitignored). The `SessionStart` hook (`scripts/clear-session-context.sh`) archives the prior scratchpad (when it carries any agent-appended `## ` section) to `.session-context.archive/<ts>-<sid8>.md`, then writes a fresh banner. The `SubagentStop` hook (`agent-token-log.py`) appends a dated header block from each subagent whose report carries a `## Session context append` section.
+A per-session orchestrator scratchpad lives at `.session-context.md` at the repo root (gitignored). The `SessionStart` hook (`agents/scripts/core/clear-session-context.sh`) archives the prior scratchpad (when it carries any agent-appended `## ` section) to `.session-context.archive/<ts>-<sid8>.md`, then writes a fresh banner. The `SubagentStop` hook (`agent-token-log.py`) appends a dated header block from each subagent whose report carries a `## Session context append` section.
 
 Rules:
 
@@ -81,14 +81,14 @@ Section shape:
 
 ## Subagent progress markers
 
-Subagents dispatched in isolated worktrees emit single-line progress markers to `.progress.log` at the worktree root (gitignored). The orchestrator (and the user) tails the file via `bash scripts/dev/tail-agent.sh` to see live progress without parsing JSONL transcripts or polling `git status`.
+Subagents dispatched in isolated worktrees emit single-line progress markers to `.progress.log` at the worktree root (gitignored). The orchestrator (and the user) tails the file via `bash agents/scripts/core/tail-agent.sh` to see live progress without parsing JSONL transcripts or polling `git status`.
 
 **How** — one line per meaningful step via the helper:
 
 ```bash
-bash scripts/dev/agent-progress.sh "<phase>: <one-line message>"
+bash agents/scripts/core/agent-progress.sh "<phase>: <one-line message>"
 # or two-arg form:
-bash scripts/dev/agent-progress.sh <phase> <one-line message>
+bash agents/scripts/core/agent-progress.sh <phase> <one-line message>
 ```
 
 The helper resolves the worktree root via `git rev-parse --show-toplevel`, appends a `[HH:MM:SS] <phase>: <message>` line, and flushes (each invocation is a separate process — the `>>` redirect closes on exit, so `tail -f` sees the line within ~1 s).
@@ -124,7 +124,7 @@ The helper resolves the worktree root via `git rev-parse --show-toplevel`, appen
 
 ## Tool-trace contract
 
-Captured automatically — no agent burden. The `SubagentStop` hook counts `tool_use` blocks in the transcript and emits a `tool_trace` field on each JSONL row (e.g. `"Edit×4, Read×8, Bash×2"`). `scripts/agent-tokens-report.py` surfaces totals; `agents-statusline.py` shows top-agents by tokens. Agents may include an explicit `## Tool trace: ...` line in their report for the user's eye but the canonical count is hook-derived.
+Captured automatically — no agent burden. The `SubagentStop` hook counts `tool_use` blocks in the transcript and emits a `tool_trace` field on each JSONL row (e.g. `"Edit×4, Read×8, Bash×2"`). `agents/scripts/core/agent-tokens-report.py` surfaces totals; `agents-statusline.py` shows top-agents by tokens. Agents may include an explicit `## Tool trace: ...` line in their report for the user's eye but the canonical count is hook-derived.
 
 ## Agent output contract
 
@@ -276,7 +276,7 @@ Investigator agents (architect, code-review, security-review, debug-detective) a
 
 ## Agent versioning
 
-Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capability tag added/removed, workflow contract changed (new mandatory section, new cleanup discipline), breaking output-shape change (renamed report section a downstream agent reads). **Don't bump on**: prose tweaks, typos, banner reformatting, token-efficiency tightens that preserve semantics. Telemetry (`agent_version` field on every JSONL row) lets `scripts/agent-tokens-report.py` flag the case where two versions of the same agent ran in one window — usually a mid-flight prompt edit.
+Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capability tag added/removed, workflow contract changed (new mandatory section, new cleanup discipline), breaking output-shape change (renamed report section a downstream agent reads). **Don't bump on**: prose tweaks, typos, banner reformatting, token-efficiency tightens that preserve semantics. Telemetry (`agent_version` field on every JSONL row) lets `agents/scripts/core/agent-tokens-report.py` flag the case where two versions of the same agent ran in one window — usually a mid-flight prompt edit.
 
 ## Cross-cutting
 

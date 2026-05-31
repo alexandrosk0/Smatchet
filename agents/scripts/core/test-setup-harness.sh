@@ -14,7 +14,7 @@
 
 set -u
 
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 cd "$PROJ_DIR"
 
 PASS=0
@@ -44,7 +44,7 @@ resolve_agent_md() {
 # -------------------------------------------------------------------- Test 1
 note "Test 1 — first run links perf-measure + perf-instrument skills"
 # setup-harness.sh is idempotent; if links exist, this is a no-op.
-SETUP_OUT_1=$(bash scripts/setup-harness.sh claude-code 2>&1)
+SETUP_OUT_1=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1)
 
 if [[ -e ".claude/skills/perf-measure/SKILL.md" ]]; then
     ok "perf-measure SKILL.md reachable via .claude/skills/"
@@ -70,7 +70,7 @@ done
 
 # -------------------------------------------------------------------- Test 3
 note "Test 3 — re-run produces zero new link-dir lines (idempotency)"
-SETUP_OUT_2=$(bash scripts/setup-harness.sh claude-code 2>&1)
+SETUP_OUT_2=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1)
 NEW_LINKS=$(echo "$SETUP_OUT_2" | grep -c '^\s*link-' || true)
 if [[ "$NEW_LINKS" -eq 0 ]]; then
     ok "idempotent re-run (zero new link- lines)"

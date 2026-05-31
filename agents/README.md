@@ -8,12 +8,12 @@ Layout (portable / project split — see [`docs/PORTABILITY.md`](../docs/PORTABI
 - `agents/project/<name>.md` — **project-specific** subsystem-bound agents (tracker-backend, grid-engine, lua-binder, mcp-toolsmith, offline-sync, unreal-bridge, p4-annotate, command-system).
 - `agents/_shared/skills/` — skill definitions that more than one harness can wire (currently `grill-with-docs`, `scratchpad-recall`).
 
-Harnesses discover agents flatly at `.claude/agents/*.md`; `scripts/setup-harness.sh` materialises that as flat per-agent links into the `core/` + `project/` subdirs. **After pulling this split, re-run `bash scripts/setup-harness.sh claude-code` to regenerate the flat links.**
+Harnesses discover agents flatly at `.claude/agents/*.md`; `agents/scripts/core/setup-harness.sh` materialises that as flat per-agent links into the `core/` + `project/` subdirs. **After pulling this split, re-run `bash agents/scripts/core/setup-harness.sh claude-code` to regenerate the flat links.**
 - `agents/_shared/token-tracking/` — `SubagentStop`-style hook + statusline renderer + slash-skill definition that any harness can wire to log per-agent token usage. See [`_shared/token-tracking/README.md`](_shared/token-tracking/README.md) for the wiring contract.
 
 ## Edit here, never in `.claude/`
 
-Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored**. They're regenerated locally from this canonical tree by `bash scripts/setup-harness.sh <name>`.
+Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored**. They're regenerated locally from this canonical tree by `bash agents/scripts/core/setup-harness.sh <name>`.
 
 Adapters are **links** (junctions / symlinks / hardlinks) into this `agents/` tree wherever the harness allows — so an edit to `agents/core/architect.md` is visible to Claude Code immediately, no sync step required.
 

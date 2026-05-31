@@ -13,7 +13,7 @@ this skill is the invocation shortcut.
 ## When
 
 - User says "drain memory" / "triage memory".
-- The SessionStart nudge (`scripts/dev/memory-drain-nudge.sh`) fired this session.
+- The SessionStart nudge (`agents/scripts/core/memory-drain-nudge.sh`) fired this session.
 - Inbox holds ≥ 5 live items or any item is > 7 days old.
 
 ## Steps

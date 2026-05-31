@@ -37,7 +37,7 @@ try:
 except (AttributeError, OSError):
     pass
 
-# Keep this pricing resolver in sync with scripts/agent-tokens-report.py.
+# Keep this pricing resolver in sync with agents/scripts/core/agent-tokens-report.py.
 # USD per 1M tokens. Source: Anthropic public pricing, 2026-05.
 PRICING = {
     "opus":        {"in": 5.00,  "cache_create": 6.25,  "cache_read": 0.50, "out": 25.00},

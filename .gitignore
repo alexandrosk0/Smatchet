@@ -58,7 +58,7 @@ smatchet_field_catalog_cache.json
 .vexp/
 .worktrees/
 
-# Harness adapters — local-only, regenerate via `bash scripts/setup-harness.sh <name>`.
+# Harness adapters — local-only, regenerate via `bash agents/scripts/core/setup-harness.sh <name>`.
 # See docs/harness/SETUP.md for per-harness instructions.
 .claude/
 .codex/

@@ -6,7 +6,7 @@
 #         → AUTO_ACT_SANITIZER_PROMPT would fire → cleanup.
 #
 # Usage:
-#   bash scripts/dev/test-autonomous-debug-loop.sh [--keep-canary]
+#   bash agents/scripts/core/test-autonomous-debug-loop.sh [--keep-canary]
 #
 # Prerequisites:
 #   - MSVC dev environment on PATH (run from VS dev prompt or after
@@ -23,7 +23,7 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 2; }
 command -v cl.exe >/dev/null 2>&1 || { echo "cl.exe required" >&2; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 CANARY_FILE="$REPO_ROOT/tests/Core/AsanCanary.test.cpp"
 KEEP_CANARY=false
@@ -139,7 +139,7 @@ echo "=== Phase 5: Validate merge-watcher detection ==="
 # Simulate the status line merge-watcher would see from merge-gates.sh
 SIMULATED_STATUS="Sanitizer (ASAN via MSVC) fail 3m14s https://github.com/..."
 
-python3 - "$REPO_ROOT/scripts/dev/merge-watcher.py" "$SIMULATED_STATUS" << 'PYEOF'
+python3 - "$REPO_ROOT/agents/scripts/core/merge-watcher.py" "$SIMULATED_STATUS" << 'PYEOF'
 import sys, importlib.util, os
 
 watcher_path = sys.argv[1]
@@ -211,14 +211,14 @@ echo ""
 echo "=== Phase 6: Validate prompt template ==="
 
 check "AUTO_ACT_SANITIZER_PROMPT defined in merge-watcher.py" \
-    grep -q "AUTO_ACT_SANITIZER_PROMPT" "$REPO_ROOT/scripts/dev/merge-watcher.py"
+    grep -q "AUTO_ACT_SANITIZER_PROMPT" "$REPO_ROOT/agents/scripts/core/merge-watcher.py"
 
 check "Prompt references debug-detective" \
-    grep -A5 "AUTO_ACT_SANITIZER_PROMPT" "$REPO_ROOT/scripts/dev/merge-watcher.py" \
+    grep -A5 "AUTO_ACT_SANITIZER_PROMPT" "$REPO_ROOT/agents/scripts/core/merge-watcher.py" \
     | grep -qi "debug-detective"
 
 check "MERGE_WATCH_AUTO_ACT_ON_SANITIZER env var checked" \
-    grep -q "MERGE_WATCH_AUTO_ACT_ON_SANITIZER" "$REPO_ROOT/scripts/dev/merge-watcher.py"
+    grep -q "MERGE_WATCH_AUTO_ACT_ON_SANITIZER" "$REPO_ROOT/agents/scripts/core/merge-watcher.py"
 
 # ---------- Phase 7: Validate debug-detective contract ----------
 
@@ -272,5 +272,5 @@ echo "To test the FULL end-to-end loop (merge-watcher → debug-detective spawn)
 echo "  1. Push a branch with the ASAN canary still in place (--keep-canary)"
 echo "  2. Open a PR"
 echo "  3. Set MERGE_WATCH_AUTO_ACT_ON_SANITIZER=true"
-echo "  4. Run: python scripts/dev/merge-watcher.py --pr <N>"
+echo "  4. Run: python agents/scripts/core/merge-watcher.py --pr <N>"
 echo "  5. Watch debug-detective spawn and diagnose the use-after-free"

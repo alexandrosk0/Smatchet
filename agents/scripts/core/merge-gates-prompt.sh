@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/dev/merge-gates-prompt.sh
+# agents/scripts/core/merge-gates-prompt.sh
 # ----------------------------------------------------------------------------
 # `ask_user_question` shell shim.
 #

@@ -8,7 +8,7 @@ memory). The weekly drain converts that inbox into repo-resident truth.
 
 ## Cadence
 
-Event-driven, not calendar. The `SessionStart` hook `scripts/dev/memory-drain-nudge.sh`
+Event-driven, not calendar. The `SessionStart` hook `agents/scripts/core/memory-drain-nudge.sh`
 checks the local inbox on every session start and prints a one-line nudge into
 context when the inbox holds ≥ 5 live items **or** any item is > 7 days old
 (both thresholds are env-overridable — see the hook script header). Act on

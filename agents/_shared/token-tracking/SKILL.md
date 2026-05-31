@@ -12,7 +12,7 @@ Print the per-agent token usage report for the current Smatchet project.
 Run the report script and emit its stdout verbatim into the chat. The user-provided arguments after `/agent-tokens` pass through unchanged.
 
 ```bash
-python "$CLAUDE_PROJECT_DIR/scripts/agent-tokens-report.py" $ARGUMENTS
+python "$CLAUDE_PROJECT_DIR/agents/scripts/core/agent-tokens-report.py" $ARGUMENTS
 ```
 
 If `$CLAUDE_PROJECT_DIR` is unset, fall back to the repo root (`$(pwd)`).
@@ -37,7 +37,7 @@ command-system       sonnet        1      4.0k       600      8.0k  $ 0.0234
 ------------------------------------------------------------------------------
 Total                              3     24.0k      4.1k     42.0k  $ 0.7059
 
-Pricing cutoff: 2026-05 (update in scripts/agent-tokens-report.py).
+Pricing cutoff: 2026-05 (update in agents/scripts/core/agent-tokens-report.py).
 
 Lifetime: <N> calls across <K> sessions, $<Z>.
 ```
@@ -46,7 +46,7 @@ Lifetime: <N> calls across <K> sessions, $<Z>.
 
 - Data source: `$CLAUDE_PROJECT_DIR/.claude/.agent-tokens.jsonl`, written by the `SubagentStop` hook at `.claude/hooks/agent-token-log.py`.
 - The JSONL is gitignored; reports are per-machine.
-- Pricing table lives at the top of `scripts/agent-tokens-report.py`. Review quarterly; banner prints the cutoff so stale prices are visible.
+- Pricing table lives at the top of `agents/scripts/core/agent-tokens-report.py`. Review quarterly; banner prints the cutoff so stale prices are visible.
 - If the JSONL is missing or empty, the script prints a friendly hint instead of an error.
 
 See `docs/guides/agent-token-tracking.md` for the full design.

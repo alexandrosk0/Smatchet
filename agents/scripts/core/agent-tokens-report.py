@@ -2,9 +2,9 @@
 """Read .claude/.agent-tokens.jsonl and emit a session + lifetime usage report.
 
 Usage:
-  python scripts/agent-tokens-report.py            # current session only
-  python scripts/agent-tokens-report.py --all      # lifetime
-  python scripts/agent-tokens-report.py --since 24h  # time window
+  python agents/scripts/core/agent-tokens-report.py            # current session only
+  python agents/scripts/core/agent-tokens-report.py --all      # lifetime
+  python agents/scripts/core/agent-tokens-report.py --since 24h  # time window
 
 Filtering rules:
   - default: latest `session` id seen in the JSONL.
@@ -237,7 +237,7 @@ def _render(rows: list[dict], header: str) -> str:
             lines.append(f"  {agent}: versions {vs}")
         lines.append("")
 
-    lines.append(f"Pricing cutoff: {PRICING_CUTOFF} (update in scripts/agent-tokens-report.py).")
+    lines.append(f"Pricing cutoff: {PRICING_CUTOFF} (update in agents/scripts/core/agent-tokens-report.py).")
     return "\n".join(lines)
 
 

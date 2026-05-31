@@ -16,7 +16,7 @@ PR #318 squash-merged before CodeRabbit (CR) reviewed it. Root cause was a race 
 Two fixes landed back-to-back to address this:
 
 - **PR #319** (`84f097da`) — patched AGENTS.md § Autonomous ship-loop so the orchestrator opens `gh pr create` **without** `--draft` when the user has authorised auto-merge in the same turn. The intent was to make CR fire so the gates poller would see a real review signal.
-- **PR #320** (`8d27ca06`, +13 min) — patched `scripts/dev/merge-gates.sh` so the poller probes for `.coderabbit.yaml` at gate start and, when CR is installed, blocks `cr_state == NONE` until (a) CR posts a review, (b) the head-commit rollup contains a `CodeRabbit` `StatusContext` with `state == "SUCCESS"`, or (c) the configurable grace window (`MERGE_GATES_CR_GRACE_POLLS`, default 10 polls) expires.
+- **PR #320** (`8d27ca06`, +13 min) — patched `agents/scripts/core/merge-gates.sh` so the poller probes for `.coderabbit.yaml` at gate start and, when CR is installed, blocks `cr_state == NONE` until (a) CR posts a review, (b) the head-commit rollup contains a `CodeRabbit` `StatusContext` with `state == "SUCCESS"`, or (c) the configurable grace window (`MERGE_GATES_CR_GRACE_POLLS`, default 10 polls) expires.
 
 PR #320 fixed the root cause in the correct layer (the poller). PR #319's draft-flip became redundant — and, on inspection, harmful:
 
@@ -33,7 +33,7 @@ Specifically:
 
 - In AGENTS.md, the **Autonomous ship-loop default** section drops the "Draft-vs-ready at `open PR`" paragraph added by PR #319.
 - The orchestrator (user's main session) opens `--draft` identically to spawned-child agents (`handoff-implementer`, `pr-iterator`). Auto-`gh pr ready` + REST squash-merge still happens at the end of the merge-gates pass for orchestrator PRs where the user authorised auto-merge — that scope boundary (§ Handoff envelope § Spawned-child PR draft requirement) is unchanged.
-- The merge-gates poller (`scripts/dev/merge-gates.sh`) remains the authoritative gate. Its CR-installed detection + grace-window behaviour from #320 is the load-bearing piece.
+- The merge-gates poller (`agents/scripts/core/merge-gates.sh`) remains the authoritative gate. Its CR-installed detection + grace-window behaviour from #320 is the load-bearing piece.
 
 # Consequences
 

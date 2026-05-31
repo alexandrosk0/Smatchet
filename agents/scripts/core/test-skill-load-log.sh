@@ -123,7 +123,7 @@ note "Test 5 — project skill resolves SKILL.md path + approx_tokens > 0"
 # Requires .claude/skills/perf-measure to exist (Phase 0 setup-harness).
 if [[ ! -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
     note "  (running setup-harness.sh claude-code to seed perf-measure link)"
-    bash "$PROJ_DIR/scripts/setup-harness.sh" claude-code >/dev/null 2>&1
+    bash "$PROJ_DIR/agents/scripts/core/setup-harness.sh" claude-code >/dev/null 2>&1
 fi
 if [[ -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
     rm -f "$LOG"

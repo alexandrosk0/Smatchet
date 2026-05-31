@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/dev/smatchet-notify.sh
+# agents/scripts/core/smatchet-notify.sh
 # ----------------------------------------------------------------------------
 # Notification dispatcher for smatchet-merge-watcher Phase 4a (per
 # `docs/plans/shipped/smatchet-merge-watcher.md`).
@@ -96,7 +96,7 @@ if [[ -z "${SMATCHET_NOTIFY_NO_WINDOWS_TOAST:-}" \
             echo "smatchet-notify: Windows native toast dispatched"
             success=1
         else
-            echo "smatchet-notify: Windows native toast failed. Set up once: powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-notify-setup.ps1" >&2
+            echo "smatchet-notify: Windows native toast failed. Set up once: powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-notify-setup.ps1" >&2
         fi
     fi
 fi

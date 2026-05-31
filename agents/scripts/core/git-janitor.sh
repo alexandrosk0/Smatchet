@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# scripts/dev/git-janitor.sh — automate the deterministic post-merge cleanup steps.
+# agents/scripts/core/git-janitor.sh — automate the deterministic post-merge cleanup steps.
 #
 # Wraps the manual flow at agents/core/git-janitor.md § Standard cleanup loop into a
 # single command. Refuses to act on uncommitted user work; refuses to
 # force-push; refuses to delete branches that aren't merged on GitHub.
 #
 # Usage:
-#   bash scripts/dev/git-janitor.sh --post-merge <pr-number>
+#   bash agents/scripts/core/git-janitor.sh --post-merge <pr-number>
 #
 # What it does (post-merge mode):
 #   1. Verify clean working tree (no uncommitted modifications outside
@@ -27,7 +27,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: bash scripts/dev/git-janitor.sh --post-merge <pr-number>" >&2
+    echo "Usage: bash agents/scripts/core/git-janitor.sh --post-merge <pr-number>" >&2
     exit 2
 }
 

@@ -14,7 +14,7 @@
 
 namespace {
 
-// Per Phase 4a's NOTIFY_STATES set in scripts/dev/merge-watcher.py.
+// Per Phase 4a's NOTIFY_STATES set in agents/scripts/core/merge-watcher.py.
 // Server-side allow-list — reject any other state string so a compromised
 // (or buggy) caller can't inject arbitrary toast text under an arbitrary
 // state label.

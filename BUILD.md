@@ -31,7 +31,7 @@ winget install LLVM.LLVM
 
 ### Dev-script CLI tools
 
-The orchestrator + agent scripts (`scripts/dev/*.sh`, `scripts/dev/merge-watcher.py`, etc.) require a small set of CLI tools beyond the build toolchain:
+The orchestrator + agent scripts (`scripts/dev/*.sh`, `agents/scripts/core/merge-watcher.py`, etc.) require a small set of CLI tools beyond the build toolchain:
 
 | Tool | Used by | Install (Windows) |
 |---|---|---|

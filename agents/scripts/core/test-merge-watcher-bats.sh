@@ -4,7 +4,7 @@
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
 #
-# Wraps the bats regression suite for scripts/dev/merge-watcher-cli.py +
+# Wraps the bats regression suite for agents/scripts/core/merge-watcher-cli.py +
 # merge-watcher.py + emits the canonical `Passed: N  Failed: M` line that
 # test-all.sh greps for. Before this wrapper the suite ran under no gate or CI
 # (the windows-2022 CI runner has no bats), so regressions rotted silently —

@@ -1,8 +1,8 @@
-# scripts/dev/merge-watcher-notify-setup.ps1
+# agents/scripts/core/merge-watcher-notify-setup.ps1
 # ----------------------------------------------------------------------------
 # One-shot setup for merge-watcher Windows desktop notifications.
 #
-# The watcher's notify dispatcher (scripts/dev/smatchet-notify.sh) tries a
+# The watcher's notify dispatcher (agents/scripts/core/smatchet-notify.sh) tries a
 # Windows native toast via smatchet-notify-windows.ps1, which needs the
 # BurntToast PowerShell module. That ps1 deliberately does NOT auto-install
 # (no silent module pulls from the hot notify path) -- THIS script is the
@@ -17,7 +17,7 @@
 #   2. Imports it + fires a test toast so you can confirm it reaches you.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-notify-setup.ps1
+#   powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-notify-setup.ps1
 #
 # Optional:
 #   -NoTest        Install only; skip the confirmation toast.
@@ -101,6 +101,6 @@ try {
 Write-Host ""
 Write-Host "[OK] Test toast dispatched." -ForegroundColor Green
 Write-Host "  If you saw it, the watcher will now reach you on terminal states"
-Write-Host "  (MERGED / stuck / budget-exhausted) via scripts/dev/smatchet-notify.sh."
+Write-Host "  (MERGED / stuck / budget-exhausted) via agents/scripts/core/smatchet-notify.sh."
 Write-Host "  If you did NOT see it, check Windows Focus Assist / notification settings"
 Write-Host "  for the 'Windows PowerShell' app."

@@ -238,7 +238,7 @@ cleanup
 : > "$CLAUDE_DIR/.tree-dirty"
 
 # clear-session-context.sh reads optional JSON on stdin. Empty stdin is fine.
-echo '' | bash "$PROJ_DIR/scripts/clear-session-context.sh" >/dev/null 2>&1
+echo '' | bash "$PROJ_DIR/agents/scripts/core/clear-session-context.sh" >/dev/null 2>&1
 
 shopt -s nullglob
 ORPHANS=("$CLAUDE_DIR"/.lint-queue.*)

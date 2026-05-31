@@ -17,7 +17,7 @@
 #   bash scripts/dev/verify-cr-reply.sh <branch> <file> [<file>...]
 #
 # Examples:
-#   bash scripts/dev/verify-cr-reply.sh feat/my-pr-branch scripts/dev/merge-gates.sh
+#   bash scripts/dev/verify-cr-reply.sh feat/my-pr-branch agents/scripts/core/merge-gates.sh
 #   bash scripts/dev/verify-cr-reply.sh fix/foo Source/Core/src/Foo.cpp Source/Core/include/Foo.h
 #
 # Exit codes:

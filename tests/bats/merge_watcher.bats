@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # tests/bats/merge_watcher.bats
 # ----------------------------------------------------------------------------
-# Bats tests for scripts/dev/merge-watcher-cli.py + merge-watcher.py.
+# Bats tests for agents/scripts/core/merge-watcher-cli.py + merge-watcher.py.
 #
 # Phase 1 of docs/design/smatchet-merge-watcher.md. Covers:
 #   - register / unregister / status / list CRUD

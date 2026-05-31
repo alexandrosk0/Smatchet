@@ -68,7 +68,7 @@ The PR-only-to-`develop` rule is suspended for a single batch when **all** of th
 2. **Path whitelist.** Every commit in the ahead-range touches only paths matching this allowlist:
    - `docs/**`
    - `agents/**`
-   - `scripts/dev/**`, `scripts/clear-session-context.sh`, `scripts/agent-tokens-report.py`
+   - `scripts/dev/**`, `agents/scripts/core/clear-session-context.sh`, `agents/scripts/core/agent-tokens-report.py`
    - `tests/**` *(test sources / fixtures only; root `tests/CMakeLists.txt` is permitted because it carries no Source/Core link surface)*
    - `backlog/**`
    - `.gitignore`, `AGENTS.md`, root-level `*.md` (README, CLAUDE, CONTEXT)
@@ -125,10 +125,10 @@ When the ahead-range diff is **strictly** within doc paths, the `test-all.sh` ga
 
 **Discriminator (one-liner)**:
 ```bash
-bash scripts/dev/is-pure-docs-diff.sh develop && echo "pure-docs (skip test-all.sh)" || echo "needs full gate"
+bash agents/scripts/core/is-pure-docs-diff.sh develop && echo "pure-docs (skip test-all.sh)" || echo "needs full gate"
 ```
 
-Implementation: `scripts/dev/is-pure-docs-diff.sh <base-branch>` — exits 0 if `git diff --name-only origin/<base>...HEAD` is strictly within the allow-list; exit 1 otherwise.
+Implementation: `agents/scripts/core/is-pure-docs-diff.sh <base-branch>` — exits 0 if `git diff --name-only origin/<base>...HEAD` is strictly within the allow-list; exit 1 otherwise.
 
 Cross-link: AGENTS.md § Trivial-visual-only change envelope is the precedent for path-prefix-based gate relaxation; this sub-exception is its pure-docs sibling.
 
@@ -162,7 +162,7 @@ export ORCH_USER
 
 # 6. Source the merge-gates poller (declares poll_merge_gates,
 #    gh_pr_ready_idempotent, ask_user_question).
-source "$MAIN_REPO/scripts/dev/merge-gates.sh"
+source "$MAIN_REPO/agents/scripts/core/merge-gates.sh"
 ```
 
 If step 2 reports uncommitted modifications outside the safe-ignore set (`build/`, `.fetchcontent-*/`), HALT and surface the file list.
