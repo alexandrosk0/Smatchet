@@ -1,24 +1,17 @@
 // CodeSyntaxColoringScenario — bucket-C screenshot-diff golden for the
 // multi-language code-coloring feature (docs/plans/active/code-syntax-coloring-
-// and-tooltips.md). Closes the deferred tooling.md "no golden-image screenshot
-// diff for syntax highlighting" gap (P3, 2026-05-15): the per-theme palette
-// round-trip is covered by bucket-A doctests, but "DrawColoredCode* actually
-// paints those colours on screen" had no pixel-level gate until now.
-//
-// Unlike DockGapSentinelScenario (which screenshots the steady-state dock
-// chrome) this scenario draws its OWN deterministic, fully-opaque window over
-// the framebuffer and renders one DrawColoredCodeBlock per representative
-// language — covering the vendored path (C++ via DrawColoredCppText, Lua),
-// the hand-rolled LDs (Python / Bash / JSON), and the Plain fallback. The
-// fixed window position + size + sample text make the capture reproducible
-// frame-to-frame so the L∞ ≤ 4 diff in scripts/dev/test-screenshot-diff.sh is
-// stable.
-//
-// Why a scenario and not a one-shot CLI: the screenshot must fire after the
-// code-block window has actually rendered at least once, and the colour cache
-// (CodeColorView's (content_hash, lang, theme_revision) map) must be warm so
-// the painted glyphs are final. A few warm-up frames guarantee both without
-// putting timing policy in the bash driver.
+// and-tooltips.md). Closes the deferred tooling.md golden-image gap (P3,
+// 2026-05-15): the per-theme palette round-trip is covered by bucket-A
+// doctests, but the on-screen paint of DrawColoredCode had no pixel-level gate
+// until now. This scenario draws its own deterministic, fully-opaque window and
+// renders one DrawColoredCodeBlock per representative language — the vendored
+// path (C++ delegates to DrawColoredCppText, plus Lua), the hand-rolled LDs
+// (Python, Bash, JSON), and the Plain fallback. Fixed window position, size,
+// and sample text make the capture reproducible frame-to-frame so the diff in
+// scripts/dev/test-screenshot-diff.sh stays stable. A scenario rather than a
+// one-shot CLI because the screenshot must fire after the window has rendered
+// at least once and the CodeColorView cache is warm; a few warm-up frames
+// guarantee both without putting timing policy in the bash driver.
 
 #include "Commands/Scenarios/IScenario.h"
 
@@ -37,7 +30,7 @@
 // g_ui — unconditional extern. Defined in SmatchetUI.cpp without a
 // SMATCHET_WITH_LUA_AUTOMATION guard; the header-side extern in
 // SmatchetUiSession.h is gated, so scenarios that need the singleton re-declare
-// it here (same shim DockGapSentinelScenario uses).
+// it at file scope, matching the DockGapSentinelScenario shim.
 extern UiDrawSession g_ui;
 
 namespace smatchet {
