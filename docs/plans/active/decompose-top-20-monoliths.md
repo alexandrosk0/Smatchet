@@ -279,7 +279,18 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   free functions (`RegisterListModels/DumpRequest/Probe/SendOnce/ValidatePrefs Command`). Command-name
   set + registration order byte-identical. `tests-out-of-band` (registry introspection needs the full
   AppController/AI dep chain not linked in `SmatchetTests`). The `HtmlToMarkdown` half of plan Slice 5
-  is deferred to a follow-up.
+  shipped as Slice 5b below.
+- **Slice 5b — `HtmlToMarkdown` (PR #639, general agent).** 337→**67 L / 12 br** in a single pass (no
+  2nd extraction). `HtmlMdCtx` struct holds shared state (former in-fn lambdas → methods); two
+  `unordered_map` dispatch tables key tag-name → free handler (25 handlers: open/void/close). **Test
+  delta**: new `tests/Core/MarkdownConvert.test.cpp` (24 cases / 48 assertions, one group per tag,
+  goldens captured pre-refactor → 48/48 byte-for-byte). Build + gate PASS.
+- **Slice 8 — `JiraClient::FetchFieldCatalog` (PR #643, `tracker-backend`).** 573 L / 165 br → **51-line**
+  fetch→parse→enrich→finalize orchestrator. 6 HTTP-phase helpers (`FetchAndParseFieldList`,
+  `EnrichGlobalCatalogFields`, `EnrichFromCreateMeta`, `EnrichIssueTypeFromProject`,
+  `DiscoverSprintBoardIds`, `EnrichSprintFields`) + 7 pure mappers in the existing
+  `TrackerFieldCatalogPure` seam (no `ITrackerClient` interface delta). **3 extraction passes** (createmeta
+  needed a 3rd-pass sub-split for the branch budget). **Test delta**: +21 cases (26/176 assertions PASS).
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
@@ -316,6 +327,13 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   the 30-branch cap on first extraction and needed a sub-extraction (cell/rect-sel helpers; a
   `HandleJsonRpcToolsCall` split). Expect a 2nd pass when decomposing a function with > ~60 total branches.
 - **`HtmlToMarkdown` half of Slice 5 deferred** to a follow-up; `RegisterAiCommands` shipped alone.
+  Shipped as Slice 5b (#639).
+- **`FetchFieldCatalog` is a phase-split, not a `{schema-type → mapper}` table** (Slice 8). § Approach B's
+  table recipe assumed a per-type dispatch switch; the function's actual shape is a *sequence of
+  per-endpoint enrichment phases* (field-list → createmeta → project issue-type → sprint boards →
+  sprint fields) with no single type-keyed branch point to tabularize. Split along the real phase
+  boundaries (the plan's own primary recommendation) — behaviour-preserving, gate-confirmed. Standing
+  note: pick table-vs-phase per the function's actual branch structure, not the plan's blanket recipe.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
