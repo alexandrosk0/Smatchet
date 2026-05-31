@@ -28,11 +28,13 @@ class SmatchetToolbarUi {
 
   private:
     void RenderBar(AppController& app, TrackerConfig& cfg);
+    void RenderButtonContextMenu(TrackerConfig& cfg, int src);
     void RenderEditor(AppController& app, TrackerConfig& cfg);
     void DispatchButton(AppController& app, TrackerConfig& cfg, const ToolbarButton& b);
 
     SmatchetIconPickerUi iconPicker_;
     bool requestEditorOpen_ = false;
+    int requestEditSelect_ = -1;  // button index to preselect when the editor next opens; -1 = default
     int selected_ = -1;  // selected button index in the editor
 
     // Editor working state (populated when the editor opens).

@@ -117,6 +117,18 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
         const std::vector<ToolbarButton> eff = ResolveEffectiveToolbar(cfg.Toolbar, std::vector<ToolbarButton>());
         const bool fa = SmatchetAreFaIconsLoaded();
 
+        // The effective bar only drops/merges separators — it never reorders real buttons —
+        // so the k-th non-separator on screen is the k-th non-separator in cfg.Toolbar.Buttons.
+        // realButtonSrc maps that ordinal back to the global index a right-click menu mutates.
+        std::vector<int> realButtonSrc;
+        realButtonSrc.reserve(cfg.Toolbar.Buttons.size());
+        for (int s = 0; s < static_cast<int>(cfg.Toolbar.Buttons.size()); ++s) {
+            if (cfg.Toolbar.Buttons[s].Kind != ToolbarButtonKind::Separator) {
+                realButtonSrc.push_back(s);
+            }
+        }
+        int realSeen = 0;
+
         for (std::size_t i = 0; i < eff.size(); ++i) {
             const ToolbarButton& b = eff[i];
             if (i != 0) {
@@ -126,6 +138,9 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
                 ImGui::TextDisabled("|");
                 continue;
             }
+
+            const int src = (realSeen < static_cast<int>(realButtonSrc.size())) ? realButtonSrc[realSeen] : -1;
+            ++realSeen;
 
             std::string glyph = GlyphFor(b);
             std::string label;
@@ -156,9 +171,25 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
                 }
                 ImGui::SetTooltip("%s", tip.c_str());
             }
+
+            // Per-button right-click menu. Opened manually (not BeginPopupContextItem) so it
+            // works on a disabled button too — e.g. to delete one bound to a missing command.
+            if (src >= 0) {
+                std::string menuId = "##tbmenu";
+                menuId += std::to_string(i);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) &&
+                    ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                    ImGui::OpenPopup(menuId.c_str());
+                }
+                if (ImGui::BeginPopup(menuId.c_str())) {
+                    RenderButtonContextMenu(cfg, src);
+                    ImGui::EndPopup();
+                }
+            }
         }
 
-        // Right-click anywhere on the bar → context menu.
+        // Right-click empty bar area → bar-level context menu (NoOpenOverItems defers to the
+        // per-button menu above when the cursor is over a button).
         if (ImGui::BeginPopupContextWindow("##ToolbarCtx", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
             if (ImGui::MenuItem("Customize Toolbar...")) {
                 requestEditorOpen_ = true;
@@ -173,11 +204,51 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
     ImGui::End();
 }
 
+void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
+    std::vector<ToolbarButton>& buttons = cfg.Toolbar.Buttons;
+    if (src < 0 || src >= static_cast<int>(buttons.size())) {
+        return;
+    }
+    const int count = static_cast<int>(buttons.size());
+
+    // Edit... defers selection to the editor (no save here); the other ops mutate the global
+    // button list in place — the same swap/insert/erase the Customize editor uses — then persist.
+    if (ImGui::MenuItem("Edit...")) {
+        requestEditorOpen_ = true;
+        requestEditSelect_ = src;
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Move Left", nullptr, false, src > 0)) {
+        std::swap(buttons[src], buttons[src - 1]);
+        ConfigManager::Save(cfg);
+    }
+    if (ImGui::MenuItem("Move Right", nullptr, false, src < count - 1)) {
+        std::swap(buttons[src], buttons[src + 1]);
+        ConfigManager::Save(cfg);
+    }
+    if (ImGui::MenuItem("Insert Separator")) {
+        ToolbarButton sep;
+        sep.Kind = ToolbarButtonKind::Separator;
+        buttons.insert(buttons.begin() + src + 1, sep);  // after the clicked button
+        ConfigManager::Save(cfg);
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Delete")) {
+        buttons.erase(buttons.begin() + src);
+        ConfigManager::Save(cfg);
+    }
+}
+
 void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     if (requestEditorOpen_) {
         requestEditorOpen_ = false;
         editBuf_ = cfg.Toolbar;
-        selected_ = editBuf_.Buttons.empty() ? -1 : 0;
+        if (requestEditSelect_ >= 0 && requestEditSelect_ < static_cast<int>(editBuf_.Buttons.size())) {
+            selected_ = requestEditSelect_;
+        } else {
+            selected_ = editBuf_.Buttons.empty() ? -1 : 0;
+        }
+        requestEditSelect_ = -1;
         cmdNames_.clear();
         const std::vector<smatchet::cmd::Command> all = app.Commands().All();
         cmdNames_.reserve(all.size());
