@@ -230,8 +230,57 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- **Slice 0 — CI size-cap gate (the keystone).** `agents/scripts/core/function_size_audit.py` (new):
+  heuristic C++ function extractor — comment/string-neutralizing "skeleton" pass, brace-depth
+  walker with a backward classifier rejecting control blocks / lambdas / scopes / aggregate
+  inits. Two delta-gated rule-ids `function-too-long` (> 200 lines) / `function-too-branchy`
+  (> 30 decision points), keyed `(rule, basename, qualified-name)`, diffed HEAD vs merge-base of
+  `origin/develop` so the existing monoliths are grandfathered. Wired into
+  `agents/scripts/project/test-lint-rules.sh` diff mode (third gate block, parallel to the
+  comment-regrowth gate; fail-closed on infra error; `SMATCHET_DEVIATION` suppression). New modes
+  `--funcsize-baseline` (writes the informational snapshot) + `--scan-file` (git-free, for tests);
+  `--selftest` extended to assert the two rule-ids are documented in `AGENTS.md`. Snapshot
+  `docs/high-integrity/function-size-baseline.md` (47 too-long + branchy grandfathered). Tests:
+  `tests/bats/function_size.bats` (6) + fixtures `tests/fixtures/function_size/`. AGENTS.md
+  § Tiered enforcement documents the rules. Parser validated: line counts match this plan's own
+  measurements within ±1–5 lines (`drawActiveProjectWindow` 992, `Draw` 608, `DrawWhisper…` 779).
+  - **CodeRabbit round (PR #627):** 4 actionable findings fixed in-band — (1) operator-overload
+    name parsing (`operator()` / `operator[]` / `operator bool` were silently skipped → now
+    detected via `_name_before_paren`); (2) backslash-continued preprocessor lines (`#define … \`)
+    now stay skipped across the splice so macro braces can't perturb depth; (3) identity key
+    extended to `(rule, basename, qualified-name, arity)` so same-named overloads no longer
+    collapse / mis-grandfather; (4) `_suppressed` parses comma-separated rule ids so a dual-cap
+    function is suppressible by one `SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy)`.
+    Added fixtures + 4 bats cases (operator detection, dual-cap fires both, comma-deviation
+    suppresses both). Also resolved an AGENTS.md merge conflict from #626 (plan path active→shipped).
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
+- **Grandfather snapshot lives in its OWN file** (`docs/high-integrity/function-size-baseline.md`),
+  not co-mingled into `docs/high-integrity/baseline.md` as the plan's § Files-to-modify row 1
+  implied. Rationale: the strict `baseline.md` has a byte-determinism contract (a bats test diffs
+  it); injecting the funcsize set would couple two independent gates and risk that test. The gate
+  itself is a live merge-base delta (not the file), so the snapshot is purely informational —
+  identical role to the comment-regrowth rules, which also keep no entry in `baseline.md`.
+- **Grandfather granularity is function-identity, not line-count.** A function fires only when it
+  is NEW over a cap or has just crossed it; a grandfathered 600-line function growing to 650 stays
+  grandfathered. This matches the plan's "same mechanism as the comment-bloat rules" wording. It
+  does NOT re-flag erosion *within* an already-oversized function — that protection applies once a
+  slice brings the function under 200 (then any later regrowth past 200 re-fires).
+- **Function detector is a heuristic** (brace scanner, not libclang — unavailable/non-portable).
+  Systematic quirks cancel in the HEAD-vs-base set-diff for unchanged code; only genuinely new /
+  just-crossed functions are flagged, and `SMATCHET_DEVIATION` is the escape hatch.
+
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **`tests/bats/function_size.bats` — 6/6 PASS**: `function-too-long` + `function-too-branchy`
+  detection; known-good negative (aggregate-init + lambda not misdetected); `--diff` delta gate
+  new-function-fails / grandfathered-passes / `SMATCHET_DEVIATION`-suppresses (throwaway git repos).
+- **`tests/bats/lint_rules.bats` — regression** re-run after the wiring change.
+- **`--selftest` PASS** — rule-ids in sync with AGENTS.md.
+- **Live gate** `test-lint-rules.sh --diff origin/develop` — function-size block reports PASS on the
+  unchanged tree (zero new; all 47+ monoliths grandfathered).
+- **Pure-tooling slice** (shell + python + fixtures + docs) — no `Source/` change, so no
+  `cmake --build` / perf scenario (per `AGENTS.md` § Cadence; perf-gate N/A — no C++ touched).
