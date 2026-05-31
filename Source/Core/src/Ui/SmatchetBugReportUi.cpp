@@ -218,8 +218,10 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
             d.bugReportPreviewDirty = false;
         }
         if (d.bugReportPreviewBuf.empty()) {
+            // Defensive allocation only — NOT "seeded". Leaving the flag false lets the
+            // dirty-check above populate real content next frame (and keeps BodyOverride
+            // empty so an all-zero buffer isn't sent as the body).
             d.bugReportPreviewBuf.assign(16384u, '\0');
-            d.bugReportPreviewSeeded = true;
         }
         ImGui::TextDisabled("This exact text is sent. Edit to remove anything you don't want to share.");
         if (ImGui::InputTextMultiline("##bugpreview", d.bugReportPreviewBuf.data(), d.bugReportPreviewBuf.size(),
