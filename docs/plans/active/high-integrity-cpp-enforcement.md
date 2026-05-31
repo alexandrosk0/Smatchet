@@ -233,6 +233,7 @@ N/A (enforcement PR) — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`,
 - _(bats)_ · `tests/bats/lint_rules.bats` (12) + 6 fixtures + `test-lint-rules-bats.sh` wrapper; `--diff=`/`--scan-file=` forms (shell-lint clean).
 - _(ci)_ · `build-and-test.yml` PR delta gate + bats in bucket-A; develop post-merge baseline-drift job; process-rules.md + coderabbit-triage.md hooks.
 - _(narrowing-ci)_ · `scan_narrowing`: Windows-path-safe parse (greedy match tolerates the `C:\` drive-letter colon `cut -d:` truncated) + first-party/`ThirdParty` filter + pipefail fix (a clean TU no longer aborts the strict scan under `set -e -o pipefail`); new `high-integrity-narrowing` develop-post-merge Windows job (PCH-free clang-cl db, configure-only); fixed `Sync/TicketSyncService.cpp:262-263` `size_t→ptrdiff_t` — the only first-party narrowing. Narrowing now gated (enforced at 0 first-party).
+- _(wide-rules)_ · promote `no-raw-new` + `deviation-overdue` from strict-zone-only to **first-party-wide absolute** — enforced at 0 across `Source/Core` + `Source/Plugins` + `Source/Standalone` (the `comment_audit.py` SWEEP_ROOTS; ThirdParty + tests excluded), not just the strict zone. New `compute_wide_violations` + `--scan-wide` mode + an always-on block in `--diff`. Both measured 0 first-party today → absolute (no grandfathering); exemption markers + `SMATCHET_DEVIATION` still suppress. `no-printf-stderr` + `define-imgui` stay strict-only (legit first-party uses: CLI stdout, the ImGui localization alias). +5 bats.
 
 ## Deviations from plan
 
@@ -258,3 +259,10 @@ N/A (enforcement PR) — diff touches only `AGENTS.md`, `scripts/dev/`, `docs/`,
 - **Findings**: 118 unique narrowing warnings → 116 in vendored `ThirdParty/stb/stb_image.h` (compiled into `Persistence/SmatchetImageTextureCache.cpp` via `STB_IMAGE_IMPLEMENTATION`; now filtered) + 2 first-party `Sync/TicketSyncService.cpp:262-263` (`size_t→difference_type` iterator offset), both fixed.
 - **Scanner**: `SMATCHET_LINT_NARROWING=1 --full` reports **0 first-party narrowing**, full TU sweep, clean exit (pipefail fix verified — earlier a clean TU aborted the scan mid-loop = false PASS). **PASS (local)**.
 - **Live CI**: `high-integrity-narrowing` (windows-2022) first validates on the next develop merge — fail-forward, matching baseline-drift's post-merge model. Serial clang-tidy (~minutes); parallelising `scan_narrowing` is a tracked follow-up.
+
+### Follow-up: `no-raw-new` + `deviation-overdue` promoted first-party-wide (2026-05-31)
+
+- **Scope**: both rules now enforced at 0 across ALL first-party C++ (`Source/Core`, `Source/Plugins`, `Source/Standalone` — the `comment_audit.py` SWEEP_ROOTS; ThirdParty + tests excluded), not just the strict zone. `compute_wide_violations` + `--scan-wide` mode + an always-on absolute block in `--diff` (no base scan — HEAD-only).
+- **Why absolute, not delta**: measured 0 across all first-party today, so there is nothing to grandfather; the user's intent is "= 0 everywhere". Exemption markers (`// C-ABI handle` / `// custom-deleter` / `// pimpl`) and `SMATCHET_DEVIATION(rule=...)` still suppress.
+- **Why only these two**: `no-printf-stderr` (Standalone CLI stdout) and `define-imgui` (the ImGui localization-alias macro in Ui) have legitimate first-party uses outside the strict zone, so they stay strict-only.
+- **Verified**: `--scan-wide` on the real tree = 0; fires `no-raw-new` on a non-strict Ui fixture; ignores ThirdParty + `tests/` + an exemption-marked raw new; `--diff origin/develop` emits the wide PASS line; full gate rc=0. 17/17 lint bats (5 new), scanner shellcheck-clean. **PASS**.

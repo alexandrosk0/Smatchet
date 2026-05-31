@@ -111,3 +111,57 @@ setup() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"new strict-zone"* ]]
 }
+
+# ---------- first-party-wide absolute rules (no-raw-new / deviation-overdue) ----------
+
+@test "--scan-wide fires no-raw-new for a NON-strict first-party file (Ui)" {
+    # Ui is the 'light' zone — outside the strict zone, but still first-party, so
+    # the wide gate must catch a raw new here.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf 'struct W {};\nvoid f() { W* p = new W(); (void)p; }\n' > "$tmp/Source/Core/src/Ui/Widget.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-wide
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no-raw-new"* ]]
+    [[ "$output" == *"Ui/Widget.cpp"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-wide ignores ThirdParty and non-first-party (tests) raw new" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/ThirdParty/x" "$tmp/tests"
+    printf 'struct V {};\nvoid g() { V* p = new V(); (void)p; }\n' > "$tmp/Source/Core/ThirdParty/x/vendor.cpp"
+    printf 'struct T {};\nvoid h() { T* p = new T(); (void)p; }\n' > "$tmp/tests/t.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-wide
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-wide respects an exemption marker on the raw new" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Standalone"
+    printf 'struct H {};\nH* make() { return new H(); } // C-ABI handle\n' > "$tmp/Source/Standalone/main.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-wide
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-wide is clean on the real first-party tree" {
+    run bash "$LINT" --scan-wide
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "--diff enforces the first-party-wide no-raw-new / deviation-overdue gate" {
+    run bash "$LINT" --full
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | sed -n 's/^  //p' > /tmp/lr_base_all
+    SMATCHET_LINT_BASELINE_SET=/tmp/lr_base_all run bash "$LINT" --diff
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no first-party no-raw-new / deviation-overdue"* ]]
+}
