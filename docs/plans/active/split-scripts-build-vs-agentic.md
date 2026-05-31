@@ -116,6 +116,24 @@ N/A — diff touches no `Source/Core/` code (pure tooling/docs move).
 
 **Deferred — Phase 2 (needs user authz: live `.claude/settings.json` edit + `SmatchetMergeWatcher` daemon stop/restart, self-mod guard):** the daemon/hook clusters — `merge-gates{,.graphql,-prompt}`, `merge-watcher{,-cli}.py`, `merge-watcher-*.ps1`, `watch-register-if-enabled`, `agent-progress`, `setup-harness`(+`.ps1`, top-level), `clear-session-context` (top-level), `vexp-strip-agents-md`, `memory-drain-nudge`, `check-main-repo-clean`, `coderabbit-triage` (←merge-watcher), `git-janitor`+`is-pure-docs-diff` (←merge-gates), `tail-agent` (←agent-progress), `smatchet-notify{,-windows}`, `agent-tokens-report.py` (top-level), and the daemon/setup tests (`test-autonomous-debug-loop`, `test-merge-gates`, `test-merge-watcher{,-integration}-bats`, `test-setup-harness`). `is-pure-docs-diff.sh` §6 regex lands with this cluster.
 
+## Phase 2 execution runbook (pre-authz — do NOT auto-run; live-system mutation)
+
+**Why this is gated, not just "continue":** unlike Phase 1, every Phase-2 script is wired into *running* infrastructure, and the moves only become safe when the branch merge and the live re-point happen **together**. Confirmed couplings (audited against the live tree):
+- **Windows scheduled task `SmatchetMergeWatcher`** runs `merge-watcher.py daemon` by an **absolute path captured at install time** (`merge-watcher-install-autostart.ps1` → `$daemonScript = $scriptDir/merge-watcher.py`). Moving the script does **not** update the registered task — it must be re-registered.
+- **Live `.claude/settings.json`** (gitignored, main repo) references `scripts/clear-session-context.sh`.
+- **Live `.claude/hooks/*`** (gitignored): `autoregister-pr.sh` + `pretool-edit-p4-lock-check.sh` reference moved scripts (`merge-watcher-cli.py`, `setup-harness.sh`, …) — files an agent cannot fully see or safely edit.
+- `cr-finding-gate` action/workflow mention `merge-gates.sh` only in **comments** (no CI invocation) — so CI does **not** break; the daemon/hooks/task do.
+
+**Sequence (run with the daemon stopped; each live edit is a discrete, reversible step):**
+1. **Stop the daemon:** `powershell -File scripts/dev/merge-watcher-install-autostart.ps1`'s uninstaller, or `Stop-ScheduledTask -TaskName SmatchetMergeWatcher; Disable-ScheduledTask -TaskName SmatchetMergeWatcher`.
+2. **Branch moves (reviewable):** `git mv` the ~29 Phase-2 scripts → `agents/scripts/core/` (+ the 4 top-level → `core/`); fix self-anchoring (`$(dirname "$0")/../..`→`../../..`, `parents[N]`+1); repath the **committed** cross-script chains (`merge-watcher.py`→`merge-gates.sh`→`git-janitor.sh`→`is-pure-docs-diff.sh`; `agent-progress`→`tail-agent`; daemon→`coderabbit-triage`/`smatchet-notify`), the installers' self-paths, `docs/harness/claude-code/settings.json.tmpl` + `docs/harness/claude-code/hooks/*`, the `cr-finding-gate` comment refs, and docs. Land `is-pure-docs-diff.sh` §6 regex here.
+3. **Re-register the task from the new path:** `powershell -File agents/scripts/core/merge-watcher-install-autostart.ps1` (re-captures `$scriptDir` → new `merge-watcher.py`).
+4. **Live re-point (USER / explicit-confirm only):** edit live `.claude/settings.json` (`scripts/clear-session-context.sh` → `agents/scripts/core/clear-session-context.sh`) and the live `.claude/hooks/*.sh` lines that name moved scripts.
+5. **Restart:** re-enable + start `SmatchetMergeWatcher`; restart the Claude Code session (re-fires SessionStart hooks at new paths).
+6. **Smoke:** `bash agents/scripts/core/merge-watcher-cli.py list` + one poll cycle on a registered PR; `bash agents/scripts/core/test-setup-harness.sh`; confirm SessionStart ran clean.
+
+**Verification gates:** test-count invariant 57→57 (moved daemon tests discovered in `core/` by multi-root `test-all.sh`); `bash -n`/`py_compile` clean; stale-operational sweep zero; daemon smoke (step 6). Steps 4–5 are the authz-gated live mutations.
+
 ## Deviations from plan
 - **`test-build-wrapper.ps1` → `scripts/dev/local/`** (§2 had `test-build-*` STAY). Rationale: it does not launch the exe — it smoke-tests the build/run PS wrappers, is `.ps1` (outside `test-all.sh`'s `.sh` glob), 0 CI refs; co-locating with its `$PSScriptRoot`-joined targets keeps the joins working with zero edits.
 - **`check-main-repo-clean.sh`: §3 `core/` → Phase-2 set.** Rationale: the committed `settings.json.tmpl` references it → hook-critical, can't move without the live-settings authz step.
