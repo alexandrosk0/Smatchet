@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://smatchet.dev/agent-eval/result-schema.json",
+  "title": "Agent eval runner output",
+  "description": "One runner output — the agent run for ONE case under ONE prompt-root, across N trials. The contract scripts/dev/agent-eval-score.py consumes: it diffs a base result against a head result (plan § Approach step 5). Emitted by scripts/dev/agent-eval-run.sh. Embeds a snapshot of the case so the scorer needs only base + head result files (no separate --case lookup) — though --case can override.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "caseId",
+    "agent",
+    "promptRoot",
+    "harness",
+    "trials"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "caseId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The case this result is for. Base + head results scored together MUST match."
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "promptRoot": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The agent-prompt tree this run read from (--prompt-root). Base run vs head run differ ONLY in this path — that is the before/after seam (plan § Approach step 5 / RISK review finding 1)."
+    },
+    "harness": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Harness adapter that produced the run, e.g. 'claude-print' or 'fake-runner'. The case/result/scoring formats are harness-agnostic; this names which adapter ran (plan § RISK review finding 4)."
+    },
+    "runMeta": {
+      "type": "object",
+      "description": "Optional provenance. Timestamps/model are recorded for human triage only — the scorer never reads them.",
+      "additionalProperties": true,
+      "properties": {
+        "model": { "type": "string" },
+        "promptRootRef": { "type": "string", "description": "Commit SHA / worktree label of the prompt-root, if known." },
+        "capturedAt": { "type": "string", "description": "ISO-8601 capture time (informational)." },
+        "trialsRequested": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "case": {
+      "description": "Snapshot of the golden case (per case-schema.json) at run time. Lets the scorer read dimensions + referenceOutcome without a second file. Optional — a --case override on the scorer supersedes it.",
+      "type": "object"
+    },
+    "trials": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per trial. The scorer averages per-dimension scores across trials.",
+      "items": { "$ref": "#/definitions/trial" }
+    }
+  },
+  "definitions": {
+    "trial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "output", "findings"],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0-based trial number."
+        },
+        "output": {
+          "type": "string",
+          "description": "The agent's full final text output. Piped to the external judge as {case, output, dimension}."
+        },
+        "findings": {
+          "type": "array",
+          "description": "Structured findings parsed from the agent output by the harness adapter. The inline objective checks (cited_file_line / severity_enum / finding_count) score these deterministically.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["summary"],
+            "properties": {
+              "file": { "type": "string" },
+              "line": { "type": ["integer", "null"] },
+              "severity": { "type": "string" },
+              "summary": { "type": "string" }
+            }
+          }
+        },
+        "error": {
+          "type": "string",
+          "description": "Optional: adapter/agent error for this trial. A non-empty error makes the trial contribute a 0 score on every dimension."
+        }
+      }
+    }
+  }
+}

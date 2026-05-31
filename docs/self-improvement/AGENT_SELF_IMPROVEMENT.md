@@ -14,7 +14,7 @@ tooling gaps. Live entries split by category; this file is the index + spec.
   Last-reviewed: <YYYY-MM-DD>   # default = creation date; bump on each sweep
 ```
 
-Applied entries are archived immediately to [`self-improvement/categories/applied.md`](self-improvement/categories/applied.md).
+Applied entries are archived immediately to [`self-improvement/categories/applied.md`](categories/applied.md).
 
 ## Categories
 
@@ -55,6 +55,30 @@ Mandatory on every `open` entry.
    workflow ≥3 times), apply: edit the relevant agent prompt(s) in `agents/`
    or AGENTS.md; flip Status to `applied`; move the entry to `applied.md` —
    **then re-run `--fix`** (two counts changed: the category −1, `applied` +1).
+   **If the edited agent has eval coverage** (currently `code-review`), score
+   the edit base-vs-head per § Optimize against evals before flipping to
+   `applied` — attach the advisory delta to the PR.
+
+## Optimize against evals (advisory)
+
+Prompt edits to `agents/*.md` mutate decision quality with **zero before/after
+measurement** unless they're scored. For any agent that has eval coverage, the
+apply step (Workflow 4) is measured the same way the perf gate measures a
+`Source/Core/` change — except the dimension is agent decision quality, not
+frame latency:
+
+- run the curated case set once with `--prompt-root=<base worktree>` and once
+  with `--prompt-root=<head worktree>`, then diff the two result JSONs with
+  `scripts/dev/agent-eval-score.py`;
+- the delta table is **advisory** — a malformed artifact FAILs, a quality
+  regression WARNs (it does not block the prompt edit) until judge-vs-human
+  calibration data exists.
+
+Full contract, the two-worktree recipe, and case-authoring live in
+[`../agent-rules/subagent-eval.md`](../agent-rules/subagent-eval.md). Coverage is
+`code-review` only in the Phase-1 MVP; broader coverage + the WARN→BLOCK
+graduation are deferred (tracked in
+[`categories/tooling.md`](categories/tooling.md)).
 
 > **Common failures this prevents:** (a) appending to this index file instead of
 > a category file; (b) forgetting the count sync → pre-push `test-backlog-counts`
@@ -71,13 +95,13 @@ without movement.
 
 | Category | Live count | File |
 |---|---|---|
-| bug         | 14  | [self-improvement/categories/bug.md](self-improvement/categories/bug.md) |
-| process     | 27  | [self-improvement/categories/process.md](self-improvement/categories/process.md) |
-| tooling     | 40  | [self-improvement/categories/tooling.md](self-improvement/categories/tooling.md) |
-| infra       | 16  | [self-improvement/categories/infra.md](self-improvement/categories/infra.md) |
-| test        | 18  | [self-improvement/categories/test.md](self-improvement/categories/test.md) |
-| security    | 14  | [self-improvement/categories/security.md](self-improvement/categories/security.md) |
-| external    | 1   | [self-improvement/categories/external-blockers.md](self-improvement/categories/external-blockers.md) |
-| applied (archive) | 144 | [self-improvement/categories/applied.md](self-improvement/categories/applied.md) |
+| bug         | 14  | [self-improvement/categories/bug.md](categories/bug.md) |
+| process     | 27  | [self-improvement/categories/process.md](categories/process.md) |
+| tooling     | 45  | [self-improvement/categories/tooling.md](categories/tooling.md) |
+| infra       | 17  | [self-improvement/categories/infra.md](categories/infra.md) |
+| test        | 19  | [self-improvement/categories/test.md](categories/test.md) |
+| security    | 14  | [self-improvement/categories/security.md](categories/security.md) |
+| external    | 1   | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |
+| applied (archive) | 144 | [self-improvement/categories/applied.md](categories/applied.md) |
 
 > **Count maintenance**: each "Live count" is the number of `^- 20YY-MM-DD` entries in the linked file (`grep -c '^- 20' self-improvement/categories/<file>.md`). The applied-archive count is the same `grep -c '^- 20' self-improvement/categories/applied.md`. `agents/scripts/core/test-backlog-counts.sh` runs at the pre-push gate (`test-all.sh` discovery) and refuses if any row diverges from the actual file. Update the row in the same commit that adds / archives / removes an entry, or run `bash agents/scripts/core/test-backlog-counts.sh --fix` to rewrite the table from current file counts.

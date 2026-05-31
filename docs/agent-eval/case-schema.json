@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://smatchet.dev/agent-eval/case-schema.json",
+  "title": "Agent eval golden case",
+  "description": "One frozen golden case for the subagent eval harness (docs/plans/active/subagent-eval-harness.md). Records enough repo context to RECONSTRUCT the run — a frozen diff alone is not reproducible (plan § Case metadata / RISK review finding 5). Consumed by scripts/dev/agent-eval-run.sh to drive the agent; the resulting findings are scored by scripts/dev/agent-eval-score.py against this case's dimensions + referenceOutcome.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "caseId",
+    "agent",
+    "repoRef",
+    "baseBranch",
+    "toolPosture",
+    "delegationPacket",
+    "dimensions",
+    "referenceOutcome"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Bumped only on a breaking shape change."
+    },
+    "caseId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier. Base + head result JSONs scored together MUST share this caseId."
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agent under eval, e.g. 'code-review' (matches agents/<name>.md basename)."
+    },
+    "description": {
+      "type": "string",
+      "description": "One-line human summary of what this case probes."
+    },
+    "repoRef": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Commit SHA the runner reconstructs the run against."
+    },
+    "baseBranch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Branch the diff is taken relative to (e.g. 'develop')."
+    },
+    "files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relevant file paths handed to the agent as context."
+    },
+    "diff": {
+      "type": "string",
+      "description": "Optional unified diff (inline) or a repo-relative path to a .diff fixture."
+    },
+    "toolPosture": {
+      "type": "string",
+      "enum": ["read-only", "edit"],
+      "description": "Tool posture the agent runs under. code-review is read-only."
+    },
+    "delegationPacket": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The EXACT delegation packet text handed to the agent — the prompt the runner feeds the harness adapter."
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Scored quality dimensions. 'judge' kind → external judge command; 'objective' kind → inline code check (plan § Approach step 2).",
+      "items": { "$ref": "#/definitions/dimension" }
+    },
+    "referenceOutcome": {
+      "$ref": "#/definitions/referenceOutcome"
+    }
+  },
+  "definitions": {
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "kind"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dimension identifier, unique within the case (e.g. 'correctness', 'cited_file_line')."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["judge", "objective"],
+          "description": "'judge' → graded by the external judge command; 'objective' → graded by an inline deterministic code check."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this dimension measures."
+        },
+        "weight": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional relative weight (default 1.0). Reserved for a future aggregate score; the MVP scores per-dimension."
+        },
+        "check": {
+          "type": "string",
+          "enum": ["cited_file_line", "severity_enum", "finding_count"],
+          "description": "Required when kind=objective: which inline check computes the score from trial.findings."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "objective" } } },
+          "then": { "required": ["check"] }
+        }
+      ]
+    },
+    "referenceOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Ground truth the judge + objective checks score against.",
+      "required": ["expectedFindingCount"],
+      "properties": {
+        "expectedFindingCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many genuine findings the case expects. Used by the 'finding_count' objective check and given to the judge as context."
+        },
+        "allowedSeverities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Severity enum the 'severity_enum' objective check accepts (default: critical/high/medium/low/info)."
+        },
+        "expectedFindings": {
+          "type": "array",
+          "description": "The known-good findings — what a strong agent run should surface. Given to the judge as the reference answer.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "summary"],
+            "properties": {
+              "file": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 },
+              "severity": { "type": "string" },
+              "summary": { "type": "string" }
+            }
+          }
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-text guidance for a human or judge (e.g. known false-positive traps in this case)."
+        }
+      }
+    }
+  }
+}

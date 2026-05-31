@@ -116,8 +116,22 @@ Not C++ — Bucket A/E N/A. Everything in the MVP is verifiable **without a live
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- `<pending-merge-sha>` · feat(agent-eval): Phase-1 subagent eval harness MVP — 3 schemas + pure-stdlib scorer (external judge) + runner (`--prompt-root` / `--fake-runner`) + 24 bats + 3 curated `code-review` cases + advisory wiring.
+
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Added `tests/agent-eval/validate_schema.py`** (not in § Files to modify): a ~110-line pure-stdlib draft-07-subset JSON Schema validator. The plan's § Verification calls for "a stdlib check inside the bats, no third-party validator"; a shared committed helper is cleaner than duplicating a validator heredoc across both bats suites, and it honestly validates against the real `*-schema.json` files (resolves `$ref`, `allOf`/`if`/`then`). Used by both `agent_eval_score.bats` and `agent_eval_run.bats`.
+- **Judge is invoked as `python <script>`, not `bash <script>`** (doc/test detail, not a contract change): on Windows a bare `bash` on PATH resolves to WSL when launched from the native-Python subprocess; a `python`-invoked judge runs in-interpreter. The scorer is agnostic to the judge command — this only pins the documented default + the fake judge. The judge path is converted with `cygpath -m` on Windows. Captured in `subagent-eval.md` § Windows note.
+- **All `@test` names are plain ASCII** (no `→`/`≠`): bats mis-parses Unicode in test names under the default non-UTF-8 Git-Bash locale (pre-existing issue already logged in `tooling.md`, 2026-05-28). Deliberately avoided here so the suites run fully even outside a UTF-8 shell.
+- **Incidental fix**: corrected 9 pre-existing broken relative links in `AGENT_SELF_IMPROVEMENT.md` (`self-improvement/categories/X` → `categories/X`) surfaced by the markdown-link gate once the file entered the diff; and reconciled 3 pre-existing stale backlog-count rows (tooling/infra/test) that the `test-backlog-counts` gate requires to match actual file counts.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Scorer test (`tests/bats/agent_eval_score.bats`)**: 14/14 pass. Fake judge + fixed base/head fixtures assert the 0/1/2 exit-code contract, the delta-table shape, the `$SMATCHET_AGENT_EVAL_JUDGE_CMD` env fallback, the `--markdown-only` advisory downgrade, caseId-mismatch → exit 2, and schema conformance (sample result + all curated cases). **Passed.**
+- **Runner test (`tests/bats/agent_eval_run.bats`)**: 10/10 pass. `--fake-runner` emits a `result-schema`-conformant JSON; `--prompt-root` / `--trials` / flag-parity / usage-error (exit 2) / last-line-is-path all asserted; plus a runner→scorer integration test (two fake runs score clean, exit 0). No live tokens. **Passed.**
+- **Schema conformance**: the 3 curated cases validate against `case-schema.json` and a sample result against `result-schema.json` via `tests/agent-eval/validate_schema.py` (stdlib). Negative control (missing-field doc rejected) asserted. **Passed.**
+- **Shell-lint**: `scripts/dev/agent-eval-run.sh` passes `agents/scripts/core/test-shell-lint.sh` (Passed: 1 Failed: 0) and direct `shellcheck` is clean. **Passed.**
+- **Markdown links** (`test-markdown-links.sh --diff origin/develop`): 0 dangling links after the incidental fix. **Passed.**
+- **Backlog counts** (`test-backlog-counts.sh`): Passed: 8 Failed: 0 after `--fix`. **Passed.**
+- **Build gate**: N/A — no compile (tooling/docs diff).
+- **Manual residue**: one live `code-review` end-to-end smoke + judge-vs-human calibration remain manual; tracked as a P2 deferred-automation entry in `docs/self-improvement/categories/tooling.md` (2026-05-31). **Not-run (deferred, tracked).**
