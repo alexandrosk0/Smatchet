@@ -77,6 +77,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | 2026-05-28 | Plan — Shell-script self-review lint |
 | [`agentic-layer-project-independence`](shipped/agentic-layer-project-independence.md) | 2026-05-29 | Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards |
 | [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | 2026-05-30 | Plan — Reduce source-comment bloat across first-party C++ |
+| [`split-scripts-build-vs-agentic`](shipped/split-scripts-build-vs-agentic.md) | — | Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. |
 <!-- END auto-plan-index -->
 
 ### Notes
