@@ -6,8 +6,8 @@ name: Doc validation
 # paths-ignore deliberately skips and coverage.yml's paths: allow-list excludes.
 #
 # Runs:
-#   - scripts/dev/test-doc-anchors.sh        (every AGENTS.md § <name> resolves)
-#   - scripts/dev/test-agent-contract.sh     (9 sub-checks: headings per agent
+#   - agents/scripts/core/test-doc-anchors.sh        (every AGENTS.md § <name> resolves)
+#   - agents/scripts/core/test-agent-contract.sh     (9 sub-checks: headings per agent
 #                                              class, frontmatter parity, Outcome
 #                                              mandate, token-tracking drift)
 #
@@ -29,14 +29,14 @@ on:
       - 'docs/plans/shipped/**'
       - 'project.config.json'
       - 'project.config.schema.json'
-      - 'scripts/dev/test-doc-anchors.sh'
-      - 'scripts/dev/test_doc_anchors.py'
-      - 'scripts/dev/test-agent-contract.sh'
-      - 'scripts/dev/test-plan-index.sh'
-      - 'scripts/dev/test-plan-ref-integrity.sh'
-      - 'scripts/dev/test-portable-purity.sh'
-      - 'scripts/dev/test-plan-naming.sh'
-      - 'scripts/dev/test-agent-discovery-fixture.sh'
+      - 'agents/scripts/core/test-doc-anchors.sh'
+      - 'agents/scripts/core/test_doc_anchors.py'
+      - 'agents/scripts/core/test-agent-contract.sh'
+      - 'agents/scripts/core/test-plan-index.sh'
+      - 'agents/scripts/core/test-plan-ref-integrity.sh'
+      - 'agents/scripts/core/test-portable-purity.sh'
+      - 'agents/scripts/core/test-plan-naming.sh'
+      - 'agents/scripts/core/test-agent-discovery-fixture.sh'
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
@@ -51,12 +51,12 @@ on:
       - 'docs/plans/shipped/**'
       - 'project.config.json'
       - 'project.config.schema.json'
-      - 'scripts/dev/test-doc-anchors.sh'
-      - 'scripts/dev/test_doc_anchors.py'
-      - 'scripts/dev/test-agent-contract.sh'
-      - 'scripts/dev/test-plan-index.sh'
-      - 'scripts/dev/test-plan-ref-integrity.sh'
-      - 'scripts/dev/test-agent-discovery-fixture.sh'
+      - 'agents/scripts/core/test-doc-anchors.sh'
+      - 'agents/scripts/core/test_doc_anchors.py'
+      - 'agents/scripts/core/test-agent-contract.sh'
+      - 'agents/scripts/core/test-plan-index.sh'
+      - 'agents/scripts/core/test-plan-ref-integrity.sh'
+      - 'agents/scripts/core/test-agent-discovery-fixture.sh'
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
@@ -83,10 +83,10 @@ jobs:
           python-version: '3.11'
 
       - name: test-doc-anchors — every AGENTS.md § <section> resolves
-        run: bash scripts/dev/test-doc-anchors.sh
+        run: bash agents/scripts/core/test-doc-anchors.sh
 
       - name: test-agent-contract — required headings + frontmatter parity
-        run: bash scripts/dev/test-agent-contract.sh
+        run: bash agents/scripts/core/test-agent-contract.sh
 
       - name: Validate project.config.json against schema
         run: |
@@ -100,16 +100,16 @@ jobs:
           PY
 
       - name: test-plan-index — shipped-plan index in sync with archive
-        run: bash scripts/dev/test-plan-index.sh
+        run: bash agents/scripts/core/test-plan-index.sh
 
       - name: test-plan-ref-integrity — no dangling docs/plans refs
-        run: bash scripts/dev/test-plan-ref-integrity.sh
+        run: bash agents/scripts/core/test-plan-ref-integrity.sh
 
       - name: test-plan-naming — plan files are kebab-case
-        run: bash scripts/dev/test-plan-naming.sh
+        run: bash agents/scripts/core/test-plan-naming.sh
 
       - name: test-portable-purity — no NEW project literals in portable dirs
-        run: bash scripts/dev/test-portable-purity.sh
+        run: bash agents/scripts/core/test-portable-purity.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
-        run: bash scripts/dev/test-agent-discovery-fixture.sh
+        run: bash agents/scripts/core/test-agent-discovery-fixture.sh

@@ -114,7 +114,7 @@ When the ahead-range diff is **strictly** within doc paths, the `test-all.sh` ga
 
 **Deny-list (any hit kicks back to the full FF-clean gate including `test-all.sh`):**
 
-- `agents/**` (changes agent behaviour; `scripts/dev/test-agent-contract.sh` covers this)
+- `agents/**` (changes agent behaviour; `agents/scripts/core/test-agent-contract.sh` covers this)
 - `scripts/**` (changes tooling / hooks)
 - `tests/**` (changes test surface)
 - `.gitignore`, `.github/**`, `CMakePresets.json`, `CMakeLists.txt` (CI / build)
