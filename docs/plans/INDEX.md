@@ -78,6 +78,21 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`agentic-layer-project-independence`](shipped/agentic-layer-project-independence.md) | 2026-05-29 | Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards |
 | [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | 2026-05-30 | Plan — Reduce source-comment bloat across first-party C++ |
 | [`split-scripts-build-vs-agentic`](shipped/split-scripts-build-vs-agentic.md) | 2026-05-30 | Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. |
+| [`agentic-ripout-doc-cleanup-v2`](shipped/agentic-ripout-doc-cleanup-v2.md) | — | Plan — Agentic ripout doc cleanup (v2 follow-up to `github-tracker-backend`) |
+| [`agents-md-reduction`](shipped/agents-md-reduction.md) | — | Plan — AGENTS.md size reduction via topical extraction |
+| [`annotate-async-config-hydrate`](shipped/annotate-async-config-hydrate.md) | — | Plan — Move Annotate config I/O off the UI thread |
+| [`config-io-safe-coalesced-writes`](shipped/config-io-safe-coalesced-writes.md) | — | Plan — ConfigManager: safe + coalesced config writes |
+| [`customizable-icon-toolbar`](shipped/customizable-icon-toolbar.md) | — | Plan — Customizable icon toolbar (Total-Commander-style button bar) |
+| [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | — | Plan - GitHub commit tracker rows |
+| [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | — | Plan — High-Integrity C++ Enforcement (slim profile) |
+| [`log-a-bug-github`](shipped/log-a-bug-github.md) | — | Debugging features — "Log a bug" hotkey → fixed GitHub dev repo (+ phase-2 crash reporter) |
+| [`mcp-lua-fresh-state-race`](shipped/mcp-lua-fresh-state-race.md) | — | Plan — MCP Lua execution: fresh per-call `sol::state` (cross-thread race fix) |
+| [`merge-gates-ci-coderabbit-comments`](shipped/merge-gates-ci-coderabbit-comments.md) | — | Plan: Merge Gates — CI green + CodeRabbit + user comments before merge |
+| [`merge-watcher-nudge-persistence`](shipped/merge-watcher-nudge-persistence.md) | — | Plan — Persist cross-poll gate state (CR-nudge guard + STALE streak) across watcher poll cycles |
+| [`session-friction-fixes`](shipped/session-friction-fixes.md) | — | Plan — Session-friction fixes (post-backlog-sweep session retro) |
+| [`source-core-dir-reorg`](shipped/source-core-dir-reorg.md) | — | Plan — Source_Core directory reorganization (precursor to high-integrity-cpp-enforcement) |
+| [`source-root-consolidation`](shipped/source-root-consolidation.md) | — | Plan — consolidate all C++ under a single `Source/` root |
+| [`unblock-external-blockers-2-3-4`](shipped/unblock-external-blockers-2-3-4.md) | — | Unblock external blockers 2 / 3 / 4 |
 <!-- END auto-plan-index -->
 
 ### Notes

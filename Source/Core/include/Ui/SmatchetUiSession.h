@@ -588,7 +588,7 @@ struct UiDrawSession {
     /// attached bug-report screenshot is █-redacted (sharp, layout-preserving).
     bool requestRedactFontThisFrame = false;
 
-    // --- "Log a Bug" modal (docs/plans/active/log-a-bug-github.md Slice 4) ---
+    // --- "Log a Bug" modal (docs/plans/shipped/log-a-bug-github.md Slice 4) ---
     // All bugReport* fields are read/written ONLY on the UI thread (the worker posts
     // its result back via mainThreadDispatcher), so no extra synchronisation is needed.
     bool showBugReport = false;

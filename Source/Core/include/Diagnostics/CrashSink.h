@@ -4,7 +4,7 @@
 #include <string>
 
 // CrashSink — the crash-survival substrate for the phase-2 in-process crash
-// reporter (docs/plans/active/log-a-bug-github.md § Phase 2). Split so the
+// reporter (docs/plans/shipped/log-a-bug-github.md § Phase 2). Split so the
 // async-signal-safe write path is tiny and dependency-free; the OS crash
 // handlers that call it live in Source/Standalone/SmatchetCrashHandler.cpp.
 // Contract: the *_AsyncSafe path runs inside a crash handler — NO heap, NO

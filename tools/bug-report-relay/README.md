@@ -7,7 +7,7 @@ re-files it as a GitHub issue under a token held server-side.
 
 This is the secure alternative to embedding a token in the binary — an embedded
 token is extractable by anyone with the binary and is a published credential the
-moment you distribute. See `docs/plans/active/log-a-bug-github.md` and the P1
+moment you distribute. See `docs/plans/shipped/log-a-bug-github.md` and the P1
 entry in `docs/self-improvement/categories/security.md`.
 
 ```text

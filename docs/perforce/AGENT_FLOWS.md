@@ -10,7 +10,7 @@ This doc is the playbook for what to use when.
 
 ## Topology
 
-Concern-oriented summary of which side owns which agentic-WIP primitive — absorbed from `AGENTS.md` § Dual-VCS topology per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md) D3.
+Concern-oriented summary of which side owns which agentic-WIP primitive — absorbed from `AGENTS.md` § Dual-VCS topology per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md) D3.
 
 | Concern | git path | p4 path |
 |---|---|---|

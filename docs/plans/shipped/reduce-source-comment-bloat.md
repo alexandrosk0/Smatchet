@@ -139,7 +139,7 @@ Per-batch pipeline (both waves): apply pass (Wave 1 = `comment_strip.py` dry-run
 - **Noise-bucket delta rules** — new rule-ids (`comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run`; **`comment-restate` deferred** — see § Deviations) folded into `test-lint-rules.sh`, riding its `--diff` / `--selftest` / zone / grandfather machinery. **Hard-fail repo-wide** (this noise is never legitimate anywhere). Escape hatch: the existing `// SMATCHET_DEVIATION(rule=<id>; reason=…; revisit=…)` grammar — no new suppressor syntax.
 - **Soft ratio warning** — delta-aware: warn only when a PR both raises a touched file's comment ÷ (comment + code) ratio *and* pushes it past **0.50**. Advisory CI annotation only; never blocks; threshold is a config constant. Well-documented files that don't get worse never warn.
 
-`comment_audit.py --diff <ref>` does the classification, emitting violation tuples in the format `test-lint-rules.sh` consumes. Modeled on the delta-gated pattern in [`docs/plans/active/high-integrity-cpp-enforcement.md`](docs/plans/active/high-integrity-cpp-enforcement.md) (extension of an existing mechanism → no new ADR).
+`comment_audit.py --diff <ref>` does the classification, emitting violation tuples in the format `test-lint-rules.sh` consumes. Modeled on the delta-gated pattern in [`docs/plans/shipped/high-integrity-cpp-enforcement.md`](docs/plans/shipped/high-integrity-cpp-enforcement.md) (extension of an existing mechanism → no new ADR).
 
 ## Files to modify
 

@@ -20,7 +20,7 @@
 # Trigger: SessionStart hook in `.claude/settings.json` (wired by
 # `docs/harness/claude-code/settings.json.tmpl`).
 #
-# Related: docs/plans/active/unblock-external-blockers-2-3-4.md § Slice 2.
+# Related: docs/plans/shipped/unblock-external-blockers-2-3-4.md § Slice 2.
 
 set -euo pipefail
 

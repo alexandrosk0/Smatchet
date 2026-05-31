@@ -204,12 +204,15 @@ Each slice ships independently. Slices 1 and 3 are ~15 min each; Slice 2 is ~1 h
 
 ## Implementation log
 
-<!-- populated when the slices ship -->
+- `2ba2c5bc` · #308 (2026-05-19) — unblocked external blockers 2/3/4 in one chore PR. Slice 1: enabled repo `allow_auto_merge` + `delete_branch_on_merge`. Slice 2: added `scripts/dev/vexp-strip-agents-md.sh` + wired it as a SessionStart hook in `.claude/settings.json`, plus the `## vexp — Claude-Code-only` pointer section in AGENTS.md. Slice 3: added the integer-literal-only `max_tokens` note (with the exact daemon error text) to `docs/harness/claude-code/CLAUDE.md.tmpl`.
 
 ## Deviations from plan
 
-<!-- populated when the slices ship -->
+- **None material.** All three slices shipped as designed in a single PR rather than separately.
 
-## Verification
+## Verification (actual)
 
-<!-- populated when the slices ship -->
+- **Slice 1 — PASS (live re-check):** `gh api repos/<owner>/Smatchet` returns `allow_auto_merge: true`, `delete_branch_on_merge: true`.
+- **Slice 2 — PASS:** `scripts/dev/vexp-strip-agents-md.sh` git-tracked, SessionStart hook present in `.claude/settings.json`, AGENTS.md pointer section present; strip is idempotent.
+- **Slice 3 — PASS:** `CLAUDE.md.tmpl` carries the int-literal note + daemon error text; float-literal audit found zero real call-sites (only self-referential matches in this plan / backlog).
+- **Open (user tasks, non-blocking):** two upstream vexp issues (Slice 2 step 5, Slice 3 step 3) drafted but not yet posted upstream — informational only.

@@ -1,6 +1,6 @@
 # UX Pillars
 
-> Lifted from [`AGENTS.md`](../../AGENTS.md) § UX Pillars per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming Pillars 1-4 + their owning agents so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
+> Lifted from [`AGENTS.md`](../../AGENTS.md) § UX Pillars per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming Pillars 1-4 + their owning agents so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
 
 Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (category `process`), not a merge block, until the supporting infrastructure lands.
 

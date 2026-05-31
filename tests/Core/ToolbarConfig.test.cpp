@@ -1,6 +1,6 @@
 // Pure-logic tests for the customizable toolbar data model:
 // JSON round-trip + effective-toolbar resolution (separator dedup / trim).
-// docs/plans/active/customizable-icon-toolbar.md § Verification (Bucket A).
+// docs/plans/shipped/customizable-icon-toolbar.md § Verification (Bucket A).
 
 #include <doctest/doctest.h>
 

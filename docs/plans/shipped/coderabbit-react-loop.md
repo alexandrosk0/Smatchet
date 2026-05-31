@@ -435,7 +435,7 @@ Final shipped state:
 
 ## Cross-cutting: merge-gates interaction
 
-`docs/plans/active/merge-gates-ci-coderabbit-comments.md` (sibling plan, shipped via PR #295 + #297) gates squash-merge on three GraphQL conditions, one of which is **zero unresolved non-outdated review threads with a `coderabbitai` comment**. Without phase-7's `ResolveReviewThread` plumbing, the short-circuit-reject path would post a reply and stop — leaving the CodeRabbit thread in `isResolved=false` and blocking the merge gate indefinitely. The operator would have to click "Resolve" in the GitHub UI for every overridden suggestion, defeating the auto-react loop's "no human in the inner loop" goal.
+`docs/plans/shipped/merge-gates-ci-coderabbit-comments.md` (sibling plan, shipped via PR #295 + #297) gates squash-merge on three GraphQL conditions, one of which is **zero unresolved non-outdated review threads with a `coderabbitai` comment**. Without phase-7's `ResolveReviewThread` plumbing, the short-circuit-reject path would post a reply and stop — leaving the CodeRabbit thread in `isResolved=false` and blocking the merge gate indefinitely. The operator would have to click "Resolve" in the GitHub UI for every overridden suggestion, defeating the auto-react loop's "no human in the inner loop" goal.
 
 Phase-7 chains `GitHubClient::LookupReviewThreadIdForComment` → `GitHubClient::ResolveReviewThread` immediately after `CommentAdd` returns on a `RejectShortCircuit` verdict, so the merge gate sees `isResolved=true` on the next poll. The gate plan's GraphQL `reviewThreads(first: 100)` query is the canonical reader for the bit phase-7 flips; both plans share the same wire-format contract.
 

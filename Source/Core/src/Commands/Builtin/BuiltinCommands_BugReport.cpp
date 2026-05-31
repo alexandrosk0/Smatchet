@@ -1,5 +1,5 @@
 // bug.report — file a bug to the fixed dev GitHub repo (modal in-app, or
-// headless text-only from CLI/MCP/Lua). docs/plans/active/log-a-bug-github.md
+// headless text-only from CLI/MCP/Lua). docs/plans/shipped/log-a-bug-github.md
 // Slice 3. Strict-lint zone (Commands/): LOG_* only, no raw new/delete,
 // const& non-trivial params, obj["k"]=v.
 

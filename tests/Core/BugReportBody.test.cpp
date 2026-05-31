@@ -1,5 +1,5 @@
 // BugReportBody / TextRedaction / ScreenshotCensor doctests — the pure half of
-// the "Log a Bug" feature. docs/plans/active/log-a-bug-github.md Slice 2.
+// the "Log a Bug" feature. docs/plans/shipped/log-a-bug-github.md Slice 2.
 
 #include "BugReportService.h"
 #include "ScreenshotCensor.h"

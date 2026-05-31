@@ -80,7 +80,7 @@ struct TrackerConfig {
     std::string GitHubOwner;   // e.g. "alexandrosk0"
     std::string GitHubRepo;    // e.g. "Smatchet"
 
-    // "Log a Bug" reporter (docs/plans/active/log-a-bug-github.md). Bug + (phase-2)
+    // "Log a Bug" reporter (docs/plans/shipped/log-a-bug-github.md). Bug + (phase-2)
     // crash reports go to ONE fixed dev GitHub repo, independent of the active
     // tracker. owner/repo + assets target + hotkey config below.
     // Relay mode (preferred for EXTERNAL distribution): when BugReportRelayUrl is
