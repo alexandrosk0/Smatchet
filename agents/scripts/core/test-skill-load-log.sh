@@ -15,7 +15,7 @@ set -u
 
 command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
 
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"
 cd "$PROJ_DIR"
 

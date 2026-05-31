@@ -45,7 +45,7 @@ Every § File-level changes table in a plan-doc names symbols (function names, `
    ```
    If the variable is populated via `file(GLOB_RECURSE …)`, no list-edit is needed — drop the row.
 
-Mechanical shortcut: `bash scripts/dev/plan-doc-table-probe.sh <plan-doc-path>` parses the plan's § File-level changes table and runs both probes for every named symbol / CMake variable, reporting hits / misses. Exit 0 if every row resolves; exit 1 if any miss. Auto-enrolled into `test-all.sh` via its own self-test at `scripts/dev/test-plan-doc-table-probe.sh`.
+Mechanical shortcut: `bash agents/scripts/core/plan-doc-table-probe.sh <plan-doc-path>` parses the plan's § File-level changes table and runs both probes for every named symbol / CMake variable, reporting hits / misses. Exit 0 if every row resolves; exit 1 if any miss. Auto-enrolled into `test-all.sh` via its own self-test at `agents/scripts/core/test-plan-doc-table-probe.sh`.
 
 Cost: ≤ 5 min per packet (manual) or seconds (script). Skips the most common class of plan-table drift (symbols that don't exist + redundant CMake list-edits).
 

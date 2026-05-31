@@ -58,9 +58,9 @@ Hardcoded paths that later phases must update (so moves don't break machine cons
 | `scripts/dev/test-agent-contract.sh` | `agents/*.md` loop **and** `agents/$a.md` named-agent paths | B |
 | `scripts/setup-harness.sh` | `link_dir ".claude/agents" "agents"`; codex/cursor `agents/*.md` counters | B |
 | `AGENTS.md` | delegation tables naming `agents/<name>.md` | B |
-| `scripts/dev/test-backlog-counts.sh` | `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`, `docs/self-improvement/categories` (lines 32-33, 40-49) | C |
+| `agents/scripts/core/test-backlog-counts.sh` | `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`, `docs/self-improvement/categories` (lines 32-33, 40-49) | C |
 | `.gitattributes` | `docs/self-improvement/categories/applied.md merge=union` (line 55) | C |
-| `scripts/dev/sort-applied-md.sh` | `docs/self-improvement/categories/applied.md` | C |
+| `agents/scripts/core/sort-applied-md.sh` | `docs/self-improvement/categories/applied.md` | C |
 | `.understand-anything/*.json` | knowledge-graph node paths | C/D |
 | `scripts/dev/test-plan-index.sh` | `PLAN_INDEX_ARCHIVE_DIR`, `PLAN_INDEX_FILE` (config vars at top) | D |
 | ~252 `Source/Core/**` comments + ADRs + bats | `docs/plans/shipped/<slug>.md` prose refs | D (via `rewrite-plan-paths.sh`) |

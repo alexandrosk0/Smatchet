@@ -21,7 +21,7 @@
 #   2 — missing index file or category file
 
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../../.."
 
 if [ "${SMATCHET_SKIP_BACKLOG_COUNTS:-0}" = "1" ]; then
     echo "test-backlog-counts: SMATCHET_SKIP_BACKLOG_COUNTS=1 — skipping" >&2

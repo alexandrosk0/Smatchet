@@ -17,8 +17,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PROBE="$REPO_ROOT/scripts/dev/plan-doc-table-probe.sh"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PROBE="$REPO_ROOT/agents/scripts/core/plan-doc-table-probe.sh"
 
 if [ ! -x "$PROBE" ]; then
     echo "FAIL: $PROBE not executable"

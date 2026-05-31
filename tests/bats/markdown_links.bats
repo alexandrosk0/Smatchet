@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # tests/bats/markdown_links.bats
 # ----------------------------------------------------------------------------
-# Bats coverage for scripts/dev/test-markdown-links.sh.
+# Bats coverage for agents/scripts/core/test-markdown-links.sh.
 #
 # Why this lint exists: sed-based path renames routinely update body text but
 # miss `[label](href)` link hrefs when the label happens to match the path.
@@ -12,7 +12,7 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    export LINT="$REPO_ROOT/scripts/dev/test-markdown-links.sh"
+    export LINT="$REPO_ROOT/agents/scripts/core/test-markdown-links.sh"
     FIXTURE_DIR="$(mktemp -d)"
     export FIXTURE_DIR
 }

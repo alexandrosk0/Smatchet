@@ -23,7 +23,7 @@
 #   1 — at least one violation (Passed: N  Failed: M)
 
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../../.."
 
 if [ "${SMATCHET_SKIP_SHELL_LINT:-0}" = "1" ]; then
     echo "test-shell-lint: SMATCHET_SKIP_SHELL_LINT=1 — skipping all checks" >&2
