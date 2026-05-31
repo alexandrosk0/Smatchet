@@ -1,0 +1,53 @@
+name: Shell lint
+
+# shellcheck gate (test-lint-bash.sh) over scripts/dev/ + agents/scripts/, on
+# ubuntu-latest where shellcheck is preinstalled (zero install cost).
+#
+# Why a dedicated CI job: the same gate runs locally at the pre-push gate
+# (scripts/dev/test-all.sh), but it SKIPS silently when shellcheck is not on
+# PATH (an optional `npm i -g shellcheck`, per BUILD.md). On any machine without
+# it, shell scripts ship unlinted with no backstop. This job is the CI backstop,
+# independent of local tooling.
+#
+# Fail-set: SC2086 / SC2046 / SC2155 (the three that have masked real bugs in
+# this repo); everything else is reported at --severity=warning, non-blocking.
+#
+# NOT path-filtered on purpose: this is a branch-protection REQUIRED check, and
+# a path-filtered required check never reports a status on PRs that miss the
+# filter — leaving them permanently un-mergeable ("Expected — Waiting"). The job
+# is seconds-fast, so running it on every PR is cheap insurance.
+#
+# NB: the repo's broader 5-rule gate (test-shell-lint.sh) is intentionally NOT
+# run here yet — its deps-preflight rule currently false-positives on graceful
+# `cmd || fallback` / `if cmd` patterns in agents/scripts/. Expanding its scope
+# + hardening that rule is tracked as a follow-up; until then it stays pre-push.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+
+concurrency:
+  group: shell-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-lint:
+    name: Shell lint (shellcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # No history needed (linters only `git rev-parse --show-toplevel`);
+          # no later step uses the token, so don't persist credentials.
+          persist-credentials: false
+
+      - name: shellcheck version (preinstalled on ubuntu runner)
+        run: shellcheck --version
+
+      - name: test-lint-bash — shellcheck fail-set (SC2086 / SC2046 / SC2155)
+        run: bash agents/scripts/core/test-lint-bash.sh
