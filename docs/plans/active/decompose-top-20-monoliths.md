@@ -172,7 +172,7 @@ Phase B — ImGui-draw monoliths (**ride-along only — no dedicated PR**; touch
 - **Pillar 3 (never crash)**: each slice gated on dual-target build + sanitizer-clean (`ninja-debug-msvc` ASan/UBSan run for slices touching bootstrap or HTTP paths — slices 6, 7).
 - **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: no change. The pattern preserves hotkey dispatch + tab order; no visual restyling.
 
-## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
+## Perf-gate section (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
 
 Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
