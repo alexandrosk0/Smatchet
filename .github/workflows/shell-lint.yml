@@ -44,7 +44,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # No history needed (linters only `git rev-parse --show-toplevel`);
+          # no later step uses the token, so don't persist credentials.
+          persist-credentials: false
 
       - name: shellcheck version (preinstalled on ubuntu runner)
         run: shellcheck --version

@@ -42,10 +42,24 @@ Mandatory on every `open` entry.
 ## Workflow
 
 1. Delegated agents end every report with `## Self-improvement`. Empty is fine.
-2. Orchestrator reads, dedupes, appends to the matching category file (not here).
-3. When evidence accumulates (mentioned by ≥2 agents OR blocks the same
+2. Orchestrator reads, dedupes, and **appends to the END of the matching category
+   file** (`docs/self-improvement/categories/<category>.md`) — **not** this index
+   file. Use the exact § Format block (date · agent · `[category]` · `P<0-3>` —
+   title; then Details / Concrete next action / Status / Last-reviewed).
+3. **Immediately sync the count index in the SAME commit** —
+   `bash agents/scripts/core/test-backlog-counts.sh --fix` rewrites the § Index
+   table from actual file counts (or hand-bump the one row). The pre-push gate
+   `test-backlog-counts.sh` **rejects any drift**, so a skipped sync fails the
+   push. (This is the #1 trip-wire when adding an entry — do it before you commit.)
+4. When evidence accumulates (mentioned by ≥2 agents OR blocks the same
    workflow ≥3 times), apply: edit the relevant agent prompt(s) in `agents/`
-   or AGENTS.md; flip Status to `applied`; move the entry to `applied.md`.
+   or AGENTS.md; flip Status to `applied`; move the entry to `applied.md` —
+   **then re-run `--fix`** (two counts changed: the category −1, `applied` +1).
+
+> **Common failures this prevents:** (a) appending to this index file instead of
+> a category file; (b) forgetting the count sync → pre-push `test-backlog-counts`
+> rejection; (c) on *archive*, bumping only the category count and not `applied`.
+> `--fix` handles all counts at once — run it after any add / archive / remove.
 
 ## Triage cadence
 
@@ -59,7 +73,7 @@ without movement.
 |---|---|---|
 | bug         | 14  | [self-improvement/categories/bug.md](self-improvement/categories/bug.md) |
 | process     | 27  | [self-improvement/categories/process.md](self-improvement/categories/process.md) |
-| tooling     | 39  | [self-improvement/categories/tooling.md](self-improvement/categories/tooling.md) |
+| tooling     | 40  | [self-improvement/categories/tooling.md](self-improvement/categories/tooling.md) |
 | infra       | 16  | [self-improvement/categories/infra.md](self-improvement/categories/infra.md) |
 | test        | 18  | [self-improvement/categories/test.md](self-improvement/categories/test.md) |
 | security    | 14  | [self-improvement/categories/security.md](self-improvement/categories/security.md) |
