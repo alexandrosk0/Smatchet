@@ -214,10 +214,14 @@ bash scripts/dev/is-pure-docs-diff.sh develop  # MUST PASS (exit 0)
 - **No code dependencies** — no script changes, no `Source_Core/` changes, no Lua binding changes.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `994068fe` · #416 — `wip(plan)` commit.
+- `96ab99fd` · #417 (2026-05-23) — lifted 4 topical sections out of AGENTS.md (−344 lines) into `docs/agent-rules/{merge-gates.md, ux-pillars.md, ship-loops.md, process-rules.md}`, each left with a stub + cross-link in AGENTS.md. Renamed `DELEGATION.md` → `delegation.md` (0 content change) and absorbed the Git/p4 discipline text into `docs/perforce/AGENT_FLOWS.md`.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **Dependency satisfied as designed** — PR #415 (`feat(p4-gated-ship-loop)`) merged first, so the `process-rules.md` + `ship-loops.md` extractions applied cleanly with no conflict.
+- **AGENTS.md has since drifted to ~216 lines** (> the ~200 target) from later, unrelated rule additions. This is not a regression of this plan, which landed AGENTS.md at ~199 lines; the stub-anchored structure is intact.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+- **Bucket A:** `test-doc-anchors.sh` + `test-agent-contract.sh` PASS — every cross-link from the 4 new `docs/agent-rules/` files + the AGENTS.md stubs resolves.
+- **Pure-docs:** `is-pure-docs-diff.sh` confirmed the diff as docs-only → build + test-all skipped per cadence rule.
+- **File presence:** all 4 extracted files exist with the expected stub-and-detail shape.

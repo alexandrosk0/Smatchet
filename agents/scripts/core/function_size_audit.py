@@ -155,14 +155,38 @@ def _match_paren_back(sk, close_idx):
     return -1
 
 
-def _ident_before(sk, open_paren):
-    """Qualified identifier ([\\w:~<>]) immediately before '(' at open_paren. Returns (name, start)."""
+OP_SYMBOL_CHARS = set("=<>!+-*/%&|^~[]()")
+
+
+def _name_before_paren(sk, open_paren):
+    """Function name immediately before the param-list '(' at open_paren. Handles plain /
+    qualified names (`Foo::Bar`, `~Foo`), symbolic operator overloads (`operator==`,
+    `operator[]`, `operator()`), and conversion operators (`operator bool`). Returns "" when the
+    token isn't a function name (control keyword resolved by the caller; lambda capture `]`)."""
     pos = _skip_ws_back(sk, open_paren - 1)
+    if pos < 0:
+        return ""
+    # Case A — symbolic operator: the chars right before '(' are operator punctuation.
+    if sk[pos] in OP_SYMBOL_CHARS:
+        end = pos
+        while pos >= 0 and (sk[pos] in OP_SYMBOL_CHARS or sk[pos].isspace()):
+            pos -= 1
+        word, _ws = _read_word_back(sk, pos)
+        if word == "operator":
+            return "operator" + re.sub(r"\s+", "", sk[pos + 1:end + 1])
+        return ""  # e.g. `](` lambda, `)(` call/cast — not a named function
+    # Case B — identifier run (plain / qualified / dtor).
     end = pos
     while pos >= 0 and IDENT_TAIL_RE.match(sk[pos]):
         pos -= 1
     name = sk[pos + 1:end + 1].strip()
-    return name, pos + 1
+    # Conversion operator: `operator bool(` — the word before the type is `operator`.
+    prevpos = _skip_ws_back(sk, pos)
+    if prevpos >= 0:
+        pword, _ps = _read_word_back(sk, prevpos)
+        if pword == "operator":
+            return "operator " + name
+    return name
 
 
 def _read_word_back(sk, pos):
@@ -174,9 +198,9 @@ def _read_word_back(sk, pos):
 
 
 def classify_brace(sk, brace_idx):
-    """Decide whether the '{' at brace_idx opens a function body. Returns the function name on
-    success, else None. Walks backward across trailing qualifiers / trailing-return to the
-    param-list ')', then rejects control keywords and lambdas."""
+    """Decide whether the '{' at brace_idx opens a function body. Returns (name, param_open,
+    param_close) on success, else None. Walks backward across trailing qualifiers /
+    trailing-return to the param-list ')', then rejects control keywords and lambdas."""
     pos = brace_idx - 1
     guard = 0
     while guard < 4096:
@@ -189,7 +213,7 @@ def classify_brace(sk, brace_idx):
             open_paren = _match_paren_back(sk, pos)
             if open_paren < 0:
                 return None
-            name, name_start = _ident_before(sk, open_paren)
+            name = _name_before_paren(sk, open_paren)
             simple = name.split("::")[-1].lstrip("~")
             if name in CONTROL_KW or simple in CONTROL_KW:
                 return None
@@ -197,10 +221,8 @@ def classify_brace(sk, brace_idx):
                 pos = open_paren - 1  # this paren belongs to a qualifier/expr; keep scanning
                 continue
             if not name:
-                prev = _skip_ws_back(sk, open_paren - 1)
-                # `](...)`{ -> lambda; treat as not a top-level function body.
-                return None if (prev >= 0 and sk[prev] == "]") else None
-            return name
+                return None  # `](...)`{ lambda / `)(`{ call — not a named function body
+            return (name, open_paren, pos)
         if c.isalnum() or c == "_":
             word, ws = _read_word_back(sk, pos)
             if word in QUALIFIER_KW:
@@ -218,13 +240,33 @@ def classify_brace(sk, brace_idx):
     return None
 
 
+def _arity(sk, param_open, param_close):
+    """Param count = top-level commas in (param_open, param_close) + 1 if non-empty. Stable
+    overload disambiguator for the identity key (param-TYPE edits don't change it; add/remove a
+    param does, which is the rare case that legitimately re-grandfathers)."""
+    inner = sk[param_open + 1:param_close]
+    if not inner.strip():
+        return 0
+    depth = 0
+    commas = 0
+    for ch in inner:
+        if ch in "([{<":
+            depth += 1
+        elif ch in ")]}>":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            commas += 1
+    return commas + 1
+
+
 # --- function extraction ------------------------------------------------------
 
 class Func(object):
-    __slots__ = ("name", "start_line", "end_line", "lines", "branches")
+    __slots__ = ("name", "arity", "start_line", "end_line", "lines", "branches")
 
-    def __init__(self, name, start_line, end_line, lines, branches):
+    def __init__(self, name, arity, start_line, end_line, lines, branches):
         self.name = name
+        self.arity = arity
         self.start_line = start_line
         self.end_line = end_line
         self.lines = lines
@@ -237,50 +279,57 @@ def extract_functions(text):
     starts = _line_starts(text)
     depth = 0
     pending_start = 0           # char index just after the last statement/scope/preprocessor boundary
-    active = None               # (open_brace_idx, base_depth, name, start_line)
+    active = None               # (open_brace_idx, base_depth, name, arity, start_line)
     funcs = []
     n = len(sk)
     i = 0
     at_line_start = True        # no non-space char seen yet on the current line
     pp_line = False             # current line is a preprocessor directive (#...)
+    line_last_ns = ""           # last non-space char on the current physical line (for `\` splice)
     while i < n:
         c = sk[i]
         if c == "\n":
-            if pp_line:
-                pending_start = i + 1   # a directive (#include/#define/#if) bounds the next signature
+            # A `#...\` directive continues onto the next physical line — keep skipping (its braces
+            # must not perturb depth / classify_brace) and don't bound the signature yet.
+            continued = pp_line and line_last_ns == "\\"
+            if pp_line and not continued:
+                pending_start = i + 1   # the directive ends here; it bounds the next signature
+            pp_line = continued
             at_line_start = True
-            pp_line = False
+            line_last_ns = ""
             i += 1
             continue
         if not c.isspace():
             if at_line_start and c == "#":
                 pp_line = True
             at_line_start = False
+            line_last_ns = c
         if pp_line:
             i += 1
             continue
         if c == "{":
             if active is None:
-                name = classify_brace(sk, i)
-                if name is not None:
+                hit = classify_brace(sk, i)
+                if hit is not None:
+                    name, p_open, p_close = hit
                     # Forward-skip over the skeleton's whitespace (comments + blank lines are
                     # spaces there) to the first real signature char — so a doc-comment / blank
                     # run above the function is not counted into its body.
                     sig_idx = pending_start
                     while sig_idx < i and sk[sig_idx].isspace():
                         sig_idx += 1
-                    active = (i, depth, name, _line_of(starts, sig_idx))
+                    active = (i, depth, name, _arity(sk, p_open, p_close), _line_of(starts, sig_idx))
             depth += 1
             pending_start = i + 1
         elif c == "}":
             depth -= 1
             if active is not None and depth == active[1]:
-                open_idx, _bd, name, start_line = active
+                open_idx, _bd, name, arity, start_line = active
                 end_line = _line_of(starts, i)
                 body = sk[open_idx + 1:i]
                 branches = (len(BRANCH_RE.findall(body))
                             + body.count("&&") + body.count("||") + body.count("?"))
-                funcs.append(Func(name, start_line, end_line, end_line - start_line + 1, branches))
+                funcs.append(Func(name, arity, start_line, end_line, end_line - start_line + 1, branches))
                 active = None
             pending_start = i + 1
         elif c == ";":
@@ -290,12 +339,12 @@ def extract_functions(text):
 
 
 def violations_for(path, text):
-    """Yield (rule, line, name, lines, branches) for each oversized function in `text`."""
+    """Yield (rule, line, name, arity, lines, branches) for each oversized function in `text`."""
     for fn in extract_functions(text):
         if fn.lines > LINE_LIMIT:
-            yield (RULE_LONG, fn.start_line, fn.name, fn.lines, fn.branches)
+            yield (RULE_LONG, fn.start_line, fn.name, fn.arity, fn.lines, fn.branches)
         if fn.branches > BRANCH_LIMIT:
-            yield (RULE_BRANCHY, fn.start_line, fn.name, fn.lines, fn.branches)
+            yield (RULE_BRANCHY, fn.start_line, fn.name, fn.arity, fn.lines, fn.branches)
 
 
 # --- git plumbing -------------------------------------------------------------
@@ -345,28 +394,29 @@ def _read_head(path):
 
 
 def scan_head():
-    """{(rule, basename, name): (path, line, lines, branches)} for the working tree."""
+    """{(rule, basename, name, arity): (path, line, lines, branches)} for the working tree.
+    arity is in the key so same-named overloads in one file don't collapse / mis-grandfather."""
     out = {}
     for f in list_head_files():
         text = _read_head(f)
         if not text:
             continue
         base = os.path.basename(f)
-        for rule, line, name, ln, br in violations_for(f, text):
-            out.setdefault((rule, base, name), (f, line, ln, br))
+        for rule, line, name, arity, ln, br in violations_for(f, text):
+            out.setdefault((rule, base, name, arity), (f, line, ln, br))
     return out
 
 
 def scan_ref(ref):
-    """Set of (rule, basename, name) keys oversized at <ref>."""
+    """Set of (rule, basename, name, arity) keys oversized at <ref>."""
     keys = set()
     for f in list_ref_files(ref):
         text = _git_ok(["show", "%s:%s" % (ref, f)])
         if not text:
             continue
         base = os.path.basename(f)
-        for rule, line, name, ln, br in violations_for(f, text):
-            keys.add((rule, base, name))
+        for rule, line, name, arity, ln, br in violations_for(f, text):
+            keys.add((rule, base, name, arity))
     return keys
 
 
@@ -380,8 +430,10 @@ def _merge_base_or_ref(ref):
 
 
 def _suppressed(path, sig_line, rule_id):
-    """True if a `// SMATCHET_DEVIATION(rule=<rule_id>; ...)` sits on the nearest non-blank line
-    above the function signature (forward-only deviation grammar; blank lines don't break it)."""
+    """True if a `// SMATCHET_DEVIATION(rule=<id>[,<id>...]; ...)` sits on the nearest non-blank
+    line above the function signature (forward-only deviation grammar; blank lines don't break
+    it). The rule= value may list several comma-separated ids, so a function that trips BOTH caps
+    can be suppressed by one marker (`rule=function-too-long,function-too-branchy`)."""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             lines = fh.read().split("\n")
@@ -391,8 +443,12 @@ def _suppressed(path, sig_line, rule_id):
     while 0 <= idx < len(lines) and lines[idx].strip() == "":
         idx -= 1
     prev = lines[idx] if 0 <= idx < len(lines) else ""
-    return "SMATCHET_DEVIATION" in prev and \
-        re.search(r"\brule=%s(?![\w-])" % re.escape(rule_id), prev) is not None
+    if "SMATCHET_DEVIATION" not in prev:
+        return False
+    m = re.search(r"rule=([A-Za-z0-9_,-]+)", prev)
+    if not m:
+        return False
+    return rule_id in [r.strip() for r in m.group(1).split(",")]
 
 
 def run_diff(ref):
@@ -403,11 +459,11 @@ def run_diff(ref):
     for key in sorted(head):
         if key in base_keys:
             continue
-        rule, bname, name = key
+        rule, bname, name, arity = key
         path, line, ln, br = head[key]
         if _suppressed(path, line, rule):
             continue
-        violations.append("%s\t%s:%d\t%s (%dL/%dbr)" % (rule, bname, line, name, ln, br))
+        violations.append("%s\t%s:%d\t%s/%d (%dL/%dbr)" % (rule, bname, line, name, arity, ln, br))
     for v in violations:
         print(v)
     return 1 if violations else 0
@@ -423,16 +479,16 @@ def run_scan_file(path):
     except OSError as e:
         print("function_size_audit: ERROR: %s" % e, file=sys.stderr)
         return 2
-    for rule, line, name, ln, br in sorted(violations_for(path, text)):
-        print("%s\t%s:%d\t%s (%dL/%dbr)" % (rule, path, line, name, ln, br))
+    for rule, line, name, arity, ln, br in sorted(violations_for(path, text)):
+        print("%s\t%s:%d\t%s/%d (%dL/%dbr)" % (rule, path, line, name, arity, ln, br))
     return 0
 
 
 def run_list():
     head = scan_head()
     rows = []
-    for (rule, bname, name), (path, line, ln, br) in head.items():
-        rows.append("%s\t%s:%d\t%s (%dL/%dbr)" % (rule, path, line, name, ln, br))
+    for (rule, bname, name, arity), (path, line, ln, br) in head.items():
+        rows.append("%s\t%s:%d\t%s/%d (%dL/%dbr)" % (rule, path, line, name, arity, ln, br))
     for r in sorted(rows):
         print(r)
     return 0
@@ -441,9 +497,9 @@ def run_list():
 def run_baseline_md():
     head = scan_head()
     by_rule = {RULE_LONG: [], RULE_BRANCHY: []}
-    for (rule, bname, name), (path, line, ln, br) in head.items():
+    for (rule, bname, name, arity), (path, line, ln, br) in head.items():
         metric = ("%d lines" % ln) if rule == RULE_LONG else ("%d branches" % br)
-        by_rule.setdefault(rule, []).append("- `%s` · `%s` · %s" % (bname, name, metric))
+        by_rule.setdefault(rule, []).append("- `%s` · `%s/%d` · %s" % (bname, name, arity, metric))
     print("# Function-size — grandfathered baseline")
     print()
     print("_Auto-generated. Do not hand-edit; run "
@@ -479,11 +535,11 @@ def run_report():
     print("\n### Largest functions\n")
     seen = set()
     rows = sorted(head.items(), key=lambda kv: kv[1][2], reverse=True)
-    for (rule, bname, name), (path, line, ln, br) in rows:
-        if (bname, name) in seen:
+    for (rule, bname, name, arity), (path, line, ln, br) in rows:
+        if (bname, name, arity) in seen:
             continue
-        seen.add((bname, name))
-        print("- `%s` `%s` — %d lines / %d branches (%s:%d)" % (bname, name, ln, br, path, line))
+        seen.add((bname, name, arity))
+        print("- `%s` `%s/%d` — %d lines / %d branches (%s:%d)" % (bname, name, arity, ln, br, path, line))
         if len(seen) >= 30:
             break
     return 0

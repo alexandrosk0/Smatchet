@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-lint-rules.sh — tiered high-integrity C++ enforcement for Smatchet.
 #
-# Plan: docs/plans/active/high-integrity-cpp-enforcement.md (precursor reorg #505).
+# Plan: docs/plans/shipped/high-integrity-cpp-enforcement.md (precursor reorg #505).
 #
 # Zones (single source of truth = AGENTS.md § Tiered enforcement; the globs
 # below are asserted identical to AGENTS.md by --selftest):
@@ -259,7 +259,7 @@ scan_narrowing() {
     # PCH ("not a valid PCH file") and can't resolve <string> (no clang stdlib
     # paths), yielding only clang-diagnostic-error noise. Until a PCH-free clang
     # db is provisioned in CI this rule is catalogued-only, never gated.
-    # See docs/plans/active/high-integrity-cpp-enforcement.md § Deviations.
+    # See docs/plans/shipped/high-integrity-cpp-enforcement.md § Deviations.
     if [ "${SMATCHET_LINT_NARROWING:-0}" != "1" ]; then
         echo "test-lint-rules: INFO: narrowing-conversions opt-in (SMATCHET_LINT_NARROWING=1 + clang db); skipped" >&2
         return 0
@@ -528,7 +528,8 @@ case "$MODE" in
         echo "FAIL: new oversized functions vs $BASE (cap 200 lines / 30 branches):"
         printf '%s\n' "$fs_out" | sed 's/^/  /'
         echo "  Decompose it (see docs/plans/active/decompose-top-20-monoliths.md § Approach), or add"
-        echo "  SMATCHET_DEVIATION(rule=function-too-long|function-too-branchy; reason=...; owner=...; revisit=...) above the signature."
+        echo "  SMATCHET_DEVIATION(rule=function-too-long; reason=...; owner=...; revisit=...) above the signature"
+        echo "  (comma-separate the rule ids — rule=function-too-long,function-too-branchy — to suppress both caps)."
     else
         echo "[test-lint-rules] PASS — no new oversized functions vs $BASE"
     fi

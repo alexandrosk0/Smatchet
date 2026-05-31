@@ -736,7 +736,7 @@ std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(sol::state_
     // Marshal against the *calling* state `sv`, not the member `lua`: the caller may be an
     // off-UI-thread fresh state (MCP / automation worker). Touching `lua` here would re-introduce
     // cross-thread lua_State access + a cross-state sol::object return. See
-    // docs/plans/active/mcp-lua-fresh-state-race.md.
+    // docs/plans/shipped/mcp-lua-fresh-state-race.md.
     CachedTicket ticket;
     if (Cache->TryGetTicket(issueId, ticket)) {
         return {sol::make_object(sv, ticket), ""};

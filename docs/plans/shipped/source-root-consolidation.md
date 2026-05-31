@@ -102,10 +102,10 @@ Grouped by subsystem. Representative anchors given; the move touches ~30 files +
 
 ### 9. Canonical / live docs (update for accuracy)
 16. [AGENTS.md](../../../AGENTS.md) — § Project rules § Layout (the `Source_Core/{src,include}` / `Target_Standalone/` / `Plugins/{Mcp,LuaConsole}` description), § Tiered enforcement strict/light zone lists (lockstep with #9), the dual-target full-verify command, and incidental path mentions. (`.claude/CLAUDE.md` `@`-imports AGENTS.md — no separate edit.)
-17. [docs/plans/active/high-integrity-cpp-enforcement.md](high-integrity-cpp-enforcement.md) strict/light zone table; [docs/CONTEXT.md](../../CONTEXT.md) (:77); [README.md](../../../README.md) (:136); [BUILD.md](../../../BUILD.md) (:181).
+17. [docs/plans/shipped/high-integrity-cpp-enforcement.md](high-integrity-cpp-enforcement.md) strict/light zone table; [docs/CONTEXT.md](../../CONTEXT.md) (:77); [README.md](../../../README.md) (:136); [BUILD.md](../../../BUILD.md) (:181).
 18. `agents/*.md` — **functional**: [git-janitor.md](../../../agents/core/git-janitor.md) path blacklist prose (:75) **and** the `disallow` regex (:91) — collapse to `^(Source/|cmake/|CMakeLists\.txt$|CMakePresets\.json$)` since all C++ now lives under `Source/`. **Charter/prose** (update for accuracy, incl. the `tests/Source_Core/` → `tests/Core/` mirror rename): [test-rig.md](../../../agents/core/test-rig.md) (:3,:35,:46,:66 — owner doc, names `tests/Source_Core/<Unit>.test.cpp` as its charter), [coderabbit-triage.md](../../../agents/core/coderabbit-triage.md) (:131,:163), [p4-blame.md](../../../agents/project/p4-blame.md) (:51-52), [delegation.md](../../agent-rules/delegation.md) (:311,:322), plus `mechanic.md` (:38), `debug-detective.md`, `perf-*.md` (+ the `agents/_shared/skills/*` mirrors), `build-doctor.md`, `unreal-bridge.md`, `architect.md`, `code-review.md`, `test-author.md`. Also two **product-code comments** pointing at the moved test path: [Plugins/Whisper/SilenceTrim.cpp:2](../../../Plugins/Whisper/SilenceTrim.cpp) and [WavWriter.h:9](../../../Plugins/Whisper/WavWriter.h) (`tests/Source_Core/…` → `tests/Core/…`).
 19. [docs/high-integrity/baseline.md](../../high-integrity/baseline.md) — **regenerate, do not hand-edit**: after the move + #9, run `bash scripts/dev/test-lint-rules.sh --catalog --refresh`.
-20. [docs/plans/active/source-core-dir-reorg.md](source-core-dir-reorg.md) — add a one-line banner noting component roots since moved under `Source/` (point here). Historical — don't rewrite.
+20. [docs/plans/shipped/source-core-dir-reorg.md](source-core-dir-reorg.md) — add a one-line banner noting component roots since moved under `Source/` (point here). Historical — don't rewrite.
 
 ## Existing utilities reused
 
@@ -154,7 +154,7 @@ Per `AGENTS.md` § Verification automation. Reconfigure first — CMake explicit
 - **Bucket A (pure-logic ctest)**: configure with `-DSMATCHET_BUILD_TESTS=ON` (or `ninja-test-msvc`) and run CTest — proves `tests/` CMake re-rooting (#5-7) is correct.
 - **Lint-gate selftest**: `bash scripts/dev/test-lint-rules.sh --selftest` (AGENTS.md ↔ script parity) then `bash scripts/dev/test-lint-rules.sh` (delta gate stays green — move is basename-safe).
 - **Full pre-push suite**: `bash scripts/dev/test-all.sh` (includes shell-lint + lint-rules + coverage-delta).
-- **Grep guards** (post-move; common excludes: `--glob '!docs/plans/shipped/**' --glob '!docs/plans/active/source-core-dir-reorg.md' --glob '!docs/plans/active/source-root-consolidation.md' --glob '!build/**' --glob '!.understand-anything/**' --glob '!docs/high-integrity/baseline.md'`):
+- **Grep guards** (post-move; common excludes: `--glob '!docs/plans/shipped/**' --glob '!docs/plans/shipped/source-core-dir-reorg.md' --glob '!docs/plans/shipped/source-root-consolidation.md' --glob '!build/**' --glob '!.understand-anything/**' --glob '!docs/high-integrity/baseline.md'`):
   - `rg '\.\./\.\./tests/_debug' Source/` → empty (Logger.cpp fixed).
   - `rg -n 'Source_Core|Target_Standalone' <excludes>` → empty, OR only the `Source_Core` *comments* in `Build.cs` (:93,:231,:294) + `Whisper/CMakeLists.txt` (:37-38) if you chose to leave them (recommend updating for cleanliness).
   - `rg -n '(^|[^/])UnrealPlugins/|(^|[^./A-Za-z])Plugins/(Mcp|LuaConsole|Whisper)' <excludes>` → empty (no old top-level paths survive un-rooted).

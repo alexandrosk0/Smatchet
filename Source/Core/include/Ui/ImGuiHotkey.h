@@ -9,7 +9,7 @@
 // + an ImGuiKey, and match it against the current ImGui input frame. Used by the
 // in-app "Log a Bug" hotkey (config: BugReportHotkey). NOT the Whisper Win32-VK
 // HotkeyParse (that's a SMATCHET_WITH_WHISPER plugin using OS-global registration).
-// docs/plans/active/log-a-bug-github.md Slice 4.
+// docs/plans/shipped/log-a-bug-github.md Slice 4.
 
 namespace smatchet {
 namespace ui {

@@ -244,6 +244,15 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   `tests/bats/function_size.bats` (6) + fixtures `tests/fixtures/function_size/`. AGENTS.md
   § Tiered enforcement documents the rules. Parser validated: line counts match this plan's own
   measurements within ±1–5 lines (`drawActiveProjectWindow` 992, `Draw` 608, `DrawWhisper…` 779).
+  - **CodeRabbit round (PR #627):** 4 actionable findings fixed in-band — (1) operator-overload
+    name parsing (`operator()` / `operator[]` / `operator bool` were silently skipped → now
+    detected via `_name_before_paren`); (2) backslash-continued preprocessor lines (`#define … \`)
+    now stay skipped across the splice so macro braces can't perturb depth; (3) identity key
+    extended to `(rule, basename, qualified-name, arity)` so same-named overloads no longer
+    collapse / mis-grandfather; (4) `_suppressed` parses comma-separated rule ids so a dual-cap
+    function is suppressible by one `SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy)`.
+    Added fixtures + 4 bats cases (operator detection, dual-cap fires both, comma-deviation
+    suppresses both). Also resolved an AGENTS.md merge conflict from #626 (plan path active→shipped).
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*

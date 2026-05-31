@@ -105,7 +105,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
     Core/GitHubClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
-    # docs/plans/active/log-a-bug-github.md Slice 2 — pure half of the bug-report
+    # docs/plans/shipped/log-a-bug-github.md Slice 2 — pure half of the bug-report
     # service (target/PAT resolution + markdown body) + redaction + censor. The
     # heavy half (BugReportService.cpp: cpr/host/AppController) is NOT linked here.
     Core/BugReportBody.test.cpp

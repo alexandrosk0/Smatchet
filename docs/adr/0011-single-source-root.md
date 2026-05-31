@@ -2,7 +2,7 @@
 
 # Status
 
-**Accepted (2026-05-29).** Implementation pending (plan-stage). Plan: [`docs/plans/active/source-root-consolidation.md`](../plans/active/source-root-consolidation.md) (grill Q1–Q3). Distinct from the already-landed [`source-core-dir-reorg`](../plans/active/source-core-dir-reorg.md), which created subsystem subdirs *inside* `Source_Core/`.
+**Accepted (2026-05-29) · Implemented (2026-05-29, PR #552 `27063e22`).** Plan (shipped): [`docs/plans/shipped/source-root-consolidation.md`](../plans/shipped/source-root-consolidation.md) (grill Q1–Q3). Distinct from the already-landed [`source-core-dir-reorg`](../plans/shipped/source-core-dir-reorg.md), which created subsystem subdirs *inside* `Source_Core/`.
 
 # Context
 

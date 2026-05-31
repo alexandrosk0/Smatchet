@@ -1,5 +1,5 @@
 // Toolbar config serialization, default starter set, and pure effective-toolbar
-// resolution. See docs/plans/active/customizable-icon-toolbar.md.
+// resolution. See docs/plans/shipped/customizable-icon-toolbar.md.
 
 #include "ToolbarConfig.h"
 

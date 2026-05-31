@@ -2,7 +2,7 @@
 #define SMATCHET_CONFIG_TOOLBAR_CONFIG_H
 
 // Data model for the customizable icon toolbar (Total-Commander-style button bar)
-// rendered below the main menu bar. See docs/plans/active/customizable-icon-toolbar.md.
+// rendered below the main menu bar. See docs/plans/shipped/customizable-icon-toolbar.md.
 // Header-cost discipline (mirrors ConfigManager.h): this header pulls only
 // <nlohmann/json_fwd.hpp>. Button command arguments are stored as a JSON *string*
 // (ArgsJson), not a live nlohmann::json member, so no TU including this header pays

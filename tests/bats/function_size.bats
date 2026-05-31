@@ -49,6 +49,13 @@ setup() {
     [ -z "$output" ]
 }
 
+@test "oversized operator overload is detected (not skipped on empty name)" {
+    run "$PY" "$AUD" --scan-file "$FIX/known-bad-operator.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"function-too-long"* ]]
+    [[ "$output" == *"operator()"* ]]
+}
+
 # ---------- delta gate (--diff) via throwaway git repos ----------
 
 # Build a minimal repo with a scoped source file; $1 = body lines in the function.
@@ -98,6 +105,47 @@ _mk_repo() {
     _mk_repo "$repo" 10
     git -C "$repo" add -A && git -C "$repo" commit -qm base
     _mk_repo "$repo" 230 "// SMATCHET_DEVIATION(rule=function-too-long; reason=test; owner=t; revisit=never)"
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# Build a repo whose function trips BOTH caps (>200 lines AND >30 branches); $3 = deviation prefix.
+_mk_repo_dualcap() {
+    local dir="$1" prefix="${2:-}"
+    git init -q "$dir"
+    git -C "$dir" config user.email t@t.t
+    git -C "$dir" config user.name t
+    mkdir -p "$dir/Source/Core/src/Tracker"
+    {
+        echo "$prefix"
+        echo "int Generated(int x) {"
+        echo "    int acc = 0;"
+        local i=0
+        while [ "$i" -lt 230 ]; do echo "    if (x == $i) acc += $i;"; i=$((i+1)); done
+        echo "    return acc;"
+        echo "}"
+    } > "$dir/Source/Core/src/Tracker/Gen.cpp"
+}
+
+@test "a dual-cap function fires BOTH function-too-long and function-too-branchy" {
+    repo="$BATS_TEST_TMPDIR/dual"
+    _mk_repo "$repo" 10
+    git -C "$repo" add -A && git -C "$repo" commit -qm base
+    _mk_repo_dualcap "$repo" ""
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"function-too-long"* ]]
+    [[ "$output" == *"function-too-branchy"* ]]
+}
+
+@test "a comma-separated SMATCHET_DEVIATION suppresses BOTH caps at once" {
+    repo="$BATS_TEST_TMPDIR/dual2"
+    _mk_repo "$repo" 10
+    git -C "$repo" add -A && git -C "$repo" commit -qm base
+    _mk_repo_dualcap "$repo" "// SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy; reason=test; owner=t; revisit=never)"
     cd "$repo"
     run "$PY" "$AUD" --diff HEAD
     [ "$status" -eq 0 ]

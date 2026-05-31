@@ -175,7 +175,7 @@ TEST_CASE("Lua bindings · decode_json valid -> table, invalid -> nil + err") {
 // =============================================================================
 
 // * doctest::test_suite("[high-risk]") — guards the state-relative marshalling
-// contract introduced by docs/plans/active/mcp-lua-fresh-state-race.md. The three
+// contract introduced by docs/plans/shipped/mcp-lua-fresh-state-race.md. The three
 // sol::object-returning binds (LuaGetTicketBind / LuaDecodeJsonBind /
 // LuaCreateIssueBind) now take the *calling* sol::state_view and build their
 // result on it, never on a member state — required so MCP / automation workers

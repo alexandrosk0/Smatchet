@@ -6,7 +6,7 @@
 
 **This plan is blocked on a precursor reorg PR.** Audit during the grill (2026-05-28) found the codebase is *flat*: 154 `.cpp` files live directly under `Source_Core/src/` organized by filename prefix; the only real subdirectory is `Commands/`, and `Plugins/Mcp/` has no `src/`. The directory-based zone globs below (`Source_Core/src/Tracker/**` etc.) therefore reference directories that **do not exist yet**.
 
-Decision (2026-05-28): rather than encode fragile filename-prefix globs, a **precursor reorganization PR** moves the flat files into real directories so the zone globs become valid. The reorg is mechanical (pure file moves + `#include` path fixups across the tree + CMake `GLOB`/source-list updates) and gets its **own plan-doc** (`docs/plans/active/source-core-dir-reorg.md`, to be written) and its own PR, ideally driven by the `mechanic` agent. This enforcement plan does not start until the reorg lands on `develop`.
+Decision (2026-05-28): rather than encode fragile filename-prefix globs, a **precursor reorganization PR** moves the flat files into real directories so the zone globs become valid. The reorg is mechanical (pure file moves + `#include` path fixups across the tree + CMake `GLOB`/source-list updates) and gets its **own plan-doc** (`docs/plans/shipped/source-core-dir-reorg.md`, to be written) and its own PR, ideally driven by the `mechanic` agent. This enforcement plan does not start until the reorg lands on `develop`.
 
 **Target directory taxonomy** the reorg must produce (strict-zone dirs are the contract this plan depends on; exact per-file placement of edge cases is settled in the reorg PR's review):
 
@@ -149,7 +149,7 @@ Trade-off: the slim version preserves the existing one-source-of-truth structure
 
 ## Files to modify
 
-**Precursor (separate PR + plan-doc, blocking — see § Dependency)**: `docs/plans/active/source-core-dir-reorg.md` (new plan) + the reorg PR itself (file moves across `Source_Core/src/**`, `Plugins/Mcp/**`, every dependent `#include`, CMake source lists). None of the rows below start until that lands on `develop`.
+**Precursor (separate PR + plan-doc, blocking — see § Dependency)**: `docs/plans/shipped/source-core-dir-reorg.md` (new plan) + the reorg PR itself (file moves across `Source_Core/src/**`, `Plugins/Mcp/**`, every dependent `#include`, CMake source lists). None of the rows below start until that lands on `develop`.
 
 1. `AGENTS.md` — add § Tiered enforcement subsection under § Project rules (≤ 20 lines; matches Approach §1) AND the `SMATCHET_DEVIATION` grammar paragraph (per Approach §4). Both edits land together so AGENTS.md is the single source of truth for both zone scope and deviation syntax.
 2. `scripts/dev/test-lint-rules.sh` — add `--diff` mode (default for `test-all.sh` invocation), `--catalog` + `--refresh` modes, the three new rule checks (clang-tidy `cppcoreguidelines-narrowing-conversions` on strict-zone TUs, `\b#define\s+ImGui\b` grep, `deviation-overdue` parser), zone-tier classification, and the rule-id contract per § Rule-id contract below (existing rules renamed to `no-printf-stderr` + `no-raw-new`).

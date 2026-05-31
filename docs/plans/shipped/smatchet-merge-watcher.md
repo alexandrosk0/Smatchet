@@ -58,7 +58,7 @@ Build the watcher as a Python daemon outside Smatchet's C++ surface — it talks
 
 **Modified (~3)**:
 
-8. [`AGENTS.md`](../../AGENTS.md) § Autonomous ship-loop § Post-ship § option 3 — reword to "Register with watcher" per the v2 re-grill (already named in `docs/plans/active/agentic-ripout-doc-cleanup-v2.md` § AGENTS.md edits as "REWORD, not strip"). When this plan ships, the v2 plan's locked decision flips to "applied".
+8. [`AGENTS.md`](../../AGENTS.md) § Autonomous ship-loop § Post-ship § option 3 — reword to "Register with watcher" per the v2 re-grill (already named in `docs/plans/shipped/agentic-ripout-doc-cleanup-v2.md` § AGENTS.md edits as "REWORD, not strip"). When this plan ships, the v2 plan's locked decision flips to "applied".
 9. [`AGENTS.md`](../../AGENTS.md) § Merge gates § Scope boundary — extend the caller list from "orchestrator + git-janitor in the user's main session" to also include `smatchet-merge-watcher`. Per v2 re-grill § Merge gates § Surgical edit line 194.
 10. [`Source_Core/include/SmatchetToastManager.h`](../../Source_Core/include/SmatchetToastManager.h) + [`SmatchetToastManager.cpp`](../../Source_Core/src/SmatchetToastManager.cpp) — Phase 4 only: expose a local-only HTTP endpoint (already-running cpp-httplib instance) that accepts POST `/merge-watch/notify` with a JSON payload `{pr, state, message}`. Toast appears in the running Smatchet UI.
 

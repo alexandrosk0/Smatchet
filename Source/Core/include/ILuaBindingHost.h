@@ -58,7 +58,7 @@ class ILuaBindingHost {
     // `sv` is the *calling* Lua state (the glue's sol::this_state). Marshal returned
     // sol::objects against `sv`, never against any member state — the caller may be an
     // off-UI-thread fresh state (MCP worker / automation worker). See
-    // docs/plans/active/mcp-lua-fresh-state-race.md.
+    // docs/plans/shipped/mcp-lua-fresh-state-race.md.
     virtual std::tuple<sol::object, std::string> LuaGetTicketBind(sol::state_view sv, const std::string& issueId) = 0;
     virtual std::vector<CachedTicket> LuaGetActiveTicketsBind() = 0;
 

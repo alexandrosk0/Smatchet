@@ -55,13 +55,17 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`ai-chat-textedit-markdown`](shipped/ai-chat-textedit-markdown.md) | 2026-05-19 | AI chat — TextEditor-backed selectable markdown render |
 | [`deepseek-provider`](shipped/deepseek-provider.md) | 2026-05-19 | DeepSeek first-class provider + auto-clear chat on model change |
 | [`markdown-language-definition-for-textedit`](shipped/markdown-language-definition-for-textedit.md) | 2026-05-19 | Extend ImGuiColorTextEdit — `LanguageDefinition::Markdown()` + 3 consumers |
+| [`merge-gates-ci-coderabbit-comments`](shipped/merge-gates-ci-coderabbit-comments.md) | 2026-05-19 | Plan: Merge Gates — CI green + CodeRabbit + user comments before merge |
 | [`process-backlog-tighten-1-2-3-9-11-12`](shipped/process-backlog-tighten-1-2-3-9-11-12.md) | 2026-05-19 | Tighten 6 process-backlog rules (items 1, 2, 3, 9, 11, 12) |
+| [`unblock-external-blockers-2-3-4`](shipped/unblock-external-blockers-2-3-4.md) | 2026-05-19 | Unblock external blockers 2 / 3 / 4 |
 | [`ai-chat-claude-desktop-parity`](shipped/ai-chat-claude-desktop-parity.md) | 2026-05-20 | AI chat — Claude-Desktop-style hover actions, pin, visible user bubbles, persisted history |
 | [`pillar-1-2-perf-review-system`](shipped/pillar-1-2-perf-review-system.md) | 2026-05-20 | Repeatable Pillar 1 + Pillar 2 performance review — Smatchet |
 | [`single-click-grid-edit-toggle`](shipped/single-click-grid-edit-toggle.md) | 2026-05-20 | Plan — single-click / double-click toggle for grid cell edit |
+| [`agentic-ripout-doc-cleanup-v2`](shipped/agentic-ripout-doc-cleanup-v2.md) | 2026-05-21 | Plan — Agentic ripout doc cleanup (v2 follow-up to `github-tracker-backend`) |
 | [`github-tracker-backend`](shipped/github-tracker-backend.md) | 2026-05-21 | Plan — Rip out C++ agentic code + add GitHub as third tracker |
 | [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | 2026-05-21 | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
 | [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | 2026-05-22 | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
+| [`agents-md-reduction`](shipped/agents-md-reduction.md) | 2026-05-23 | Plan — AGENTS.md size reduction via topical extraction |
 | [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | 2026-05-23 | Plan — description-field tooltip consolidation |
 | [`p4-gated-ship-loop`](shipped/p4-gated-ship-loop.md) | 2026-05-23 | Plan — P4-gated ship-loop |
 | [`autonomous-debugging-no-creds`](shipped/autonomous-debugging-no-creds.md) | 2026-05-24 | Plan — Fully autonomous debugging without credentials or user input |
@@ -72,10 +76,21 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
 | [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
 | [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
+| [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | 2026-05-28 | Plan - GitHub commit tracker rows |
+| [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | 2026-05-28 | Plan — High-Integrity C++ Enforcement (slim profile) |
+| [`mcp-lua-fresh-state-race`](shipped/mcp-lua-fresh-state-race.md) | 2026-05-28 | Plan — MCP Lua execution: fresh per-call `sol::state` (cross-thread race fix) |
 | [`merge-watcher-triage-recovery`](shipped/merge-watcher-triage-recovery.md) | 2026-05-28 | Plan — merge-watcher triage-budget recovery + CR-thread resolution |
 | [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | 2026-05-28 | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
+| [`session-friction-fixes`](shipped/session-friction-fixes.md) | 2026-05-28 | Plan — Session-friction fixes (post-backlog-sweep session retro) |
 | [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | 2026-05-28 | Plan — Shell-script self-review lint |
+| [`source-core-dir-reorg`](shipped/source-core-dir-reorg.md) | 2026-05-28 | Plan — Source_Core directory reorganization (precursor to high-integrity-cpp-enforcement) |
 | [`agentic-layer-project-independence`](shipped/agentic-layer-project-independence.md) | 2026-05-29 | Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards |
+| [`source-root-consolidation`](shipped/source-root-consolidation.md) | 2026-05-29 | Plan — consolidate all C++ under a single `Source/` root |
+| [`annotate-async-config-hydrate`](shipped/annotate-async-config-hydrate.md) | 2026-05-30 | Plan — Move Annotate config I/O off the UI thread |
+| [`config-io-safe-coalesced-writes`](shipped/config-io-safe-coalesced-writes.md) | 2026-05-30 | Plan — ConfigManager: safe + coalesced config writes |
+| [`customizable-icon-toolbar`](shipped/customizable-icon-toolbar.md) | 2026-05-30 | Plan — Customizable icon toolbar (Total-Commander-style button bar) |
+| [`log-a-bug-github`](shipped/log-a-bug-github.md) | 2026-05-30 | Debugging features — "Log a bug" hotkey → fixed GitHub dev repo (+ phase-2 crash reporter) |
+| [`merge-watcher-nudge-persistence`](shipped/merge-watcher-nudge-persistence.md) | 2026-05-30 | Plan — Persist cross-poll gate state (CR-nudge guard + STALE streak) across watcher poll cycles |
 | [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | 2026-05-30 | Plan — Reduce source-comment bloat across first-party C++ |
 | [`split-scripts-build-vs-agentic`](shipped/split-scripts-build-vs-agentic.md) | 2026-05-30 | Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. |
 <!-- END auto-plan-index -->

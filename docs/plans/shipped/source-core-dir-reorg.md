@@ -6,7 +6,7 @@
 
 ## Context
 
-[`docs/plans/active/high-integrity-cpp-enforcement.md`](high-integrity-cpp-enforcement.md) § Dependency declares itself **blocked** on this reorg. That plan's tiered-enforcement design keys the strict/light/exempt lint zones off **directory globs** (`Source_Core/src/Tracker/**`, `/Sync/**`, `/Persistence/**`, `/Config/**`, `Plugins/Mcp/src/**`). Audit (2026-05-28) found those directories **do not exist**: `Source_Core/src/` is flat — 154 `.cpp` files at the top level organized by filename prefix, with only `Commands/` as a real subdirectory; `Source_Core/include/` is likewise flat (146 `.h`, only `Commands/`); `Plugins/Mcp/` has no `src/`. The enforcement plan considered fragile filename-prefix globs and **deliberately rejected them** in favour of this mechanical reorg so the directory globs become literally valid.
+[`docs/plans/shipped/high-integrity-cpp-enforcement.md`](high-integrity-cpp-enforcement.md) § Dependency declares itself **blocked** on this reorg. That plan's tiered-enforcement design keys the strict/light/exempt lint zones off **directory globs** (`Source_Core/src/Tracker/**`, `/Sync/**`, `/Persistence/**`, `/Config/**`, `Plugins/Mcp/src/**`). Audit (2026-05-28) found those directories **do not exist**: `Source_Core/src/` is flat — 154 `.cpp` files at the top level organized by filename prefix, with only `Commands/` as a real subdirectory; `Source_Core/include/` is likewise flat (146 `.h`, only `Commands/`); `Plugins/Mcp/` has no `src/`. The enforcement plan considered fragile filename-prefix globs and **deliberately rejected them** in favour of this mechanical reorg so the directory globs become literally valid.
 
 Intended outcome — after this lands: `Source_Core/src/` (and, per the header decision below, `Source_Core/include/`) and `Plugins/Mcp/` are organized into the subsystem directories the enforcement plan's strict/light zone globs name, the dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) is green, and the Unreal package build still resolves all includes. The enforcement PR is then unblocked.
 
@@ -98,7 +98,7 @@ This diff moves `Source_Core/` files wholesale, so the gate **applies** — but 
 ## Implementation log
 
 - `ae2d522` · wip(plan): source-core-dir-reorg plan-doc.
-- _(pending)_ · reorg: 183 Source_Core + 4 MCP files `git mv`'d into subsystem dirs; CMake source paths + include dirs; Build.cs PublicIncludePaths; test-CMake path + include-dir fixes.
+- `22495f08` · #505 (2026-05-28) · reorg: 183 Source_Core + 4 MCP files `git mv`'d into subsystem dirs (196 files, almost all pure renames); CMake source paths + include dirs; Build.cs PublicIncludePaths; test-CMake path + include-dir fixes. Unblocked the downstream `high-integrity-cpp-enforcement` gate (#507, same day).
 
 ## Deviations from plan
 
