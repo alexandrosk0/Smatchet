@@ -32,7 +32,7 @@ if [ "${SMATCHET_LOCK_BYPASS_REPO_CHECK:-0}" != "1" ]; then
     # unreadable, so the guard is never weaker than before. Anchored at a path
     # boundary (`/` https, `:` scp-style) per H15; matched case-insensitively.
     _proj_cfg="$(git rev-parse --show-toplevel 2>/dev/null)/project.config.json"
-    _proj_name="$( { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["project"]["name"])' "$_proj_cfg" 2>/dev/null \n                    || python -c 'import json,sys;print(json.load(open(sys.argv[1]))["project"]["name"])' "$_proj_cfg" 2>/dev/null; } || printf 'Smatchet' )"
+    _proj_name="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["project"]["name"])' "$_proj_cfg" 2>/dev/null || python -c 'import json,sys;print(json.load(open(sys.argv[1]))["project"]["name"])' "$_proj_cfg" 2>/dev/null || printf 'Smatchet')"
     _proj_lc="$(printf '%s' "$_proj_name" | tr '[:upper:]' '[:lower:]')"
     _url_lc="$(printf '%s' "$remote_url" | tr '[:upper:]' '[:lower:]')"
     case "$_url_lc" in

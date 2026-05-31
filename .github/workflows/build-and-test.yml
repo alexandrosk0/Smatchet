@@ -72,6 +72,14 @@ jobs:
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               case "$f" in
+                # Build-invoked exception: test-lint-rules.sh is the strict-zone
+                # delta gate run INSIDE the windows-msvc job (steps below at the
+                # "--diff origin/develop" + develop "--catalog --refresh" lines).
+                # It lives in the agentic tree but a change to it MUST trigger the
+                # build so the gate is re-validated — otherwise a PR touching only
+                # the gate skips the build and the gate never runs. Keep before the
+                # agents/* docs-class arm (case matches first pattern).
+                agents/scripts/project/test-lint-rules.sh) code=true; break ;;
                 *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
                 *) code=true; break ;;
               esac
