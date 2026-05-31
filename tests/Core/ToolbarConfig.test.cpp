@@ -128,3 +128,53 @@ TEST_CASE("ResolveEffectiveToolbar: trims leading and trailing separators") {
     REQUIRE(out.size() == 1);
     CHECK(out[0].CommandId == "a");
 }
+
+namespace {
+
+// CommandIds of the non-separator buttons in `buttons`, in order.
+std::vector<std::string> RealIds(const std::vector<ToolbarButton>& buttons) {
+    std::vector<std::string> ids;
+    for (std::size_t i = 0; i < buttons.size(); ++i) {
+        if (buttons[i].Kind != ToolbarButtonKind::Separator) {
+            ids.push_back(buttons[i].CommandId);
+        }
+    }
+    return ids;
+}
+
+} // namespace
+
+TEST_CASE("ResolveEffectiveToolbar preserves the global non-separator subsequence") {
+    // RenderBar's per-button right-click menu maps the k-th on-screen non-separator button back
+    // to the k-th non-separator in cfg.Toolbar.Buttons. That mapping is correct only because
+    // resolution drops or merges separators without reordering real buttons. Lock that property.
+    ToolbarConfig g;
+    g.Buttons.push_back(Sep());   // leading, trimmed
+    g.Buttons.push_back(Cmd("a"));
+    g.Buttons.push_back(Sep());   // interior, kept
+    g.Buttons.push_back(Cmd("b"));
+    g.Buttons.push_back(Cmd("c"));
+    g.Buttons.push_back(Sep());   // trailing, trimmed
+
+    const std::vector<ToolbarButton> eff = ResolveEffectiveToolbar(g, {});
+    CHECK(RealIds(eff) == RealIds(g.Buttons)); // same real buttons, same order
+}
+
+TEST_CASE("ResolveEffectiveToolbar keeps global buttons first when an append list is present") {
+    // With a per-tracker append, only the leading (global) on-screen buttons map to the global
+    // list; appended buttons must come strictly after, so they fall outside the mapping and get
+    // no global context menu (the render code guards them with src == -1).
+    ToolbarConfig g;
+    g.Buttons.push_back(Cmd("g0"));
+    g.Buttons.push_back(Cmd("g1"));
+    std::vector<ToolbarButton> append;
+    append.push_back(Cmd("t0"));
+    append.push_back(Cmd("t1"));
+
+    const std::vector<std::string> real = RealIds(ResolveEffectiveToolbar(g, append));
+    REQUIRE(real.size() == 4);
+    CHECK(real[0] == "g0");
+    CHECK(real[1] == "g1");
+    CHECK(real[2] == "t0");
+    CHECK(real[3] == "t1");
+}
