@@ -253,6 +253,11 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
     function is suppressible by one `SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy)`.
     Added fixtures + 4 bats cases (operator detection, dual-cap fires both, comma-deviation
     suppresses both). Also resolved an AGENTS.md merge conflict from #626 (plan path active→shipped).
+- **Slice 1a — ImGui draw-function pattern doc (PR #630).** `docs/agent-rules/imgui-draw-pattern.md`
+  (new): canonical `DrawCtx` + section-helper shape, the 6 § Approach-A rules, a positional-ImGui
+  hazards section (Begin/End + PushID/PopID pairing, byte-for-byte layout preservation, bucket-C/E
+  golden verification), `drawActiveProjectWindow` named as the worked canary. `AGENTS.md`
+  § Project rules cross-link + ride-along-only note. Pure-docs.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
@@ -271,6 +276,12 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
 - **Function detector is a heuristic** (brace scanner, not libclang — unavailable/non-portable).
   Systematic quirks cancel in the HEAD-vs-base set-diff for unchanged code; only genuinely new /
   just-crossed functions are flagged, and `SMATCHET_DEVIATION` is the escape hatch.
+- **Slice 1 split into 1a (pattern doc) + 1b (canary).** The plan paired the doc with the
+  992-line `drawActiveProjectWindow` decomposition in one slice. Shipped the doc first (1a, PR
+  #630, pure-docs — immediately useful, unblocks Phase B); the canary surgery (1b) follows as its
+  own build-gated PR with CI bucket-C/E screenshot-diff verification. Rationale: a positional-ImGui
+  decomposition of that size carries real visual-regression risk and a ~20-min dual-target build —
+  far safer isolated than bundled with docs. Delegated to `grid-engine`.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
