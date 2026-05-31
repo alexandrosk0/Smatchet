@@ -226,9 +226,7 @@ std::string ResolveEndpointUrl(AiProvider provider, const std::string& baseUrl) 
     }
 }
 
-} // namespace
-
-void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
+void RegisterListModelsCommand(CommandRegistry& reg) {
     // --- ai.list-models -----------------------------------------------------
     {
         Command c = MakeCommand(
@@ -260,7 +258,9 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Idempotent = true;
         reg.Register(std::move(c));
     }
+}
 
+void RegisterDumpRequestCommand(CommandRegistry& reg) {
     // --- ai.dump-request ----------------------------------------------------
     {
         Command c = MakeCommand(
@@ -332,7 +332,9 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Idempotent = true;
         reg.Register(std::move(c));
     }
+}
 
+void RegisterProbeCommand(CommandRegistry& reg) {
     // --- ai.probe -----------------------------------------------------------
     {
         Command c = MakeCommand(
@@ -370,7 +372,9 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Idempotent = true;
         reg.Register(std::move(c));
     }
+}
 
+void RegisterSendOnceCommand(CommandRegistry& reg) {
     // --- ai.send-once -------------------------------------------------------
     {
         Command c = MakeCommand(
@@ -512,7 +516,9 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Idempotent = false;
         reg.Register(std::move(c));
     }
+}
 
+void RegisterValidatePrefsCommand(CommandRegistry& reg) {
     // --- ai.validate-prefs --------------------------------------------------
     {
         Command c = MakeCommand(
@@ -552,6 +558,16 @@ void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Idempotent = true;
         reg.Register(std::move(c));
     }
+}
+
+} // namespace
+
+void RegisterAiCommands(CommandRegistry& reg, AppController& /*app*/) {
+    RegisterListModelsCommand(reg);
+    RegisterDumpRequestCommand(reg);
+    RegisterProbeCommand(reg);
+    RegisterSendOnceCommand(reg);
+    RegisterValidatePrefsCommand(reg);
 }
 
 #endif // SMATCHET_WITH_AI
