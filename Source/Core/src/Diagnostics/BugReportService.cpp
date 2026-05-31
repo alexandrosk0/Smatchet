@@ -288,7 +288,7 @@ std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string
     if (brace != std::string::npos) {
         uploadUrl = uploadUrl.substr(0, brace);
     }
-    uploadUrl += "?name=" + dumpName;
+    uploadUrl += "?name=" + UrlEncode(dumpName); // encode spaces / specials in the filename
 
     cpr::Header up = headers;
     up["Content-Type"] = "application/octet-stream";

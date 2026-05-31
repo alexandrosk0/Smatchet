@@ -73,10 +73,15 @@ async function uploadCrashDump(token, repo, base64, name) {
   const brace = uploadUrl.indexOf("{");
   if (brace !== -1) uploadUrl = uploadUrl.slice(0, brace);
   uploadUrl += `?name=${encodeURIComponent(name || "crash.dmp")}`;
-  // base64 -> bytes
-  const bin = atob(base64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  // base64 -> bytes (malformed input must drop the dump, NOT 500 the whole report)
+  let bytes;
+  try {
+    const bin = atob(base64);
+    bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  } catch {
+    return "";
+  }
   const resp = await fetch(uploadUrl, {
     method: "POST",
     headers: {

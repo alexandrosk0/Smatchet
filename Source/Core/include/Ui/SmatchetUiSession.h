@@ -608,6 +608,7 @@ struct UiDrawSession {
     bool bugReportPreviewDirty = true;       // rebuild preview text only when inputs changed
     bool bugReportPreviewSeeded = false;     // preview buffer has been built at least once (drives BodyOverride)
     bool bugReportPreviewUserEdited = false; // user edited the preview — stop auto-regenerating from inputs
+    bool bugReportPreviewGenerating = false; // preview being built on a worker (GatherContext does disk I/O)
     int bugReportShotMode = 0;               // 0 full, 1 censored
     std::vector<char> bugReportDescBuf;      // lazy multiline description buffer
     std::vector<char> bugReportPreviewBuf;   // editable egress preview = exactly what gets sent
