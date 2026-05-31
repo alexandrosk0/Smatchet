@@ -44,7 +44,7 @@ if (-not (Test-Path -Path $UProjectPath -PathType Leaf)) {
 $uprojectDir = Split-Path -Parent $UProjectPath
 $uprojectName = [System.IO.Path]::GetFileNameWithoutExtension($UProjectPath)
 
-$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $deployScript = Join-Path $PSScriptRoot "build_and_deploy_unreal_plugin.ps1"
 if (-not (Test-Path -Path $deployScript -PathType Leaf)) {
     throw "Deploy script missing: $deployScript"

@@ -199,7 +199,7 @@ fi
 
 cppcheck_line=$(tool_version cppcheck --version)
 if [ -z "$cppcheck_line" ]; then
-    write_warn 'cppcheck' 'install via LLVM or Visual Studio individual components (used by scripts/dev/run_cppcheck.py)'
+    write_warn 'cppcheck' 'install via LLVM or Visual Studio individual components (used by scripts/dev/local/run_cppcheck.py)'
 else
     write_pass 'cppcheck' "$cppcheck_line"
 fi

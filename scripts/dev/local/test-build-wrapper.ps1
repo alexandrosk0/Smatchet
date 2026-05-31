@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $PSScriptDir = $PSScriptRoot
-$repoRoot    = Split-Path -Parent (Split-Path -Parent $PSScriptDir)
+$repoRoot    = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptDir))
 
 $passed  = 0
 $failed  = 0

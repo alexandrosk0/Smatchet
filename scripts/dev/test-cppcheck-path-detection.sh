@@ -4,12 +4,12 @@
 # Bug: previously the filter hard-coded the literal "Smatchet" in a regex over each entry's
 # absolute path. Any clone path not containing "Smatchet" (CI tmpdirs, evaluator clones like
 # Codex_eval_smatchet, contributor workspaces) produced 0 filtered entries and a silent no-op.
-# The fix keys the filter off `root = Path(__file__).resolve().parents[2]` via `relative_to`,
+# The fix keys the filter off `root = Path(__file__).resolve().parents[3]` via `relative_to`,
 # matching first-party TUs by their position under the repo root, not by literal substring.
 #
 # Strategy: synthesise a compile_commands.json in a temp dir whose path does NOT contain
-# "Smatchet". Copy scripts/dev/run_cppcheck.py + a minimal directory shadow so the script's
-# `parents[2]` resolves to that temp root. Run the script and assert non-zero entry count.
+# "Smatchet". Copy scripts/dev/local/run_cppcheck.py + a minimal directory shadow so the script's
+# `parents[3]` resolves to that temp root. Run the script and assert non-zero entry count.
 # This is a hermetic unit-style test — no real cmake, no real cppcheck — that exercises only
 # the predicate that regressed.
 #
@@ -49,8 +49,8 @@ case "$SCRATCH" in
 esac
 
 # Shadow tree mirroring the parents[2] layout the script expects.
-mkdir -p "$SCRATCH/scripts/dev" "$SCRATCH/Source/Core/src" "$SCRATCH/Source/Plugins/Mcp" "$SCRATCH/Source/Standalone" "$SCRATCH/build"
-cp "$REPO_ROOT/scripts/dev/run_cppcheck.py" "$SCRATCH/scripts/dev/run_cppcheck.py"
+mkdir -p "$SCRATCH/scripts/dev/local" "$SCRATCH/Source/Core/src" "$SCRATCH/Source/Plugins/Mcp" "$SCRATCH/Source/Standalone" "$SCRATCH/build"
+cp "$REPO_ROOT/scripts/dev/local/run_cppcheck.py" "$SCRATCH/scripts/dev/local/run_cppcheck.py"
 
 # Resolve the absolute scratch root the way Python's Path.resolve() will.
 SCRATCH_ABS="$("$PYTHON" -c "import sys, pathlib; print(pathlib.Path(sys.argv[1]).resolve())" "$SCRATCH")"
@@ -80,7 +80,7 @@ PASSED=0
 FAILED=0
 
 # Assertion 1 — running the script from the scratch tree filters down to the three first-party entries.
-OUT="$("$PYTHON" "$SCRATCH/scripts/dev/run_cppcheck.py" --no-run --compile-db "$DB" --out-db "$SCRATCH/build/compile_commands.cppcheck.json" 2>&1 || true)"
+OUT="$("$PYTHON" "$SCRATCH/scripts/dev/local/run_cppcheck.py" --no-run --compile-db "$DB" --out-db "$SCRATCH/build/compile_commands.cppcheck.json" 2>&1 || true)"
 echo "$OUT"
 
 LINE="$(echo "$OUT" | grep -E '^wrote [0-9]+ entries' | tail -n 1 || true)"

@@ -108,10 +108,10 @@ cmake --build --preset ninja-iter-unreal-msvc
 Wrapper shortcuts are still available:
 
 ```powershell
-.\scripts\dev\build_and_run.ps1
-.\scripts\dev\build_and_run.ps1 -Preset ninja-iter-msvc
-.\scripts\dev\build_and_run.ps1 -BuildOnly
-.\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
+.\scripts\dev\local\build_and_run.ps1
+.\scripts\dev\local\build_and_run.ps1 -Preset ninja-iter-msvc
+.\scripts\dev\local\build_and_run.ps1 -BuildOnly
+.\scripts\dev\local\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
 ### MSVC from bash (Git Bash)
@@ -162,7 +162,7 @@ ctest --test-dir build/ninja-test-msvc --output-on-failure
 cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
 # 5. Optional: static-analysis pass.
-python .\scripts\dev\run_cppcheck.py
+python .\scripts\dev\local\run_cppcheck.py
 ```
 
 If step 1 prints `Doctor: RED`, fix the listed prerequisites before

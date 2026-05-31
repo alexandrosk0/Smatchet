@@ -39,7 +39,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $pluginName = "SmatchetImGuiPlugin"
 $sourcePluginDir = Join-Path $repoRoot "Source/UnrealPlugins\$pluginName"
 $fetchContentBaseDir = Join-Path $repoRoot ".fetchcontent-msvc"

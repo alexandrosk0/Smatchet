@@ -366,13 +366,13 @@ Unreal links against stale native libraries:
 - Repackage from the repo with:
 
 ```powershell
-.\scripts\dev\package_unreal_plugin_msvc.ps1 -Configuration Release -PackageOnly -ForceConfigure
+.\scripts\dev\local\package_unreal_plugin_msvc.ps1 -Configuration Release -PackageOnly -ForceConfigure
 ```
 
 For the local TestProject smoke rebuild, use:
 
 ```powershell
-.\scripts\dev\rebuild_testproject_plugin.ps1 -Release
+.\scripts\dev\local\rebuild_testproject_plugin.ps1 -Release
 ```
 
 ## Low-Level Native ABI

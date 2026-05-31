@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# test-all.sh — run every scripts/dev/test-*.sh and aggregate Passed/Failed.
+# test-all.sh — run every test-*.sh across the test roots and aggregate Passed/Failed.
 #
-# Discovers tests by glob: scripts/dev/test-*.sh (excludes self).
+# Discovers tests by glob across scripts/dev/ + agents/scripts/{core,project}/
+# (each root included only if present); test-*.sh, excludes self.
 # Each test script must follow the test-author bash conventions:
 #   - set -euo pipefail
 #   - exits 0 on all-pass, 1 on assertion failure, 2 on missing binary/build.
@@ -42,11 +43,22 @@ if [ "${1:-}" = "--filter" ]; then
     shift 2
 fi
 
-# Collect test scripts.
-mapfile -t TESTS < <(find scripts/dev -maxdepth 1 -type f -name 'test-*.sh' ! -name 'test-all.sh' | sort)
+# Collect test scripts across all roots that hold them. Product/build tests
+# stay under scripts/dev/; the agentic test-* suites live under
+# agents/scripts/{core,project}/ after the script-split (see
+# docs/plans/active/split-scripts-build-vs-agentic.md). Each root is searched
+# ONLY if it exists, so the code repo still runs standalone when the agents/
+# tree is later extracted, and the agents repo can ship without a dangling
+# scripts/dev reference.
+TEST_ROOTS=(scripts/dev agents/scripts/core agents/scripts/project)
+SEARCH_ROOTS=()
+for root in "${TEST_ROOTS[@]}"; do
+    [ -d "$root" ] && SEARCH_ROOTS+=("$root")
+done
+mapfile -t TESTS < <(find "${SEARCH_ROOTS[@]}" -maxdepth 1 -type f -name 'test-*.sh' ! -name 'test-all.sh' | sort)
 
 if [ "${#TESTS[@]}" -eq 0 ]; then
-    echo "no tests found under scripts/dev/test-*.sh" >&2
+    echo "no tests found under {${TEST_ROOTS[*]}}/test-*.sh" >&2
     exit 2
 fi
 
