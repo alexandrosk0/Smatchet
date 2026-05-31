@@ -579,16 +579,14 @@ struct UiDrawSession {
     /// Used by the visual-test pipeline to snapshot dock layouts deterministically.
     bool requestScreenshot = false;
     std::string requestScreenshotPath;
-    /// log-a-bug-github — when set alongside requestScreenshot, the standalone capture path
-    /// mosaic-censors the framebuffer (no readable text) before writing the PNG.
-    bool requestScreenshotCensor = false;
-    /// Censor mosaic block size (px) for this request. 0 = auto (RecommendedCensorBlock).
-    /// Seeded from cfg.BugReportCensorBlock when the bug-report modal arms a capture.
-    int requestScreenshotCensorBlock = 0;
     /// log-a-bug-github — set by the bug-report modal when its capture request is for the
     /// report (not a debug/test shot). The standalone capture path echoes completion back
     /// via bugReportShotReady so the modal never polls the filesystem on the UI thread.
     bool requestScreenshotBugReport = false;
+    /// font-redaction censor — set on the bug-report Submit frame; the standalone loop
+    /// repoints the fonts to the Redaction font on the NEXT (captured) frame so every
+    /// attached bug-report screenshot is █-redacted (sharp, layout-preserving).
+    bool requestRedactFontThisFrame = false;
 
     // --- "Log a Bug" modal (docs/plans/active/log-a-bug-github.md Slice 4) ---
     // All bugReport* fields are read/written ONLY on the UI thread (the worker posts
@@ -609,7 +607,6 @@ struct UiDrawSession {
     bool bugReportPreviewSeeded = false;     // preview buffer has been built at least once (drives BodyOverride)
     bool bugReportPreviewUserEdited = false; // user edited the preview — stop auto-regenerating from inputs
     bool bugReportPreviewGenerating = false; // preview being built on a worker (GatherContext does disk I/O)
-    int bugReportShotMode = 0;               // 0 full, 1 censored
     std::vector<char> bugReportDescBuf;      // lazy multiline description buffer
     std::vector<char> bugReportPreviewBuf;   // editable egress preview = exactly what gets sent
     std::string bugReportStagedShotPath;     // captured screenshot path (post-swap)

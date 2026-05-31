@@ -592,6 +592,15 @@ int main(int argc, char** argv) {
                 ImGui_ImplOpenGL3_CreateDeviceObjects();
             }
 
+            // font-redaction censor — if the bug-report modal armed a capture last frame,
+            // swap the whole UI to the redaction font BEFORE NewFrame so this (captured)
+            // frame renders all text as blocks. Popped after the screenshot capture below.
+            const bool redactThisFrame = g_ui.requestRedactFontThisFrame;
+            g_ui.requestRedactFontThisFrame = false;
+            if (redactThisFrame) {
+                SmatchetPushRedactionFonts();
+            }
+
             // Start the ImGui frame
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
@@ -667,10 +676,6 @@ int main(int argc, char** argv) {
             // raw PPM-P6 on typical UI captures) and is readable by every image tool.
             if (g_ui.requestScreenshot) {
                 g_ui.requestScreenshot = false;
-                const bool censorThisShot = g_ui.requestScreenshotCensor;
-                g_ui.requestScreenshotCensor = false;
-                const int censorBlockOverride = g_ui.requestScreenshotCensorBlock; // 0 = auto
-                g_ui.requestScreenshotCensorBlock = 0;
                 // "Log a Bug" capture — own the staging dir + signal completion here (the
                 // capture path is inherently main-thread and already writes to disk), so the
                 // bug-report modal never does UI-thread filesystem I/O.
@@ -707,17 +712,11 @@ int main(int argc, char** argv) {
                         }
                     }
                     // "Log a Bug" capture: downscale so the base64 PNG fits the relay
-                    // payload cap (a 1920px frame is ~4x too big), THEN censor. Gated on
-                    // bugReportShot so golden/test captures keep their native resolution.
+                    // payload cap (a 1920px frame is ~4x too big). Text redaction was
+                    // already done at render time via the font swap — no CPU filter here.
+                    // Gated on bugReportShot so golden/test captures keep native resolution.
                     if (bugReportShot) {
                         smatchet::imaging::DownscaleToMaxDimension(rgb, fw, fh, 3, 1280);
-                    }
-                    // "Log a Bug" censored variant — mosaic the frame so no text is
-                    // readable before it is written/uploaded. Consumed once per request.
-                    if (censorThisShot) {
-                        const int block = censorBlockOverride > 0 ? censorBlockOverride
-                                                                  : smatchet::imaging::RecommendedCensorBlock(fw, fh);
-                        smatchet::imaging::MosaicCensorInPlace(rgb.data(), fw, fh, 3, block);
                     }
                     // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
                     // dev hardware) while still cutting the file ~40× vs raw PPM. Stride is
@@ -738,6 +737,11 @@ int main(int argc, char** argv) {
                 if (bugReportShot) {
                     g_ui.bugReportShotReady = true;
                 }
+            }
+
+            // Restore normal fonts after the redacted capture frame (next frame is normal).
+            if (redactThisFrame) {
+                SmatchetPopRedactionFonts();
             }
 
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)

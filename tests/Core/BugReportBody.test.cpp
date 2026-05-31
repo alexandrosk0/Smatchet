@@ -12,8 +12,6 @@
 #include <vector>
 
 using namespace smatchet::diagnostics;
-using smatchet::imaging::MosaicCensorInPlace;
-using smatchet::imaging::RecommendedCensorBlock;
 using smatchet::privacy::RedactLogLine;
 using smatchet::privacy::RedactLogText;
 
@@ -59,31 +57,6 @@ TEST_CASE("RedactLogText — applies per line, preserves newlines") {
 // ScreenshotCensor
 // --------------------------------------------------------------------------
 
-TEST_CASE("MosaicCensorInPlace — replaces each block with its average (comp=1)") {
-    // 2x2, one block of size 2 -> all pixels become the mean (0+10+20+30)/4 = 15.
-    std::vector<unsigned char> px = {0, 10, 20, 30};
-    MosaicCensorInPlace(px.data(), 2, 2, 1, 2);
-    for (unsigned char v : px) {
-        CHECK(v == 15);
-    }
-}
-
-TEST_CASE("MosaicCensorInPlace — edge cells clamp in-bounds, no overrun") {
-    // 3x1, block 2 -> cell0 = avg(0,10)=5, cell1(edge,1px)=avg(90)=90.
-    std::vector<unsigned char> px = {0, 10, 90};
-    MosaicCensorInPlace(px.data(), 3, 1, 1, 2);
-    CHECK(px[0] == 5);
-    CHECK(px[1] == 5);
-    CHECK(px[2] == 90);
-}
-
-TEST_CASE("MosaicCensorInPlace — null / non-positive args are no-ops") {
-    std::vector<unsigned char> px = {1, 2, 3, 4};
-    MosaicCensorInPlace(nullptr, 2, 2, 1, 2);
-    MosaicCensorInPlace(px.data(), 2, 2, 1, 0);
-    CHECK(px[0] == 1); // unchanged
-}
-
 TEST_CASE("DownscaleToMaxDimension — shrinks longest side, updates dims, no-op when small") {
     using smatchet::imaging::DownscaleToMaxDimension;
 
@@ -112,13 +85,6 @@ TEST_CASE("DownscaleToMaxDimension — shrinks longest side, updates dims, no-op
     CHECK(gw == 1280);
     CHECK(gh < 1009);
     CHECK(big.size() == static_cast<std::size_t>(gw) * gh * 3);
-}
-
-TEST_CASE("RecommendedCensorBlock — light pixelation, clamps to [5,10]") {
-    CHECK(RecommendedCensorBlock(64, 64) == 5);      // tiny -> floor 5
-    CHECK(RecommendedCensorBlock(1280, 672) == 6);   // ~672/110 -> 6 (typical downscaled capture)
-    CHECK(RecommendedCensorBlock(8000, 6000) == 10); // large -> ceil 10
-    CHECK(RecommendedCensorBlock(0, 0) == 5);
 }
 
 // --------------------------------------------------------------------------
