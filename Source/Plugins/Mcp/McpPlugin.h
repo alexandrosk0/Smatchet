@@ -4,7 +4,13 @@
 #include "SmatchetDefaults.h"
 #include "McpServerStatus.h"
 #include <memory>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
+
+namespace httplib {
+class Request;
+class Response;
+} // namespace httplib
 
 class McpPlugin : public IPlugin {
   public:
@@ -29,13 +35,28 @@ class McpPlugin : public IPlugin {
     bool LuaExecutionEnabledMatches(bool enabled) const;
 
   private:
+    /// Shared authorization gate for every MCP route. Returns true when the
+    /// request may proceed; on rejection it has already populated `res` with the
+    /// appropriate 401/403 status and body. Must be called first in each handler.
+    bool Authorize(const httplib::Request& req, httplib::Response& res);
+
+    /// OnStart registration phases. Each installs a disjoint set of routes on
+    /// `impl_->svr`; OnStart calls them in declaration order, preserving the
+    /// original route-registration order (route precedence is order-sensitive).
+    void RegisterTicketRoutes();   ///< /mcp/list_tickets, /mcp/attachment_proxy, /mcp/search
+    void RegisterToolsListRoute(); ///< GET /mcp/tools/list
+    void RegisterToolsCallRoute(); ///< POST /mcp/tools/call (REST)
+    void RegisterSseRoute();       ///< GET <kSsePath> (SSE event stream)
+    void RegisterJsonRpcRoutes();  ///< POST /mcp/messages + POST <kSsePath>
+    void StartServerThread();      ///< bind + listen on the worker thread
+
+    /// Handle a JSON-RPC `tools/call` request. Populates `jres["result"]` or
+    /// `jres["error"]` (the caller already seeded jres with jsonrpc/id). Split
+    /// out of RegisterJsonRpcRoutes to keep that registration phase under the
+    /// branch cap; behaviour is byte-for-byte identical to the inlined form.
+    void HandleJsonRpcToolsCall(const std::string& remote, const nlohmann::json& params, nlohmann::json& jres);
+
     int port_;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
-
-
-
-
-
-
