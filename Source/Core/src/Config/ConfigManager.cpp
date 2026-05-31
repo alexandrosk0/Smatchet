@@ -285,6 +285,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["mcp_export_fields"] = config.McpExportFields;
     j["show_mcp_server_window"] = config.ShowMcpServerWindow;
     j["quick_comment_templates"] = config.QuickCommentTemplates;
+    j["toolbar"] = config.Toolbar;
     j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
     j["duration_suggestions"] = config.DurationSuggestions;
     j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
@@ -933,6 +934,16 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                 }
             } else {
                 cfg.QuickCommentTemplates = GetDefaultQuickCommentTemplates();
+            }
+
+            if (j.contains("toolbar") && j["toolbar"].is_object()) {
+                try {
+                    cfg.Toolbar = j["toolbar"].get<ToolbarConfig>();
+                } catch (...) { // catch-all-ok: malformed toolbar block → defaults
+                    cfg.Toolbar = ToolbarConfig::Default();
+                }
+            } else {
+                cfg.Toolbar = ToolbarConfig::Default();
             }
 
             if (j.contains("annotate_comment_templates") && j["annotate_comment_templates"].is_array()) {
