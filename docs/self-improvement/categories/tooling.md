@@ -16,6 +16,12 @@
 
 <!-- Latest first. Append new P0 / P1 / P2 entries at the top. Append new P3 entries to ## Parked. -->
 
+- 2026-05-30 · orchestrator · [tooling] · P2 — No read-only `git-leftover-audit.sh`; the loss/residue map is hand-derived (and got it wrong) every time
+  Details: Answering "what's parked / might be lost in git?" this session took ~5 rounds of ad-hoc `git for-each-ref` + `rev-list` + tip-diff + `gh pr view` loops, re-run on every "check again" because sibling agents/daemon kept swapping HEAD and advancing origin. The hand-rolled flow produced two wrong verdicts (paired process entry) by diffing a stale local `develop`. No single canonical command exists: `git-janitor` *acts* (squash-merges + deletes), `coderabbit-current-head.sh` is CR-only — neither just *reports* the leftover map.
+  Concrete next action: add read-only `scripts/dev/git-leftover-audit.sh`: (1) `git fetch --prune`; (2) classify every local+remote branch vs `origin/develop` keyed on `gh pr` state (MERGED→residue / OPEN→active / none+ahead→WIP-or-orphan); (3) flag worktrees whose branch is MERGED (removable), uncommitted-in-worktree, and `origin/*` with no PR + behind develop + age>N (stale). Hardcodes the origin-compare so the paired process rule can't be skipped; orchestrator runs it instead of ad-hoc git. ~1-1.5 h (bash + a `gh pr list --json` join). Wins every "is anything lost?" / pre-`git-janitor` check.
+  Status: open
+  Last-reviewed: 2026-05-30
+
 - 2026-05-28 · deep-audit · [tooling] · P2 — C++ lint (`lint-catch-all.py`, clang-tidy, cppcheck) runs only as local hooks, never in CI
   Details: `.claude/hooks/lint-catch-all.py` flags unmarked empty `catch(...){}` as `[error]` (rc=2) but fires only as a local PostToolUse hook on Claude-Code edits — `grep` over `.github/workflows/*.yml` shows zero references. Same for clang-tidy + `run_cppcheck.py` (both only in `scripts/dev/`, not any workflow). This is why the 11 unmarked empty-catch blocks (paired bug entry) reached develop: the gate is local-only, so non-Claude-Code commits and any skipped hook run bypass it. Related: `.clang-tidy` enables only 3 checks (`-*,clang-analyzer-deadcode.DeadStores,misc-unused-using-decls,misc-unused-alias-decls`) — none of the `bugprone-*` / `clang-analyzer` memory families that back the Pillar-3 never-crash invariant; cppcheck carries the real static-analysis weight. Verified (deep-audit, adversarially confirmed: lint-catch-all + cppcheck + clang-tidy absent from all workflows).
   Concrete next action: add a bucket-A CI step in `build-and-test.yml` that runs `lint-catch-all.py` over the diff (block on `[error]`-tier) + a curated cppcheck pass; decide whether clang-tidy joins (enable a `bugprone-*` subset) or is documented in `.clang-tidy` as intentionally cppcheck-primary. ~1-2 h.
@@ -130,6 +136,18 @@
 > P3 entries with no immediate owner. Reassess when adjacent feature lands or when a P2 promotion is justified.
 
 <!-- Latest first within Parked. -->
+
+- 2026-05-30 · orchestrator · [tooling] · P3 — `git-janitor` is end-of-session-only; parallel-agent merged-branch residue piles up mid-session
+  Details: With multiple agents + the merge-watcher daemon active, merged-PR local branches accumulate fast — a mid-session sweep found ~11 local residue branches (PRs all MERGED: #553/#554/#557/#560/#569/#576/#540/#541) + 2 worktrees holding now-merged branches. `git-janitor` deletes merged branches + cleans worktrees but only "after the last PR of a work session lands and the user signals no more changes"; nothing prunes between. Related-but-distinct from the 2026-05-18 `worktree-prune.sh` entry (that ff-pulls + deletes `[gone]` branches per worktree; this is a PR-state-keyed local-branch prune on a periodic cadence).
+  Concrete next action: add a bounded periodic light-prune (reuse the `merge-watcher-install-prune-task` cron, or a `git-janitor --light` flag): delete only local-only branches whose head-PR is MERGED; never touch open-PR / worktree-held / no-PR-ahead branches; classification supplied by `git-leftover-audit.sh` (paired P2). ~1 h once the audit script exists.
+  Status: open
+  Last-reviewed: 2026-05-30
+
+- 2026-05-30 · orchestrator · [tooling] · P3 — No sweep for stale `origin/*` branches with no PR (pushed-then-abandoned)
+  Details: This session's sweep found 5 `origin/*` branches pushed but with no PR and behind develop — `fix/cr-gate-empty-body-review`, `fix/setup-harness-agent-junction`, `gate-enforcement-cr-gate`, `plan/agentic-layer-project-independence`, and `bug-report-assets` (an epoch-stamped asset branch). Durable (on origin) so not "lost", but orphaned — invisible unless you `git branch -r`, easy to forget, and they re-trigger GitHub's "Compare & pull request" banner. `git-janitor` only deletes *merged* branches; nothing flags pushed-no-PR remotes.
+  Concrete next action: extend `git-leftover-audit.sh` (or `git-janitor`) to flag `origin/*` with no associated PR + behind `origin/develop` + last-commit age > N days. Report only — never auto-delete (could be a sibling's in-flight WIP). ~30 min on top of the audit script.
+  Status: open
+  Last-reviewed: 2026-05-30
 
 - 2026-05-30 · orchestrator · [tooling] · P3 — No edit-time gate for portable-purity → NEW-literal leaks land in a PR and only fail at CI
   Details: `scripts/dev/test-portable-purity.sh` (blocks NEW project literals in portable dirs `agents/core`, `agents/_shared`, `docs/agent-rules`, `docs/harness`) IS discovered by `scripts/dev/test-all.sh:46` (globs every `test-*.sh`) and runs in the `Doc anchors + agent contract` CI job — so the coverage exists. The gap is **when it fires**: there is no PostToolUse lint hook that runs it at edit time, and an agent editing a portable doc does not reliably run the full `test-all.sh` before pushing (the orchestrator pushed PR #557 without it). Result: a leak (`SMATCHET_*` env names + `Source/Core` example in `docs/agent-rules/memory-drain.md`) only surfaced at CR/CI → fix → re-push, a full round it would have caught in 5 sec at edit time. Distinct from the existing infra entry about *shrinking* the baseline.
