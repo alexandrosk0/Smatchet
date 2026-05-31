@@ -71,7 +71,7 @@ Rules of the pattern (codified in `docs/agent-rules/imgui-draw-pattern.md`, adde
 
 1. **`DrawCtx` struct** holds the per-frame snapshots + references. No more 30-line argument lists; no more `static` locals leaking across windows.
 2. **One responsibility per helper**. Header / body / footer / modals / hotkeys are non-overlapping. A helper that grows past ~80 lines splits again.
-3. **Perf scopes stay at the section boundary**. Helper-internal scopes only if `perf-detective` asks for finer resolution. Scope names match the existing inventory — zero baseline-bump churn.
+3. **Perf scopes stay at the section boundary** *where they exist* (reuse verbatim → zero baseline-bump churn). Where a function has no scopes (see § seam-premise correction), decompose on logical sections; add a scope only intentionally + regen `MARKER_INVENTORY.md`. Helper-internal scopes only if `perf-detective` asks for finer resolution.
 4. **Window-state extraction**. Persistent `static` locals (filter buffers, expanded-row sets, last-selection ids) move into a `<Foo>WindowState` member struct on the owning UI object. Caught by `grep "static.*Buf\|static bool s_" Source/Core/src/Smatchet*Ui*.cpp`.
 5. **Action handlers** (button click → mutation) move into `OnX()` methods returning `void` or `bool`. Keeps the draw body to layout-only.
 6. **Section-file split when a `.cpp` exceeds 1500 lines** — precedent: `SmatchetViewsDashboardUi.cpp` + `SmatchetViewsDashboardUi_widgets.cpp`. Naming: `<Owner>Ui_<Section>.cpp`.
@@ -88,7 +88,7 @@ For `ConfigManager::Load/Save`, `OnStart`, `BuildUserFieldPayload`, `HtmlToMarkd
 - **`AiAssistantController::RunRequest`** → split fetch (HTTP) ↔ stream-parse ↔ history-update phases into separate methods, each testable in isolation.
 - **`main` (`Source/Standalone/main.cpp`)** → already partially decomposed; extract remaining `// Boot phase` blocks into `BootApplication()`, `RunFrameLoop()`, `ShutdownApplication()` (`ShutdownApplication` already exists). Goal: `main` ≤ 80 lines.
 - **`AppController::Initialize`** → split into `InitConfig()`, `InitBackends()`, `InitCommands()`, `InitPlugins()`. Each ≤ 120 lines.
-- **`SpawnAndRun` / `RunCmdAttach`** (`Source/Standalone/CliCommandRunner.cpp`) → already on the queue from the CLI-cleanup backlog; extract `WaitForReady`, `SendQuit`, `WaitForScenario` helpers. ~250 → ~80 lines each.
+- ~~**`SpawnAndRun` / `RunCmdAttach`**~~ — *dropped (refresh): now 249 / 219 lines, under the 300 threshold. Not monoliths; the Slice-0 gate keeps them honest.*
 
 ### C. Slice ordering
 
@@ -167,7 +167,7 @@ Phase B — ImGui-draw monoliths (**ride-along only — no dedicated PR**; touch
 
 ## UX Pillar callouts
 
-- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: zero-impact target. Perf scopes preserved by construction (extracted at existing `SMATCHET_UI_PERF_SCOPE` boundaries). Slice gate: per-slice baseline diff via `perf-gatekeeper`; any > 0.2 ms regression = revert.
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: zero-impact target *where existing perf scopes are reused verbatim*; where a function has none and a scope is added, that's an intentional, inventory-tracked baseline change (not silent — see § seam-premise correction). Slice gate: per-slice baseline diff via `perf-gatekeeper`; any > 0.2 ms regression = revert.
 - **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: refactor is layout-only; no new sync I/O introduced. Existing async dispatchers (`MainThreadDispatcher`) unchanged.
 - **Pillar 3 (never crash)**: each slice gated on dual-target build + sanitizer-clean (`ninja-debug-msvc` ASan/UBSan run for slices touching bootstrap or HTTP paths — slices 6, 7).
 - **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: no change. The pattern preserves hotkey dispatch + tab order; no visual restyling.
@@ -177,7 +177,7 @@ Phase B — ImGui-draw monoliths (**ride-along only — no dedicated PR**; touch
 Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
 1. **PR-fast CI** — each slice declares the matching scenario in its PR body. Mapping (from `agents/core/perf-gatekeeper.md` § Curated diff → scenario map):
-   - Slice 1 (`SmatchetPreferencesUi_Whisper.cpp`) → `preferences-whisper-tab-render`.
+   - Slice 1 canary (`SmatchetActiveProjectGridUi.cpp`) → the `active-project-window-render` scenario.
    - Slice 2 (`ConfigManager.cpp`) → `app-cold-start` (Load is on the boot path).
    - Slice 3 (`McpPlugin.cpp`) → `mcp-server-startup`.
    - Slice 4 (`TrackerFieldPayloadPure.cpp`) → `bulk-payload-build-1000`.
@@ -198,7 +198,6 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 - **Risk (the big one): erosion without the gate.** Pure decomposition reverts under feature pressure — *already observed* (`SmatchetUI::Draw` 589→608, `drawMainMenuBar` 491→504 since this plan was written). Mitigation: **Slice 0 ships the delta-gated size cap first**; everything after is protected. This is why the gate moved from "out of scope" to slice 0.
 - **Risk: per-slice churn vs feature branches** — a dedicated UI-decomposition sweep conflicts with all in-flight UI work. Mitigation: **don't sweep** — Phase B is ride-along (you're already in the file). Phase A files are non-UI / low-churn.
 - **Risk: seam absence** — not every draw fn has `SMATCHET_UI_PERF_SCOPE` blocks (e.g. Whisper, ViewsDashboard have none). Mitigation: § Approach A seam-premise correction — invent logical seams; any new scope is an intentional `MARKER_INVENTORY.md` add (not a silent baseline shift).
-- **Risk: ImGui-draw ordering bugs** *(restated)* — positional `Begin/End`, `PushID/PopID`. Mitigation: bucket-E screenshot diff vs pre-refactor golden; visual delta = revert.
 - **Risk: clang-tidy / clang-format thrash** — extracted helpers can re-trigger `readability-function-cognitive-complexity`. Mitigation: target ≤ 80 lines per helper.
 - **Non-goal**: rewriting widget logic. Layout/behaviour/state semantics byte-for-byte preserved. Pure mechanical decomposition.
 - **Non-goal**: introducing a new UI framework / retained-mode layer. Smatchet stays immediate-mode ImGui.
