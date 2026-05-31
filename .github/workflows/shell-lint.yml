@@ -17,10 +17,12 @@ name: Shell lint
 # filter — leaving them permanently un-mergeable ("Expected — Waiting"). The job
 # is seconds-fast, so running it on every PR is cheap insurance.
 #
-# NB: the repo's broader 5-rule gate (test-shell-lint.sh) is intentionally NOT
-# run here yet — its deps-preflight rule currently false-positives on graceful
-# `cmd || fallback` / `if cmd` patterns in agents/scripts/. Expanding its scope
-# + hardening that rule is tracked as a follow-up; until then it stays pre-push.
+# The repo's broader 5-rule gate (test-shell-lint.sh) also runs here as a second
+# step: deps-preflight / shellcheck (SC2086,2046,2128,2155,2068) / curl -f /
+# sha256-after-download / --flag↔--flag=value parity, over the same expanded
+# target set (scripts/dev + agents/scripts/{core,project}). Its deps rule was
+# hardened so graceful `cmd || fallback` / `if cmd` shapes no longer false-fire,
+# which unblocked covering agents/scripts/ (was the deferral noted in #624).
 
 on:
   push:
@@ -49,3 +51,6 @@ jobs:
 
       - name: test-lint-bash — shellcheck fail-set (SC2086 / SC2046 / SC2155)
         run: bash agents/scripts/core/test-lint-bash.sh
+
+      - name: test-shell-lint — 5-rule self-review gate (deps / shellcheck / curl / sha256 / flag-parity)
+        run: bash agents/scripts/core/test-shell-lint.sh
