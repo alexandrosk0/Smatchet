@@ -8,7 +8,7 @@
 #   * the before/after seam (--prompt-root) + trial count are honoured;
 #   * usage errors exit 2;
 #   * runner -> scorer integration: two fake runs score clean (exit 0).
-# Plan: docs/plans/active/subagent-eval-harness.md § Verification (Runner test).
+# Plan: docs/plans/shipped/subagent-eval-harness.md § Verification (Runner test).
 #
 # Requires: bash, bats, python (3.x) on PATH.
 # ----------------------------------------------------------------------------

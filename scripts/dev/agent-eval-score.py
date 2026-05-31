@@ -4,7 +4,7 @@
 # Companion to scripts/dev/agent-eval-run.sh. One level up the stack from
 # scripts/dev/perf-compare.py: it diffs agent DECISION QUALITY instead of frame
 # latency, reusing the same load_json / evaluate / emit_markdown / 0-1-2
-# exit-code skeleton. Plan: docs/plans/active/subagent-eval-harness.md.
+# exit-code skeleton. Plan: docs/plans/shipped/subagent-eval-harness.md.
 #
 # Consumes a BASE result JSON + a HEAD result JSON (per
 # docs/agent-eval/result-schema.json). Each carries the agent's per-trial output

@@ -2,7 +2,7 @@
 # tests/agent-eval/validate_schema.py — minimal JSON Schema (draft-07 subset)
 # validator, pure stdlib. Lets the bats suites conformance-check eval cases +
 # runner results against docs/agent-eval/*-schema.json WITHOUT a third-party
-# validator (plan docs/plans/active/subagent-eval-harness.md § Verification).
+# validator (plan docs/plans/shipped/subagent-eval-harness.md § Verification).
 #
 # Supports only the keywords those schemas actually use:
 #   $ref (local #/definitions/...), type (string or list), required,
