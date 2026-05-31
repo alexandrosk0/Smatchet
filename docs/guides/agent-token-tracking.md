@@ -139,7 +139,7 @@ Caveats: statusline runs on every refresh — keep parsing under 100ms. Tail the
 - `agents/_shared/token-tracking/agents-statusline.py` — canonical statusline source (linked into `.claude/hooks/agents-statusline.py`).
 - `agents/_shared/token-tracking/SKILL.md` — canonical slash-skill source (linked into `.claude/skills/agent-tokens/SKILL.md`).
 - `agents/_shared/token-tracking/README.md` — README for the canonical dir.
-- `agents/scripts/core/agent-tokens-report.py` — harness-agnostic CLI report. Lives in `scripts/`, invoked the same way from any harness.
+- `agents/scripts/core/agent-tokens-report.py` — harness-agnostic CLI report. Lives in `agents/scripts/core/`, invoked the same way from any harness.
 
 ## Files modified
 

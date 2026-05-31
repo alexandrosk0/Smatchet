@@ -14,7 +14,7 @@ setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
     export FIXTURES_DIR="$REPO_ROOT/tests/fixtures"
-    export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
+    export SCRIPTS_DIR="$REPO_ROOT/agents/scripts/core"
 
     # Standard test env
     export ORCH_USER="alexkonstantonis"
