@@ -449,7 +449,11 @@ case "$MODE" in
         echo "test-lint-rules: ERROR: missing $cr_aud; cannot enforce comment-regrowth gate" >&2
         exit 2
     fi
-    cr_out="$("$cr_py" "$cr_aud" --diff "$BASE")"; cr_rc=$?
+    # Capture exit code inside the `if` condition: a bare `x=$(cmd); rc=$?` would, under the CI
+    # shell's `set -e`, abort the whole script the instant comment_audit.py exits non-zero (e.g. 1
+    # = violations found) — before `rc=$?` ever runs. An assignment used as an `if` condition is
+    # exempt from `set -e`, so this reliably captures 0 / 1 / >=2.
+    if cr_out="$("$cr_py" "$cr_aud" --diff "$BASE")"; then cr_rc=0; else cr_rc=$?; fi
     if [ "$cr_rc" -ge 2 ]; then
         echo "test-lint-rules: ERROR: comment_audit.py --diff failed (exit $cr_rc) for base '$BASE'" >&2
         exit 2

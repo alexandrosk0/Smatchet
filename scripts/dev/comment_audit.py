@@ -207,8 +207,21 @@ def print_markdown(grand, per_sub):
         print(f"- `{b}`: {g['buckets'][b]}")
 
 
+def _merge_base_or_ref(ref):
+    """Resolve the fork point of <ref> and HEAD so the diff reflects only what THIS branch added —
+    not <ref>'s own divergence since the branch point. If <ref> has advanced past our merge-base,
+    a raw `git diff <ref> HEAD` misattributes <ref>'s newer lines (and our now-older lines) as our
+    additions, false-failing the gate. The merge-base is always an ancestor of HEAD, so it is
+    computable even when <ref> is a shallow fetch. Falls back to <ref> only if merge-base can't be
+    found (unrelated histories)."""
+    p = subprocess.run(["git", "merge-base", ref, "HEAD"], capture_output=True, text=True)
+    mb = p.stdout.strip()
+    return mb if (p.returncode == 0 and mb) else ref
+
+
 def run_diff_mode(ref):
-    """Phase-4 regrowth: emit noise-bucket violations for lines ADDED vs <ref>."""
+    """Phase-4 regrowth: emit noise-bucket violations for lines ADDED vs the merge-base of <ref>."""
+    ref = _merge_base_or_ref(ref)
     rule_for = {
         "cut-blank": "comment-blank-run",
         "cut-decorative": "comment-decorative-banner",
@@ -281,6 +294,7 @@ def run_ratio_warn(ref, threshold=0.50):
     """ADVISORY (always exit 0): warn for each changed first-party C++ file whose comment ratio
     both RISES vs <ref> AND exceeds `threshold`. Well-documented files that don't get worse never
     warn. Never blocks — this is the soft half of the Phase-4 regrowth guard."""
+    ref = _merge_base_or_ref(ref)
     changed = _git(["diff", "--name-only", "--diff-filter=ACMR", ref, "--",
                     *[r + "**" for r in SWEEP_ROOTS]]).split()
     warned = 0
