@@ -7,7 +7,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstddef>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using nlohmann::json;
@@ -30,8 +33,7 @@ TrackerField MakeComponentsField() {
 }
 
 const TrackerFieldOption* FindOption(const std::vector<TrackerFieldOption>& opts, const std::string& id) {
-    auto it = std::find_if(opts.begin(), opts.end(),
-                           [&](const TrackerFieldOption& o) { return o.Id == id; });
+    auto it = std::find_if(opts.begin(), opts.end(), [&](const TrackerFieldOption& o) { return o.Id == id; });
     return it == opts.end() ? nullptr : &(*it);
 }
 
@@ -48,9 +50,7 @@ TEST_CASE("ComponentJsonIdToString accepts string / signed / unsigned ints; reje
         CHECK(ComponentJsonIdToString(json(42)) == "42");
         CHECK(ComponentJsonIdToString(json(-7)) == "-7");
     }
-    SUBCASE("unsigned integer to decimal") {
-        CHECK(ComponentJsonIdToString(json(123456789u)) == "123456789");
-    }
+    SUBCASE("unsigned integer to decimal") { CHECK(ComponentJsonIdToString(json(123456789u)) == "123456789"); }
     SUBCASE("non-id types degrade to empty string — no UB / no throw") {
         CHECK(ComponentJsonIdToString(json(nullptr)) == "");
         CHECK(ComponentJsonIdToString(json(true)) == "");
@@ -293,7 +293,7 @@ TEST_CASE("ExtractComponentOption → Merge → Sort end-to-end mimics catalog a
         {{"componentBean", {{"id", "10"}, {"name", "Audio"}}}},
         {{"id", "20"}, {"name", "physics"}},
         {{"id", "10"}, {"name", "Audio"}}, // duplicate — should dedupe
-        {{"name", "no-id"}},                // malformed — skipped
+        {{"name", "no-id"}},               // malformed — skipped
     });
 
     int merged = 0;
@@ -305,8 +305,8 @@ TEST_CASE("ExtractComponentOption → Merge → Sort end-to-end mimics catalog a
             ++merged;
         }
     }
-    CHECK(merged == 4);                // 5 input nodes; 1 malformed
-    CHECK(components.size() == 3);     // 4 merged; 1 was a duplicate
+    CHECK(merged == 4);            // 5 input nodes; 1 malformed
+    CHECK(components.size() == 3); // 4 merged; 1 was a duplicate
 
     SortComponentCatalog(fields, components);
     REQUIRE(components.size() == 3);
@@ -370,9 +370,9 @@ TEST_CASE("BuildDedupedIssueTypeOptions: id-only dedup also fires") {
 TEST_CASE("BuildDedupedIssueTypeOptions: skips entries missing id or name") {
     nlohmann::json input = nlohmann::json::array({
         {{"id", "10003"}, {"name", "Task"}},
-        {{"id", "10009"}},                    // no name
-        {{"name", "Bug"}},                    // no id
-        nlohmann::json::object(),             // empty
+        {{"id", "10009"}},        // no name
+        {{"name", "Bug"}},        // no id
+        nlohmann::json::object(), // empty
     });
     std::vector<std::string> allowedValues;
     std::vector<TrackerFieldOption> options;
@@ -389,4 +389,270 @@ TEST_CASE("BuildDedupedIssueTypeOptions: non-array input clears outputs") {
     TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(input, allowedValues, options);
     CHECK(allowedValues.empty());
     CHECK(options.empty());
+}
+
+// ---------------------------------------------------------------------------
+// ParseFieldDefinition — per-field schema → TrackerField mapping (Phase 1 core)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ParseFieldDefinition: rejects nodes missing string id/name") {
+    std::vector<std::string> sprintIds;
+    TrackerField out;
+    CHECK_FALSE(TrackerFieldCatalogPure::ParseFieldDefinition(json::object(), out, sprintIds));
+    CHECK_FALSE(TrackerFieldCatalogPure::ParseFieldDefinition(json{{"id", "summary"}}, out, sprintIds));
+    CHECK_FALSE(TrackerFieldCatalogPure::ParseFieldDefinition(json{{"id", 5}, {"name", "X"}}, out, sprintIds));
+    CHECK(sprintIds.empty());
+}
+
+TEST_CASE("ParseFieldDefinition: scalar string field maps id/name/type/readonly") {
+    std::vector<std::string> sprintIds;
+    TrackerField out;
+    json field = {{"id", "summary"},
+                  {"name", "Summary"},
+                  {"isLocked", true},
+                  {"schema", {{"type", "string"}, {"system", "summary"}}}};
+    REQUIRE(TrackerFieldCatalogPure::ParseFieldDefinition(field, out, sprintIds));
+    CHECK(out.Id == "summary");
+    CHECK(out.Name == "Summary");
+    CHECK(out.Type == "string");
+    CHECK(out.ReadOnly == true);
+    CHECK(out.SchemaSystem == "summary");
+    CHECK(out.IsArray == false);
+    CHECK(out.IsUserType == false);
+    CHECK(out.IsCustom == false);
+    CHECK_FALSE(out.RawFieldDefinitionJson.empty());
+}
+
+TEST_CASE("ParseFieldDefinition: array schema with object items resolves ItemsType + IsArray") {
+    std::vector<std::string> sprintIds;
+    TrackerField out;
+    json field = {
+        {"id", "labels"}, {"name", "Labels"}, {"schema", {{"type", "array"}, {"items", {{"type", "string"}}}}}};
+    REQUIRE(TrackerFieldCatalogPure::ParseFieldDefinition(field, out, sprintIds));
+    CHECK(out.IsArray == true);
+    CHECK(out.ItemsType == "string");
+    CHECK(out.IsUserType == false);
+}
+
+TEST_CASE("ParseFieldDefinition: user + array-of-user set IsUserType") {
+    std::vector<std::string> sprintIds;
+    TrackerField user;
+    REQUIRE(TrackerFieldCatalogPure::ParseFieldDefinition(
+        json{{"id", "assignee"}, {"name", "Assignee"}, {"schema", {{"type", "user"}}}}, user, sprintIds));
+    CHECK(user.IsUserType == true);
+
+    TrackerField arrUser;
+    REQUIRE(TrackerFieldCatalogPure::ParseFieldDefinition(
+        json{{"id", "watchers"}, {"name", "Watchers"}, {"schema", {{"type", "array"}, {"items", "user"}}}}, arrUser,
+        sprintIds));
+    CHECK(arrUser.IsUserType == true);
+    CHECK(arrUser.ItemsType == "user");
+}
+
+TEST_CASE("ParseFieldDefinition: custom field + gh-sprint schema is collected into sprintFieldIds") {
+    std::vector<std::string> sprintIds;
+    TrackerField out;
+    json field = {{"id", "customfield_10020"},
+                  {"name", "Sprint"},
+                  {"schema", {{"type", "array"}, {"custom", "com.pyxis.greenhopper.jira:gh-sprint"}}}};
+    REQUIRE(TrackerFieldCatalogPure::ParseFieldDefinition(field, out, sprintIds));
+    CHECK(out.IsCustom == true);
+    CHECK(out.SchemaCustom == "com.pyxis.greenhopper.jira:gh-sprint");
+    REQUIRE(sprintIds.size() == 1);
+    CHECK(sprintIds[0] == "customfield_10020");
+}
+
+// ---------------------------------------------------------------------------
+// BuildSimpleCatalogOptions — priority / status flat catalog mapping
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BuildSimpleCatalogOptions: dedupes by id, coerces int ids, keeps PayloadJson") {
+    json arr = json::array({
+        {{"id", 1}, {"name", "High"}},
+        {{"id", "1"}, {"name", "High dup"}}, // same coerced id → skipped
+        {{"id", 2}, {"name", "Low"}},
+        {{"name", "NoId"}}, // missing id → skipped
+        {{"id", 3}},        // missing name → skipped
+    });
+    TrackerField field;
+    field.Id = "priority";
+    field.AllowedValues = {"stale"};
+    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(arr, field);
+    REQUIRE(field.AllowedValueOptions.size() == 2);
+    CHECK(field.AllowedValues == std::vector<std::string>{"High", "Low"});
+    CHECK(field.AllowedValueOptions[0].Id == "1");
+    CHECK(field.AllowedValueOptions[0].Value == "High");
+    CHECK_FALSE(field.AllowedValueOptions[0].PayloadJson.empty());
+}
+
+TEST_CASE("BuildSimpleCatalogOptions: non-array input is a no-op (no clear)") {
+    TrackerField field;
+    field.AllowedValues = {"keep"};
+    field.AllowedValueOptions.push_back(TrackerFieldOption{});
+    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(json::object(), field);
+    CHECK(field.AllowedValues == std::vector<std::string>{"keep"});
+    CHECK(field.AllowedValueOptions.size() == 1);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyCreateMetaToCatalog — createmeta projects/issuetypes enrichment
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ApplyCreateMetaToCatalog: collects issue types, required ids, components, allowedValues") {
+    std::vector<TrackerField> fields;
+    TrackerField components;
+    components.Id = "components";
+    fields.push_back(components);
+    TrackerField customSelect;
+    customSelect.Id = "customfield_1";
+    fields.push_back(customSelect);
+
+    std::unordered_map<std::string, std::size_t> indexById;
+    indexById["components"] = 0;
+    indexById["customfield_1"] = 1;
+
+    std::vector<TrackerComponent> outComponents;
+    std::vector<TrackerIssueTypeCreateMeta> outMeta;
+    std::set<std::string> uniqueIssueTypes;
+
+    json meta = {
+        {"projects",
+         json::array({{
+             {"key", "ABC"},
+             {"issuetypes",
+              json::array({{
+                  {"id", 10001},
+                  {"name", "Story"},
+                  {"subtask", false},
+                  {"fields",
+                   {
+                       {"summary", {{"required", true}}},
+                       {"components", {{"allowedValues", json::array({{{"id", "c1"}, {"name", "Backend"}}})}}},
+                       {"customfield_1", {{"allowedValues", json::array({{{"id", "o1"}, {"value", "Opt1"}}})}}},
+                   }},
+              }})},
+         }})}};
+
+    TrackerFieldCatalogPure::ApplyCreateMetaToCatalog(meta, "ABC", indexById, fields, outComponents, outMeta,
+                                                      uniqueIssueTypes);
+
+    CHECK(uniqueIssueTypes.count("Story") == 1);
+    REQUIRE(outMeta.size() == 1);
+    CHECK(outMeta[0].ProjectKey == "ABC");
+    CHECK(outMeta[0].IssueTypeId == "10001");
+    CHECK(outMeta[0].RequiredFieldIds.count("summary") == 1);
+    REQUIRE(outComponents.size() == 1);
+    CHECK(outComponents[0].Id == "c1");
+    CHECK(outComponents[0].Name == "Backend");
+    CHECK_FALSE(fields[1].AllowedValueOptions.empty());
+}
+
+TEST_CASE("ApplyCreateMetaToCatalog: merges duplicate issue types (required ids unioned)") {
+    std::vector<TrackerField> fields;
+    std::unordered_map<std::string, std::size_t> indexById;
+    std::vector<TrackerComponent> outComponents;
+    std::vector<TrackerIssueTypeCreateMeta> outMeta;
+    std::set<std::string> uniqueIssueTypes;
+
+    json meta = {
+        {"projects", json::array({{
+                         {"key", "ABC"},
+                         {"issuetypes", json::array({
+                                            {{"id", 5}, {"name", "Bug"}, {"fields", {{"a", {{"required", true}}}}}},
+                                            {{"id", 5}, {"name", "Bug"}, {"fields", {{"b", {{"required", true}}}}}},
+                                        })},
+                     }})}};
+
+    TrackerFieldCatalogPure::ApplyCreateMetaToCatalog(meta, "ABC", indexById, fields, outComponents, outMeta,
+                                                      uniqueIssueTypes);
+    REQUIRE(outMeta.size() == 1);
+    CHECK(outMeta[0].RequiredFieldIds.count("a") == 1);
+    CHECK(outMeta[0].RequiredFieldIds.count("b") == 1);
+}
+
+TEST_CASE("ApplyCreateMetaToCatalog: no projects array is a no-op") {
+    std::vector<TrackerField> fields;
+    std::unordered_map<std::string, std::size_t> indexById;
+    std::vector<TrackerComponent> outComponents;
+    std::vector<TrackerIssueTypeCreateMeta> outMeta;
+    std::set<std::string> uniqueIssueTypes;
+    TrackerFieldCatalogPure::ApplyCreateMetaToCatalog(json::object(), "ABC", indexById, fields, outComponents, outMeta,
+                                                      uniqueIssueTypes);
+    CHECK(outMeta.empty());
+    CHECK(uniqueIssueTypes.empty());
+}
+
+// ---------------------------------------------------------------------------
+// BuildIssueTypeOptionsFromProjectJson — /project/{key} issueTypes
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BuildIssueTypeOptionsFromProjectJson: sorts by Value, coerces ids") {
+    json project = {{"issueTypes", json::array({
+                                       {{"id", 3}, {"name", "Task"}},
+                                       {{"id", "1"}, {"name", "Bug"}},
+                                       {{"id", 2}}, // no name → skipped
+                                   })}};
+    std::vector<TrackerFieldOption> opts;
+    REQUIRE(TrackerFieldCatalogPure::BuildIssueTypeOptionsFromProjectJson(project, opts));
+    REQUIRE(opts.size() == 2);
+    CHECK(opts[0].Value == "Bug");
+    CHECK(opts[0].Id == "1");
+    CHECK(opts[1].Value == "Task");
+    CHECK(opts[1].Id == "3");
+}
+
+TEST_CASE("BuildIssueTypeOptionsFromProjectJson: returns false when no usable entries") {
+    std::vector<TrackerFieldOption> opts;
+    CHECK_FALSE(TrackerFieldCatalogPure::BuildIssueTypeOptionsFromProjectJson(json::object(), opts));
+    CHECK(opts.empty());
+    json empty = {{"issueTypes", json::array()}};
+    CHECK_FALSE(TrackerFieldCatalogPure::BuildIssueTypeOptionsFromProjectJson(empty, opts));
+}
+
+// ---------------------------------------------------------------------------
+// Sprint board / sprint option extraction (Jira Agile)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ExtractSprintBoardIdsFromPage: dedupes positive ids, reports isLast") {
+    std::set<int> seen;
+    std::vector<int> ids;
+    json page = {{"values", json::array({
+                                {{"id", 7}},
+                                {{"id", 7}},
+                                {{"id", -1}},
+                                {{"id", 9}},
+                            })},
+                 {"isLast", false}};
+    CHECK_FALSE(TrackerFieldCatalogPure::ExtractSprintBoardIdsFromPage(page, seen, ids));
+    REQUIRE(ids.size() == 2);
+    CHECK(ids[0] == 7);
+    CHECK(ids[1] == 9);
+
+    json lastPage = {{"values", json::array({{{"id", 9}}})}, {"isLast", true}};
+    CHECK(TrackerFieldCatalogPure::ExtractSprintBoardIdsFromPage(lastPage, seen, ids));
+    CHECK(ids.size() == 2); // 9 already seen
+}
+
+TEST_CASE("ExtractSprintBoardIdsFromPage: unusable shape signals stop") {
+    std::set<int> seen;
+    std::vector<int> ids;
+    CHECK(TrackerFieldCatalogPure::ExtractSprintBoardIdsFromPage(json::object(), seen, ids));
+    CHECK(ids.empty());
+}
+
+TEST_CASE("CollectSprintOptionsFromPage: string + numeric ids, dedupe, PayloadJson") {
+    std::set<std::string> seen;
+    std::vector<TrackerFieldOption> opts;
+    json page = {{"values", json::array({
+                                {{"id", "100"}, {"name", "Sprint 1"}},
+                                {{"id", 100}, {"name", "Sprint 1 dup"}}, // coerced dup → skipped
+                                {{"id", 101}, {"name", "Sprint 2"}},
+                                {{"id", 102}}, // no name → skipped
+                            })}};
+    TrackerFieldCatalogPure::CollectSprintOptionsFromPage(page, seen, opts);
+    REQUIRE(opts.size() == 2);
+    CHECK(opts[0].Id == "100");
+    CHECK(opts[0].Value == "Sprint 1");
+    CHECK_FALSE(opts[0].PayloadJson.empty());
+    CHECK(opts[1].Id == "101");
 }
