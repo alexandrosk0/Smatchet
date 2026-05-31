@@ -1,5 +1,6 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
+#include "PlaneIssueMappingPure.h"
 
 #include "Logger.h"
 #include "StringUtil.h"
@@ -17,11 +18,11 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 using smatchet::plane_detail::JsonFieldToString;
 using smatchet::plane_detail::NormalizePlaneApiBase;
 using smatchet::plane_detail::ResolvePlaneProject;
-using smatchet::plane_detail::TrimAsciiWs;
 
 namespace {
 
@@ -45,12 +46,6 @@ std::string SanitizeAsciiSnippet(const std::string& s, size_t maxLen) {
         }
     }
     return o;
-}
-
-std::string PlaneWorkItemTitleForDisplay(const nlohmann::json& issue) {
-    std::string title = JsonFieldToString(issue, "name");
-    TrimAsciiWs(title);
-    return title;
 }
 
 // Pull `project_id` from a Plane structured-query JSON blob. "" sentinel covers
@@ -84,6 +79,147 @@ constexpr std::int64_t kPlaneListProjectsTtlSeconds = 300; // 5 minutes
 std::int64_t PlaneNowUnixSeconds() {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
+}
+
+// Phase 1: validate Plane connection config + active-view project scope. Returns the
+// fetch-error string on failure (empty on success). Byte-for-byte mirror of the original
+// inline guards in FetchIssuesStreamed.
+std::string ValidatePlaneFetchConfig(const TrackerConfig& cfg, const std::string& projectKey) {
+    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
+        return "Plane is not configured or active view has no project scope. "
+               "Set URL / Workspace Slug in Preferences, and choose a Plane view with a project.";
+    }
+    if (cfg.PlaneApiKey.empty()) {
+        return "Plane API key is missing. Set it in Preferences → Tracker.";
+    }
+    return std::string();
+}
+
+// Phase 3: fetch + parse the project `states` list into (id, name) pairs (display-value mapping).
+// Mirrors the original inline block exactly: only a 200 with a non-discarded body commits, and an
+// empty-but-valid parse still commits (clears stale states). The outShouldCommit flag tells the
+// caller when a parse is committable (even when empty) versus when the response was skipped. Returns
+// neutral id-plus-name pairs rather than the private nested CachedState struct, so this free helper
+// stays out of the class; the orchestrator widens the pairs into the typed cache.
+std::vector<std::pair<std::string, std::string>>
+FetchPlaneStatePairs(const std::string& planeApi, const std::string& workspaceSlug, const std::string& planeProjectId,
+                     const cpr::Header& headers, bool& outShouldCommit) {
+    outShouldCommit = false;
+    std::vector<std::pair<std::string, std::string>> pairs;
+    const std::string statesUrl =
+        planeApi + "/api/v1/workspaces/" + workspaceSlug + "/projects/" + planeProjectId + "/states/";
+    auto r = TrackerGetLogged("PlaneClient", statesUrl, headers);
+    if (r.status_code != 200) {
+        return pairs;
+    }
+    const std::string statesBody = StripUtf8BomCopy(r.text);
+    nlohmann::json j = nlohmann::json::parse(statesBody, nullptr, false);
+    if (j.is_discarded()) {
+        return pairs;
+    }
+    outShouldCommit = true;
+    auto results = (j.is_object() && j.contains("results")) ? j["results"] : j;
+    if (!results.is_array()) {
+        return pairs;
+    }
+    for (const auto& s : results) {
+        std::string id = JsonFieldToString(s, "id");
+        std::string name = JsonFieldToString(s, "name");
+        if (!id.empty())
+            pairs.emplace_back(std::move(id), std::move(name));
+    }
+    return pairs;
+}
+
+// Outcome of fetching + validating a single work-items page. On a hard failure `Error` carries the
+// caller-facing message (return immediately). On success `Results` aliases into `Body` (kept alive
+// here) and `Body` drives cursor extraction.
+struct PlaneIssuePageFetch {
+    bool Ok = false;
+    std::string Error;
+    nlohmann::json Body;
+};
+
+// Phase 4: HTTP GET one work-items page + classify the response body. Reproduces the original
+// inline non-200 / empty / HTML / invalid-JSON / no-results-array error paths byte-for-byte.
+PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::string& workspaceSlug,
+                                        const std::string& planeProjectId, const cpr::Header& headers, int pageSize,
+                                        const std::string& listCursor) {
+    PlaneIssuePageFetch out;
+    const std::string listBase =
+        planeApi + "/api/v1/workspaces/" + workspaceSlug + "/projects/" + planeProjectId + "/work-items/";
+    cpr::Parameters params;
+    params.Add({"per_page", std::to_string(pageSize)});
+    params.Add({"expand", "assignees,labels,state"});
+    if (!listCursor.empty()) {
+        params.Add({"cursor", listCursor});
+    }
+
+    auto response = TrackerGetLogged("PlaneClient", listBase, headers, params);
+
+    if (response.status_code != 200) {
+        const std::string urlHint = SanitizeAsciiSnippet(listBase, 200);
+        std::string apiDetail;
+        {
+            const std::string tb = StripUtf8BomCopy(response.text);
+            const nlohmann::json ej = nlohmann::json::parse(tb, nullptr, false);
+            if (!ej.is_discarded() && ej.is_object() && ej.contains("detail")) {
+                apiDetail = JsonFieldToString(ej, "detail");
+            }
+        }
+        std::string err = "Plane API error " + std::to_string(response.status_code) +
+                          " fetching issues (URL: " + urlHint + "): " + response.text.substr(0, 300);
+        if (!apiDetail.empty()) {
+            err += " [detail: " + apiDetail + "]";
+        }
+        if (response.status_code == 404) {
+            err += " Check Workspace Slug and Project ID (UUID from app URL or Plane settings), and API key "
+                   "scopes.";
+        }
+        out.Error = err;
+        return out;
+    }
+
+    const std::string bodyForJson = StripUtf8BomCopy(response.text);
+    const bool looksHtml = LooksHtmlPrefix(bodyForJson);
+
+    if (bodyForJson.empty()) {
+        out.Error = "Plane returned empty response body (HTTP 200) when fetching issues.";
+        return out;
+    }
+    if (looksHtml) {
+        const std::string urlHint = SanitizeAsciiSnippet(listBase, 220);
+        out.Error = "Plane returned HTML instead of JSON (HTTP 200). Request URL: " + urlHint +
+                    ". For Plane Cloud set base URL to https://api.plane.so (origin only, no /workspace path). "
+                    "Self-hosted: use the API origin your reverse proxy serves for /api/v1/.";
+        return out;
+    }
+
+    nlohmann::json j = nlohmann::json::parse(bodyForJson, nullptr, false);
+    if (j.is_discarded()) {
+        out.Error = "Plane returned invalid JSON when fetching issues (HTTP 200). Verify Plane URL, workspace slug, "
+                    "project UUID, and API key.";
+        return out;
+    }
+
+    auto results = (j.is_object() && j.contains("results")) ? j["results"] : j;
+    if (!results.is_array()) {
+        std::string keyList;
+        if (j.is_object()) {
+            for (auto it = j.begin(); it != j.end() && keyList.size() < 240; ++it) {
+                if (!keyList.empty())
+                    keyList += ',';
+                keyList += it.key();
+            }
+        }
+        out.Error =
+            "Plane list response has no results array (wrong endpoint or API version). Top-level keys: " + keyList;
+        return out;
+    }
+
+    out.Ok = true;
+    out.Body = std::move(j);
+    return out;
 }
 
 } // namespace
@@ -124,13 +260,8 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     // See docs/plans/shipped/remove-global-project-key.md §2.5 / §7 PR 6.
     const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
 
-    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
-        summary.FetchError = "Plane is not configured or active view has no project scope. "
-                             "Set URL / Workspace Slug in Preferences, and choose a Plane view with a project.";
-        return summary;
-    }
-    if (cfg.PlaneApiKey.empty()) {
-        summary.FetchError = "Plane API key is missing. Set it in Preferences → Tracker.";
+    summary.FetchError = ValidatePlaneFetchConfig(cfg, projectKey);
+    if (!summary.FetchError.empty()) {
         return summary;
     }
 
@@ -178,31 +309,23 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     std::unordered_map<std::string, std::string> localKeyToId;
 
     try {
-        // Fetch states for display value mapping
+        // Phase 3: fetch states for display value mapping. A 200 + parseable body commits even when
+        // the parsed list is empty (clears stale states); non-200 / discarded leave the cache as-is.
         {
-            const std::string statesUrl =
-                planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/states/";
-            auto r = TrackerGetLogged("PlaneClient", statesUrl, headers);
-            if (r.status_code == 200) {
-                const std::string statesBody = StripUtf8BomCopy(r.text);
-                nlohmann::json j = nlohmann::json::parse(statesBody, nullptr, false);
-                if (!j.is_discarded()) {
-                    std::vector<CachedState> tempCachedStates;
-                    auto results = (j.is_object() && j.contains("results")) ? j["results"] : j;
-                    if (results.is_array()) {
-                        for (const auto& s : results) {
-                            CachedState cs;
-                            cs.Id = JsonFieldToString(s, "id");
-                            cs.Name = JsonFieldToString(s, "name");
-                            if (!cs.Id.empty())
-                                tempCachedStates.push_back(cs);
-                        }
-                    }
-                    {
-                        std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
-                        cachedStates_ = std::move(tempCachedStates);
-                    }
+            bool shouldCommitStates = false;
+            std::vector<std::pair<std::string, std::string>> statePairs =
+                FetchPlaneStatePairs(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, headers, shouldCommitStates);
+            if (shouldCommitStates) {
+                std::vector<CachedState> tempCachedStates;
+                tempCachedStates.reserve(statePairs.size());
+                for (auto& p : statePairs) {
+                    CachedState cs;
+                    cs.Id = std::move(p.first);
+                    cs.Name = std::move(p.second);
+                    tempCachedStates.push_back(std::move(cs));
                 }
+                std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+                cachedStates_ = std::move(tempCachedStates);
             }
         }
 
@@ -214,6 +337,17 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
         std::string listCursor;
         bool syncEndedCleanly = false;
         int pageCount = 0;
+
+        // Assignee-display lookup for the pure mapper: translate cached TrackerUsers into the
+        // mapper's opaque (AccountId, DisplayName) pairs once, ahead of the page loop.
+        std::vector<smatchet::plane::UserDisplayLookup> userLookup;
+        userLookup.reserve(localCachedUsers.size());
+        for (const auto& u : localCachedUsers) {
+            smatchet::plane::UserDisplayLookup lk;
+            lk.AccountId = u.AccountId;
+            lk.DisplayName = u.DisplayName;
+            userLookup.push_back(std::move(lk));
+        }
 
         while (true) {
             if (shouldCancel && shouldCancel()) {
@@ -233,221 +367,28 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
             }
             ++pageCount;
 
-            const std::string listBase = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
-                                         planeProjectId + "/work-items/";
-            cpr::Parameters params;
-            params.Add({"per_page", std::to_string(pageSize)});
-            params.Add({"expand", "assignees,labels,state"});
-            if (!listCursor.empty()) {
-                params.Add({"cursor", listCursor});
-            }
-
-            auto response = TrackerGetLogged("PlaneClient", listBase, headers, params);
-
-            if (response.status_code != 200) {
-                const std::string urlHint = SanitizeAsciiSnippet(listBase, 200);
-                std::string apiDetail;
-                {
-                    const std::string tb = StripUtf8BomCopy(response.text);
-                    const nlohmann::json ej = nlohmann::json::parse(tb, nullptr, false);
-                    if (!ej.is_discarded() && ej.is_object() && ej.contains("detail")) {
-                        apiDetail = JsonFieldToString(ej, "detail");
-                    }
-                }
-                std::string err = "Plane API error " + std::to_string(response.status_code) +
-                                  " fetching issues (URL: " + urlHint + "): " + response.text.substr(0, 300);
-                if (!apiDetail.empty()) {
-                    err += " [detail: " + apiDetail + "]";
-                }
-                if (response.status_code == 404) {
-                    err += " Check Workspace Slug and Project ID (UUID from app URL or Plane settings), and API key "
-                           "scopes.";
-                }
-                LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", err.c_str());
-                summary.FetchError = err;
+            // Phase 4: fetch + classify one page. Any hard failure carries a ready error string.
+            PlaneIssuePageFetch page =
+                FetchPlaneIssuePage(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, headers, pageSize, listCursor);
+            if (!page.Ok) {
+                LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", page.Error.c_str());
+                summary.FetchError = page.Error;
                 return summary;
             }
 
-            const std::string bodyForJson = StripUtf8BomCopy(response.text);
-            const bool looksHtml = LooksHtmlPrefix(bodyForJson);
-
-            if (bodyForJson.empty()) {
-                const std::string err = "Plane returned empty response body (HTTP 200) when fetching issues.";
-                LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", err.c_str());
-                summary.FetchError = err;
-                return summary;
-            }
-            if (looksHtml) {
-                const std::string urlHint = SanitizeAsciiSnippet(listBase, 220);
-                const std::string err =
-                    "Plane returned HTML instead of JSON (HTTP 200). Request URL: " + urlHint +
-                    ". For Plane Cloud set base URL to https://api.plane.so (origin only, no /workspace path). "
-                    "Self-hosted: use the API origin your reverse proxy serves for /api/v1/.";
-                LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", err.c_str());
-                summary.FetchError = err;
-                return summary;
-            }
-
-            nlohmann::json j = nlohmann::json::parse(bodyForJson, nullptr, false);
-            if (j.is_discarded()) {
-                const std::string err =
-                    "Plane returned invalid JSON when fetching issues (HTTP 200). Verify Plane URL, workspace slug, "
-                    "project UUID, and API key.";
-                LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", err.c_str());
-                summary.FetchError = err;
-                return summary;
-            }
-
-            auto results = (j.is_object() && j.contains("results")) ? j["results"] : j;
-            if (!results.is_array()) {
-                std::string keyList;
-                if (j.is_object()) {
-                    for (auto it = j.begin(); it != j.end() && keyList.size() < 240; ++it) {
-                        if (!keyList.empty())
-                            keyList += ',';
-                        keyList += it.key();
-                    }
-                }
-                const std::string err =
-                    "Plane list response has no results array (wrong endpoint or API version). Top-level keys: " +
-                    keyList;
-                LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", err.c_str());
-                summary.FetchError = err;
-                return summary;
-            }
+            auto results = (page.Body.is_object() && page.Body.contains("results")) ? page.Body["results"] : page.Body;
 
             if (results.empty()) {
                 syncEndedCleanly = true;
                 break;
             }
 
-            std::vector<CachedTicket> pageIssues;
-            for (const auto& issue : results) {
-                if (shouldCancel && shouldCancel()) {
-                    break;
-                }
-                try {
-                    CachedTicket ticket;
-                    const std::string uuid = JsonFieldToString(issue, "id");
-                    const std::string seqId = JsonFieldToString(issue, "sequence_id");
-
-                    std::string visualKey;
-                    if (!tempProjectIdentifier.empty() && !seqId.empty()) {
-                        visualKey = tempProjectIdentifier + "-" + seqId;
-                    } else if (!seqId.empty()) {
-                        visualKey = "#" + seqId;
-                    } else {
-                        visualKey = uuid;
-                    }
-
-                    ticket.id = visualKey;
-                    ticket.fieldValues["uuid"] = uuid;
-                    ticket.fieldValues["key"] = visualKey;
-                    localKeyToId[visualKey] = uuid;
-                    ticket.fieldValues["summary"] = PlaneWorkItemTitleForDisplay(issue);
-
-                    // Status
-                    if (issue.contains("state_detail") && issue["state_detail"].is_object()) {
-                        ticket.fieldValues["status"] = JsonFieldToString(issue["state_detail"], "id");
-                    } else if (issue.contains("state") && issue["state"].is_object()) {
-                        ticket.fieldValues["status"] = JsonFieldToString(issue["state"], "id");
-                    } else {
-                        ticket.fieldValues["status"] = JsonFieldToString(issue, "state");
-                    }
-
-                    // Assignee
-                    std::string assigneeId;
-                    if (issue.contains("assignees") && issue["assignees"].is_array() && !issue["assignees"].empty()) {
-                        const auto& first = issue["assignees"][0];
-                        if (first.is_object()) {
-                            assigneeId = JsonFieldToString(first, "id");
-                        } else if (first.is_string()) {
-                            assigneeId = first.get<std::string>();
-                        }
-                    }
-
-                    std::string assigneeName = assigneeId;
-                    if (issue.contains("assignee_details") && issue["assignee_details"].is_array() &&
-                        !issue["assignee_details"].empty()) {
-                        const auto& first = issue["assignee_details"][0];
-                        if (first.is_object() && first.contains("display_name")) {
-                            assigneeName = JsonFieldToString(first, "display_name");
-                        }
-                    }
-
-                    if (assigneeName == assigneeId && !assigneeId.empty()) {
-                        auto uIt = std::find_if(localCachedUsers.begin(), localCachedUsers.end(),
-                                                [&](const auto& u) { return u.AccountId == assigneeId; });
-                        if (uIt != localCachedUsers.end()) {
-                            assigneeName = uIt->DisplayName;
-                        }
-                    }
-
-                    ticket.fieldValues["assignee"] = assigneeName;
-                    ticket.fieldValues["priority"] = JsonFieldToString(issue, "priority");
-
-                    // Sprint
-                    if (issue.contains("cycle_details") && issue["cycle_details"].is_object()) {
-                        ticket.fieldValues["sprint"] = JsonFieldToString(issue["cycle_details"], "id");
-                    } else if (issue.contains("cycle") && issue["cycle"].is_object()) {
-                        ticket.fieldValues["sprint"] = JsonFieldToString(issue["cycle"], "id");
-                    } else {
-                        ticket.fieldValues["sprint"] = JsonFieldToString(issue, "cycle");
-                    }
-
-                    // Labels
-                    std::string labelStr;
-                    if (issue.contains("label_details") && issue["label_details"].is_array()) {
-                        for (const auto& lbl : issue["label_details"]) {
-                            if (!labelStr.empty())
-                                labelStr += ", ";
-                            std::string ln = JsonFieldToString(lbl, "name");
-                            if (ln.empty())
-                                ln = JsonFieldToString(lbl, "id");
-                            labelStr += ln;
-                        }
-                    } else if (issue.contains("labels") && issue["labels"].is_array()) {
-                        for (const auto& lbl : issue["labels"]) {
-                            if (!labelStr.empty())
-                                labelStr += ", ";
-                            if (lbl.is_object()) {
-                                std::string ln = JsonFieldToString(lbl, "name");
-                                if (ln.empty())
-                                    ln = JsonFieldToString(lbl, "id");
-                                labelStr += ln;
-                            } else if (lbl.is_string()) {
-                                labelStr += lbl.get<std::string>();
-                            }
-                        }
-                    }
-                    ticket.fieldValues["labels"] = labelStr;
-
-                    ticket.fieldValues["created"] = JsonFieldToString(issue, "created_at");
-                    ticket.fieldValues["updated"] = JsonFieldToString(issue, "updated_at");
-                    ticket.fieldValues["description"] = JsonFieldToString(issue, "description_stripped");
-                    // Preserve the original HTML so the long-text modal editor can round-trip via
-                    // Markdown without destroying formatting on save. See RICH_TEXT_EDITING_V2_PLAN.md.
-                    const std::string descHtml = JsonFieldToString(issue, "description_html");
-                    if (!descHtml.empty()) {
-                        ticket.fieldRichValues["description"] = descHtml;
-                    }
-
-                    // Issue Type
-                    if (issue.contains("type_detail") && issue["type_detail"].is_object()) {
-                        ticket.fieldValues["issuetype"] = JsonFieldToString(issue["type_detail"], "name");
-                    } else if (issue.contains("type") && issue["type"].is_object()) {
-                        ticket.fieldValues["issuetype"] = JsonFieldToString(issue["type"], "name");
-                    } else {
-                        ticket.fieldValues["issuetype"] = JsonFieldToString(issue, "type");
-                    }
-
-                    if (!ticket.id.empty()) {
-                        pageIssues.push_back(std::move(ticket));
-                    }
-                } catch (const std::exception& ex) {
-                    LOG_WARN("PlaneClient::FetchIssuesStreamed: skipping issue parse error: %s", ex.what());
-                }
-            }
+            // Phase 5: map this page's work-items into CachedTickets via the pure mapper, which
+            // reproduces the per-issue field mapping (status / assignee / sprint / labels / type /
+            // description-html) and silently skips rows that throw — parity with the old inline
+            // try/catch. Fills localKeyToId with the visual-key → uuid associations.
+            std::vector<CachedTicket> pageIssues = smatchet::plane::MapPlaneWorkItemsArrayToCachedTickets(
+                results, tempProjectIdentifier, userLookup, &localKeyToId);
 
             if (shouldCancel && shouldCancel()) {
                 syncEndedCleanly = false;
@@ -461,18 +402,9 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
                 onBatch(std::move(pageIssues));
             }
 
-            // Cursor pagination
-            listCursor.clear();
-            bool more = false;
-            if (j.is_object()) {
-                if (j.contains("next_page_results") && j["next_page_results"].is_boolean()) {
-                    more = j["next_page_results"].get<bool>();
-                }
-                if (more && j.contains("next_cursor") && j["next_cursor"].is_string()) {
-                    listCursor = j["next_cursor"].get<std::string>();
-                }
-            }
-            if (!more || listCursor.empty()) {
+            // Phase 6: cursor pagination — advance or terminate.
+            listCursor = smatchet::plane::NextPaginationCursor(page.Body);
+            if (listCursor.empty()) {
                 syncEndedCleanly = true;
                 break;
             }
