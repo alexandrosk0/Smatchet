@@ -21,13 +21,13 @@
 # Only repo admins + the cleanup-action bot can.
 #
 # Trade-off: a contributor with plain push access can no longer claim a
-# plan-lock from their own clone via `bash scripts/dev/lock-claim.sh`.
+# plan-lock from their own clone via `bash agents/scripts/core/lock-claim.sh`.
 # This is intentional — if that's the workflow you want, leave the
 # ruleset off and rely on social convention. The ruleset is for "I want
 # the lock system to be hard to bypass" stance.
 #
 # Usage:
-#   bash scripts/dev/setup-locks-ruleset.sh
+#   bash agents/scripts/core/setup-locks-ruleset.sh
 #
 # Idempotent: if a ruleset named "plan-locks" already exists on the repo,
 # the script updates it in place. Run again after editing this file to

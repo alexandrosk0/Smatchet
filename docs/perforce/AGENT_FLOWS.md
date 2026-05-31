@@ -29,7 +29,7 @@ The verb-level TL;DR below extends this concern view with per-operation guidance
 |---|---|---|---|
 | Ship code to `develop` for review | `git push` + `gh pr create` | (same — git remains the ship-line) | every agent |
 | Spawn an isolated parallel subagent | `git worktree add .claude/worktrees/<id>` | `bash scripts/dev/p4-task-stream.sh <id>` | orchestrator |
-| Atomic plan-lock claim | `bash scripts/dev/lock-claim.sh` | `SMATCHET_LOCK_BACKEND=p4-counter bash scripts/dev/lock-claim.sh` | orchestrator |
+| Atomic plan-lock claim | `bash agents/scripts/core/lock-claim.sh` | `SMATCHET_LOCK_BACKEND=p4-counter bash agents/scripts/core/lock-claim.sh` | orchestrator |
 | Stash WIP locally | `git stash` | `p4 shelve` (server-side, surfaces in P4V) | individual agent |
 | Edit a file exclusively (block other agents) | (no equivalent) | `p4 edit -t +l <file>` | individual agent |
 | Read a file's revision history | `git log -- <file>` | `p4 filelog <depot-path>` | any |
@@ -95,9 +95,9 @@ Two complementary mechanisms — a **plan-lock** (slice-scoped, coordinates whic
 Same API as git-ref backend; flip the backend env to use p4-counter:
 
 ```bash
-SMATCHET_LOCK_BACKEND=p4-counter bash scripts/dev/lock-claim.sh <slug> <write-set-file>
+SMATCHET_LOCK_BACKEND=p4-counter bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>
 # ... do the slice work ...
-SMATCHET_LOCK_BACKEND=p4-counter bash scripts/dev/lock-release.sh <slug>
+SMATCHET_LOCK_BACKEND=p4-counter bash agents/scripts/core/lock-release.sh <slug>
 ```
 
 Backed by `p4 counter --from=<old> --to=<new> smatchet_lock_<slug>` compare-and-swap. Metadata (`{owner, branch, plan, write_set, …}`) stored in sibling counter `smatchet_lock_<slug>_meta`. See [`docs/plans/shipped/git-to-perforce-migration.md`](../plans/shipped/git-to-perforce-migration.md) § Phase 4 for the atomic-primitive details.

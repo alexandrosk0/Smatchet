@@ -36,7 +36,7 @@ STRANDED_CL=""
 # "missing binary → skip" contract. Otherwise the test would die with exit
 # 127 (command-not-found) the first time it tried to invoke one, which
 # test-all.sh would mis-classify as a real failure.
-for dep in scripts/dev/p4-task-stream.sh scripts/dev/p4-task-stream-gc.sh scripts/dev/lock-claim.sh; do
+for dep in scripts/dev/p4-task-stream.sh scripts/dev/p4-task-stream-gc.sh agents/scripts/core/lock-claim.sh; do
     # Invocations are `bash <script>` (not `<script>` directly), so we only
     # need read access — not the executable bit. On Windows / NTFS the
     # x-bit often isn't set even when the script runs fine under bash;
@@ -127,7 +127,7 @@ echo ""
 echo "=== Scenario 2: git-only baseline (no p4 calls) ==="
 
 # Trace `p4` invocation by routing PATH through a wrapper that logs every
-# call. Then actually invoke scripts/dev/lock-claim.sh with the default
+# call. Then actually invoke agents/scripts/core/lock-claim.sh with the default
 # (git-ref) backend; the wrapper p4 must NOT be called because the dispatcher
 # at the top of lock-claim.sh `exec`s into lock-claim-p4.sh only when
 # SMATCHET_LOCK_BACKEND=p4-counter is set. Vacuous-pass concern (CR #389)
@@ -153,7 +153,7 @@ PATH="${TRACE_DIR}:${PATH}" \
     SMATCHET_LOCK_BACKEND="" \
     SMATCHET_LOCK_BYPASS_REPO_CHECK=1 \
     LOCK_REMOTE="file:///nonexistent-test-remote" \
-    bash scripts/dev/lock-claim.sh "phase7-trace-${RANDOM}" "$ws_file" >/dev/null 2>&1 || true
+    bash agents/scripts/core/lock-claim.sh "phase7-trace-${RANDOM}" "$ws_file" >/dev/null 2>&1 || true
 rm -f "$ws_file"
 
 call_count=$(wc -l < "$P4_TRACE_LOG" 2>/dev/null | tr -d ' ')

@@ -24,12 +24,12 @@
 #   2 — sandbox setup failure
 #
 # Usage:
-#   bash scripts/dev/test-lock-primitives.sh
+#   bash agents/scripts/core/test-lock-primitives.sh
 
 set -uo pipefail
 
-ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-SCRIPTS="$ROOT/scripts/dev"
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+SCRIPTS="$ROOT/agents/scripts/core"
 
 # Sanity: required scripts exist.
 for s in lock-claim.sh lock-claim-update.sh lock-release.sh locks-show.sh; do

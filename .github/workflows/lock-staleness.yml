@@ -5,7 +5,7 @@ name: Plan-lock staleness sweep
 # than the staleness threshold (default 14 days).
 #
 # Phase 4 of docs/plans/shipped/git-ref-plan-locks.md. The bulk of the logic
-# lives in scripts/dev/lock-staleness-sweep.sh — keeping the YAML thin
+# lives in agents/scripts/core/lock-staleness-sweep.sh — keeping the YAML thin
 # avoids the block-scalar parse pitfall where embedded multi-line Python
 # heredocs at column 1 break the `run: |` literal block scalar (the
 # bug that fix/lock-staleness-yaml-parse repaired).
@@ -69,4 +69,4 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           THRESHOLD_DAYS: ${{ github.event.inputs.threshold_days || '14' }}
-        run: bash scripts/dev/lock-staleness-sweep.sh
+        run: bash agents/scripts/core/lock-staleness-sweep.sh

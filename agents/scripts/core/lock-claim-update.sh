@@ -7,7 +7,7 @@
 # between fetch and push (atomic compare-and-swap on the existing-ref case).
 #
 # Usage:
-#   bash scripts/dev/lock-claim-update.sh <slug> <write-set-file>
+#   bash agents/scripts/core/lock-claim-update.sh <slug> <write-set-file>
 #
 # Arguments identical to lock-claim.sh. New write_set fully replaces the
 # previous one; updated_at is bumped, started_at carries over from the
@@ -39,8 +39,8 @@ The Perforce backend (lock-claim-p4.sh + lock-release-p4.sh) ships claim
 + release only. To grow an existing lock's write-set, run release then a
 fresh claim:
 
-    bash scripts/dev/lock-release.sh <slug>
-    bash scripts/dev/lock-claim.sh <slug> <new-write-set-file>
+    bash agents/scripts/core/lock-release.sh <slug>
+    bash agents/scripts/core/lock-claim.sh <slug> <new-write-set-file>
 
 Backlog: implement lock-claim-update-p4.sh as a follow-up. Filed in
 docs/self-improvement/categories/tooling.md.
@@ -49,7 +49,7 @@ EOF
 fi
 
 usage() {
-    echo "usage: bash scripts/dev/lock-claim-update.sh <slug> <write-set-file>" >&2
+    echo "usage: bash agents/scripts/core/lock-claim-update.sh <slug> <write-set-file>" >&2
     exit 2
 }
 

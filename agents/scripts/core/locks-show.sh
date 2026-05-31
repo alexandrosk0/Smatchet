@@ -6,7 +6,7 @@
 # blob on each, and prints a human-readable table.
 #
 # Usage:
-#   bash scripts/dev/locks-show.sh
+#   bash agents/scripts/core/locks-show.sh
 #
 # Output columns:
 #   slug | owner | branch | started | paths | first-path

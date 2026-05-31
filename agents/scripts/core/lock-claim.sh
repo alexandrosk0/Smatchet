@@ -8,7 +8,7 @@
 # deterministically (first push wins, others get a hard "lock held" error).
 #
 # Usage:
-#   bash scripts/dev/lock-claim.sh <slug> <write-set-file>
+#   bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>
 #
 # Arguments:
 #   slug             — kebab-case identifier, [a-z0-9][a-z0-9-]{0,63}
@@ -43,7 +43,7 @@ if [ "${SMATCHET_LOCK_BACKEND:-git-ref}" = "p4-counter" ]; then
 fi
 
 usage() {
-    echo "usage: bash scripts/dev/lock-claim.sh <slug> <write-set-file>" >&2
+    echo "usage: bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>" >&2
     exit 2
 }
 
@@ -139,7 +139,7 @@ while : ; do
             # Likely lock held. Confirm by ls-remote.
             held=$(git ls-remote "$remote" "$ref" 2>/dev/null | awk '{print $1}')
             if [ -n "$held" ]; then
-                echo "lock-claim: $slug already held at $held — run scripts/dev/locks-show.sh" >&2
+                echo "lock-claim: $slug already held at $held — run agents/scripts/core/locks-show.sh" >&2
                 exit 1
             fi
             ;;

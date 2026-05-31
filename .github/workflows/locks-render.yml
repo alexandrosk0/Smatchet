@@ -3,7 +3,7 @@ name: Plan-locks render
 # Regenerates docs/plans/active/_plan-locks.generated.md from the live state of
 # refs/locks/* on origin. The rendered file is the human-readable mirror of
 # the atomic ref-based plan-lock state — see docs/plans/shipped/git-ref-plan-locks.md
-# (Phase 2) and scripts/dev/locks-render-markdown.sh.
+# (Phase 2) and agents/scripts/core/locks-render-markdown.sh.
 #
 # GitHub's `on: push` event does not fire for non-branch / non-tag refs
 # (refs/locks/* are neither), so this workflow runs on a schedule plus manual
@@ -52,7 +52,7 @@ jobs:
 
       - name: Render
         run: |
-          bash scripts/dev/locks-render-markdown.sh > docs/plans/active/_plan-locks.generated.md
+          bash agents/scripts/core/locks-render-markdown.sh > docs/plans/active/_plan-locks.generated.md
           echo "--- rendered file size:"
           wc -l docs/plans/active/_plan-locks.generated.md
 

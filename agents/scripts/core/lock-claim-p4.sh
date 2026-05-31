@@ -10,7 +10,7 @@
 # Phase 4 of `docs/plans/shipped/git-to-perforce-migration.md`.
 #
 # Usage:
-#   bash scripts/dev/lock-claim-p4.sh <slug> <write-set-file>
+#   bash agents/scripts/core/lock-claim-p4.sh <slug> <write-set-file>
 #
 # Arguments:
 #   slug             — kebab-case identifier, [a-z0-9][a-z0-9-]{0,63}
@@ -36,7 +36,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: bash scripts/dev/lock-claim-p4.sh <slug> <write-set-file>" >&2
+    echo "usage: bash agents/scripts/core/lock-claim-p4.sh <slug> <write-set-file>" >&2
     exit 2
 }
 

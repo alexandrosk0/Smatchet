@@ -17,13 +17,13 @@
 
 # The primitive scripts + helpers that touch refs/locks/* on origin. A
 # malicious or buggy edit here can race-corrupt any in-flight slice's claim.
-scripts/dev/lock-claim.sh              @alexandrosk0
-scripts/dev/lock-claim-update.sh       @alexandrosk0
-scripts/dev/lock-release.sh            @alexandrosk0
-scripts/dev/locks-show.sh              @alexandrosk0
-scripts/dev/locks-render-markdown.sh   @alexandrosk0
-scripts/dev/_lock-json.py              @alexandrosk0
-scripts/dev/test-lock-primitives.sh    @alexandrosk0
+agents/scripts/core/lock-claim.sh              @alexandrosk0
+agents/scripts/core/lock-claim-update.sh       @alexandrosk0
+agents/scripts/core/lock-release.sh            @alexandrosk0
+agents/scripts/core/locks-show.sh              @alexandrosk0
+agents/scripts/core/locks-render-markdown.sh   @alexandrosk0
+agents/scripts/core/_lock-json.py              @alexandrosk0
+agents/scripts/core/test-lock-primitives.sh    @alexandrosk0
 
 # Workflows that hold delete-ref + open-issue + open-PR privileges with the
 # default GITHUB_TOKEN. Self-modification risk: a PR could edit the workflow

@@ -16,7 +16,7 @@
 # Phase 4 of `docs/plans/shipped/git-to-perforce-migration.md`.
 #
 # Usage:
-#   bash scripts/dev/lock-release-p4.sh <slug>
+#   bash agents/scripts/core/lock-release-p4.sh <slug>
 #
 # Required environment:
 #   P4PORT, P4USER
@@ -33,7 +33,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: bash scripts/dev/lock-release-p4.sh <slug>" >&2
+    echo "usage: bash agents/scripts/core/lock-release-p4.sh <slug>" >&2
     exit 2
 }
 

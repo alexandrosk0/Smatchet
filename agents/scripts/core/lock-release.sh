@@ -8,7 +8,7 @@
 # not call this in the happy path.
 #
 # Usage:
-#   bash scripts/dev/lock-release.sh <slug>
+#   bash agents/scripts/core/lock-release.sh <slug>
 #
 # Optional environment:
 #   LOCK_REMOTE                       — git remote name (default: origin)
@@ -27,7 +27,7 @@ if [ "${SMATCHET_LOCK_BACKEND:-git-ref}" = "p4-counter" ]; then
 fi
 
 usage() {
-    echo "usage: bash scripts/dev/lock-release.sh <slug>" >&2
+    echo "usage: bash agents/scripts/core/lock-release.sh <slug>" >&2
     exit 2
 }
 
