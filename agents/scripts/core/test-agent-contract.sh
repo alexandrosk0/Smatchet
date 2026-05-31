@@ -257,7 +257,10 @@ echo "[11/13] Skill ↔ agent SKILL.md parity (version + triggers)"
 skill_drift=()
 for skill_md in agents/_shared/skills/*/SKILL.md; do
   skill_name=$(basename "$(dirname "$skill_md")")
-  skill_ver=$(awk '/^---$/{p=!p;next}p' "$skill_md" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  # `|| true`: under `set -euo pipefail` a SKILL.md with no `version:` line makes
+  # grep exit 1, which (via pipefail) aborts the whole script BEFORE the `-z`
+  # guard below can report it as drift. Tolerate the empty match so the guard runs.
+  skill_ver=$(awk '/^---$/{p=!p;next}p' "$skill_md" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]' || true)
   if [[ -z "$skill_ver" ]]; then
     skill_drift+=("$skill_name SKILL.md: missing frontmatter version: field (telemetry parity, eval M9)")
     continue
@@ -266,7 +269,7 @@ for skill_md in agents/_shared/skills/*/SKILL.md; do
   if [[ ! -f "$agent_md" ]]; then
     continue  # Skill-only (no sibling agent) — version-presence check already passed.
   fi
-  agent_ver=$(awk '/^---$/{p=!p;next}p' "$agent_md" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  agent_ver=$(awk '/^---$/{p=!p;next}p' "$agent_md" | grep -E "^version:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]' || true)  # || true: same set -e/pipefail guard as skill_ver above
   if [[ "$skill_ver" != "$agent_ver" ]]; then
     skill_drift+=("$skill_name: SKILL.md v=$skill_ver vs agents/$skill_name.md v=$agent_ver")
   fi
