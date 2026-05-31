@@ -142,10 +142,11 @@ COMMENT_RULES=(comment-commented-out-code comment-decorative-banner comment-blan
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
-    local base="$1" aud
+    local base="$1" aud py
     aud="$(dirname "$SELF")/comment_audit.py"
-    command -v python3 >/dev/null 2>&1 || return 0   # advisory-only; silently skip if python3 absent
-    [ -f "$aud" ] && python3 "$aud" --ratio-warn "$base" 2>/dev/null || true
+    py="$(command -v python3 || command -v python || true)"
+    [ -n "$py" ] || return 0          # advisory-only; silently skip if no python interpreter
+    [ -f "$aud" ] && "$py" "$aud" --ratio-warn "$base" 2>/dev/null || true
     return 0
 }
 
@@ -434,9 +435,24 @@ case "$MODE" in
     # New noise comments (commented-out code / decorative banner / blank-comment run) fail ANYWHERE
     # in first-party C++ (never legitimate). comment_audit.py --diff classifies; a
     # `// SMATCHET_DEVIATION(rule=comment-...)` on the line above escapes a flagged line.
+    # Fail CLOSED: a hard-fail gate that silently no-ops (missing python / missing script / crash)
+    # would pass dirty PRs as false-clean. comment_audit.py's exit contract: 0=clean, 1=violations
+    # (on stdout), >=2=infra error. Resolve python3 OR python (Windows CI ships `python`).
     cr_out=""
-    if command -v python3 >/dev/null 2>&1 && [ -f "$(dirname "$SELF")/comment_audit.py" ]; then
-        cr_out="$(python3 "$(dirname "$SELF")/comment_audit.py" --diff "$BASE" 2>/dev/null || true)"
+    cr_aud="$(dirname "$SELF")/comment_audit.py"
+    cr_py="$(command -v python3 || command -v python || true)"
+    if [ -z "$cr_py" ]; then
+        echo "test-lint-rules: ERROR: no python interpreter; cannot enforce comment-regrowth gate" >&2
+        exit 2
+    fi
+    if [ ! -f "$cr_aud" ]; then
+        echo "test-lint-rules: ERROR: missing $cr_aud; cannot enforce comment-regrowth gate" >&2
+        exit 2
+    fi
+    cr_out="$("$cr_py" "$cr_aud" --diff "$BASE")"; cr_rc=$?
+    if [ "$cr_rc" -ge 2 ]; then
+        echo "test-lint-rules: ERROR: comment_audit.py --diff failed (exit $cr_rc) for base '$BASE'" >&2
+        exit 2
     fi
     if [ -n "$cr_out" ]; then
         rc=1

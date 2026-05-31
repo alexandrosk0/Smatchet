@@ -228,10 +228,17 @@ def run_diff_mode(ref):
                 with open(path, "r", encoding="utf-8", errors="replace") as fh:
                     file_cache[path] = fh.read().split("\n")
             lines = file_cache[path]
-            prev = lines[line_no - 2] if 2 <= line_no <= len(lines) else ""
+            # Walk upward past blank lines to the nearest non-blank line, honoring the forward-only
+            # deviation contract (a marker separated from its target by blank lines still suppresses).
+            idx = line_no - 2
+            while 0 <= idx < len(lines) and lines[idx].strip() == "":
+                idx -= 1
+            prev = lines[idx] if 0 <= idx < len(lines) else ""
         except OSError:
             return False
-        return "SMATCHET_DEVIATION" in prev and ("rule=" + rule_id) in prev
+        # Prefix-safe: `rule=comment-blank` must NOT match `rule=comment-blank-run` (and vice-versa).
+        return "SMATCHET_DEVIATION" in prev and \
+            re.search(r"\brule=%s(\b|[;)])" % re.escape(rule_id), prev) is not None
 
     for ln in diff.splitlines():
         if ln.startswith("+++ b/"):
@@ -309,10 +316,21 @@ def main():
     ap.add_argument("--diff", metavar="REF")
     ap.add_argument("--ratio-warn", metavar="REF")
     args = ap.parse_args()
+    # Exit-code contract for the gate seams: 0 = clean, 1 = violations found (printed to stdout),
+    # >=2 = infra failure (git/IO error) — so test-lint-rules.sh can fail CLOSED on >=2 without
+    # mistaking a legitimate "violations found" (1) for an inability to run.
     if args.ratio_warn:
-        sys.exit(run_ratio_warn(args.ratio_warn))
+        try:
+            sys.exit(run_ratio_warn(args.ratio_warn))
+        except Exception as e:  # advisory mode, but never crash-as-clean
+            print("comment_audit: ERROR (ratio-warn): %s" % e, file=sys.stderr)
+            sys.exit(2)
     if args.diff:
-        sys.exit(run_diff_mode(args.diff))
+        try:
+            sys.exit(run_diff_mode(args.diff))
+        except Exception as e:
+            print("comment_audit: ERROR (diff): %s" % e, file=sys.stderr)
+            sys.exit(2)
     grand, per_sub, file_reports = run_audit()
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:

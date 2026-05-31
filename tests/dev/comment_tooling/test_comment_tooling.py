@@ -218,6 +218,34 @@ def case_deviation(repo):
     check("comment-commented-out-code" not in out, "deviation: commented-out-code not reported")
 _in_repo(case_deviation)
 
+# 4c2 — deviation separated by a BLANK line still suppresses (forward-only contract, blank-skip).
+def case_deviation_blank(repo):
+    _commit_base(repo, CLEAN)
+    sup = CLEAN + (
+        "// SMATCHET_DEVIATION(rule=comment-commented-out-code; reason=x; owner=y; revisit=never)\n"
+        "\n"
+        "// oldCall(arg);\n"
+    )
+    _write(repo, REL, sup)
+    rc, out = _run_diff("HEAD")
+    check(rc == 0 and "comment-commented-out-code" not in out,
+          "deviation separated by a blank line still suppresses (blank-skip)")
+_in_repo(case_deviation_blank)
+
+# 4c3 — prefix-collision: rule=comment-blank must NOT suppress comment-blank-run (and vice-versa).
+def case_deviation_prefix(repo):
+    _commit_base(repo, CLEAN)
+    # A wrong/over-specific rule id on the deviation must NOT suppress a different rule.
+    sup = CLEAN + (
+        "// SMATCHET_DEVIATION(rule=comment-blank; reason=x; owner=y; revisit=never)\n"
+        "//\n"   # comment-blank-run — different rule-id; the comment-blank marker must not cover it
+    )
+    _write(repo, REL, sup)
+    rc, out = _run_diff("HEAD")
+    check(rc == 1 and "comment-blank-run" in out,
+          "prefix-collision: rule=comment-blank does NOT suppress comment-blank-run")
+_in_repo(case_deviation_prefix)
+
 # 4d — ratio warning is delta-aware AND non-blocking.
 def case_ratio_rise(repo):
     _commit_base(repo, CLEAN)   # low ratio base
