@@ -128,7 +128,7 @@ bool MapPlanePropertyToField(const nlohmann::json& prop, TrackerField& out) {
 
     try {
         out.RawFieldDefinitionJson = prop.dump();
-    } catch (...) {
+    } catch (...) {  // catch-all-ok: prop.dump() can throw on invalid UTF-8 in untrusted Plane JSON; clear raw on failure
         out.RawFieldDefinitionJson.clear();
     }
     return true;
