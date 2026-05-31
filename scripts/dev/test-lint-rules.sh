@@ -135,6 +135,21 @@ revisit_overdue() {
     esac
 }
 
+# reduce-source-comment-bloat Phase 4 — repo-wide comment-regrowth rule-ids (delta-gated,
+# hard-fail anywhere; classified by comment_audit.py --diff). KEEP IN SYNC with AGENTS.md.
+COMMENT_RULES=(comment-commented-out-code comment-decorative-banner comment-blank-run)
+
+ratio_warn_for() {
+    # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
+    # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
+    local base="$1" aud py
+    aud="$(dirname "$SELF")/comment_audit.py"
+    py="$(command -v python3 || command -v python || true)"
+    [ -n "$py" ] || return 0          # advisory-only; silently skip if no python interpreter
+    [ -f "$aud" ] && "$py" "$aud" --ratio-warn "$base" 2>/dev/null || true
+    return 0
+}
+
 scan_file_rules() {
     # $1 = file. Emits triples for all line/grep rules + deviation-overdue.
     local f="$1"
@@ -329,7 +344,11 @@ case "$MODE" in
         case "$g" in Source/Core/include/*) continue ;; esac
         if ! grep -qF "$g" AGENTS.md; then echo "SELFTEST FAIL: '$g' missing from AGENTS.md" >&2; miss=1; fi
     done
-    [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs in sync" || exit 1
+    # Assert each repo-wide comment-regrowth rule-id is documented in AGENTS.md (delta-gated list).
+    for r in "${COMMENT_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: comment rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment rules in sync" || exit 1
     ;;
 
   full)
@@ -399,16 +418,59 @@ case "$MODE" in
     fi
     # New triples = HEAD \ base.
     new_triples="$(comm -23 <(printf '%s\n' "$head_set" | sort -u) <(printf '%s\n' "$base_set" | sort -u) | grep -E . || true)"
-    if [ -z "$new_triples" ]; then
+
+    rc=0
+    # --- strict-zone high-integrity rules (delta-gated) ---
+    if [ -n "$new_triples" ]; then
+        rc=1
+        echo
+        echo "FAIL: new strict-zone high-integrity violations vs $BASE:"
+        printf '%s\n' "$new_triples" | sed 's/^/  /'
+        echo "  Fix it, or add SMATCHET_DEVIATION(rule=...; reason=...; owner=...; revisit=...) above the line."
+    else
         echo "[test-lint-rules] PASS — no new strict-zone violations vs $BASE"
-        exit 0
     fi
-    echo
-    echo "FAIL: new strict-zone high-integrity violations vs $BASE:"
-    printf '%s\n' "$new_triples" | sed 's/^/  /'
-    echo
-    echo "Fix the violation, add a SMATCHET_DEVIATION(rule=...; reason=...; owner=...; revisit=...)"
-    echo "comment on the line above it, or (non-behavioural only) discuss with a maintainer."
-    exit 1
+
+    # --- comment-regrowth rules (repo-wide, delta-gated; reduce-source-comment-bloat Phase 4) ---
+    # New noise comments (commented-out code / decorative banner / blank-comment run) fail ANYWHERE
+    # in first-party C++ (never legitimate). comment_audit.py --diff classifies; a
+    # `// SMATCHET_DEVIATION(rule=comment-...)` on the line above escapes a flagged line.
+    # Fail CLOSED: a hard-fail gate that silently no-ops (missing python / missing script / crash)
+    # would pass dirty PRs as false-clean. comment_audit.py's exit contract: 0=clean, 1=violations
+    # (on stdout), >=2=infra error. Resolve python3 OR python (Windows CI ships `python`).
+    cr_out=""
+    cr_aud="$(dirname "$SELF")/comment_audit.py"
+    cr_py="$(command -v python3 || command -v python || true)"
+    if [ -z "$cr_py" ]; then
+        echo "test-lint-rules: ERROR: no python interpreter; cannot enforce comment-regrowth gate" >&2
+        exit 2
+    fi
+    if [ ! -f "$cr_aud" ]; then
+        echo "test-lint-rules: ERROR: missing $cr_aud; cannot enforce comment-regrowth gate" >&2
+        exit 2
+    fi
+    # Capture exit code inside the `if` condition: a bare `x=$(cmd); rc=$?` would, under the CI
+    # shell's `set -e`, abort the whole script the instant comment_audit.py exits non-zero (e.g. 1
+    # = violations found) — before `rc=$?` ever runs. An assignment used as an `if` condition is
+    # exempt from `set -e`, so this reliably captures 0 / 1 / >=2.
+    if cr_out="$("$cr_py" "$cr_aud" --diff "$BASE")"; then cr_rc=0; else cr_rc=$?; fi
+    if [ "$cr_rc" -ge 2 ]; then
+        echo "test-lint-rules: ERROR: comment_audit.py --diff failed (exit $cr_rc) for base '$BASE'" >&2
+        exit 2
+    fi
+    if [ -n "$cr_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: new comment-noise vs $BASE (commented-out code / decorative banner / blank-comment run):"
+        printf '%s\n' "$cr_out" | sed 's/^/  /'
+        echo "  Delete the noise, or add SMATCHET_DEVIATION(rule=<comment-id>; reason=...; owner=...; revisit=...) above it."
+    else
+        echo "[test-lint-rules] PASS — no new comment-noise vs $BASE"
+    fi
+
+    # --- soft comment-ratio warning (ADVISORY — never changes exit code) ---
+    ratio_warn_for "$BASE" || true
+
+    exit "$rc"
     ;;
 esac
