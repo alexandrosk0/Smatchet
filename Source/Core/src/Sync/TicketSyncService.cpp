@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -258,9 +259,10 @@ void TicketSyncService::TickStreamingApply() {
                 break; // Frame limit
             }
 
+            const std::ptrdiff_t sliceOffset = static_cast<std::ptrdiff_t>(sliceSize);
             batchToProcess.insert(batchToProcess.end(), std::make_move_iterator(frontBatch.begin()),
-                                  std::make_move_iterator(frontBatch.begin() + sliceSize));
-            frontBatch.erase(frontBatch.begin(), frontBatch.begin() + sliceSize);
+                                  std::make_move_iterator(frontBatch.begin() + sliceOffset));
+            frontBatch.erase(frontBatch.begin(), frontBatch.begin() + sliceOffset);
 
             if (frontBatch.empty()) {
                 activeStreamingSync_.PendingBatches.erase(activeStreamingSync_.PendingBatches.begin());
