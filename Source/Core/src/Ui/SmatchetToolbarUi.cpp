@@ -15,12 +15,13 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Config/ConfigManager.h"
+#include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
 #include "Logger.h"
 #include "Ui/SmatchetImGuiFonts.h"
 #include "Ui/SmatchetUiSession.h"
 #include "imgui.h"
-#include "imgui_internal.h"  // BeginViewportSideBar (pins the bar below the menu)
+#include "imgui_internal.h" // BeginViewportSideBar (pins the bar below the menu)
 
 namespace {
 
@@ -46,10 +47,10 @@ bool ButtonEnabled(AppController& app, const ToolbarButton& b) {
         }
         return IsUiPseudoCommand(b.CommandId) || app.Commands().HasExact(b.CommandId);
     }
-    return true;  // separators are inert
+    return true; // separators are inert
 }
 
-}  // namespace
+} // namespace
 
 void SmatchetToolbarUi::OpenEditor() { requestEditorOpen_ = true; }
 
@@ -95,7 +96,7 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
     if (!b.ArgsJson.empty()) {
         try {
             args = nlohmann::json::parse(b.ArgsJson);
-        } catch (...) {  // catch-all-ok: invalid args JSON → dispatch with empty object
+        } catch (...) { // catch-all-ok: invalid args JSON → dispatch with empty object
             args = nlohmann::json::object();
         }
     }
@@ -108,14 +109,50 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
     }
 }
 
+void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
+    std::string key;
+    const ITrackerBackend* be = app.GetTrackerBackend();
+    if (be) {
+        key = ConfigManager::NormalizeViewsBackendKey(be->Connectivity().GetTrackerType());
+    }
+    if (trackerAppendCacheLoaded_ && key == trackerAppendCacheKey_) {
+        return; // active backend unchanged — the cached append is still current
+    }
+    trackerAppendCache_.clear();
+    if (!key.empty()) {
+        const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+        const auto it = disk.Backends.find(key);
+        if (it != disk.Backends.end()) {
+            trackerAppendCache_ = it->second.ToolbarAppend;
+        }
+    }
+    trackerAppendCacheKey_ = key;
+    trackerAppendCacheLoaded_ = true;
+}
+
 void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     const float barH = ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.y * 2.0f;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
     if (ImGui::BeginViewportSideBar("##SmatchetToolbar", vp, ImGuiDir_Up, barH, flags)) {
-        const std::vector<ToolbarButton> eff = ResolveEffectiveToolbar(cfg.Toolbar, std::vector<ToolbarButton>());
+        // The per-tracker append is loaded once per backend change (not per frame) to keep the
+        // render path off the disk; right-click button menus still map only to the global list.
+        RefreshTrackerAppendCache(app);
+        const std::vector<ToolbarButton> eff = ResolveEffectiveToolbar(cfg.Toolbar, trackerAppendCache_);
         const bool fa = SmatchetAreFaIconsLoaded();
+
+        // The effective bar only drops/merges separators — it never reorders real buttons —
+        // so the k-th non-separator on screen is the k-th non-separator in cfg.Toolbar.Buttons.
+        // realButtonSrc maps that ordinal back to the global index a right-click menu mutates.
+        std::vector<int> realButtonSrc;
+        realButtonSrc.reserve(cfg.Toolbar.Buttons.size());
+        for (int s = 0; s < static_cast<int>(cfg.Toolbar.Buttons.size()); ++s) {
+            if (cfg.Toolbar.Buttons[s].Kind != ToolbarButtonKind::Separator) {
+                realButtonSrc.push_back(s);
+            }
+        }
+        int realSeen = 0;
 
         for (std::size_t i = 0; i < eff.size(); ++i) {
             const ToolbarButton& b = eff[i];
@@ -126,6 +163,9 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
                 ImGui::TextDisabled("|");
                 continue;
             }
+
+            const int src = (realSeen < static_cast<int>(realButtonSrc.size())) ? realButtonSrc[realSeen] : -1;
+            ++realSeen;
 
             std::string glyph = GlyphFor(b);
             std::string label;
@@ -156,10 +196,27 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
                 }
                 ImGui::SetTooltip("%s", tip.c_str());
             }
+
+            // Per-button right-click menu. Opened manually (not BeginPopupContextItem) so it
+            // works on a disabled button too — e.g. to delete one bound to a missing command.
+            if (src >= 0) {
+                std::string menuId = "##tbmenu";
+                menuId += std::to_string(i);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) &&
+                    ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                    ImGui::OpenPopup(menuId.c_str());
+                }
+                if (ImGui::BeginPopup(menuId.c_str())) {
+                    RenderButtonContextMenu(cfg, src);
+                    ImGui::EndPopup();
+                }
+            }
         }
 
-        // Right-click anywhere on the bar → context menu.
-        if (ImGui::BeginPopupContextWindow("##ToolbarCtx", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        // Right-click empty bar area → bar-level context menu (NoOpenOverItems defers to the
+        // per-button menu above when the cursor is over a button).
+        if (ImGui::BeginPopupContextWindow("##ToolbarCtx",
+                                           ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
             if (ImGui::MenuItem("Customize Toolbar...")) {
                 requestEditorOpen_ = true;
             }
@@ -173,11 +230,72 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
     ImGui::End();
 }
 
+void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
+    std::vector<ToolbarButton>& buttons = cfg.Toolbar.Buttons;
+    if (src < 0 || src >= static_cast<int>(buttons.size())) {
+        return;
+    }
+    const int count = static_cast<int>(buttons.size());
+
+    // Edit... defers selection to the editor (no save here); the other ops mutate the global
+    // button list in place — the same swap/insert/erase the Customize editor uses — then persist.
+    if (ImGui::MenuItem("Edit...")) {
+        requestEditorOpen_ = true;
+        requestEditSelect_ = src;
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Move Left", nullptr, false, src > 0)) {
+        std::swap(buttons[src], buttons[src - 1]);
+        ConfigManager::Save(cfg);
+    }
+    if (ImGui::MenuItem("Move Right", nullptr, false, src < count - 1)) {
+        std::swap(buttons[src], buttons[src + 1]);
+        ConfigManager::Save(cfg);
+    }
+    if (ImGui::MenuItem("Insert Separator")) {
+        ToolbarButton sep;
+        sep.Kind = ToolbarButtonKind::Separator;
+        buttons.insert(buttons.begin() + src + 1, sep); // after the clicked button
+        ConfigManager::Save(cfg);
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Delete")) {
+        buttons.erase(buttons.begin() + src);
+        ConfigManager::Save(cfg);
+    }
+}
+
 void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     if (requestEditorOpen_) {
         requestEditorOpen_ = false;
         editBuf_ = cfg.Toolbar;
-        selected_ = editBuf_.Buttons.empty() ? -1 : 0;
+
+        // Capture the active backend so Tracker scope edits the matching views bucket. The
+        // right-click "Edit..." path preselects a global button, so the editor always opens in
+        // Global scope; the user switches to Tracker scope explicitly.
+        editScope_ = EditScope::Global;
+        editHasTracker_ = false;
+        editTrackerType_.clear();
+        editTrackerKey_.clear();
+        trackerEditBuf_.clear();
+        const ITrackerBackend* be = app.GetTrackerBackend();
+        if (be) {
+            editTrackerType_ = be->Connectivity().GetTrackerType();
+            editTrackerKey_ = ConfigManager::NormalizeViewsBackendKey(editTrackerType_);
+            editHasTracker_ = true;
+            const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+            const auto it = disk.Backends.find(editTrackerKey_);
+            if (it != disk.Backends.end()) {
+                trackerEditBuf_ = it->second.ToolbarAppend;
+            }
+        }
+
+        if (requestEditSelect_ >= 0 && requestEditSelect_ < static_cast<int>(editBuf_.Buttons.size())) {
+            selected_ = requestEditSelect_;
+        } else {
+            selected_ = editBuf_.Buttons.empty() ? -1 : 0;
+        }
+        requestEditSelect_ = -1;
         cmdNames_.clear();
         const std::vector<smatchet::cmd::Command> all = app.Commands().All();
         cmdNames_.reserve(all.size());
@@ -188,38 +306,74 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
         ImGui::OpenPopup("Customize Toolbar##SmatchetToolbarEditor");
     }
 
-    ImGui::SetNextWindowSize(ImVec2(620.0f, 420.0f), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal("Customize Toolbar##SmatchetToolbarEditor", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Customize Toolbar##SmatchetToolbarEditor", nullptr,
+                                ImGuiWindowFlags_NoSavedSettings)) {
         return;
     }
 
     const bool fa = SmatchetAreFaIconsLoaded();
+
+    // Scope selector. Global scope edits the shared toolbar; Tracker scope edits the active
+    // backend append list, shown on the bar after the global set. Switching resets selection.
+    ImGui::TextUnformatted("Scope:");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Global", editScope_ == EditScope::Global) && editScope_ != EditScope::Global) {
+        editScope_ = EditScope::Global;
+        selected_ = editBuf_.Buttons.empty() ? -1 : 0;
+    }
+    ImGui::SameLine();
+    {
+        const std::string trackerLabel =
+            (editHasTracker_ ? ("Current tracker: " + editTrackerType_) : std::string("Current tracker: (none)")) +
+            "##scopeTracker";
+        if (!editHasTracker_) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::RadioButton(trackerLabel.c_str(), editScope_ == EditScope::Tracker) &&
+            editScope_ != EditScope::Tracker) {
+            editScope_ = EditScope::Tracker;
+            selected_ = trackerEditBuf_.empty() ? -1 : 0;
+        }
+        if (!editHasTracker_) {
+            ImGui::EndDisabled();
+        }
+    }
+
+    const bool trackerScope = editScope_ == EditScope::Tracker;
+    std::vector<ToolbarButton>& buttons = trackerScope ? trackerEditBuf_ : editBuf_.Buttons;
+    if (trackerScope) {
+        ImGui::TextDisabled("Appended for %s, shown after the global toolbar.", editTrackerType_.c_str());
+    } else {
+        ImGui::TextDisabled("Global toolbar, shown for every tracker.");
+    }
+    ImGui::Separator();
 
     // Action row.
     if (ImGui::Button("Add command")) {
         ToolbarButton b;
         b.Kind = ToolbarButtonKind::Command;
         b.Tooltip = "New button";
-        editBuf_.Buttons.push_back(b);
-        selected_ = static_cast<int>(editBuf_.Buttons.size()) - 1;
+        buttons.push_back(b);
+        selected_ = static_cast<int>(buttons.size()) - 1;
     }
     ImGui::SameLine();
     if (ImGui::Button("Add Lua")) {
         ToolbarButton b;
         b.Kind = ToolbarButtonKind::Lua;
         b.Tooltip = "New Lua button";
-        editBuf_.Buttons.push_back(b);
-        selected_ = static_cast<int>(editBuf_.Buttons.size()) - 1;
+        buttons.push_back(b);
+        selected_ = static_cast<int>(buttons.size()) - 1;
     }
     ImGui::SameLine();
     if (ImGui::Button("Add separator")) {
         ToolbarButton b;
         b.Kind = ToolbarButtonKind::Separator;
-        editBuf_.Buttons.push_back(b);
-        selected_ = static_cast<int>(editBuf_.Buttons.size()) - 1;
+        buttons.push_back(b);
+        selected_ = static_cast<int>(buttons.size()) - 1;
     }
 
-    const int count = static_cast<int>(editBuf_.Buttons.size());
+    const int count = static_cast<int>(buttons.size());
     const bool hasSel = selected_ >= 0 && selected_ < count;
 
     ImGui::SameLine();
@@ -227,22 +381,22 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
         ImGui::BeginDisabled();
     }
     if (ImGui::Button("Duplicate") && hasSel) {
-        editBuf_.Buttons.insert(editBuf_.Buttons.begin() + selected_ + 1, editBuf_.Buttons[selected_]);
+        buttons.insert(buttons.begin() + selected_ + 1, buttons[selected_]);
         ++selected_;
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete") && hasSel) {
-        editBuf_.Buttons.erase(editBuf_.Buttons.begin() + selected_);
-        selected_ = editBuf_.Buttons.empty() ? -1 : (std::min)(selected_, static_cast<int>(editBuf_.Buttons.size()) - 1);
+        buttons.erase(buttons.begin() + selected_);
+        selected_ = buttons.empty() ? -1 : (std::min)(selected_, static_cast<int>(buttons.size()) - 1);
     }
     ImGui::SameLine();
     if (ImGui::Button("Up") && hasSel && selected_ > 0) {
-        std::swap(editBuf_.Buttons[selected_], editBuf_.Buttons[selected_ - 1]);
+        std::swap(buttons[selected_], buttons[selected_ - 1]);
         --selected_;
     }
     ImGui::SameLine();
     if (ImGui::Button("Down") && hasSel && selected_ < count - 1) {
-        std::swap(editBuf_.Buttons[selected_], editBuf_.Buttons[selected_ + 1]);
+        std::swap(buttons[selected_], buttons[selected_ + 1]);
         ++selected_;
     }
     if (!hasSel) {
@@ -251,10 +405,10 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
 
     ImGui::Separator();
 
-    // Left: button list (drag-drop reorder). Right: field editor.
+    // Left: button list (drag-drop reorder, confined to the active scope). Right: field editor.
     ImGui::BeginChild("##tblist", ImVec2(240.0f, -ImGui::GetFrameHeightWithSpacing()), true);
-    for (int i = 0; i < static_cast<int>(editBuf_.Buttons.size()); ++i) {
-        ToolbarButton& b = editBuf_.Buttons[i];
+    for (int i = 0; i < static_cast<int>(buttons.size()); ++i) {
+        ToolbarButton& b = buttons[i];
         std::string rowLabel;
         if (b.Kind == ToolbarButtonKind::Separator) {
             rowLabel = "--- separator ---";
@@ -275,11 +429,11 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SMATCHET_TB_BTN")) {
                 const int src = *static_cast<const int*>(p->Data);
-                if (src >= 0 && src < static_cast<int>(editBuf_.Buttons.size()) && src != i) {
-                    ToolbarButton moved = editBuf_.Buttons[src];
-                    editBuf_.Buttons.erase(editBuf_.Buttons.begin() + src);
+                if (src >= 0 && src < static_cast<int>(buttons.size()) && src != i) {
+                    ToolbarButton moved = buttons[src];
+                    buttons.erase(buttons.begin() + src);
                     int dst = (src < i) ? (i - 1) : i;
-                    editBuf_.Buttons.insert(editBuf_.Buttons.begin() + dst, moved);
+                    buttons.insert(buttons.begin() + dst, moved);
                     selected_ = dst;
                 }
             }
@@ -291,8 +445,8 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
 
     ImGui::SameLine();
     ImGui::BeginChild("##tbedit", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
-    if (selected_ >= 0 && selected_ < static_cast<int>(editBuf_.Buttons.size())) {
-        ToolbarButton& b = editBuf_.Buttons[selected_];
+    if (selected_ >= 0 && selected_ < static_cast<int>(buttons.size())) {
+        ToolbarButton& b = buttons[selected_];
         const char* kinds[] = {"Command", "Lua", "Separator"};
         int k = static_cast<int>(b.Kind);
         if (ImGui::Combo("Kind", &k, kinds, 3)) {
@@ -371,11 +525,26 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     }
     ImGui::EndChild();
 
-    ImGui::Checkbox("Show toolbar", &editBuf_.Visible);
+    // Footer. "Show toolbar" is a global-only setting (per-tracker visibility deferred), so in
+    // Tracker scope a hint anchors the line instead.
+    if (trackerScope) {
+        ImGui::TextDisabled("Visibility follows the global scope.");
+    } else {
+        ImGui::Checkbox("Show toolbar", &editBuf_.Visible);
+    }
     ImGui::SameLine(ImGui::GetWindowWidth() - 200.0f);
     if (ImGui::Button("Save", ImVec2(90.0f, 0.0f))) {
-        cfg.Toolbar = editBuf_;
-        ConfigManager::Save(cfg);
+        if (trackerScope && editHasTracker_) {
+            // Load-modify-save the views file so only this backend's append list changes,
+            // preserving its Views/ActiveViewId and every other backend bucket.
+            PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+            disk.Backends[editTrackerKey_].ToolbarAppend = trackerEditBuf_;
+            ConfigManager::SavePersistentViewsToDisk(disk);
+            trackerAppendCacheLoaded_ = false; // force RenderBar to reload the active append
+        } else {
+            cfg.Toolbar = editBuf_;
+            ConfigManager::Save(cfg);
+        }
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();

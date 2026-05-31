@@ -27,18 +27,37 @@ class SmatchetToolbarUi {
     void OpenEditor();
 
   private:
+    // Which list the Customize editor mutates: the shared toolbar or the active backend's append.
+    enum class EditScope { Global, Tracker };
+
     void RenderBar(AppController& app, TrackerConfig& cfg);
+    void RenderButtonContextMenu(TrackerConfig& cfg, int src);
     void RenderEditor(AppController& app, TrackerConfig& cfg);
     void DispatchButton(AppController& app, TrackerConfig& cfg, const ToolbarButton& b);
+    // Reload the active backend's appended buttons from disk into trackerAppendCache_, but only
+    // when the active backend key changed (or the cache was invalidated) — keeps RenderBar off the
+    // disk on the per-frame path. A null backend yields an empty cache.
+    void RefreshTrackerAppendCache(AppController& app);
 
     SmatchetIconPickerUi iconPicker_;
     bool requestEditorOpen_ = false;
-    int selected_ = -1;  // selected button index in the editor
+    int requestEditSelect_ = -1; // button index to preselect when the editor next opens; -1 = default
+    int selected_ = -1;          // selected button index in the editor
 
     // Editor working state (populated when the editor opens).
-    ToolbarConfig editBuf_;             // edited copy; committed to cfg.Toolbar on Save
-    std::vector<std::string> cmdNames_;  // registry command names for the command picker
-    char cmdSearch_[64] = {0};           // command-picker filter text
+    EditScope editScope_ = EditScope::Global;   // active scope in the editor
+    ToolbarConfig editBuf_;                     // edited copy of the global toolbar; committed to cfg.Toolbar on Save
+    std::vector<ToolbarButton> trackerEditBuf_; // edited copy of the active backend's ToolbarAppend (Tracker scope)
+    std::string editTrackerType_;               // backend display name captured on open ("Jira"/"Plane"/"GitHub")
+    std::string editTrackerKey_;                // normalized views-bucket key for that backend
+    bool editHasTracker_ = false;               // a backend was connected when the editor opened
+    std::vector<std::string> cmdNames_;         // registry command names for the command picker
+    char cmdSearch_[64] = {0};                  // command-picker filter text
+
+    // RenderBar cache of the active backend's ToolbarAppend (refreshed only on backend change).
+    std::vector<ToolbarButton> trackerAppendCache_;
+    std::string trackerAppendCacheKey_;     // backend key the cache was loaded for ("" = none)
+    bool trackerAppendCacheLoaded_ = false; // false forces a reload on the next RenderBar
 };
 
-#endif  // SMATCHET_UI_TOOLBAR_UI_H
+#endif // SMATCHET_UI_TOOLBAR_UI_H
