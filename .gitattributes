@@ -43,7 +43,7 @@
 # each PREPEND new "Resolution:" entries to applied.md. Without `merge=union`, the
 # parallel prepends conflict and require manual resolution per slice (~5 min × N slices).
 # Union concatenates both sides on conflict — correct for prepend, may interleave
-# date order. Run `bash scripts/dev/sort-applied-md.sh` to restore "Latest first"
+# date order. Run `bash agents/scripts/core/sort-applied-md.sh` to restore "Latest first"
 # ordering when interleaving is visible.
 #
 # DELIBERATELY NOT applied to process.md / tooling.md / AGENT_SELF_IMPROVEMENT.md:

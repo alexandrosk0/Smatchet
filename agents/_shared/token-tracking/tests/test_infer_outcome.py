@@ -2,7 +2,7 @@
 """Unit tests for agents/_shared/token-tracking/agent-token-log.py:_infer_outcome.
 
 Covers AGENTS.md § Agent output contract — the canonical telemetry classifier.
-Run via `scripts/dev/test-agent-contract.sh` (auto-enrolled by test-all.sh).
+Run via `agents/scripts/core/test-agent-contract.sh` (auto-enrolled by test-all.sh).
 """
 
 import importlib.util

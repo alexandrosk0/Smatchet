@@ -72,7 +72,15 @@ jobs:
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               case "$f" in
-                *.md|docs/*|agents/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
+                # Build-invoked exception: test-lint-rules.sh is the strict-zone
+                # delta gate run INSIDE the windows-msvc job (steps below at the
+                # "--diff origin/develop" + develop "--catalog --refresh" lines).
+                # It lives in the agentic tree but a change to it MUST trigger the
+                # build so the gate is re-validated — otherwise a PR touching only
+                # the gate skips the build and the gate never runs. Keep before the
+                # agents/* docs-class arm (case matches first pattern).
+                agents/scripts/project/test-lint-rules.sh) code=true; break ;;
+                *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
                 *) code=true; break ;;
               esac
             done <<< "$files"
@@ -170,7 +178,7 @@ jobs:
           git fetch --no-tags --depth=1 origin develop
           git rev-parse --verify --quiet origin/develop >/dev/null || {
             echo "::error::origin/develop unavailable — cannot run high-integrity delta gate"; exit 1; }
-          bash scripts/dev/test-lint-rules.sh --diff origin/develop
+          bash agents/scripts/project/test-lint-rules.sh --diff origin/develop
           # NB: the gate's bats (tests/bats/lint_rules.bats via test-lint-rules-bats.sh)
           # run at the pre-push gate (test-all.sh, where bats is installed), NOT here —
           # the Windows CI runner has no bats (the wrapper would exit 2 / "bats missing").
@@ -415,9 +423,9 @@ jobs:
       - name: Refresh baseline + assert no drift
         shell: bash
         run: |
-          bash scripts/dev/test-lint-rules.sh --catalog --refresh
+          bash agents/scripts/project/test-lint-rules.sh --catalog --refresh
           if ! git diff --exit-code docs/high-integrity/baseline.md; then
-            echo "::error::baseline stale — run 'bash scripts/dev/test-lint-rules.sh --catalog --refresh' locally and commit"
+            echo "::error::baseline stale — run 'bash agents/scripts/project/test-lint-rules.sh --catalog --refresh' locally and commit"
             exit 1
           fi
           echo "high-integrity baseline in sync"

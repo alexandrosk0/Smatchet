@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # tests/bats/lock_claim.bats
 # ----------------------------------------------------------------------------
-# Bats tests for scripts/dev/lock-claim.sh — argument validation + happy path
-# + lock-held rejection. Complementary to scripts/dev/test-lock-primitives.sh
+# Bats tests for agents/scripts/core/lock-claim.sh — argument validation + happy path
+# + lock-held rejection. Complementary to agents/scripts/core/test-lock-primitives.sh
 # (the existing end-to-end multi-clone integration test); this file isolates
 # each case in its own bats setup so a single failing argument-validation case
 # doesn't poison the whole run.
@@ -15,7 +15,7 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
+    export SCRIPTS_DIR="$REPO_ROOT/agents/scripts/core"
 
     # Force git-ref backend regardless of session env — the operator may run
     # bats with SMATCHET_LOCK_BACKEND=p4-counter set, which dispatches to
@@ -162,7 +162,7 @@ teardown() {
     tree_sha=$(git -C "$CLONE" cat-file -p "$ref_sha" | awk '/^tree / {print $2}')
     blob_sha=$(git -C "$CLONE" ls-tree "$tree_sha" claim.json | awk '{print $3}')
     claim_body=$(git -C "$CLONE" cat-file -p "$blob_sha")
-    # Schema per scripts/dev/_lock-json.py build-claim:
+    # Schema per agents/scripts/core/_lock-json.py build-claim:
     #   slug / owner (= AGENT_ID env) / branch / paths / started / ...
     [[ "$claim_body" == *"\"slug\""* ]]
     [[ "$claim_body" == *"\"inspect-slug\""* ]]

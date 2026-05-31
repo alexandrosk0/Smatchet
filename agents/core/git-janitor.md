@@ -33,7 +33,7 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **See also**: [`p4-janitor`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology.
 
-**P4-gated ship-loop note**: when the orchestrator hands off to `git-janitor` from the P4-gated ship-loop (per [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop), `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only. Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic; the watcher polls GitHub PR state and doesn't care whether the PR's commits were produced by direct git workflow or by `scripts/dev/p4-task-stream-to-pr.sh --promote-reviewed-cl`. `git-janitor` NEVER touches p4 shelves, p4 streams, or any p4 server state — that's `p4-janitor`'s remit. If `git-janitor` notices a stranded p4 shelf or task stream during cleanup, it reports the residue per § Residue requiring user action and routes the user to `p4-janitor`.
+**P4-gated ship-loop note**: when the orchestrator hands off to `git-janitor` from the P4-gated ship-loop (per [`AGENTS.md`](../../AGENTS.md) § P4-gated ship-loop), `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only. Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic; the watcher polls GitHub PR state and doesn't care whether the PR's commits were produced by direct git workflow or by `agents/scripts/project/p4-task-stream-to-pr.sh --promote-reviewed-cl`. `git-janitor` NEVER touches p4 shelves, p4 streams, or any p4 server state — that's `p4-janitor`'s remit. If `git-janitor` notices a stranded p4 shelf or task stream during cleanup, it reports the residue per § Residue requiring user action and routes the user to `p4-janitor`.
 
 ## Path resolution — `<main-repo>` / `<worktree>`
 
@@ -114,7 +114,7 @@ When the ahead-range diff is **strictly** within doc paths, the `test-all.sh` ga
 
 **Deny-list (any hit kicks back to the full FF-clean gate including `test-all.sh`):**
 
-- `agents/**` (changes agent behaviour; `scripts/dev/test-agent-contract.sh` covers this)
+- `agents/**` (changes agent behaviour; `agents/scripts/core/test-agent-contract.sh` covers this)
 - `scripts/**` (changes tooling / hooks)
 - `tests/**` (changes test surface)
 - `.gitignore`, `.github/**`, `CMakePresets.json`, `CMakeLists.txt` (CI / build)
@@ -214,7 +214,7 @@ Before any destructive op (`branch -D`, `worktree remove`, `reset --hard`), run 
 
 1. **Worktree bookkeeping audit** — parse `git worktree list --porcelain` and inspect each entry's `gitdir` line. The **main worktree** has no `gitdir` line; skip it from orphan checks. For each additional worktree, the `gitdir` value points at `.git/worktrees/<id>/` — if that dir is missing, the working dir is orphaned (not git-managed; `git worktree prune` won't touch on-disk content). Conversely, for each on-disk dir under `.claude/worktrees/<id>/`, look up its path in the porcelain output and flag dirs with no matching `worktree` line. Phantom dirs warrant a manual `rm -rf` after confirming with the user — basename parity against `.git/worktrees/` is NOT reliable (the gitdir id can diverge from the working-dir basename).
 2. **Detached-HEAD salvage tag** — for any worktree on detached HEAD, run `git -C <path> log --oneline HEAD ^origin/develop ^origin/main` to inventory unique commits. If non-empty, create a salvage tag `salvage/<worktree-name>-<short-summary>` BEFORE any prune / remove op so a parallel-agent's WIP isn't garbage-collected (default reflog window is 30 days for unreachable, 90 for reachable — short enough to lose work on a quiet week).
-3. **Lock staleness sweep** — `bash scripts/dev/lock-staleness-sweep.sh` to surface any plan-locks whose PR has already merged but the auto-release token didn't fire (squash-merge edge case per `docs/self-improvement/categories/tooling.md` 2026-05-18 plan-lock entry). Run before the final report so stale-lock residue isn't carried into the next session.
+3. **Lock staleness sweep** — `bash agents/scripts/core/lock-staleness-sweep.sh` to surface any plan-locks whose PR has already merged but the auto-release token didn't fire (squash-merge edge case per `docs/self-improvement/categories/tooling.md` 2026-05-18 plan-lock entry). Run before the final report so stale-lock residue isn't carried into the next session.
 
 ## Standard cleanup loop
 

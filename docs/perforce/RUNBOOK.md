@@ -54,10 +54,10 @@ Smatchet allocates one task stream per parallel subagent. Streams accumulate; th
 
 ```bash
 # Dry-run first (shows which streams would be deleted; no mutation):
-bash scripts/dev/p4-task-stream-gc.sh --older-than-days 14 --dry-run
+bash agents/scripts/project/p4-task-stream-gc.sh --older-than-days 14 --dry-run
 
 # Real run:
-bash scripts/dev/p4-task-stream-gc.sh --older-than-days 14
+bash agents/scripts/project/p4-task-stream-gc.sh --older-than-days 14
 ```
 
 GC refuses to delete a stream that has pending CLs (any client has work in-flight against it). Resolve the pending CL first — either `p4 submit` it (if the work is wanted) or `p4 revert -c <CL>` then `p4 change -d <CL>` (if not).
@@ -99,9 +99,9 @@ If the offsite robocopy mirror has a more recent checkpoint than the local one, 
 | `p4 info` hangs or refuses connection | Service stopped or LAN partition | Re-check `p4d_smatchet` service on the server host; verify port 1666 reachable (`Test-NetConnection brick -Port 1666`). |
 | `Library shutdown failed` or similar at `p4d` start | Earlier crash left lock files | Delete `$P4ROOT\db.lockfile`, retry. |
 | `Submit failed: Out of disk space on server` | Server-root drive full | Free space OR roll log files; never delete `db.*` files manually. |
-| Client `p4 reconcile` lists files the user didn't touch | `.p4ignore` missing or out of sync with `.gitignore` | Re-read [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology § Drift handling. Confirm `P4IGNORE=.p4ignore` is set; re-run `bash scripts/dev/p4-reconcile-check.sh` for the diff against git. |
+| Client `p4 reconcile` lists files the user didn't touch | `.p4ignore` missing or out of sync with `.gitignore` | Re-read [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology § Drift handling. Confirm `P4IGNORE=.p4ignore` is set; re-run `bash agents/scripts/project/p4-reconcile-check.sh` for the diff against git. |
 | A file is `*exclusive*` and the owning client is dead | Stale `+l` lock | `p4 lock -r //path/to/file` from the server host as `super` user (irreversible — confirms abandonment). |
-| `p4 counter --from --to` rejects valid CAS | Counter doesn't exist (first claim) | Bootstrap path in [`scripts/dev/lock-claim-p4.sh`](../../scripts/dev/lock-claim-p4.sh) handles this. Manual: `p4 counter <name> 0` then retry CAS. |
+| `p4 counter --from --to` rejects valid CAS | Counter doesn't exist (first claim) | Bootstrap path in [`agents/scripts/core/lock-claim-p4.sh`](../../agents/scripts/core/lock-claim-p4.sh) handles this. Manual: `p4 counter <name> 0` then retry CAS. |
 
 ## Permissions + super user
 

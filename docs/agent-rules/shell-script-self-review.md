@@ -1,6 +1,6 @@
 # Shell-script self-review checklist
 
-Five rules every `scripts/dev/*.sh` ships through, enforced by `scripts/dev/test-shell-lint.sh` (auto-runs via `scripts/dev/test-all.sh` at the pre-push gate). Each rule closes a real CodeRabbit finding class from session 2026-05-28. Plan: [`../plans/shipped/shell-script-self-review-lint.md`](../plans/shipped/shell-script-self-review-lint.md).
+Five rules every `scripts/dev/*.sh` ships through, enforced by `agents/scripts/core/test-shell-lint.sh` (auto-runs via `scripts/dev/test-all.sh` at the pre-push gate). Each rule closes a real CodeRabbit finding class from session 2026-05-28. Plan: [`../plans/shipped/shell-script-self-review-lint.md`](../plans/shipped/shell-script-self-review-lint.md).
 
 Bypass: `SMATCHET_SKIP_SHELL_LINT=1` (logged; emergency-only).
 
@@ -27,7 +27,7 @@ command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
 python -c 'import json; ...'
 ```
 
-**Allowlist drift** — using a tool not on the allowlist (e.g. `node`, `npm`, `ripgrep`, `docker`) emits a non-blocking `INFO: tool '<name>' not in allowlist; consider adding to scripts/dev/test-shell-lint.sh`. Extending the allowlist is a one-line change in that script.
+**Allowlist drift** — using a tool not on the allowlist (e.g. `node`, `npm`, `ripgrep`, `docker`) emits a non-blocking `INFO: tool '<name>' not in allowlist; consider adding to agents/scripts/core/test-shell-lint.sh`. Extending the allowlist is a one-line change in that script.
 
 ---
 
@@ -142,13 +142,13 @@ esac
 
 ```bash
 # Repo-wide
-bash scripts/dev/test-shell-lint.sh
+bash agents/scripts/core/test-shell-lint.sh
 
 # Single script
-bash scripts/dev/test-shell-lint.sh --target scripts/dev/my-script.sh
+bash agents/scripts/core/test-shell-lint.sh --target scripts/dev/my-script.sh
 
 # Bypass (emergency only — logged)
-SMATCHET_SKIP_SHELL_LINT=1 bash scripts/dev/test-shell-lint.sh
+SMATCHET_SKIP_SHELL_LINT=1 bash agents/scripts/core/test-shell-lint.sh
 ```
 
 Output format: `<path>:<line>: <rule-id>: <message>`. Final summary line `Passed: N  Failed: M` is consumed by `scripts/dev/test-all.sh`.

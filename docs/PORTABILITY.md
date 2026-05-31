@@ -55,14 +55,14 @@ Hardcoded paths that later phases must update (so moves don't break machine cons
 
 | Consumer | Path it hardcodes | Phase |
 |---|---|---|
-| `scripts/dev/test-agent-contract.sh` | `agents/*.md` loop **and** `agents/$a.md` named-agent paths | B |
+| `agents/scripts/core/test-agent-contract.sh` | `agents/*.md` loop **and** `agents/$a.md` named-agent paths | B |
 | `scripts/setup-harness.sh` | `link_dir ".claude/agents" "agents"`; codex/cursor `agents/*.md` counters | B |
 | `AGENTS.md` | delegation tables naming `agents/<name>.md` | B |
-| `scripts/dev/test-backlog-counts.sh` | `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`, `docs/self-improvement/categories` (lines 32-33, 40-49) | C |
+| `agents/scripts/core/test-backlog-counts.sh` | `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`, `docs/self-improvement/categories` (lines 32-33, 40-49) | C |
 | `.gitattributes` | `docs/self-improvement/categories/applied.md merge=union` (line 55) | C |
-| `scripts/dev/sort-applied-md.sh` | `docs/self-improvement/categories/applied.md` | C |
+| `agents/scripts/core/sort-applied-md.sh` | `docs/self-improvement/categories/applied.md` | C |
 | `.understand-anything/*.json` | knowledge-graph node paths | C/D |
-| `scripts/dev/test-plan-index.sh` | `PLAN_INDEX_ARCHIVE_DIR`, `PLAN_INDEX_FILE` (config vars at top) | D |
+| `agents/scripts/core/test-plan-index.sh` | `PLAN_INDEX_ARCHIVE_DIR`, `PLAN_INDEX_FILE` (config vars at top) | D |
 | ~252 `Source/Core/**` comments + ADRs + bats | `docs/plans/shipped/<slug>.md` prose refs | D (via `rewrite-plan-paths.sh`) |
 | `.github/workflows/*` | `paths:` filters; `doc-validation.yml` guard list | B–F |
 
@@ -71,5 +71,5 @@ Hardcoded paths that later phases must update (so moves don't break machine cons
 Claude Code links `.claude/agents` → the whole `agents/` dir. The `agents/core/` +
 `agents/project/` split must not hide agents. The mechanism — `setup-harness.sh`
 emits **flat hardlinks** in `.claude/agents/` (one per agent, into the
-subdirs) — is proven by `scripts/dev/test-agent-discovery-fixture.sh` before any
+subdirs) — is proven by `agents/scripts/core/test-agent-discovery-fixture.sh` before any
 real move (Phase B). See that test for the fixture.

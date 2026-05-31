@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # tests/bats/shell_lint.bats
 # ----------------------------------------------------------------------------
-# Bats coverage for scripts/dev/test-shell-lint.sh.
+# Bats coverage for agents/scripts/core/test-shell-lint.sh.
 #
 # Plan: docs/design/shell-script-self-review-lint.md. Closes
 # docs/self-improvement/categories/process.md 2026-05-28 P1 entry
@@ -16,7 +16,7 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    export LINT="$REPO_ROOT/scripts/dev/test-shell-lint.sh"
+    export LINT="$REPO_ROOT/agents/scripts/core/test-shell-lint.sh"
     export FIXTURE_DIR="$REPO_ROOT/tests/fixtures/shell_lint"
 }
 

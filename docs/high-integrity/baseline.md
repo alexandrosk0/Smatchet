@@ -1,6 +1,6 @@
 # High-Integrity C++ — grandfathered baseline
 
-_Auto-generated. Do not hand-edit; run `bash scripts/dev/test-lint-rules.sh --catalog --refresh` and commit._
+_Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --catalog --refresh` and commit._
 _Refreshed on `develop` post-merge (fail-on-drift); gate uses live scan vs `origin/develop`, not this file._
 
 ## strict zone × narrowing-conversions (0 entries)

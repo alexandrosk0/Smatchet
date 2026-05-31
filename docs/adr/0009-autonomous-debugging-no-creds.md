@@ -47,7 +47,7 @@ The agent's process gains two new phases before phase 1 (Clarify):
 
 Phase 2 (Reproduce) loses its "user repro steps fallback." If no deterministic reproducer is supplied or discoverable and no existing scenario can be parametrized, the agent's first action is to **add a scenario** that reproduces the bug — on the same branch as the fix. Scenario-add = one new `.cpp` under `Source/Core/src/Commands/Scenarios/` + one line in the slice-5 `SmatchetScenarioRegistry.cpp` table.
 
-The contract is verified by a literal-grep check in `scripts/dev/test-agent-contract.sh` ("reproducer-first contract" must appear in `agents/core/debug-detective.md`); soft-rewrites that drop the phrase fail the check loudly.
+The contract is verified by a literal-grep check in `agents/scripts/core/test-agent-contract.sh` ("reproducer-first contract" must appear in `agents/core/debug-detective.md`); soft-rewrites that drop the phrase fail the check loudly.
 
 **Why hard refusal, not soft preference**: the autonomous-debug loop's promise — "at most one user-input point" — only holds if phase 2 doesn't ask. Soft preferences slide into soft fallbacks under deadline pressure ("the agent didn't have a reproducer but we needed the bug fixed, so we let it pause and ask the user"), and once that happens the entire end-state degrades to "interactive debug with extra steps." The hard refusal makes the failure mode visible: missing reproducer → explicit scenario-add commit on the branch, with the bug-class recorded in the self-improvement template's new `missing-scenario` category so the orchestrator's quarterly pattern-mining loop can spot duplicate scenarios across the lifetime of the codebase.
 

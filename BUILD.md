@@ -40,7 +40,7 @@ The orchestrator + agent scripts (`scripts/dev/*.sh`, `scripts/dev/merge-watcher
 | `python` 3.11+ | dev scripts (perf-compare, watcher CLI, etc.) | `winget install Python.Python.3.13` |
 | `clang-format` / `clang-tidy` / `cppcheck` | lint hooks | Install via LLVM or Visual Studio individual components |
 | `bats` | `tests/bats/*.bats` regression suite (merge-gates poller, etc.) | `npm i -g bats` |
-| `shellcheck` | `scripts/dev/test-shell-lint.sh` (pre-push gate) | `npm install -g shellcheck` |
+| `shellcheck` | `agents/scripts/core/test-shell-lint.sh` (pre-push gate) | `npm install -g shellcheck` |
 
 Verify the full set in one shot:
 
@@ -108,10 +108,10 @@ cmake --build --preset ninja-iter-unreal-msvc
 Wrapper shortcuts are still available:
 
 ```powershell
-.\scripts\dev\build_and_run.ps1
-.\scripts\dev\build_and_run.ps1 -Preset ninja-iter-msvc
-.\scripts\dev\build_and_run.ps1 -BuildOnly
-.\scripts\dev\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
+.\scripts\dev\local\build_and_run.ps1
+.\scripts\dev\local\build_and_run.ps1 -Preset ninja-iter-msvc
+.\scripts\dev\local\build_and_run.ps1 -BuildOnly
+.\scripts\dev\local\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
 ### MSVC from bash (Git Bash)
@@ -162,7 +162,7 @@ ctest --test-dir build/ninja-test-msvc --output-on-failure
 cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
 # 5. Optional: static-analysis pass.
-python .\scripts\dev\run_cppcheck.py
+python .\scripts\dev\local\run_cppcheck.py
 ```
 
 If step 1 prints `Doctor: RED`, fix the listed prerequisites before

@@ -9,14 +9,14 @@ Asserts, per the plan's safety contract:
     code; and that stripping leaves the code-token residue byte-identical;
   - the analyzer classifies each comment into the expected taxonomy bucket.
 
-Run via scripts/dev/test-comment-tooling.sh (auto-enrolled by test-all.sh). Zero deps (stdlib).
+Run via agents/scripts/core/test-comment-tooling.sh (auto-enrolled by test-all.sh). Zero deps (stdlib).
 """
 
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEV = os.path.normpath(os.path.join(HERE, "..", "..", "..", "scripts", "dev"))
+DEV = os.path.normpath(os.path.join(HERE, "..", "..", "..", "agents", "scripts", "core"))
 sys.path.insert(0, DEV)
 
 import comment_lib as cl       # noqa: E402

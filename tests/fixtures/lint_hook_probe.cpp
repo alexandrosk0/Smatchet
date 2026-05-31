@@ -1,4 +1,4 @@
-// Fixture for scripts/dev/test-lint-hook-split.sh. Pre-formatted (clang-format
+// Fixture for agents/scripts/core/test-lint-hook-split.sh. Pre-formatted (clang-format
 // clean) and cppcheck-clean so the inline hook's `clang-format -i` is a no-op
 // and the drain reports no findings.
 //
