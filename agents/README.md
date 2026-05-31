@@ -6,7 +6,7 @@ Layout (portable / project split — see [`docs/PORTABILITY.md`](../docs/PORTABI
 
 - `agents/core/<name>.md` — **portable** generic engineering roles (architect, build-doctor, code-review, …), reusable in another project; project-specific values come from [`project.config.json`](../project.config.json).
 - `agents/project/<name>.md` — **project-specific** subsystem-bound agents (tracker-backend, grid-engine, lua-binder, mcp-toolsmith, offline-sync, unreal-bridge, p4-annotate, command-system).
-- `agents/_shared/skills/` — skill definitions that more than one harness can wire (currently `grill-with-docs`, `scratchpad-recall`).
+- `agents/_shared/skills/` — skill definitions that more than one harness can wire (auto-linked by `agents/scripts/core/setup-harness.sh`'s skills glob; see the directory for the current set).
 
 Harnesses discover agents flatly at `.claude/agents/*.md`; `agents/scripts/core/setup-harness.sh` materialises that as flat per-agent links into the `core/` + `project/` subdirs. **After pulling this split, re-run `bash agents/scripts/core/setup-harness.sh claude-code` to regenerate the flat links.**
 - `agents/_shared/token-tracking/` — `SubagentStop`-style hook + statusline renderer + slash-skill definition that any harness can wire to log per-agent token usage. See [`_shared/token-tracking/README.md`](_shared/token-tracking/README.md) for the wiring contract.
