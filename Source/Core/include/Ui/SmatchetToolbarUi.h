@@ -6,7 +6,6 @@
 // set of ui.* pseudo-actions are handled in-layer (open palette / settings / editor).
 // Customization is via a modal editor + right-click context menus; layout persists via
 // ConfigManager. See docs/plans/active/customizable-icon-toolbar.md.
-//
 // Header stays ImGui-free (Core dual-target rule) — only std + the pure config model
 // and the icon picker (also ImGui-free in its header).
 

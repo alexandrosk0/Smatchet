@@ -2,7 +2,7 @@
 #define SMATCHET_UI_ICON_PICKER_UI_H
 
 // Font-Awesome icon picker for the customizable toolbar. A curated catalog of common
-// FA6 glyphs (name + glyph) backs both the picker grid and name->glyph resolution at
+// FA6 glyphs back both the picker grid and the name-to-glyph lookup performed at
 // render time. The full ~2500-glyph catalog + ImGuiListClipper grid is a deferred
 // enhancement (docs/plans/active/customizable-icon-toolbar.md).
 
@@ -26,11 +26,9 @@ class SmatchetIconPickerUi {
     /** Request the picker to open on the next Draw(). */
     void Open();
 
-    /**
-     * Render the modal if open. When the user commits a pick, writes outName + outGlyph
-     * and returns true exactly once; otherwise returns false. Must be called every frame
-     * from inside the owning window/popup so the modal can render.
-     */
+    // Render the modal if open. When the user commits a pick, writes outName + outGlyph
+    // and returns true exactly once; otherwise returns false. Must be called every frame
+    // from inside the owning window/popup so the modal can render.
     bool Draw(std::string& outName, std::string& outGlyph);
 
   private:
