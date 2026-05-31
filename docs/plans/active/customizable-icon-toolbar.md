@@ -225,7 +225,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 
 - `2aa35ea` · Slice 1 — config data model (`ToolbarConfig.h/.cpp`) + persistence (`TrackerConfig.Toolbar`, `ViewWorkspaceState.ToolbarAppend`) + 8 doctest cases.
 - `91b08cc` · Slice 2/3 — icon catalog + `SmatchetIconPickerUi`, `SmatchetToolbarUi` (render under menu via `BeginViewportSideBar(Up)`, command/Lua/`ui.*` dispatch, right-click menu, editor with drag-drop reorder + command/icon pickers + `ConfigManager::Save` write-through), `SmatchetUI` integration, View-menu toggle, `SmatchetLuaTests` link fix.
-- `feat/full-fa-icon-catalog` · Slice 4 — replaced the curated ~50-icon catalog with the full Font-Awesome 6 set: `scripts/dev/gen-fa-catalog.py` (empty-parse guard) parses `IconsFontAwesome6.h` and emits the checked-in `IconsFontAwesome6_Catalog.inl` (1402 `{slug, ICON_FA_*}` rows). Catalog + `SmatchetToolbarIconGlyph` lookup moved to a new ImGui-free `SmatchetIconCatalog.cpp` (which `#include`s the `.inl`); `SmatchetIconPickerUi.cpp` renders that shared catalog through `ImGuiListClipper` (UX Pillar 1 — the prior grid had no clipper). New pure test `tests/Core/IconCatalog.test.cpp`.
+- `d7b1ef2f` (#608) · Slice 4 — replaced the curated ~50-icon catalog with the full Font-Awesome 6 set: `scripts/dev/gen-fa-catalog.py` (empty-parse guard) parses `IconsFontAwesome6.h` and emits the checked-in `IconsFontAwesome6_Catalog.inl` (1402 `{slug, ICON_FA_*}` rows). Catalog + `SmatchetToolbarIconGlyph` lookup moved to a new ImGui-free `SmatchetIconCatalog.cpp` (which `#include`s the `.inl`); `SmatchetIconPickerUi.cpp` renders that shared catalog through `ImGuiListClipper` (UX Pillar 1 — the prior grid had no clipper). New pure test `tests/Core/IconCatalog.test.cpp`.
 
 ## Deviations from plan
 
@@ -242,6 +242,8 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 ## Verification (actual)
 
 - **Bucket A**: `SmatchetTests --test-case=*Toolbar*` → 8/8 cases, 30 assertions; `SmatchetLuaTests` → 30/30, 167 assertions (both re-run green on the Slice 2/3 head).
+- **Bucket A (Slice 4, `d7b1ef2f` / #608)**: `IconCatalog.test.cpp` — full catalog populated (>1000 glyphs, every row non-empty), `SmatchetToolbarIconGlyph` lookup (curated-era + new names + empty/unknown), glyph-matches-entry; the full 1402-glyph `.inl` builds dual-target (green via #608 CI).
+- **Bucket A (`cb837337` / #613)**: `ToolbarConfig.test.cpp` hardened — locks the global non-separator mapping invariant in `ResolveEffectiveToolbar` (test-only follow-up).
 - **Dual-target build**: `SmatchetStandalone` (OpenGL exe) + `SmatchetCore_DX12` (Unreal lib) compile + link clean (MSVC, isolated worktree).
 - **`SmatchetLuaTests` link**: fixed (added `ToolbarConfig.cpp` to its source list — the original PR #603 CI break).
 - **Manual / visual**: PASSED — user visually validated the Standalone build (`91b08cc`): toolbar renders below the menu bar, FA icons load, default buttons + hover tooltips, Customize editor (add / drag-drop reorder / icon picker / Save), View-menu Show-Toolbar toggle. **Bucket-E** (ImGui-Test-Engine drive + screenshot golden) still backlogged as deferred-automation.
