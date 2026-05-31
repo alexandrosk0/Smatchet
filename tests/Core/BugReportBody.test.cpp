@@ -199,6 +199,14 @@ TEST_CASE("BuildRelayRequest — title/body/censored; screenshot only when prese
     const nlohmann::json b = BuildRelayRequest("t", "b", "QUJD", true);
     CHECK(b["censored"] == true);
     CHECK(b["screenshotBase64"] == "QUJD");
+    CHECK_FALSE(b.contains("dumpBase64"));
+
+    // Crash dump fields included only when present; default name applied.
+    const nlohmann::json c = BuildRelayRequest("t", "b", "", false, "REVG", "");
+    CHECK(c["dumpBase64"] == "REVG");
+    CHECK(c["dumpName"] == "crash.dmp");
+    const nlohmann::json d = BuildRelayRequest("t", "b", "", false, "REVG", "crash-123.dmp");
+    CHECK(d["dumpName"] == "crash-123.dmp");
 }
 
 TEST_CASE("ResolveBugReportTarget — error paths: missing repo / no PAT / bad baseUrl") {

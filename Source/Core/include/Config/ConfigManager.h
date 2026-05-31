@@ -23,6 +23,7 @@
 #include "AiTypes.h"
 #include "SmatchetDefaults.h"
 #include "SmatchetThemeIds.h"
+#include "ToolbarConfig.h"
 
 struct CommentTemplate {
     std::string Id;
@@ -101,10 +102,10 @@ struct TrackerConfig {
     bool BugReportPersistPat = false;
     std::string BugReportGitHubPat;
     // Censor mosaic block size in pixels on the (downscaled) capture. 0 = auto
-    // (RecommendedCensorBlock, ~6px). Lower = sharper / less pixelated (2-3 is
-    // light), higher = blurrier. Tune to taste — this is a reduce-readability
-    // pass, not a privacy guarantee.
-    int BugReportCensorBlock = 0;
+    // (RecommendedCensorBlock, ~6px). Lower = sharper / less pixelated, higher =
+    // blurrier. Shipped default 2 = light (debuggable). Tune to taste — this is a
+    // reduce-readability pass, not a privacy guarantee.
+    int BugReportCensorBlock = 2;
     std::string BugReportHotkey = "Ctrl+Shift+B";
     bool BugReportHotkeyEnabled = true;
     bool BugReportScreenshotDefault = true;
@@ -202,6 +203,10 @@ struct TrackerConfig {
     // Quick comment templates for context menus and annotate analysis
     std::vector<CommentTemplate> QuickCommentTemplates = GetDefaultQuickCommentTemplates();
     std::vector<CommentTemplate> AnnotateCommentTemplates = GetDefaultAnnotateCommentTemplates();
+
+    // Customizable icon toolbar rendered below the main menu bar. Per-tracker append
+    // lists live in ViewWorkspaceState::ToolbarAppend. See ToolbarConfig.h.
+    ToolbarConfig Toolbar = ToolbarConfig::Default();
 
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
@@ -436,6 +441,8 @@ struct ViewsStore {
 struct ViewWorkspaceState {
     std::string ActiveViewId;
     std::vector<ViewDefinition> Views;
+    // Per-tracker toolbar buttons, appended after the global ToolbarConfig at render time.
+    std::vector<ToolbarButton> ToolbarAppend;
 };
 
 /** Full smatchet_views.json on disk (version 2 with per-backend buckets). */

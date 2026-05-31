@@ -32,6 +32,7 @@ add_executable(SmatchetLuaTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"

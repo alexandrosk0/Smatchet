@@ -515,6 +515,10 @@ void SmatchetUI::Draw(AppController& app) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
     }
+    if (!d.cfg.ZenMode) {
+        SMATCHET_UI_PERF_SCOPE("SmatchetToolbarUi::Draw");
+        toolbar_.Draw(app, d.cfg);
+    }
 #if defined(SMATCHET_WITH_WHISPER)
     // Whisper first-run dictation setup banner — pinned under the menu bar,
     // visible only while cfg.WhisperSetupCompleted == false. Renders nothing

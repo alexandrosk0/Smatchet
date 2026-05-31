@@ -87,6 +87,17 @@ ViewWorkspaceState ParseWorkspaceObject(const nlohmann::json& root) {
             ws.Views.push_back(ParseViewDefinition(viewJson));
         }
     }
+    if (root.contains("toolbar_append") && root["toolbar_append"].is_array()) {
+        for (const auto& btnJson : root["toolbar_append"]) {
+            if (!btnJson.is_object()) {
+                continue;
+            }
+            try {
+                ws.ToolbarAppend.push_back(btnJson.get<ToolbarButton>());
+            } catch (...) { // catch-all-ok: skip a malformed toolbar button, keep the rest
+            }
+        }
+    }
     if (ws.ActiveViewId.empty() && !ws.Views.empty()) {
         ws.ActiveViewId = ws.Views.front().Id;
     }
@@ -119,6 +130,9 @@ nlohmann::json SerializeWorkspace(const ViewWorkspaceState& ws) {
     j["views"] = nlohmann::json::array();
     for (const auto& view : ws.Views) {
         j["views"].push_back(SerializeView(view));
+    }
+    if (!ws.ToolbarAppend.empty()) {
+        j["toolbar_append"] = ws.ToolbarAppend;
     }
     return j;
 }

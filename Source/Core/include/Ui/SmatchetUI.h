@@ -3,6 +3,7 @@
 #include "AnnotateAnalysisUi.h"
 #include "Commands/CommandPaletteUi.h"
 #include "ConfigManager.h"
+#include "SmatchetToolbarUi.h"
 #include "SmatchetThemeIds.h"
 #include "TicketGridModel.h"
 #include "Views.h"
@@ -106,6 +107,7 @@ class SmatchetUI {
     AnnotateAnalysisUi annotateAnalysisUi_;
     GridFrameContext gridFrameCtx_;
     smatchet::cmd::CommandPaletteUi commandPalette_;
+    SmatchetToolbarUi toolbar_;
     // Tracks the palette currently applied to ImGui::GetStyle() so SmatchetUI::Draw can detect
     // a cfg.Theme change and re-apply once per dirty event (not every frame).
     ThemeId lastAppliedTheme_ = ThemeId::SmatchetDark;

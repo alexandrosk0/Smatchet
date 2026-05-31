@@ -51,6 +51,7 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
     opts.IncludeScreenshot = !shotPath.empty();
     opts.Censored = (d.bugReportShotMode == 1);
     opts.ScreenshotAbsPath = shotPath;
+    opts.DumpAbsPath = d.bugReportCrashDumpPath; // crash mode: upload the minidump as a Release asset
     // WYSIWYG consent: if the user opened (and possibly edited) the egress preview,
     // that exact text is the issue body.
     if (d.bugReportPreviewSeeded && !d.bugReportPreviewBuf.empty()) {
@@ -126,8 +127,13 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
         if (d.bugReportDescBuf.size() < kDescBufCap) {
             d.bugReportDescBuf.assign(kDescBufCap, '\0');
             if (d.bugReportCrashMode) {
-                const char* seed = "Smatchet closed unexpectedly. What were you doing?";
-                std::strncpy(d.bugReportDescBuf.data(), seed, kDescBufCap - 1);
+                // Prefer the assembled crash context — reason, breadcrumb, and log
+                // tail — falling back to a plain prompt.
+                const std::string seed =
+                    d.bugReportCrashContext.empty()
+                        ? std::string("Smatchet closed unexpectedly. What were you doing?")
+                        : ("Smatchet closed unexpectedly. What were you doing?\n\n" + d.bugReportCrashContext);
+                std::strncpy(d.bugReportDescBuf.data(), seed.c_str(), kDescBufCap - 1);
             }
         }
         // NOTE: bugReportInclScreenshot / bugReportShotMode are NOT seeded here —
@@ -142,6 +148,7 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
         d.bugReportPreviewDirty = true;
         d.bugReportPreviewSeeded = false;
         d.bugReportPreviewUserEdited = false;
+        d.bugReportPreviewGenerating = false;
         d.bugReportPreviewBuf.clear();
     }
 
@@ -202,31 +209,43 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
     // remove anything they don't want to share. (Re)generated from the current
     // inputs only until the user starts editing it.
     if (ImGui::CollapsingHeader("Preview / edit what will be sent")) {
-        if (d.bugReportPreviewDirty && !d.bugReportPreviewUserEdited) {
+        // (Re)generate on a WORKER — GatherContext reads the audit file from disk, which
+        // must never block the UI thread (Pillar 2). The worker posts the text back.
+        if (d.bugReportPreviewDirty && !d.bugReportPreviewUserEdited && !d.bugReportPreviewGenerating) {
+            d.bugReportPreviewGenerating = true;
             smatchet::diagnostics::BugReportOptions opts;
             opts.UserDescription = DescriptionText(d);
             opts.IncludeScreenshot = d.bugReportInclScreenshot;
-            const smatchet::diagnostics::ContextBundle bundle = smatchet::diagnostics::GatherContext(app, opts);
-            const std::string shotNote =
-                d.bugReportInclScreenshot ? "_(screenshot attached on submit)_" : std::string();
-            const std::string text = smatchet::diagnostics::BuildMarkdownBody(opts, bundle, shotNote);
-            // Editable copy with headroom (the user mostly trims, but allow some growth).
-            const std::size_t cap = text.size() + 16384u;
-            d.bugReportPreviewBuf.assign(cap, '\0');
-            std::memcpy(d.bugReportPreviewBuf.data(), text.data(), text.size());
-            d.bugReportPreviewSeeded = true;
-            d.bugReportPreviewDirty = false;
+            const bool inclShot = d.bugReportInclScreenshot;
+            app.LaunchBackgroundTask([&app, &d, opts, inclShot]() {
+                const smatchet::diagnostics::ContextBundle bundle = smatchet::diagnostics::GatherContext(app, opts);
+                const std::string shotNote = inclShot ? "_(screenshot attached on submit)_" : std::string();
+                auto text =
+                    std::make_shared<std::string>(smatchet::diagnostics::BuildMarkdownBody(opts, bundle, shotNote));
+                app.mainThreadDispatcher.PostToMainThread([&d, text]() {
+                    // Don't clobber if the user started editing while we generated.
+                    if (!d.bugReportPreviewUserEdited) {
+                        const std::size_t cap = text->size() + 16384u;
+                        d.bugReportPreviewBuf.assign(cap, '\0');
+                        std::memcpy(d.bugReportPreviewBuf.data(), text->data(), text->size());
+                        d.bugReportPreviewSeeded = true;
+                        d.bugReportPreviewDirty = false;
+                    }
+                    d.bugReportPreviewGenerating = false;
+                });
+            });
         }
-        if (d.bugReportPreviewBuf.empty()) {
-            // Defensive allocation only — NOT "seeded". Leaving the flag false lets the
-            // dirty-check above populate real content next frame (and keeps BodyOverride
-            // empty so an all-zero buffer isn't sent as the body).
-            d.bugReportPreviewBuf.assign(16384u, '\0');
-        }
-        ImGui::TextDisabled("This exact text is sent. Edit to remove anything you don't want to share.");
-        if (ImGui::InputTextMultiline("##bugpreview", d.bugReportPreviewBuf.data(), d.bugReportPreviewBuf.size(),
-                                      ImVec2(-1.0f, 220.0f))) {
-            d.bugReportPreviewUserEdited = true;
+        if (d.bugReportPreviewGenerating && d.bugReportPreviewBuf.empty()) {
+            ImGui::TextDisabled("Generating preview…");
+        } else {
+            if (d.bugReportPreviewBuf.empty()) {
+                d.bugReportPreviewBuf.assign(16384u, '\0'); // defensive only — not "seeded"
+            }
+            ImGui::TextDisabled("This exact text is sent. Edit to remove anything you don't want to share.");
+            if (ImGui::InputTextMultiline("##bugpreview", d.bugReportPreviewBuf.data(), d.bugReportPreviewBuf.size(),
+                                          ImVec2(-1.0f, 220.0f))) {
+                d.bugReportPreviewUserEdited = true;
+            }
         }
     }
 
