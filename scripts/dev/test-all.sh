@@ -46,7 +46,7 @@ fi
 # Collect test scripts across all roots that hold them. Product/build tests
 # stay under scripts/dev/; the agentic test-* suites live under
 # agents/scripts/{core,project}/ after the script-split (see
-# docs/plans/active/split-scripts-build-vs-agentic.md). Each root is searched
+# docs/plans/shipped/split-scripts-build-vs-agentic.md). Each root is searched
 # ONLY if it exists, so the code repo still runs standalone when the agents/
 # tree is later extracted, and the agents repo can ship without a dangling
 # scripts/dev reference.
