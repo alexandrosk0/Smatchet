@@ -1,5 +1,6 @@
 ---
 name: but-for-real
+version: 1
 description: Force a skeptical second pass on your own work before declaring completion. Use when the user invokes but-for-real, says "for real", "prove it", "double-check your work", "don't just say it should work", or when an agent has made non-trivial edits and needs an adversarial self-review with git diff, request matching, edge-case review, and actual verification.
 ---
 
