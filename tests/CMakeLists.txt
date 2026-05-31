@@ -59,6 +59,8 @@ add_executable(SmatchetTests
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp
+    Core/IconCatalog.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetIconCatalog.cpp"
     Core/SingleClickEditConfig.test.cpp
     Core/AiSseParser.test.cpp
     # autonomous-debugging-no-creds § Slice 4 — verifies the StubAiClient
@@ -326,6 +328,9 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit"
+    # IconCatalog.test.cpp links SmatchetIconCatalog.cpp, which includes the FA6
+    # header + generated catalog (parity with the production SmatchetCoreInterface).
+    "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/IconsFontAwesome6"
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp"
     "${CMAKE_SOURCE_DIR}/Source/Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"

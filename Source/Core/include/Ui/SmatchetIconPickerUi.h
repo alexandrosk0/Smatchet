@@ -1,10 +1,10 @@
 #ifndef SMATCHET_UI_ICON_PICKER_UI_H
 #define SMATCHET_UI_ICON_PICKER_UI_H
 
-// Font-Awesome icon picker for the customizable toolbar. A curated catalog of common
-// FA6 glyphs back both the picker grid and the name-to-glyph lookup performed at
-// render time. The full ~2500-glyph catalog + ImGuiListClipper grid is a deferred
-// enhancement (docs/plans/active/customizable-icon-toolbar.md).
+// Font-Awesome icon picker for the customizable toolbar. The full Font-Awesome 6
+// catalog (generated from the FA header by scripts/dev/gen-fa-catalog.py) backs both
+// the picker grid and the name-to-glyph lookup; the grid is virtualized with
+// ImGuiListClipper so the ~1400-glyph set stays within the frame budget.
 
 #include <string>
 #include <vector>
