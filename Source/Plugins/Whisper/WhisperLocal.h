@@ -7,10 +7,8 @@
 // the Phase E hotkey wiring will call Transcribe from a thread launched via
 // AppController::LaunchBackgroundTask, then post the result back to the UI
 // via MainThreadDispatcher::PostToMainThread.
-//
 // Two compile modes, gated by the new sub-option SMATCHET_WHISPER_LOCAL_BACKEND
 // (see root CMakeLists.txt and Deviations in docs/plans/shipped/whisper-dictation.md):
-//
 //   - SMATCHET_WHISPER_LOCAL_BACKEND=ON  → WhisperLocal.cpp pulls
 //     `whisper.h` from the FetchContent build and links the real
 //     library. Calling LoadModel + Transcribe runs whisper.cpp inference
@@ -19,7 +17,6 @@
 //     compiles a stub that always returns false from LoadModel with
 //     "local backend not built" in `outError`. Banner / mode router code
 //     callers fall back to cloud per § Mode router decision tree.
-//
 // The split keeps Phase C's binary-size + MinGW-build risk gated: shipping
 // the API surface unconditionally lets the ModelDownloader, banner, and
 // Preferences tab land without dragging whisper.cpp + ggml's ~50 MB of code

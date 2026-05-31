@@ -6,7 +6,7 @@ assert-code-unchanged.sh (the safety gate, via --strip). The whole sweep's safet
 this scanner correctly distinguishing comments from `//`-or-`/*` sequences that live inside
 string / char / raw-string literals.
 
-Definitions (match docs/plans/active/reduce-source-comment-bloat.md § Baseline metrics):
+Definitions (match docs/plans/shipped/reduce-source-comment-bloat.md § Baseline metrics):
   - A *comment line* is a full-line comment: the stripped line starts with `//`, `/*`, or `*`
     (the `*` covers continuation lines inside a `/* ... */` block).
   - A *trailing* comment on a code line counts as CODE, never stripped by the mechanical pass

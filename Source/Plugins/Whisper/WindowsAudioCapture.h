@@ -3,7 +3,6 @@
 // WindowsAudioCapture — WASAPI mic capture, 16 kHz mono 16-bit PCM, ring-
 // buffered for caller drain. Phase B addition; first cut targets the Whisper
 // cloud transcription smoke path (whisper.transcribe-once CLI).
-//
 // Threading model:
 //   - Start() spins up an internal capture thread; the call returns immediately.
 //   - The capture thread blocks on a WASAPI event handle and copies new audio
@@ -13,11 +12,9 @@
 //     when to read (typically post-Stop() for offline-style capture, or every
 //     ~50 ms for live-streaming variants in future phases).
 //   - Stop() signals the thread to exit + joins it; idempotent.
-//
 // RAII for every COM object: IMMDeviceEnumerator, IMMDevice, IAudioClient,
 // IAudioCaptureClient. No raw `new` / `delete`. Custom-deleter unique_ptrs
 // keep the destructor / failure paths exception-safe.
-//
 // Failure mode for non-Windows builds: the .cpp is compiled only when the
 // Source/Plugins/Whisper subdirectory is added (SMATCHET_WITH_WHISPER + Windows
 // host). The DX12 / Unreal build keeps SMATCHET_WITH_WHISPER=OFF, so this

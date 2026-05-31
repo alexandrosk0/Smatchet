@@ -894,7 +894,6 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
             // Hardcoded width clipped the language badge when CanonicalName(lang) returned a longer
             // string (e.g. "TypeScript", "Objective-C"). Use the button's text-size + padding for
             // an exact reservation.
-            //
             // Per CodeRabbit follow-up on PR #359 — clamp the right-align math so the cursor never
             // moves LEFT of where SameLine() put it. Without the clamp, narrow tooltips / parent
             // columns (availW < btnW) push the button on top of the language badge.

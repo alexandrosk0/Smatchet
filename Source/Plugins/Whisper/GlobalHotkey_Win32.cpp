@@ -1,7 +1,6 @@
 // GlobalHotkey_Win32 implementation — Win32-only translation unit. The
 // Source/Plugins/Whisper subtree is CMake-conditional + Win32-gated so this file is
 // never visited on non-Windows builds.
-//
 // Thread model:
 //   * Register() spawns a single message-pump thread (`hookThreadMain`).
 //   * That thread:

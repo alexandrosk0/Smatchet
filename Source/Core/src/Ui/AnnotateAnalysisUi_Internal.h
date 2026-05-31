@@ -4,11 +4,9 @@
 //   AnnotateAnalysisUi.cpp, AnnotateAnalysisUi_Config.cpp, AnnotateAnalysisUi_Worker.cpp,
 //   AnnotateAnalysisUi_Launch.cpp, AnnotateAnalysisUi_Modals.cpp,
 //   AnnotateAnalysisUi_Preferences.cpp, AnnotateAnalysisUi_Window.cpp.
-//
 // Do NOT include this from any other translation unit; it pulls in the file-scope
 // `AnnotateRow`, `DetailPack`, `WorkerState` types and the full `AnnotateState`
 // definition, plus the `#define ImGui SmatchetLocalizedImGui` alias.
-//
 // Cross-TU helpers that were previously in an anonymous namespace are exposed
 // inside `namespace AnnotateInternal { ... }` with external linkage so the linker
 // resolves them across the new TUs without ODR collisions against any other
@@ -36,10 +34,8 @@
 
 class AppController;
 
-// ---------------------------------------------------------------------------
 // File-scope types — used by AnnotateAnalysisUi::AnnotateState defined below.
 // Not in an anon namespace so AnnotateState (a nested type) can name them.
-// ---------------------------------------------------------------------------
 
 struct AnnotateRow {
     ParsedCallstackFrame Parsed;

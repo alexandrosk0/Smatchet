@@ -1052,9 +1052,7 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
 
     ImGui::PopID();
 
-    // -------------------------------------------------------------------------
     // Merge-conflict resolution modal (PR-F)
-    // -------------------------------------------------------------------------
     if (d.showConflictResolveModal) {
 
         // Open + size the popup once per trigger.

@@ -2,13 +2,11 @@
 #define SMATCHET_TARGET_STANDALONE_CLI_COMMAND_RUNNER_H
 
 // Standalone CLI front-end for the unified Command System.
-//
 // When Smatchet.exe is invoked with a `cmd <name>` subcommand, this
 // runner short-circuits the GUI boot and talks to a running Smatchet instance
 // over MCP HTTP (default discovery: SMATCHET_MCP_HOST/PORT env, then default
 // port). The full GUI / windowed paths are taken only in normal (non-`cmd`)
 // invocations.
-//
 // Exit codes (stable contract — see docs/plans/active/applied/command-system-plan.md §CLI):
 //   0  ok
 //   2  unknown-command

@@ -1,28 +1,23 @@
 #pragma once
 
 // GlobalHotkey_Win32 — push-to-talk hotkey listener.
-//
 // Two-tier strategy so the hotkey works both when Smatchet is the foreground
 // window and when another app is foreground (the common dictation case —
 // drafting a long-form email in a browser, holding the hotkey, releasing into
 // Smatchet's AI Assistant):
-//
 //   1. `RegisterHotKey` for in-focus use. Cheap, no security prompts, no
 //      global state — the OS dispatches `WM_HOTKEY` to our message-only
 //      window when Smatchet has focus.
 //   2. `SetWindowsHookEx WH_KEYBOARD_LL` for global use. Required to receive
 //      key events while another app is foreground; runs on a dedicated
 //      message-pump thread.
-//
 // Callbacks fire on the hook thread, NOT the UI thread. Callers MUST treat
 // `onPress` / `onRelease` as worker entry points (typical pattern:
 // `AppController::LaunchBackgroundTask` to do anything non-trivial; never
 // touch ImGui state directly).
-//
 // Debounce: the LL hook flag `LLKHF_REPEAT` (auto-repeat) is filtered, and
 // rising-edge detection is enforced by a `pressed_` atomic so synthetic
 // duplicate down-events do not re-fire onPress while the key is still held.
-//
 // RAII: the hook thread is joined on `Unregister` / destruction; `HHOOK` and
 // the registered hotkey atom live behind the same lifetime gate so a Win32
 // failure leaves no leaked OS handles.
@@ -54,7 +49,6 @@ class GlobalHotkey_Win32 {
     /// carries a short human-readable diagnostic ("hotkey already claimed by
     /// another process", "LL hook install failed"). Re-registering while
     /// already registered fails with "hotkey already registered".
-    ///
     /// Callbacks may be empty (`nullptr` / default-constructed) — the
     /// listener will still install but the hook is a no-op. Useful for
     /// "register but disable temporarily" flows.

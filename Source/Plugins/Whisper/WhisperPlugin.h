@@ -2,13 +2,11 @@
 
 // WhisperPlugin — push-to-talk dictation plugin. See
 // docs/plans/shipped/whisper-dictation.md for the full plan.
-//
 // Phase A: shell only. The plugin registers a single `whisper.status` CLI
 // command that reports the static feature flags. No audio capture, no
 // transcription, no UI surface — Phases B (cloud client) / C (local +
 // model download) / D (insertion targets) / E (hotkey + visual cue) layer
 // onto this skeleton without re-plumbing the plugin host contract.
-//
 // Phase E: the plugin owns a `GlobalHotkey_Win32` listener + a
 // `WindowsAudioCapture` instance + a worker-side recording state machine.
 // onPress dispatches capture-start + UI indicator on; onRelease dispatches
@@ -16,7 +14,6 @@
 // callbacks are worker-thread entry points — they post UI-thread state via
 // `AppController::mainThreadDispatcher.PostToMainThread` and never touch
 // ImGui directly.
-//
 // Entire Source/Plugins/Whisper/ subtree is CMake-conditional (Layer 6 gating); the
 // translation unit only exists when SMATCHET_WITH_WHISPER=ON. UI / call-site
 // callers reach the dictation router through IDictationHost, which has a

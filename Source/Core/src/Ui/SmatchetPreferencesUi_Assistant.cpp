@@ -39,40 +39,38 @@
 #include <vector>
 
 void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
-        // ----- Assistant tab — minimal config. -----
-        //
-        // Goal: "select provider from dropdown + press Test connection" Just Works
-        // for LM Studio out of the box. Per-provider sensible defaults are seeded
-        // on provider switch. Field edits commit through MarkPrefsDirty (debounced
-        // ~100 ms save). No explicit Save button — the validator banner + the
-        // Test-connection result line provide all the feedback.
-        //
-        // Static InputText buffers live at function scope across frames + tab
-        // toggles. Re-seeded from `d.cfg.Ai*` on first paint + on provider change.
-        static char s_agentsMdGlobalBuf[1024] = {};
-        static char s_projectAgentsMdBuf[1024] = {};
-        static bool s_agentsBufsSeeded = false;
-        static char s_openAiKeyBuf[1024] = {};
-        static char s_anthropicKeyBuf[1024] = {};
-        static char s_openAiModelBuf[256] = {};
-        static char s_anthropicModelBuf[256] = {};
-        static char s_ollamaModelBuf[256] = {};
-        static char s_baseUrlBuf[512] = {};
-        static char s_ollamaBaseUrlBuf[512] = {};
-        // DeepSeek-specific buffers — same shape as the OpenAI / Anthropic pair.
-        // Sized matching the existing key / model / URL buffers (1024 / 256 / 1024
-        // respectively — the URL buffer doubles the others to accommodate path
-        // suffixes some operators add to their endpoint).
-        static char s_deepseekKeyBuf[1024] = {};
-        static char s_deepseekBaseUrlBuf[1024] = {};
-        static char s_deepseekModelBuf[256] = {};
-        static bool s_aiBufsSeeded = false;
-        static int s_lastSeededProvider = -1;
-        if (!s_agentsBufsSeeded) {
-            s_agentsBufsSeeded = true;
-            std::snprintf(s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf), "%s", d.cfg.AgentsMdGlobalPath.c_str());
-            std::snprintf(s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf), "%s", d.cfg.ProjectAgentsMdPath.c_str());
-        }
+    // ----- Assistant tab — minimal config. -----
+    // Goal: "select provider from dropdown + press Test connection" Just Works
+    // for LM Studio out of the box. Per-provider sensible defaults are seeded
+    // on provider switch. Field edits commit through MarkPrefsDirty (debounced
+    // ~100 ms save). No explicit Save button — the validator banner + the
+    // Test-connection result line provide all the feedback.
+    // Static InputText buffers live at function scope across frames + tab
+    // toggles. Re-seeded from `d.cfg.Ai*` on first paint + on provider change.
+    static char s_agentsMdGlobalBuf[1024] = {};
+    static char s_projectAgentsMdBuf[1024] = {};
+    static bool s_agentsBufsSeeded = false;
+    static char s_openAiKeyBuf[1024] = {};
+    static char s_anthropicKeyBuf[1024] = {};
+    static char s_openAiModelBuf[256] = {};
+    static char s_anthropicModelBuf[256] = {};
+    static char s_ollamaModelBuf[256] = {};
+    static char s_baseUrlBuf[512] = {};
+    static char s_ollamaBaseUrlBuf[512] = {};
+    // DeepSeek-specific buffers — same shape as the OpenAI / Anthropic pair.
+    // Sized matching the existing key / model / URL buffers (1024 / 256 / 1024
+    // respectively — the URL buffer doubles the others to accommodate path
+    // suffixes some operators add to their endpoint).
+    static char s_deepseekKeyBuf[1024] = {};
+    static char s_deepseekBaseUrlBuf[1024] = {};
+    static char s_deepseekModelBuf[256] = {};
+    static bool s_aiBufsSeeded = false;
+    static int s_lastSeededProvider = -1;
+    if (!s_agentsBufsSeeded) {
+        s_agentsBufsSeeded = true;
+        std::snprintf(s_agentsMdGlobalBuf, sizeof(s_agentsMdGlobalBuf), "%s", d.cfg.AgentsMdGlobalPath.c_str());
+        std::snprintf(s_projectAgentsMdBuf, sizeof(s_projectAgentsMdBuf), "%s", d.cfg.ProjectAgentsMdPath.c_str());
+    }
         // Reseed on first paint, on provider switch, or when the Test-connection
         // success callback persisted a fallback default value back into cfg (so
         // the buffer reflects the just-saved value on the next paint).
@@ -392,7 +390,6 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
             ImGui::Spacing();
 
             // --- Per-provider credentials (auto-saved on every edit). ---
-            //
             // Model picker shape: when the provider ships a published catalog
             // (`KnownModels(provider)` non-empty), render a Combo + a collapsing
             // "Custom model ID" header for free-form override. Otherwise (local

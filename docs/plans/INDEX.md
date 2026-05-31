@@ -76,6 +76,7 @@ The table below is **auto-generated** by `scripts/dev/test-plan-index.sh` from t
 | [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | 2026-05-28 | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
 | [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | 2026-05-28 | Plan — Shell-script self-review lint |
 | [`agentic-layer-project-independence`](shipped/agentic-layer-project-independence.md) | 2026-05-29 | Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards |
+| [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | 2026-05-30 | Plan — Reduce source-comment bloat across first-party C++ |
 <!-- END auto-plan-index -->
 
 ### Notes

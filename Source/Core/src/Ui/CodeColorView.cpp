@@ -20,10 +20,7 @@ namespace code_color {
 
 namespace {
 
-// ============================================================================
 // Tag → CodeLang alias map
-// ============================================================================
-//
 // Case-insensitive, alias-rich per docs/plans/active/code-syntax-coloring-and-tooltips.md
 // § Slice 1 step 2. Order doesn't matter; linear-scan lookup against a small
 // constant table (~30 entries) is faster than std::unordered_map for this
@@ -84,10 +81,7 @@ std::string ToLower(const std::string& s) {
     return out;
 }
 
-// ============================================================================
 // Hand-rolled LanguageDefinitions for Python / Bash / Json
-// ============================================================================
-//
 // Same pattern as TextEditor.cpp's Markdown() factory at line 3630 — populate
 // the LD's keyword set + regex strings + comment delimiters, leave mTokenize
 // nullptr so the regex-fallback path drives tokenization. Lazy init via
@@ -219,9 +213,7 @@ const TextEditor::LanguageDefinition& JsonLd() {
     return langDef;
 }
 
-// ============================================================================
 // LD lookup
-// ============================================================================
 
 const TextEditor::LanguageDefinition* LdForLang(CodeLang lang) {
     switch (lang) {
@@ -253,9 +245,7 @@ const TextEditor::LanguageDefinition* LdForLang(CodeLang lang) {
     }
 }
 
-// ============================================================================
 // Tokenizer — single-pass left-to-right over the LD's tables
-// ============================================================================
 
 constexpr std::size_t kInputCap = 256 * 1024; // 256 KiB
 
@@ -407,10 +397,7 @@ void TokenizeWithLd(const char* begin, const char* end, const TextEditor::Langua
     }
 }
 
-// ============================================================================
 // Cache — (content_hash, lang) -> vector<Token>
-// ============================================================================
-//
 // FNV-1a 64-bit hash; collision risk acceptable at this cache size (256 entries
 // FIFO eviction). Slice 3 extends the key with theme_revision.
 
@@ -479,9 +466,7 @@ const std::vector<Token>& TokenizeCached(const char* data, std::size_t len, Code
     return inserted.first->second;
 }
 
-// ============================================================================
 // Render-side palette mapping
-// ============================================================================
 
 ImVec4 PaletteToThemeColor(TokenPalette p) {
     const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
@@ -520,9 +505,7 @@ constexpr ImVec4 kPlainTint(0.95f, 0.85f, 0.6f, 1.0f);
 
 } // namespace
 
-// ============================================================================
 // Public API
-// ============================================================================
 
 CodeLang FromTag(const std::string& tag) {
     const std::string lower = ToLower(tag);

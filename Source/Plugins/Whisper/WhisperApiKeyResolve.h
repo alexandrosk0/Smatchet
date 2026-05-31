@@ -2,12 +2,10 @@
 
 // WhisperApiKeyResolve — pure helper that implements the 5-row API-key fallback
 // decision table from docs/plans/shipped/whisper-dictation.md § API key fallback rule.
-//
 // Pure: no I/O, no globals, no SMATCHET_WITH_WHISPER gate, no third-party deps.
 // The TU lives under Source/Plugins/Whisper/ because the rule is owned by the Whisper
 // feature, but the function is tested by the doctest rig directly (per the
 // pure-helper TU-split recipe in AGENTS.md § Delegation packet).
-//
 // Inputs are the three relevant fields straight off ConfigManager — the caller
 // (WhisperPlugin / WhisperApiClient) is responsible for converting
 // `cfg.AiProviderKind` to its canonical lowercase string ("openai" /
@@ -24,7 +22,6 @@ namespace pure {
 // Returns the OpenAI API key Whisper should use for this transcription. Empty
 // return means "no key available" — caller should surface a "configure
 // Whisper API key" message and refuse to fire the HTTP request.
-//
 // Decision table (mirrors the plan):
 //   1. whisperApiKey set            -> whisperApiKey  (explicit always wins)
 //   2. whisperApiKey empty + aiProvider == "openai" + aiApiKey set
