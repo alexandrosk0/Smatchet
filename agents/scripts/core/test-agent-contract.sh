@@ -194,7 +194,7 @@ fi
 # 9. agent-token-log.py canonical vs .claude/hooks/ copy drift check.
 # -------------------------------------------------------------------------
 # Per process.md 2026-05-19 orchestrator P3 — `link_file()` in
-# scripts/setup-harness.sh short-circuits when destination exists, so an
+# agents/scripts/core/setup-harness.sh short-circuits when destination exists, so an
 # independent copy at `.claude/hooks/agent-token-log.py` (different inode,
 # possibly stale) can silently diverge from the canonical at
 # `agents/_shared/token-tracking/agent-token-log.py`. Edits to the canonical
@@ -210,7 +210,7 @@ if [[ ! -f "$hook_copy" ]]; then
 elif cmp -s "$canonical" "$hook_copy"; then
   check_pass "canonical and hook copy byte-identical"
 else
-  check_fail "DRIFT: $canonical vs $hook_copy differ — run \`cp -f $canonical $hook_copy\` or \`bash scripts/setup-harness.sh claude-code\` (after \`rm $hook_copy\`)"
+  check_fail "DRIFT: $canonical vs $hook_copy differ — run \`cp -f $canonical $hook_copy\` or \`bash agents/scripts/core/setup-harness.sh claude-code\` (after \`rm $hook_copy\`)"
 fi
 
 # -------------------------------------------------------------------------

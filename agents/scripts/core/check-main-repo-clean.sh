@@ -18,7 +18,7 @@
 #   4. Returns 0 always — never blocks the Stop event. Best-effort signal.
 #
 # Manual invocation (anytime, not just on Stop):
-#   bash scripts/dev/check-main-repo-clean.sh
+#   bash agents/scripts/core/check-main-repo-clean.sh
 #
 # Authoritative spec: docs/self-improvement/categories/process.md
 # (2026-05-19 orchestrator P2 — option b).

@@ -1,12 +1,12 @@
-# scripts/dev/smatchet-notify-windows.ps1
+# agents/scripts/core/smatchet-notify-windows.ps1
 # ----------------------------------------------------------------------------
 # Windows native toast notification for smatchet-merge-watcher Phase 4a.
-# Invoked by scripts/dev/smatchet-notify.sh on Windows when the Smatchet
+# Invoked by agents/scripts/core/smatchet-notify.sh on Windows when the Smatchet
 # in-app toast endpoint is unavailable (Smatchet closed, or Phase 4b not
 # shipped yet).
 #
 # Requires the BurntToast module. One-shot opt-in install + self-test:
-#   powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-notify-setup.ps1
+#   powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-notify-setup.ps1
 #
 # Exits 0 on toast dispatched; 1 if BurntToast missing or toast call failed.
 #
@@ -28,10 +28,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 # BurntToast presence check -- no auto-install (user opt-in only). The one-shot
-# opt-in installer is scripts/dev/merge-watcher-notify-setup.ps1.
+# opt-in installer is agents/scripts/core/merge-watcher-notify-setup.ps1.
 $module = Get-Module -ListAvailable -Name BurntToast
 if (-not $module) {
-    Write-Error "BurntToast module not installed. Run the one-shot setup: powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-notify-setup.ps1  (or: Install-Module BurntToast -Scope CurrentUser)"
+    Write-Error "BurntToast module not installed. Run the one-shot setup: powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-notify-setup.ps1  (or: Install-Module BurntToast -Scope CurrentUser)"
     exit 1
 }
 

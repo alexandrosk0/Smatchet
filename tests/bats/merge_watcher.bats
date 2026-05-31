@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # tests/bats/merge_watcher.bats
 # ----------------------------------------------------------------------------
-# Bats tests for scripts/dev/merge-watcher-cli.py + merge-watcher.py.
+# Bats tests for agents/scripts/core/merge-watcher-cli.py + merge-watcher.py.
 #
 # Phase 1 of docs/design/smatchet-merge-watcher.md. Covers:
 #   - register / unregister / status / list CRUD
@@ -21,7 +21,7 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
+    export SCRIPTS_DIR="$REPO_ROOT/agents/scripts/core"
 
     # Isolate per-user watcher state in a temp sandbox. watcher_root() in
     # merge-watcher-cli.py reads LOCALAPPDATA on Windows (os.name == "nt") and
@@ -68,7 +68,7 @@ watch_cli() {
 @test "_parse_gate_carry extracts nudge_head/stale_head/stale_streak; None when absent" {
     run python - <<'PY'
 import importlib.util, os, sys
-sd = os.path.join(os.environ["REPO_ROOT"], "scripts", "dev")
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
 sys.path.insert(0, sd)
 spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
@@ -90,7 +90,7 @@ PY
     # clone_path via its own reader, bump, re-read, assert the round-trip.
     run python - <<'PY'
 import importlib.util, os, sys
-sd = os.path.join(os.environ["REPO_ROOT"], "scripts", "dev")
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
 sys.path.insert(0, sd)
 spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)

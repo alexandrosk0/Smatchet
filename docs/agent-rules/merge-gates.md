@@ -2,7 +2,7 @@
 
 > Lifted from [`AGENTS.md`](../../AGENTS.md) § Merge gates per [`docs/plans/active/agents-md-reduction.md`](../plans/active/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the three gates + the override / scope boundaries so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
 
-Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` (the host daemon per [`docs/plans/shipped/smatchet-merge-watcher.md`](../plans/shipped/smatchet-merge-watcher.md)) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`scripts/dev/merge-gates.graphql`):
+Before the orchestrator, `git-janitor`, OR `smatchet-merge-watcher` (the host daemon per [`docs/plans/shipped/smatchet-merge-watcher.md`](../plans/shipped/smatchet-merge-watcher.md)) squash-merges a PR, it polls three conditions via one `gh api graphql` call (`agents/scripts/core/merge-gates.graphql`):
 
 1. **CI** — every required check (`isRequired(pullRequestNumber: $pr) == true`) on `pullRequest.commits(last:1).commit.statusCheckRollup.contexts` must reach a passing terminal state.
    - **CheckRun**: pass = `status == "COMPLETED"` AND `conclusion in {SUCCESS, NEUTRAL, SKIPPED, STALE}`. Block = `conclusion in {FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE}`. Any non-COMPLETED status counts as pending.
@@ -79,7 +79,7 @@ Conflicts, missing required checks, and branch-protection rules are enforced by 
 - `MERGE_GATES_POLL_INTERVAL` — seconds between polls (default 60).
 - `MERGE_GATES_MAX_POLLS` — max poll count (default 60).
 - `MERGE_GATES_TIMEOUT_SECONDS` — wall-clock budget (default 3600).
-- `MERGE_GATES_QUERY_FILE` — override GraphQL document path (default `scripts/dev/merge-gates.graphql`).
+- `MERGE_GATES_QUERY_FILE` — override GraphQL document path (default `agents/scripts/core/merge-gates.graphql`).
 - `MERGE_GATES_CR_INSTALLED` — override the auto-detected CodeRabbit-installed flag (`true` / `false`). Auto-detection probes `repos/<owner>/<repo>/contents/.coderabbit.yaml` (and `.yml`); set explicitly when the config lives outside the repo or when running against a fork that has not yet enabled CR.
 - `MERGE_GATES_CR_GRACE_POLLS` — polls to wait for CR to start (a review or `CodeRabbit` SUCCESS status) before falling through `NONE` to pass (default 10). Only consulted when `MERGE_GATES_CR_INSTALLED` is true / auto-detected as installed.
 - `MERGE_GATES_STALE_REREVIEW_POLLS` — consecutive blocking-STALE polls on the same HEAD before the poller auto-posts `@coderabbitai review` once per HEAD (default 5). Also gates the **CR=NONE early-nudge** (which fires on the *first* blocking NONE poll per HEAD, no streak required). `0` disables both auto-nudges. Both share one once-per-HEAD guard so at most one `@coderabbitai review` is posted per head SHA.
@@ -87,4 +87,4 @@ Conflicts, missing required checks, and branch-protection rules are enforced by 
 
 **Scope boundary**: the auto-`gh pr ready` + auto-merge path applies to the orchestrator, `git-janitor`, and `smatchet-merge-watcher`. No other caller has merge authority. The deleted spawned-child agents (`handoff-implementer`, `pr-iterator`) are gone per v1 of `docs/plans/shipped/github-tracker-backend.md`; the watcher runs as a host daemon, not a per-PR subprocess, so the spawned-child draft-only carve-out no longer applies.
 
-Implementation: `scripts/dev/merge-gates.sh` (sourceable + CLI), `scripts/dev/merge-gates-prompt.sh` (`ask_user_question` shim), `scripts/dev/merge-gates.graphql`. Tests: `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json`.
+Implementation: `agents/scripts/core/merge-gates.sh` (sourceable + CLI), `agents/scripts/core/merge-gates-prompt.sh` (`ask_user_question` shim), `agents/scripts/core/merge-gates.graphql`. Tests: `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json`.

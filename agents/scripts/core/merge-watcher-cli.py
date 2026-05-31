@@ -5,7 +5,7 @@ merge-watcher-cli — register / unregister / status / list subcommands.
 Phase 1 of `docs/plans/shipped/smatchet-merge-watcher.md`. Per-user registry at
 `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` (cross-clone). The
 companion daemon (`merge-watcher.py`) polls every registered PR via
-`scripts/dev/merge-gates.sh`.
+`agents/scripts/core/merge-gates.sh`.
 
 Phase-1 scope: registry CRUD only. No auto-merge (Phase 2), no triage
 (Phase 3), no notify (Phase 4). The daemon prints per-PR state to stdout;

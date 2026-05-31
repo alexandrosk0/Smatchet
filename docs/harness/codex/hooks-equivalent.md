@@ -52,6 +52,6 @@ the CI gate catches anything that slipped through.
 
 Codex's hook system (codex.toml / task.json mechanisms) isn't stable enough
 across Codex versions to ship a checked-in template. Smatchet's
-`scripts/setup-harness.sh codex` deliberately does NOT copy hook templates —
+`agents/scripts/core/setup-harness.sh codex` deliberately does NOT copy hook templates —
 it only emits this guidance file. Pre-commit hook is the recommended path
 because git enforces it regardless of which agent harness ran the change.

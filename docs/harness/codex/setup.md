@@ -10,7 +10,7 @@ Per the [agents.md spec](https://agents.md/), this layout is the entire adapter.
 ## Verify after clone
 
 ```bash
-bash scripts/setup-harness.sh codex
+bash agents/scripts/core/setup-harness.sh codex
 ```
 
 The script prints a confirmation and counts the agent files. It writes nothing — `.codex/` is gitignored and never created.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/dev/merge-gates.sh
+# agents/scripts/core/merge-gates.sh
 # ----------------------------------------------------------------------------
 # Merge-gates poller for the orchestrator + git-janitor ship-loop.
 #
@@ -28,10 +28,10 @@
 # (CI downgrades) / do NOT block the CR gate (cr-out-of-band).
 #
 # Usage:
-#   source scripts/dev/merge-gates.sh
+#   source agents/scripts/core/merge-gates.sh
 #   poll_merge_gates <owner> <repo> <pr_number>
 # OR:
-#   scripts/dev/merge-gates.sh <owner> <repo> <pr_number>
+#   agents/scripts/core/merge-gates.sh <owner> <repo> <pr_number>
 #
 # Env knobs:
 #   ORCH_USER                    — orchestrator GitHub login (required)
@@ -82,7 +82,7 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
 if [ -f "$SCRIPT_DIR/merge-gates-prompt.sh" ]; then
-    # shellcheck source=scripts/dev/merge-gates-prompt.sh
+    # shellcheck source=agents/scripts/core/merge-gates-prompt.sh
     source "$SCRIPT_DIR/merge-gates-prompt.sh"
 fi
 

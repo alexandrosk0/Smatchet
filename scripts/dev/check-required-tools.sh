@@ -23,7 +23,7 @@
 # Exit 0 when every REQUIRED tool resolves. Exit 1 on any missing required tool.
 # Optional tools (currently: opencppcoverage) print a WARN line but don't fail.
 #
-# Wired as the first step of `scripts/setup-harness.sh` (claude-code path) so
+# Wired as the first step of `agents/scripts/core/setup-harness.sh` (claude-code path) so
 # the absence fires at clone time. Also safe to invoke ad-hoc:
 #
 #   bash scripts/dev/check-required-tools.sh

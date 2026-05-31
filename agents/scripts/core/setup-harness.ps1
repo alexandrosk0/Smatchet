@@ -20,12 +20,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Set-Location (Join-Path $PSScriptRoot '..')
+Set-Location (Join-Path $PSScriptRoot '..\..\..')
 $Root = (Get-Location).Path
 
 if (-not $Harness -or $Harness -in @('-h', '--help', '/?')) {
     Write-Host @'
-Usage: pwsh scripts/setup-harness.ps1 <harness>
+Usage: pwsh agents/scripts/core/setup-harness.ps1 <harness>
 
 Harnesses:
   claude-code   Generate .claude/ with junctions/symlinks into agents/ +

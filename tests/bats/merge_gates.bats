@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # tests/bats/merge_gates.bats
 # ----------------------------------------------------------------------------
-# Bats tests for scripts/dev/merge-gates.sh — poll_merge_gates + helpers.
+# Bats tests for agents/scripts/core/merge-gates.sh — poll_merge_gates + helpers.
 #
 # Stubs `gh` on PATH; reads fixtures from tests/fixtures/merge_gates_*.json;
 # mutates fixtures in-flight via jq (`fixture_override` helper) — same
@@ -14,7 +14,7 @@ setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
     export FIXTURES_DIR="$REPO_ROOT/tests/fixtures"
-    export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
+    export SCRIPTS_DIR="$REPO_ROOT/agents/scripts/core"
 
     # Standard test env
     export ORCH_USER="alexkonstantonis"
@@ -123,7 +123,7 @@ STUB
     export PATH="$STUB_BIN_DIR:$PATH"
 
     # Source SUT
-    # shellcheck source=../../scripts/dev/merge-gates.sh
+    # shellcheck source=../../agents/scripts/core/merge-gates.sh
     source "$SCRIPTS_DIR/merge-gates.sh"
 }
 

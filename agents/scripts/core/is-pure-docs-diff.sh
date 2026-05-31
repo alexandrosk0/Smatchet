@@ -15,7 +15,7 @@
 # Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 2
 #
 # Usage:
-#   bash scripts/dev/is-pure-docs-diff.sh [base-branch]   # default: develop
+#   bash agents/scripts/core/is-pure-docs-diff.sh [base-branch]   # default: develop
 
 set -euo pipefail
 
@@ -44,7 +44,7 @@ fi
 # Root *.md restricted to uppercase-letter-and-underscore-only filenames so
 # the discriminator stays tight (README.md, CONTEXT.md, CLAUDE.md, BUILD.md
 # all match; lowercase foo.md does not — those don't exist at repo root today).
-allow='^(docs/|backlog/|AGENTS\.md$|[A-Z][A-Z_]*\.md$)'
+allow='^(docs/|backlog/|agents/scripts/|AGENTS\.md$|[A-Z][A-Z_]*\.md$)'
 
 if printf '%s\n' "$files" | grep -qvE -- "$allow"; then
     exit 1

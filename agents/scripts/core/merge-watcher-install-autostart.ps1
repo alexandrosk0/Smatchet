@@ -1,4 +1,4 @@
-# scripts/dev/merge-watcher-install-autostart.ps1
+# agents/scripts/core/merge-watcher-install-autostart.ps1
 # ----------------------------------------------------------------------------
 # Register a Windows Scheduled Task that starts `merge-watcher.py daemon` at
 # user login. Phase 4c of `docs/plans/shipped/smatchet-merge-watcher.md`.
@@ -11,7 +11,7 @@
 #   %LOCALAPPDATA%\Smatchet\merge-watch\daemon.log
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-install-autostart.ps1
+#   powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-install-autostart.ps1
 #
 # Optional parameters:
 #   -PollInterval <seconds>  Override MERGE_WATCH_POLL_INTERVAL (default 60).
@@ -29,9 +29,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Resolve repo root from script location (this file lives at
-# <repo>/scripts/dev/merge-watcher-install-autostart.ps1).
+# <repo>/agents/scripts/core/merge-watcher-install-autostart.ps1).
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
+$repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $scriptDir))
 $daemonScript = Join-Path $scriptDir "merge-watcher.py"
 
 if (-not (Test-Path $daemonScript)) {

@@ -4,7 +4,7 @@ merge-watcher — foreground daemon that polls every registered PR.
 
 Phase 1 of `docs/plans/shipped/smatchet-merge-watcher.md`. Reads the per-user
 registry at `%LOCALAPPDATA%/Smatchet/merge-watch/active.json` (managed
-by `merge-watcher-cli.py`), runs `scripts/dev/merge-gates.sh` for each
+by `merge-watcher-cli.py`), runs `agents/scripts/core/merge-gates.sh` for each
 entry per the configured interval, writes per-PR state to
 `%LOCALAPPDATA%/Smatchet/merge-watch/state/<pr>.json`, emits structured
 stdout per poll cycle.
@@ -597,7 +597,7 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
     2. The eventual REST squash-merge returns HTTP 405 "Pull Request is still
        a draft" if the PR somehow remains draft at merge time.
 
-    Per H2 (`scripts/dev/merge-gates.sh:gh_pr_ready_idempotent`): mirror the
+    Per H2 (`agents/scripts/core/merge-gates.sh:gh_pr_ready_idempotent`): mirror the
     bash positive-check fallback so the Python version is equally robust to
     `gh` wording changes / locale variation. Returns True if the PR is
     observably non-draft after the call (whether via successful flip OR
@@ -1935,7 +1935,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="merge-watcher",
         description=(
             "Foreground daemon for smatchet-merge-watcher Phase 1. "
-            "Polls every registered PR via scripts/dev/merge-gates.sh + writes per-PR state."
+            "Polls every registered PR via agents/scripts/core/merge-gates.sh + writes per-PR state."
         ),
     )
     sub = p.add_subparsers(dest="cmd", required=True)

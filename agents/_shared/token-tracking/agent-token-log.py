@@ -9,7 +9,7 @@ Output:
     agent's final report carries a `## Session context append` section.
     Lifecycle: the live scratchpad is rotated to
     `.session-context.archive/<ts>-<sid8>.md` by the SessionStart hook
-    (`scripts/clear-session-context.sh`); recall via the `scratchpad-recall`
+    (`agents/scripts/core/clear-session-context.sh`); recall via the `scratchpad-recall`
     skill. See AGENTS.md § Session scratchpad protocol.
 
 Silent on success; warnings to stderr on parse failure. Never blocks the user.

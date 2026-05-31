@@ -37,7 +37,7 @@ Fields:
 
 ### Hook
 
-`agents/_shared/token-tracking/agent-token-log.py` is the canonical Python hook source. `scripts/setup-harness.sh claude-code` hardlinks it to `.claude/hooks/agent-token-log.py` so canonical edits propagate without a sync step.
+`agents/_shared/token-tracking/agent-token-log.py` is the canonical Python hook source. `agents/scripts/core/setup-harness.sh claude-code` hardlinks it to `.claude/hooks/agent-token-log.py` so canonical edits propagate without a sync step.
 
 Wired to `SubagentStop` event with `matcher: ""` (all subagents) in `.claude/settings.json`:
 
@@ -72,11 +72,11 @@ Add `.claude/.agent-tokens.jsonl` — per-machine usage data, not for the repo.
 
 `.claude/skills/agent-tokens/SKILL.md` — Claude Code project-scoped skill.
 
-When the user types `/agent-tokens` (optionally `/agent-tokens --all` or `/agent-tokens --since 7d`), the skill runs `scripts/agent-tokens-report.py` and emits its stdout into chat.
+When the user types `/agent-tokens` (optionally `/agent-tokens --all` or `/agent-tokens --since 7d`), the skill runs `agents/scripts/core/agent-tokens-report.py` and emits its stdout into chat.
 
 ### Report script
 
-`scripts/agent-tokens-report.py` — pure Python, no `jq` dependency. Inputs:
+`agents/scripts/core/agent-tokens-report.py` — pure Python, no `jq` dependency. Inputs:
 
 - `--all` — lifetime (default: current session only, matched by latest `session` id in the JSONL).
 - `--since <N>{h|d|w}` — time-bounded window (e.g. `--since 24h`).
@@ -97,7 +97,7 @@ Logic:
    | `haiku_3_5` | Haiku 3.5 | $0.80 | $1.00 | $0.08 | $4 |
    | `haiku_3` | Haiku 3 | $0.25 | $0.30 | $0.03 | $1.25 |
 
-   Pricing as of 2026-05; update both `scripts/agent-tokens-report.py` and `agents/_shared/token-tracking/agents-statusline.py`. Document review cadence quarterly.
+   Pricing as of 2026-05; update both `agents/scripts/core/agent-tokens-report.py` and `agents/_shared/token-tracking/agents-statusline.py`. Document review cadence quarterly.
 5. Emit a fixed-width table:
 
    ```
@@ -139,13 +139,13 @@ Caveats: statusline runs on every refresh — keep parsing under 100ms. Tail the
 - `agents/_shared/token-tracking/agents-statusline.py` — canonical statusline source (linked into `.claude/hooks/agents-statusline.py`).
 - `agents/_shared/token-tracking/SKILL.md` — canonical slash-skill source (linked into `.claude/skills/agent-tokens/SKILL.md`).
 - `agents/_shared/token-tracking/README.md` — README for the canonical dir.
-- `scripts/agent-tokens-report.py` — harness-agnostic CLI report. Lives in `scripts/`, invoked the same way from any harness.
+- `agents/scripts/core/agent-tokens-report.py` — harness-agnostic CLI report. Lives in `agents/scripts/core/`, invoked the same way from any harness.
 
 ## Files modified
 
 - `.claude/settings.json` — `SubagentStop` hook entry pointing at `.claude/hooks/agent-token-log.py` (hardlinked to canonical).
 - `.gitignore` — ignore `.claude/.agent-tokens.jsonl`.
-- `scripts/setup-harness.sh` — links the canonical `agents/_shared/token-tracking/` tree into `.claude/hooks/` + `.claude/skills/agent-tokens/` so the harness picks up canonical edits with no sync step.
+- `agents/scripts/core/setup-harness.sh` — links the canonical `agents/_shared/token-tracking/` tree into `.claude/hooks/` + `.claude/skills/agent-tokens/` so the harness picks up canonical edits with no sync step.
 - `AGENTS.md` — § Agent file locations documents the dual-location convention for both `agents/*.md` and `agents/_shared/`.
 
 ## Migration / commit order
@@ -165,9 +165,9 @@ cat .claude/.agent-tokens.jsonl | jq .   # well-formed JSON per line
 wc -l .claude/.agent-tokens.jsonl        # ≥ 1 after first subagent call
 
 # D
-python scripts/agent-tokens-report.py                 # session report
-python scripts/agent-tokens-report.py --all           # lifetime report
-python scripts/agent-tokens-report.py --since 24h     # time window
+python agents/scripts/core/agent-tokens-report.py                 # session report
+python agents/scripts/core/agent-tokens-report.py --all           # lifetime report
+python agents/scripts/core/agent-tokens-report.py --since 24h     # time window
 
 # C
 # (visual — restart Claude Code or trigger a refresh)

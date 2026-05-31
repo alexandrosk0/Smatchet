@@ -6,21 +6,21 @@
 # file sees updates within ~1s. Format mirrors `[HH:MM:SS] <phase>: <message>`.
 #
 # Usage:
-#   bash scripts/dev/agent-progress.sh "<phase>: <one-line message>"
-#   bash scripts/dev/agent-progress.sh start "cutting feat/foo branch off develop"
-#   bash scripts/dev/agent-progress.sh gate "ninja-test-msvc building"
+#   bash agents/scripts/core/agent-progress.sh "<phase>: <one-line message>"
+#   bash agents/scripts/core/agent-progress.sh start "cutting feat/foo branch off develop"
+#   bash agents/scripts/core/agent-progress.sh gate "ninja-test-msvc building"
 #
 # Phase conventions (suggested, not enforced):
 #   start | lock | design | code | test | gate | commit | push | pr | end
 #
-# Companion: scripts/dev/tail-agent.sh consumes this file when present.
+# Companion: agents/scripts/core/tail-agent.sh consumes this file when present.
 
 set -uo pipefail
 
 # Single-string form: "phase: text". Two-arg form: phase text.
 if [ "$#" -eq 0 ]; then
-    echo "usage: bash scripts/dev/agent-progress.sh <phase>: <text>" >&2
-    echo "   or: bash scripts/dev/agent-progress.sh <phase> <text>" >&2
+    echo "usage: bash agents/scripts/core/agent-progress.sh <phase>: <text>" >&2
+    echo "   or: bash agents/scripts/core/agent-progress.sh <phase> <text>" >&2
     exit 2
 fi
 

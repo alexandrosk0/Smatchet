@@ -44,7 +44,7 @@ files never hardcode a project literal, so the boundary can't silently rot.
 
 1. Copy the PORTABLE tree into the new repo (preserve `agents/{core,_shared}/`, `docs/{agent-rules,harness}/`, the self-improvement framework files, the generic scripts, `AGENTS.md`).
 2. Write a fresh `project.config.json` (validate against `project.config.schema.json`).
-3. Run `scripts/setup-harness.sh <harness>` to regenerate flat agent-discovery links.
+3. Run `agents/scripts/core/setup-harness.sh <harness>` to regenerate flat agent-discovery links.
 4. Author the new project's `agents/project/` subsystem agents.
 5. Run `test-portable-purity.sh` — must be green (no project literals leaked into portable dirs).
 6. Verify agent discovery on each supported harness (Claude Code + Codex).
@@ -56,7 +56,7 @@ Hardcoded paths that later phases must update (so moves don't break machine cons
 | Consumer | Path it hardcodes | Phase |
 |---|---|---|
 | `agents/scripts/core/test-agent-contract.sh` | `agents/*.md` loop **and** `agents/$a.md` named-agent paths | B |
-| `scripts/setup-harness.sh` | `link_dir ".claude/agents" "agents"`; codex/cursor `agents/*.md` counters | B |
+| `agents/scripts/core/setup-harness.sh` | `link_dir ".claude/agents" "agents"`; codex/cursor `agents/*.md` counters | B |
 | `AGENTS.md` | delegation tables naming `agents/<name>.md` | B |
 | `agents/scripts/core/test-backlog-counts.sh` | `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`, `docs/self-improvement/categories` (lines 32-33, 40-49) | C |
 | `.gitattributes` | `docs/self-improvement/categories/applied.md merge=union` (line 55) | C |

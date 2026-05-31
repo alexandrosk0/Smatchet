@@ -3,9 +3,9 @@
 Generated locally at `.cursor/rules/agents.mdc` by:
 
 ```bash
-bash scripts/setup-harness.sh cursor
+bash agents/scripts/core/setup-harness.sh cursor
 # or, on Windows-native PowerShell:
-pwsh scripts/setup-harness.ps1 cursor
+pwsh agents/scripts/core/setup-harness.ps1 cursor
 ```
 
 Idempotent. The script never overwrites a user-modified rule file.
@@ -27,7 +27,7 @@ That's the whole adapter — Cursor's built-in file-search + the rule's pointer 
 
 ## Refreshing after a `git pull`
 
-Re-run `bash scripts/setup-harness.sh cursor`. The script copies the template only if you haven't locally modified `.cursor/rules/agents.mdc`.
+Re-run `bash agents/scripts/core/setup-harness.sh cursor`. The script copies the template only if you haven't locally modified `.cursor/rules/agents.mdc`.
 
 ## Removing the adapter
 

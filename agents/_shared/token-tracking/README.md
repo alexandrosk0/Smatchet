@@ -2,7 +2,7 @@
 
 Canonical sources for the agent token-tracking infrastructure (Layers B / D / C from [`docs/guides/agent-token-tracking.md`](../../../docs/guides/agent-token-tracking.md)).
 
-These files are **harness-agnostic in intent**: the Python logic, JSONL schema, pricing table, and CLI report all work without any Claude-Code-specific assumption. The wiring INTO a specific harness is handled by `bash scripts/setup-harness.sh <name>`, which junctions / symlinks the canonical tree into the harness's expected location.
+These files are **harness-agnostic in intent**: the Python logic, JSONL schema, pricing table, and CLI report all work without any Claude-Code-specific assumption. The wiring INTO a specific harness is handled by `bash agents/scripts/core/setup-harness.sh <name>`, which junctions / symlinks the canonical tree into the harness's expected location.
 
 ## Files
 
@@ -10,9 +10,9 @@ These files are **harness-agnostic in intent**: the Python logic, JSONL schema, 
 |---|---|
 | `agent-token-log.py` | Reads stdin JSON describing a finished subagent call (`session_id`, `subagent_type`/`subagent_name`/`agent`, `transcript_path`). Parses the transcript JSONL, sums `input_tokens` / `output_tokens` / `cache_*_tokens` across assistant messages, appends one JSONL row to `$CLAUDE_PROJECT_DIR/.claude/.agent-tokens.jsonl`. |
 | `agents-statusline.py` | Tails the JSONL, renders a one-line statusline badge with the top-N agents for the current session and the running cost. Optionally invokes caveman's statusline first to concatenate both badges. |
-| `SKILL.md` | Slash-skill definition. `/agent-tokens [--all|--since 24h]` shells out to `scripts/agent-tokens-report.py` and emits the report into chat. |
+| `SKILL.md` | Slash-skill definition. `/agent-tokens [--all|--since 24h]` shells out to `agents/scripts/core/agent-tokens-report.py` and emits the report into chat. |
 
-`scripts/agent-tokens-report.py` is harness-agnostic and lives in `scripts/`, invoked the same way from any harness.
+`agents/scripts/core/agent-tokens-report.py` is harness-agnostic and lives in `scripts/`, invoked the same way from any harness.
 
 ## Wiring for other harnesses
 
@@ -21,7 +21,7 @@ The hook + statusline + skill names + paths are Claude-Code conventions, but the
 - **Hook contract**: any harness that fires an event when a delegated agent finishes can pipe `{"session_id":..., "subagent_type":..., "transcript_path":...}` to `agent-token-log.py` and get a JSONL row.
 - **Transcript format**: assumes Anthropic-style transcripts where assistant messages carry a `usage` dict with `input_tokens` / `output_tokens` / `cache_creation_input_tokens` / `cache_read_input_tokens`. Harnesses using non-Anthropic transcripts need a translator.
 - **Statusline**: anything that runs a shell command for a status badge can invoke `agents-statusline.py` directly.
-- **Report**: `scripts/agent-tokens-report.py` is just a CLI; bind it to whatever skill / shortcut your harness uses.
+- **Report**: `agents/scripts/core/agent-tokens-report.py` is just a CLI; bind it to whatever skill / shortcut your harness uses.
 
 See `AGENTS.md` § Harness adapter for the wider mapping.
 

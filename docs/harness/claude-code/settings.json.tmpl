@@ -6,17 +6,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/clear-session-context.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/clear-session-context.sh\"",
             "timeout": 3000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/dev/vexp-strip-agents-md.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/vexp-strip-agents-md.sh\"",
             "timeout": 3000
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/dev/memory-drain-nudge.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/memory-drain-nudge.sh\"",
             "timeout": 3000
           }
         ]
@@ -100,7 +100,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/dev/check-main-repo-clean.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/check-main-repo-clean.sh\"",
             "timeout": 5000
           }
         ]

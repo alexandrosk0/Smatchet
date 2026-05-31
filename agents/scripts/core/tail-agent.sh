@@ -9,23 +9,23 @@
 # `git status` + `git log` + `git diff --stat` snapshots in a watch loop.
 #
 # Usage:
-#   bash scripts/dev/tail-agent.sh                 # watch the most-recent worktree
-#   bash scripts/dev/tail-agent.sh <idPrefix>      # watch a specific agent (prefix-match)
-#   bash scripts/dev/tail-agent.sh --list          # list all worktree-agents (newest first)
-#   bash scripts/dev/tail-agent.sh --diff [id]     # also show git diff --stat per tick
-#   bash scripts/dev/tail-agent.sh --once [id]     # print state once + exit (no watch)
-#   bash scripts/dev/tail-agent.sh --interval N    # tick every N seconds (default 3)
-#   bash scripts/dev/tail-agent.sh --files [id]    # show files-modified-recently instead
+#   bash agents/scripts/core/tail-agent.sh                 # watch the most-recent worktree
+#   bash agents/scripts/core/tail-agent.sh <idPrefix>      # watch a specific agent (prefix-match)
+#   bash agents/scripts/core/tail-agent.sh --list          # list all worktree-agents (newest first)
+#   bash agents/scripts/core/tail-agent.sh --diff [id]     # also show git diff --stat per tick
+#   bash agents/scripts/core/tail-agent.sh --once [id]     # print state once + exit (no watch)
+#   bash agents/scripts/core/tail-agent.sh --interval N    # tick every N seconds (default 3)
+#   bash agents/scripts/core/tail-agent.sh --files [id]    # show files-modified-recently instead
 #
 # Examples:
-#   bash scripts/dev/tail-agent.sh -l
-#   bash scripts/dev/tail-agent.sh ade88dbd
-#   bash scripts/dev/tail-agent.sh --diff --interval 5
+#   bash agents/scripts/core/tail-agent.sh -l
+#   bash agents/scripts/core/tail-agent.sh ade88dbd
+#   bash agents/scripts/core/tail-agent.sh --diff --interval 5
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 WORKTREES_DIR="$REPO_ROOT/.claude/worktrees"
 
 # ---------------------------------------------------------------------------

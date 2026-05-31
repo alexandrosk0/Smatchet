@@ -7,11 +7,11 @@
 # gap in the post-ship protocol (AGENTS.md § Autonomous ship-loop). Idempotent:
 # `merge-watch register` no-ops if the PR is already registered.
 #
-# Copied into .claude/hooks/ by `bash scripts/setup-harness.sh claude-code` and
+# Copied into .claude/hooks/ by `bash agents/scripts/core/setup-harness.sh claude-code` and
 # wired as a PostToolUse(Bash) hook by docs/harness/claude-code/settings.json.tmpl.
 #
 # Behaviour: no-op for any Bash command that isn't `gh pr create`; no-op when no
-# PR number can be parsed; no-op if scripts/dev/merge-watcher-cli.py or python is
+# PR number can be parsed; no-op if agents/scripts/core/merge-watcher-cli.py or python is
 # absent. Always exits 0 — never blocks the turn. jq is NOT assumed on PATH.
 
 set -uo pipefail
@@ -31,7 +31,7 @@ pr="$(printf '%s' "$input" | grep -oE 'pull/[0-9]+' | grep -oE '[0-9]+' | head -
 proj="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 [ -n "$proj" ] && cd "$proj" 2>/dev/null || exit 0
 
-cli="scripts/dev/merge-watcher-cli.py"
+cli="agents/scripts/core/merge-watcher-cli.py"
 [ -f "$cli" ] || exit 0
 command -v python >/dev/null 2>&1 || exit 0
 

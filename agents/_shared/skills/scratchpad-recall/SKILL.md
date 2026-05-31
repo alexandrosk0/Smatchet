@@ -1,6 +1,6 @@
 ---
 name: scratchpad-recall
-description: Recall facts from prior session scratchpads — list archives, show a specific archive, or grep across all archives. Use when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question. Archives live at `.session-context.archive/` and are written by `scripts/clear-session-context.sh` on SessionStart. Read-only — never writes.
+description: Recall facts from prior session scratchpads — list archives, show a specific archive, or grep across all archives. Use when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question. Archives live at `.session-context.archive/` and are written by `agents/scripts/core/clear-session-context.sh` on SessionStart. Read-only — never writes.
 version: 1
 ---
 
@@ -76,5 +76,5 @@ From .session-context.archive/2026-05-14T08-22-13Z-a1b2c3d4.md:
 ## See also
 
 - AGENTS.md § Session scratchpad protocol — full lifecycle.
-- `scripts/clear-session-context.sh` — the rotation/archive script.
+- `agents/scripts/core/clear-session-context.sh` — the rotation/archive script.
 - `agents/_shared/token-tracking/agent-token-log.py` — the SubagentStop appender.

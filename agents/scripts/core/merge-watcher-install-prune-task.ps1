@@ -1,4 +1,4 @@
-# scripts/dev/merge-watcher-install-prune-task.ps1
+# agents/scripts/core/merge-watcher-install-prune-task.ps1
 # ----------------------------------------------------------------------------
 # Register a Windows Scheduled Task that runs `merge-watch prune` daily, so the
 # watcher registry self-heals even across daemon-down windows.
@@ -14,7 +14,7 @@
 # schedule take effect on next run.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts/dev/merge-watcher-install-prune-task.ps1
+#   powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-install-prune-task.ps1
 #
 # Optional parameters:
 #   -At <HH:mm>        Daily run time (default 09:15).
@@ -41,9 +41,9 @@ if ($At -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {
 }
 
 # Resolve repo root from script location (this file lives at
-# <repo>/scripts/dev/merge-watcher-install-prune-task.ps1).
+# <repo>/agents/scripts/core/merge-watcher-install-prune-task.ps1).
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
+$repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $scriptDir))
 $cliScript = Join-Path $scriptDir "merge-watcher-cli.py"
 
 if (-not (Test-Path $cliScript)) {
@@ -111,7 +111,7 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -RunLevel Limited `
-    -Description "Smatchet merge-watcher registry janitor -- daily `merge-watch prune` to unregister merged/closed PRs. See scripts/dev/merge-watcher-cli.py." | Out-Null
+    -Description "Smatchet merge-watcher registry janitor -- daily `merge-watch prune` to unregister merged/closed PRs. See agents/scripts/core/merge-watcher-cli.py." | Out-Null
 
 Write-Host ""
 Write-Host "[OK] Scheduled Task '$TaskName' registered." -ForegroundColor Green
