@@ -51,6 +51,18 @@ setup() {
     [[ "$output" == *"Passed: 0  Failed: 1"* ]]
 }
 
+@test "rule 1 (deps): does NOT fire on graceful '|| fallback' / if-while-condition shapes" {
+    # Relaxation lock-in (follow-up to PR #624): tools used with same-line
+    # `|| <fallback>` or as an if/while/until condition self-handle a missing
+    # tool, so no `command -v` preflight is required and the rule must stay
+    # silent. A regression here would re-introduce the 6 false positives that
+    # blocked expanding the gate to agents/scripts/.
+    run bash "$LINT" --target "$FIXTURE_DIR/known-good-1-deps-graceful.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_DEPS"* ]]
+    [[ "$output" == *"Passed: 1  Failed: 0"* ]]
+}
+
 # ---------- rule 2: shellcheck clean ----------
 
 @test "rule 2 (shellcheck): fires on SC2086 unquoted expansion" {

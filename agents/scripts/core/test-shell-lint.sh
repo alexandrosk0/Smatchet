@@ -13,7 +13,8 @@
 #   4. sha256 verify within 10 lines after `curl -o <path>` / `--output <path>`.
 #   5. --key=value ↔ --key value parity when the flag takes a value.
 #
-# Targets: scripts/dev/*.sh (repo-wide). Lints itself.
+# Targets: scripts/dev/*.sh + agents/scripts/{core,project}/*.sh (post-#609
+# layout; maxdepth 1, so scripts/dev/local/ is excluded). Lints itself.
 #
 # Bypass: SMATCHET_SKIP_SHELL_LINT=1 (logged when used).
 #
@@ -50,7 +51,7 @@ if [ "${1:-}" = "--target" ] && [ -n "${2:-}" ]; then
     TARGETS=("$2")
 else
     while IFS= read -r f; do TARGETS+=("$f"); done \
-        < <(find scripts/dev -maxdepth 1 -type f -name '*.sh' | sort)
+        < <(find scripts/dev agents/scripts/core agents/scripts/project -maxdepth 1 -type f -name '*.sh' | sort)
 fi
 
 VIOLATIONS=()
@@ -63,7 +64,9 @@ non_comment() { sed -E 's/(^|[^\\])#.*$/\1/' "$1"; }
 # A "command use" is the tool appearing at a command-start position:
 #   start-of-line (with optional indent), after `&&`/`||`/`|`/`;`, inside
 #   `$(...)` / backticks, or after `if`/`while`/`until`/`then`/`else`/`!`/`&`.
-# This excludes bare-word array list contexts (e.g. `ALLOWLIST=(curl gh git)`).
+# This excludes bare-word array list contexts (e.g. `ALLOWLIST=(curl gh git)`),
+# and graceful-degradation shapes (same-line `|| <fallback>`, if/while/until
+# conditions) are filtered out below — they self-handle a missing tool.
 check_deps() {
     local script="$1"
     local nc
@@ -83,6 +86,24 @@ check_deps() {
         # Drop preflight lines themselves.
         local real_use
         real_use=$(printf '%s\n' "$hits" | grep -vE "(command -v|which|type -p)[[:space:]]+${tool_escaped}\\b" || true)
+        if [ -z "$real_use" ]; then continue; fi
+        # Graceful-degradation shapes are NOT unguarded uses — drop them before
+        # deciding (these handle a missing/failed tool inline, so a separate
+        # `command -v` preflight is redundant). Two shapes:
+        #   * same-line trailing fallback `<tool> <args> || <fallback>`: the
+        #     tool's own failure is caught inline (e.g. the lock scripts'
+        #     `python3 -c … || python -c … || printf`, setup-harness's
+        #     `cygpath … || echo`). The span is quote-aware: a `;` inside a
+        #     quoted arg (python's `-c 'import json,sys;…'`) does not end it,
+        #     but a bare `;` statement boundary does — so an unrelated later
+        #     command's `||` is not mistaken for the tool's own guard.
+        #   * if/while/until CONDITION: the control-flow itself IS the
+        #     availability test (e.g. clear-session-context's
+        #     `if P4_INFO="$(p4 info 2>/dev/null)"; then`).
+        real_use=$(printf '%s\n' "$real_use" \
+            | grep -vE "${tool_escaped}[[:space:]]([^;'\"]|'[^']*'|\"[^\"]*\")*[|][|]" \
+            | grep -vE '^[0-9]+:[[:space:]]*(if|while|until)[[:space:]]' \
+            || true)
         if [ -z "$real_use" ]; then continue; fi
         # Does the script have ANY preflight for this tool? Strip comments
         # first so a comment mentioning "command -v <tool>" (e.g. in this
