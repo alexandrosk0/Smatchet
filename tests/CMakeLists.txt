@@ -58,6 +58,7 @@ add_executable(SmatchetTests
     Core/OfflineQueueServiceRuntime.test.cpp
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
+    Core/ToolbarConfig.test.cpp
     Core/SingleClickEditConfig.test.cpp
     Core/AiSseParser.test.cpp
     # autonomous-debugging-no-creds § Slice 4 — verifies the StubAiClient
@@ -193,6 +194,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetTheme.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
