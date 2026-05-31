@@ -48,7 +48,7 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 if [ "${1:-}" = "--root" ]; then
     cd "$2"; shift 2
 else
-    cd "$(dirname "$0")/../.."
+    cd "$(dirname "$0")/../../.."
 fi
 REPO_ROOT="$(pwd)"
 
@@ -143,7 +143,7 @@ ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
     local base="$1" aud py
-    aud="$(dirname "$SELF")/comment_audit.py"
+    aud="$REPO_ROOT/agents/scripts/core/comment_audit.py"
     py="$(command -v python3 || command -v python || true)"
     [ -n "$py" ] || return 0          # advisory-only; silently skip if no python interpreter
     [ -f "$aud" ] && "$py" "$aud" --ratio-warn "$base" 2>/dev/null || true
@@ -366,7 +366,7 @@ case "$MODE" in
     gen_catalog() {
         echo "# High-Integrity C++ — grandfathered baseline"
         echo
-        echo "_Auto-generated. Do not hand-edit; run \`bash scripts/dev/test-lint-rules.sh --catalog --refresh\` and commit._"
+        echo "_Auto-generated. Do not hand-edit; run \`bash agents/scripts/project/test-lint-rules.sh --catalog --refresh\` and commit._"
         echo "_Refreshed on \`develop\` post-merge (fail-on-drift); gate uses live scan vs \`origin/develop\`, not this file._"
         local total=0 rule cnt
         for rule in narrowing-conversions no-printf-stderr no-raw-new define-imgui deviation-overdue; do
@@ -439,7 +439,7 @@ case "$MODE" in
     # would pass dirty PRs as false-clean. comment_audit.py's exit contract: 0=clean, 1=violations
     # (on stdout), >=2=infra error. Resolve python3 OR python (Windows CI ships `python`).
     cr_out=""
-    cr_aud="$(dirname "$SELF")/comment_audit.py"
+    cr_aud="$REPO_ROOT/agents/scripts/core/comment_audit.py"
     cr_py="$(command -v python3 || command -v python || true)"
     if [ -z "$cr_py" ]; then
         echo "test-lint-rules: ERROR: no python interpreter; cannot enforce comment-regrowth gate" >&2

@@ -5,7 +5,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 PY="${PYTHON:-python3}"
 
 command -v "$PY" >/dev/null 2>&1 || { echo "test-comment-tooling: $PY not found" >&2; exit 2; }

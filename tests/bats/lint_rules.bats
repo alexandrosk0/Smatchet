@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # tests/bats/lint_rules.bats
 # ----------------------------------------------------------------------------
-# Bats coverage for scripts/dev/test-lint-rules.sh (high-integrity C++ gate).
+# Bats coverage for agents/scripts/project/test-lint-rules.sh (high-integrity C++ gate).
 # Plan: docs/design/high-integrity-cpp-enforcement.md.
 #
 # Covers: each grep rule via --scan-file, SMATCHET_DEVIATION suppression +
@@ -15,7 +15,7 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    export LINT="$REPO_ROOT/scripts/dev/test-lint-rules.sh"
+    export LINT="$REPO_ROOT/agents/scripts/project/test-lint-rules.sh"
     export FIX="$REPO_ROOT/tests/fixtures/lint_rules"
 }
 

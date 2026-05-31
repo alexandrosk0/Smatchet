@@ -26,7 +26,7 @@ Consolidate all first-party C++ under a single `Source/` root, **subdir-per-comp
 
 # Consequences
 
-- The high-integrity lint zone globs ([`scripts/dev/test-lint-rules.sh`](../../scripts/dev/test-lint-rules.sh) `STRICT_GLOBS`) and their `--selftest` twin in `AGENTS.md` § Tiered enforcement re-root in lockstep, or enforcement silently no-ops on the moved tree. Likewise `CODEOWNERS`, `.coderabbit.yaml` path rules, and every `paths:`-filtered CI workflow.
+- The high-integrity lint zone globs ([`agents/scripts/project/test-lint-rules.sh`](../../agents/scripts/project/test-lint-rules.sh) `STRICT_GLOBS`) and their `--selftest` twin in `AGENTS.md` § Tiered enforcement re-root in lockstep, or enforcement silently no-ops on the moved tree. Likewise `CODEOWNERS`, `.coderabbit.yaml` path rules, and every `paths:`-filtered CI workflow.
 - `SmatchetImGuiPlugin.Build.cs` (Unreal, **not** covered by the CMake dual-target gate) gains one level in its repo-root walk and points at `Source/Core` — verify at UE package time.
 - `docs/high-integrity/baseline.md` is regenerated via `--catalog --refresh`; the delta gate keys on `(rule, basename, hash)`, so the move itself introduces no new violations.
 - Reversing this is another full mechanical churn — treat the `Source/` shape as intentional architecture, not an implementation detail.

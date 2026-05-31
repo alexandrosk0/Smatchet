@@ -3,7 +3,7 @@
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob. Complements
-# scripts/dev/test-lint-rules.sh (the scanner / delta gate itself) — this gives
+# agents/scripts/project/test-lint-rules.sh (the scanner / delta gate itself) — this gives
 # per-case isolation for the rule + deviation + diff-mode logic.
 #
 # Plan: docs/plans/active/high-integrity-cpp-enforcement.md.
