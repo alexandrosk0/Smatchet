@@ -11,6 +11,7 @@ extern "C" {
 #include <cstring>
 #include <numeric>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 using nlohmann::json;
@@ -1351,17 +1352,42 @@ bool ParseHtmlTag(const std::string& html, size_t& pos, HtmlTagToken& outTok, bo
     return true;
 }
 
-std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
-    std::ostringstream out;
-    bool fellBack = false;
-    const auto& allowed = HtmlAllowedTags();
+// Table-driven HTML→Markdown tag dispatch. `HtmlToMarkdown` is a thin parse
+// loop that, per tag, looks up a handler in one of two dispatch tables
+// (`HtmlOpenHandlers` / `HtmlCloseHandlers`) keyed by tag name and invokes it
+// against a shared `HtmlMdCtx`. Every handler renders exactly the bytes the
+// original if-else branch emitted — output is byte-for-byte identical (pinned
+// by tests/Core/MarkdownConvert.test.cpp).
 
+// One open element on the parse stack.
+struct HtmlMdFrame {
+    std::string tag;
+    int olCounter = 0; // <ol> running index; reused on <a> frames as a 1-based linkHrefs index.
+    int listIndent = 0;
+};
+
+// All mutable state the tag handlers share. The former in-function lambdas
+// (`tail`, `flushBuffer`, `appendPipeTable`) are now methods so their branches
+// live outside the parse loop's body.
+struct HtmlMdCtx {
+    std::ostringstream out;
     std::string buffer;
     std::vector<std::string*> outPtrStack;
-    outPtrStack.push_back(&buffer);
-    auto tail = [&]() -> std::string& { return *outPtrStack.back(); };
+    std::vector<HtmlMdFrame> stack;
+    // Href stack for <a> tags. A plain per-call member (never static): a mid-parse exception must
+    // not leave stale state that corrupts the next call. Open/close handlers index into it via
+    // HtmlMdFrame::olCounter.
+    std::vector<std::string> linkHrefs;
+    std::vector<std::vector<std::string>> tableRows;
+    std::string cellAcc;
+    int tableNest = 0;
+    bool fellBack = false;
 
-    auto flushBuffer = [&](bool addBlankLine) {
+    HtmlMdCtx() { outPtrStack.push_back(&buffer); }
+
+    std::string& tail() { return *outPtrStack.back(); }
+
+    void flushBuffer(bool addBlankLine) {
         std::string& tref = *outPtrStack.back();
         if (outPtrStack.size() == 1) {
             if (!tref.empty()) {
@@ -1374,46 +1400,14 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
             if (addBlankLine)
                 tref += "\n\n";
         }
-    };
+    }
 
-    std::vector<std::vector<std::string>> tableRows;
-    int tableNest = 0;
-    std::string cellAcc;
-
-    struct Frame {
-        std::string tag;
-        int olCounter = 0; // for <ol> only
-        int listIndent = 0;
-    };
-    std::vector<Frame> stack;
-    // Href stack for <a> tags. Previously static thread_local — mid-parse exceptions left stale
-    // state that corrupted the next call. Now a plain local: reset on every call, shared across
-    // the open- and close-tag handlers below (they index into it via Frame::olCounter).
-    std::vector<std::string> linkHrefs;
-
-    auto isInlineMark = [](const std::string& t) {
-        return t == "strong" || t == "b" || t == "em" || t == "i" || t == "s" || t == "del" || t == "u" || t == "code";
-    };
-
-    auto inlineOpenMd = [](const std::string& t) -> std::string {
-        if (t == "strong" || t == "b")
-            return "**";
-        if (t == "em" || t == "i")
-            return "*";
-        if (t == "s" || t == "del")
-            return "~~";
-        if (t == "code")
-            return "`";
-        if (t == "u")
-            return ""; // Markdown has no underline; pass through plain.
-        return "";
-    };
-
-    auto appendPipeTable = [&](const std::vector<std::vector<std::string>>& rows) {
+    void appendPipeTable(const std::vector<std::vector<std::string>>& rows) {
         if (rows.empty())
             return;
-        const size_t ncol = std::accumulate(rows.begin(), rows.end(), size_t{},
-                                            [](size_t acc, const auto& r) { return (std::max)(acc, r.size()); });
+        const size_t ncol =
+            std::accumulate(rows.begin(), rows.end(), size_t{},
+                            [](size_t acc, const std::vector<std::string>& r) { return (std::max)(acc, r.size()); });
         auto escPipe = [](std::string c) {
             for (size_t i = 0; i < c.size(); ++i) {
                 if (c[i] == '|') {
@@ -1442,251 +1436,364 @@ std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
             }
         }
         out << '\n';
+    }
+};
+
+bool HtmlIsInlineMark(const std::string& t) {
+    return t == "strong" || t == "b" || t == "em" || t == "i" || t == "s" || t == "del" || t == "u" || t == "code";
+}
+
+std::string HtmlInlineOpenMd(const std::string& t) {
+    if (t == "strong" || t == "b")
+        return "**";
+    if (t == "em" || t == "i")
+        return "*";
+    if (t == "s" || t == "del")
+        return "~~";
+    if (t == "code")
+        return "`";
+    // <u>: Markdown has no underline; pass through plain.
+    return "";
+}
+
+using HtmlTagHandler = void (*)(HtmlMdCtx&, const HtmlTagToken&);
+
+// Open-tag handlers.
+
+void HtmlOpenTable(HtmlMdCtx& c, const HtmlTagToken&) {
+    if (c.tableNest > 0) {
+        c.fellBack = true;
+        return;
+    }
+    ++c.tableNest;
+    c.flushBuffer(true);
+    c.tableRows.clear();
+    c.stack.push_back({"table", 0, 0});
+}
+
+void HtmlOpenTableSection(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.stack.push_back({tok.name, 0, 0}); // thead / tbody
+}
+
+void HtmlOpenTr(HtmlMdCtx& c, const HtmlTagToken&) {
+    c.tableRows.emplace_back();
+    c.stack.push_back({"tr", 0, 0});
+}
+
+void HtmlOpenCell(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.cellAcc.clear();
+    c.outPtrStack.push_back(&c.cellAcc);
+    c.stack.push_back({tok.name, 0, 0}); // td / th
+}
+
+void HtmlOpenBlock(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.stack.push_back({tok.name, 0, 0}); // p / div
+}
+
+void HtmlOpenHeading(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.stack.push_back({tok.name, 0, 0});
+    const int level = tok.name[1] - '0';
+    for (int i = 0; i < level; ++i)
+        c.tail() += '#';
+    c.tail() += ' ';
+}
+
+void HtmlOpenList(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    HtmlMdFrame f{tok.name, 0, 0}; // ul / ol
+    if (!c.stack.empty())
+        f.listIndent = c.stack.back().listIndent + 2;
+    c.stack.push_back(f);
+    c.tail() += "\n";
+}
+
+void HtmlOpenLi(HtmlMdCtx& c, const HtmlTagToken&) {
+    HtmlMdFrame f{"li", 0, 0};
+    if (!c.stack.empty())
+        f.listIndent = c.stack.back().listIndent;
+    c.stack.push_back(f);
+    for (int i = 0; i < f.listIndent; ++i)
+        c.tail() += ' ';
+    bool ordered = false;
+    for (auto it = c.stack.rbegin() + 1; it != c.stack.rend(); ++it) {
+        if (it->tag == "ol") {
+            ++it->olCounter;
+            c.tail() += std::to_string(it->olCounter) + ". ";
+            ordered = true;
+            break;
+        }
+        if (it->tag == "ul") {
+            c.tail() += "- ";
+            break;
+        }
+    }
+    if (!ordered && c.stack.size() == 1)
+        c.tail() += "- ";
+}
+
+void HtmlOpenBlockquote(HtmlMdCtx& c, const HtmlTagToken&) {
+    c.stack.push_back({"blockquote", 0, 0});
+    c.tail() += "> ";
+}
+
+void HtmlOpenPre(HtmlMdCtx& c, const HtmlTagToken&) {
+    c.stack.push_back({"pre", 0, 0});
+    c.tail() += "\n```\n";
+}
+
+void HtmlOpenInlineMark(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.stack.push_back({tok.name, 0, 0});
+    c.tail() += HtmlInlineOpenMd(tok.name);
+}
+
+void HtmlOpenAnchor(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    c.stack.push_back({"a", 0, 0});
+    c.tail() += "[";
+    c.linkHrefs.push_back(tok.href);
+    c.stack.back().olCounter = static_cast<int>(c.linkHrefs.size());
+}
+
+void HtmlOpenSpan(HtmlMdCtx& c, const HtmlTagToken&) { c.stack.push_back({"span", 0, 0}); }
+
+// Void-tag handlers (br / hr / img).
+
+void HtmlVoidBr(HtmlMdCtx& c, const HtmlTagToken&) { c.tail() += "  \n"; }
+
+void HtmlVoidHr(HtmlMdCtx& c, const HtmlTagToken&) { c.tail() += "\n---\n\n"; }
+
+void HtmlVoidImg(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    std::string escAlt;
+    for (char ch : tok.alt) {
+        if (ch == ']' || ch == '\\')
+            escAlt += '\\';
+        escAlt += ch;
+    }
+    c.tail() += "![" + escAlt + "](" + tok.src + ")";
+}
+
+// Close-tag handlers: pop the matching open frame off the stack (shared
+// `HtmlCloseGenericPop`), then emit the per-tag suffix. The td/th and table
+// close paths run extra table-accumulation logic before the generic pop.
+
+// Pops back to and including the nearest frame whose tag == t. Returns the
+// popped <a> frame's href (empty otherwise) so the anchor handler can close
+// the `](href)` syntax.
+std::string HtmlCloseGenericPop(HtmlMdCtx& c, const std::string& t) {
+    std::string poppedLinkHref;
+    const auto itClose =
+        std::find_if(c.stack.rbegin(), c.stack.rend(), [&](const HtmlMdFrame& fr) { return fr.tag == t; });
+    if (itClose != c.stack.rend()) {
+        auto it = itClose;
+        if (t == "a" && it->olCounter > 0) {
+            const size_t idx = static_cast<size_t>(it->olCounter) - 1;
+            if (idx < c.linkHrefs.size()) {
+                poppedLinkHref = c.linkHrefs[idx];
+            }
+            if (idx + 1 == c.linkHrefs.size())
+                c.linkHrefs.pop_back();
+        }
+        const size_t targetIdx = std::distance(it, c.stack.rend()) - 1;
+        while (c.stack.size() > targetIdx + 1)
+            c.stack.pop_back();
+        c.stack.pop_back();
+    }
+    return poppedLinkHref;
+}
+
+void HtmlCloseCell(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    if (c.outPtrStack.size() > 1 && c.outPtrStack.back() == &c.cellAcc) {
+        std::string finished = std::move(c.cellAcc);
+        c.cellAcc.clear();
+        c.outPtrStack.pop_back();
+        if (!c.tableRows.empty()) {
+            c.tableRows.back().push_back(std::move(finished));
+        }
+    }
+    HtmlCloseGenericPop(c, tok.name); // td / th
+}
+
+void HtmlCloseTable(HtmlMdCtx& c, const HtmlTagToken&) {
+    c.appendPipeTable(c.tableRows);
+    c.tableRows.clear();
+    if (c.tableNest > 0)
+        --c.tableNest;
+    HtmlCloseGenericPop(c, "table");
+}
+
+void HtmlCloseBlock(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    HtmlCloseGenericPop(c, tok.name); // p / div / h1-h6 / blockquote all emit "\n\n"
+    c.tail() += "\n\n";
+}
+
+void HtmlCloseLi(HtmlMdCtx& c, const HtmlTagToken&) {
+    HtmlCloseGenericPop(c, "li");
+    c.tail() += "\n";
+}
+
+void HtmlCloseList(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    HtmlCloseGenericPop(c, tok.name); // ul / ol
+    c.flushBuffer(true);
+}
+
+void HtmlClosePre(HtmlMdCtx& c, const HtmlTagToken&) {
+    HtmlCloseGenericPop(c, "pre");
+    c.tail() += "\n```\n\n";
+}
+
+void HtmlCloseInlineMark(HtmlMdCtx& c, const HtmlTagToken& tok) {
+    HtmlCloseGenericPop(c, tok.name);
+    c.tail() += HtmlInlineOpenMd(tok.name);
+}
+
+void HtmlCloseAnchor(HtmlMdCtx& c, const HtmlTagToken&) {
+    const std::string href = HtmlCloseGenericPop(c, "a");
+    c.tail() += "](";
+    c.tail() += href;
+    c.tail() += ")";
+}
+
+// Pop-only close (thead / tbody / tr / span) — no suffix emitted.
+void HtmlClosePopOnly(HtmlMdCtx& c, const HtmlTagToken& tok) { HtmlCloseGenericPop(c, tok.name); }
+
+// Dispatch tables: tag name → handler.
+
+const std::unordered_map<std::string, HtmlTagHandler>& HtmlOpenHandlers() {
+    static const std::unordered_map<std::string, HtmlTagHandler> m = {
+        {"table", HtmlOpenTable},
+        {"thead", HtmlOpenTableSection},
+        {"tbody", HtmlOpenTableSection},
+        {"tr", HtmlOpenTr},
+        {"td", HtmlOpenCell},
+        {"th", HtmlOpenCell},
+        {"p", HtmlOpenBlock},
+        {"div", HtmlOpenBlock},
+        {"h1", HtmlOpenHeading},
+        {"h2", HtmlOpenHeading},
+        {"h3", HtmlOpenHeading},
+        {"h4", HtmlOpenHeading},
+        {"h5", HtmlOpenHeading},
+        {"h6", HtmlOpenHeading},
+        {"ul", HtmlOpenList},
+        {"ol", HtmlOpenList},
+        {"li", HtmlOpenLi},
+        {"blockquote", HtmlOpenBlockquote},
+        {"pre", HtmlOpenPre},
+        {"strong", HtmlOpenInlineMark},
+        {"b", HtmlOpenInlineMark},
+        {"em", HtmlOpenInlineMark},
+        {"i", HtmlOpenInlineMark},
+        {"s", HtmlOpenInlineMark},
+        {"del", HtmlOpenInlineMark},
+        {"u", HtmlOpenInlineMark},
+        {"code", HtmlOpenInlineMark},
+        {"a", HtmlOpenAnchor},
+        {"span", HtmlOpenSpan},
+        {"br", HtmlVoidBr},
+        {"hr", HtmlVoidHr},
+        {"img", HtmlVoidImg},
     };
+    return m;
+}
+
+const std::unordered_map<std::string, HtmlTagHandler>& HtmlCloseHandlers() {
+    static const std::unordered_map<std::string, HtmlTagHandler> m = {
+        {"td", HtmlCloseCell},        {"th", HtmlCloseCell},           {"table", HtmlCloseTable},
+        {"p", HtmlCloseBlock},        {"div", HtmlCloseBlock},         {"h1", HtmlCloseBlock},
+        {"h2", HtmlCloseBlock},       {"h3", HtmlCloseBlock},          {"h4", HtmlCloseBlock},
+        {"h5", HtmlCloseBlock},       {"h6", HtmlCloseBlock},          {"blockquote", HtmlCloseBlock},
+        {"li", HtmlCloseLi},          {"ul", HtmlCloseList},           {"ol", HtmlCloseList},
+        {"pre", HtmlClosePre},        {"strong", HtmlCloseInlineMark}, {"b", HtmlCloseInlineMark},
+        {"em", HtmlCloseInlineMark},  {"i", HtmlCloseInlineMark},      {"s", HtmlCloseInlineMark},
+        {"del", HtmlCloseInlineMark}, {"u", HtmlCloseInlineMark},      {"code", HtmlCloseInlineMark},
+        {"a", HtmlCloseAnchor},       {"thead", HtmlClosePopOnly},     {"tbody", HtmlClosePopOnly},
+        {"tr", HtmlClosePopOnly},     {"span", HtmlClosePopOnly},
+    };
+    return m;
+}
+
+// Collapse runs of 3+ newlines down to 2 (paragraph break).
+std::string HtmlCollapseNewlines(const std::string& result) {
+    std::string collapsed;
+    collapsed.reserve(result.size());
+    int newlineRun = 0;
+    for (char ch : result) {
+        if (ch == '\n') {
+            ++newlineRun;
+            if (newlineRun <= 2)
+                collapsed += ch;
+        } else {
+            newlineRun = 0;
+            collapsed += ch;
+        }
+    }
+    return collapsed;
+}
+
+std::string HtmlToMarkdown(const std::string& html, bool* outFellBack) {
+    HtmlMdCtx c;
+    const auto& allowed = HtmlAllowedTags();
+    const auto& openHandlers = HtmlOpenHandlers();
+    const auto& closeHandlers = HtmlCloseHandlers();
 
     size_t pos = 0;
     while (pos < html.size()) {
-        if (html[pos] == '<') {
-            HtmlTagToken tok;
-            const size_t before = pos;
-            if (!ParseHtmlTag(html, pos, tok, fellBack)) {
-                tail() += html[before];
-                pos = before + 1;
-                continue;
-            }
-            if (tok.name == "!ignored")
-                continue;
-
-            // Unknown tag → trip the fallback flag and suppress markup (text inside still emits).
-            if (allowed.find(tok.name) == allowed.end()) {
-                fellBack = true;
-                continue;
-            }
-
-            const std::string& t = tok.name;
-            const bool isVoid = (t == "br" || t == "hr" || t == "img");
-            if (tok.isClose) {
-                if (t == "td" || t == "th") {
-                    if (outPtrStack.size() > 1 && outPtrStack.back() == &cellAcc) {
-                        std::string finished = std::move(cellAcc);
-                        cellAcc.clear();
-                        outPtrStack.pop_back();
-                        if (!tableRows.empty()) {
-                            tableRows.back().push_back(std::move(finished));
-                        }
-                    }
-                }
-                if (t == "table") {
-                    appendPipeTable(tableRows);
-                    tableRows.clear();
-                    if (tableNest > 0)
-                        --tableNest;
-                }
-
-                std::string poppedLinkHref;
-                bool poppedAny = false;
-                const auto itClose =
-                    std::find_if(stack.rbegin(), stack.rend(), [&](const Frame& fr) { return fr.tag == t; });
-                if (itClose != stack.rend()) {
-                    auto it = itClose;
-                    if (t == "a" && it->olCounter > 0) {
-                        const size_t idx = static_cast<size_t>(it->olCounter) - 1;
-                        if (idx < linkHrefs.size()) {
-                            poppedLinkHref = linkHrefs[idx];
-                        }
-                        if (idx + 1 == linkHrefs.size())
-                            linkHrefs.pop_back();
-                    }
-                    const size_t targetIdx = std::distance(it, stack.rend()) - 1;
-                    while (stack.size() > targetIdx + 1)
-                        stack.pop_back();
-                    stack.pop_back();
-                    poppedAny = true;
-                }
-                (void)poppedAny;
-                if (t == "p" || t == "div") {
-                    tail() += "\n\n";
-                } else if (t == "h1" || t == "h2" || t == "h3" || t == "h4" || t == "h5" || t == "h6") {
-                    tail() += "\n\n";
-                } else if (t == "li") {
-                    tail() += "\n";
-                } else if (t == "ul" || t == "ol") {
-                    flushBuffer(true);
-                } else if (t == "blockquote") {
-                    tail() += "\n\n";
-                } else if (t == "pre") {
-                    tail() += "\n```\n\n";
-                } else if (isInlineMark(t)) {
-                    tail() += inlineOpenMd(t);
-                } else if (t == "a") {
-                    tail() += "](";
-                    tail() += poppedLinkHref;
-                    tail() += ")";
-                }
-                continue;
-            }
-
-            if (isVoid) {
-                if (t == "br")
-                    tail() += "  \n";
-                else if (t == "hr")
-                    tail() += "\n---\n\n";
-                else if (t == "img") {
-                    std::string escAlt;
-                    for (char ch : tok.alt) {
-                        if (ch == ']' || ch == '\\')
-                            escAlt += '\\';
-                        escAlt += ch;
-                    }
-                    tail() += "![" + escAlt + "](" + tok.src + ")";
-                }
-                continue;
-            }
-
-            if (t == "table") {
-                if (tableNest > 0) {
-                    fellBack = true;
-                    continue;
-                }
-                ++tableNest;
-                flushBuffer(true);
-                tableRows.clear();
-                stack.push_back({"table", 0, 0});
-                continue;
-            }
-            if (t == "thead" || t == "tbody") {
-                stack.push_back({t, 0, 0});
-                continue;
-            }
-            if (t == "tr") {
-                tableRows.emplace_back();
-                stack.push_back({"tr", 0, 0});
-                continue;
-            }
-            if (t == "td" || t == "th") {
-                cellAcc.clear();
-                outPtrStack.push_back(&cellAcc);
-                stack.push_back({t, 0, 0});
-                continue;
-            }
-
-            if (t == "p" || t == "div") {
-                stack.push_back({t, 0, 0});
-                continue;
-            }
-            if (t == "h1" || t == "h2" || t == "h3" || t == "h4" || t == "h5" || t == "h6") {
-                stack.push_back({t, 0, 0});
-                const int level = t[1] - '0';
-                for (int i = 0; i < level; ++i)
-                    tail() += '#';
-                tail() += ' ';
-                continue;
-            }
-            if (t == "ul" || t == "ol") {
-                Frame f{t, 0, 0};
-                if (!stack.empty())
-                    f.listIndent = stack.back().listIndent + 2;
-                stack.push_back(f);
-                tail() += "\n";
-                continue;
-            }
-            if (t == "li") {
-                Frame f{"li", 0, 0};
-                if (!stack.empty())
-                    f.listIndent = stack.back().listIndent;
-                stack.push_back(f);
-                for (int i = 0; i < f.listIndent; ++i)
-                    tail() += ' ';
-                bool ordered = false;
-                for (auto it = stack.rbegin() + 1; it != stack.rend(); ++it) {
-                    if (it->tag == "ol") {
-                        ++it->olCounter;
-                        tail() += std::to_string(it->olCounter) + ". ";
-                        ordered = true;
-                        break;
-                    }
-                    if (it->tag == "ul") {
-                        tail() += "- ";
-                        break;
-                    }
-                }
-                if (!ordered && stack.size() == 1)
-                    tail() += "- ";
-                continue;
-            }
-            if (t == "blockquote") {
-                stack.push_back({t, 0, 0});
-                tail() += "> ";
-                continue;
-            }
-            if (t == "pre") {
-                stack.push_back({t, 0, 0});
-                tail() += "\n```\n";
-                continue;
-            }
-            if (isInlineMark(t)) {
-                stack.push_back({t, 0, 0});
-                tail() += inlineOpenMd(t);
-                continue;
-            }
-            if (t == "a") {
-                stack.push_back({"a", 0, 0});
-                tail() += "[";
-                linkHrefs.push_back(tok.href);
-                stack.back().olCounter = static_cast<int>(linkHrefs.size());
-                continue;
-            }
-            if (t == "span") {
-                stack.push_back({t, 0, 0});
-                continue;
-            }
+        if (html[pos] != '<') {
+            const size_t lt = html.find('<', pos);
+            const size_t end = (lt == std::string::npos) ? html.size() : lt;
+            c.tail() += DecodeHtmlEntities(html.substr(pos, end - pos));
+            pos = end;
             continue;
         }
 
-        const size_t lt = html.find('<', pos);
-        const size_t end = (lt == std::string::npos) ? html.size() : lt;
-        const std::string raw = html.substr(pos, end - pos);
-        tail() += DecodeHtmlEntities(raw);
-        pos = end;
+        HtmlTagToken tok;
+        const size_t before = pos;
+        if (!ParseHtmlTag(html, pos, tok, c.fellBack)) {
+            c.tail() += html[before];
+            pos = before + 1;
+            continue;
+        }
+        if (tok.name == "!ignored")
+            continue;
+
+        // Unknown tag → trip the fallback flag and suppress markup (text inside still emits).
+        if (allowed.find(tok.name) == allowed.end()) {
+            c.fellBack = true;
+            continue;
+        }
+
+        if (tok.isClose) {
+            const auto it = closeHandlers.find(tok.name);
+            if (it != closeHandlers.end())
+                it->second(c, tok);
+            continue;
+        }
+
+        const auto it = openHandlers.find(tok.name);
+        if (it != openHandlers.end())
+            it->second(c, tok);
     }
 
     // Malformed HTML (e.g. unclosed <td>) can leave a nested text sink active — merge back and
     // flag fallback so callers can prefer raw-mode.
-    while (outPtrStack.size() > 1) {
-        fellBack = true;
-        std::string orphan = std::move(*outPtrStack.back());
-        outPtrStack.pop_back();
-        tail() += orphan;
+    while (c.outPtrStack.size() > 1) {
+        c.fellBack = true;
+        std::string orphan = std::move(*c.outPtrStack.back());
+        c.outPtrStack.pop_back();
+        c.tail() += orphan;
     }
     // If the document ended mid-table (missing </table>), appendPipeTable never fired on the
     // </table> close path and the accumulated rows would be lost. Flush them here so the
     // partial table at least renders as best-effort pipe-table output before the fallback flag
     // routes the caller to raw mode.
-    if (!tableRows.empty()) {
-        fellBack = true;
-        appendPipeTable(tableRows);
-        tableRows.clear();
+    if (!c.tableRows.empty()) {
+        c.fellBack = true;
+        c.appendPipeTable(c.tableRows);
+        c.tableRows.clear();
     }
 
-    flushBuffer(false);
+    c.flushBuffer(false);
     if (outFellBack)
-        *outFellBack = fellBack;
-    std::string result = out.str();
-    // Collapse 3+ consecutive newlines into 2 (paragraph break).
-    std::string collapsed;
-    collapsed.reserve(result.size());
-    int newlineRun = 0;
-    for (char c : result) {
-        if (c == '\n') {
-            ++newlineRun;
-            if (newlineRun <= 2)
-                collapsed += c;
-        } else {
-            newlineRun = 0;
-            collapsed += c;
-        }
-    }
-    return collapsed;
+        *outFellBack = c.fellBack;
+    return HtmlCollapseNewlines(c.out.str());
 }
 
 } // namespace

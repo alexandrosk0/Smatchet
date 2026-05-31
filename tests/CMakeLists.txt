@@ -30,6 +30,7 @@ add_executable(SmatchetTests
     Core/SmatchetThemeNortonPalette.test.cpp
     Core/MarkdownPreviewLangTag.test.cpp
     Core/MarkdownConvertAdf.test.cpp
+    Core/MarkdownConvert.test.cpp
     Core/IssueDraft.test.cpp
     Core/IssueCreatePipeline.test.cpp
     Core/CallstackParser.test.cpp
