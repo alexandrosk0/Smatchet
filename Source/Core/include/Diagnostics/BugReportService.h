@@ -25,6 +25,7 @@ namespace diagnostics {
 struct BugReportOptions {
     std::string UserDescription;
     std::string ScreenshotAbsPath; // filled by the standalone UI; empty otherwise (no live frame in CLI/MCP)
+    std::string DumpAbsPath;       // phase-2 crash: minidump to upload as a GitHub Release asset
     // When non-empty, this exact text is the issue body (the user-edited egress
     // preview — WYSIWYG consent). When empty, the body is built via BuildMarkdownBody.
     std::string BodyOverride;
@@ -89,7 +90,8 @@ std::string BuildMarkdownBody(const BugReportOptions& opts, const ContextBundle&
 /// the issue + uploads the screenshot server-side, so no GitHub token is needed
 /// on the client.
 nlohmann::json BuildRelayRequest(const std::string& title, const std::string& body, const std::string& screenshotBase64,
-                                 bool censored);
+                                 bool censored, const std::string& dumpBase64 = std::string(),
+                                 const std::string& dumpName = std::string());
 
 // ---- heavy (BugReportService.cpp — NOT linked into the doctest rig) ----
 

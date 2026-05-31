@@ -98,13 +98,17 @@ ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::st
 }
 
 nlohmann::json BuildRelayRequest(const std::string& title, const std::string& body, const std::string& screenshotBase64,
-                                 bool censored) {
+                                 bool censored, const std::string& dumpBase64, const std::string& dumpName) {
     nlohmann::json out = nlohmann::json::object();
     out["title"] = title;
     out["body"] = body;
     out["censored"] = censored;
     if (!screenshotBase64.empty()) {
         out["screenshotBase64"] = screenshotBase64;
+    }
+    if (!dumpBase64.empty()) {
+        out["dumpBase64"] = dumpBase64;
+        out["dumpName"] = dumpName.empty() ? std::string("crash.dmp") : dumpName;
     }
     return out;
 }

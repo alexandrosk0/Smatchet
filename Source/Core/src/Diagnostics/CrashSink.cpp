@@ -1,5 +1,7 @@
 #include "CrashSink.h"
 
+#include "TextRedaction.h"
+
 #include <ghc/filesystem.hpp>
 
 #include <algorithm>
@@ -33,7 +35,9 @@ char g_markerPath[kPathCap] = {0};
 char g_dumpPath[kPathCap] = {0};
 char g_breadcrumbPath[kPathCap] = {0};
 char g_crashDir[kPathCap] = {0};
+char g_sessionLogRecordPath[kPathCap] = {0}; // crashes/session_log.txt — points at the active log
 bool g_inited = false;
+std::string g_crashedLogPath; // crashed session's log path, stashed at Init when a crash is pending
 
 void CopyPath(char* dst, const std::string& s) {
     const std::size_t n = s.size() < (kPathCap - 1) ? s.size() : (kPathCap - 1);
@@ -87,9 +91,30 @@ std::string ReadFileText(const char* path) {
     return out;
 }
 
+// Last `maxLines` lines of `text`.
+std::string TailLines(const std::string& text, std::size_t maxLines) {
+    if (text.empty()) {
+        return std::string();
+    }
+    std::size_t pos = text.size();
+    std::size_t lines = 0;
+    while (pos > 0) {
+        const std::size_t nl = text.rfind('\n', pos - 1);
+        if (nl == std::string::npos) {
+            return text;
+        }
+        ++lines;
+        if (lines > maxLines) {
+            return text.substr(nl + 1);
+        }
+        pos = nl;
+    }
+    return text;
+}
+
 } // namespace
 
-void CrashSinkInit(const std::string& userDataDir) {
+void CrashSinkInit(const std::string& userDataDir, const std::string& activeLogPath) {
     std::string base = userDataDir;
     if (!base.empty() && base.back() != '/' && base.back() != '\\') {
         base += '/';
@@ -102,6 +127,21 @@ void CrashSinkInit(const std::string& userDataDir) {
     CopyPath(g_markerPath, crashDir + "/pending_crash.marker");
     CopyPath(g_dumpPath, crashDir + "/pending_crash.dmp");
     CopyPath(g_breadcrumbPath, crashDir + "/breadcrumb.txt");
+    CopyPath(g_sessionLogRecordPath, crashDir + "/session_log.txt");
+
+    // Stash the PREVIOUS session's recorded log path BEFORE overwriting it — but
+    // only when a crash is pending, so the next-launch reporter can tail the
+    // crashed log even though it's a per-PID file the new process can't guess.
+    if (fs::exists(g_markerPath, ec) && !ec) {
+        g_crashedLogPath = ReadFileText(g_sessionLogRecordPath);
+    }
+    if (!activeLogPath.empty()) {
+        std::FILE* f = std::fopen(g_sessionLogRecordPath, "wb");
+        if (f != nullptr) {
+            std::fwrite(activeLogPath.data(), 1, activeLogPath.size(), f);
+            std::fclose(f);
+        }
+    }
 
     RotateDumps(crashDir, 5);
     g_inited = true;
@@ -166,6 +206,14 @@ CrashInfo CrashSinkConsume() {
         info.Reason = "unknown";
     }
     info.Breadcrumb = ReadFileText(g_breadcrumbPath);
+
+    // Tail the crashed session's log (path stashed at Init), redacted.
+    if (!g_crashedLogPath.empty()) {
+        const std::string raw = ReadFileText(g_crashedLogPath.c_str());
+        if (!raw.empty()) {
+            info.LogTail = privacy::RedactLogText(TailLines(raw, 200));
+        }
+    }
 
     // Archive the pending dump (timestamped) so it survives + is rotated; keep it
     // until a successful submit is out of scope for v1 (dump stays locally).

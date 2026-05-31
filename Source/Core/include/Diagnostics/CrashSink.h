@@ -21,13 +21,17 @@ struct CrashInfo {
     std::string Reason;     // short marker reason (e.g. "SEH", "SIGSEGV", "terminate")
     std::string Breadcrumb; // last activity recorded before the crash
     std::string DumpPath;   // archived minidump path, if one was written
+    std::string LogTail;    // redacted tail of the CRASHED session's log, if locatable
 };
 
 /// Startup (normal context). Builds the static path buffers used by the async
-/// handler, ensures `<userDataDir>/crashes` + `/logs` exist, and rotates old
-/// dumps (keeps the most recent few). Safe to call once before installing
-/// handlers. Idempotent.
-void CrashSinkInit(const std::string& userDataDir);
+/// handler, ensures `<userDataDir>/crashes` exists, and rotates old dumps. Pass
+/// `activeLogPath` = the current session's log-sink path; CrashSink records it so
+/// a LATER launch can tail the crashed session's log (it stashes the previous
+/// recorded path BEFORE overwriting, only when a crash is pending — avoiding the
+/// per-PID-log "can't locate next launch" race). Safe to call once before
+/// installing handlers. Idempotent.
+void CrashSinkInit(const std::string& userDataDir, const std::string& activeLogPath = std::string());
 
 /// Normal context. Record what the user is doing now (cheap file overwrite) so a
 /// later crash report can say what was happening. No-op before Init.

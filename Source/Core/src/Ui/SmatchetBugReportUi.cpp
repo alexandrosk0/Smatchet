@@ -51,6 +51,7 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
     opts.IncludeScreenshot = !shotPath.empty();
     opts.Censored = (d.bugReportShotMode == 1);
     opts.ScreenshotAbsPath = shotPath;
+    opts.DumpAbsPath = d.bugReportCrashDumpPath; // crash mode: upload the minidump as a Release asset
     // WYSIWYG consent: if the user opened (and possibly edited) the egress preview,
     // that exact text is the issue body.
     if (d.bugReportPreviewSeeded && !d.bugReportPreviewBuf.empty()) {

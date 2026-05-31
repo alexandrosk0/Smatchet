@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <ctime>
+#include <fstream>
 #include <string>
 
 namespace fs = ghc::filesystem;
@@ -47,6 +48,29 @@ TEST_CASE("CrashSink — write marker -> pending -> consume -> cleared") {
     // Consuming deletes the marker — never loop on the same crash.
     CHECK_FALSE(CrashSinkHasPending());
     CHECK_FALSE(CrashSinkConsume().Pending);
+}
+
+TEST_CASE("CrashSink — log-tail: stashes the crashed session's log path across launches") {
+    const std::string dir = MakeTempDir();
+    // Write a fake "crashed session" log next to the crash dir.
+    const std::string logPath = (fs::path(dir) / "session.log").string();
+    {
+        std::ofstream f(logPath);
+        for (int i = 0; i < 5; ++i) {
+            f << "[INFO] line " << i << " token=supersecretvalue123longenoughtotriprule\n";
+        }
+    }
+    // Session A: records its log path, then "crashes" (writes a marker).
+    CrashSinkInit(dir, logPath);
+    CrashSinkWriteMarkerAsyncSafe("SIGSEGV (segfault)");
+
+    // Session B (next launch): Init stashes the previous log path BEFORE overwriting,
+    // because a marker is pending. Consume returns a redacted tail of the crashed log.
+    CrashSinkInit(dir, (fs::path(dir) / "session_B.log").string());
+    const CrashInfo info = CrashSinkConsume();
+    REQUIRE(info.Pending);
+    CHECK(info.LogTail.find("line 4") != std::string::npos);              // crashed log content present
+    CHECK(info.LogTail.find("supersecretvalue123") == std::string::npos); // redacted
 }
 
 TEST_CASE("CrashSink — pending dump path is non-empty after Init") {

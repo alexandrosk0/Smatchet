@@ -268,8 +268,8 @@ int main(int argc, char** argv) {
     // The per-PID suffix means concurrent Smatchet processes (e.g. spawn-mode
     // ephemeral + the user's manual instance) get distinct log files instead
     // of interleaving + corrupting a shared sink.
+    std::string logPath; // hoisted so the crash reporter can record it for next-launch log-tail
     {
-        std::string logPath;
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
@@ -414,7 +414,7 @@ int main(int argc, char** argv) {
     // resolved (CrashSinkInit writes its marker/dump there). Runs before any heavy work
     // so startup crashes are still captured. CrashSinkInit builds the static path buffers
     // the async handlers use; InstallCrashHandlers wires SEH/terminate/signals.
-    smatchet::diagnostics::CrashSinkInit(ConfigManager::GetUserDataDirectory());
+    smatchet::diagnostics::CrashSinkInit(ConfigManager::GetUserDataDirectory(), logPath);
     smatchet::InstallCrashHandlers();
     smatchet::diagnostics::CrashSinkBreadcrumb("startup");
 
@@ -562,9 +562,14 @@ int main(int argc, char** argv) {
                 ctx += "\nLast activity: " + ci.Breadcrumb;
             }
             if (!ci.DumpPath.empty()) {
-                ctx += "\nMinidump saved locally: " + ci.DumpPath;
+                ctx += "\nMinidump: " + ci.DumpPath + " (uploaded on submit)";
+            }
+            if (!ci.LogTail.empty()) {
+                ctx += "\n\n<details><summary>Log tail (crashed session)</summary>\n\n```\n" + ci.LogTail +
+                       "\n```\n\n</details>";
             }
             g_ui.bugReportCrashContext = ctx;
+            g_ui.bugReportCrashDumpPath = ci.DumpPath; // uploaded as a Release asset on submit
             g_ui.bugReportCrashMode = true;
             g_ui.showBugReport = true;
             g_ui.bugReportOpenLatch = true;

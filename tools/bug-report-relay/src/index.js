@@ -35,6 +35,67 @@ function json(status, obj) {
   });
 }
 
+// Ensure a `crash-dumps` prerelease exists; return its upload_url template, or "".
+async function ensureCrashRelease(token, repo) {
+  const h = ghHeaders(token);
+  const base = `${GH_API}/repos/${repo}/releases`;
+  const existing = await fetch(`${base}/tags/crash-dumps`, { headers: h });
+  if (existing.status === 200) {
+    try {
+      return (await existing.json()).upload_url || "";
+    } catch {
+      return "";
+    }
+  }
+  if (existing.status !== 404) return "";
+  const made = await fetch(base, {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({
+      tag_name: "crash-dumps",
+      name: "Crash dumps",
+      body: "Minidumps attached automatically by the Smatchet crash reporter.",
+      prerelease: true,
+    }),
+  });
+  if (made.status !== 201) return "";
+  try {
+    return (await made.json()).upload_url || "";
+  } catch {
+    return "";
+  }
+}
+
+// Upload a base64 minidump as a Release asset; returns the browser download URL or "".
+async function uploadCrashDump(token, repo, base64, name) {
+  let uploadUrl = await ensureCrashRelease(token, repo);
+  if (!uploadUrl) return "";
+  const brace = uploadUrl.indexOf("{");
+  if (brace !== -1) uploadUrl = uploadUrl.slice(0, brace);
+  uploadUrl += `?name=${encodeURIComponent(name || "crash.dmp")}`;
+  // base64 -> bytes
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const resp = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": UA,
+      "Content-Type": "application/octet-stream",
+    },
+    body: bytes,
+  });
+  if (resp.status !== 201 && resp.status !== 200) return "";
+  try {
+    return (await resp.json()).browser_download_url || "";
+  } catch {
+    return "";
+  }
+}
+
 function splitRepo(slug) {
   const i = slug.indexOf("/");
   if (i <= 0 || i + 1 >= slug.length) return null;
@@ -136,6 +197,16 @@ async function handleReport(request, env) {
       body += `\n\n![screenshot](${rawUrl})`;
     } else {
       body += `\n\n_Screenshot received but could not be uploaded (relay token lacks contents:write or upload failed)._`;
+    }
+  }
+
+  // Crash minidump → Release asset (binaries off the git tree), link in the body.
+  if (payload.dumpBase64) {
+    const dumpUrl = await uploadCrashDump(env.GITHUB_TOKEN, assetsRepo, payload.dumpBase64, payload.dumpName);
+    if (dumpUrl) {
+      body += `\n\n[Crash minidump](${dumpUrl})`;
+    } else {
+      body += `\n\n_Crash minidump received but could not be uploaded (relay token lacks release perms or upload failed)._`;
     }
   }
 
