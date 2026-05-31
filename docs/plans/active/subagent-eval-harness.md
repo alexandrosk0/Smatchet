@@ -4,6 +4,8 @@
 >
 > **Scope clarifier**: this evaluates the **development agents** (`agents/*.md` — orchestrator + the ~30 delegated subagents), NOT the Smatchet product or any in-app AI-assistant surface. See § Out of scope.
 >
+> **Scope (this plan)**: Phase 1 MVP only — **prove the scoring contract before any live agent, harvester, or merge-gate block**. `code-review` only. The trace flywheel (Phase 2) is split into a separate follow-up plan: `docs/plans/active/subagent-eval-flywheel.md`.
+>
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
 ## Context
@@ -12,64 +14,58 @@ The dev process mutates agent prompts (`agents/*.md`) through the self-improveme
 
 Meanwhile the **perf dimension already runs full eval-driven development**: a frozen scenario set → `scripts/dev/perf-run.sh` → `scripts/dev/perf-compare.py` diff vs a baseline → threshold gate that blocks regressions. That is exactly the "optimize against evals" loop, just for one dimension (latency).
 
-Prompted by the video *"The maturity phases of running evals"* (Phil Hetzel, Braintrust, <https://www.youtube.com/watch?v=FB-MLPhL9Ms>). Core lessons applied here: evals ≠ unit tests (dimensional scoring, not exact-match pass/fail); measure every change against a frozen golden set; block scored regressions; grow the golden set from real traces ("flywheel"); calibrate the auto-judge against humans.
+Prompted by the video *"The maturity phases of running evals"* (Phil Hetzel, Braintrust, <https://www.youtube.com/watch?v=FB-MLPhL9Ms>). Core lessons applied here: evals ≠ unit tests (dimensional scoring, not exact-match pass/fail); measure every change against a frozen golden set; block scored regressions; grow the golden set from real traces ("flywheel" — deferred to the follow-up plan); calibrate the auto-judge against humans.
 
-**Intended outcome (one sentence):** after this lands, editing a covered agent's prompt runs that agent's frozen golden case set and surfaces a scored, dimensional before/after delta that blocks regressions — the same gate shape the perf dimension already enjoys.
+**Intended outcome (one sentence):** after this lands, the scoring contract is proven end-to-end against deterministic fixtures — a `code-review` prompt edit can be scored base-vs-head across quality dimensions — with **advisory** CI output, ready to graduate to a blocking gate once calibration data exists.
 
 ## Approach
 
-Mirror the perf pipeline one level up the stack — agent **decision quality** instead of frame latency — reusing the perf-gate shape verbatim wherever possible. Three core artifacts (Phase 1):
+Mirror the perf pipeline one level up the stack — agent **decision quality** instead of frame latency — reusing the perf-gate shape wherever possible. The decisive choice for the MVP: **prove the scoring contract against fixtures before spending a single live-agent token.** Build strictly in this order; each step is testable without the next.
 
-1. **Frozen golden case sets** — `tests/agent-eval/<agent>/*.json`. Each case = `{ input, referenceOutcome, dimensions[] }` (input = a frozen diff / bug repro / scenario; reference = the finding/diagnosis that actually mattered; dimensions = the rubric axes to score). Seeded from **real prior runs** — hand-picked in Phase 1, auto-harvested in Phase 2 (see § Approach Phasing).
-2. **Runner** — `scripts/dev/agent-eval-run.sh <agent> <case>`: invokes ONE agent headlessly (`claude -p` print mode / Agent SDK), runs `N` trials, captures the agent's final output to a result JSON. This is the only harness-coupled piece — a thin adapter, swappable per harness exactly like `scripts/setup-harness.sh`.
-3. **Scorer** — `scripts/dev/agent-eval-score.py`: LLM-as-judge with a calibrated rubric **plus** code-based checks (e.g. "did the finding cite the correct `file:line`?"), emits per-dimension scores, a markdown delta table, and exits non-zero on a threshold breach vs `docs/agent-eval/scoring-policy.json`. Pure Python stdlib, harness-agnostic — a near-direct clone of `perf-compare.py`.
+**1 — Contract (schemas).** Three JSON schemas pin the data shape: `case-schema.json` (a golden case), `result-schema.json` (one runner output), `scoring-policy.json` (per-dimension thresholds + per-agent overrides). Nothing else is built until these are fixed.
 
-Wire into the self-improvement loop: a PR that edits `agents/<name>.md` for a covered agent runs that agent's case set before/after and reports the scored delta; a regression **WARNs** initially (label-overridable, like `perf-out-of-band`) and graduates to **BLOCK** once the judge is calibrated.
+**2 — Scorer (`agent-eval-score.py`), pure Python stdlib.** Consumes a base result JSON + a head result JSON (per `result-schema`), emits a per-dimension markdown delta, exits `0/1/2` — a near-direct clone of `perf-compare.py`. It is **pure-stdlib** because it never calls an LLM directly: dimensional grading goes through an **external judge command** named by `--judge-cmd` / `$SMATCHET_AGENT_EVAL_JUDGE_CMD` (the scorer pipes `{case, output}` in, parses a JSON score out); objective dimensions (`file:line` cited, severity enum, finding count) are code-based checks inline. The judge being external is what keeps the scorer deterministic and unit-testable.
 
-**Key trade-off:** agents are non-deterministic LLMs, not deterministic C++ scenarios. Handled with multi-trial averaging + tolerance thresholds (the video's "run across multiple trials") and LLM-as-judge scoring instead of exact match — never a single-run binary gate. The non-determinism is contained to the runner; the case format and scorer stay deterministic and portable.
+**3 — Scorer tests (`agent_eval_score.bats`).** Inject a **fake judge command** that echoes canned scores → fully deterministic. Assert the exit-code contract (0 clean / 1 regression / 2 malformed) and the delta-table shape. This proves the contract with **no live agent**.
 
-**Phasing.** **Phase 1 (MVP)** — 3 highest-leverage diagnostic agents, offline, manual / PR-scoped trigger, hand-seeded golden cases. **Phase 2 (in scope) — trace flywheel**: grow the golden set automatically from real session traces (the video's "production traces become eval datasets"), sequenced after Phase 1's judge is calibrated. **Phase 3 deferred** — online / continuous eval + dashboard (see § Out of scope).
+**4 — Curated cases (`code-review` only, 3-5).** Hand-picked from real prior runs. Each case carries enough **repo context to reproduce the run** (see § Case metadata).
 
-**Phase 2 mechanism.** A harvester (`scripts/dev/agent-eval-harvest.sh`) scans traces that **already exist** — `.session-context.archive/`, session transcripts, `.claude/.agent-tokens.jsonl` (tells which agent ran) — for runs of covered agents, extracts `(input, agent-output)` pairs, **redacts secrets / PII**, and emits them as *candidate* cases under `tests/agent-eval/<agent>/_candidates/`. Candidates are **proposals, not golden**: a human attaches the `referenceOutcome` and promotes them into the live set via PR review. This keeps the gate deterministic (only curated cases score) while letting the dataset grow from reality. A dedup ledger (`tests/agent-eval/.harvest-ledger.json`) blocks re-harvesting the same trace. No trace-storage infra is built — the harvester reads archives already on disk.
+**5 — Runner (`agent-eval-run.sh`), only after the scorer is stable.** Invokes ONE agent for ONE case, `N` trials, writes a `result-schema` JSON. Two non-negotiable seams:
+- **Before/after** is explicit via `--prompt-root=<path>`: the runner reads the agent-prompt tree from that path, so a prompt PR is scored by running the case set once with `--prompt-root=<base worktree>` and once with `--prompt-root=<head worktree>`, then diffing the two result JSONs (mirrors perf base-vs-fresh). No implicit "current checkout".
+- **Harness adapter**: `claude -p` print mode is **one** adapter behind a seam, not the canonical interface; the case / result / scoring formats assume no specific harness. A `--fake-runner` mode emits a canned `result-schema` JSON so the runner is bats-testable with **no live tokens in CI**.
+
+**6 — Wiring, advisory-only.** `subagent-eval.md` rule + `AGENTS.md` stub + self-improvement-loop hook. CI is **advisory at first**: a malformed eval artifact **FAILs**; a quality regression only **WARNs** until enough calibration data exists to trust the judge. The WARN→BLOCK graduation (and any merge-gate wiring) is explicitly out of the MVP.
+
+### Case metadata
+
+A frozen diff alone is not reproducible. Each `code-review` case records: `repoRef` (commit SHA), `baseBranch`, the relevant files / diff, `agent` name, `toolPosture` (read-only vs edit), and the **exact delegation packet** handed to the agent. The runner reconstructs the run from these fields.
 
 ## Files to modify
 
-Create (new subsystem — grouped by role):
+Create (new subsystem — listed in build order; the order is the point):
 
-*Case data*
-1. `tests/agent-eval/code-review/*.json` — seed set: 5-10 frozen diffs + the findings that mattered.
-2. `tests/agent-eval/debug-detective/*.json` — seed set: frozen bug repros + known root cause.
-3. `tests/agent-eval/perf-detective/*.json` — seed set: frozen scenario + known hot path.
+1. `docs/agent-eval/case-schema.json` — golden-case format: `repoRef`, `baseBranch`, files/diff, `agent`, `toolPosture`, `delegationPacket`, `dimensions[]`, `referenceOutcome`.
+2. `docs/agent-eval/result-schema.json` — one runner output: per-trial agent final output + run metadata; the contract the scorer consumes.
+3. `docs/agent-eval/scoring-policy.json` — per-dimension thresholds + per-agent overrides; mirror `docs/perf/regression-policy.json`.
+4. `scripts/dev/agent-eval-score.py` — pure-stdlib scorer; external judge via `--judge-cmd` / `$SMATCHET_AGENT_EVAL_JUDGE_CMD` + inline code-checks; base-vs-head delta; exit `0/1/2`; mirror `perf-compare.py`.
+5. `tests/bats/agent_eval_score.bats` — scorer tests with a **fake judge command** (deterministic); mirror `tests/bats/merge_gates.bats`.
+6. `tests/agent-eval/code-review/*.json` — **3-5 curated cases, `code-review` only.**
+7. `scripts/dev/agent-eval-run.sh` — runner, **after** the scorer is stable; `--prompt-root` (base/head), `--trials=N`, `--fake-runner`; `claude -p` as one adapter; mirror `perf-run.sh` CLI shape.
+8. `docs/agent-rules/subagent-eval.md` — the rule: malformed artifact = FAIL, quality regression = WARN (advisory) until calibrated; documents the deferred WARN→BLOCK graduation.
+9. `AGENTS.md` — one-line § Project rules pointer + stub to `docs/agent-rules/subagent-eval.md`.
+10. `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` — wire the advisory eval delta into the loop as the "optimize against evals" step.
 
-*Pipeline*
-4. `scripts/dev/agent-eval-run.sh` — headless single-agent runner; mirror `perf-run.sh` CLI shape (`<agent> <case> [--trials=N] [--out=<path>]`).
-5. `scripts/dev/agent-eval-score.py` — dimensional scorer + threshold gate; mirror `perf-compare.py` (load/extract/evaluate/emit-markdown, exit 0/1/2).
-6. `docs/agent-eval/scoring-policy.json` — per-dimension thresholds + per-agent overrides; mirror `docs/perf/regression-policy.json`.
-7. `docs/agent-eval/case-schema.json` — case-file schema; mirror `scripts/dev/perf-baseline-schema.json`.
-
-*Wiring + tests*
-8. `docs/agent-rules/subagent-eval.md` — the rule: when the gate fires, WARN→BLOCK graduation, how the self-improvement loop consumes the delta.
-9. `tests/bats/agent_eval_score.bats` — scorer unit tests against fixed input/reference JSON (judge mocked → deterministic); mirror `tests/bats/merge_gates.bats`.
-10. `AGENTS.md` — one-line § Project rules pointer + stub to `docs/agent-rules/subagent-eval.md`.
-11. `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` — wire the eval gate into the loop as the "optimize against evals" step.
-
-*Phase 2 — trace flywheel*
-12. `scripts/dev/agent-eval-harvest.sh` — scan `.session-context.archive/` + transcripts + `.claude/.agent-tokens.jsonl` → redacted *candidate* cases; harness-specific adapter like the runner.
-13. `tests/agent-eval/<agent>/_candidates/*.json` — staging for un-curated harvested candidates (await human `referenceOutcome` + promotion).
-14. `docs/agent-eval/harvest-policy.json` — which agents to harvest, redaction patterns (token / email / key scrub), per-run candidate cap.
-15. `tests/agent-eval/.harvest-ledger.json` — dedup ledger of already-harvested trace IDs.
-16. `tests/bats/agent_eval_harvest.bats` — redaction + dedup tests (fixture transcript with planted fake secrets → assert scrubbed; re-run → assert no dup).
-
-(Item 8 `docs/agent-rules/subagent-eval.md` also documents the harvest → curate → promote flywheel + the curation gate.)
+No harvester / flywheel artifacts here — see § Out of scope.
 
 ## Existing utilities reused
 
-- `perf-compare.py` skeleton (`load_json` / `extract_rows` / `evaluate` / `emit_markdown` + 0/1/2 exit-code contract) — `scripts/dev/perf-compare.py:62` onward — clone the scorer structure verbatim, swap perf rows for dimension scores.
+- `perf-compare.py` skeleton (`load_json` / `extract_rows` / `evaluate` / `emit_markdown` + 0/1/2 exit-code contract) — `scripts/dev/perf-compare.py:62` onward — clone the scorer structure, swap perf rows for dimension scores.
 - `perf-run.sh` arg-parse + output-path discipline (stale-file wipe, last-line-is-path) — `scripts/dev/perf-run.sh:54` — clone the runner shell shape.
 - `regression-policy.json` `default` + `perScenario` override pattern — `docs/perf/regression-policy.json` (consumed at `scripts/dev/perf-compare.py:74`) — reuse as `default` + `perAgent`.
-- Harness-adapter philosophy (per-harness adapter, portable core) — `scripts/setup-harness.sh` + `AGENTS.md` § Harness adapter — runner is per-harness, case format + scorer portable.
-- Trace source for case harvesting (Phase 2) — `.session-context.archive/` (via `scratchpad-recall` skill) + `.claude/.agent-tokens.jsonl` (via `agent-tokens` skill) + session transcripts.
-- `claude -p` headless print mode — the runner's agent-invocation mechanism.
+- Harness-adapter philosophy (per-harness adapter, portable core) — `agents/scripts/core/setup-harness.sh` + `AGENTS.md` § Harness adapter — runner is per-harness, case / result / scoring formats portable.
+- Shell-lint gate — `agents/scripts/core/test-shell-lint.sh` (5-rule checklist) — the runner must pass it.
+- `merge_gates.bats` bats prior art — `tests/bats/merge_gates.bats`.
+- `claude -p` headless print mode — **one** runner adapter, behind the harness seam (not the canonical interface).
 
 ## UX Pillar callouts
 
@@ -86,34 +82,36 @@ Dev-process tooling only — no product-runtime code. All four N/A.
 
 ## Risks / non-goals
 
-- **RISK — non-determinism**: LLM agents vary run-to-run → flaky gate. *Mitigation*: N-trial averaging + tolerance thresholds + a min-trials floor (mirror `min_baseline_calls`); gate starts as WARN, graduates to BLOCK only after calibration.
-- **RISK — token cost**: each eval run spends real tokens (spawns a live agent). *Mitigation*: tiny case sets (5-10), manual / PR-scoped trigger only (NOT every push), 3 agents not 30.
-- **RISK — judge drift**: LLM-as-judge mis-scores. *Mitigation*: periodic human calibration (the video's refine-evals loop — not our deferred milestone Phase 3; calibration runs inside Phase 1); keep code-based checks wherever objective (`file:line` match, severity enum, finding count).
-- **RISK — harness coupling**: runner needs `claude -p`. *Mitigation*: isolate it in the `.sh` adapter; case format + scorer stay portable per § Harness adapter — a Codex/Cursor runner is a drop-in sibling.
-- **SECURITY — secret / PII leakage (Phase 2)**: session transcripts + archives can carry tokens, API keys, emails, Jira / p4 content. *Mitigation*: mandatory redaction pass in the harvester before any candidate is written; candidates stage in `_candidates/` and enter the committed set only through human PR review; run `security-review` on the harvester before it ships.
-- **RISK — curation burden / candidate quality (Phase 2)**: auto-harvested traces are noisy. *Mitigation*: harvester emits *proposals* only — a human attaches `referenceOutcome` and promotes; a per-run candidate cap keeps review tractable.
-- **RISK — trace-format coupling (Phase 2)**: transcript shape is Claude-Code-specific. *Mitigation*: harvester is harness-specific like the runner; isolate the parse seam, keep the emitted case format portable.
-- **NON-GOAL**: evaluating the Smatchet **product** / its in-app AI-assistant surface — separate plan if that surface ships LLM features (see § Out of scope).
-- **NON-GOAL**: building trace-storage / observability infra (Braintrust-scale) — overkill for an internal fleet; the flywheel reuses existing archives instead.
-- **NON-GOAL**: covering all ~30 agents — MVP is the 3 highest-leverage diagnostic ones only.
+- **RISK — before/after underspecified** (review finding 1): a single checkout can't produce a delta. *Mitigation*: explicit `--prompt-root=<path>` base-vs-head; the two-worktree recipe is documented in `subagent-eval.md`.
+- **RISK — scorer purity vs LLM judge** (review finding 2): can't be pure-stdlib *and* call an LLM. *Mitigation*: external judge command (`--judge-cmd` / `$SMATCHET_AGENT_EVAL_JUDGE_CMD`); scorer stays pure-stdlib + deterministic; tests use a fake judge.
+- **RISK — harness coupling** (review finding 4): `claude -p` is Claude-specific. *Mitigation*: it is one adapter behind a seam; case / result / scoring formats are harness-agnostic. (Path corrected: `agents/scripts/core/setup-harness.sh`.)
+- **RISK — non-determinism**: live agents vary run-to-run. *Mitigation*: scoring contract is proven against fixtures first; `--fake-runner` + fake judge keep CI deterministic with no live tokens; multi-trial averaging + tolerance for live runs.
+- **RISK — cases not reproducible** (review finding 5): a frozen diff alone is insufficient. *Mitigation*: case schema records `repoRef` / `baseBranch` / files / `agent` / `toolPosture` / `delegationPacket`.
+- **NON-GOAL — no live merge-gate BLOCK in the MVP**: CI is advisory (malformed = FAIL, regression = WARN) until calibration data exists. WARN→BLOCK is deferred.
+- **NON-GOAL — Phase 2 trace flywheel** (review finding 3): harvest / redaction / dedup / candidates / ledger are a separate, security-sensitive plan (`subagent-eval-flywheel.md`).
+- **NON-GOAL — coverage beyond `code-review`**: added only after the MVP proves the contract.
+- **NON-GOAL — Smatchet product / in-app AI-assistant eval**: separate plan.
 
 ## Verification
 
-Not C++ — Bucket A/E mostly N/A.
+Not C++ — Bucket A/E N/A. Everything in the MVP is verifiable **without a live agent**.
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: N/A — no `Source/Core/` helper added.
 - **Bucket E (ImGui Test Engine)**: N/A — no UI.
-- **Bash-driver / scorer test**: `tests/bats/agent_eval_score.bats` runs the scorer against fixed input + reference JSON with the judge mocked (deterministic), asserting the exit-code contract (0 clean / 1 regression / 2 malformed) and the markdown delta shape — mirrors `merge_gates.bats`. `scripts/dev/agent-eval-run.sh` passes `scripts/dev/test-shell-lint.sh` (5-rule checklist).
-- **Harvester test (Phase 2)**: `tests/bats/agent_eval_harvest.bats` feeds a fixture transcript with planted fake secrets → asserts redaction scrubs them from emitted candidates; a second run over the same trace asserts the dedup ledger blocks a duplicate. `agent-eval-harvest.sh` passes `test-shell-lint.sh`.
-- **Smoke**: run the full loop once end-to-end on `code-review`'s seed set; eyeball the markdown delta + dimension scores for sanity.
-- **Build gate**: N/A — no compile (`SmatchetStandalone` / `SmatchetCore_DX12` untouched).
-- **Manual residue**: judge-vs-human calibration is inherently manual (the video names this as a permanent step). Deferred-automation action plan: add a `docs/self-improvement/categories/tooling.md` entry tracking calibration cadence (e.g. re-calibrate every N new cases). Not silent residue.
+- **Scorer test (`tests/bats/agent_eval_score.bats`)**: fake judge command + fixed base/head result JSON → asserts exit-code contract (0/1/2) and delta-table shape. Deterministic, no live agent.
+- **Runner test (`tests/bats/agent_eval_run.bats`)**: `--fake-runner` mode → asserts the emitted JSON conforms to `result-schema.json`; no live tokens.
+- **Schema conformance**: the 3-5 curated cases + a sample result validate against `case-schema.json` / `result-schema.json` (stdlib check inside the bats, no third-party validator).
+- **Shell-lint**: `scripts/dev/agent-eval-run.sh` passes `agents/scripts/core/test-shell-lint.sh`.
+- **Build gate**: N/A — no compile.
+- **Manual residue**: one live `code-review` end-to-end smoke (off-CI) once scorer + runner are stable, and judge-vs-human calibration, are inherently manual. Deferred-automation action plan: a `docs/self-improvement/categories/tooling.md` entry tracking the smoke + calibration cadence. Not silent residue.
 
-## Out of scope (flagged, not designed)
+## Out of scope (flagged, not designed here)
 
-- **Phase 3 — online / continuous eval + dashboard**: no-action. An internal fleet doesn't warrant live sampling / observability infra (explicit non-goal above).
-- **Product AI-assistant eval**: separate plan, pending a scope check of whatever the `AGENTS.md` § security-review "AI-assistant" surface actually is.
-- **Coverage past 3 agents**: backlog after the MVP proves the gate catches a real prompt regression.
+- **Phase 2 — trace flywheel → follow-up plan `docs/plans/active/subagent-eval-flywheel.md`**: `agent-eval-harvest.sh`, `_candidates/` staging, harvest dedup ledger, secret/PII redaction policy, candidate curation. Security-sensitive; blocked on Phase-1 calibration.
+- **Coverage beyond `code-review`** (`debug-detective`, `perf-detective`, …): after the MVP proves the gate catches a real prompt regression.
+- **Live merge-gate BLOCK / WARN→BLOCK graduation**: after calibration data exists.
+- **Phase 3 — online / continuous eval + dashboard**: no-action. An internal fleet doesn't warrant live sampling / observability infra.
+- **Product AI-assistant eval**: separate plan, pending a scope check of the `AGENTS.md` § security-review "AI-assistant" surface.
 
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
