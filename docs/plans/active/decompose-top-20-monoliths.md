@@ -22,6 +22,51 @@ Goal: no non-ThirdParty function exceeds **200 lines** / **30 branches**, enforc
 - **🔴 Low ROI as a sweep — the 12 ImGui-draw decompositions.** Pure mechanical, **no behaviour/feature value**; positional-ImGui (`Begin/End`, `PushID/PopID`) decomposition is regression-prone; conflicts with all in-flight UI work; the perf benefit isn't realised (scopes preserved); and **it regrows without the enforcement gate** (already observed). Doing 12 risky PRs whose result decays is net-negative. → made **ride-along** (decompose a draw fn only when already editing that window for a feature).
 - **The gate is the keystone.** Land the line/branch cap in CI *first*; the rest is then either bug-reducing (Phase A) or free-rider (ride-along), and nothing erodes.
 
+## Status — shipped & remaining (2026-05-31)
+
+**Keystone + 9 decompositions shipped** (full detail in § Implementation log): Slice 0 gate (#627),
+Slice 1a pattern doc (#630), and the function decompositions `drawActiveProjectWindow` 992→140 (#632),
+`BuildValue` 169→24 (#633), `RegisterAiCommands` 325→7 (#634), `McpPlugin::OnStart` 687→77 (#635),
+`HtmlToMarkdown` 337→67 (#639), `JiraClient::FetchFieldCatalog` 573→51 (#643), Plane
+`FetchFieldCatalog`+`FetchIssuesStreamed` (#647). Gate is **live** — nothing regrows.
+
+> **Everything below is grandfathered behind the gate** (the delta gate only fails NEW or
+> just-crossed functions). Nothing here is blocking; each can land independently, in any order, as
+> its own PR. The full current oversized set is snapshotted in
+> [`docs/high-integrity/function-size-baseline.md`](../../high-integrity/function-size-baseline.md).
+> **Cross-check the live baseline before starting any item — the plan's named symbol can drift**
+> (Slice 4/8 both hit this). Expect a 2nd (sometimes 3rd) sub-extraction pass on any function with
+> >~60 branches. Merge-discipline: with parallel decomposition PRs, **merge develop into the branch
+> before merging** (CI's shallow clone defeats `git merge-base` → stale branches false-flag a
+> sibling's now-decomposed function; see § Verification (actual) caveat + tooling.md P1).
+
+**Remaining Phase A — genuine-ROI non-UI (the flagship set, recipes in § Approach B):**
+- `ConfigManager::Load` (619 L/162 br) + `Save` (314 L/32 br), `Source/Core/src/Config/ConfigManager.cpp`
+  — **highest value, highest risk.** Field-registration table (`FieldDesc kFields[]`); kills the
+  config parallel-duplication bug class. Boot path → **silent config-corruption risk**: mandatory
+  per-field round-trip tests (write non-default for every field, assert read-back) + a defaults test +
+  the `app-cold-start` perf scenario. Do this one **serially, carefully, dedicated** — not fanned out.
+- `AppController::Initialize` (432 L/61 br) — split `InitConfig`/`InitBackends`/`InitCommands`/`InitPlugins`. Bootstrap → ASan run.
+- `main` (561 L/75 br, `Source/Standalone/main.cpp`) — extract `BootApplication`/`RunFrameLoop` (`ShutdownApplication` exists). Bootstrap → ASan.
+- `AiAssistantController::RunRequest` (340 L/44 br) — phase-split fetch ↔ stream-parse ↔ history-update; each bucket-A testable. HTTP/streaming → keep AI-driver bucket-E green.
+
+**Long tail surfaced by the 200-line cap** (NOT in the original 300-line sweep; all grandfathered):
+- Command registrars — same per-command-fn split as `RegisterAiCommands` (#634), mechanical/low-risk,
+  `command-system`: `RegisterDebugCommands` (315/23), `RegisterViewCommands` (295/32),
+  `RegisterPerfCommands` (245/15), `RegisterTicketMutationCommands` (243/24).
+- `AppController::SubmitFieldEdit` (257/43); `JiraClient::UpdateIssueFields` (243/61, `tracker-backend`).
+- Sync (`offline-sync`): `OfflineQueueService::TickOfflineFieldEdits` (290/71),
+  `TicketSyncService::TickStreamingApply` (276/43) — **perf-sensitive Tick paths; profile before/after.**
+- `SpawnAndRun` (249/32) + `RunCmdAttach` (219/43), `Source/Standalone/CliCommandRunner.cpp` — the
+  refresh banner called these "under threshold" at the old 300 cap; the 200 cap catches them.
+
+**Phase B — ImGui-draw monoliths: RIDE-ALONG ONLY (no dedicated PRs).** The ~15 UI draws still > 200 L
+(`SmatchetUI::Draw`, `drawMainMenuBar`, `DrawWhisperPreferencesTab`, `drawViewsDashboardWindow`,
+`AnnotateAnalysisUi::DrawContent`, `DrawUnifiedOfflineQueuesPanel`, `LuaConsolePlugin::OnDraw`, …; full
+list in § Files Phase B + the baseline snapshot). Decompose one **only when a feature already opens that
+file**, using § Approach A + [`docs/guides/imgui-draw-pattern.md`](../../guides/imgui-draw-pattern.md).
+The canary (#632) is the worked reference.
+
 ## Approach
 
 ### A. ImGui draw-function pattern (canonical)
