@@ -67,7 +67,7 @@ void FooUi::Draw(AppController& app, UiDrawSession& d) {
 }
 ```
 
-Rules of the pattern (codified in `docs/agent-rules/imgui-draw-pattern.md`, added by this plan):
+Rules of the pattern (codified in `docs/guides/imgui-draw-pattern.md`, added by this plan):
 
 1. **`DrawCtx` struct** holds the per-frame snapshots + references. No more 30-line argument lists; no more `static` locals leaking across windows.
 2. **One responsibility per helper**. Header / body / footer / modals / hotkeys are non-overlapping. A helper that grows past ~80 lines splits again.
@@ -96,7 +96,7 @@ Re-sequenced (refresh): the **gate leads**, the **bug-reducing Phase A** follows
 
 **Slice 0 — CI size-cap gate (the keystone; was "out of scope", now leads).** Extend `agents/scripts/project/test-lint-rules.sh` (or a sibling) with a `function-too-long` / `function-too-branchy` rule, **delta-gated** (only NEW or grown functions fail; the existing 30 are grandfathered into `docs/high-integrity/baseline.md`, same mechanism as the comment-bloat rules). Without this, every decomposition below regrows. Pairs with the pattern doc. *Pure-logic; no `Source/` change → fast CI.*
 
-**Slice 1 — pattern doc + a scope-bearing canary** (small). Write `docs/agent-rules/imgui-draw-pattern.md`; refactor **`drawActiveProjectWindow`** (992 L, **8 existing `SMATCHET_UI_PERF_SCOPE` blocks** → real reusable seams, zero baseline shift) as the canonical reference. *(Original canary `DrawWhisperPreferencesTab` is rejected — it has zero perf scopes, so it can't demonstrate the "reuse existing seams" contract.)*
+**Slice 1 — pattern doc + a scope-bearing canary** (small). Write `docs/guides/imgui-draw-pattern.md`; refactor **`drawActiveProjectWindow`** (992 L, **8 existing `SMATCHET_UI_PERF_SCOPE` blocks** → real reusable seams, zero baseline shift) as the canonical reference. *(Original canary `DrawWhisperPreferencesTab` is rejected — it has zero perf scopes, so it can't demonstrate the "reuse existing seams" contract.)*
 
 **Phase A — non-UI table refactors (genuine ROI; ship these regardless of the UI work).**
 2. **`ConfigManager::Load/Save` field table** (`Load` 620 L, `Save` 315 L). Self-contained, no UI-thread risk, kills the parallel-duplication bug class on every config-key add. Biggest dev-ergonomics + correctness win.
@@ -123,9 +123,9 @@ Each draw-fn ride-along follows the same recipe:
 
 Gate + pattern (slices 0-1):
 1. `agents/scripts/project/test-lint-rules.sh` (+ `docs/high-integrity/baseline.md` grandfather snapshot) — add the delta-gated `function-too-long` / `function-too-branchy` rule (Slice 0).
-2. `docs/agent-rules/imgui-draw-pattern.md` (new) — the canonical pattern reference (Slice 1).
+2. `docs/guides/imgui-draw-pattern.md` (new) — the canonical pattern reference (Slice 1).
 3. `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:127` — canary refactor of `drawActiveProjectWindow` (992 L, 8 perf scopes) + its header — add helper API + `ActiveProjectWindowState`.
-4. `AGENTS.md` § Project rules — one-line cross-link ("ImGui draw functions ≥ 200 lines use the section-helper pattern — see `docs/agent-rules/imgui-draw-pattern.md`; enforced by the function-size gate").
+4. `AGENTS.md` § Project rules — one-line cross-link ("ImGui draw functions ≥ 200 lines use the section-helper pattern — see `docs/guides/imgui-draw-pattern.md`; enforced by the function-size gate").
 
 Phase A — non-UI monoliths (slices 2-7):
 5. `Source/Core/src/Config/ConfigManager.cpp:606` (`Load` 620 L) + `:175` (`Save` 315 L) + its header — field-registration table (`FieldDesc`).
@@ -253,6 +253,11 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
     function is suppressible by one `SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy)`.
     Added fixtures + 4 bats cases (operator detection, dual-cap fires both, comma-deviation
     suppresses both). Also resolved an AGENTS.md merge conflict from #626 (plan path active→shipped).
+- **Slice 1a — ImGui draw-function pattern doc (PR #630).** `docs/guides/imgui-draw-pattern.md`
+  (new): canonical `DrawCtx` + section-helper shape, the 6 § Approach-A rules, a positional-ImGui
+  hazards section (Begin/End + PushID/PopID pairing, byte-for-byte layout preservation, bucket-C/E
+  golden verification), `drawActiveProjectWindow` named as the worked canary. `AGENTS.md`
+  § Project rules cross-link + ride-along-only note. Pure-docs.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
@@ -271,6 +276,12 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
 - **Function detector is a heuristic** (brace scanner, not libclang — unavailable/non-portable).
   Systematic quirks cancel in the HEAD-vs-base set-diff for unchanged code; only genuinely new /
   just-crossed functions are flagged, and `SMATCHET_DEVIATION` is the escape hatch.
+- **Slice 1 split into 1a (pattern doc) + 1b (canary).** The plan paired the doc with the
+  992-line `drawActiveProjectWindow` decomposition in one slice. Shipped the doc first (1a, PR
+  #630, pure-docs — immediately useful, unblocks Phase B); the canary surgery (1b) follows as its
+  own build-gated PR with CI bucket-C/E screenshot-diff verification. Rationale: a positional-ImGui
+  decomposition of that size carries real visual-regression risk and a ~20-min dual-target build —
+  far safer isolated than bundled with docs. Delegated to `grid-engine`.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
