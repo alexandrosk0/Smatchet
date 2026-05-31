@@ -226,6 +226,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 - `2aa35ea` · Slice 1 — config data model (`ToolbarConfig.h/.cpp`) + persistence (`TrackerConfig.Toolbar`, `ViewWorkspaceState.ToolbarAppend`) + 8 doctest cases.
 - `91b08cc` · Slice 2/3 — icon catalog + `SmatchetIconPickerUi`, `SmatchetToolbarUi` (render under menu via `BeginViewportSideBar(Up)`, command/Lua/`ui.*` dispatch, right-click menu, editor with drag-drop reorder + command/icon pickers + `ConfigManager::Save` write-through), `SmatchetUI` integration, View-menu toggle, `SmatchetLuaTests` link fix.
 - `feat/full-fa-icon-catalog` · Slice 4 — replaced the curated ~50-icon catalog with the full Font-Awesome 6 set: `scripts/dev/gen-fa-catalog.py` (empty-parse guard) parses `IconsFontAwesome6.h` and emits the checked-in `IconsFontAwesome6_Catalog.inl` (1402 `{slug, ICON_FA_*}` rows). Catalog + `SmatchetToolbarIconGlyph` lookup moved to a new ImGui-free `SmatchetIconCatalog.cpp` (which `#include`s the `.inl`); `SmatchetIconPickerUi.cpp` renders that shared catalog through `ImGuiListClipper` (UX Pillar 1 — the prior grid had no clipper). New pure test `tests/Core/IconCatalog.test.cpp`.
+- `#611` / `#613` · Per-button right-click context menu — `RenderButtonContextMenu` (Edit… / Move Left / Move Right / Insert Separator / Delete) mutates `cfg.Toolbar.Buttons` then `ConfigManager::Save`; menu opened manually (`IsMouseReleased` + `OpenPopup`) so it works on a disabled button too; `realButtonSrc` maps each on-screen non-separator button to its global index; editor preselect via `requestEditSelect_`. Code landed bundled in the #611 scope-selector merge; the non-separator mapping-invariant doctest cases were added separately in #613.
 
 ## Deviations from plan
 
@@ -233,7 +234,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 - **Test path `tests/Core/`** (plan said `tests/Source_Core/`) — matches actual tree; explicit-listed in `tests/CMakeLists.txt` + `tests/Lua/CMakeLists.txt`.
 - **Refresh/sync default button omitted** — no concrete sync command id confirmed (plan § sync-button fallback).
 - **`ui.*` as toolbar-layer pseudo-actions** (not registered `BuiltinCommands`) — toolbar intercepts `ui.command_palette` (reuses existing `g_ui.requestCommandPaletteOpen`), `ui.settings` (`cfg.ShowPreferencesWindow`), `ui.toolbar_customize` (own editor). Avoids strict-zone Commands→UI coupling. `ui.view_create` dropped from defaults.
-- **Per-button right-click context menu deferred** — only empty-bar right-click (Customize / Hide); edit/move/delete live in the editor. (backlog)
+- ~~**Per-button right-click context menu deferred** — only empty-bar right-click (Customize / Hide); edit/move/delete live in the editor. (backlog)~~ — **resolved**: the per-button menu (Edit… / Move Left / Move Right / Insert Separator / Delete) ships, operating on `cfg.Toolbar.Buttons` + `ConfigManager::Save`; opened manually so disabled buttons stay actionable; `realButtonSrc` maps each on-screen button to its global index (appended buttons get no menu). Landed in #611; mapping-invariant tests in #613.
 - **Editor per-tracker append scope selector deferred** — editor edits the global toolbar only; per-tracker `ToolbarAppend` still renders (separator-joined) when present in config. (backlog)
 - ~~**Curated ~50-icon catalog** instead of generated 2500-glyph `.inl` + clipper — `SmatchetToolbarIconGlyph(name)` lookup; no `gen-fa-catalog.py` shipped. (backlog)~~ — **resolved (Slice 4)**: `gen-fa-catalog.py` ships, `IconsFontAwesome6_Catalog.inl` holds the full FA6 set (1402 glyphs), picker grid clipped with `ImGuiListClipper`.
 - **`imgui_internal.h`** required for `BeginViewportSideBar` (matches `SmatchetStatusBarUi.cpp`).
@@ -242,6 +243,7 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 ## Verification (actual)
 
 - **Bucket A**: `SmatchetTests --test-case=*Toolbar*` → 8/8 cases, 30 assertions; `SmatchetLuaTests` → 30/30, 167 assertions (both re-run green on the Slice 2/3 head).
+- **Bucket A (context menu)**: `tests/Core/ToolbarConfig.test.cpp` adds two doctest cases locking the mapping invariant `RenderBar`'s per-button menu relies on — resolution preserves the global non-separator subsequence, and global buttons render before the per-tracker append. CI-green, merged via #613.
 - **Dual-target build**: `SmatchetStandalone` (OpenGL exe) + `SmatchetCore_DX12` (Unreal lib) compile + link clean (MSVC, isolated worktree).
 - **`SmatchetLuaTests` link**: fixed (added `ToolbarConfig.cpp` to its source list — the original PR #603 CI break).
 - **Manual / visual**: PASSED — user visually validated the Standalone build (`91b08cc`): toolbar renders below the menu bar, FA icons load, default buttons + hover tooltips, Customize editor (add / drag-drop reorder / icon picker / Save), View-menu Show-Toolbar toggle. **Bucket-E** (ImGui-Test-Engine drive + screenshot golden) still backlogged as deferred-automation.
