@@ -117,7 +117,7 @@ server: ${P4_PORT:-unknown}
 Orchestrator MUST follow the P4-gated ship-loop per
 \`docs/agent-rules/ship-loops.md\` § P4-gated ship-loop. Ask the sub-variant
 question (small-change vs task-stream) before any slice subagent. Avoid
-\`git worktree add\` — use \`scripts/dev/p4-task-stream.sh\` instead. This
+\`git worktree add\` — use \`agents/scripts/project/p4-task-stream.sh\` instead. This
 overrides prompt-driven mode inference even when the user mentions PR
 numbers or gh URLs.
 

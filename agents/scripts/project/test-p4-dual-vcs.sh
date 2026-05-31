@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../../.."
 
 PASSED=0
 FAILED=0
@@ -36,7 +36,7 @@ STRANDED_CL=""
 # "missing binary → skip" contract. Otherwise the test would die with exit
 # 127 (command-not-found) the first time it tried to invoke one, which
 # test-all.sh would mis-classify as a real failure.
-for dep in scripts/dev/p4-task-stream.sh scripts/dev/p4-task-stream-gc.sh agents/scripts/core/lock-claim.sh; do
+for dep in agents/scripts/project/p4-task-stream.sh agents/scripts/project/p4-task-stream-gc.sh agents/scripts/core/lock-claim.sh; do
     # Invocations are `bash <script>` (not `<script>` directly), so we only
     # need read access — not the executable bit. On Windows / NTFS the
     # x-bit often isn't set even when the script runs fine under bash;
@@ -110,7 +110,7 @@ echo "=== Scenario 1: dual-VCS round-trip ==="
 
 cleanup_probe "$PROBE_AGENT_A"   # leftover state from prior runs
 
-ws=$(bash scripts/dev/p4-task-stream.sh "$PROBE_AGENT_A" 2>/dev/null)
+ws=$(bash agents/scripts/project/p4-task-stream.sh "$PROBE_AGENT_A" 2>/dev/null)
 [ -n "$ws" ] && [ -d "$ws" ]
 assert_eq "alloc emits workspace path" "ok" "$([ -n "$ws" ] && [ -d "$ws" ] && echo ok)"
 
@@ -119,7 +119,7 @@ test "$synced_count" -ge 100  # sanity: depot should have hundreds of files
 assert_eq "task workspace populated (>= 100 files)" "ok" "$([ "$synced_count" -ge 100 ] && echo ok)"
 
 # Re-invoke is idempotent: returns same path, no error.
-ws2=$(bash scripts/dev/p4-task-stream.sh "$PROBE_AGENT_A" 2>/dev/null)
+ws2=$(bash agents/scripts/project/p4-task-stream.sh "$PROBE_AGENT_A" 2>/dev/null)
 assert_eq "alloc is idempotent (same workspace path)" "$ws" "$ws2"
 
 # ----- scenario 2: git-only baseline (regression — no p4 calls invoked) ----
@@ -148,7 +148,7 @@ export P4_TRACE_LOG="$TRACE_DIR/p4-calls.log"
 # bogus remote so we don't actually fork git push either). The claim is
 # allowed to FAIL — we only care about whether the wrapper p4 was called.
 ws_file=$(mktemp)
-printf 'scripts/dev/test-p4-dual-vcs.sh\n' > "$ws_file"
+printf 'agents/scripts/project/test-p4-dual-vcs.sh\n' > "$ws_file"
 PATH="${TRACE_DIR}:${PATH}" \
     SMATCHET_LOCK_BACKEND="" \
     SMATCHET_LOCK_BYPASS_REPO_CHECK=1 \
@@ -173,8 +173,8 @@ echo "=== Scenario 3: multi-agent parallel task streams ==="
 
 cleanup_probe "$PROBE_AGENT_B"
 
-wsA=$(bash scripts/dev/p4-task-stream.sh "$PROBE_AGENT_A" 2>/dev/null)
-wsB=$(bash scripts/dev/p4-task-stream.sh "$PROBE_AGENT_B" 2>/dev/null)
+wsA=$(bash agents/scripts/project/p4-task-stream.sh "$PROBE_AGENT_A" 2>/dev/null)
+wsB=$(bash agents/scripts/project/p4-task-stream.sh "$PROBE_AGENT_B" 2>/dev/null)
 [ "$wsA" != "$wsB" ]
 assert_eq "two agents get distinct workspaces" "ok" "$([ "$wsA" != "$wsB" ] && echo ok)"
 
@@ -182,17 +182,17 @@ stream_count=$("$P4_BIN" streams "//smatchet/task-*" 2>/dev/null | grep -c "phas
 assert_eq "both streams visible in 'p4 streams'" "2" "${stream_count// /}"
 
 # GC dry-run should propose purging both (--older-than-days 0 forces it).
-gc_out=$(bash scripts/dev/p4-task-stream-gc.sh --older-than-days 0 --dry-run 2>&1)
+gc_out=$(bash agents/scripts/project/p4-task-stream-gc.sh --older-than-days 0 --dry-run 2>&1)
 purgeable=$(echo "$gc_out" | grep -c "DRY-RUN would purge //smatchet/task-phase7-probe-" || true)
 assert_eq "GC dry-run identifies both task streams" "2" "${purgeable// /}"
 
 # Real GC removes both.
-bash scripts/dev/p4-task-stream-gc.sh --older-than-days 0 >/dev/null 2>&1
+bash agents/scripts/project/p4-task-stream-gc.sh --older-than-days 0 >/dev/null 2>&1
 remaining=$("$P4_BIN" streams "//smatchet/task-*" 2>/dev/null | grep -c "phase7-probe-" || true)
 assert_eq "GC real run removes both" "0" "${remaining// /}"
 
 # ----- scenario 4: prepare-review-cl creates pending CL + shelf ------------
-# Covers `bash scripts/dev/p4-task-stream-to-pr.sh --prepare-review-cl`
+# Covers `bash agents/scripts/project/p4-task-stream-to-pr.sh --prepare-review-cl`
 # from docs/plans/shipped/p4-gated-ship-loop.md. Verifies that prepare-mode:
 #   1. Creates a NAMED pending CL on //smatchet/main (not the default
 #      changelist).
@@ -220,7 +220,7 @@ if [ "${pending_probe_count:-0}" -gt 0 ]; then
     echo "  (clean up unrelated pending CLs before re-running this test for full coverage)"
 else
     cleanup_probe "$PROBE_AGENT_PREP"  # leftover state
-    ws_prep=$(bash scripts/dev/p4-task-stream.sh "$PROBE_AGENT_PREP" 2>/dev/null)
+    ws_prep=$(bash agents/scripts/project/p4-task-stream.sh "$PROBE_AGENT_PREP" 2>/dev/null)
     [ -n "$ws_prep" ] && [ -d "$ws_prep" ]
     assert_eq "prepare probe: alloc emits workspace" "ok" "$([ -n "$ws_prep" ] && [ -d "$ws_prep" ] && echo ok)"
 
@@ -244,7 +244,7 @@ echo "phase7 probe content $(date +%s)" > "${ws_prep}/${probe_file}"
 PREP_OUT=$(mktemp)
 PREP_ERR=$(mktemp)
 if P4PORT="${P4PORT}" P4USER="${P4USER}" P4_BIN="${P4_BIN}" \
-        bash scripts/dev/p4-task-stream-to-pr.sh "$PROBE_AGENT_PREP" "Phase 7 prepare probe" --prepare-review-cl > "$PREP_OUT" 2>"$PREP_ERR"; then
+        bash agents/scripts/project/p4-task-stream-to-pr.sh "$PROBE_AGENT_PREP" "Phase 7 prepare probe" --prepare-review-cl > "$PREP_OUT" 2>"$PREP_ERR"; then
     prep_exit=0
 else
     prep_exit=$?
@@ -292,7 +292,7 @@ fi
 fi  # end scenario-4 pre-flight-clean guard
 
 # ----- scenario 5: promote-reviewed-cl refuses stranded / mismatched CL ----
-# Covers `bash scripts/dev/p4-task-stream-to-pr.sh --promote-reviewed-cl`
+# Covers `bash agents/scripts/project/p4-task-stream-to-pr.sh --promote-reviewed-cl`
 # refusal path: when the CL is pending but its description doesn't carry
 # the `task-stream-id: <agent-id>` tag this caller expects, promote MUST
 # refuse with exit 5 and surface manual cleanup instructions (never
@@ -320,7 +320,7 @@ stranded_out=$(P4CLIENT="$main_client" "$P4_BIN" change -o | awk '
 STRANDED_CL=$(printf '%s\n' "$stranded_out" | sed -nE 's/.*Change ([0-9]+) created.*/\1/p' | tail -1)
 
 if [ -n "$STRANDED_CL" ]; then
-    if promote_out=$(bash scripts/dev/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$STRANDED_CL" 2>&1); then
+    if promote_out=$(bash agents/scripts/project/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$STRANDED_CL" 2>&1); then
         promote_exit=0
     else
         promote_exit=$?
@@ -350,7 +350,7 @@ fi
 # flaky once the counter passes that mark).
 latest_cl=$("$P4_BIN" changes -m1 //smatchet/... 2>/dev/null | sed -nE 's/^Change ([0-9]+).*/\1/p' | head -1)
 nonexistent_cl=$(( ${latest_cl:-0} + 100000 ))
-if promote_missing_out=$(bash scripts/dev/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$nonexistent_cl" 2>&1); then
+if promote_missing_out=$(bash agents/scripts/project/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$nonexistent_cl" 2>&1); then
     promote_missing_exit=0
 else
     promote_missing_exit=$?

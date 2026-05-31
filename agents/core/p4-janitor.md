@@ -29,7 +29,7 @@ Owned ops:
 
 | Op | Mechanism | Dry-run default? |
 |---|---|---|
-| Purge stale task streams + their clients + on-disk workspaces | `scripts/dev/p4-task-stream-gc.sh --older-than-days N` | Yes |
+| Purge stale task streams + their clients + on-disk workspaces | `agents/scripts/project/p4-task-stream-gc.sh --older-than-days N` | Yes |
 | Drop abandoned plan-lock counters (state == 0, no meta, > 30 d old) | `p4 counter -d smatchet_lock_<slug>` | Yes |
 | Sweep stale shelved CLs (no client owner alive, > 30 d) | `p4 shelve -d -c <cl>` | Yes |
 | Periodic archive-integrity check | `p4 verify -q //smatchet/...` | n/a (read-only) |
@@ -61,7 +61,7 @@ echo "=== lock counters ==="; p4 counters -e 'smatchet_lock_*'
 echo "=== pending CLs ==="; p4 changes -s pending
 
 # 2. task-stream GC (dry-run)
-bash scripts/dev/p4-task-stream-gc.sh --older-than-days 14 --dry-run
+bash agents/scripts/project/p4-task-stream-gc.sh --older-than-days 14 --dry-run
 
 # 3. shelve sweep (dry-run)
 p4 shelves -m 100 | awk '/^Change/ { print $2 }' | while read cl; do

@@ -6,11 +6,11 @@
 # older than the threshold. Skips any stream with pending changelists
 # (safety — pending CLs may hold un-shipped agent work).
 #
-# Counterpart to `bash scripts/dev/p4-task-stream.sh` (the allocator).
+# Counterpart to `bash agents/scripts/project/p4-task-stream.sh` (the allocator).
 # Phase 2 Step 4 of `docs/plans/shipped/git-to-perforce-migration.md`.
 #
 # Usage:
-#   bash scripts/dev/p4-task-stream-gc.sh [--older-than-days N] [--dry-run]
+#   bash agents/scripts/project/p4-task-stream-gc.sh [--older-than-days N] [--dry-run]
 #
 # Options:
 #   --older-than-days N  — only purge streams whose updated-time is older
@@ -23,7 +23,7 @@
 # Optional environment:
 #   P4_TASK_PREFIX    — task-stream path prefix INCLUDING trailing separator
 #                       (default: //smatchet/task-). Must match the prefix
-#                       used by `bash scripts/dev/p4-task-stream.sh`.
+#                       used by `bash agents/scripts/project/p4-task-stream.sh`.
 #   P4_CLIENT_PREFIX  — client name prefix (default: task)
 #   P4_BIN            — p4 executable (default: `p4` from PATH)
 #

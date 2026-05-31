@@ -58,17 +58,17 @@ When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a **P4-gated ship-loop** 
 **Two sub-variants** — orchestrator asks once at task start via `AskUserQuestion` which to use:
 
 1. **Small-change loop** (default; single slice, single subsystem) — work directly on `//smatchet/main` via the canonical client. Iterate edits in a pending CL. Smoke build → shelve → user review → full tests → submit → git branch + push + PR.
-2. **Task-stream loop** (multi-slice OR write set spans multiple subsystems; only when user explicitly approves) — allocate `bash scripts/dev/p4-task-stream.sh <id>`. Each slice submits to the task stream's depot path. End-gate runs the full battery, then `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl` integrates into a pending main-stream CL + shelves. User reviews shelf. On approval, `--promote-reviewed-cl <CL>` submits + creates git branch + push + PR.
+2. **Task-stream loop** (multi-slice OR write set spans multiple subsystems; only when user explicitly approves) — allocate `bash agents/scripts/project/p4-task-stream.sh <id>`. Each slice submits to the task stream's depot path. End-gate runs the full battery, then `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl` integrates into a pending main-stream CL + shelves. User reviews shelf. On approval, `--promote-reviewed-cl <CL>` submits + creates git branch + push + PR.
 
 **Key invariants (both sub-variants):**
 
 - `git push` / `gh pr create` happen **once**, after shelf approval AND full test-pass.
 - Shelf-review gate fires **exactly once** per task. Test failures post-approval → fix → re-test without re-review. Re-review only on explicit user request.
-- **No `git worktree add`** while `SMATCHET_AGENT_VCS=p4` — subagent isolation uses `scripts/dev/p4-task-stream.sh` exclusively. First git write is the `git checkout -b` inside the promote step.
+- **No `git worktree add`** while `SMATCHET_AGENT_VCS=p4` — subagent isolation uses `agents/scripts/project/p4-task-stream.sh` exclusively. First git write is the `git checkout -b` inside the promote step.
 - **Smoke build precedes shelf** — user never sees a non-compiling change in P4V.
 - **`code-review` agent dispatched ONCE per task** at the end-gate / shelf step (cumulative diff). Not per slice.
 - Pure-docs slice skip still applies. Trivial-visual-only envelope still applies, with `p4 sync` + `p4 edit -t +l` substituting for `git stash` race-recovery.
-- Plan-lock backend auto-flips to `p4-counter` **only when unset** — `export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"` (no colon — empty-string setting is preserved per `scripts/dev/test-p4-dual-vcs.sh` scenario 2 line 149 + scenario 6 line 369).
+- Plan-lock backend auto-flips to `p4-counter` **only when unset** — `export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"` (no colon — empty-string setting is preserved per `agents/scripts/project/test-p4-dual-vcs.sh` scenario 2 line 149 + scenario 6 line 369).
 - Post-ship `AskUserQuestion` ALWAYS fires with option 3 ("Register with watcher") pre-selected; when `docs/plans/active/merge-gates-ci-coderabbit-comments.md` ships end-to-end the `AskUserQuestion` goes away entirely in p4-mode.
 
 Full phase sequence + invariants + exception rules in [`docs/perforce/AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § P4-gated ship-loop. Plan: [`docs/plans/shipped/p4-gated-ship-loop.md`](../plans/shipped/p4-gated-ship-loop.md). ADR: [`docs/adr/0008-p4-gated-ship-loop.md`](../adr/0008-p4-gated-ship-loop.md).

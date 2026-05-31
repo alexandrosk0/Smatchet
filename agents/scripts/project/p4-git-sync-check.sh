@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/dev/p4-git-sync-check.sh — guard against git/p4 path mismatches.
+# agents/scripts/project/p4-git-sync-check.sh — guard against git/p4 path mismatches.
 #
 # In the dual-VCS topology (SMATCHET_AGENT_VCS=p4), follow-up edits can drift
 # out of sync between git working-tree state and p4 client state: files
@@ -8,8 +8,8 @@
 # can correct before shipping.
 #
 # Usage:
-#   bash scripts/dev/p4-git-sync-check.sh           # exit 0 if synced; exit 1 if mismatch
-#   bash scripts/dev/p4-git-sync-check.sh --quiet   # silent on success
+#   bash agents/scripts/project/p4-git-sync-check.sh           # exit 0 if synced; exit 1 if mismatch
+#   bash agents/scripts/project/p4-git-sync-check.sh --quiet   # silent on success
 #
 # Exit codes:
 #   0 — git pending paths and p4 opened paths are aligned

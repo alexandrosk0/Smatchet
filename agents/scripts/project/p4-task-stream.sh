@@ -17,7 +17,7 @@
 # Phase 2 Step 2 of `docs/plans/shipped/git-to-perforce-migration.md`.
 #
 # Usage:
-#   bash scripts/dev/p4-task-stream.sh <agent-id>
+#   bash agents/scripts/project/p4-task-stream.sh <agent-id>
 #
 # Arguments:
 #   agent-id — kebab-case identifier, [a-z0-9][a-z0-9-]{0,63}
@@ -48,7 +48,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: bash scripts/dev/p4-task-stream.sh <agent-id>" >&2
+    echo "usage: bash agents/scripts/project/p4-task-stream.sh <agent-id>" >&2
     exit 2
 }
 

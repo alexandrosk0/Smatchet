@@ -66,7 +66,7 @@ If either signal fires, archive the backlog entry into `applied.md` with a `Reso
 **Force-push carve-out for Claude Code SDK-spawned recovery and p4 task-stream promotion**: the global `git push --force` ban (and the harness's banned `--no-verify` / `--no-gpg-sign` flags) gets two narrow carve-outs — `git push --force-with-lease origin <branch>` is permitted **only** during API-500 recovery (see [`docs/agent-rules/delegation.md`](delegation.md) § API-500 mid-run recovery) when the orchestrator is amending an unpushed-since-API-500 commit on:
 
 1. A Claude Code SDK-spawned worktree branch matching `claude/<id>/*`, OR
-2. A Perforce-task-stream-promoted branch matching `agent/<task-stream-id>/*` (created by `scripts/dev/p4-task-stream-to-pr.sh`).
+2. A Perforce-task-stream-promoted branch matching `agent/<task-stream-id>/*` (created by `agents/scripts/project/p4-task-stream-to-pr.sh`).
 
 The `agent/<id>` carve-out was deleted post-`ClaudeCodeLocalRunner` (per v1 of `docs/plans/shipped/github-tracker-backend.md`) and is reinstated here for the p4-task-stream surface: those branches are recovery-style throwaways, created by the script after a successful shelf submit, and they should never carry non-self commits. The `smatchet-merge-watcher` host daemon (per `docs/plans/shipped/smatchet-merge-watcher.md`) runs in-process, not as a spawned subprocess, so it has no worktree branch that would need this carve-out.
 

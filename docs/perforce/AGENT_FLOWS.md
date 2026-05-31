@@ -14,10 +14,10 @@ Concern-oriented summary of which side owns which agentic-WIP primitive — abso
 
 | Concern | git path | p4 path |
 |---|---|---|
-| Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash scripts/dev/p4-task-stream.sh <agent-id>` |
+| Per-subagent isolation | `git worktree add .claude/worktrees/<id>` | `bash agents/scripts/project/p4-task-stream.sh <agent-id>` |
 | Plan-lock backend | `refs/locks/<slug>` (default) | `SMATCHET_LOCK_BACKEND=p4-counter` |
-| Submit subagent work as PR | (manual) | `bash scripts/dev/p4-task-stream-to-pr.sh <id> <title>` |
-| Stale-stream GC | (cron via `agents/core/git-janitor.md`) | `agents/core/p4-janitor.md` + `scripts/dev/p4-task-stream-gc.sh` |
+| Submit subagent work as PR | (manual) | `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> <title>` |
+| Stale-stream GC | (cron via `agents/core/git-janitor.md`) | `agents/core/p4-janitor.md` + `agents/scripts/project/p4-task-stream-gc.sh` |
 | Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
 | Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
 
@@ -28,13 +28,13 @@ The verb-level TL;DR below extends this concern view with per-operation guidance
 | If you need to… | git verb | p4 verb | Owner |
 |---|---|---|---|
 | Ship code to `develop` for review | `git push` + `gh pr create` | (same — git remains the ship-line) | every agent |
-| Spawn an isolated parallel subagent | `git worktree add .claude/worktrees/<id>` | `bash scripts/dev/p4-task-stream.sh <id>` | orchestrator |
+| Spawn an isolated parallel subagent | `git worktree add .claude/worktrees/<id>` | `bash agents/scripts/project/p4-task-stream.sh <id>` | orchestrator |
 | Atomic plan-lock claim | `bash agents/scripts/core/lock-claim.sh` | `SMATCHET_LOCK_BACKEND=p4-counter bash agents/scripts/core/lock-claim.sh` | orchestrator |
 | Stash WIP locally | `git stash` | `p4 shelve` (server-side, surfaces in P4V) | individual agent |
 | Edit a file exclusively (block other agents) | (no equivalent) | `p4 edit -t +l <file>` | individual agent |
 | Read a file's revision history | `git log -- <file>` | `p4 filelog <depot-path>` | any |
 | Diff before submit | `git diff` | `p4 diff` | any |
-| Merge subagent work back to mainline | (manual) | `bash scripts/dev/p4-task-stream-to-pr.sh <id> <title>` | orchestrator |
+| Merge subagent work back to mainline | (manual) | `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> <title>` | orchestrator |
 
 The general principle: **anything that needs to leave the dev box (PRs, CI, merge-watcher) goes through git**. Anything local + ephemeral + agentic (parallel isolation, locks, shelves, exclusive-edit) can go through p4 for the affordances p4 has that git doesn't.
 
@@ -45,7 +45,7 @@ A task stream is the p4 sibling of a git worktree: a labeled scratch space for o
 ### Allocate
 
 ```bash
-ws=$(bash scripts/dev/p4-task-stream.sh <agent-id>)
+ws=$(bash agents/scripts/project/p4-task-stream.sh <agent-id>)
 echo "subagent working dir: $ws"
 ```
 
@@ -64,7 +64,7 @@ Inside `$ws`, the subagent uses any p4 verb: `p4 edit`, `p4 add`, `p4 submit`, e
 ### Integrate + ship as PR
 
 ```bash
-bash scripts/dev/p4-task-stream-to-pr.sh <agent-id> "PR title here"
+bash agents/scripts/project/p4-task-stream-to-pr.sh <agent-id> "PR title here"
 ```
 
 Behind the scenes:
@@ -81,7 +81,7 @@ Behind the scenes:
 ### GC
 
 ```bash
-bash scripts/dev/p4-task-stream-gc.sh --older-than-days 14
+bash agents/scripts/project/p4-task-stream-gc.sh --older-than-days 14
 ```
 
 Scans `//smatchet/task-*`, parses each stream's `Update:` timestamp, deletes streams older than the threshold whose clients have **zero pending CLs** (safety). On-disk cleanup limited to client roots under `.claude/streams/` (refuses to rm-rf anywhere else).
@@ -200,7 +200,7 @@ export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
 | Situation | p4 stream | Promote-to-PR |
 |---|---|---|
 | **Default** | `//smatchet/main` via canonical client directly | `p4 submit` (approved CL) + `git push` + `gh pr create` |
-| **User-approved task stream** | `bash scripts/dev/p4-task-stream.sh <id>` | `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>` |
+| **User-approved task stream** | `bash agents/scripts/project/p4-task-stream.sh <id>` | `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>` |
 
 **Default**: always `//smatchet/main`. Task streams are never chosen automatically — orchestrator asks via `AskUserQuestion` before allocating one.
 
@@ -226,10 +226,10 @@ For each slice (repeat until all slices done):
 After all slices pass slice-boundary gates:
 
 - **End-gate** — full battery of sentinels + coverage-delta + doc-anchors + agent-contract + bucket-E + perf. Runs ONCE here, NOT per slice. Failures iterate in p4 (no shelf yet; user sees nothing until end-gate green).
-- **Prepare main-stream review CL** — `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl`. Integrates task stream → `//smatchet/main` into a pending CL, resolves auto-safe, shelves it, prints CL number on stdout.
+- **Prepare main-stream review CL** — `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl`. Integrates task stream → `//smatchet/main` into a pending CL, resolves auto-safe, shelves it, prints CL number on stdout.
 - **Code-review pass** — `code-review` agent dispatched ONCE (cumulative diff across all slices). Findings → fix inline → re-run end-gate → re-prepare review CL → re-dispatch code-review.
 - **Shelf-for-user-validation** — `AskUserQuestion`: "All slices done, tests green, code-review clean. Shelf <CL> ready — review in P4V and confirm." Feedback → fix in p4 → `p4 shelve -f -c <CL>` → re-present. Approved → continue.
-- **Promote** — `bash scripts/dev/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>`. Submits the approved CL to `//smatchet/main`, then creates git branch + commit + push + draft PR. Post-ship `AskUserQuestion` (option 3 pre-selected).
+- **Promote** — `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>`. Submits the approved CL to `//smatchet/main`, then creates git branch + commit + push + draft PR. Post-ship `AskUserQuestion` (option 3 pre-selected).
 
 ### Stranded-CL recovery — `--prepare-review-cl` / `--promote-reviewed-cl`
 
