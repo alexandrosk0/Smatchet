@@ -246,6 +246,20 @@ def case_deviation_prefix(repo):
           "prefix-collision: rule=comment-blank does NOT suppress comment-blank-run")
 _in_repo(case_deviation_prefix)
 
+# 4c4 — hyphen-extended collision: rule=comment-blank-run-extra must NOT suppress comment-blank-run
+#       (\b matches before '-', so the marker must end on a non-[\w-] char — CodeRabbit #598).
+def case_deviation_hyphen_ext(repo):
+    _commit_base(repo, CLEAN)
+    sup = CLEAN + (
+        "// SMATCHET_DEVIATION(rule=comment-blank-run-extra; reason=x; owner=y; revisit=never)\n"
+        "//\n"   # comment-blank-run — the longer typo'd id must not cover it
+    )
+    _write(repo, REL, sup)
+    rc, out = _run_diff("HEAD")
+    check(rc == 1 and "comment-blank-run" in out,
+          "hyphen-extended: rule=comment-blank-run-extra does NOT suppress comment-blank-run")
+_in_repo(case_deviation_hyphen_ext)
+
 # 4d — ratio warning is delta-aware AND non-blocking.
 def case_ratio_rise(repo):
     _commit_base(repo, CLEAN)   # low ratio base

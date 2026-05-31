@@ -237,8 +237,11 @@ def run_diff_mode(ref):
         except OSError:
             return False
         # Prefix-safe: `rule=comment-blank` must NOT match `rule=comment-blank-run` (and vice-versa).
+        # The next char after rule_id must be neither a word char NOR a hyphen — `(?![\w-])` —
+        # because `\b` matches between a word char and `-`, which would let a longer/typo'd id
+        # (e.g. `rule=comment-blank-run-extra`) leak through.
         return "SMATCHET_DEVIATION" in prev and \
-            re.search(r"\brule=%s(\b|[;)])" % re.escape(rule_id), prev) is not None
+            re.search(r"\brule=%s(?![\w-])" % re.escape(rule_id), prev) is not None
 
     for ln in diff.splitlines():
         if ln.startswith("+++ b/"):
