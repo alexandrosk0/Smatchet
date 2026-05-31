@@ -18,6 +18,8 @@
 #   narrowing-conversions  clang-tidy cppcoreguidelines-narrowing-conversions (strict TUs)
 #   define-imgui           `#define ImGui...` macro-alias trick
 #   deviation-overdue      SMATCHET_DEVIATION whose calendar revisit= has passed
+#   function-too-long      function body > 200 lines (repo-wide, delta-gated; function_size_audit.py)
+#   function-too-branchy   function decision count > 30 (repo-wide, delta-gated)
 #
 # Modes:
 #   (no args) / --diff [<ref>]   delta gate: fail only on (rule,basename,hash)
@@ -150,6 +152,10 @@ revisit_overdue() {
 # reduce-source-comment-bloat Phase 4 — repo-wide comment-regrowth rule-ids (delta-gated,
 # hard-fail anywhere; classified by comment_audit.py --diff). KEEP IN SYNC with AGENTS.md.
 COMMENT_RULES=(comment-commented-out-code comment-decorative-banner comment-blank-run)
+
+# decompose-top-20-monoliths Slice 0 — repo-wide function-size rule-ids (delta-gated; classified by
+# function_size_audit.py --diff). KEEP IN SYNC with AGENTS.md § Tiered enforcement.
+FUNCSIZE_RULES=(function-too-long function-too-branchy)
 
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
@@ -334,12 +340,13 @@ case "${1:-}" in
     --diff)        MODE=diff;     ARG="${2:-}" ;;
     --diff=*)      MODE=diff;     ARG="${1#--diff=}" ;;
     --catalog)     MODE=catalog ;;
+    --funcsize-baseline) MODE=funcsizebaseline ;;
     --scan-file)   MODE=scanfile; ARG="${2:-}" ;;
     --scan-file=*) MODE=scanfile; ARG="${1#--scan-file=}" ;;
     --full)        MODE=full ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--scan-file[=]<f>|--full|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--scan-file[=]<f>|--full|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -360,7 +367,11 @@ case "$MODE" in
     for r in "${COMMENT_RULES[@]}"; do
         if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: comment rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
-    [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment rules in sync" || exit 1
+    # Assert each repo-wide function-size rule-id is documented in AGENTS.md (delta-gated list).
+    for r in "${FUNCSIZE_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: function-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment + function-size rules in sync" || exit 1
     ;;
 
   full)
@@ -401,6 +412,18 @@ case "$MODE" in
     else
         gen_catalog
     fi
+    ;;
+
+  funcsizebaseline)
+    # Refresh the informational function-size grandfather snapshot. Kept in its OWN file (not
+    # co-mingled with $BASELINE_FILE) so the strict-catalog determinism contract is untouched; the
+    # gate itself is a live merge-base delta (function_size_audit.py --diff), not this file.
+    fs_py="$(resolve_python || true)"
+    [ -n "$fs_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --funcsize-baseline" >&2; exit 2; }
+    FUNCSIZE_BASELINE_FILE="docs/high-integrity/function-size-baseline.md"
+    mkdir -p "$(dirname "$FUNCSIZE_BASELINE_FILE")"
+    "$fs_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --baseline-md > "$FUNCSIZE_BASELINE_FILE"
+    echo "[test-lint-rules] refreshed $FUNCSIZE_BASELINE_FILE"
     ;;
 
   diff)
@@ -479,6 +502,36 @@ case "$MODE" in
         echo "  Delete the noise, or add SMATCHET_DEVIATION(rule=<comment-id>; reason=...; owner=...; revisit=...) above it."
     else
         echo "[test-lint-rules] PASS — no new comment-noise vs $BASE"
+    fi
+
+    # --- function-size rules (repo-wide, delta-gated; decompose-top-20-monoliths Slice 0) ---
+    # New functions over the cap (>200 lines / >30 branches) — or existing ones that JUST crossed
+    # it — fail anywhere in first-party C++. function_size_audit.py keys by (rule, basename,
+    # qualified-name) and diffs HEAD vs the merge-base of $BASE, so the existing monoliths are
+    # grandfathered (a grandfathered function growing further stays grandfathered — same model as
+    # the comment-regrowth rules). Fail CLOSED on infra error, identical contract to the comment
+    # gate (0 clean / 1 violations / >=2 infra). A `// SMATCHET_DEVIATION(rule=function-too-long;
+    # ...)` above the signature suppresses one. $cr_py is the validated interpreter from above.
+    fs_aud="$REPO_ROOT/agents/scripts/core/function_size_audit.py"
+    if [ ! -f "$fs_aud" ]; then
+        echo "test-lint-rules: ERROR: missing $fs_aud; cannot enforce function-size gate" >&2
+        exit 2
+    fi
+    if fs_out="$("$cr_py" "$fs_aud" --diff "$BASE")"; then fs_rc=0; else fs_rc=$?; fi
+    if [ "$fs_rc" -ge 2 ]; then
+        echo "test-lint-rules: ERROR: function_size_audit.py --diff failed (exit $fs_rc) for base '$BASE'" >&2
+        exit 2
+    fi
+    if [ -n "$fs_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: new oversized functions vs $BASE (cap 200 lines / 30 branches):"
+        printf '%s\n' "$fs_out" | sed 's/^/  /'
+        echo "  Decompose it (see docs/plans/active/decompose-top-20-monoliths.md § Approach), or add"
+        echo "  SMATCHET_DEVIATION(rule=function-too-long; reason=...; owner=...; revisit=...) above the signature"
+        echo "  (comma-separate the rule ids — rule=function-too-long,function-too-branchy — to suppress both caps)."
+    else
+        echo "[test-lint-rules] PASS — no new oversized functions vs $BASE"
     fi
 
     # --- soft comment-ratio warning (ADVISORY — never changes exit code) ---
