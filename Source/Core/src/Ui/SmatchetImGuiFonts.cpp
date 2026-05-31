@@ -329,11 +329,46 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
             monoFont = io.Fonts->AddFontFromFileTTF(kConsolasPath, fontSizePixels, &variant_cfg, glyph_ranges.Data);
         }
 
+        // Bug-report censor font. ImGui 1.92 bakes glyphs ON DEMAND, so restricting
+        // the glyph range does NOT stop other glyphs loading — instead we load the
+        // body font + merged FA normally, then AddRemapChar() every TEXT codepoint to
+        // U+2588 (█). When this font is active the whole UI renders as blocks while FA
+        // icons stay real. Used for the bug-report screenshot capture frame.
+        ImFont* redactFont = nullptr;
+        {
+            ImFontConfig redact_cfg;
+            redact_cfg.GlyphRanges = glyph_ranges.Data;
+            redactFont = io.Fonts->AddFontFromFileTTF(path, fontSizePixels, &redact_cfg, glyph_ranges.Data);
+            if (redactFont != nullptr) {
+                const std::string faRedactPath = ResolveAssetTtfPath("fa-solid-900.ttf");
+                if (!faRedactPath.empty()) {
+                    ImFontConfig fa_redact;
+                    fa_redact.MergeMode = true;
+                    fa_redact.PixelSnapH = true;
+                    fa_redact.GlyphOffset.y = 1.0f;
+                    fa_redact.GlyphMinAdvanceX = fontSizePixels;
+                    io.Fonts->AddFontFromFileTTF(faRedactPath.c_str(), fontSizePixels, &fa_redact, kFontAwesomeRange);
+                }
+                redactFont->FallbackChar = static_cast<ImWchar>(0x2588);
+                // Point every text codepoint at the block glyph; keep the FA icon
+                // range (0xe005..0xf8ff) and the block itself real.
+                for (const ImWchar* gr = glyph_ranges.Data; gr[0] != 0 && gr[1] != 0; gr += 2) {
+                    for (unsigned cp = gr[0]; cp <= gr[1]; ++cp) {
+                        if ((cp >= 0xe005 && cp <= 0xf8ff) || cp == 0x2588) {
+                            continue;
+                        }
+                        redactFont->AddRemapChar(static_cast<ImWchar>(cp), static_cast<ImWchar>(0x2588));
+                    }
+                }
+            }
+        }
+
         g_PreviewFonts.Regular = newFont;
         g_PreviewFonts.Bold = boldFont ? boldFont : newFont;
         g_PreviewFonts.Italic = italicFont ? italicFont : newFont;
         g_PreviewFonts.BoldItalic = boldItalicFont ? boldItalicFont : (boldFont ? boldFont : newFont);
         g_PreviewFonts.Mono = monoFont ? monoFont : newFont;
+        g_PreviewFonts.Redaction = redactFont ? redactFont : newFont;
 
         std::lock_guard<std::mutex> lock(g_FontReloadMutex);
         g_CurrentFontName = fontName;
@@ -349,6 +384,7 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
     g_PreviewFonts.Italic = newFont;
     g_PreviewFonts.BoldItalic = newFont;
     g_PreviewFonts.Mono = newFont;
+    g_PreviewFonts.Redaction = newFont; // default-font path: no real block glyph; degrade to no-op
     std::lock_guard<std::mutex> lock(g_FontReloadMutex);
     g_CurrentFontName = "Proggy (Clean/Default)";
     g_CurrentFontSize = fontSizePixels;
@@ -356,6 +392,43 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
 }
 
 const SmatchetPreviewFonts& SmatchetGetPreviewFonts() { return g_PreviewFonts; }
+
+namespace {
+SmatchetPreviewFonts g_RedactFontBackup;
+ImFont* g_FontDefaultBackup = nullptr;
+bool g_RedactActive = false;
+} // namespace
+
+void SmatchetPushRedactionFonts() {
+    if (g_RedactActive) {
+        return;
+    }
+    ImFont* r = g_PreviewFonts.Redaction;
+    if (r == nullptr) {
+        return; // no redaction font — leave the frame normal
+    }
+    g_RedactFontBackup = g_PreviewFonts;
+    ImGuiIO& io = ImGui::GetIO();
+    g_FontDefaultBackup = io.FontDefault;
+    io.FontDefault = r;
+    // Repoint every preview font so default text AND the explicit PushFont sites
+    // (markdown preview, selectable text) all render blocks for this frame.
+    g_PreviewFonts.Regular = r;
+    g_PreviewFonts.Bold = r;
+    g_PreviewFonts.Italic = r;
+    g_PreviewFonts.BoldItalic = r;
+    g_PreviewFonts.Mono = r;
+    g_RedactActive = true;
+}
+
+void SmatchetPopRedactionFonts() {
+    if (!g_RedactActive) {
+        return;
+    }
+    g_PreviewFonts = g_RedactFontBackup;
+    ImGui::GetIO().FontDefault = g_FontDefaultBackup;
+    g_RedactActive = false;
+}
 
 bool SmatchetAreFaIconsLoaded() { return g_FaIconsLoaded.load(std::memory_order_acquire); }
 

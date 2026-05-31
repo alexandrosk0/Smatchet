@@ -49,7 +49,7 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
     smatchet::diagnostics::BugReportOptions opts;
     opts.UserDescription = DescriptionText(d);
     opts.IncludeScreenshot = !shotPath.empty();
-    opts.Censored = (d.bugReportShotMode == 1);
+    opts.Censored = !shotPath.empty(); // every attached screenshot is font-redacted
     opts.ScreenshotAbsPath = shotPath;
     opts.DumpAbsPath = d.bugReportCrashDumpPath; // crash mode: upload the minidump as a Release asset
     // WYSIWYG consent: if the user opened (and possibly edited) the egress preview,
@@ -93,8 +93,6 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
             // capture now; main.cpp writes the PNG this frame and sets bugReportShotReady.
             d.bugReportShotArmed = false;
             d.requestScreenshotPath = d.bugReportStagedShotPath;
-            d.requestScreenshotCensor = (d.bugReportShotMode == 1);
-            d.requestScreenshotCensorBlock = d.cfg.BugReportCensorBlock; // 0 = auto
             d.requestScreenshot = true;
             d.requestScreenshotBugReport = true;
             d.bugReportShotReady = false;
@@ -136,10 +134,9 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
                 std::strncpy(d.bugReportDescBuf.data(), seed.c_str(), kDescBufCap - 1);
             }
         }
-        // NOTE: bugReportInclScreenshot / bugReportShotMode are NOT seeded here —
-        // the opener owns them (hotkey + menu seed from config; the `bug.report`
-        // command sets them from --screenshot/--censored). Re-seeding here would
-        // clobber command-provided modal args.
+        // NOTE: bugReportInclScreenshot is NOT seeded here — the opener owns it
+        // (hotkey + menu seed from config; the bug.report command sets it from
+        // --screenshot). Re-seeding here would clobber command-provided modal args.
         d.bugReportResult.reset();
         d.bugReportInFlight = false;
         d.bugReportShotPending = false;
@@ -185,23 +182,15 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
     }
 
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL
-    // Screenshot toggle — standalone only (DX12 has no GL capture path).
-    if (ImGui::Checkbox("Attach screenshot", &d.bugReportInclScreenshot)) {
+    // Screenshot toggle — standalone only (DX12 has no GL capture path). The shot is
+    // always text-redacted: every glyph renders as a block on the capture frame, so
+    // layout, colour, and icons stay sharp while text is unreadable.
+    if (ImGui::Checkbox("Attach screenshot (text redacted)", &d.bugReportInclScreenshot)) {
         d.bugReportPreviewDirty = true;
     }
-    if (d.bugReportInclScreenshot) {
-        ImGui::Indent();
-        int mode = d.bugReportShotMode;
-        ImGui::RadioButton("Full", &mode, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Censored (blur fine text)", &mode, 1);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Light pixelation: blurs fine print but keeps layout + larger text\n"
-                              "legible for debugging. Not a privacy guarantee — use the editable\n"
-                              "preview below to remove anything sensitive in the text.");
-        }
-        d.bugReportShotMode = mode;
-        ImGui::Unindent();
+    if (d.bugReportInclScreenshot && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("The screenshot is captured with all text rendered as blocks (██) —\n"
+                          "sharp, layout-preserving, no readable text. Icons + colour stay intact.");
     }
 #endif
 
@@ -285,6 +274,9 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
             d.bugReportShotReady = false;
             d.bugReportShotPending = true;
             d.bugReportShotArmed = true;
+            // Set on THIS (Submit) frame so main.cpp swaps to the redaction font before
+            // NewFrame on the NEXT (captured) frame — the whole UI renders as blocks.
+            d.requestRedactFontThisFrame = true;
             // Generous fallback deadline (the handshake resets it once the capture is requested).
             d.bugReportShotDeadline = ImGui::GetTime() + kShotCaptureTimeoutSec + 2.0;
         } else {

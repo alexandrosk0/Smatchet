@@ -26,11 +26,22 @@ struct SmatchetPreviewFonts {
     ImFont* Italic = nullptr;
     ImFont* BoldItalic = nullptr;
     ImFont* Mono = nullptr;
+    // Bug-report censor: renders every text codepoint as a U+2588 block (icons
+    // survive via merged FA). Falls back to Regular if the body font lacks U+2588.
+    ImFont* Redaction = nullptr;
 };
 
 // Reads the most recently built preview font set. Stable across frames; pointers
 // are invalidated after every SmatchetApplyImGuiFont call (i.e. font hot-reload).
 const SmatchetPreviewFonts& SmatchetGetPreviewFonts();
+
+// Bug-report censor (docs/plans/active/bug-report-font-redaction-censor.md): for
+// the single screenshot-capture frame, repoint every preview font + io.FontDefault
+// at the Redaction font so the captured frame renders all text as blocks (sharp,
+// layout-preserving). Push BEFORE ImGui::NewFrame; Pop after the capture. No-op
+// when no Redaction font is available. Not re-entrant (one capture at a time).
+void SmatchetPushRedactionFonts();
+void SmatchetPopRedactionFonts();
 
 // True iff the Font Awesome 6 Solid TTF was successfully merged into the active
 // atlas on the most-recent `SmatchetApplyImGuiFont` call. False when the TTF

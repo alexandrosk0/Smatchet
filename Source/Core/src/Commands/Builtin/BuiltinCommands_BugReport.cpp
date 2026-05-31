@@ -33,7 +33,6 @@ void RegisterBugReportCommands(CommandRegistry& reg, AppController& app) {
         [&app](const nlohmann::json& args, const CommandContext& ctx) {
             const std::string description = args.value("description", std::string());
             const bool screenshot = args.value("screenshot", true);
-            const bool censored = args.value("censored", false);
 
             if (ctx.DryRun) {
                 const TrackerConfig cfg = ConfigManager::Load();
@@ -59,17 +58,15 @@ void RegisterBugReportCommands(CommandRegistry& reg, AppController& app) {
 
             // Modal mode (no description) — flip the UI latch on the UI thread; no submit here.
             if (description.empty()) {
-                return RunOnUiThreadAsCommandResult(app, [screenshot, censored]() {
+                return RunOnUiThreadAsCommandResult(app, [screenshot]() {
                     g_ui.showBugReport = true;
                     g_ui.bugReportOpenLatch = true;
                     g_ui.bugReportInclScreenshot = screenshot;
-                    g_ui.bugReportShotMode = censored ? 1 : 0;
                     return CommandResult::Success({{"modalOpened", true}});
                 });
             }
 
             // Headless mode (description set) — text-only submit (no live frame in CLI/MCP/Lua).
-            // The `censored` param is meaningful only in modal mode; ignored here (no screenshot).
             diagnostics::BugReportOptions opts;
             opts.UserDescription = description;
             opts.IncludeScreenshot = false;
@@ -95,15 +92,7 @@ void RegisterBugReportCommands(CommandRegistry& reg, AppController& app) {
             p.Name = "screenshot";
             p.Type = ParamType::Bool;
             p.Default = true;
-            p.Description = "Modal only: attach a screenshot (default true).";
-            return p;
-        }()},
-        {[] {
-            ParamSpec p;
-            p.Name = "censored";
-            p.Type = ParamType::Bool;
-            p.Default = false;
-            p.Description = "Modal only: censor the screenshot so no text is readable (default false).";
+            p.Description = "Modal only: attach a screenshot (always text-redacted; default true).";
             return p;
         }()},
     };

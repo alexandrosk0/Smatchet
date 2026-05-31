@@ -208,7 +208,6 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["bugreport_github_base_url"] = config.BugReportGitHubBaseUrl;
     j["bugreport_assets_repo"] = config.BugReportAssetsRepo;
     j["bugreport_persist_pat"] = config.BugReportPersistPat;
-    j["bugreport_censor_block"] = config.BugReportCensorBlock;
     j["bugreport_hotkey"] = config.BugReportHotkey;
     j["bugreport_hotkey_enabled"] = config.BugReportHotkeyEnabled;
     j["bugreport_screenshot_default"] = config.BugReportScreenshotDefault;
@@ -686,7 +685,6 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.BugReportGitHubBaseUrl = j.value("bugreport_github_base_url", cfg.BugReportGitHubBaseUrl);
             cfg.BugReportAssetsRepo = j.value("bugreport_assets_repo", cfg.BugReportAssetsRepo);
             cfg.BugReportPersistPat = j.value("bugreport_persist_pat", cfg.BugReportPersistPat);
-            cfg.BugReportCensorBlock = j.value("bugreport_censor_block", cfg.BugReportCensorBlock);
             cfg.BugReportHotkey = j.value("bugreport_hotkey", cfg.BugReportHotkey);
             cfg.BugReportHotkeyEnabled = j.value("bugreport_hotkey_enabled", cfg.BugReportHotkeyEnabled);
             cfg.BugReportScreenshotDefault = j.value("bugreport_screenshot_default", cfg.BugReportScreenshotDefault);
