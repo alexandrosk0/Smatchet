@@ -258,6 +258,28 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   hazards section (Begin/End + PushID/PopID pairing, byte-for-byte layout preservation, bucket-C/E
   golden verification), `drawActiveProjectWindow` named as the worked canary. `AGENTS.md`
   § Project rules cross-link + ride-along-only note. Pure-docs.
+- **Slice 1b — `drawActiveProjectWindow` canary (PR #632, `grid-engine`).** 992→~140 L. Extracted
+  11 section helpers + 3 anon-namespace free helpers at the 8 `activeProject:*` perf-scope seams
+  (scope names verbatim — zero baseline shift; the row-emitting helpers correctly nested *inside*
+  the `BeginTable`/`EndTable` scope), `ActiveProjectDrawCtx` struct, and an `ActiveProjectWindowState`
+  member hoisting the two former `static` locals. Orchestrator-verified: objective paired-ImGui
+  balance identical to develop (Begin/End, BeginTable/EndTable, BeginChild/EndChild, PushID/PopID).
+  CI: **Bucket-C screenshot diff + Bucket-E + ASan + Perf-PR-fast all PASS** (the plan-mandated
+  visual/interaction/sanitizer/perf gate). `tests-out-of-band` (visual regression IS the test).
+- **Slice 3 — `McpPlugin::OnStart` (PR #635, `mcp-toolsmith`).** 687→77 L. 8 registration-phase
+  helpers (`Authorize`, `RegisterTicketRoutes`, `RegisterToolsListRoute`, `RegisterToolsCallRoute`,
+  `RegisterSseRoute`, `RegisterJsonRpcRoutes`, `HandleJsonRpcToolsCall` [2nd-pass sub-extraction to
+  clear the 30-branch cap], `StartServerThread`). Route-registration order byte-identical; preprocessor
+  guards balanced (proven by dual-target build 704/704 exit 0). `tests-out-of-band` (plugin lifecycle).
+- **Slice 4 — `BuildValue` table-dispatch (PR #633, `tracker-backend`).** 169→24 L dispatcher +
+  `kScalarBuilders` table + 11 per-type scalar builders + array/labels builders. **Test delta added**
+  (2 TEST_CASEs covering every dispatch entry + a precedence test; corrected 3 wrong expectations to
+  preserve original option/component/priority precedence). 17 cases / 186 assertions PASS.
+- **Slice 5 — `RegisterAiCommands` (PR #634, `command-system`).** 325→7 L dispatcher + 5 per-command
+  free functions (`RegisterListModels/DumpRequest/Probe/SendOnce/ValidatePrefs Command`). Command-name
+  set + registration order byte-identical. `tests-out-of-band` (registry introspection needs the full
+  AppController/AI dep chain not linked in `SmatchetTests`). The `HtmlToMarkdown` half of plan Slice 5
+  is deferred to a follow-up.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
@@ -282,6 +304,18 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   own build-gated PR with CI bucket-C/E screenshot-diff verification. Rationale: a positional-ImGui
   decomposition of that size carries real visual-regression risk and a ~20-min dual-target build —
   far safer isolated than bundled with docs. Delegated to `grid-engine`.
+- **Slice 4 target was misnamed in the plan.** § Approach B / § Files row 7 name `BuildUserFieldPayload`,
+  but that function is already ~33 L; the actual flagged monolith is `BuildValue` (169 L/55 br) in the
+  same file (`TrackerFieldPayloadPure.cpp`) — and `BuildValue` *is* the field-type-dispatch tower the
+  plan describes. `tracker-backend` caught this via a baseline cross-check. **Standing correction:
+  decompose targets must be verified against the live `function-size-baseline.md`, not the plan's named
+  symbol** (the symbol can drift). Every subsequent slice now does this cross-check first.
+- **Branchy seams need a second-pass extraction** (confirmed 2×). The § Approach A "one helper per
+  perf-scope seam" recipe is sound but not single-pass for the *branchier* monoliths: the canary's
+  `grid.sort`/`grid.rows`/`grid.rectSel.keys` helpers and Slice 3's `RegisterJsonRpcRoutes` each tripped
+  the 30-branch cap on first extraction and needed a sub-extraction (cell/rect-sel helpers; a
+  `HandleJsonRpcToolsCall` split). Expect a 2nd pass when decomposing a function with > ~60 total branches.
+- **`HtmlToMarkdown` half of Slice 5 deferred** to a follow-up; `RegisterAiCommands` shipped alone.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
@@ -295,3 +329,21 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   unchanged tree (zero new; all 47+ monoliths grandfathered).
 - **Pure-tooling slice** (shell + python + fixtures + docs) — no `Source/` change, so no
   `cmake --build` / perf scenario (per `AGENTS.md` § Cadence; perf-gate N/A — no C++ touched).
+
+**Slices 1b / 3 / 4 / 5 (shipped — full CI green on each):**
+- **Slice 1b canary (#632)** — Windows MSVC + light + Coverage PASS; **Bucket-C screenshot diff PASS**
+  (pixel-identical) + **Bucket-E UI tests PASS** (interaction preserved) + **Sanitizer/ASan PASS** +
+  **Perf-PR-fast PASS** (no regression). This is the plan's full Phase-B verification bar.
+- **Slice 4 BuildValue (#633)** — dual-target build PASS; ctest 17 cases / 186 assertions PASS (test
+  delta); ASan + Perf + Coverage + bucket-C/E PASS.
+- **Slice 5 RegisterAiCommands (#634)** + **Slice 3 OnStart (#635)** — dual-target build PASS; full CI
+  green (MSVC + light + Coverage + Perf + Sanitizer + bucket-C/E); `tests-out-of-band` (justified).
+- **Post-merge sanity**: `function_size_audit.py --list` on develop confirms all four functions
+  (`drawActiveProjectWindow`, `BuildValue`, `RegisterAiCommands`, `McpPlugin::OnStart`) are out of the
+  oversized set.
+- **CI gate-staleness caveat** (filed as follow-up): a PR branched *before* a decomposition landed on
+  develop false-flags the now-decomposed function (`function-too-long`/`comment-*`) because CI's
+  shallow clone defeats `git merge-base`, so the delta gate compares against tip-of-develop, not the
+  PR's fork point. Hit on #633 (drawActiveProjectWindow flagged). Workaround used: merge develop into
+  the branch before merge. Real fix: CI checkout `fetch-depth: 0` (or deepen to the merge-base). Backlog:
+  `docs/self-improvement/categories/tooling.md`.
