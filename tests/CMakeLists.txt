@@ -139,6 +139,11 @@ add_executable(SmatchetTests
     # pulls cpr). Same shape as the GitHub PR12 split above.
     Core/PlaneIssueMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueMappingPure.cpp"
+    # Monoliths Phase A (decompose-top-20-monoliths.md) — pure Plane field-catalog
+    # property → TrackerField mapper extracted out of PlaneFieldCatalog.cpp (which
+    # pulls cpr). Same pure-seam shape as PlaneIssueMappingPure above.
+    Core/PlaneFieldCatalogPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalogPure.cpp"
     Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit

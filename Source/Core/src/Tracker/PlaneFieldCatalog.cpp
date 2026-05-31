@@ -1,5 +1,6 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
+#include "PlaneFieldCatalogPure.h"
 
 #include "Logger.h"
 #include "StringUtil.h"
@@ -14,6 +15,7 @@
 #include <iterator>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 using smatchet::plane_detail::JsonFieldToString;
 using smatchet::plane_detail::NormalizePlaneApiBase;
@@ -49,11 +51,6 @@ std::string NormalizePlaneWebBase(std::string base) {
         return schemePrefix + std::string("app.plane.so") + portSuffix;
     }
     return base;
-}
-
-std::string ToUpperAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return s;
 }
 
 void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, std::vector<nlohmann::json>& outRows,
@@ -103,173 +100,56 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
     }
 }
 
-bool TrackerFieldFromPlaneProperty(const nlohmann::json& prop, TrackerField& out) {
-    const std::string id = JsonFieldToString(prop, "id");
-    if (id.empty()) {
-        return false;
-    }
-    out.Id = id;
-    out.Name = JsonFieldToString(prop, "display_name");
-    if (out.Name.empty()) {
-        out.Name = JsonFieldToString(prop, "name");
-    }
-    if (out.Name.empty()) {
-        out.Name = out.Id;
-    }
-    const std::string pt = ToUpperAscii(JsonFieldToString(prop, "property_type"));
-    out.IsCustom = true;
-    out.ReadOnly = prop.value("is_readonly", false);
-    if (prop.contains("is_required") && prop["is_required"].is_boolean()) {
-        out.IsRequired = prop["is_required"].get<bool>();
-    }
-
-    if (pt == "NUMBER" || pt == "INTEGER" || pt == "DECIMAL" || pt == "FLOAT") {
-        out.Type = "number";
-        out.Family = TrackerFieldFamily::Number;
-    } else if (pt == "DATE") {
-        out.Type = "date";
-        out.Family = TrackerFieldFamily::Date;
-    } else if (pt == "DATETIME" || pt == "TIMESTAMP") {
-        out.Type = "datetime";
-        out.Family = TrackerFieldFamily::DateTime;
-    } else if (pt == "OPTION" || pt == "DROPDOWN" || pt == "SELECT") {
-        out.Type = "option";
-        out.Family = TrackerFieldFamily::SelectSingle;
-        if (prop.contains("options") && prop["options"].is_array()) {
-            for (const auto& opt : prop["options"]) {
-                if (!opt.is_object()) {
-                    continue;
-                }
-                TrackerFieldOption o;
-                o.Id = JsonFieldToString(opt, "id");
-                o.Value = JsonFieldToString(opt, "value");
-                if (o.Value.empty()) {
-                    o.Value = JsonFieldToString(opt, "name");
-                }
-                if (!o.Id.empty() || !o.Value.empty()) {
-                    out.AllowedValueOptions.push_back(std::move(o));
-                }
-            }
-        }
-    } else if (pt == "MULTI_SELECT" || pt == "MULTISELECT") {
-        out.Type = "array";
-        out.IsArray = true;
-        out.Family = TrackerFieldFamily::SelectMulti;
-    } else if (pt == "MEMBER" || pt == "USER") {
-        out.Type = "user";
-        out.Family = TrackerFieldFamily::UserSingle;
-        out.IsUserType = true;
-    } else if (pt == "MULTI_MEMBER" || pt == "MULTI_USER" || pt == "USERS") {
-        out.Type = "array";
-        out.IsArray = true;
-        out.Family = TrackerFieldFamily::UserMulti;
-        out.IsUserType = true;
-    } else if (pt == "BOOLEAN" || pt == "CHECKBOX") {
-        out.Type = "boolean";
-        out.Family = TrackerFieldFamily::Text;
-    } else {
-        // URL / LINK / RICH_TEXT / HTML / TEXT / empty / unknown — all collapse to the
-        // string+Text default. Kept as a single branch so cppcheck doesn't flag duplicate
-        // bodies; if any of these grow special handling in the future, split them back out.
-        out.Type = "string";
-        out.Family = TrackerFieldFamily::Text;
-    }
-    try {
-        out.RawFieldDefinitionJson = prop.dump();
-    } catch (...) {
-        out.RawFieldDefinitionJson.clear();
-    }
-    return true;
+TrackerField MakeCoreField(const char* id, const char* name, const char* type, TrackerFieldFamily fam, bool readOnly) {
+    TrackerField f;
+    f.Id = id;
+    f.Name = name;
+    f.Type = type;
+    f.Family = fam;
+    f.ReadOnly = readOnly;
+    f.IsUserType = (fam == TrackerFieldFamily::UserSingle || fam == TrackerFieldFamily::UserMulti);
+    return f;
 }
 
-} // namespace
-
-bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKeyArg,
-                                    TrackerFieldCatalogResult& outCatalog, std::string& outError) {
-    outCatalog = TrackerFieldCatalogResult{};
-    outError.clear();
-    std::vector<std::string> warns;
-
-    // PR 6: project is now an explicit per-call argument (legacy cfg.PlaneProjectId removed).
-    // Empty ≡ unscoped: caller didn't pin a project, so refuse rather than silently fetching
-    // a stale catalog. See remove-global-project-key.md §2.5 / §7 PR 6.
-    const std::string projectKey = projectKeyArg;
-
-    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
-        outError = "Plane is not configured or no project was supplied. "
-                   "Set URL / Workspace Slug in Preferences, and pick a project before refreshing the field catalog.";
-        return false;
-    }
-    if (cfg.PlaneApiKey.empty()) {
-        outError = "Plane API key is missing. Set it in Preferences → Tracker.";
-        return false;
-    }
-
-    const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
-    cpr::Header headers;
-    for (const auto& kv : BuildPlaneHeaders(cfg)) {
-        headers.insert({kv.first, kv.second});
-    }
-
-    std::string resolvedProjectId;
-    std::string resolvedProjectIdentifier;
-    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier,
-                             &outError)) {
-        return false;
-    }
-    const std::string planeProjectId = resolvedProjectId;
-
-    auto makeCore = [](const char* id, const char* name, const char* type, TrackerFieldFamily fam, bool readOnly) {
-        TrackerField f;
-        f.Id = id;
-        f.Name = name;
-        f.Type = type;
-        f.Family = fam;
-        f.ReadOnly = readOnly;
-        f.IsUserType = (fam == TrackerFieldFamily::UserSingle || fam == TrackerFieldFamily::UserMulti);
-        return f;
-    };
-
-    std::vector<TrackerField> fields;
-    fields.reserve(32);
-    fields.push_back(makeCore("summary", "Name", "string", TrackerFieldFamily::Text, false));
-    fields.push_back(makeCore("description", "Description", "string", TrackerFieldFamily::Text, false));
-    fields.push_back(makeCore("priority", "Priority", "string", TrackerFieldFamily::Text, false));
-
-    std::vector<CachedState> localStates;
+// Phase: fetch the `states` list, build the status field's options + the parallel (id, name) cache
+// pairs. Byte-for-byte mirror of the original inline states block. Appends a warning when nothing
+// parsed. Returns neutral id-plus-name pairs rather than the private nested CachedState struct, so
+// this free helper stays out of the class; the orchestrator widens the pairs into the typed cache.
+TrackerField FetchPlaneStatesField(const std::string& planeApi, const TrackerConfig& cfg,
+                                   const std::string& planeProjectId, const cpr::Header& headers,
+                                   std::vector<std::pair<std::string, std::string>>& outStates,
+                                   std::vector<std::string>& warns) {
+    TrackerField statusField = MakeCoreField("status", "State", "string", TrackerFieldFamily::Status, false);
     const std::string statesUrl =
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/states/";
     std::string stateWarn;
     std::vector<nlohmann::json> stateRows;
     AppendPagedResults(statesUrl, headers, stateRows, &stateWarn);
-    TrackerField statusField = makeCore("status", "State", "string", TrackerFieldFamily::Status, false);
     for (const auto& s : stateRows) {
         if (!s.is_object()) {
             continue;
         }
-        CachedState cs;
-        cs.Id = JsonFieldToString(s, "id");
-        cs.Name = JsonFieldToString(s, "name");
-        if (cs.Id.empty()) {
+        const std::string id = smatchet::plane::AppendPlaneRowOption(s, "id", "name", statusField);
+        if (id.empty()) {
             continue;
         }
-        localStates.push_back(cs);
-        TrackerFieldOption opt;
-        opt.Id = cs.Id;
-        opt.Value = cs.Name.empty() ? cs.Id : cs.Name;
-        statusField.AllowedValueOptions.push_back(std::move(opt));
+        outStates.emplace_back(id, JsonFieldToString(s, "name"));
     }
-    if (localStates.empty() && !stateWarn.empty()) {
+    if (outStates.empty() && !stateWarn.empty()) {
         warns.push_back(std::string("states: ") + stateWarn);
-    } else if (localStates.empty()) {
+    } else if (outStates.empty()) {
         warns.push_back("No Plane states returned (empty list or unparsed response).");
     }
-    fields.push_back(std::move(statusField));
+    return statusField;
+}
 
-    fields.push_back(makeCore("assignee", "Assignee", "user", TrackerFieldFamily::UserSingle, false));
-
-    std::vector<CachedCycle> localCycles;
-    TrackerField sprintField = makeCore("sprint", "Cycle", "string", TrackerFieldFamily::Sprint, false);
+// Phase: fetch the `cycles` list, build the sprint field's options + the parallel (id, name) cache
+// pairs (widened to CachedCycle by the orchestrator — see FetchPlaneStatesField for the rationale).
+TrackerField FetchPlaneCyclesField(const std::string& planeApi, const TrackerConfig& cfg,
+                                   const std::string& planeProjectId, const cpr::Header& headers,
+                                   std::vector<std::pair<std::string, std::string>>& outCycles,
+                                   std::vector<std::string>& warns) {
+    TrackerField sprintField = MakeCoreField("sprint", "Cycle", "string", TrackerFieldFamily::Sprint, false);
     const std::string cyclesUrl =
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/cycles/";
     std::string cycleWarn;
@@ -279,24 +159,23 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
         if (!c.is_object()) {
             continue;
         }
-        CachedCycle cc;
-        cc.Id = JsonFieldToString(c, "id");
-        cc.Name = JsonFieldToString(c, "name");
-        if (cc.Id.empty()) {
+        const std::string id = smatchet::plane::AppendPlaneRowOption(c, "id", "name", sprintField);
+        if (id.empty()) {
             continue;
         }
-        localCycles.push_back(cc);
-        TrackerFieldOption opt;
-        opt.Id = cc.Id;
-        opt.Value = cc.Name.empty() ? cc.Id : cc.Name;
-        sprintField.AllowedValueOptions.push_back(std::move(opt));
+        outCycles.emplace_back(id, JsonFieldToString(c, "name"));
     }
-    if (localCycles.empty() && !cycleWarn.empty()) {
+    if (outCycles.empty() && !cycleWarn.empty()) {
         warns.push_back(std::string("cycles: ") + cycleWarn);
     }
-    fields.push_back(std::move(sprintField));
+    return sprintField;
+}
 
-    std::vector<TrackerUser> localUsers;
+// Phase: fetch the `members` list into TrackerUsers. Mirrors the original member-unwrap logic
+// (member/user nested object, bare-UUID member string, name/email fallbacks) byte-for-byte.
+void FetchPlaneMembers(const std::string& planeApi, const TrackerConfig& cfg, const std::string& planeProjectId,
+                       const cpr::Header& headers, std::vector<TrackerUser>& outUsers,
+                       std::vector<std::string>& warns) {
     const std::string membersUrl =
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/members/";
     std::vector<nlohmann::json> memberRows;
@@ -344,46 +223,48 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
         if (tu.DisplayName.empty())
             tu.DisplayName = tu.AccountId; // Fallback to ID so it's not empty
 
-        localUsers.push_back(tu);
-        outCatalog.Users.push_back(tu);
+        outUsers.push_back(tu);
     }
-    if (localUsers.empty() && !memberWarn.empty()) {
+    if (outUsers.empty() && !memberWarn.empty()) {
         warns.push_back(std::string("members: ") + memberWarn);
     }
-    LOG_INFO("PlaneClient: Fetched %zu project members.", localUsers.size());
+    LOG_INFO("PlaneClient: Fetched %zu project members.", outUsers.size());
+}
 
-    std::vector<CachedLabel> localLabels;
+// Phase: fetch the `labels` list, build the labels field's options + the parallel (id, name) cache
+// pairs (widened to CachedLabel by the orchestrator — see FetchPlaneStatesField for the rationale).
+TrackerField FetchPlaneLabelsField(const std::string& planeApi, const TrackerConfig& cfg,
+                                   const std::string& planeProjectId, const cpr::Header& headers,
+                                   std::vector<std::pair<std::string, std::string>>& outLabels,
+                                   std::vector<std::string>& warns) {
     const std::string labelsUrl =
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/labels/";
     std::string labelsWarn;
     std::vector<nlohmann::json> labelRows;
     AppendPagedResults(labelsUrl, headers, labelRows, &labelsWarn);
 
-    TrackerField labelsField = makeCore("labels", "Labels", "array", TrackerFieldFamily::Labels, false);
+    TrackerField labelsField = MakeCoreField("labels", "Labels", "array", TrackerFieldFamily::Labels, false);
     for (const auto& l : labelRows) {
         if (!l.is_object())
             continue;
-        CachedLabel cl;
-        cl.Id = JsonFieldToString(l, "id");
-        cl.Name = JsonFieldToString(l, "name");
-        if (cl.Id.empty())
+        const std::string id = smatchet::plane::AppendPlaneRowOption(l, "id", "name", labelsField);
+        if (id.empty())
             continue;
-        localLabels.push_back(cl);
-
-        TrackerFieldOption opt;
-        opt.Id = cl.Id;
-        opt.Value = cl.Name.empty() ? cl.Id : cl.Name;
-        labelsField.AllowedValueOptions.push_back(std::move(opt));
+        outLabels.emplace_back(id, JsonFieldToString(l, "name"));
     }
-    if (localLabels.empty() && !labelsWarn.empty()) {
+    if (outLabels.empty() && !labelsWarn.empty()) {
         warns.push_back(std::string("labels: ") + labelsWarn);
     }
-    LOG_INFO("PlaneClient: Fetched %zu project labels.", localLabels.size());
-    fields.push_back(std::move(labelsField));
+    LOG_INFO("PlaneClient: Fetched %zu project labels.", outLabels.size());
+    return labelsField;
+}
 
-    fields.push_back(makeCore("created", "Created", "datetime", TrackerFieldFamily::DateTime, true));
-    fields.push_back(makeCore("updated", "Updated", "datetime", TrackerFieldFamily::DateTime, true));
-
+// Phase: walk active work-item-types, fetch each type's properties, and map every property into a
+// deduped custom-field map. Mirrors the original inline type/property loop byte-for-byte; property
+// mapping routes through the pure MapPlanePropertyToField helper.
+void FetchPlaneCustomFields(const std::string& planeApi, const TrackerConfig& cfg, const std::string& planeProjectId,
+                            const cpr::Header& headers, std::unordered_map<std::string, TrackerField>& outCustoms,
+                            std::vector<std::string>& warns) {
     const std::string typesUrl =
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/work-item-types/";
     std::vector<nlohmann::json> typeRows;
@@ -396,8 +277,6 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
         if (!typeWarn.empty())
             warns.push_back("work-item-types: " + typeWarn);
     }
-
-    std::unordered_map<std::string, TrackerField> customs;
 
     for (const auto& tentry : typeRows) {
         if (!tentry.is_object()) {
@@ -436,35 +315,111 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
                 continue;
             }
             TrackerField tf;
-            if (!TrackerFieldFromPlaneProperty(prop, tf)) {
+            if (!smatchet::plane::MapPlanePropertyToField(prop, tf)) {
                 continue;
             }
-            if (customs.find(tf.Id) != customs.end()) {
+            if (outCustoms.find(tf.Id) != outCustoms.end()) {
                 continue;
             }
-            customs.emplace(tf.Id, std::move(tf));
+            outCustoms.emplace(tf.Id, std::move(tf));
         }
     }
+}
+
+// Phase: rewrite every user-type field's options to the full member roster (drop the placeholder
+// options the field carried). Mirrors the original inline user-field population.
+void PopulateUserFieldOptions(std::vector<TrackerField>& fields, const std::vector<TrackerUser>& users) {
+    if (users.empty()) {
+        return;
+    }
+    for (auto& field : fields) {
+        if (!field.IsUserType) {
+            continue;
+        }
+        field.AllowedValueOptions.clear();
+        field.AllowedValueOptions.reserve(users.size());
+        for (const auto& user : users) {
+            TrackerFieldOption opt;
+            opt.Id = user.AccountId;
+            opt.Value = user.DisplayName;
+            field.AllowedValueOptions.push_back(std::move(opt));
+        }
+    }
+}
+
+} // namespace
+
+bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKeyArg,
+                                    TrackerFieldCatalogResult& outCatalog, std::string& outError) {
+    outCatalog = TrackerFieldCatalogResult{};
+    outError.clear();
+    std::vector<std::string> warns;
+
+    // PR 6: project is now an explicit per-call argument (legacy cfg.PlaneProjectId removed).
+    // Empty ≡ unscoped: caller didn't pin a project, so refuse rather than silently fetching
+    // a stale catalog. See remove-global-project-key.md §2.5 / §7 PR 6.
+    const std::string projectKey = projectKeyArg;
+
+    if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
+        outError = "Plane is not configured or no project was supplied. "
+                   "Set URL / Workspace Slug in Preferences, and pick a project before refreshing the field catalog.";
+        return false;
+    }
+    if (cfg.PlaneApiKey.empty()) {
+        outError = "Plane API key is missing. Set it in Preferences → Tracker.";
+        return false;
+    }
+
+    const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
+    cpr::Header headers;
+    for (const auto& kv : BuildPlaneHeaders(cfg)) {
+        headers.insert({kv.first, kv.second});
+    }
+
+    std::string resolvedProjectId;
+    std::string resolvedProjectIdentifier;
+    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier,
+                             &outError)) {
+        return false;
+    }
+    const std::string planeProjectId = resolvedProjectId;
+
+    // Built-in fields are emitted in a fixed order; the network-backed states / cycles / members /
+    // labels / custom-property phases each map their rows into the matching field + parallel cache.
+    std::vector<TrackerField> fields;
+    fields.reserve(32);
+    fields.push_back(MakeCoreField("summary", "Name", "string", TrackerFieldFamily::Text, false));
+    fields.push_back(MakeCoreField("description", "Description", "string", TrackerFieldFamily::Text, false));
+    fields.push_back(MakeCoreField("priority", "Priority", "string", TrackerFieldFamily::Text, false));
+
+    // States / cycles / labels phases return neutral (id, name) pairs; widen into the typed nested
+    // caches (the private nested Cached structs) here, where those types are in scope.
+    std::vector<std::pair<std::string, std::string>> statePairs;
+    fields.push_back(FetchPlaneStatesField(planeApi, cfg, planeProjectId, headers, statePairs, warns));
+
+    fields.push_back(MakeCoreField("assignee", "Assignee", "user", TrackerFieldFamily::UserSingle, false));
+
+    std::vector<std::pair<std::string, std::string>> cyclePairs;
+    fields.push_back(FetchPlaneCyclesField(planeApi, cfg, planeProjectId, headers, cyclePairs, warns));
+
+    std::vector<TrackerUser> localUsers;
+    FetchPlaneMembers(planeApi, cfg, planeProjectId, headers, localUsers, warns);
+    outCatalog.Users = localUsers;
+
+    std::vector<std::pair<std::string, std::string>> labelPairs;
+    fields.push_back(FetchPlaneLabelsField(planeApi, cfg, planeProjectId, headers, labelPairs, warns));
+
+    fields.push_back(MakeCoreField("created", "Created", "datetime", TrackerFieldFamily::DateTime, true));
+    fields.push_back(MakeCoreField("updated", "Updated", "datetime", TrackerFieldFamily::DateTime, true));
+
+    std::unordered_map<std::string, TrackerField> customs;
+    FetchPlaneCustomFields(planeApi, cfg, planeProjectId, headers, customs, warns);
     fields.reserve(fields.size() + customs.size());
     std::transform(customs.begin(), customs.end(), std::back_inserter(fields),
                    [](auto& kv) { return std::move(kv.second); });
 
     // Populate user fields with options for the dropdowns
-    if (!localUsers.empty()) {
-        for (auto& field : fields) {
-            if (!field.IsUserType) {
-                continue;
-            }
-            field.AllowedValueOptions.clear();
-            field.AllowedValueOptions.reserve(localUsers.size());
-            for (const auto& user : localUsers) {
-                TrackerFieldOption opt;
-                opt.Id = user.AccountId;
-                opt.Value = user.DisplayName;
-                field.AllowedValueOptions.push_back(std::move(opt));
-            }
-        }
-    }
+    PopulateUserFieldOptions(fields, localUsers);
 
     for (size_t i = 0; i < warns.size(); ++i) {
         if (i != 0) {
@@ -474,6 +429,31 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
     }
 
     outCatalog.Fields = std::move(fields);
+
+    std::vector<CachedState> localStates;
+    localStates.reserve(statePairs.size());
+    for (auto& p : statePairs) {
+        CachedState cs;
+        cs.Id = std::move(p.first);
+        cs.Name = std::move(p.second);
+        localStates.push_back(std::move(cs));
+    }
+    std::vector<CachedCycle> localCycles;
+    localCycles.reserve(cyclePairs.size());
+    for (auto& p : cyclePairs) {
+        CachedCycle cc;
+        cc.Id = std::move(p.first);
+        cc.Name = std::move(p.second);
+        localCycles.push_back(std::move(cc));
+    }
+    std::vector<CachedLabel> localLabels;
+    localLabels.reserve(labelPairs.size());
+    for (auto& p : labelPairs) {
+        CachedLabel cl;
+        cl.Id = std::move(p.first);
+        cl.Name = std::move(p.second);
+        localLabels.push_back(std::move(cl));
+    }
 
     // Securely publish the fully loaded local cache results under a quick brief lock.
     {
