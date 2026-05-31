@@ -222,10 +222,24 @@ PRs `CODE_PULL_REQUEST`, Branches `CODE_BRANCH`.
 - **`CommandSource::Toolbar` telemetry value** — v1 reuses `CommandSource::Internal`; a dedicated source enum is deferred.
 
 ## Implementation log
-*(populated post-ship — `<sha> · <one-line summary>` per shipped commit)*
+
+- `2aa35ea` · Slice 1 — config data model (`ToolbarConfig.h/.cpp`) + persistence (`TrackerConfig.Toolbar`, `ViewWorkspaceState.ToolbarAppend`) + 8 doctest cases.
+- (slice 2/3, this PR) — icon catalog + `SmatchetIconPickerUi`, `SmatchetToolbarUi` (render under menu via `BeginViewportSideBar(Up)`, command/Lua/`ui.*` dispatch, right-click menu, editor with drag-drop reorder + command/icon pickers + `ConfigManager::Save` write-through), `SmatchetUI` integration, View-menu toggle, `SmatchetLuaTests` link fix.
 
 ## Deviations from plan
-*(populated post-ship — what changed / removed / deferred + one-line rationale)*
+
+- **Args as `std::string ArgsJson`** (not a live `nlohmann::json` member) — keeps `ConfigManager.h` on `<nlohmann/json_fwd.hpp>`; parsed at dispatch. Also moots the null-json CodeRabbit finding.
+- **Test path `tests/Core/`** (plan said `tests/Source_Core/`) — matches actual tree; explicit-listed in `tests/CMakeLists.txt` + `tests/Lua/CMakeLists.txt`.
+- **Refresh/sync default button omitted** — no concrete sync command id confirmed (plan § sync-button fallback).
+- **`ui.*` as toolbar-layer pseudo-actions** (not registered `BuiltinCommands`) — toolbar intercepts `ui.command_palette` (reuses existing `g_ui.requestCommandPaletteOpen`), `ui.settings` (`cfg.ShowPreferencesWindow`), `ui.toolbar_customize` (own editor). Avoids strict-zone Commands→UI coupling. `ui.view_create` dropped from defaults.
+- **Per-button right-click context menu deferred** — only empty-bar right-click (Customize / Hide); edit/move/delete live in the editor. (backlog)
+- **Editor per-tracker append scope selector deferred** — editor edits the global toolbar only; per-tracker `ToolbarAppend` still renders (separator-joined) when present in config. (backlog)
+- **Curated ~50-icon catalog** instead of generated 2500-glyph `.inl` + clipper — `SmatchetToolbarIconGlyph(name)` lookup; no `gen-fa-catalog.py` shipped. (backlog)
+- **`imgui_internal.h`** required for `BeginViewportSideBar` (matches `SmatchetStatusBarUi.cpp`).
 
 ## Verification (actual)
-*(populated post-ship — what was tested + result)*
+
+- **Bucket A**: `SmatchetTests --test-case=*Toolbar*` → 8/8 cases, 30 assertions (Slice 1; re-run after Slice 2/3).
+- **Dual-target build**: `SmatchetStandalone` (OpenGL exe) + `SmatchetCore_DX12` (Unreal lib) compile + link clean (MSVC, isolated worktree).
+- **`SmatchetLuaTests` link**: fixed (added `ToolbarConfig.cpp` to its source list — the original PR #603 CI break).
+- **Manual / visual + Bucket-E**: NOT yet done — toolbar look/feel + interaction is visual-validation residue (deferred-automation: bucket-E ImGui-Test-Engine drive + screenshot golden, logged to backlog).

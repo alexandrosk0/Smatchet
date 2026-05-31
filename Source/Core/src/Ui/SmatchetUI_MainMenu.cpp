@@ -135,6 +135,13 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                 commandPalette_.Open();
                 commandPalette_.SetFilterText("view.toggle.");
             }
+            if (ImGui::MenuItem("Show Toolbar", nullptr, d.cfg.Toolbar.Visible)) {
+                d.cfg.Toolbar.Visible = !d.cfg.Toolbar.Visible;
+                ConfigManager::Save(d.cfg);
+            }
+            if (ImGui::MenuItem("Customize Toolbar...")) {
+                toolbar_.OpenEditor();
+            }
             ImGui::Separator();
             if (ImGui::BeginMenu("Appearance")) {
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL

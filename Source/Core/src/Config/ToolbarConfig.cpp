@@ -81,11 +81,10 @@ ToolbarConfig ToolbarConfig::Default() {
     // (unknown-command-id guard). The sync/refresh button is intentionally omitted
     // until a concrete sync command id is confirmed (plan § sync-button fallback).
     c.Buttons.push_back(MakeCommandButton("magnifying-glass", "Command palette", "ui.command_palette", "{}"));
-    c.Buttons.push_back(MakeCommandButton("plus", "New view", "ui.view_create", "{}"));
     c.Buttons.push_back(MakeCommandButton("list", "Views", "view.list", "{}"));
-    c.Buttons.push_back(MakeSeparator());
     c.Buttons.push_back(MakeCommandButton("gear", "Settings", "ui.settings", "{}"));
-    c.Buttons.push_back(MakeCommandButton("lock", "Toggle read-only", "app.set_readonly", "{\"on\":true}"));
+    c.Buttons.push_back(MakeSeparator());
+    c.Buttons.push_back(MakeCommandButton("lock", "Enable read-only", "app.set_readonly", "{\"on\":true}"));
     c.Buttons.push_back(MakeCommandButton("sliders", "Customize toolbar", "ui.toolbar_customize", "{}"));
     return c;
 }
