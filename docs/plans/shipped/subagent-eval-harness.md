@@ -116,7 +116,7 @@ Not C++ — Bucket A/E N/A. Everything in the MVP is verifiable **without a live
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
-- `<pending-merge-sha>` · feat(agent-eval): Phase-1 subagent eval harness MVP — 3 schemas + pure-stdlib scorer (external judge) + runner (`--prompt-root` / `--fake-runner`) + 24 bats + 3 curated `code-review` cases + advisory wiring.
+- `98666bd0` · feat(agent-eval): Phase-1 subagent eval harness MVP (#650) — 3 schemas + pure-stdlib scorer (external judge) + runner (`--prompt-root` / `--fake-runner`) + 24 bats + 3 curated `code-review` cases + advisory wiring; incl. portable-purity fix for the rule doc.
 
 ## Deviations from plan
 
