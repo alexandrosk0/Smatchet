@@ -1,5 +1,5 @@
 // Customizable icon toolbar — render, click dispatch, right-click menus, and the
-// Customize Toolbar editor. See docs/plans/active/customizable-icon-toolbar.md.
+// Customize Toolbar editor. See docs/plans/shipped/customizable-icon-toolbar.md.
 
 #include "Ui/SmatchetToolbarUi.h"
 

@@ -1,6 +1,6 @@
 // "Log a Bug" modal. See SmatchetBugReportUi.h. Dual-target: no GL/GLFW here;
 // the screenshot toggle + capture is standalone-only (hidden on DX12).
-// docs/plans/active/log-a-bug-github.md Slice 4.
+// docs/plans/shipped/log-a-bug-github.md Slice 4.
 
 #include "SmatchetBugReportUi.h"
 

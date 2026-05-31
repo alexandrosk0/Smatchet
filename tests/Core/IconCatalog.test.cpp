@@ -1,7 +1,7 @@
 // Pure-logic tests for the generated Font-Awesome 6 icon catalog and the
 // name->glyph lookup (SmatchetIconCatalog.cpp). Guards the gen-fa-catalog.py
 // output wiring (full FA6 set, not the old curated ~50) and the resolver
-// contract. docs/plans/active/customizable-icon-toolbar.md § Verification (Bucket A).
+// contract. docs/plans/shipped/customizable-icon-toolbar.md § Verification (Bucket A).
 
 #include <doctest/doctest.h>
 

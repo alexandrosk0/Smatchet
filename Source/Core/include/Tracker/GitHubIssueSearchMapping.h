@@ -45,7 +45,7 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
 /// Pillar 3 — a malformed field maps to a safe empty default rather than
 /// throwing. Row shape (id `owner/repo@<sha>`, `github.kind`=commit, the
 /// `commit.*` columns) is documented in
-/// docs/plans/active/github-commit-tracker-rows.md § Row contract.
+/// docs/plans/shipped/github-commit-tracker-rows.md § Row contract.
 CachedTicket MapCommitJsonToCachedTicket(const nlohmann::json& commit, const std::string& owner,
                                          const std::string& repo);
 

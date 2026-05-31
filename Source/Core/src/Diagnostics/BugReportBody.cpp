@@ -1,7 +1,7 @@
 // BugReportBody — the PURE half of BugReportService: dev-repo/PAT resolution +
 // markdown body assembly. No cpr / no host symbols / no AppController, so the
 // doctest rig links this TU directly. The heavy gather/submit half lives in
-// BugReportService.cpp. docs/plans/active/log-a-bug-github.md.
+// BugReportService.cpp. docs/plans/shipped/log-a-bug-github.md.
 
 #include "BugReportService.h"
 

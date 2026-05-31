@@ -1,7 +1,7 @@
 // BugReportService — the HEAVY half: context gather + dedicated-destination
 // submit + screenshot upload. Links cpr / AppController / host symbols, so the
 // doctest rig deliberately does NOT compile this TU (it links BugReportBody.cpp
-// for the pure pieces). docs/plans/active/log-a-bug-github.md.
+// for the pure pieces). docs/plans/shipped/log-a-bug-github.md.
 
 #include "BugReportService.h"
 

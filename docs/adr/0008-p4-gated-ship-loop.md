@@ -52,7 +52,7 @@ This re-introduces the `agent/<id>` namespace deleted post-`ClaudeCodeLocalRunne
 - **Pause-loop interaction** — debug-detective triggers (per [`docs/agent-rules/delegation.md`](../agent-rules/delegation.md) § Debug-mode pause-loop) suspend BOTH ship-loop variants. The pause-loop continues to take precedence; p4-mode does not suppress the diagnose-first-then-confirm cycle.
 - **No git-worktree-add in p4-mode** — subagent isolation uses `agents/scripts/project/p4-task-stream.sh` exclusively. Documented in AGENTS.md § P4-gated ship-loop § Key invariants. Doc-level rule, not script-level enforcement; the follow-up backlog item to add a runtime gate is flagged in the plan's § Out of scope.
 - **Stranded pending CLs persist across sessions** — if a session dies between `--prepare-review-cl` and `--promote-reviewed-cl`, the pending CL stays on the p4 server with its shelf attached. Resume via `--promote-reviewed-cl <CL>` is safe; the user is in the loop on cleanup decisions (the script prints the manual recipe and refuses to auto-clean).
-- **AskUserQuestion fires post-PR with option 3 pre-selected** — only goes away once [`docs/plans/active/merge-gates-ci-coderabbit-comments.md`](../plans/active/merge-gates-ci-coderabbit-comments.md) ships end-to-end. Dependency tracked in the plan's § Dependencies (sequencing).
+- **AskUserQuestion fires post-PR with option 3 pre-selected** — only goes away once [`docs/plans/shipped/merge-gates-ci-coderabbit-comments.md`](../plans/shipped/merge-gates-ci-coderabbit-comments.md) ships end-to-end. Dependency tracked in the plan's § Dependencies (sequencing).
 
 ## From (b) carve-out extension
 

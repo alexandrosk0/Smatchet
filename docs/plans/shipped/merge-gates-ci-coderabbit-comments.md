@@ -554,8 +554,17 @@ Deferred — do not implement under this plan:
 
 ## Implementation log
 
-(filled in after PR merges)
+- `c8c7fe06` · #298 (2026-05-19) — core landing: `poll_merge_gates` + `merge-gates.graphql` single-call gate, bats rig + fixtures, and AGENTS.md / git-janitor wiring. Matches this plan's § Files changed table.
+- Hardening follow-ups (~15 PRs, 2026-05-19 → 05-30): #398, #420, #424, #426, #427, #428, #431, #475 (`MERGE_GATES_FLIP_READY` draft→ready + `gh_pr_ready_idempotent`), #481 (STALE recovery), #511, #554, #576 (`0352c96d`, cross-poll nudge/STALE-streak persistence — most recent code touch). Added `scripts/dev/merge-gates.sh` as the real entrypoint, `test-merge-gates.sh`, the `cr-out-of-band` / `tests-out-of-band` / `perf-out-of-band` label overrides, the CR=`NONE` auto-nudge, and the review-skipped (too-many-files) block.
 
 ## Deviations from plan
 
-(filled in after PR merges)
+- **Shipped scope grew well beyond the plan.** `scripts/dev/merge-gates.sh` (not `merge-gates-prompt.sh`) is the operative entrypoint; the gate gained `MERGE_GATES_FLIP_READY`, the CR=`NONE` grace + auto-`@coderabbitai review` nudge, the review-skipped size block, STALE-resolved / streak handling, and per-PR label overrides — none in the original design.
+- **25 fixtures shipped vs the 8 planned** (`tests/fixtures/merge_gates_*.json`), covering the added CR / STALE / size-skip / label paths.
+- **Ongoing CR-gate hardening tracked separately** in `docs/plans/active/gate-enforcement-hardening.md` (agent→GitHub promotion), so this plan closes at the poller + bats level.
+
+## Verification (actual)
+
+- **Bucket A (bats):** `tests/bats/merge_gates.bats` green at the pre-push gate (`scripts/dev/test-all.sh`); the 30+ planned cases plus the added CR-nudge / STALE-streak / label-override cases all pass against the 25 fixtures.
+- **Live:** exercised end-to-end across the ~15 follow-up PRs (real CI-red blocks, CR `CHANGES_REQUESTED` blocks, force-push STALE blocks, `SKIP_MERGE_GATES` bypass).
+- **Build gate:** N/A — `scripts/` + `tests/bats/` only, no `Source/Core` C++.

@@ -170,7 +170,7 @@ jobs:
           bash scripts/dev/test-cppcheck-path-detection.sh
           bash scripts/dev/test-build-warnings.sh
           bash scripts/dev/test-markdown-lang-tag.sh
-          # High-integrity C++ delta gate (docs/plans/active/high-integrity-cpp-enforcement.md):
+          # High-integrity C++ delta gate (docs/plans/shipped/high-integrity-cpp-enforcement.md):
           # fail on any NEW strict-zone violation vs origin/develop, grandfathering
           # existing. The gate scans HEAD vs a base worktree of origin/develop, so
           # fetch that ref (depth 1 is enough — no merge-base needed); warn-skips if
@@ -411,7 +411,7 @@ jobs:
     # develop post-merge only: regenerate the grandfathered baseline and fail if
     # the committed snapshot diverged. CI stays read-only against develop — it
     # never auto-commits; the remediation is for a contributor to refresh + commit.
-    # See docs/plans/active/high-integrity-cpp-enforcement.md § CI baseline-refresh policy.
+    # See docs/plans/shipped/high-integrity-cpp-enforcement.md § CI baseline-refresh policy.
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     timeout-minutes: 10
