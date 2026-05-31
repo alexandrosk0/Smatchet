@@ -48,7 +48,7 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
    - `clang-tidy <changed-cpp> -- -std=c++14 -ISource/Core/include`
    - `clang-format --dry-run --Werror <changed-cpp-and-h>`
 
-   Skip vendored paths: `build/`, `.fetchcontent-src/`, `*-build-dir/`, `Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/`. Don't re-flag findings the lint hook already cleaned in this session. Per AGENTS.md § Build / ctest cadence, the deferred-lint drain (`scripts/dev/lint-flush.sh` or the Stop hook) already ran cppcheck + clang-tidy + dual-target syntax on every edited file — re-running the same tools here is redundant when the drain log showed clean. Only re-run if your review uncovers changed files the drain didn't touch (e.g. files modified in earlier commits on the branch).
+   Skip vendored paths: `build/`, `.fetchcontent-src/`, `*-build-dir/`, `Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/`. Don't re-flag findings the lint hook already cleaned in this session. Per AGENTS.md § Build / ctest cadence, the deferred-lint drain (`agents/scripts/core/lint-flush.sh` or the Stop hook) already ran cppcheck + clang-tidy + dual-target syntax on every edited file — re-running the same tools here is redundant when the drain log showed clean. Only re-run if your review uncovers changed files the drain didn't touch (e.g. files modified in earlier commits on the branch).
 
 4. **Read changed files at full context.** Don't trust line excerpts. Apply the Smatchet checklist below.
 

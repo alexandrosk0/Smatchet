@@ -6,7 +6,7 @@
 #   2. Multi-edit dedup: same path written 3× still drains as 1 file.
 #   3. Multi-file drain: distinct paths each visited once.
 #   7. SMATCHET_LINT_INLINE=1 escape hatch skips the queue (and runs inline).
-#   8. scripts/dev/lint-flush.sh delegates to the drain script.
+#   8. agents/scripts/core/lint-flush.sh delegates to the drain script.
 #   9. PreToolUse:Bash on `cmake --build …` clears .tree-dirty.
 #  11. SessionStart cleanup removes orphaned queue / lock / tree-dirty.
 #
@@ -21,7 +21,7 @@
 
 set -u
 
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"
 
 CLAUDE_DIR="$PROJ_DIR/.claude"
@@ -181,10 +181,10 @@ else
 fi
 
 # -------------------------------------------------------------------- Test 8
-note "Test 8 — manual flush via scripts/dev/lint-flush.sh"
+note "Test 8 — manual flush via agents/scripts/core/lint-flush.sh"
 cleanup
 echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh"
-bash "$PROJ_DIR/scripts/dev/lint-flush.sh" >/dev/null 2>&1
+bash "$PROJ_DIR/agents/scripts/core/lint-flush.sh" >/dev/null 2>&1
 flush_rc=$?
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)

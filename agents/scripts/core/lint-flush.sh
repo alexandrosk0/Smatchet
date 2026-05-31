@@ -11,7 +11,7 @@
 
 set -u
 
-PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"
 
 exec bash "$PROJ_DIR/.claude/hooks/lint-cpp-drain.sh"
