@@ -1389,11 +1389,47 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
         std::string snapErr;
 
-        // PR 6: legacy global project fields removed. Initial catalog load at startup is now
-        // unscoped (project key = ""); per-project catalogs are populated lazily on demand
-        // through RefreshFieldCatalogForProject() driven by the new-issue draft / picker UI.
-        const std::string projectKeyForCache;
-        const std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
+        // Resolve the active view's project from its JQL so the startup load hits the
+        // project-scoped snapshot (which carries Phase-3 component options). Falls back to the
+        // unscoped ("") key when no project resolves (filter-id / cross-project / non-`project=`
+        // JQL). Mirrors the grid's StartFieldCatalogFetchAsync scoping so the two key spaces agree.
+        std::string projectKeyForCache;
+        if (Backend) {
+            try {
+                const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+                const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(activeTrackerType);
+                const auto bucketIt = disk.Backends.find(backendKey);
+                if (bucketIt != disk.Backends.end()) {
+                    const ViewWorkspaceState& bucket = bucketIt->second;
+                    const ViewDefinition* activeView = nullptr;
+                    for (const ViewDefinition& view : bucket.Views) {
+                        if (view.Id == bucket.ActiveViewId) {
+                            activeView = &view;
+                            break;
+                        }
+                    }
+                    if (activeView == nullptr && !bucket.Views.empty()) {
+                        activeView = &bucket.Views.front();
+                    }
+                    if (activeView != nullptr) {
+                        projectKeyForCache = Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
+                    }
+                }
+            } catch (const std::exception& ex) {
+                LOG_WARN("AppController::Initialize: active-view project resolve for catalog snapshot failed: %s",
+                         ex.what());
+                projectKeyForCache.clear();
+            }
+        }
+        std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
+        if (!projectKeyForCache.empty() && !FieldCatalogCache::TryLoadFieldCatalogSnapshot(
+                                               cacheKey, snapFields, snapComponents, snapIssueTypeMeta, snapErr)) {
+            // No project-scoped snapshot yet (first run with this project, or it was evicted).
+            // Fall back to the unscoped key so we still restore *some* catalog offline; the grid's
+            // scoped fetch repopulates the project entry on next draw.
+            projectKeyForCache.clear();
+            cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
+        }
 
         if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
 

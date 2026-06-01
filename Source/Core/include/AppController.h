@@ -613,6 +613,13 @@ class AppController
                          const std::string& error);
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error);
+    /// Pin the project key the next SetFieldCatalog() snapshot saves under. The grid's scoped
+    /// catalog fetch resolves a project from the active-view JQL but applies the result through
+    /// SetFieldCatalog() (not RefreshFieldCatalog()), so without this hint the scoped result would
+    /// persist under the unscoped ("") key and component options would be lost on next startup.
+    /// Pass the same project key the fetch was scoped to (empty = unscoped). Guarded by
+    /// availableFieldsMutex_.
+    void SetCurrentCatalogProject(const std::string& projectKey);
     /// Replace the cached user list (e.g. after a successful `FetchUsers`). Surfaces to
     /// `GetAvailableUsers()` for the JQL autocomplete to suggest assignees / reporters.
     /// Idempotent; safe to call with an empty vector to clear the cache.

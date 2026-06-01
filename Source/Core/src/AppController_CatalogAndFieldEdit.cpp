@@ -174,6 +174,11 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     SetFieldCatalog(std::move(fields), std::move(components), {}, error);
 }
 
+void AppController::SetCurrentCatalogProject(const std::string& projectKey) {
+    std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+    currentCatalogProjectKey_ = projectKey;
+}
+
 void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
     std::lock_guard<std::mutex> lk(availableFieldsMutex_);
     AvailableUsers = std::move(users);
