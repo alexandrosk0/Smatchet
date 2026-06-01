@@ -762,6 +762,14 @@ class AppController
      *  has not been warmed yet (caller falls back to the global components catalog). */
     std::vector<TrackerFieldOption> GetComponentOptionsForProject(const std::string& projectKey) const;
 
+    /** Lazily fetch one Jira project's component options into projectComponentOptions_ when the
+     *  eager warm (WarmIssueTypeEditMetaAtStartAsync) missed it (race, or a project loaded after the
+     *  warm ran). Non-blocking: checks the per-project map + in-flight set under availableFieldsMutex_
+     *  and launches a background fetch; the HTTP runs on the worker. No-op when projectKey is empty,
+     *  already cached, or already in-flight. The components editor calls this instead of falling back
+     *  to the cross-project global catalog union. */
+    void EnsureProjectComponentsLoaded(const std::string& projectKey);
+
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.
      *
@@ -906,6 +914,10 @@ class AppController
      *  MultiSelect editor via GetComponentOptionsForProject. In-memory only (no disk persistence).
      *  Guarded by availableFieldsMutex_. */
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> projectComponentOptions_;
+    /** Project keys with an in-flight lazy component fetch (EnsureProjectComponentsLoaded), so a
+     *  not-yet-warmed project opened in the editor fetches exactly once instead of per frame.
+     *  Guarded by availableFieldsMutex_. */
+    std::unordered_set<std::string> projectComponentsInFlight_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
     /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once

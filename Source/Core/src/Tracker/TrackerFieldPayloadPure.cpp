@@ -34,19 +34,46 @@ const TrackerFieldOption* FindOptionById(const std::vector<TrackerFieldOption>& 
     return nullptr;
 }
 
-std::string ResolveOptionLabel(const std::vector<TrackerFieldOption>& options, const std::string& value) {
+// Id-preferred resolution: scan for option.Id == value first; only fall back to
+// option.Value == value when no id matches. Avoids the id/name collision where a
+// component literally named "10033" shadows the option whose Id is 10033.
+std::string ResolveOptionLabelByIdRecursive(const std::vector<TrackerFieldOption>& options, const std::string& value) {
     for (const auto& option : options) {
-        if (option.Id == value || option.Value == value) {
+        if (option.Id == value) {
             return option.Value;
         }
         if (!option.Children.empty()) {
-            const std::string nested = ResolveOptionLabel(option.Children, value);
+            const std::string nested = ResolveOptionLabelByIdRecursive(option.Children, value);
             if (!nested.empty()) {
                 return nested;
             }
         }
     }
     return {};
+}
+
+std::string ResolveOptionLabelByValueRecursive(const std::vector<TrackerFieldOption>& options,
+                                               const std::string& value) {
+    for (const auto& option : options) {
+        if (option.Value == value) {
+            return option.Value;
+        }
+        if (!option.Children.empty()) {
+            const std::string nested = ResolveOptionLabelByValueRecursive(option.Children, value);
+            if (!nested.empty()) {
+                return nested;
+            }
+        }
+    }
+    return {};
+}
+
+std::string ResolveOptionLabel(const std::vector<TrackerFieldOption>& options, const std::string& value) {
+    const std::string byId = ResolveOptionLabelByIdRecursive(options, value);
+    if (!byId.empty()) {
+        return byId;
+    }
+    return ResolveOptionLabelByValueRecursive(options, value);
 }
 
 const TrackerFieldOption* FindOptionByIdOrValue(const std::vector<TrackerFieldOption>& options,
@@ -378,6 +405,23 @@ std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, 
             return parent->Value;
         }
         return parent->Value + " > " + child->Value;
+    }
+    if (field.IsArray) {
+        // Multi-valued fields (SelectMulti / StructuredMulti / components) arrive comma-joined
+        // (", " separator, matching NormalizeTrackerFieldValue's JoinStrings). Resolve each element
+        // individually, then re-join — otherwise the whole "10033, 10034" string never matches a
+        // single option and falls through to the raw numeric id.
+        const std::vector<std::string> parts = SplitAndTrim(value);
+        if (parts.empty()) {
+            return value;
+        }
+        std::vector<std::string> resolvedParts;
+        resolvedParts.reserve(parts.size());
+        for (const auto& part : parts) {
+            const std::string resolvedPart = ResolveOptionLabel(field.AllowedValueOptions, part);
+            resolvedParts.push_back(resolvedPart.empty() ? part : resolvedPart);
+        }
+        return JoinStrings(resolvedParts, ", ");
     }
     const std::string resolved = ResolveOptionLabel(field.AllowedValueOptions, value);
     return resolved.empty() ? value : resolved;

@@ -566,4 +566,39 @@ TEST_CASE("ResolveDisplayValueForSubmittedSelection: label resolution") {
         c.AllowedValueOptions.push_back(MakeOption("p1", "Hardware"));
         CHECK(ResolveDisplayValueForSubmittedSelection(c, "p1") == "Hardware");
     }
+
+    // BLUUP-1 ground truth: a per-project option set with a real id/name collision — components
+    // are literally NAMED "10033"/"10034", and other options carry those strings as their Id.
+    SUBCASE("id-preferred resolution returns id-keyed option when another option's Value collides") {
+        TrackerField c;
+        c.AllowedValueOptions.push_back(MakeOption("10067", "10033"));
+        c.AllowedValueOptions.push_back(MakeOption("10069", "10034"));
+        c.AllowedValueOptions.push_back(MakeOption("10070", "10067"));
+        c.AllowedValueOptions.push_back(MakeOption("10033", "TestComponent1"));
+        c.AllowedValueOptions.push_back(MakeOption("10034", "TestComponent2"));
+        // value "10033" must resolve via Id==10033 (TestComponent1), not the earlier Value=="10033" option.
+        CHECK(ResolveDisplayValueForSubmittedSelection(c, "10033") == "TestComponent1");
+        CHECK(ResolveDisplayValueForSubmittedSelection(c, "10034") == "TestComponent2");
+    }
+
+    SUBCASE("multi-value array splits, resolves each, re-joins (BLUUP components)") {
+        TrackerField c;
+        c.IsArray = true;
+        c.Family = TrackerFieldFamily::SelectMulti;
+        c.AllowedValueOptions.push_back(MakeOption("10067", "10033"));
+        c.AllowedValueOptions.push_back(MakeOption("10069", "10034"));
+        c.AllowedValueOptions.push_back(MakeOption("10070", "10067"));
+        c.AllowedValueOptions.push_back(MakeOption("10033", "TestComponent1"));
+        c.AllowedValueOptions.push_back(MakeOption("10034", "TestComponent2"));
+        CHECK(ResolveDisplayValueForSubmittedSelection(c, "10033, 10034") == "TestComponent1, TestComponent2");
+    }
+
+    SUBCASE("non-colliding single value still resolves (regression guard)") {
+        TrackerField c;
+        c.AllowedValueOptions.push_back(MakeOption("10", "Bug"));
+        c.AllowedValueOptions.push_back(MakeOption("20", "Task"));
+        CHECK(ResolveDisplayValueForSubmittedSelection(c, "20") == "Task");
+        // resolve by Value too, when no Id collision exists
+        CHECK(ResolveDisplayValueForSubmittedSelection(c, "Bug") == "Bug");
+    }
 }

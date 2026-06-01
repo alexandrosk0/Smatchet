@@ -514,6 +514,53 @@ std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(con
     return it->second;
 }
 
+void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey) {
+    if (projectKey.empty()) {
+        return;
+    }
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    if (!backend) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+        if (projectComponentOptions_.find(projectKey) != projectComponentOptions_.end()) {
+            return;  // already warmed
+        }
+        if (!projectComponentsInFlight_.insert(projectKey).second) {
+            return;  // a fetch for this project is already running
+        }
+    }
+    TrackerConfig trackerCfgForWorker = ConfigManager::Load();
+    LaunchBackgroundTask([this, projectKey, backend, trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
+        if (shuttingDown_.load()) {
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            projectComponentsInFlight_.erase(projectKey);
+            return;
+        }
+        ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
+        if (catalog == nullptr) {
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            projectComponentsInFlight_.erase(projectKey);
+            return;
+        }
+        std::vector<TrackerComponent> comps;
+        std::vector<TrackerFieldOption> opts;
+        std::string err;
+        // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
+        if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
+            LOG_DEBUG("AppController: lazy per-project component load failed for %s: %s", projectKey.c_str(),
+                      err.c_str());
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            projectComponentsInFlight_.erase(projectKey);  // allow a later open to retry
+            return;
+        }
+        std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+        projectComponentOptions_[projectKey] = std::move(opts);
+        projectComponentsInFlight_.erase(projectKey);
+    });
+}
+
 bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
                                          const TrackerField* fieldMeta, const std::string* issueTypeKeyOverride) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
@@ -547,9 +594,10 @@ bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::
             if (byType != issueTypeEditMeta_.end() && byType->second.loaded) {
                 const auto typeFieldIt = byType->second.fieldCanEdit.find(fieldKey);
                 if (typeFieldIt == byType->second.fieldCanEdit.end()) {
-                    // Jira often omits `priority` from editmeta (e.g. Epic) while PUT still accepts it; see
+                    // Jira often omits `priority` (e.g. Epic) and `components` (cross-project / filter-id
+                    // views) from editmeta while PUT still accepts them; force-editable carve-out. See
                     // AppController::CanEditFieldForIssue doc comment.
-                    if (fieldKey == "priority") {
+                    if (fieldKey == "priority" || fieldKey == "components") {
                         return true;
                     }
                     return false;
@@ -561,7 +609,7 @@ bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::
     }
     const auto fieldIt = it->second.fieldCanEdit.find(fieldKey);
     if (fieldIt == it->second.fieldCanEdit.end()) {
-        if (fieldKey == "priority") {
+        if (fieldKey == "priority" || fieldKey == "components") {
             return true;
         }
         return false;
