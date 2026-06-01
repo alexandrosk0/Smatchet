@@ -41,7 +41,6 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 362 lines
 - `TicketSyncService.cpp` · `TicketSyncService::TickStreamingApply/0` · 276 lines
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 243 lines
-- `ViewCommands.cpp` · `RegisterViewCommands/2` · 295 lines
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
 - `main.cpp` · `main/2` · 561 lines
 
@@ -116,9 +115,8 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 44 branches
 - `TrackerFieldValueParser.cpp` · `NormalizeTrackerFieldValue/1` · 54 branches
 - `TrackerFieldValueParser.cpp` · `ParseChangelog/1` · 44 branches
-- `ViewCommands.cpp` · `RegisterViewCommands/2` · 32 branches
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 39 branches
 - `main.cpp` · `main/2` · 75 branches
 
 ## Totals
-- oversized functions grandfathered: 113
+- oversized functions grandfathered: 111

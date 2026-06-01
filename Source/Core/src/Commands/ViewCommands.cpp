@@ -145,7 +145,7 @@ void RegisterViewRefreshActiveCommand(AppController& app, Views& views, CommandR
 }
 
 // Create a new view from a prototype. After Create() the new view becomes
-// active automatically (Views::Create sets ActiveViewId to the new id), so
+// active automatically — the Views layer sets ActiveViewId to the new id, so
 // the next sync will fetch tickets matching the new JQL.
 void RegisterViewCreateCommand(AppController& app, Views& views, CommandRegistry& reg) {
     Command c;
