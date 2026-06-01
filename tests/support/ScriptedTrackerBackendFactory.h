@@ -5,8 +5,9 @@
 // that returns fresh fixture-configured FakeTrackerClient("Jira") instances on Create().
 // Injected via AppController::SetBackendFactory before Initialize in UI-test builds.
 //
-// Non-Jira tracker types get a plain FakeTrackerClient(trackerType) so the app can
-// still initialise without crashing if a different backend is configured.
+// The factory owns the JiraFakeTrackerFixture by value so there is no lifetime hazard
+// when AppController holds the factory via unique_ptr. Non-Jira tracker types get a
+// plain FakeTrackerClient(trackerType).
 
 #include "FakeTrackerClient.h"
 #include "ITrackerBackendFactory.h"
@@ -14,22 +15,23 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace smatchet_tests {
 
 class ScriptedTrackerBackendFactory : public ITrackerBackendFactory {
   public:
-    explicit ScriptedTrackerBackendFactory(const JiraFakeTrackerFixture* fixture) : fixture_(fixture) {}
+    explicit ScriptedTrackerBackendFactory(JiraFakeTrackerFixture fixture) : fixture_(std::move(fixture)) {}
 
     std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
-        if (fixture_ && (trackerType == "Jira" || trackerType == "jira")) {
-            return fixture_->CreateClient();
+        if (trackerType == "Jira" || trackerType == "jira") {
+            return fixture_.CreateClient();
         }
         return std::unique_ptr<ITrackerBackend>(new FakeTrackerClient(trackerType));
     }
 
   private:
-    const JiraFakeTrackerFixture* fixture_;
+    JiraFakeTrackerFixture fixture_;
 };
 
 } // namespace smatchet_tests

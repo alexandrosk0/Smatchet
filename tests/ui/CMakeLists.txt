@@ -43,6 +43,14 @@ set(_SMATCHET_UI_TEST_SOURCES
 target_sources(SmatchetStandalone PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
 target_link_libraries(SmatchetStandalone PRIVATE SmatchetImGuiTestEngine)
 
+# Slice 3 of docs/plans/active/deterministic-jira-test-backend.md — fixture
+# support source + include path for the Jira backend injection hook in
+# StandaloneAppBootstrap.cpp. Also compiled into DX12 as a no-GL tripwire.
+target_sources(SmatchetStandalone PRIVATE
+    "${CMAKE_SOURCE_DIR}/tests/support/JiraFakeTrackerFixture.cpp")
+target_include_directories(SmatchetStandalone PRIVATE
+    "${CMAKE_SOURCE_DIR}/tests/support")
+
 if(TARGET SmatchetCore_DX12 AND TARGET SmatchetImGuiTestEngine_DX12)
     target_sources(SmatchetCore_DX12 PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
     target_link_libraries(SmatchetCore_DX12 PRIVATE SmatchetImGuiTestEngine_DX12)
