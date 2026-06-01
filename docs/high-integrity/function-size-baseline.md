@@ -3,54 +3,51 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --funcsize-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py --diff); this file is an informational snapshot, not the gate input._
 
-## function-too-long (40 entries, cap 200 lines)
+## function-too-long (38 entries, cap 200 lines)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 340 lines
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 945 lines
-- `AppController.cpp` · `AppController::Initialize/2` · 432 lines
-- `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEdit/4` · 257 lines
+- `AppController.cpp` · `AppController::Initialize/2` · 448 lines
 - `BuiltinCommands_Debug.cpp` · `RegisterDebugCommands/2` · 315 lines
-- `BuiltinCommands_Perf.cpp` · `RegisterPerfCommands/2` · 245 lines
-- `BuiltinCommands_TicketMutations.cpp` · `RegisterTicketMutationCommands/2` · 243 lines
 - `CliCommandRunner.cpp` · `RunCmdAttach/2` · 219 lines
 - `CliCommandRunner.cpp` · `SpawnAndRun/3` · 249 lines
-- `ConfigManager.cpp` · `ConfigManager::Load/1` · 619 lines
-- `ConfigManager.cpp` · `ConfigManager::Save/1` · 314 lines
+- `ConfigManager.cpp` · `ConfigManager::Load/1` · 621 lines
+- `ConfigManager.cpp` · `ConfigManager::Save/1` · 315 lines
 - `JiraIssueMutation.cpp` · `JiraClient::UpdateIssueFields/3` · 243 lines
 - `LuaConsolePlugin.cpp` · `LuaConsolePlugin::OnDraw/1` · 381 lines
+- `MarkdownPreviewRender.cpp` · `RenderPlanBlock/2` · 216 lines
 - `OfflineQueueService.cpp` · `OfflineQueueService::TickOfflineFieldEdits/0` · 290 lines
-- `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 321 lines
+- `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 315 lines
 - `SmatchetAiAssistantUi.cpp` · `DrawInputAndButtons/3` · 218 lines
-- `SmatchetAiAssistantUi.cpp` · `SmatchetDrawAiAssistantPanel/3` · 284 lines
-- `SmatchetAttachmentPreviewUi.cpp` · `SmatchetUI::drawAttachmentPreviewWindow/2` · 287 lines
+- `SmatchetAiAssistantUi.cpp` · `SmatchetDrawAiAssistantPanel/3` · 287 lines
+- `SmatchetAttachmentPreviewUi.cpp` · `SmatchetUI::drawAttachmentPreviewWindow/2` · 278 lines
 - `SmatchetBugReportUi.cpp` · `SmatchetBugReportUi_Draw/2` · 221 lines
-- `SmatchetBulkTicketsUi.cpp` · `SmatchetUI::drawBulkImportWindow/2` · 400 lines
+- `SmatchetBulkTicketsUi.cpp` · `SmatchetUI::drawBulkImportWindow/2` · 399 lines
 - `SmatchetGridHeaderUi.cpp` · `DrawGridHeaderToolbar/8` · 447 lines
-- `SmatchetNewIssueDraftUi.cpp` · `RenderNewIssueDraftRow/5` · 464 lines
+- `SmatchetNewIssueDraftUi.cpp` · `RenderNewIssueDraftRow/5` · 467 lines
 - `SmatchetOfflineQueueUi.cpp` · `DrawUnifiedOfflineQueuesPanel/2` · 606 lines
 - `SmatchetPreferencesUi.cpp` · `SmatchetUI::drawPreferencesWindow/2` · 403 lines
-- `SmatchetPreferencesUi_Assistant.cpp` · `DrawAssistantPreferencesTab/2` · 531 lines
+- `SmatchetPreferencesUi_Assistant.cpp` · `DrawAssistantPreferencesTab/2` · 533 lines
 - `SmatchetPreferencesUi_Local.cpp` · `DrawLocalAndAppearancePreferencesTabs/3` · 264 lines
-- `SmatchetPreferencesUi_Templates.cpp` · `DrawTemplatePreferencesTabs/4` · 504 lines
-- `SmatchetPreferencesUi_Whisper.cpp` · `DrawWhisperPreferencesTab/2` · 779 lines
+- `SmatchetPreferencesUi_Templates.cpp` · `DrawTemplatePreferencesTabs/4` · 510 lines
+- `SmatchetPreferencesUi_Whisper.cpp` · `DrawWhisperPreferencesTab/2` · 781 lines
 - `SmatchetToolbarUi.cpp` · `SmatchetToolbarUi::RenderEditor/2` · 288 lines
 - `SmatchetUI.cpp` · `SmatchetUI::Draw/1` · 608 lines
 - `SmatchetUI_MainMenu.cpp` · `SmatchetUI::drawMainMenuBar/2` · 504 lines
 - `SmatchetViewsDashboardUi.cpp` · `SmatchetUI::drawViewsDashboardWindow/2` · 778 lines
 - `SubprocessCapture.cpp` · `RunWindows/3` · 251 lines
 - `TicketFieldEditor.cpp` · `TicketFieldEditor::RenderFieldCell/15` · 382 lines
-- `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 362 lines
-- `TicketSyncService.cpp` · `TicketSyncService::TickStreamingApply/0` · 276 lines
+- `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 367 lines
+- `TicketSyncService.cpp` · `TicketSyncService::TickStreamingApply/0` · 279 lines
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 243 lines
 - `ViewCommands.cpp` · `RegisterViewCommands/2` · 295 lines
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
 - `main.cpp` · `main/2` · 561 lines
 
-## function-too-branchy (73 entries, cap 30 branches)
+## function-too-branchy (72 entries, cap 30 branches)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 44 branches
 - `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 33 branches
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 196 branches
-- `AppController.cpp` · `AppController::Initialize/2` · 61 branches
-- `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEdit/4` · 43 branches
+- `AppController.cpp` · `AppController::Initialize/2` · 63 branches
 - `AppController_LuaBindings_Draw.cpp` · `ReplayCmdList/6` · 43 branches
 - `CliCommandRunner.cpp` · `RunCmdAttach/2` · 43 branches
 - `CliCommandRunner.cpp` · `SpawnAndRun/3` · 32 branches
@@ -64,8 +61,8 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `GitHubQueryFromJql.cpp` · `TranslateJqlToGitHubSearch/3` · 64 branches
 - `HotkeyParse.cpp` · `TokenToVirtualKey/1` · 33 branches
 - `IssueCreatePipeline.cpp` · `ApplyPostIssueSteps/5` · 31 branches
+- `JiraIssueMappingPure.cpp` · `AppendCachedTicketFromJiraSearchIssue/4` · 33 branches
 - `JiraIssueMutation.cpp` · `JiraClient::UpdateIssueFields/3` · 61 branches
-- `JiraIssueSearch.cpp` · `JiraAppendCachedTicketFromSearchIssue/4` · 33 branches
 - `JiraIssueSearch.cpp` · `JiraClient::FetchIssuesStreamed/4` · 48 branches
 - `JiraUserAndMeta.cpp` · `JiraClient::FetchIssueEditMeta/4` · 35 branches
 - `JqlSuggestEngine.cpp` · `BuildJqlSuggestions/8` · 33 branches
@@ -75,28 +72,28 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `MarkdownConvert.cpp` · `ParseHtmlTag/4` · 40 branches
 - `MarkdownPreviewRender.cpp` · `EmitWordsRS/2` · 33 branches
 - `MarkdownPreviewRender.cpp` · `PreviewEnterBlock/3` · 40 branches
-- `MarkdownPreviewRender.cpp` · `RenderPlanBlock/2` · 44 branches
+- `MarkdownPreviewRender.cpp` · `RenderPlanBlock/2` · 51 branches
 - `OfflineQueueService.cpp` · `OfflineQueueService::TickOfflineFieldEdits/0` · 71 branches
 - `PlaneIssueMappingPure.cpp` · `MapPlaneWorkItemJsonToCachedTicket/3` · 41 branches
 - `SelectableTextRun.cpp` · `End/1` · 48 branches
-- `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 52 branches
+- `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 53 branches
 - `SmatchetAiAssistantUi.cpp` · `SmatchetDrawAiAssistantPanel/3` · 44 branches
 - `SmatchetAttachmentPreviewUi.cpp` · `ParseImageDimensions/2` · 62 branches
-- `SmatchetAttachmentPreviewUi.cpp` · `SmatchetUI::drawAttachmentPreviewWindow/2` · 77 branches
+- `SmatchetAttachmentPreviewUi.cpp` · `SmatchetUI::drawAttachmentPreviewWindow/2` · 71 branches
 - `SmatchetAuditUi.cpp` · `SmatchetUI::drawAuditWindow/2` · 35 branches
 - `SmatchetAutocompleteUi.cpp` · `TrackerQueryAcp_InputTextCallback/1` · 35 branches
 - `SmatchetBugReportUi.cpp` · `SmatchetBugReportUi_Draw/2` · 50 branches
-- `SmatchetBulkTicketsUi.cpp` · `SmatchetUI::drawBulkImportWindow/2` · 77 branches
+- `SmatchetBulkTicketsUi.cpp` · `SmatchetUI::drawBulkImportWindow/2` · 76 branches
 - `SmatchetGridHeaderUi.cpp` · `DrawGridHeaderToolbar/8` · 105 branches
 - `SmatchetMcpServerUi.cpp` · `SmatchetDrawMcpServerPanel/3` · 45 branches
-- `SmatchetNewIssueDraftUi.cpp` · `RenderNewIssueDraftRow/5` · 130 branches
+- `SmatchetNewIssueDraftUi.cpp` · `RenderNewIssueDraftRow/5` · 129 branches
 - `SmatchetOfflineQueueUi.cpp` · `DrawUnifiedOfflineQueuesPanel/2` · 130 branches
 - `SmatchetPreferencesUi.cpp` · `SmatchetUI::drawPreferencesWindow/2` · 63 branches
 - `SmatchetPreferencesUi_Assistant.cpp` · `DrawAssistantPreferencesTab/2` · 87 branches
 - `SmatchetPreferencesUi_Local.cpp` · `DrawLocalAndAppearancePreferencesTabs/3` · 49 branches
-- `SmatchetPreferencesUi_Templates.cpp` · `DrawTemplatePreferencesTabs/4` · 77 branches
+- `SmatchetPreferencesUi_Templates.cpp` · `DrawTemplatePreferencesTabs/4` · 78 branches
 - `SmatchetPreferencesUi_Whisper.cpp` · `DrawWhisperPreferencesTab/2` · 135 branches
-- `SmatchetProjectPicker.cpp` · `Draw/6` · 31 branches
+- `SmatchetProjectPicker.cpp` · `Draw/6` · 32 branches
 - `SmatchetToolbarUi.cpp` · `SmatchetToolbarUi::RenderEditor/2` · 74 branches
 - `SmatchetUI.cpp` · `SmatchetUI::Draw/1` · 147 branches
 - `SmatchetUI_MainMenu.cpp` · `SmatchetUI::drawMainMenuBar/2` · 123 branches
@@ -107,7 +104,7 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `SubprocessCapture.cpp` · `RunWindows/3` · 50 branches
 - `TicketFieldEditor.cpp` · `RenderMultiSelectEditor/8` · 36 branches
 - `TicketFieldEditor.cpp` · `RenderSingleSelectEditor/8` · 48 branches
-- `TicketFieldEditor.cpp` · `RenderTextEditor/9` · 37 branches
+- `TicketFieldEditor.cpp` · `RenderTextEditor/9` · 38 branches
 - `TicketFieldEditor.cpp` · `TicketFieldEditor::RenderFieldCell/15` · 77 branches
 - `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 79 branches
 - `TicketGridModel.cpp` · `CompareFieldValuesForSort/5` · 34 branches
@@ -121,4 +118,4 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `main.cpp` · `main/2` · 75 branches
 
 ## Totals
-- oversized functions grandfathered: 113
+- oversized functions grandfathered: 110
