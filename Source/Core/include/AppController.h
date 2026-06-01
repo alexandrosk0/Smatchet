@@ -1025,6 +1025,12 @@ class AppController
 
   private:
     void JoinBackgroundTasks();
+    /// Join + erase any background workers whose task has completed (their `done` flag is set,
+    /// so the join returns immediately — no UI-thread stall). Called on each new launch so the
+    /// worker vector stays bounded mid-session instead of accumulating dead-but-joinable
+    /// std::thread objects until shutdown (memory-budget-and-lifetime-hardening § Phase 4).
+    /// Caller MUST hold `backgroundWorkersMutex_`.
+    void reapFinishedBackgroundWorkersLocked_();
 
     void DrainTrackerConnectivityProbeFuture();
     void ApplyTrackerConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
@@ -1047,7 +1053,14 @@ class AppController
 
     mutable std::mutex activeTicketsMutex_;
     std::atomic<bool> shuttingDown_{false};
-    std::vector<std::thread> backgroundWorkers_;
+    /// One tracked background worker. `done` flips true when the task returns, so the pool can
+    /// reap finished threads mid-session (a finished thread's join() is instant) instead of
+    /// letting joinable-dead std::thread objects pile up until shutdown.
+    struct BackgroundWorker {
+        std::thread thread;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
+    std::vector<BackgroundWorker> backgroundWorkers_;
     mutable std::mutex backgroundWorkersMutex_;
 
     // Offline-replay throttle + in-flight guards + legacyPendingStartupBanner_ all moved to

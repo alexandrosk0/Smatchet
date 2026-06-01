@@ -15,6 +15,7 @@ add_executable(SmatchetTests
     Core/AnnotateLocalization.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
+    Core/BackgroundWorkerReap.test.cpp
     Core/JqlProjectScope.test.cpp
     Core/TextMerge.test.cpp
     Core/CachedTicketFieldValueRef.test.cpp
