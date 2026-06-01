@@ -49,7 +49,7 @@ A **data-driven staleness gate** (WARN, never blocks) enrols any `Source/Core/sr
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`)
 
-`N/A — diff adds only Markdown under `Source/Core/src/Tracker/` + a shell gate + a `docs/` map. No `.cpp`/`.h` source compiled into either target changes; `is-pure-docs-diff.sh` classifies the C++-tree portion as docs-only.`
+N/A — diff adds only Markdown under `Source/Core/src/Tracker/` + a shell gate + a `docs/` map. No `.cpp`/`.h` source compiled into either target changes; `is-pure-docs-diff.sh` classifies the C++-tree portion as docs-only.
 
 ## Risks / non-goals
 
