@@ -141,7 +141,9 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                                                   {"calls", r.calls},
                                                   {"emaAvgMs", r.emaAvgMs}};
                         });
-                        // Write file.
+                        // Serialise before opening the file so a throw (bad_alloc, JSON error)
+                        // cannot leak an open FILE* handle.
+                        const std::string s = doc.dump(2);
                         std::error_code ec;
                         fs::path outFs(outPath);
                         fs::create_directories(outFs.parent_path(), ec);
@@ -150,7 +152,6 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                             return CommandResult::Failure(ErrorCode::HandlerError,
                                                           "Could not write perf dump to '" + outPath + "'.");
                         }
-                        const std::string s = doc.dump(2);
                         std::fwrite(s.data(), 1, s.size(), f);
                         std::fclose(f);
                         nlohmann::json out;
