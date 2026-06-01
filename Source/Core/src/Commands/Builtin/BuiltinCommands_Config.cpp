@@ -49,6 +49,7 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
                                     all["mcpAllowRemote"] = cfg.McpAllowRemote;
                                     all["mcpAllowLuaExecution"] = cfg.McpAllowLuaExecution;
                                     all["readOnlyMode"] = cfg.ReadOnlyMode;
+                                    all["defaultLongTextEditorPreview"] = cfg.DefaultLongTextEditorPreview;
                                     all["logMinLevel"] = cfg.LogMinLevel;
                                     all["logTrackerHttpBodies"] = cfg.LogTrackerHttpBodies;
                                     all["dbPath"] = cfg.DbPath;

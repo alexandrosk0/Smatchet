@@ -206,9 +206,10 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     }
 
-    // p_open drives the title-bar close (X), same affordance as every other window. Clicking it
-    // flips modalOpen=false and ImGui auto-closes the popup, so control falls to the `else` branch
-    // below which runs CloseLongTextEditor() — identical discard semantics to Esc / the Cancel button.
+    // The title-bar close (X) is driven by p_open, the same affordance as every other window. When
+    // the user clicks it ImGui clears the open flag and auto-dismisses the popup; the dismissed-
+    // without-intervention branch below then runs the editor-close path, giving the X the same
+    // discard semantics as Esc and the Cancel button.
     bool modalOpen = true;
     if (ImGui::BeginPopupModal(kLongTextModalPopupId, &modalOpen,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
