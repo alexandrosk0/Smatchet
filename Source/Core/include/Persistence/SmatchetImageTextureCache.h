@@ -39,6 +39,13 @@ bool GetOrLoadFromFile(const std::string& cacheKey, const std::string& absoluteP
 
 void EvictCacheKey(const std::string& cacheKey);
 
+/** Snapshot-only memory gauges for `perf.memory` (docs/plans/active/memory-budget-and-lifetime-hardening.md § S3).
+ *  Both take the cache's `g_mutex`; cheap (O(1) and O(entries) respectively). */
+std::size_t IconCacheEntryCount();
+/** Approximate resident GPU bytes: Σ Width·Height·4 over cached entries. An estimate
+ *  (ignores driver padding / mips) — a gauge, not authoritative RSS. */
+std::size_t IconCacheApproxBytes();
+
 } // namespace SmatchetImageTextureCache
 
 

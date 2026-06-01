@@ -1,6 +1,8 @@
 #include "SmatchetProjectPicker.h"
 
+#include "AppController.h"
 #include "FieldCatalogCache.h"
+#include "ITrackerBackend.h"
 #include "ITrackerConnectivity.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
@@ -13,8 +15,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -41,10 +43,15 @@ std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind)
 
 namespace SmatchetProjectPicker {
 
-bool Draw(const char* idScope, State& state, ITrackerConnectivity* client, const std::string& backendKind,
+bool Draw(const char* idScope, State& state, AppController& app, const std::string& backendKind,
           const std::string& endpoint, std::string& selectedKey) {
     ImGui::PushID(idScope);
     bool changed = false;
+    // Strong handle to the active backend (kept as a local arity to preserve the function key).
+    // The OFF-THREAD fetch captures this shared_ptr so it survives a live tracker swap (ADR 0012);
+    // `client` is a raw view for the synchronous null-check / identity use only.
+    std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
+    ITrackerConnectivity* client = backend ? &backend->Connectivity() : nullptr;
 
     const char* placeholder = SmatchetLocalization::T("draft.project.placeholder", "(pick one)");
     const std::string preview = selectedKey.empty() ? std::string(placeholder) : selectedKey;
@@ -94,16 +101,22 @@ bool Draw(const char* idScope, State& state, ITrackerConnectivity* client, const
         if (ImGui::TreeNodeEx(allLabel, state.allExpanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
             state.allExpanded = true;
 
-            // Kick the lazy fetch on first expand.
-            if (!state.fetchDone.load() && !state.fetchInFlight.load() && client != nullptr) {
+            // Kick the lazy fetch on first expand. Routed through the app-owned joined
+            // background-task pool (not a raw detached thread — forbidden by the
+            // no-detach lint) so it is joined at shutdown. The lambda captures the
+            // `backend` shared_ptr (a strong copy), so a live tracker swap that frees
+            // AppController::Backend cannot dangle the client mid-ListProjects() — the
+            // old backend stays alive until this task drops its copy (ADR 0012).
+            // `statePtr` is app-lifetime window state (heap-owned by the caller's draw
+            // session), safe to hold as a raw pointer.
+            if (!state.fetchDone.load() && !state.fetchInFlight.load() && backend != nullptr) {
                 state.fetchInFlight.store(true);
                 State* statePtr = &state;
-                ITrackerConnectivity* clientPtr = client;
-                std::thread([statePtr, clientPtr]() {
+                app.LaunchBackgroundTask([statePtr, backend]() {
                     std::vector<RemoteProject> projects;
                     std::string err;
                     try {
-                        projects = clientPtr->ListProjects();
+                        projects = backend->Connectivity().ListProjects();
                     } catch (const std::exception& ex) {
                         err = ex.what();
                     } catch (...) {
@@ -116,7 +129,7 @@ bool Draw(const char* idScope, State& state, ITrackerConnectivity* client, const
                     }
                     statePtr->fetchDone.store(true);
                     statePtr->fetchInFlight.store(false);
-                }).detach();
+                });
             }
 
             if (state.fetchInFlight.load() && !state.fetchDone.load()) {

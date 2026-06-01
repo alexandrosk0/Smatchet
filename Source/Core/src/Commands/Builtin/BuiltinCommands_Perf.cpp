@@ -10,7 +10,9 @@
 #include "AppController.h"
 #include "CachedTicketTypes.h"
 #include "ConfigManager.h"
+#include "MemoryTelemetry.h"
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetImageTextureCache.h"
 #include "SmatchetUiSession.h"
 #include "TrackerFieldSchema.h"
 #include "UiPerfMonitor.h"
@@ -61,6 +63,38 @@ void RegisterPerfCommands(CommandRegistry& reg, AppController& app) {
                                 });
         c.Description =
             "Returns array of UI perf rows ({name, lastTotalMs, avgPerCallMs, maxMs, calls, lifetimeHits, emaAvgMs}).";
+        reg.Register(std::move(c));
+    }
+
+    {
+        // perf.memory — pull-based memory-pressure snapshot (S3 of
+        // docs/plans/active/memory-budget-and-lifetime-hardening.md). Each gauge reads its
+        // source under that source's existing lock at snapshot time; no push wiring in hot paths.
+        Command c = MakeCommand(
+            "perf.memory", "Pull-based memory snapshot: RSS, dispatcher queue, icon-cache occupancy, tickets.",
+            [&app](const nlohmann::json&, const CommandContext&) {
+                smatchet::memtel::MemorySnapshot s;
+                s.RssBytes = smatchet::memtel::ProcessRssBytes();
+                s.DispatcherQueueLen = app.mainThreadDispatcher.QueueLen();
+                s.DispatcherLastDrainTasks = app.mainThreadDispatcher.LastDrainTaskCount();
+                s.IconCacheEntries = SmatchetImageTextureCache::IconCacheEntryCount();
+                s.IconCacheApproxBytes = SmatchetImageTextureCache::IconCacheApproxBytes();
+                if (auto tickets = app.GetActiveTicketsSnapshot()) {
+                    s.ActiveTicketCount = tickets->size();
+                }
+                s.PendingThumbnailUploads = smatchet::memtel::PendingThumbnailUploads().load(std::memory_order_relaxed);
+                nlohmann::json out;
+                out["rssBytes"] = s.RssBytes;
+                out["dispatcherQueueLen"] = s.DispatcherQueueLen;
+                out["dispatcherLastDrainTasks"] = s.DispatcherLastDrainTasks;
+                out["iconCacheEntries"] = s.IconCacheEntries;
+                out["iconCacheApproxBytes"] = s.IconCacheApproxBytes;
+                out["activeTicketCount"] = s.ActiveTicketCount;
+                out["pendingThumbnailUploads"] = s.PendingThumbnailUploads;
+                return CommandResult::Success(std::move(out));
+            });
+        c.Description = "Returns {rssBytes, dispatcherQueueLen, dispatcherLastDrainTasks, iconCacheEntries, "
+                        "iconCacheApproxBytes, activeTicketCount, pendingThumbnailUploads}. Gauges, not invariants.";
         reg.Register(std::move(c));
     }
 

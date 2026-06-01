@@ -103,7 +103,9 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
     clientCfg.TotalTimeoutMs = 15000;
 
     MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
-    std::thread([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
+    // Joined background-task pool, not a raw detached thread — the no-detach lint forbids that.
+    // Joined at shutdown, so the &dispatcher capture stays valid for the task's whole life.
+    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
         std::string errMsg;
         // Defensive try/catch — `MakeAiClient` / `ProbeReachability` / `SendStreaming` all
         // run third-party transport (cpr/libcurl) + SSE parser code. An uncaught exception
@@ -180,7 +182,7 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
                 g_ui.assistantPrefsTestResultType = 2;
             }
         });
-    }).detach();
+    });
 }
 
 } // namespace AiPrefsTestConnection

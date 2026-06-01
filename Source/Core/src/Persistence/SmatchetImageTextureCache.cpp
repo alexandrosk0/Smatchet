@@ -276,6 +276,21 @@ void EvictCacheKey(const std::string& cacheKey) {
     }
 }
 
+std::size_t IconCacheEntryCount() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_map.size();
+}
+
+std::size_t IconCacheApproxBytes() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    std::size_t total = 0;
+    for (const auto& kv : g_map) {
+        // Estimate: RGBA32 pixel storage. Ignores driver padding / mips — a gauge, not RSS.
+        total += static_cast<std::size_t>(kv.second.Width) * static_cast<std::size_t>(kv.second.Height) * 4u;
+    }
+    return total;
+}
+
 } // namespace SmatchetImageTextureCache
 
 

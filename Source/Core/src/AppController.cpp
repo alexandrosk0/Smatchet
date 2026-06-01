@@ -503,7 +503,10 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
     }
 
     LaunchBackgroundTask([this, toFetch]() {
-        ITrackerBackend* backend = Backend.get();
+        // Latch a strong handle via atomic_load: this worker reads Backend off the UI thread,
+        // which would race a live SetBackend swap on a plain .get(). The shared_ptr also keeps
+        // the backend alive for the FetchIssuesForKeys call (ADR 0012).
+        std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
 
         if (!backend) {
 
@@ -612,6 +615,18 @@ void AppController::reapFinishedBackgroundWorkersLocked_() {
                 w.thread.join(); // done flag set → returns immediately
             }
         });
+}
+
+void AppController::RetireBackend(std::shared_ptr<ITrackerBackend> old) {
+    // Defer-free (ADR 0012): keep a swapped-out backend alive until shutdown so raw subobject
+    // pointers (Reader/Mutations/Connectivity) captured by in-flight workers before the live
+    // tracker swap can't dangle. Drained by ~retiredBackends_ in ~AppController, after every
+    // worker has been joined via JoinBackgroundTasks.
+    if (!old) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(retiredBackendsMutex_);
+    retiredBackends_.push_back(std::move(old));
 }
 
 void AppController::JoinBackgroundTasks() {
@@ -1277,7 +1292,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     if (!backendFactory_) {
         backendFactory_ = std::make_unique<DefaultTrackerBackendFactory>();
     }
-    Backend = backendFactory_->Create(activeTracker);
+    // atomic_store: off-thread workers read Backend via std::atomic_load (ADR 0012); a plain
+    // assignment would data-race those reads on the shared_ptr instance (C++14).
+    std::atomic_store(&Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
     if (!Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {
@@ -1977,14 +1994,18 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 
     TrackerIssueFetchPack pack;
 
-    if (!Backend || !Cache) {
+    // Latch via atomic_load: command handlers (MCP / Lua) can call this off the UI thread, so a
+    // plain Backend read would race a live SetBackend swap. The shared_ptr also keeps the backend
+    // alive across the blocking FetchIssues call (ADR 0012).
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
+    if (!backend || !Cache) {
 
         return pack;
     }
 
     std::lock_guard<std::mutex> lock(g_TrackerIssueFetchMutex);
 
-    pack.Tickets = Backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
+    pack.Tickets = backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
                                                  &pack.FetchError, &pack.Warning);
 
     return pack;

@@ -61,6 +61,11 @@ struct AttachmentWindowEntry {
     std::string PreviewError;
     bool PreviewRequestIssued = false;
     ImTextureData* ThumbnailTextureData = nullptr;
+    // S5: a thumbnail decode→upload task is currently in flight for this entry. Set when the
+    // decode is launched, cleared by the dispatcher upload callback. Prevents double-kicking the
+    // same entry while its decode runs, and lets a rate-limited (saturated) skip retry on a later
+    // frame instead of the thumbnail silently never loading.
+    bool ThumbnailDecodeInFlight = false;
 };
 
 struct PendingFieldEdit {

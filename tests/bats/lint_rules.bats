@@ -39,6 +39,24 @@ setup() {
     [[ "$output" == *"define-imgui"* ]]
 }
 
+@test "no-detach fires on raw .detach()" {
+    run bash "$LINT" --scan-file "$FIX/known-bad-detach.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no-detach"* ]]
+}
+
+@test "no-detach does NOT fire on a comment or string-literal mention of .detach()" {
+    run bash "$LINT" --scan-file "$FIX/detach-in-comment.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"no-detach"* ]]
+}
+
+@test "no-detach suppressed by SMATCHET_DEVIATION(rule=no-detach)" {
+    run bash "$LINT" --scan-file "$FIX/detach-deviation.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"no-detach"* ]]
+}
+
 # ---------- SMATCHET_DEVIATION ----------
 
 @test "deviation-overdue fires when calendar revisit has passed" {

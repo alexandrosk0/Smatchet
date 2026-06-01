@@ -137,7 +137,9 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
     // fine because it only writes `d.assistantHistory` / `d.assistantHistoryRowIds`
     // / `d.assistantHistoryHydrated`, all of which live on the same `UiDrawSession`.
     AppController* appPtr = &app;
-    std::thread([appPtr, cap]() {
+    // Joined background-task pool, not a raw detached thread — the no-detach lint forbids that.
+    // Joined at shutdown, which is exactly the lifetime guarantee the comment above relies on.
+    app.LaunchBackgroundTask([appPtr, cap]() {
         try {
             std::vector<AiMessage> loaded;
             std::vector<std::int64_t> ids;
@@ -152,7 +154,7 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
             // until the next session retries. The LCM already logged the LOG_WARN.
             appPtr->mainThreadDispatcher.PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
         }
-    }).detach();
+    });
 }
 
 void PersistOpenStateImmediate(UiDrawSession& d) {

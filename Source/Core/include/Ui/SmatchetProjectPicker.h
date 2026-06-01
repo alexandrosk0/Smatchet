@@ -4,8 +4,10 @@
 // Hybrid surface (OQ-2):
 //   - Recently used: read directly from FieldCatalogCache::ListCachedProjects(), filtered to the
 //     current backend+endpoint, ordered by lastUsedUnix desc.
-//   - All projects: collapsible. First expand fires ITrackerConnectivity::ListProjects() on a detached
-//     thread; subsequent renders use the cached vector on the picker state.
+//   - All projects: collapsible. First expand fires ITrackerConnectivity::ListProjects() on the
+//     app-owned joined background-task pool; subsequent renders use the cached vector on the picker
+//     state. The fetch captures a shared_ptr to the backend so a live tracker swap (which frees the
+//     old backend) can't dangle it mid-fetch — see ADR 0012.
 // Pure UI helper: no global state, no allocations beyond what the search/render naturally needs.
 // Renders inside the current ImGui scope — caller is responsible for ImGui::SetNextItemWidth
 // upstream if a specific width is desired.
@@ -19,6 +21,8 @@
 #include <vector>
 
 class ITrackerConnectivity;
+class ITrackerBackend;
+class AppController;
 
 namespace SmatchetProjectPicker {
 
@@ -41,14 +45,16 @@ struct State {
  *  @param idScope        Unique ImGui id scope (e.g. "draft_project" / "bulk_project"). Pushed
  *                        internally so multiple pickers may coexist on the same frame.
  *  @param state          Persistent picker state (owned by caller).
- *  @param client         Backend client (nullable). Used for ListProjects() lazy fetch and for
- *                        backend+endpoint identity when filtering the recently-used list.
+ *  @param app            App controller — launches the lazy fetch on the joined task pool, and
+ *                        supplies the active backend via `app.BackendShared()`. The "All projects"
+ *                        fetch captures that shared_ptr so it survives a live tracker swap (ADR 0012);
+ *                        the backend also supplies backend+endpoint identity for the recently-used filter.
  *  @param backendKind    "Jira" or "Plane" — matches FieldCatalogCache::CachedProjectEntry.backend.
  *  @param endpoint       Normalized endpoint string used to filter recently-used entries to the
  *                        current connection (Jira: domain; Plane: planeUrl + "|" + workspaceSlug).
  *  @param selectedKey    In/out: the currently selected project key. Empty == "(pick one)".
  *  @returns true iff the user picked / changed the selection this frame. */
-bool Draw(const char* idScope, State& state, ITrackerConnectivity* client, const std::string& backendKind,
+bool Draw(const char* idScope, State& state, AppController& app, const std::string& backendKind,
           const std::string& endpoint, std::string& selectedKey);
 
 } // namespace SmatchetProjectPicker

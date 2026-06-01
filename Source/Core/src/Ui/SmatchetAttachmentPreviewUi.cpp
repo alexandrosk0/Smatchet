@@ -2,7 +2,9 @@
 
 #include "AppController.h"
 #include "Logger.h"
+#include "MemoryTelemetry.h"
 #include "SmatchetAttachmentPreviewUi.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -23,6 +25,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <mutex>
@@ -59,14 +62,25 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
         result.Error = "Attachment preview path is empty.";
         return result;
     }
-    // TODO(pillar2): bug-2026-05-20-ui-sync-reads — UI-thread read of (up to 50 MB) attachment.
-    // Easy fix: seekg + read 64 bytes for PNG/JPEG header parse instead of the whole file.
+    // Bounded header read (S4 of docs/plans/active/memory-budget-and-lifetime-hardening.md):
+    // read at most kMaxHeaderBytes instead of slurping the whole file (was up to 50 MB) on the
+    // UI thread. PNG/GIF/WEBP dimensions live in the first <30 bytes; the JPEG SOF marker walk
+    // below is naturally capped to this window (a SOF buried past the cap by huge EXIF/thumbnail
+    // segments falls through to the existing "could not parse" degradation — rare, and the S5
+    // decoder still reads the file in full off the UI thread).
+    constexpr std::size_t kMaxHeaderBytes = 64u * 1024u;
+    // Still synchronous on the UI thread (dimensions feed layout this frame) but now bounded to
+    // <=64 KB (sub-ms), down from a whole-file slurp.
+    // TODO(pillar2): memory-budget-and-lifetime-hardening — source dimensions from the S5 async
+    // decode so even this bounded header read leaves the UI thread.
     std::ifstream ifs(path.c_str(), std::ios::binary);
     if (!ifs.is_open()) {
         result.Error = "Failed to open downloaded attachment file.";
         return result;
     }
-    std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    std::vector<unsigned char> bytes(kMaxHeaderBytes);
+    ifs.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(kMaxHeaderBytes));
+    bytes.resize(static_cast<std::size_t>(ifs.gcount()));
     if (bytes.empty()) {
         result.Error = "Downloaded attachment file is empty.";
         return result;
@@ -205,8 +219,11 @@ static std::wstring Utf8ToWideLocal(const std::string& s) {
     return w;
 }
 
+// Decode an image file to RGBA32. When maxDimension > 0, the image is decode-SCALED so its
+// longest side is at most maxDimension — IWICBitmapScaler scales during the pixel pull, so a
+// multi-megapixel attachment never materialises a full-res RGBA buffer on the worker (#2).
 static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigned char>& outPixels, int& outWidth,
-                                    int& outHeight, std::string& outError) {
+                                    int& outHeight, std::string& outError, int maxDimension) {
     outPixels.clear();
     outWidth = 0;
     outHeight = 0;
@@ -225,6 +242,7 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
     IWICBitmapDecoder* decoder = nullptr;
     IWICBitmapFrameDecode* frame = nullptr;
     IWICFormatConverter* converter = nullptr;
+    IWICBitmapScaler* scaler = nullptr;
     bool ok = false;
 
     do {
@@ -245,17 +263,46 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
             outError = "Failed to access image frame.";
             break;
         }
-        hr = frame->GetSize(reinterpret_cast<UINT*>(&outWidth), reinterpret_cast<UINT*>(&outHeight));
-        if (FAILED(hr) || outWidth <= 0 || outHeight <= 0) {
+        UINT srcW = 0;
+        UINT srcH = 0;
+        hr = frame->GetSize(&srcW, &srcH);
+        if (FAILED(hr) || srcW == 0 || srcH == 0) {
             outError = "Failed to read image dimensions.";
             break;
         }
+        outWidth = static_cast<int>(srcW);
+        outHeight = static_cast<int>(srcH);
+
+        // #2: bound the DECODE resolution when a thumbnail budget is requested. The scaler
+        // pulls scaled pixels straight from the frame, so the format converter + CopyPixels
+        // (and the resulting buffer) only ever touch the scaled size — not the full image.
+        IWICBitmapSource* pixelSource = frame;
+        const UINT longest = (srcW > srcH) ? srcW : srcH;
+        if (maxDimension > 0 && longest > static_cast<UINT>(maxDimension)) {
+            const double scale = static_cast<double>(maxDimension) / static_cast<double>(longest);
+            const UINT dstW = (std::max)(1u, static_cast<UINT>(static_cast<double>(srcW) * scale));
+            const UINT dstH = (std::max)(1u, static_cast<UINT>(static_cast<double>(srcH) * scale));
+            hr = factory->CreateBitmapScaler(&scaler);
+            if (FAILED(hr) || !scaler) {
+                outError = "Failed to create WIC bitmap scaler.";
+                break;
+            }
+            hr = scaler->Initialize(frame, dstW, dstH, WICBitmapInterpolationModeFant);
+            if (FAILED(hr)) {
+                outError = "Failed to initialise WIC bitmap scaler.";
+                break;
+            }
+            pixelSource = scaler;
+            outWidth = static_cast<int>(dstW);
+            outHeight = static_cast<int>(dstH);
+        }
+
         hr = factory->CreateFormatConverter(&converter);
         if (FAILED(hr) || !converter) {
             outError = "Failed to create WIC format converter.";
             break;
         }
-        hr = converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0,
+        hr = converter->Initialize(pixelSource, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0,
                                    WICBitmapPaletteTypeCustom);
         if (FAILED(hr)) {
             outError = "Failed to convert image to RGBA32.";
@@ -272,6 +319,8 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
         ok = true;
     } while (false);
 
+    if (scaler)
+        scaler->Release();
     if (converter)
         converter->Release();
     if (frame)
@@ -285,6 +334,15 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
     }
     return ok;
 }
+
+// S5 worker-side budget: cap a decoded thumbnail's longest side. Precedent: the icon cache's
+// kMaxIconDimension. A preview tooltip is drawn at a capped size anyway; passing this to
+// DecodeImageFileToRgba32 makes WIC decode-scale (#2) so a multi-megapixel attachment never
+// allocates a full-res RGBA buffer on the worker.
+constexpr int kMaxThumbnailDimension = 2048;
+// Bound concurrent decode→upload tasks so many simultaneous completions can't spike the
+// single-frame dispatcher Drain() (producer-side rate limit, plan § S5 spike mitigation).
+constexpr std::size_t kMaxConcurrentThumbnailDecodes = 4;
 #endif
 
 #if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
@@ -491,6 +549,68 @@ static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
     ImGui::Image(entry.ThumbnailTextureData->GetTexRef(), ImVec2(drawWidth, drawHeight));
     ImGui::EndTooltip();
 }
+
+// S5: launch or retry an off-thread thumbnail decode when an entry needs one and the rate
+// limit allows it. Decode + WIC scale run on the joined pool; only the GPU upload is posted
+// back via the dispatcher (it must run on the UI thread). The worker captures path + Url by
+// value; the upload callback re-finds the entry by Url in the process-global g_ui, so a vector
+// resize/reorder between decode and upload can never dangle a pointer (Pillar 3). The
+// ThumbnailDecodeInFlight flag dedupes per-entry; a rate-limited skip just retries next frame
+// (no silent drop). Called per-frame from the card-draw loop.
+static void MaybeKickThumbnailDecode(AppController& app, AttachmentWindowEntry& entry) {
+    if (entry.ThumbnailDecodeInFlight || entry.ThumbnailTextureData != nullptr || !entry.PreviewError.empty() ||
+        entry.Url.empty() || entry.LocalPath.empty() || !IsSupportedImageMime(entry.MimeType)) {
+        return;
+    }
+    std::atomic<std::size_t>& pending = smatchet::memtel::PendingThumbnailUploads();
+    if (pending.load(std::memory_order_relaxed) >= kMaxConcurrentThumbnailDecodes) {
+        return; // saturated — leave the entry eligible; a later frame retries.
+    }
+    const std::string localPath = entry.LocalPath;
+    const std::string urlKey = entry.Url;
+    entry.ThumbnailDecodeInFlight = true;
+    pending.fetch_add(1, std::memory_order_relaxed);
+    app.LaunchBackgroundTask([&app, localPath, urlKey]() {
+        std::vector<unsigned char> rgba;
+        std::string err;
+        int w = 0;
+        int h = 0;
+        const bool decoded = DecodeImageFileToRgba32(localPath, rgba, w, h, err, kMaxThumbnailDimension);
+        app.mainThreadDispatcher.PostToMainThread([urlKey, rgba = std::move(rgba), w, h, err, decoded]() mutable {
+            smatchet::memtel::PendingThumbnailUploads().fetch_sub(1, std::memory_order_relaxed);
+            AttachmentWindowEntry* target = nullptr;
+            for (AttachmentWindowEntry& e : g_ui.attachmentWindowEntries) {
+                if (e.Url == urlKey) {
+                    target = &e;
+                    break;
+                }
+            }
+            if (target == nullptr) {
+                return; // entry gone (window reloaded) — nothing to upload
+            }
+            target->ThumbnailDecodeInFlight = false;
+            if (!decoded) {
+                target->PreviewError = err;
+                LOG_WARN("SmatchetUI: thumbnail decode failed url=%s err=%s", urlKey.c_str(), err.c_str());
+                return;
+            }
+            if (w > 0 && h > 0) {
+                target->ImageWidth = w;
+                target->ImageHeight = h;
+            }
+            DestroyAttachmentTexture(target->ThumbnailTextureData);
+            std::string upErr;
+            if (!CreateAttachmentTextureFromRgba(rgba, target->ImageWidth, target->ImageHeight,
+                                                 target->ThumbnailTextureData, upErr)) {
+                target->PreviewError = upErr;
+                LOG_WARN("SmatchetUI: thumbnail upload failed url=%s err=%s", urlKey.c_str(), upErr.c_str());
+            } else {
+                LOG_DEBUG("SmatchetUI: thumbnail uploaded url=%s size=%dx%d", urlKey.c_str(), target->ImageWidth,
+                          target->ImageHeight);
+            }
+        });
+    });
+}
 #endif
 
 } // namespace
@@ -573,39 +693,9 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
                     entry.PreviewError = imageInfo.Error;
                 }
             }
-#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
-            if (thumbnailSupport.CanRenderBitmapThumbnails && entry.PreviewError.empty()) {
-#if defined(_WIN32)
-                std::vector<unsigned char> rgbaPixels;
-                std::string uploadError;
-                int decodedWidth = 0;
-                int decodedHeight = 0;
-                if (DecodeImageFileToRgba32(entry.LocalPath, rgbaPixels, decodedWidth, decodedHeight, uploadError)) {
-                    if (decodedWidth > 0 && decodedHeight > 0) {
-                        entry.ImageWidth = decodedWidth;
-                        entry.ImageHeight = decodedHeight;
-                    }
-                    DestroyAttachmentTexture(entry.ThumbnailTextureData);
-                    if (!CreateAttachmentTextureFromRgba(rgbaPixels, entry.ImageWidth, entry.ImageHeight,
-                                                         entry.ThumbnailTextureData, uploadError)) {
-                        entry.PreviewError = uploadError;
-                        LOG_WARN("SmatchetUI: thumbnail upload failed file=%s err=%s", entry.Filename.c_str(),
-                                 uploadError.c_str());
-                    } else {
-                        LOG_DEBUG("SmatchetUI: thumbnail uploaded file=%s size=%dx%d", entry.Filename.c_str(),
-                                  entry.ImageWidth, entry.ImageHeight);
-                    }
-                } else {
-                    entry.PreviewError = uploadError;
-                    LOG_WARN("SmatchetUI: thumbnail decode failed file=%s err=%s", entry.Filename.c_str(),
-                             uploadError.c_str());
-                }
-#endif
-            } else if (!thumbnailSupport.CanRenderBitmapThumbnails && entry.PreviewError.empty()) {
-                LOG_DEBUG("SmatchetUI: bitmap thumbnails unavailable for file=%s detail=%s", entry.Filename.c_str(),
-                          thumbnailSupport.Reason.c_str());
-            }
-#endif
+            // S5: the off-thread thumbnail decode is kicked per-frame by MaybeKickThumbnailDecode()
+            // in the card-draw loop below — not here — so a rate-limited (saturated) skip retries
+            // on a later frame instead of this one-shot update dropping it silently.
             d.attachmentPreviewWindowOpen = true;
         }
     }
@@ -633,6 +723,20 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", thumbnailSupport.Reason.c_str());
         }
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+        // S5 visible cue: thumbnail decode now runs off the UI thread, so surface in-flight
+        // work (Pillar 2 — a worker-deferred operation must show a cue) driven off the same
+        // pendingThumbnailUploads gauge the perf.memory snapshot reads.
+        {
+            const std::size_t loadingThumbs =
+                smatchet::memtel::PendingThumbnailUploads().load(std::memory_order_relaxed);
+            if (loadingThumbs > 0) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("attachment.thumbnails.loading",
+                                                                   "loading thumbnails..."));
+            }
+        }
+#endif
         ImGui::Separator();
         ImGui::BeginChild("AttachmentListPane", ImVec2(390, 0), true);
         const float cardWidth = 120.0f;
@@ -645,6 +749,13 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
         if (ImGui::BeginTable("AttachmentGrid", columnCount, ImGuiTableFlags_SizingFixedFit)) {
             for (int i = 0; i < static_cast<int>(d.attachmentWindowEntries.size()); ++i) {
                 AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(i)];
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+                // S5: per-frame decode kick — retries a rate-limited skip, dedup'd via the
+                // entry's ThumbnailDecodeInFlight flag.
+                if (thumbnailSupport.CanRenderBitmapThumbnails) {
+                    MaybeKickThumbnailDecode(app, entry);
+                }
+#endif
                 const bool selected = (i == d.attachmentWindowSelectedIndex);
                 ImGui::TableNextColumn();
                 ImGui::PushID(i);

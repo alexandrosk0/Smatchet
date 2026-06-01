@@ -69,8 +69,9 @@ void AppController::RefreshLocalData() {
 }
 
 void AppController::RefreshLocalDataAndWarmIssueTypeMeta() {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     RefreshLocalData();
-    if (Backend) {
+    if (backend) {
         WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
     }
 }
@@ -85,7 +86,13 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
 bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg) { return RefreshFieldCatalog(cfg, std::string()); }
 
 bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey) {
-    if (!Backend) {
+    // Latch a strong handle for the duration of this call. RefreshFieldCatalog runs on
+    // a background worker thread — the new-issue draft / picker catalog refresh — and a live tracker switch
+    // (SetBackend on the UI thread) would otherwise free `Backend` mid-FetchFieldCatalog — the
+    // FieldCatalog object dereferenced below lives inside it. The shared_ptr copy keeps the old
+    // backend alive until this call returns, even after app_.Backend is swapped (ADR 0012).
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
+    if (!backend) {
         {
             std::lock_guard<std::mutex> lk(availableFieldsMutex_);
             currentCatalogProjectKey_ = projectKey;
@@ -101,7 +108,7 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     TrackerFieldCatalogResult catalog;
     std::string error;
     const bool ok =
-        Backend->FieldCatalog() && Backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, catalog, error);
+        backend->FieldCatalog() && backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, catalog, error);
     if (!ok) {
         SetFieldCatalog({}, {}, error);
         LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
@@ -114,41 +121,45 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
 
 bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                                       std::string& outError) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outCatalog = TrackerFieldCatalogResult{};
     outError.clear();
-    if (!Backend) {
+    if (!backend) {
         outError = "Tracker backend is not initialized.";
         return false;
     }
     // PR 6: project is per-operation. This convenience overload is called by config-time
     // probes that don't pin a project; backend returns the unscoped catalog.
-    return Backend->FieldCatalog()
-               ? Backend->FieldCatalog()->FetchFieldCatalog(cfg, std::string(), outCatalog, outError)
+    return backend->FieldCatalog()
+               ? backend->FieldCatalog()->FetchFieldCatalog(cfg, std::string(), outCatalog, outError)
                : (outError = "FetchFieldCatalog is not supported by this backend.", false);
 }
 
 bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
                                       TrackerFieldCatalogResult& outCatalog, std::string& outError) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outCatalog = TrackerFieldCatalogResult{};
     outError.clear();
-    if (!Backend) {
+    if (!backend) {
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    return Backend->FieldCatalog() ? Backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, outCatalog, outError)
+    return backend->FieldCatalog() ? backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, outCatalog, outError)
                                    : (outError = "FetchFieldCatalog is not supported by this backend.", false);
 }
 
 std::string AppController::BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
-    return Backend ? Backend->Reader().BuildBrowseUrl(cfg, issueKey) : std::string();
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    return backend ? backend->Reader().BuildBrowseUrl(cfg, issueKey) : std::string();
 }
 
 std::string AppController::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                                const std::string& value) const {
-    if (!Backend) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    if (!backend) {
         return value;
     }
-    return Backend->Reader().ResolveDisplayValue(fieldId, field, value);
+    return backend->Reader().ResolveDisplayValue(fieldId, field, value);
 }
 
 std::string AppController::BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql) {
@@ -336,6 +347,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
     const std::string& originalEstimateSnapshot, const std::string& remainingEstimateSnapshot,
     const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
     std::unordered_map<std::string, std::string>& outDisplayValues, std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     (void)originalEstimateSnapshot;
     (void)remainingEstimateSnapshot;
     outError.clear();
@@ -345,7 +357,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
         outError = "Issue id is empty.";
         return false;
     }
-    if (!Backend) {
+    if (!backend) {
         outError = "Tracker backend is not initialized.";
         return false;
     }
@@ -371,7 +383,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
     }
 
     nlohmann::json valuePayload;
-    if (!Backend->Mutations() || !Backend->Mutations()->BuildFieldPayload(field, rawValues, valuePayload, outError)) {
+    if (!backend->Mutations() || !backend->Mutations()->BuildFieldPayload(field, rawValues, valuePayload, outError)) {
         LOG_WARN("AppController::TryBuildFieldEditPayloadForNetwork build failed issue=%s field=%s err=%s",
                  issueId.c_str(), field.Id.c_str(), outError.c_str());
         return false;
@@ -385,7 +397,7 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
             if (i != 0) {
                 displayValue += ", ";
             }
-            displayValue += Backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
+            displayValue += backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
         }
     }
     outDisplayValues[field.Id] = std::move(displayValue);
@@ -406,7 +418,8 @@ std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueI
 }
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
-    if (!Backend) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    if (!backend) {
         return;
     }
     const auto ticketsSnap = GetActiveTicketsSnapshot();
@@ -452,7 +465,8 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
 
 bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
                                          const TrackerField* fieldMeta, const std::string* issueTypeKeyOverride) const {
-    if (!Backend || issueId.empty() || fieldId.empty()) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    if (!backend || issueId.empty() || fieldId.empty()) {
         return true;
     }
     if (IsEditableTimetrackingEstimateFieldId(fieldId)) {
@@ -507,10 +521,11 @@ bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::
 bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError,
                                               const std::string* issueTypeKeyOverride,
                                               const TrackerConfig* configSnapshot) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (outError) {
         outError->clear();
     }
-    if (!Backend || issueId.empty()) {
+    if (!backend || issueId.empty()) {
         return true;
     }
     {
@@ -538,8 +553,8 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
     const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     std::unordered_map<std::string, bool> meta;
     std::string fetchError;
-    const bool ok = Backend->FieldCatalog() != nullptr &&
-                    Backend->FieldCatalog()->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
+    const bool ok = backend->FieldCatalog() != nullptr &&
+                    backend->FieldCatalog()->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
 
     IssueEditMetaCache cache;
     // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made
@@ -626,7 +641,8 @@ void AppController::PruneEditMetaCacheToActiveTickets() {
 }
 
 void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
-    if (!Backend || issueId.empty()) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    if (!backend || issueId.empty()) {
         return;
     }
     {
@@ -654,6 +670,7 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
 
 bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues, std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -661,7 +678,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                  field.Id.c_str());
         return false;
     }
-    if (!Backend || !Cache) {
+    if (!backend || !Cache) {
         outError = "Backend or cache is not initialized.";
         LOG_WARN("AppController::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(), field.Id.c_str(),
                  outError.c_str());
@@ -673,7 +690,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
         return false;
     }
 
-    ITrackerIssueMutations* const mutations = Backend->Mutations();
+    ITrackerIssueMutations* const mutations = backend->Mutations();
     if (!mutations) {
         outError = "Tracker backend does not support issue mutations.";
         return false;
@@ -889,7 +906,7 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                 if (i != 0) {
                     displayValue += ", ";
                 }
-                displayValue += Backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
+                displayValue += backend->Reader().ResolveDisplayValue(field.Id, &field, values[i]);
             }
         }
 
@@ -915,6 +932,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                                                const std::string& originalEstimateSnapshot,
                                                const std::string& remainingEstimateSnapshot,
                                                const std::string& issueTypeKeySnapshot, FieldEditResult& outResult) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outResult = FieldEditResult{};
     LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu", FieldEditAuditSource::Current(),
               issueId.c_str(), field.Id.c_str(), rawValues.size());
@@ -929,11 +947,11 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         return false;
     }
 
-    if (!Backend) {
+    if (!backend) {
         outResult.Error = "No tracker backend initialized.";
         return false;
     }
-    ITrackerIssueMutations* const mutations = Backend->Mutations();
+    ITrackerIssueMutations* const mutations = backend->Mutations();
     if (!mutations) {
         outResult.Error = "Tracker backend does not support issue mutations.";
         return false;
@@ -1121,18 +1139,19 @@ bool AppController::ApplyFieldEditResult(const std::string& issueId, const Field
 
 bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                                        std::string& outError) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outWatchers.clear();
     outError.clear();
-    if (!Backend) {
+    if (!backend) {
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
+    const bool ok = backend->Collaboration()->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1142,22 +1161,23 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
 }
 
 bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
         LOG_WARN("AppController::AddIssueWatcher blocked by read-only mode issue=%s", issueKey.c_str());
         return false;
     }
-    if (!Backend) {
+    if (!backend) {
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->AddIssueWatcher(cfg, issueKey, outError);
+    const bool ok = backend->Collaboration()->AddIssueWatcher(cfg, issueKey, outError);
     if (!ok) {
         LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1169,18 +1189,19 @@ bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& ou
 bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
                                     std::string& outError, int* outVoteCount, bool* outHasVoted,
                                     bool* outVotersInResponse) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outVoters.clear();
     outError.clear();
-    if (!Backend) {
+    if (!backend) {
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount,
+    const bool ok = backend->Collaboration()->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount,
                                                               outHasVoted, outVotersInResponse);
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueVotes failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
@@ -1192,18 +1213,19 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
 
 bool AppController::SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
                                        std::string& outError) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outUsers.clear();
     outError.clear();
-    if (!Backend) {
+    if (!backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->SearchUsersByQuery(cfg, query, outUsers, outError);
+    const bool ok = backend->Collaboration()->SearchUsersByQuery(cfg, query, outUsers, outError);
     if (!ok) {
         LOG_ERROR("AppController::SearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
                   outError.c_str());
@@ -1215,22 +1237,23 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
 
 bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                          std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
         LOG_WARN("AppController::AddIssueCommentPlain blocked by read-only mode issue=%s", issueKey.c_str());
         return false;
     }
-    if (!Backend) {
+    if (!backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
+    const bool ok = backend->Collaboration()->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
     if (!ok) {
         LOG_ERROR("AppController::AddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1243,22 +1266,23 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
                                   const std::string& timeRemaining, const std::string& adjustEstimate,
                                   const std::string& workDescription, const std::string& startedDate,
                                   std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
         LOG_WARN("AppController::SubmitWorklog blocked by read-only mode issue=%s", issueId.c_str());
         return false;
     }
-    if (!Backend) {
+    if (!backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate,
+    const bool ok = backend->Collaboration()->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate,
                                                          workDescription, startedDate, outError);
     if (!ok) {
         LOG_ERROR("AppController::SubmitWorklog failed issue=%s err=%s", issueId.c_str(), outError.c_str());
@@ -1274,22 +1298,23 @@ bool AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, 
                                                    const int lineNumber, const std::string& changelist,
                                                    const std::string& date, const bool approximated,
                                                    const std::string& codeSnippet, std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
         LOG_WARN("AppController::AddIssueCommentAnnotateContext blocked by read-only mode issue=%s", issueKey.c_str());
         return false;
     }
-    if (!Backend) {
+    if (!backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->AddIssueCommentAnnotateContext(cfg, issueKey, p4User, functionName,
+    const bool ok = backend->Collaboration()->AddIssueCommentAnnotateContext(cfg, issueKey, p4User, functionName,
                                                                              filePath, lineNumber, changelist, date,
                                                                              approximated, codeSnippet, outError);
     if (!ok) {
@@ -1303,18 +1328,19 @@ bool AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, 
 
 bool AppController::FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                                         std::string& outError) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);  // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outGroupNames.clear();
     outError.clear();
-    if (!Backend) {
+    if (!backend) {
         outError = "Jira backend is not initialized.";
         return false;
     }
-    if (!Backend->Collaboration()) {
+    if (!backend->Collaboration()) {
         outError = "Tracker backend does not support collaboration features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = Backend->Collaboration()->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
+    const bool ok = backend->Collaboration()->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
     if (!ok) {
         LOG_ERROR("AppController::FetchUserGroupNames failed account=%s err=%s", TruncateForLog(accountId, 40).c_str(),
                   outError.c_str());
