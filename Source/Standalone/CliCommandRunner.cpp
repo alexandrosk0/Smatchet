@@ -841,7 +841,7 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
 /// Phase 3 of SpawnAndRun: handle async scenario.run result.
 /// Waits for the output file, reads it, and emits the result envelope.
 /// Returns kExitOk on success; 8 (timeout) or kExitHandler on failure.
-/// Does NOT send app.quit — the orchestrator always does that.
+/// Sends app.quit on every failure path so the orchestrator's early-return is safe.
 int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std::string& commandName,
                            const std::string& outPath, int frames, int scenarioWaitMs) {
     std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames,
@@ -883,6 +883,10 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         errEnv["command"] = commandName;
         errEnv["error"] = {{"code", "handler-error"}, {"message", "--spawn: could not read result file: " + outPath}};
         EmitErrorToStderr(errEnv);
+        nlohmann::json quitBody;
+        quitBody["name"] = "app.quit";
+        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
+        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
         return kExitHandler;
     }
 
@@ -983,7 +987,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
             const std::string outPath = SafeString(envData, "outPath");
             resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs);
             if (resultCode != kExitOk)
-                return resultCode; // async helper already sent app.quit on timeout
+                return resultCode; // async helper sends app.quit on every failure path
         } else {
             // Phase 4: synchronous command — emit directly.
             resultCode = SpawnAndRunHandleSync(pa, cli, envelope);
