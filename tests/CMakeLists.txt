@@ -17,6 +17,7 @@ add_executable(SmatchetTests
     Core/MainThreadDispatcherDrain.test.cpp
     Core/JqlProjectScope.test.cpp
     Core/TextMerge.test.cpp
+    Core/CachedTicketFieldValueRef.test.cpp
     Core/JsonParseUtil.test.cpp
     Core/TrackerFieldValueParser.test.cpp
     Core/TrackerFieldValueParser.extended.test.cpp

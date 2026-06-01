@@ -175,8 +175,10 @@ static void RebuildGridSortAndFilterProjection(UiDrawSession& d, ImGuiTableSortS
                             continue;
                         return sk.dir < 0;
                     }
-                    const std::string aVal = tix[ia].GetFieldValue(sk.col->FieldId);
-                    const std::string bVal = tix[ib].GetFieldValue(sk.col->FieldId);
+                    // Zero-copy refs (Phase 5 pull-forward): GetFieldValueRef avoids the two
+                    // std::string copies GetFieldValue made on every comparison inside stable_sort.
+                    const std::string& aVal = tix[ia].GetFieldValueRef(sk.col->FieldId);
+                    const std::string& bVal = tix[ib].GetFieldValueRef(sk.col->FieldId);
                     const int cmp = CompareFieldValuesForSort(sk.col->FieldId, sk.fieldMeta, aVal, bVal, sk.dir);
                     if (cmp != 0)
                         return (cmp * sk.dir) < 0;
