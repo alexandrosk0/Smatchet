@@ -3,11 +3,10 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --funcsize-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py --diff); this file is an informational snapshot, not the gate input._
 
-## function-too-long (40 entries, cap 200 lines)
+## function-too-long (39 entries, cap 200 lines)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 340 lines
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 945 lines
 - `AppController.cpp` · `AppController::Initialize/2` · 432 lines
-- `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEdit/4` · 257 lines
 - `BuiltinCommands_Debug.cpp` · `RegisterDebugCommands/2` · 315 lines
 - `BuiltinCommands_Perf.cpp` · `RegisterPerfCommands/2` · 245 lines
 - `BuiltinCommands_TicketMutations.cpp` · `RegisterTicketMutationCommands/2` · 243 lines
@@ -45,12 +44,11 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
 - `main.cpp` · `main/2` · 561 lines
 
-## function-too-branchy (73 entries, cap 30 branches)
+## function-too-branchy (72 entries, cap 30 branches)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 44 branches
 - `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 33 branches
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 196 branches
 - `AppController.cpp` · `AppController::Initialize/2` · 61 branches
-- `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEdit/4` · 43 branches
 - `AppController_LuaBindings_Draw.cpp` · `ReplayCmdList/6` · 43 branches
 - `CliCommandRunner.cpp` · `RunCmdAttach/2` · 43 branches
 - `CliCommandRunner.cpp` · `SpawnAndRun/3` · 32 branches
@@ -121,4 +119,4 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `main.cpp` · `main/2` · 75 branches
 
 ## Totals
-- oversized functions grandfathered: 113
+- oversized functions grandfathered: 111
