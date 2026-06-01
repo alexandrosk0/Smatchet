@@ -502,7 +502,10 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
     }
 
     LaunchBackgroundTask([this, toFetch]() {
-        ITrackerBackend* backend = Backend.get();
+        // Latch a strong handle via atomic_load: this worker reads Backend off the UI thread,
+        // which would race a live SetBackend swap on a plain .get(). The shared_ptr also keeps
+        // the backend alive for the FetchIssuesForKeys call (ADR 0012).
+        std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
 
         if (!backend) {
 
@@ -1969,14 +1972,18 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 
     TrackerIssueFetchPack pack;
 
-    if (!Backend || !Cache) {
+    // Latch via atomic_load: command handlers (MCP / Lua) can call this off the UI thread, so a
+    // plain Backend read would race a live SetBackend swap. The shared_ptr also keeps the backend
+    // alive across the blocking FetchIssues call (ADR 0012).
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
+    if (!backend || !Cache) {
 
         return pack;
     }
 
     std::lock_guard<std::mutex> lock(g_TrackerIssueFetchMutex);
 
-    pack.Tickets = Backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
+    pack.Tickets = backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
                                                  &pack.FetchError, &pack.Warning);
 
     return pack;
