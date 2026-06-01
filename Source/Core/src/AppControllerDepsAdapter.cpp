@@ -55,7 +55,10 @@ void AppControllerDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() 
 ITrackerIssueReader* AppControllerDepsAdapter::Backend() { return app_.Backend ? &app_.Backend->Reader() : nullptr; }
 
 void AppControllerDepsAdapter::SetBackend(std::unique_ptr<ITrackerBackend> backend) {
-    app_.Backend = std::move(backend);
+    // atomic_store: a live tracker swap runs here; off-thread workers read app_.Backend via
+    // std::atomic_load (ADR 0012). A plain assignment would data-race them on the shared_ptr
+    // instance (C++14) — the very UAF class this change closes.
+    std::atomic_store(&app_.Backend, std::shared_ptr<ITrackerBackend>(std::move(backend)));
 }
 
 ITrackerBackendFactory* AppControllerDepsAdapter::BackendFactory() { return app_.backendFactory_.get(); }

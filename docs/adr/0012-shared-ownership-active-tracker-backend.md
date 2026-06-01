@@ -16,10 +16,11 @@ The memory-hardening plan's S1 migrates these detached threads onto the joined `
 
 Make `AppController::Backend` a `std::shared_ptr<ITrackerBackend>`. Background workers that call into the backend capture a `shared_ptr<ITrackerBackend>` **copy**; a live `SetBackend` swap then drops only the controller's reference, and the old backend stays alive until the last in-flight worker releases its copy — the standard ownership-extends-lifetime guarantee, no extra coordination code.
 
-- `SetBackend` keeps its `std::unique_ptr<ITrackerBackend>` parameter — `shared_ptr::operator=` adopts a `unique_ptr&&` on assignment, so the call site is unchanged.
+- **All `Backend` reads go through `std::atomic_load` and all writes through `std::atomic_store`** (`BackendShared()`, `GetTrackerBackend*()`, the ~20 per-method latches in `AppController_CatalogAndFieldEdit.cpp`, and the two writes in `Initialize` + `AppControllerDepsAdapter::SetBackend`). A `shared_ptr` *instance* is not itself safe to copy/assign concurrently in C++14, so the latch read must be synchronized against the live-swap write — otherwise the latch operation itself is a data race (CodeRabbit #657). C++14 free functions; the project is `CMAKE_CXX_STANDARD 14`.
+- `SetBackend` keeps its `std::unique_ptr<ITrackerBackend>` parameter (wrapped into a `shared_ptr` for `atomic_store`), so the call site is otherwise unchanged.
 - `ITrackerBackendFactory::Create` is unchanged (still returns `unique_ptr`).
 - The ~22 `Backend->…` call sites are unchanged (`operator->` is identical for `shared_ptr`).
-- A new `std::shared_ptr<ITrackerBackend> AppController::BackendShared() const` accessor hands the strong reference to worker-spawning UI. `SmatchetProjectPicker::Draw` takes the `shared_ptr` (and its 2 callers pass `app.BackendShared()`); the picker's pooled fetch captures the `shared_ptr` and calls `sp->Connectivity().ListProjects()`.
+- A new `std::shared_ptr<ITrackerBackend> AppController::BackendShared() const` accessor hands the strong reference to worker-spawning UI. `SmatchetProjectPicker::Draw` takes `AppController& app` (its 2 callers pass `app`, not a `shared_ptr` — keeping the function arity at 6 preserves its grandfathered function-size key) and derives `auto backend = app.BackendShared();` internally; the picker's pooled fetch captures that `shared_ptr` and calls `backend->Connectivity().ListProjects()`.
 
 # Considered options
 

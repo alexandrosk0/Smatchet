@@ -625,16 +625,20 @@ class AppController
     /** Read-only accessor used by UI sites (e.g. `ResolveProjectForDraft`) to call
      *  `ITrackerConnectivity::ExtractProjectFromQuery` / `GetTrackerType`. May be null before
      *  `Initialize` has wired up the factory. Do not retain the pointer past the current frame. */
-    const ITrackerBackend* GetTrackerBackend() const { return Backend.get(); }
+    // All reads of the `Backend` member go through std::atomic_load and all writes through
+    // std::atomic_store (ADR 0012): the slot is reassigned live on a tracker swap, and a
+    // shared_ptr *instance* is not itself thread-safe to copy/assign concurrently (C++14).
+    const ITrackerBackend* GetTrackerBackend() const { return std::atomic_load(&Backend).get(); }
     // PR 4b: non-const accessor for callers that invoke mutating client methods (e.g.
     // ListProjects() which populates a per-client in-memory cache).
-    ITrackerBackend* GetTrackerBackendMutable() { return Backend.get(); }
+    ITrackerBackend* GetTrackerBackendMutable() { return std::atomic_load(&Backend).get(); }
     /** Strong (shared) handle to the active backend, for OFF-THREAD work that must
      *  outlive a live tracker swap. `Backend` is reassigned live on a tracker change
      *  (`SyncWithBackend`→`SetBackend`), which frees the old object; a worker that
      *  captured only a raw pointer would dangle. Capture this `shared_ptr` instead so
-     *  the old backend stays alive until the worker drops it. See ADR 0012. */
-    std::shared_ptr<ITrackerBackend> BackendShared() const { return Backend; }
+     *  the old backend stays alive until the worker drops it. Atomic-loaded so the
+     *  snapshot itself can't race the swap. See ADR 0012. */
+    std::shared_ptr<ITrackerBackend> BackendShared() const { return std::atomic_load(&Backend); }
 
     // ---- Create issue flow -------------------------------------------------
 

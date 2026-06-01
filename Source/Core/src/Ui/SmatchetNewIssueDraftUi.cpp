@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
+#include "Logger.h"
 #include "ProjectResolver.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
@@ -252,7 +253,9 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             try {
                 app.RefreshFieldCatalog(refetchCfg, projectKey);
             } catch (...) {
-                // Already logged inside RefreshFieldCatalog / SetFieldCatalog; never throw across UI.
+                // RefreshFieldCatalog / SetFieldCatalog log internally; this catch-all only guards
+                // against an unexpected escape so it never crosses the worker boundary.
+                LOG_DEBUG("SmatchetNewIssueDraftUi: catalog refresh worker caught exception");
             }
         });
     }

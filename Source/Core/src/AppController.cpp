@@ -1255,7 +1255,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     if (!backendFactory_) {
         backendFactory_ = std::make_unique<DefaultTrackerBackendFactory>();
     }
-    Backend = backendFactory_->Create(activeTracker);
+    // atomic_store: off-thread workers read Backend via std::atomic_load (ADR 0012); a plain
+    // assignment would data-race those reads on the shared_ptr instance (C++14).
+    std::atomic_store(&Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
     if (!Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {

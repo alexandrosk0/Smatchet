@@ -248,7 +248,10 @@ scan_file_rules() {
             case "$line" in
                 *'"'*.detach*'"'*) : ;;      # `.detach()` inside a string literal
                 *)
-                    if ! has_inline_exempt "$line" && [ "$suppress" != "no-detach" ]; then
+                    # no-detach is an ABSOLUTE rule: legacy inline markers (// CLI stdout / // pimpl
+                    # / etc., via has_inline_exempt) must NOT suppress it — only an explicit
+                    # SMATCHET_DEVIATION(rule=no-detach; ...) may (CodeRabbit PR #657).
+                    if [ "$suppress" != "no-detach" ]; then
                         printf 'no-detach\t%s:%s\t%s\n' "$f" "$lineno" "$line"
                     fi ;;
             esac
