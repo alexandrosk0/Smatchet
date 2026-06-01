@@ -77,24 +77,29 @@ void RegisterPerfCommands(CommandRegistry& reg, AppController& app) {
                 s.RssBytes = smatchet::memtel::ProcessRssBytes();
                 s.DispatcherQueueLen = app.mainThreadDispatcher.QueueLen();
                 s.DispatcherLastDrainTasks = app.mainThreadDispatcher.LastDrainTaskCount();
+                s.DispatcherLastDrainDeferred = app.mainThreadDispatcher.LastDrainDeferredCount();
                 s.IconCacheEntries = SmatchetImageTextureCache::IconCacheEntryCount();
                 s.IconCacheApproxBytes = SmatchetImageTextureCache::IconCacheApproxBytes();
                 if (auto tickets = app.GetActiveTicketsSnapshot()) {
                     s.ActiveTicketCount = tickets->size();
                 }
                 s.PendingThumbnailUploads = smatchet::memtel::PendingThumbnailUploads().load(std::memory_order_relaxed);
+                s.PlanCacheApproxBytes = smatchet::memtel::PlanCacheApproxBytes().load(std::memory_order_relaxed);
                 nlohmann::json out;
                 out["rssBytes"] = s.RssBytes;
                 out["dispatcherQueueLen"] = s.DispatcherQueueLen;
                 out["dispatcherLastDrainTasks"] = s.DispatcherLastDrainTasks;
+                out["dispatcherLastDrainDeferred"] = s.DispatcherLastDrainDeferred;
                 out["iconCacheEntries"] = s.IconCacheEntries;
                 out["iconCacheApproxBytes"] = s.IconCacheApproxBytes;
                 out["activeTicketCount"] = s.ActiveTicketCount;
                 out["pendingThumbnailUploads"] = s.PendingThumbnailUploads;
+                out["planCacheApproxBytes"] = s.PlanCacheApproxBytes;
                 return CommandResult::Success(std::move(out));
             });
-        c.Description = "Returns {rssBytes, dispatcherQueueLen, dispatcherLastDrainTasks, iconCacheEntries, "
-                        "iconCacheApproxBytes, activeTicketCount, pendingThumbnailUploads}. Gauges, not invariants.";
+        c.Description = "Returns {rssBytes, dispatcherQueueLen, dispatcherLastDrainTasks, dispatcherLastDrainDeferred, "
+                        "iconCacheEntries, iconCacheApproxBytes, activeTicketCount, pendingThumbnailUploads, "
+                        "planCacheApproxBytes}. Gauges, not invariants.";
         reg.Register(std::move(c));
     }
 

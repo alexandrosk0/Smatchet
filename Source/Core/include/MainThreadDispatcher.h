@@ -1,8 +1,10 @@
 #pragma once
 
+#include "MainThreadDispatcherDrain.h"
 #include "UiPerfMonitor.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <mutex>
@@ -27,6 +29,14 @@ class MainThreadDispatcher {
     /// file-sink bound and is well above any reasonable per-frame burst.
     static constexpr std::size_t kMaxQueueSize = 4096;
 
+    /// Per-frame drain-time budget (Phase 4). The count cap above bounds the queue's *size*; this
+    /// bounds the *work per frame*. `Drain()` runs tasks FIFO until this budget is exceeded, then
+    /// defers the untouched tail to the next frame (Risk #134: the old drain ran the whole queue
+    /// unbudgeted, so a burst of decode→upload completions could spike a single frame). Generous
+    /// on purpose: a normal frame drains far under it and behaves exactly as before — only a
+    /// genuine spike spreads across frames. Ignored during shutdown so the final drain runs all.
+    static constexpr std::chrono::microseconds kDrainBudget{4000};
+
     /// Post a task to be run on the UI thread at the next `Drain()`. Safe to call from any
     /// thread. No-ops if `BeginShutdown()` has been called.
     void PostToMainThread(Task t) {
@@ -47,9 +57,11 @@ class MainThreadDispatcher {
         queue_.push_back(std::move(t));
     }
 
-    /// Drain all queued tasks on the calling thread (must be the UI thread). Tasks are moved
-    /// out of the queue and each `Task` is released after invocation so captures (especially
-    /// shared_ptr / large state) do not live across the whole drain loop.
+    /// Drain queued tasks on the calling thread (must be the UI thread), FIFO, until the queue
+    /// empties or `kDrainBudget` is exceeded — in which case the untouched tail is requeued ahead
+    /// of any task posted meanwhile and runs next frame. Tasks are moved out and each `Task` is
+    /// released after invocation so captures (especially shared_ptr / large state) do not live
+    /// across the whole drain loop.
     /// Pillar 1 + 2 perf-review (slice 2 of `docs/plans/shipped/pillar-1-2-perf-review-system.md`):
     /// the drain itself is wrapped in `SMATCHET_UI_PERF_SCOPE("dispatcher.drain")` so an
     /// unbounded posted lambda surfaces in `perf.snapshot` as a single hot row. The
@@ -62,13 +74,35 @@ class MainThreadDispatcher {
             std::lock_guard<std::mutex> lk(mutex_);
             tasks.swap(queue_);
         }
-        lastDrainTaskCount_.store(tasks.size(), std::memory_order_release);
-        for (auto& t : tasks) {
-            if (t) {
-                t();
-                t = nullptr; // release captures eagerly; previous code held them across the loop
+        const bool budgeted = !shuttingDown_.load(std::memory_order_acquire);
+        const auto deadline = std::chrono::steady_clock::now() + kDrainBudget;
+        std::size_t ran = 0;
+        std::size_t deferred = 0;
+        for (std::size_t i = 0; i < tasks.size(); ++i) {
+            if (tasks[i]) {
+                tasks[i]();
+                tasks[i] = nullptr; // release captures eagerly; previous code held them across the loop
+                ++ran;
+            }
+            // Check the clock only after running at least one task (always make forward progress)
+            // and only when work remains. During shutdown the budget is ignored so the final drain
+            // empties the queue rather than orphaning the tail.
+            if (budgeted && i + 1 < tasks.size() && std::chrono::steady_clock::now() >= deadline) {
+                std::vector<Task> tail;
+                tail.reserve(tasks.size() - (i + 1));
+                for (std::size_t j = i + 1; j < tasks.size(); ++j) {
+                    tail.push_back(std::move(tasks[j]));
+                }
+                deferred = tail.size();
+                std::lock_guard<std::mutex> lk(mutex_);
+                std::vector<Task> merged;
+                smatchet::RequeueDeferredFront(tail, queue_, kMaxQueueSize, merged);
+                queue_.swap(merged);
+                break;
             }
         }
+        lastDrainTaskCount_.store(ran, std::memory_order_release);
+        lastDrainDeferredCount_.store(deferred, std::memory_order_release);
     }
 
     /// Stop accepting new posts. After this returns, all `PostToMainThread` calls become
@@ -81,6 +115,13 @@ class MainThreadDispatcher {
     /// requiring every poster to instrument its own SMATCHET_UI_PERF_SCOPE.
     /// Returns 0 before the first drain.
     std::size_t LastDrainTaskCount() const noexcept { return lastDrainTaskCount_.load(std::memory_order_acquire); }
+
+    /// Tasks deferred to the next frame on the most recent `Drain()` because the drain-time
+    /// budget was hit (0 in the common case where the queue drained fully). Surfaced by the
+    /// `perf.memory` gauge so a sustained non-zero value flags a producer outrunning the budget.
+    std::size_t LastDrainDeferredCount() const noexcept {
+        return lastDrainDeferredCount_.load(std::memory_order_acquire);
+    }
 
     /// Pending-task count right now, for the `perf.memory` gauge. Snapshot-only —
     /// takes `mutex_` (which `mutable` permits in this const accessor). Not for
@@ -95,4 +136,5 @@ class MainThreadDispatcher {
     std::vector<Task> queue_;
     std::atomic<bool> shuttingDown_{false};
     std::atomic<std::size_t> lastDrainTaskCount_{0};
+    std::atomic<std::size_t> lastDrainDeferredCount_{0};
 };

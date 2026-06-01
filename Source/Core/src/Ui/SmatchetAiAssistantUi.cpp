@@ -13,10 +13,12 @@
 #include "AiModelCatalog.h"
 #include "AiTypes.h"
 #include "AppController.h"
+#include "CacheEvictionPolicy.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
+#include "MemoryTelemetry.h"
 #include "SmatchetChatPersistWorker.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetImGuiFonts.h"
@@ -172,6 +174,10 @@ void PersistOpenStateImmediate(UiDrawSession& d) {
 // rebuild). FIFO cap at kMaxCachedPlans keeps memory bounded across long
 // chat sessions.
 constexpr std::size_t kMaxCachedPlans = 256;
+// Aggregate byte cap (Phase 4), alongside the entry cap. Proxies the parsed-plan AST size by the
+// cached message's source length — the AST is larger but tracks content length, and the source
+// length is free to measure. 4 MiB of summed markdown source is well past any sane chat history.
+constexpr std::size_t kMaxPlanCacheBytes = 4u * 1024u * 1024u;
 struct CachedPlanEntry {
     std::size_t contentLen = 0;
     MarkdownPreviewRender::PreviewPlanPtr plan;
@@ -179,6 +185,22 @@ struct CachedPlanEntry {
 // Process-static — one AI panel exists in the app at a time.
 std::unordered_map<std::uint64_t, CachedPlanEntry> s_planCache;
 std::vector<std::uint64_t> s_planCacheInsertionOrder;
+// Running Σ contentLen over s_planCache, maintained on insert/evict/clear. Mirrored to the
+// memtel atomic so the perf.memory gauge reads it without reaching into this TU.
+std::size_t s_planCacheBytes = 0;
+
+// Per-message render caches. File-scope (not function-local statics) so the "Clear conversation"
+// action can drop them in one call — once history is wiped their content/index-keyed entries are
+// pure garbage that would otherwise linger for the rest of the session.
+//   - height cache: realised layout height per finalised message, for off-screen culling.
+//   - hover cache: whether the action row was active last frame, per message index, for the
+//     show-on-hover alpha gate; the 1-frame lag avoids an ImGui hover-detection chicken-and-egg.
+std::unordered_map<std::uint64_t, float> s_messageHeightCache;
+std::unordered_map<std::size_t, bool> s_turnActiveLastFrame;
+
+void PublishPlanCacheBytes() {
+    smatchet::memtel::PlanCacheApproxBytes().store(s_planCacheBytes, std::memory_order_relaxed);
+}
 
 const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content) {
     const std::uint64_t key = MarkdownPreviewRender::HashContent(content);
@@ -186,22 +208,56 @@ const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::st
     if (it != s_planCache.end() && it->second.contentLen == content.size()) {
         return *it->second.plan;
     }
-    // Cache miss (or hash collision on different length) — build a fresh plan.
+    // Cache miss or hash collision on different length. Build the plan first, evict second, then
+    // insert — so the new entry is never a candidate for its own eviction pass. Post-insert figures
+    // are passed to CacheOverCap so the loop makes room for the new item's size; only pre-existing
+    // entries are ever dropped because the new key is not yet in the insertion-order vector.
     CachedPlanEntry entry;
     entry.contentLen = content.size();
     entry.plan = MarkdownPreviewRender::MakePlan();
     MarkdownPreviewRender::BuildPlan(content, *entry.plan);
-    const auto inserted = s_planCache.emplace(key, std::move(entry));
-    s_planCacheInsertionOrder.push_back(key);
-    // FIFO eviction once we exceed the cap.
-    while (s_planCacheInsertionOrder.size() > kMaxCachedPlans) {
+    while (!s_planCacheInsertionOrder.empty() &&
+           smatchet::CacheOverCap(s_planCacheInsertionOrder.size() + 1,
+                                  s_planCacheBytes + content.size(), kMaxCachedPlans,
+                                  kMaxPlanCacheBytes)) {
         const std::uint64_t evictKey = s_planCacheInsertionOrder.front();
         s_planCacheInsertionOrder.erase(s_planCacheInsertionOrder.begin());
-        if (evictKey != key) {
-            s_planCache.erase(evictKey);
+        const auto victim = s_planCache.find(evictKey);
+        if (victim != s_planCache.end()) {
+            s_planCacheBytes -= victim->second.contentLen;
+            s_planCache.erase(victim);
         }
     }
+    const auto inserted = s_planCache.emplace(key, std::move(entry));
+    s_planCacheInsertionOrder.push_back(key);
+    s_planCacheBytes += content.size();
+    PublishPlanCacheBytes();
     return *inserted.first->second.plan;
+}
+
+// Drop every per-conversation render cache. Called when history is cleared so stale entries do
+// not survive the session.
+void ClearAiRenderCaches() {
+    s_planCache.clear();
+    s_planCacheInsertionOrder.clear();
+    s_planCacheBytes = 0;
+    PublishPlanCacheBytes();
+    s_messageHeightCache.clear();
+    s_turnActiveLastFrame.clear();
+}
+
+// True (and updates the stored basis) when the layout basis for cached message heights has
+// changed since the last call — font size or content-wrap width. Cached heights are pixel
+// layouts, so a font or width change makes every cached value stale; the caller clears the
+// height cache on a true return. The >1px width threshold ignores sub-pixel jitter, so a
+// steady-state frame returns false and pays nothing.
+bool AiLayoutBasisChanged(float fontSize, float wrapWidth, float& lastFontSize, float& lastWrapWidth) {
+    if (fontSize != lastFontSize || std::fabs(wrapWidth - lastWrapWidth) > 1.0f) {
+        lastFontSize = fontSize;
+        lastWrapWidth = wrapWidth;
+        return true;
+    }
+    return false;
 }
 
 // Helper: collapse newlines + truncate to a single-line preview for the pin strip
@@ -397,23 +453,17 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     renderOpts.clickableLinks = true;
     renderOpts.existingSelCtx = &selCtx;
 
-    // Per-message height cache. Opt #4 — once a finalised message has been
-    // rendered once, its layout height is stable (until font / wrap-width
-    // changes, which we don't detect). On subsequent frames where the
-    // message's expected screen rect is OUTSIDE the visible scroll region,
-    // skip the rich render entirely and emit ImGui::Dummy(height) instead so
-    // the cursor advances correctly without paying the BuildPlan + RenderPlan
-    // cost. Keyed by message-content hash so it shares lifetimes with the
-    // plan cache. Pillar 1 opt #4.
-    static std::unordered_map<std::uint64_t, float> s_messageHeightCache;
-
-    // Per-message "action row was active on previous frame" map keyed by
-    // messageIndex. Used to drive the show-on-hover alpha gate without the
-    // classic ImGui chicken-and-egg (`IsItemHovered` requires the item to be
-    // rendered; rendering only when hovered means IsItemHovered never fires).
-    // 1-frame lag on first hover is imperceptible. Cleared lazily when the
-    // map size diverges from history size.
-    static std::unordered_map<std::size_t, bool> s_turnActiveLastFrame;
+    // s_messageHeightCache + s_turnActiveLastFrame are now file-scope (above) so the clear-history
+    // action can drop them; the off-screen-cull height cache (Opt #4) and the show-on-hover alpha
+    // gate read them exactly as before. Invalidate the height cache when the layout basis changes
+    // (font size or wrap width) — cached heights are pixel layouts that go stale otherwise, which
+    // would mis-cull. Cheap epoch compare: steady-state frames clear nothing.
+    static float s_lastLayoutFontSize = 0.0f;
+    static float s_lastLayoutWrapWidth = 0.0f;
+    if (AiLayoutBasisChanged(ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x, s_lastLayoutFontSize,
+                             s_lastLayoutWrapWidth)) {
+        s_messageHeightCache.clear();
+    }
 
     const SmatchetThemeAiColors& aiPalette = SmatchetTheme::GetActiveAiColors();
     const bool faLoaded = SmatchetAreFaIconsLoaded();
@@ -1067,6 +1117,9 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
                 d.assistantScrollToMessageIndex = -1;
                 d.assistantStreamBuf.clear();
                 d.assistantLastError.clear();
+                // Drop the per-conversation render caches (plan / height / hover) so their
+                // now-orphaned entries don't linger for the rest of the session (Phase 4).
+                ClearAiRenderCaches();
                 // Worker no-ops if chat_persist isn't running; safe to call.
                 smatchet::ai::chat_persist::Op clearOp;
                 clearOp.kind = smatchet::ai::chat_persist::OpKind::ClearAll;

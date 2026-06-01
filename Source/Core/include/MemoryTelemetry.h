@@ -25,11 +25,19 @@ struct MemorySnapshot {
     std::uint64_t RssBytes = 0;             ///< Process working set / RSS (0 if unavailable).
     std::size_t DispatcherQueueLen = 0;     ///< MainThreadDispatcher pending tasks right now.
     std::size_t DispatcherLastDrainTasks = 0; ///< Tasks drained in the last frame.
+    std::size_t DispatcherLastDrainDeferred = 0; ///< Tasks deferred to next frame by the drain-time budget (Phase 4).
     std::size_t IconCacheEntries = 0;       ///< SmatchetImageTextureCache resident entries.
     std::size_t IconCacheApproxBytes = 0;   ///< Σ Width·Height·4 over resident icon textures (estimate).
     std::size_t ActiveTicketCount = 0;      ///< Published active-ticket count (no copy).
     std::size_t PendingThumbnailUploads = 0; ///< In-flight attachment thumbnail decode→upload tasks (S5).
+    std::size_t PlanCacheApproxBytes = 0;   ///< AI plan cache size, proxied by Σ cached-message source length (Phase 4).
 };
+
+/// Live approximate byte size of the AI assistant's parsed-plan cache, proxied by the summed
+/// source length of cached messages (the parsed AST is larger but tracks content length). Stored
+/// by the AI UI on every plan-cache insert/evict/clear; read cold by the `perf.memory` gauge,
+/// which may run off the UI thread via MCP/Lua dispatch — hence atomic. 0 when nothing is cached.
+std::atomic<std::size_t>& PlanCacheApproxBytes();
 
 /// Live counter of in-flight thumbnail decode→upload tasks. Incremented by the
 /// attachment-preview producer on enqueue, decremented by the dispatcher upload

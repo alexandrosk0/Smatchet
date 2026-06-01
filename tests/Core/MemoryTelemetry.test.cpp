@@ -40,3 +40,14 @@ TEST_CASE("PendingThumbnailUploads returns the same singleton each call") {
     // ONE counter — a fresh atomic per call would make the gauge meaningless.
     CHECK(&smatchet::memtel::PendingThumbnailUploads() == &smatchet::memtel::PendingThumbnailUploads());
 }
+
+TEST_CASE("PlanCacheApproxBytes counter round-trips and is a stable singleton") {
+    // Phase 4 gauge: the AI UI stores its running plan-cache byte proxy here; perf.memory loads
+    // it (possibly off-thread via MCP/Lua), so it must be one shared atomic.
+    std::atomic<std::size_t>& counter = smatchet::memtel::PlanCacheApproxBytes();
+    const std::size_t base = counter.load();
+    counter.store(base + 4096u, std::memory_order_relaxed);
+    CHECK(counter.load() == base + 4096u);
+    counter.store(base, std::memory_order_relaxed);
+    CHECK(&smatchet::memtel::PlanCacheApproxBytes() == &smatchet::memtel::PlanCacheApproxBytes());
+}

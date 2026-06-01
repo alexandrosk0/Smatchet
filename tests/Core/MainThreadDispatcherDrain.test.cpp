@@ -16,11 +16,13 @@
 // Pure header / no I/O / no UI thread — runs in the bucket-A doctest rig.
 
 #include "MainThreadDispatcher.h"
+#include "MainThreadDispatcherDrain.h"
 
 #include "doctest/doctest.h"
 
 #include <atomic>
 #include <cstddef>
+#include <vector>
 
 TEST_CASE("MainThreadDispatcher::LastDrainTaskCount starts at zero") {
     MainThreadDispatcher d;
@@ -88,4 +90,49 @@ TEST_CASE("MainThreadDispatcher::PostToMainThread respects kMaxQueueSize bound")
     d.Drain();
     CHECK(ran.load() == static_cast<int>(cap));
     CHECK(d.LastDrainTaskCount() == cap);
+}
+
+// ---- Phase 4 drain-time budget: pure requeue step (memory-budget-and-lifetime-hardening.md) ----
+// The time-budget path itself is wall-clock dependent (a normal frame drains fully, so a unit
+// test cannot deterministically trip it), but the ordering+trim it relies on is pure and tested
+// here. RequeueDeferredFront puts the deferred tail ahead of tasks posted during the drain, then
+// trims oldest-first to the cap.
+
+TEST_CASE("RequeueDeferredFront: deferred tail leads, arrived follow") {
+    std::vector<int> deferred = {1, 2, 3};
+    std::vector<int> arrived = {4, 5};
+    std::vector<int> out;
+    smatchet::RequeueDeferredFront(deferred, arrived, 100, out);
+    REQUIRE(out.size() == 5);
+    CHECK(out[0] == 1);
+    CHECK(out[1] == 2);
+    CHECK(out[2] == 3);
+    CHECK(out[3] == 4);
+    CHECK(out[4] == 5);
+}
+
+TEST_CASE("RequeueDeferredFront: trims oldest-first to maxSize") {
+    std::vector<int> deferred = {1, 2, 3};
+    std::vector<int> arrived = {4, 5, 6};
+    std::vector<int> out;
+    smatchet::RequeueDeferredFront(deferred, arrived, 4, out);
+    // 6 combined, cap 4 -> drop the 2 oldest (1, 2), keep the newest 4 in order.
+    REQUIRE(out.size() == 4);
+    CHECK(out[0] == 3);
+    CHECK(out[1] == 4);
+    CHECK(out[2] == 5);
+    CHECK(out[3] == 6);
+}
+
+TEST_CASE("RequeueDeferredFront: empty inputs and exact-fit are no-op-safe") {
+    std::vector<int> empty1, empty2, out;
+    smatchet::RequeueDeferredFront(empty1, empty2, 10, out);
+    CHECK(out.empty());
+
+    std::vector<int> deferred = {1, 2};
+    std::vector<int> arrived = {3, 4};
+    smatchet::RequeueDeferredFront(deferred, arrived, 4, out); // exactly at cap -> no trim
+    REQUIRE(out.size() == 4);
+    CHECK(out[0] == 1);
+    CHECK(out[3] == 4);
 }

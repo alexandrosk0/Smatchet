@@ -27,6 +27,11 @@ std::atomic<std::size_t>& PendingThumbnailUploads() {
     return counter;
 }
 
+std::atomic<std::size_t>& PlanCacheApproxBytes() {
+    static std::atomic<std::size_t> counter{0};
+    return counter;
+}
+
 std::uint64_t ProcessRssBytes() {
 #if defined(_WIN32)
     PROCESS_MEMORY_COUNTERS pmc;
