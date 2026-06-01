@@ -85,7 +85,13 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
 bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg) { return RefreshFieldCatalog(cfg, std::string()); }
 
 bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey) {
-    if (!Backend) {
+    // Latch a strong handle for the duration of this call. RefreshFieldCatalog runs on a
+    // background worker (the new-issue draft / picker catalog refresh), and a live tracker switch
+    // (SetBackend on the UI thread) would otherwise free `Backend` mid-FetchFieldCatalog — the
+    // FieldCatalog object dereferenced below lives inside it. The shared_ptr copy keeps the old
+    // backend alive until this call returns, even after app_.Backend is swapped (ADR 0012).
+    std::shared_ptr<ITrackerBackend> backend = Backend;
+    if (!backend) {
         {
             std::lock_guard<std::mutex> lk(availableFieldsMutex_);
             currentCatalogProjectKey_ = projectKey;
@@ -101,7 +107,7 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     TrackerFieldCatalogResult catalog;
     std::string error;
     const bool ok =
-        Backend->FieldCatalog() && Backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, catalog, error);
+        backend->FieldCatalog() && backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, catalog, error);
     if (!ok) {
         SetFieldCatalog({}, {}, error);
         LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
