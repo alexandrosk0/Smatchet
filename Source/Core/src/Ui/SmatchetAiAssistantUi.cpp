@@ -208,28 +208,29 @@ const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::st
     if (it != s_planCache.end() && it->second.contentLen == content.size()) {
         return *it->second.plan;
     }
-    // Cache miss (or hash collision on different length) — build a fresh plan.
+    // Cache miss or hash collision on different length. Build the plan first, evict second, then
+    // insert — so the new entry is never a candidate for its own eviction pass. Post-insert figures
+    // are passed to CacheOverCap so the loop makes room for the new item's size; only pre-existing
+    // entries are ever dropped because the new key is not yet in the insertion-order vector.
     CachedPlanEntry entry;
     entry.contentLen = content.size();
     entry.plan = MarkdownPreviewRender::MakePlan();
     MarkdownPreviewRender::BuildPlan(content, *entry.plan);
-    const auto inserted = s_planCache.emplace(key, std::move(entry));
-    s_planCacheInsertionOrder.push_back(key);
-    s_planCacheBytes += content.size();
-    // FIFO eviction once we exceed either the entry cap or the aggregate-byte cap.
     while (!s_planCacheInsertionOrder.empty() &&
-           smatchet::CacheOverCap(s_planCacheInsertionOrder.size(), s_planCacheBytes, kMaxCachedPlans,
+           smatchet::CacheOverCap(s_planCacheInsertionOrder.size() + 1,
+                                  s_planCacheBytes + content.size(), kMaxCachedPlans,
                                   kMaxPlanCacheBytes)) {
         const std::uint64_t evictKey = s_planCacheInsertionOrder.front();
         s_planCacheInsertionOrder.erase(s_planCacheInsertionOrder.begin());
-        if (evictKey != key) {
-            const auto victim = s_planCache.find(evictKey);
-            if (victim != s_planCache.end()) {
-                s_planCacheBytes -= victim->second.contentLen;
-                s_planCache.erase(victim);
-            }
+        const auto victim = s_planCache.find(evictKey);
+        if (victim != s_planCache.end()) {
+            s_planCacheBytes -= victim->second.contentLen;
+            s_planCache.erase(victim);
         }
     }
+    const auto inserted = s_planCache.emplace(key, std::move(entry));
+    s_planCacheInsertionOrder.push_back(key);
+    s_planCacheBytes += content.size();
     PublishPlanCacheBytes();
     return *inserted.first->second.plan;
 }
