@@ -137,54 +137,87 @@ SQLite::Statement& LocalCacheManager::stmt(std::unique_ptr<SQLite::Statement>& s
     return *slot;
 }
 
+// Write one ticket's rows using the cached prepared statements. Assumes `stmtMutex_` is held
+// AND an enclosing SQLite::Transaction is active (SaveTicket / SaveTickets own the txn). Each
+// single-bind statement is reset()+clearBindings() after exec so it can be rebound for the next
+// ticket when called in a batch loop (SaveTickets).
+void LocalCacheManager::writeTicketRows_(const CachedTicket& ticket) {
+    auto& ticketUpsert = stmt(stmt_save_upsert_ticket_, "INSERT OR REPLACE INTO tickets (id) VALUES (?)");
+    ticketUpsert.bind(1, ticket.id);
+    ticketUpsert.exec();
+    ticketUpsert.reset();
+    ticketUpsert.clearBindings();
+
+    // Keep selected field cache rows in sync with latest snapshot for this ticket.
+    auto& deleteFields = stmt(stmt_save_delete_fields_, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
+    deleteFields.bind(1, ticket.id);
+    deleteFields.exec();
+    deleteFields.reset();
+    deleteFields.clearBindings();
+
+    auto& fieldUpsert =
+        stmt(stmt_save_insert_field_,
+             "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+    for (const auto& kv : ticket.fieldValues) {
+        fieldUpsert.bind(1, ticket.id);
+        fieldUpsert.bind(2, kv.first);
+        fieldUpsert.bind(3, kv.second);
+        fieldUpsert.exec();
+        fieldUpsert.reset();
+        fieldUpsert.clearBindings();
+    }
+
+    // Mirror the rich-value table.
+    auto& deleteRich = stmt(stmt_save_delete_rich_, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
+    deleteRich.bind(1, ticket.id);
+    deleteRich.exec();
+    deleteRich.reset();
+    deleteRich.clearBindings();
+
+    auto& richUpsert = stmt(
+        stmt_save_insert_rich_,
+        "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+    for (const auto& kv : ticket.fieldRichValues) {
+        if (kv.second.empty())
+            continue;
+        richUpsert.bind(1, ticket.id);
+        richUpsert.bind(2, kv.first);
+        richUpsert.bind(3, kv.second);
+        richUpsert.exec();
+        richUpsert.reset();
+        richUpsert.clearBindings();
+    }
+}
+
 void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
     std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
     try {
         SQLite::Transaction transaction(db);
-
-        auto& ticketUpsert = stmt(stmt_save_upsert_ticket_, "INSERT OR REPLACE INTO tickets (id) VALUES (?)");
-        ticketUpsert.bind(1, ticket.id);
-        ticketUpsert.exec();
-
-        // Keep selected field cache rows in sync with latest snapshot for this ticket.
-        auto& deleteFields = stmt(stmt_save_delete_fields_, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
-        deleteFields.bind(1, ticket.id);
-        deleteFields.exec();
-
-        auto& fieldUpsert =
-            stmt(stmt_save_insert_field_,
-                 "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
-        for (const auto& kv : ticket.fieldValues) {
-            fieldUpsert.bind(1, ticket.id);
-            fieldUpsert.bind(2, kv.first);
-            fieldUpsert.bind(3, kv.second);
-            fieldUpsert.exec();
-            fieldUpsert.reset();
-            fieldUpsert.clearBindings();
-        }
-
-        // Mirror the rich-value table.
-        auto& deleteRich = stmt(stmt_save_delete_rich_, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
-        deleteRich.bind(1, ticket.id);
-        deleteRich.exec();
-
-        auto& richUpsert = stmt(
-            stmt_save_insert_rich_,
-            "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
-        for (const auto& kv : ticket.fieldRichValues) {
-            if (kv.second.empty())
-                continue;
-            richUpsert.bind(1, ticket.id);
-            richUpsert.bind(2, kv.first);
-            richUpsert.bind(3, kv.second);
-            richUpsert.exec();
-            richUpsert.reset();
-            richUpsert.clearBindings();
-        }
-
+        writeTicketRows_(ticket);
         transaction.commit();
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::SaveTicket failed ticket=%s err=%s", ticket.id.c_str(), ex.what());
+        throw;
+    }
+}
+
+// Phase 3(a) of docs/plans/active/memory-budget-and-lifetime-hardening.md: persist a whole slice
+// of tickets in ONE transaction (the streaming-sync apply loop used to open a separate
+// SQLite::Transaction per ticket — up to 20 commits/frame on the UI thread). Reuses the cached
+// prepared statements across the batch.
+void LocalCacheManager::SaveTickets(const std::vector<CachedTicket>& tickets) {
+    if (tickets.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(stmtMutex_);
+    try {
+        SQLite::Transaction transaction(db);
+        for (const auto& ticket : tickets) {
+            writeTicketRows_(ticket);
+        }
+        transaction.commit();
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::SaveTickets failed (%zu tickets) err=%s", tickets.size(), ex.what());
         throw;
     }
 }

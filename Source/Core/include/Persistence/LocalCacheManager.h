@@ -33,6 +33,10 @@ class LocalCacheManager {
     explicit LocalCacheManager(const std::string& dbPath);
 
     void SaveTicket(const CachedTicket& ticket);
+    /** Persist a batch of tickets in a SINGLE transaction (vs one per ticket). Used by the
+     *  streaming-sync apply loop to coalesce up to 20 per-frame commits into one. See
+     *  docs/plans/active/memory-budget-and-lifetime-hardening.md § Phase 3(a). */
+    void SaveTickets(const std::vector<CachedTicket>& tickets);
     /** @return false if `ticketId` is not present in `tickets`. */
     bool TryGetTicket(const std::string& ticketId, CachedTicket& out);
     void DeleteTicket(const std::string& ticketId);
@@ -105,6 +109,10 @@ class LocalCacheManager {
 #endif
 
   private:
+    /// Write one ticket's rows via the cached prepared statements. Caller holds `stmtMutex_`
+    /// and owns the enclosing SQLite::Transaction (SaveTicket / SaveTickets). See the .cpp.
+    void writeTicketRows_(const CachedTicket& ticket);
+
     SQLite::Database db;
 
     // Cached prepared statements for the hot paths (SaveTicket / TryGetTicket).
