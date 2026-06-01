@@ -25,6 +25,17 @@ struct CachedTicket {
         return (it != fieldValues.end()) ? it->second : std::string();
     }
 
+    /// Zero-copy view of a field value (a stable reference to the stored string, or a static
+    /// empty string when absent). Use on hot read paths — e.g. the grid sort comparator, which
+    /// runs O(n log n) per sort — to avoid the per-call std::string copy GetFieldValue() makes.
+    /// The reference is valid until the ticket (or its fieldValues entry) is mutated/destroyed.
+    /// (memory-budget-and-lifetime-hardening § Phase 5 pull-forward.)
+    const std::string& GetFieldValueRef(const std::string& key) const {
+        static const std::string kEmpty;
+        const auto it = fieldValues.find(key);
+        return (it != fieldValues.end()) ? it->second : kEmpty;
+    }
+
     std::string GetFieldRichValue(const std::string& key) const {
         const auto it = fieldRichValues.find(key);
         return (it != fieldRichValues.end()) ? it->second : std::string();
