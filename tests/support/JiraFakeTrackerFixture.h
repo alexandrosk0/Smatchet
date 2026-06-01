@@ -57,8 +57,8 @@ class JiraFakeTrackerFixture {
     std::string reachabilityDiagnostic_;
     std::vector<JiraFixtureFetch> fetches_;
     // Scripted mutation replies (FIFO, same shape as FakeTrackerClient queues).
-    std::vector<std::pair<bool, std::string>> updateIssueFieldsReplies_;
-    std::vector<std::pair<bool, std::string>> createIssueReplies_;
+    std::vector<ScriptedReply> updateIssueFieldsReplies_;
+    std::vector<ScriptedReply> createIssueReplies_;
 };
 
 } // namespace smatchet_tests

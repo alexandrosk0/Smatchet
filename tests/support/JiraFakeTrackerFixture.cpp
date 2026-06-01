@@ -102,17 +102,19 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
         const auto& m = root["mutations"];
         if (m.contains("updateIssueFields") && m["updateIssueFields"].is_array()) {
             for (const auto& entry : m["updateIssueFields"]) {
-                bool ok = entry.value("ok", true);
-                std::string err = entry.value("error", std::string());
-                fixture.updateIssueFieldsReplies_.emplace_back(ok, err);
+                ScriptedReply r;
+                r.Ok = entry.value("ok", true);
+                r.Error = entry.value("error", std::string());
+                fixture.updateIssueFieldsReplies_.push_back(std::move(r));
             }
         }
         if (m.contains("createIssue") && m["createIssue"].is_array()) {
             for (const auto& entry : m["createIssue"]) {
-                bool ok = entry.value("ok", true);
-                std::string keyOrErr = ok ? entry.value("issueKey", std::string("FIXTURE-1"))
-                                          : entry.value("error", std::string("fixture error"));
-                fixture.createIssueReplies_.emplace_back(ok, keyOrErr);
+                ScriptedReply r;
+                r.Ok = entry.value("ok", true);
+                r.IssueKey = r.Ok ? entry.value("issueKey", std::string("FIXTURE-1")) : std::string();
+                r.Error = r.Ok ? std::string() : entry.value("error", std::string("fixture error"));
+                fixture.createIssueReplies_.push_back(std::move(r));
             }
         }
     }
@@ -128,18 +130,18 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
     }
 
     for (const auto& reply : updateIssueFieldsReplies_) {
-        if (reply.first) {
+        if (reply.Ok) {
             client.EnqueueUpdateIssueFieldsSuccess();
         } else {
-            client.EnqueueUpdateIssueFieldsFailure(reply.second);
+            client.EnqueueUpdateIssueFieldsFailure(reply.Error);
         }
     }
 
     for (const auto& reply : createIssueReplies_) {
-        if (reply.first) {
-            client.EnqueueCreateIssueSuccess(reply.second);
+        if (reply.Ok) {
+            client.EnqueueCreateIssueSuccess(reply.IssueKey);
         } else {
-            client.EnqueueCreateIssueFailure(reply.second);
+            client.EnqueueCreateIssueFailure(reply.Error);
         }
     }
 }
