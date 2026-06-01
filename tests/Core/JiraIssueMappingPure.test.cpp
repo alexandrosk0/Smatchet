@@ -89,6 +89,7 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — changelog mapped to history
     const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
 
     REQUIRE(ok);
+    REQUIRE(results.size() == 1);
     CHECK(results[0].fieldValues.count("history") == 1);
 }
 

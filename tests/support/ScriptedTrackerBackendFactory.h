@@ -27,7 +27,7 @@ class ScriptedTrackerBackendFactory : public ITrackerBackendFactory {
         if (trackerType == "Jira" || trackerType == "jira") {
             return fixture_.CreateClient();
         }
-        return std::unique_ptr<ITrackerBackend>(new FakeTrackerClient(trackerType));
+        return std::make_unique<FakeTrackerClient>(trackerType);
     }
 
   private:

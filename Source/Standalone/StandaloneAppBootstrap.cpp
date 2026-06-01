@@ -349,9 +349,19 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
 #endif
         ctx.pluginHost->OnEarlyInit(*ctx.app);
 #if defined(SMATCHET_BUILD_UI_TESTS)
-        if (const char* fixturePath = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE")) {
-            ctx.app->SetBackendFactory(std::make_unique<smatchet_tests::ScriptedTrackerBackendFactory>(
-                smatchet_tests::JiraFakeTrackerFixture::LoadFromFile(fixturePath)));
+        {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+            const char* fixturePath = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+            if (fixturePath != nullptr && fixturePath[0] != '\0') {
+                ctx.app->SetBackendFactory(std::make_unique<smatchet_tests::ScriptedTrackerBackendFactory>(
+                    smatchet_tests::JiraFakeTrackerFixture::LoadFromFile(fixturePath)));
+            }
         }
 #endif
         ctx.app->Initialize(cfg.DbPath, cfg.TrackerType);

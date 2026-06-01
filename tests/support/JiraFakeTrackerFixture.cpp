@@ -21,7 +21,9 @@ TrackerReachabilityProbeKind ParseReachabilityKind(const std::string& kind) {
         return TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
     if (kind == "ServiceUnavailable")
         return TrackerReachabilityProbeKind::ServiceUnavailable;
-    return TrackerReachabilityProbeKind::TransportDown;
+    if (kind == "TransportDown")
+        return TrackerReachabilityProbeKind::TransportDown;
+    throw std::runtime_error("JiraFakeTrackerFixture: unknown reachability kind: " + kind);
 }
 
 } // namespace
@@ -147,7 +149,7 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
 }
 
 std::unique_ptr<FakeTrackerClient> JiraFakeTrackerFixture::CreateClient() const {
-    auto client = std::unique_ptr<FakeTrackerClient>(new FakeTrackerClient("Jira"));
+    auto client = std::make_unique<FakeTrackerClient>("Jira");
     Configure(*client);
     return client;
 }
