@@ -69,6 +69,10 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
     // segments falls through to the existing "could not parse" degradation — rare, and the S5
     // decoder still reads the file in full off the UI thread).
     constexpr std::size_t kMaxHeaderBytes = 64u * 1024u;
+    // Still synchronous on the UI thread (dimensions feed layout this frame) but now bounded to
+    // <=64 KB (sub-ms), down from a whole-file slurp.
+    // TODO(pillar2): memory-budget-and-lifetime-hardening — source dimensions from the S5 async
+    // decode so even this bounded header read leaves the UI thread.
     std::ifstream ifs(path.c_str(), std::ios::binary);
     if (!ifs.is_open()) {
         result.Error = "Failed to open downloaded attachment file.";
