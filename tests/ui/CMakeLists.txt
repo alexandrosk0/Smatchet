@@ -17,6 +17,7 @@ option(SMATCHET_DEBUG_VISIBLE_CUE_HARNESS "Compile the synthetic visible-cue sta
 
 set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ui_tests_registry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/jira_deterministic_backend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/views_columns_reorder.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/callstack_tooltip_hover.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcp_lua_fresh_state_race.test.cpp"

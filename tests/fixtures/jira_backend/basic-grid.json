@@ -1,0 +1,49 @@
+{
+  "name": "basic-grid",
+  "reachability": {"kind": "AuthenticatedReachable", "diagnostic": ""},
+  "catalog": {
+    "fields": [],
+    "components": [],
+    "issueTypeMeta": [],
+    "users": []
+  },
+  "fetches": [
+    {
+      "fullSyncCompleted": true,
+      "warning": "",
+      "fetchError": "",
+      "selectedFields": ["summary", "status", "priority", "assignee"],
+      "jiraSearchPages": [
+        {
+          "issues": [
+            {
+              "key": "SMAT-1",
+              "fields": {
+                "summary": "First deterministic issue",
+                "status": {"name": "In Progress", "id": "3"},
+                "priority": {"name": "High", "id": "2"},
+                "assignee": {"displayName": "Alice Tester"},
+                "issuetype": {"name": "Bug"}
+              }
+            },
+            {
+              "key": "SMAT-2",
+              "fields": {
+                "summary": "Second deterministic issue",
+                "status": {"name": "Open", "id": "1"},
+                "priority": {"name": "Medium", "id": "3"},
+                "assignee": {"displayName": "Bob Reviewer"},
+                "issuetype": {"name": "Story"}
+              }
+            }
+          ],
+          "isLast": true
+        }
+      ]
+    }
+  ],
+  "mutations": {
+    "updateIssueFields": [{"ok": true}],
+    "createIssue": [{"ok": true, "issueKey": "SMAT-99"}]
+  }
+}

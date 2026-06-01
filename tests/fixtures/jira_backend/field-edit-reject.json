@@ -1,0 +1,30 @@
+{
+  "name": "field-edit-reject",
+  "reachability": {"kind": "AuthenticatedReachable", "diagnostic": ""},
+  "fetches": [
+    {
+      "fullSyncCompleted": true,
+      "warning": "",
+      "fetchError": "",
+      "selectedFields": ["summary", "status"],
+      "jiraSearchPages": [
+        {
+          "issues": [
+            {
+              "key": "SMAT-1",
+              "fields": {
+                "summary": "Issue with read-only field",
+                "status": {"name": "Closed"}
+              }
+            }
+          ],
+          "isLast": true
+        }
+      ]
+    }
+  ],
+  "mutations": {
+    "updateIssueFields": [{"ok": false, "error": "Field is not editable in current status."}],
+    "createIssue": []
+  }
+}
