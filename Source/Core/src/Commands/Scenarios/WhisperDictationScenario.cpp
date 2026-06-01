@@ -65,10 +65,10 @@ class WhisperDictationScenario : public IScenario {
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         expectedText_ = args.value("text", std::string(kDefaultMockText));
-        delayMs_ = std::max(0, args.value("delayMs", 50));
-        frameLimit_ = std::max(60, args.value("frames", 300));
-        pressFrame_ = std::max(1, args.value("pressFrame", 1));
-        releaseFrame_ = std::max(pressFrame_ + 1, args.value("releaseFrame", pressFrame_ + 3));
+        delayMs_ = (std::max)(0, args.value("delayMs", 50));
+        frameLimit_ = (std::max)(60, args.value("frames", 300));
+        pressFrame_ = (std::max)(1, args.value("pressFrame", 1));
+        releaseFrame_ = (std::max)(pressFrame_ + 1, args.value("releaseFrame", pressFrame_ + 3));
 
         // Zero the buffer and register with the router. The router stores the
         // raw pointer; we must keep g_testBuffer alive until OnFinish runs and

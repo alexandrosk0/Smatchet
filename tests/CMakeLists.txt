@@ -134,6 +134,18 @@ add_executable(SmatchetTests
     # without HTTP.
     Core/GitHubIssueSearchMapping.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearchMapping.cpp"
+    # Slice 1 of docs/plans/active/deterministic-jira-test-backend.md — pure
+    # Jira JSON → CachedTicket mapper + field-list builder extracted from
+    # JiraIssueSearch.cpp (which pulls cpr). Same pure-seam shape as the
+    # Plane and GitHub splits above.
+    Core/JiraIssueMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMappingPure.cpp"
+    # Slice 2 of docs/plans/active/deterministic-jira-test-backend.md — Jira
+    # fixture parser + FakeTrackerClient configurator. Exercises LoadFromString,
+    # jiraSearchPages round-trip through AppendCachedTicketFromJiraSearchIssue,
+    # multi-fetch sequencing, and mutation reply queues.
+    Core/JiraFakeTrackerFixture.test.cpp
+    "${CMAKE_SOURCE_DIR}/tests/support/JiraFakeTrackerFixture.cpp"
     # Slice 1 of docs/design/autonomous-debugging-no-creds.md — fixture-driven
     # GitHub mapping coverage (basic mapping / PR-vs-issue filter / assignee +
     # state + labels / pagination boundary). Reuses GitHubIssueSearchMapping.cpp

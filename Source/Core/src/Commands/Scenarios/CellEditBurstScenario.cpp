@@ -29,7 +29,7 @@ class CellEditBurstScenario : public IScenario {
     std::string Name() const override { return "cell-edit-burst"; }
 
     void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
-        const int count = std::max(1, args.value("count", 200));
+        const int count = (std::max)(1, args.value("count", 200));
         const std::string fieldId = args.value("field", std::string("summary"));
         const std::string issueIdArg = args.value("issue", std::string());
         const std::string newValue = args.value("value", std::string("burst-edit"));

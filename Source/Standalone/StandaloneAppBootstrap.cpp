@@ -66,6 +66,13 @@
 #include <unistd.h>
 #endif
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Fixture-backed backend injection for deterministic Jira UI tests.
+// Headers live in tests/support/ — added to the include path by tests/ui/CMakeLists.txt.
+#include "JiraFakeTrackerFixture.h"
+#include "ScriptedTrackerBackendFactory.h"
+#endif
+
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -341,6 +348,22 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
         ctx.pluginHost->Register(std::make_unique<WhisperPlugin>());
 #endif
         ctx.pluginHost->OnEarlyInit(*ctx.app);
+#if defined(SMATCHET_BUILD_UI_TESTS)
+        {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+            const char* fixturePath = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+            if (fixturePath != nullptr && fixturePath[0] != '\0') {
+                ctx.app->SetBackendFactory(std::make_unique<smatchet_tests::ScriptedTrackerBackendFactory>(
+                    smatchet_tests::JiraFakeTrackerFixture::LoadFromFile(fixturePath)));
+            }
+        }
+#endif
         ctx.app->Initialize(cfg.DbPath, cfg.TrackerType);
         ctx.pluginHost->OnStart(*ctx.app);
         return true;
