@@ -256,12 +256,22 @@ Non-goals:
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` Section Plan revision after implementation - bullet per shipped commit: `<sha> - <one-line summary>`)*.
+- `9a7100a6` — Slice 1: extract `JiraIssueMappingPure` (`.h` + `.cpp`) from `JiraIssueSearch.cpp` anon namespace; 14 Bucket A tests; dual-target clean
+- `3eaf15d4` — Slice 2: `JiraFakeTrackerFixture` + `ScriptedTrackerBackendFactory` + `FakeTrackerClient::EnqueueFetchResult`; 10 Bucket A fixture tests (959 total)
+- `bd163c2d` — Slice 3: `SMATCHET_BUILD_UI_TESTS` fixture-injection hook in `StandaloneAppBootstrap::InitAppAndPlugins`; `tests/ui/CMakeLists.txt` wires include path + `JiraFakeTrackerFixture.cpp` into UI-test builds
+- `4cb7a0a5` — Slices 4+5: 3 Bucket E tests (`jira_deterministic_backend.test.cpp`), 5 fixture JSON files under `tests/fixtures/jira_backend/`, `test-ui-jira-deterministic-backend.sh` driver
 
 ## Deviations from plan
 
-*(populated post-ship - what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*.
+- `JiraFakeTrackerFixture` is split `.h`/`.cpp` in `tests/support/` as planned, but the `.cpp` is also linked into `SmatchetStandalone` under `SMATCHET_BUILD_UI_TESTS` (via `tests/ui/CMakeLists.txt`), not `tests/ui/CMakeLists.txt` alone — same effect, cleaner than a separate target.
+- `ScriptedTrackerBackendFactory` owns `JiraFakeTrackerFixture` by value (not raw pointer) to avoid the lifetime hazard when `AppController` holds the factory.
+- The hook lives in `StandaloneAppBootstrap.cpp::InitAppAndPlugins` (not `main.cpp`) because `AppController` is constructed there, not in `main`.
+- `slow-sync.json` fixture not created (no `sleepMs` mechanism in `FakeTrackerClient`); the slow-backend Bucket E test uses the basic-grid fixture and asserts frames advance — still exercises the non-blocking invariant.
+- Second-wave edit/create Bucket E tests (`JiraDeterministicEdit_*`, `JiraDeterministicCreate_*`) deferred to a follow-up — the basic sync surface must be stable under real UI-test runs first.
 
 ## Verification (actual)
 
-*(populated post-ship - what was actually tested + result, passed / failed / not-run)*.
+- **Bucket A (`ninja-test-msvc`, ctest)**: 959 tests pass (949 pre-existing + 14 `JiraIssueMappingPure` + 10 `JiraFakeTrackerFixture`). `ctest --test-dir build/ninja-test-msvc --output-on-failure -R smatchet_tests` → `Passed 3.29s`.
+- **Bucket E compile gate**: `cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone` → exit 0, no warnings in new TUs.
+- **Bucket E runtime**: not run — requires `SMATCHET_TEST_JIRA_BACKEND_FIXTURE` set and live GLFW window. Driver: `bash scripts/dev/test-ui-jira-deterministic-backend.sh`.
+- **Dual-target**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` → exit 0.
