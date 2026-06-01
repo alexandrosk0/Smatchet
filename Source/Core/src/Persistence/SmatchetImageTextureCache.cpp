@@ -1,5 +1,6 @@
 #include "SmatchetImageTextureCache.h"
 
+#include "CacheEvictionPolicy.h"
 #include "imgui_internal.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -26,6 +27,11 @@ namespace {
 constexpr size_t kMaxCacheEntries = 384;
 constexpr size_t kMaxFileReadBytes = 4u * 1024u * 1024u;
 constexpr int kMaxIconDimension = 512;
+// Aggregate gauge-byte cap (Phase 4). The 384-entry cap alone bounds memory only if every
+// entry is small; 384 entries at the 512×512 dimension ceiling would be ~384 MB. This caps the
+// summed Width·Height·4 estimate so a run of large-but-under-dimension icons can't balloon the
+// resident set. Eviction stays LRU-tail; this just adds a second condition to the evict loop.
+constexpr size_t kMaxCacheBytes = 96u * 1024u * 1024u;
 
 struct CacheValue {
     ImTextureData* Texture = nullptr;
@@ -37,6 +43,15 @@ struct CacheValue {
 static std::mutex g_mutex;
 static std::list<std::string> g_lru;
 static std::unordered_map<std::string, CacheValue> g_map;
+// Running sum of EntryBytes over g_map, maintained on every insert/evict/erase under g_mutex so
+// the byte cap and the perf.memory gauge are O(1) instead of an O(entries) walk. Single source
+// of truth for the IconCacheApproxBytes gauge.
+static std::size_t g_totalBytes = 0;
+
+static std::size_t EntryBytes(int width, int height) {
+    // RGBA32 estimate, matching the gauge formula. Ignores driver padding / mips.
+    return static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
+}
 
 static std::vector<ImTextureData*>& PendingDestroyTextures() {
     static std::vector<ImTextureData*> list;
@@ -84,12 +99,18 @@ static bool CreateTextureFromRgba(const std::vector<unsigned char>& pixels, int 
     return true;
 }
 
-static void EvictOneUnlocked() {
-    while (g_lru.size() >= kMaxCacheEntries) {
+// Evict LRU-tail entries until admitting one more entry of `incomingBytes` keeps the cache
+// within both the entry-count and aggregate-byte caps. Pass the simulated post-insert figures
+// to the pure policy so the loop also makes room when the *new* entry is what tips a cap. The
+// `!g_lru.empty()` guard stops a single oversized entry from looping against an empty cache.
+static void EvictToFitUnlocked(std::size_t incomingBytes) {
+    while (!g_lru.empty() && smatchet::CacheOverCap(g_lru.size() + 1, g_totalBytes + incomingBytes,
+                                                    kMaxCacheEntries, kMaxCacheBytes)) {
         const std::string victim = g_lru.back();
         g_lru.pop_back();
         const auto it = g_map.find(victim);
         if (it != g_map.end()) {
+            g_totalBytes -= EntryBytes(it->second.Width, it->second.Height);
             QueueTextureDestroy(it->second.Texture);
             g_map.erase(it);
         }
@@ -200,6 +221,7 @@ bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes
         return true;
     }
     if (itExisting != g_map.end()) {
+        g_totalBytes -= EntryBytes(itExisting->second.Width, itExisting->second.Height);
         g_map.erase(itExisting);
         const auto lit = std::find(g_lru.begin(), g_lru.end(), cacheKey);
         if (lit != g_lru.end()) {
@@ -214,7 +236,7 @@ bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes
         return false;
     }
 
-    EvictOneUnlocked();
+    EvictToFitUnlocked(EntryBytes(w, h));
 
     ImTextureData* tex = nullptr;
     if (!CreateTextureFromRgba(rgba, w, h, tex, outError)) {
@@ -223,6 +245,7 @@ bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes
 
     g_lru.push_front(cacheKey);
     g_map[cacheKey] = CacheValue{tex, w, h, g_lru.begin()};
+    g_totalBytes += EntryBytes(w, h);
     // LruIt is set; TouchLruUnlocked will use it for O(1) splice on subsequent accesses.
     out.Texture = tex;
     out.Width = w;
@@ -268,6 +291,7 @@ void EvictCacheKey(const std::string& cacheKey) {
     if (it == g_map.end()) {
         return;
     }
+    g_totalBytes -= EntryBytes(it->second.Width, it->second.Height);
     QueueTextureDestroy(it->second.Texture);
     g_map.erase(it);
     const auto lit = std::find(g_lru.begin(), g_lru.end(), cacheKey);
@@ -282,13 +306,10 @@ std::size_t IconCacheEntryCount() {
 }
 
 std::size_t IconCacheApproxBytes() {
+    // O(1): g_totalBytes is the maintained sum of EntryBytes, updated under g_mutex on every
+    // insert/evict/erase. The byte cap and this gauge read the same source of truth.
     std::lock_guard<std::mutex> lock(g_mutex);
-    std::size_t total = 0;
-    for (const auto& kv : g_map) {
-        // Estimate: RGBA32 pixel storage. Ignores driver padding / mips — a gauge, not RSS.
-        total += static_cast<std::size_t>(kv.second.Width) * static_cast<std::size_t>(kv.second.Height) * 4u;
-    }
-    return total;
+    return g_totalBytes;
 }
 
 } // namespace SmatchetImageTextureCache
