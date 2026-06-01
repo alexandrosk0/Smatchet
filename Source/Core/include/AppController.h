@@ -1041,6 +1041,27 @@ class AppController
                                             std::string& outError);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
 
+    /// Shared context for the three SubmitFieldEdit branch helpers. Holds references only —
+    /// lifetime is bounded to the SubmitFieldEdit call frame that builds the ctx on the stack.
+    struct SubmitFieldEditCtx {
+        const std::string& issueId;
+        const TrackerField& field;
+        const std::vector<std::string>& rawValues;  ///< original, unfiltered
+        const std::vector<std::string>& values;     ///< filtered (non-empty entries only)
+        ITrackerIssueMutations* mutations;
+        const std::shared_ptr<ITrackerBackend>& backend;
+        const std::shared_ptr<const std::vector<CachedTicket>>& ticketsSnap;
+        const std::string& fieldEditAuditOp;
+        const char* fieldEditAuditSource;
+    };
+
+    /// Sprint-field branch of SubmitFieldEdit (AddIssueToSprint + local-cache sync).
+    bool SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx, std::string& outError);
+    /// Editable timetracking estimate branch of SubmitFieldEdit (UpdateIssueFields timetracking wrapper).
+    bool SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx, std::string& outError);
+    /// Regular field branch of SubmitFieldEdit (editmeta check + UpdateIssueFields + 400-retry).
+    bool SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::string& outError);
+
   public:
     /// Spawn `task` on a tracked background thread. Threads are joined either
     /// when the producer completes or in `JoinBackgroundTasks` before
