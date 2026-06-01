@@ -86,10 +86,10 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
 
     void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
         expectedText_ = args.value("text", std::string(kDefaultAutosendText));
-        delayMs_ = std::max(0, args.value("delayMs", 50));
-        frameLimit_ = std::max(120, args.value("frames", 360));
-        pressFrame_ = std::max(1, args.value("pressFrame", 1));
-        releaseFrame_ = std::max(pressFrame_ + 1, args.value("releaseFrame", pressFrame_ + 3));
+        delayMs_ = (std::max)(0, args.value("delayMs", 50));
+        frameLimit_ = (std::max)(120, args.value("frames", 360));
+        pressFrame_ = (std::max)(1, args.value("pressFrame", 1));
+        releaseFrame_ = (std::max)(pressFrame_ + 1, args.value("releaseFrame", pressFrame_ + 3));
 
         // Snapshot + force the auto-send-on-punctuation pref so the
         // post-insertion gate fires. Restored in Teardown so user prefs are

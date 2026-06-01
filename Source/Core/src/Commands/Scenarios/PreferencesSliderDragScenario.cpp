@@ -37,7 +37,7 @@ class PreferencesSliderDragScenario : public IScenario {
     std::string Name() const override { return "preferences-slider-drag"; }
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
-        frames_ = std::max(1, args.value("frames", 600));
+        frames_ = (std::max)(1, args.value("frames", 600));
         UiPerfMonitor::Instance().Reset();
     }
 

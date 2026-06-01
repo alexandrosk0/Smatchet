@@ -37,8 +37,8 @@ int IntArg(const nlohmann::json& args, const char* key, int fallback) {
 
 ScenarioCaptureSize ParseScenarioCaptureSize(const nlohmann::json& args) {
     ScenarioCaptureSize size;
-    size.Width = std::max(320, IntArg(args, "windowWidth", size.Width));
-    size.Height = std::max(240, IntArg(args, "windowHeight", size.Height));
+    size.Width = (std::max)(320, IntArg(args, "windowWidth", size.Width));
+    size.Height = (std::max)(240, IntArg(args, "windowHeight", size.Height));
     return size;
 }
 
