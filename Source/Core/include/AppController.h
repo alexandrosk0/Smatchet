@@ -824,8 +824,24 @@ class AppController
     std::unique_ptr<ITrackerBackendFactory>
         backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
     /// Shared (not unique) so off-thread workers can capture a strong handle that
-    /// survives a live tracker swap freeing this slot. See ADR 0012 + `BackendShared()`.
+    /// survives a live tracker swap freeing this slot. All reads go through
+    /// `std::atomic_load`, all writes through `std::atomic_store`/`atomic_exchange`
+    /// (a shared_ptr instance is not concurrently copy/assign-safe in C++14). See ADR 0012.
     std::shared_ptr<ITrackerBackend> Backend;
+    /// Defer-free graveyard (ADR 0012): a live tracker swap retires the OLD backend here
+    /// instead of freeing it, so raw subobject pointers (Reader/Mutations/Connectivity)
+    /// captured by in-flight workers before the swap stay valid. Drained only in
+    /// `~AppController` (after `JoinBackgroundTasks` joins all workers). Tracker switches are
+    /// rare user actions, so this holds at most a handful of small backend objects per session.
+    std::mutex retiredBackendsMutex_;
+    std::vector<std::shared_ptr<ITrackerBackend>> retiredBackends_;
+
+  public:
+    /// Retire a swapped-out backend into the defer-free graveyard (see `retiredBackends_`).
+    /// Called by `AppControllerDepsAdapter::SetBackend`. Thread-safe.
+    void RetireBackend(std::shared_ptr<ITrackerBackend> old);
+
+  private:
     /// Implements `IOfflineQueueDeps` + `ITicketSyncDeps`. Constructed eagerly in `Initialize`
     /// before `offlineQueue_` / `ticketSync_` so they can capture an interface reference at
     /// construction time. The adapter never outlives this AppController (owned by it), so the

@@ -22,14 +22,22 @@ AppControllerDepsAdapter::AppControllerDepsAdapter(AppController& app) : app_(ap
 
 LocalCacheManager* AppControllerDepsAdapter::Cache() { return app_.Cache.get(); }
 
-ITrackerIssueReader* AppControllerDepsAdapter::Reader() { return app_.Backend ? &app_.Backend->Reader() : nullptr; }
+// Backend reads go through std::atomic_load so the shared_ptr-instance read can't race the
+// live swap — atomic_store/atomic_exchange in SetBackend — and the returned raw subobject
+// pointer stays valid because the swapped-out backend is retired via defer-free, not freed (ADR 0012).
+ITrackerIssueReader* AppControllerDepsAdapter::Reader() {
+    auto b = std::atomic_load(&app_.Backend);
+    return b ? &b->Reader() : nullptr;
+}
 
 ITrackerIssueMutations* AppControllerDepsAdapter::Mutations() {
-    return app_.Backend ? app_.Backend->Mutations() : nullptr;
+    auto b = std::atomic_load(&app_.Backend);
+    return b ? b->Mutations() : nullptr;
 }
 
 ITrackerConnectivity* AppControllerDepsAdapter::BackendConnectivity() {
-    return app_.Backend ? &app_.Backend->Connectivity() : nullptr;
+    auto b = std::atomic_load(&app_.Backend);
+    return b ? &b->Connectivity() : nullptr;
 }
 
 const std::vector<TrackerField>& AppControllerDepsAdapter::AvailableFields() const { return app_.AvailableFields; }
@@ -52,13 +60,20 @@ void AppControllerDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() 
 
 // ---- ITicketSyncDeps ------------------------------------------------------------------
 
-ITrackerIssueReader* AppControllerDepsAdapter::Backend() { return app_.Backend ? &app_.Backend->Reader() : nullptr; }
+ITrackerIssueReader* AppControllerDepsAdapter::Backend() {
+    auto b = std::atomic_load(&app_.Backend);
+    return b ? &b->Reader() : nullptr;
+}
 
 void AppControllerDepsAdapter::SetBackend(std::unique_ptr<ITrackerBackend> backend) {
-    // atomic_store: a live tracker swap runs here; off-thread workers read app_.Backend via
-    // std::atomic_load (ADR 0012). A plain assignment would data-race them on the shared_ptr
-    // instance (C++14) — the very UAF class this change closes.
-    std::atomic_store(&app_.Backend, std::shared_ptr<ITrackerBackend>(std::move(backend)));
+    // Live tracker swap. atomic_exchange swaps the slot AND returns the old backend in one
+    // synchronised step — off-thread workers read app_.Backend via std::atomic_load, and a plain
+    // assignment would data-race the shared_ptr instance in C++14). The old backend is then
+    // RETIRED (defer-free), not freed, so any raw Reader/Mutations/Connectivity pointer a worker
+    // captured before the swap stays valid until shutdown. See ADR 0012.
+    std::shared_ptr<ITrackerBackend> incoming(std::move(backend));
+    std::shared_ptr<ITrackerBackend> old = std::atomic_exchange(&app_.Backend, incoming);
+    app_.RetireBackend(std::move(old));
 }
 
 ITrackerBackendFactory* AppControllerDepsAdapter::BackendFactory() { return app_.backendFactory_.get(); }

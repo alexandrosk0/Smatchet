@@ -592,6 +592,18 @@ void AppController::LaunchBackgroundTask(std::function<void()> task) {
     backgroundWorkers_.push_back(std::move(worker));
 }
 
+void AppController::RetireBackend(std::shared_ptr<ITrackerBackend> old) {
+    // Defer-free (ADR 0012): keep a swapped-out backend alive until shutdown so raw subobject
+    // pointers (Reader/Mutations/Connectivity) captured by in-flight workers before the live
+    // tracker swap can't dangle. Drained by ~retiredBackends_ in ~AppController, after every
+    // worker has been joined via JoinBackgroundTasks.
+    if (!old) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(retiredBackendsMutex_);
+    retiredBackends_.push_back(std::move(old));
+}
+
 void AppController::JoinBackgroundTasks() {
 
     std::vector<std::thread> workers;

@@ -24,9 +24,9 @@ Make `AppController::Backend` a `std::shared_ptr<ITrackerBackend>`. Background w
 
 # Considered options
 
-- **(a) Shared ownership** — chosen. Minimal blast radius (member type + one accessor + the picker), the lifetime guarantee is automatic, live switching is untouched.
+- **(a) Shared ownership** — chosen for the parts where consumers can cheaply hold a strong handle (the picker, the catalog/field-edit methods). Strong `shared_ptr` latches give those an automatic lifetime guarantee.
 - **(b) Join in-flight workers inside `SetBackend` before freeing.** Rejected: `SetBackend` runs on the UI thread; joining a network fetch there is a Pillar-2 (>100 ms UI-thread block) violation, and could hang the swap for the full HTTP timeout.
-- **(c) Deferred-free "graveyard"** — retire old backends into a holding list, reaped once in-flight workers drain. Rejected: it reinvents reference counting (a generation/refcount + a reaping path) to buy exactly the guarantee `shared_ptr` already provides.
+- **(c) Deferred-free "graveyard"** — retire old backends into a holding list, freed at shutdown. **Initially rejected, then ADOPTED (CodeRabbit #657).** The exposure proved systemic: `AppControllerDepsAdapter` hands out *raw* subobject pointers (`Reader()`/`Mutations()`/`Connectivity()`), and `OfflineQueueService` captures them into a worker that outlives a live swap — consumer-latching can't cheaply cover every such raw-pointer holder. Retiring the old backend (kept alive until `~AppController`, after `JoinBackgroundTasks`) makes *all* those raw pointers safe in one place. Tracker switches are rare user actions, so the graveyard holds a handful of small objects per session — a deliberate, bounded leak, not unbounded growth. **(a) + (c) together** are the shipped design: atomic access closes the `shared_ptr`-instance data race; the graveyard closes the raw-subobject-pointer dangle.
 
 # Consequences
 
