@@ -238,21 +238,23 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
     // or PR 4's picker once it lands), kick a per-project catalog refresh on a worker thread so the
     // returned create-meta becomes per-project required-fields for the next submit attempt. The
     // refresh writes through SetFieldCatalog → SaveFieldCatalogSnapshot, populating the new cache
-    // entry. We use std::async(launch::async) — the UI thread cannot block on HTTP.
+    // entry on the app-owned joined background-task pool — the UI thread cannot block on HTTP.
     if (!d.newIssueDraft.ProjectKey.empty() && d.newIssueDraft.ProjectKey != d.newIssueDraftLastFetchedProjectKey) {
         d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
         // PR 6: project is plumbed as an explicit per-call argument; legacy cfg.ProjectKey /
         // cfg.PlaneProjectId have been removed.
         const TrackerConfig refetchCfg = cfg;
         const std::string projectKey = d.newIssueDraft.ProjectKey;
-        // Detach: fire-and-forget. AppController serializes catalog writes via its own mutex.
-        std::thread([&app, refetchCfg, projectKey]() {
+        // Fire-and-forget on the joined pool (not a raw detached thread — forbidden by the
+        // no-detach lint). Joined at shutdown, so the by-ref `&app` capture stays valid for the
+        // task's whole life. AppController serializes catalog writes via its own mutex.
+        app.LaunchBackgroundTask([&app, refetchCfg, projectKey]() {
             try {
                 app.RefreshFieldCatalog(refetchCfg, projectKey);
             } catch (...) {
                 // Already logged inside RefreshFieldCatalog / SetFieldCatalog; never throw across UI.
             }
-        }).detach();
+        });
     }
 
     // Active draft: ID column gets Create/Cancel; other columns get per-field inputs.
@@ -444,9 +446,8 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             const std::string endpoint =
                 (cfg.TrackerType == "Plane") ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug) : cfg.Domain;
             std::string sel = d.newIssueDraft.ProjectKey;
-            ITrackerBackend* bm = app.GetTrackerBackendMutable();
-            if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState,
-                                            bm ? &bm->Connectivity() : nullptr, backendKind, endpoint, sel)) {
+            if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState, app, backendKind,
+                                            endpoint, sel)) {
                 d.newIssueDraft.ProjectKey = sel;
                 d.newIssueDraft.FieldValues[fieldId] = sel;
                 d.newIssueQueueFallbackVisible = false;

@@ -256,9 +256,8 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
                                          ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
                                          : d.cfg.Domain;
         ImGui::SetNextItemWidth(360.0f);
-        ITrackerBackend* bm = app.GetTrackerBackendMutable();
-        SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, bm ? &bm->Connectivity() : nullptr,
-                                    backendKind, endpoint, d.bulkImportProjectModalChosenKey);
+        SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, app, backendKind, endpoint,
+                                    d.bulkImportProjectModalChosenKey);
         ImGui::Separator();
         if (ImGui::Button(SmatchetLocalization::T("bulkImport.chooseProject.cancel", "Cancel"))) {
             d.bulkImportProjectModalOpen = false;

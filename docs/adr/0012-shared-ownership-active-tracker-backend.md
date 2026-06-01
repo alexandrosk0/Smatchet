@@ -1,0 +1,36 @@
+# Shared ownership of the active tracker backend
+
+# Status
+
+**Accepted (2026-05-31)** — drives slice S1 of [`memory-budget-and-lifetime-hardening`](../plans/active/memory-budget-and-lifetime-hardening.md). Surfaced by a `grill-with-docs` session that overturned the plan's original "site #6 is a shutdown-only hazard" framing.
+
+# Context
+
+`AppController::Backend` is a `std::unique_ptr<ITrackerBackend>`. It is created once in `AppController::Initialize` (`Source/Core/src/AppController.cpp:1258`, `Backend = backendFactory_->Create(activeTracker)`) **and reassigned live on a tracker switch**: Preferences → Save & Sync → `AppController::SyncWithBackend` → `TicketSyncService::SyncWithBackend`, which on a tracker-kind change calls `deps_.SetBackend(BackendFactory()->Create(<type>))` (`Source/Core/src/Sync/TicketSyncService.cpp:468/472/476`) → `AppControllerDepsAdapter::SetBackend` → `app_.Backend = std::move(backend)` (`Source/Core/src/AppControllerDepsAdapter.cpp:58`). The `unique_ptr` move-assign **frees the old backend object**. This runs synchronously on the UI thread.
+
+Several fire-and-forget UI workers capture a raw pointer into the live backend and dereference it off-thread. The clearest is `SmatchetProjectPicker` (`Source/Core/src/Ui/SmatchetProjectPicker.cpp:101`), which captures `ITrackerConnectivity* clientPtr = client;` (where `client == &Backend->Connectivity()`) and calls `clientPtr->ListProjects()` (a network call, seconds long) on a detached thread. If the user switches Jira → Plane while that fetch is in flight, the old backend is freed and `clientPtr` dangles — a use-after-free.
+
+The memory-hardening plan's S1 migrates these detached threads onto the joined `LaunchBackgroundTask` pool. That pool is joined only at shutdown (`~AppController` / `JoinBackgroundTasks`), so it closes the **shutdown** UAF window but **not** the **live-swap** window — `SetBackend` does not join in-flight workers. Live tracker switching is a shipped feature that must keep working, so blocking or restart-gating the swap is not acceptable.
+
+# Decision
+
+Make `AppController::Backend` a `std::shared_ptr<ITrackerBackend>`. Background workers that call into the backend capture a `shared_ptr<ITrackerBackend>` **copy**; a live `SetBackend` swap then drops only the controller's reference, and the old backend stays alive until the last in-flight worker releases its copy — the standard ownership-extends-lifetime guarantee, no extra coordination code.
+
+- `SetBackend` keeps its `std::unique_ptr<ITrackerBackend>` parameter — `shared_ptr::operator=` adopts a `unique_ptr&&` on assignment, so the call site is unchanged.
+- `ITrackerBackendFactory::Create` is unchanged (still returns `unique_ptr`).
+- The ~22 `Backend->…` call sites are unchanged (`operator->` is identical for `shared_ptr`).
+- A new `std::shared_ptr<ITrackerBackend> AppController::BackendShared() const` accessor hands the strong reference to worker-spawning UI. `SmatchetProjectPicker::Draw` takes the `shared_ptr` (and its 2 callers pass `app.BackendShared()`); the picker's pooled fetch captures the `shared_ptr` and calls `sp->Connectivity().ListProjects()`.
+
+# Considered options
+
+- **(a) Shared ownership** — chosen. Minimal blast radius (member type + one accessor + the picker), the lifetime guarantee is automatic, live switching is untouched.
+- **(b) Join in-flight workers inside `SetBackend` before freeing.** Rejected: `SetBackend` runs on the UI thread; joining a network fetch there is a Pillar-2 (>100 ms UI-thread block) violation, and could hang the swap for the full HTTP timeout.
+- **(c) Deferred-free "graveyard"** — retire old backends into a holding list, reaped once in-flight workers drain. Rejected: it reinvents reference counting (a generation/refcount + a reaping path) to buy exactly the guarantee `shared_ptr` already provides.
+
+# Consequences
+
+- **Pillar 3 (never crash):** the live-swap UAF on the project-picker fetch (and the same class for any worker that captures a backend handle) is closed without serializing or blocking the swap.
+- **Ownership clarity:** `Backend` now expresses "shared while in-flight work may reference it," not "sole owner." A future reader sees `shared_ptr` and the ADR explains why it is not `unique_ptr`.
+- **No interface churn:** `SetBackend(unique_ptr)`, the factory, and every `Backend->…` access compile unchanged; the only new surface is `BackendShared()` + the picker `Draw` signature.
+- **Verification shift:** site #6's repro is **not** "shut down mid-fetch" — it is "start a project-picker fetch, then switch tracker live." The S1 sanitizer (bucket-D) repro is updated accordingly (TSan/ASan: kick the picker fetch, fire a live `SetBackend`, assert no UAF/data-race), in addition to the shutdown-mid-flight repro for the other five sites.
+- **Scope note:** other workers that read `app.Backend` *fresh at call time* (e.g. site #2's `app.RefreshFieldCatalog`) get the live backend rather than a dangling one, but can still race a free mid-call if they latch a raw handle internally; S1 audits those to capture the `shared_ptr` where they latch.

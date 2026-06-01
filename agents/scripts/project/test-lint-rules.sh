@@ -15,6 +15,7 @@
 # section headers, and SMATCHET_DEVIATION(rule=<id>) suppression):
 #   no-printf-stderr       printf/fprintf/cerr/cout without an exemption marker
 #   no-raw-new             raw `new T` (use make_unique) without an exemption marker
+#   no-detach              `.detach()` (use AppController::LaunchBackgroundTask; first-party-wide)
 #   narrowing-conversions  clang-tidy cppcoreguidelines-narrowing-conversions (strict TUs)
 #   define-imgui           `#define ImGui...` macro-alias trick
 #   deviation-overdue      SMATCHET_DEVIATION whose calendar revisit= has passed
@@ -235,6 +236,23 @@ scan_file_rules() {
                     fi ;;
             esac
         fi
+
+        # no-detach — `.detach()` is forbidden first-party-wide. A raw
+        # std::thread(...).detach() leaves an unjoined worker that use-after-frees
+        # captured app/backend/dispatcher state when ~AppController runs mid-flight
+        # (Pillar-3 never-crash). Use the joined AppController::LaunchBackgroundTask
+        # pool (joined at shutdown via JoinBackgroundTasks) instead. Pure-comment
+        # lines are already skipped above, so prose mentions of `.detach()` (incl.
+        # migration notes) don't fire; also exclude string-literal mentions.
+        if [[ "$line" =~ \.detach\(\) ]]; then
+            case "$line" in
+                *'"'*.detach*'"'*) : ;;      # `.detach()` inside a string literal
+                *)
+                    if ! has_inline_exempt "$line" && [ "$suppress" != "no-detach" ]; then
+                        printf 'no-detach\t%s:%s\t%s\n' "$f" "$lineno" "$line"
+                    fi ;;
+            esac
+        fi
     done < "$f"
 }
 
@@ -357,7 +375,7 @@ compute_wide_violations() {
     )
     [ "${#files[@]}" -gt 0 ] || return 0
     for f in "${files[@]}"; do scan_file_rules "$f"; done \
-        | awk -F'\t' '$1=="no-raw-new" || $1=="deviation-overdue" { print $1"\t"$2 }'
+        | awk -F'\t' '$1=="no-raw-new" || $1=="deviation-overdue" || $1=="no-detach" { print $1"\t"$2 }'
     return 0
 }
 
@@ -558,12 +576,13 @@ case "$MODE" in
     if [ -n "$wide_out" ]; then
         rc=1
         echo
-        echo "FAIL: first-party no-raw-new / deviation-overdue (enforced everywhere, not just the strict zone):"
+        echo "FAIL: first-party no-raw-new / deviation-overdue / no-detach (enforced everywhere, not just the strict zone):"
         printf '%s\n' "$wide_out" | sed 's/^/  /'
-        echo "  Use std::unique_ptr + make_unique (or an exemption marker: // C-ABI handle / // custom-deleter / // pimpl),"
-        echo "  revisit the overdue SMATCHET_DEVIATION, or add SMATCHET_DEVIATION(rule=no-raw-new; reason=...; owner=...; revisit=...) above the line."
+        echo "  no-raw-new: use std::unique_ptr + make_unique (or marker // C-ABI handle / // custom-deleter / // pimpl)."
+        echo "  no-detach: route the worker through AppController::LaunchBackgroundTask (joined at shutdown), not std::thread().detach()."
+        echo "  Or revisit the overdue SMATCHET_DEVIATION / add SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
     else
-        echo "[test-lint-rules] PASS — no first-party no-raw-new / deviation-overdue (whole tree)"
+        echo "[test-lint-rules] PASS — no first-party no-raw-new / deviation-overdue / no-detach (whole tree)"
     fi
 
     # --- function-size rules (repo-wide, delta-gated; decompose-top-20-monoliths Slice 0) ---

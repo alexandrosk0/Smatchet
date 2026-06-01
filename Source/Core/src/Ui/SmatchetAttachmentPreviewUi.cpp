@@ -2,7 +2,9 @@
 
 #include "AppController.h"
 #include "Logger.h"
+#include "MemoryTelemetry.h"
 #include "SmatchetAttachmentPreviewUi.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -23,6 +25,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <mutex>
@@ -59,14 +62,21 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
         result.Error = "Attachment preview path is empty.";
         return result;
     }
-    // TODO(pillar2): bug-2026-05-20-ui-sync-reads — UI-thread read of (up to 50 MB) attachment.
-    // Easy fix: seekg + read 64 bytes for PNG/JPEG header parse instead of the whole file.
+    // Bounded header read (S4 of docs/plans/active/memory-budget-and-lifetime-hardening.md):
+    // read at most kMaxHeaderBytes instead of slurping the whole file (was up to 50 MB) on the
+    // UI thread. PNG/GIF/WEBP dimensions live in the first <30 bytes; the JPEG SOF marker walk
+    // below is naturally capped to this window (a SOF buried past the cap by huge EXIF/thumbnail
+    // segments falls through to the existing "could not parse" degradation — rare, and the S5
+    // decoder still reads the file in full off the UI thread).
+    constexpr std::size_t kMaxHeaderBytes = 64u * 1024u;
     std::ifstream ifs(path.c_str(), std::ios::binary);
     if (!ifs.is_open()) {
         result.Error = "Failed to open downloaded attachment file.";
         return result;
     }
-    std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    std::vector<unsigned char> bytes(kMaxHeaderBytes);
+    ifs.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(kMaxHeaderBytes));
+    bytes.resize(static_cast<std::size_t>(ifs.gcount()));
     if (bytes.empty()) {
         result.Error = "Downloaded attachment file is empty.";
         return result;
@@ -284,6 +294,51 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
         CoUninitialize();
     }
     return ok;
+}
+
+// S5 worker-side budget: cap a decoded thumbnail's longest side. Precedent: the icon cache's
+// kMaxIconDimension. A preview tooltip is drawn at a capped size anyway, so a multi-megapixel
+// attachment is downscaled to fit before the GPU upload — bounding both the upload and the
+// transient buffer kept alive until the dispatcher runs.
+constexpr int kMaxThumbnailDimension = 2048;
+// Bound concurrent decode→upload tasks so many simultaneous completions can't spike the
+// single-frame dispatcher Drain() (producer-side rate limit, plan § S5 spike mitigation).
+constexpr std::size_t kMaxConcurrentThumbnailDecodes = 4;
+
+// Nearest-neighbour in-place downscale of an RGBA32 buffer so max(width,height) <= maxDim.
+// Worker-thread only (no GL / ImGui). No-op when already within budget or degenerate.
+static void DownscaleRgba32ToFit(std::vector<unsigned char>& pixels, int& width, int& height, int maxDim) {
+    if (width <= 0 || height <= 0 || maxDim <= 0) {
+        return;
+    }
+    const int longest = (width > height) ? width : height;
+    if (longest <= maxDim) {
+        return;
+    }
+    const double scale = static_cast<double>(maxDim) / static_cast<double>(longest);
+    const int newW = (std::max)(1, static_cast<int>(static_cast<double>(width) * scale));
+    const int newH = (std::max)(1, static_cast<int>(static_cast<double>(height) * scale));
+    if (pixels.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u) {
+        return; // malformed buffer; leave untouched
+    }
+    std::vector<unsigned char> out(static_cast<std::size_t>(newW) * static_cast<std::size_t>(newH) * 4u);
+    for (int y = 0; y < newH; ++y) {
+        const int srcY = (std::min)(height - 1, static_cast<int>(static_cast<double>(y) / scale));
+        for (int x = 0; x < newW; ++x) {
+            const int srcX = (std::min)(width - 1, static_cast<int>(static_cast<double>(x) / scale));
+            const std::size_t si = (static_cast<std::size_t>(srcY) * static_cast<std::size_t>(width) +
+                                    static_cast<std::size_t>(srcX)) * 4u;
+            const std::size_t di = (static_cast<std::size_t>(y) * static_cast<std::size_t>(newW) +
+                                    static_cast<std::size_t>(x)) * 4u;
+            out[di] = pixels[si];
+            out[di + 1] = pixels[si + 1];
+            out[di + 2] = pixels[si + 2];
+            out[di + 3] = pixels[si + 3];
+        }
+    }
+    pixels.swap(out);
+    width = newW;
+    height = newH;
 }
 #endif
 
@@ -575,32 +630,66 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
             }
 #if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
             if (thumbnailSupport.CanRenderBitmapThumbnails && entry.PreviewError.empty()) {
-#if defined(_WIN32)
-                std::vector<unsigned char> rgbaPixels;
-                std::string uploadError;
-                int decodedWidth = 0;
-                int decodedHeight = 0;
-                if (DecodeImageFileToRgba32(entry.LocalPath, rgbaPixels, decodedWidth, decodedHeight, uploadError)) {
-                    if (decodedWidth > 0 && decodedHeight > 0) {
-                        entry.ImageWidth = decodedWidth;
-                        entry.ImageHeight = decodedHeight;
-                    }
-                    DestroyAttachmentTexture(entry.ThumbnailTextureData);
-                    if (!CreateAttachmentTextureFromRgba(rgbaPixels, entry.ImageWidth, entry.ImageHeight,
-                                                         entry.ThumbnailTextureData, uploadError)) {
-                        entry.PreviewError = uploadError;
-                        LOG_WARN("SmatchetUI: thumbnail upload failed file=%s err=%s", entry.Filename.c_str(),
-                                 uploadError.c_str());
-                    } else {
-                        LOG_DEBUG("SmatchetUI: thumbnail uploaded file=%s size=%dx%d", entry.Filename.c_str(),
-                                  entry.ImageWidth, entry.ImageHeight);
-                    }
-                } else {
-                    entry.PreviewError = uploadError;
-                    LOG_WARN("SmatchetUI: thumbnail decode failed file=%s err=%s", entry.Filename.c_str(),
-                             uploadError.c_str());
+                // S5: decode off the UI thread, post only the GPU upload back through the
+                // dispatcher (a GPU upload is exactly "a task that must run on the UI thread").
+                // The decode worker captures the path + the entry's Url (a stable re-lookup key)
+                // by value; the upload callback re-finds the entry by Url in the process-global
+                // g_ui on the UI thread, so a vector resize / reorder between decode and upload
+                // can never dangle a pointer (Pillar 3 never-crash). Concurrency is bounded by
+                // kMaxConcurrentThumbnailDecodes (producer-side rate limit) and surfaced via the
+                // pendingThumbnailUploads gauge, which also drives the "loading thumbnails" cue.
+                // See plan § S5.
+                std::atomic<std::size_t>& pending = smatchet::memtel::PendingThumbnailUploads();
+                if (pending.load(std::memory_order_relaxed) < kMaxConcurrentThumbnailDecodes && !entry.Url.empty()) {
+                    const std::string localPath = entry.LocalPath;
+                    const std::string urlKey = entry.Url;
+                    pending.fetch_add(1, std::memory_order_relaxed);
+                    app.LaunchBackgroundTask([&app, localPath, urlKey]() {
+                        std::vector<unsigned char> rgba;
+                        std::string err;
+                        int w = 0;
+                        int h = 0;
+                        const bool decoded = DecodeImageFileToRgba32(localPath, rgba, w, h, err);
+                        if (decoded) {
+                            DownscaleRgba32ToFit(rgba, w, h, kMaxThumbnailDimension); // worker-side; preview only
+                        }
+                        app.mainThreadDispatcher.PostToMainThread(
+                            [urlKey, rgba = std::move(rgba), w, h, err, decoded]() mutable {
+                                smatchet::memtel::PendingThumbnailUploads().fetch_sub(1, std::memory_order_relaxed);
+                                AttachmentWindowEntry* target = nullptr;
+                                for (AttachmentWindowEntry& e : g_ui.attachmentWindowEntries) {
+                                    if (e.Url == urlKey) {
+                                        target = &e;
+                                        break;
+                                    }
+                                }
+                                if (target == nullptr) {
+                                    return; // entry gone (window reloaded) — nothing to upload
+                                }
+                                if (!decoded) {
+                                    target->PreviewError = err;
+                                    LOG_WARN("SmatchetUI: thumbnail decode failed url=%s err=%s", urlKey.c_str(),
+                                             err.c_str());
+                                    return;
+                                }
+                                if (w > 0 && h > 0) {
+                                    target->ImageWidth = w;
+                                    target->ImageHeight = h;
+                                }
+                                DestroyAttachmentTexture(target->ThumbnailTextureData);
+                                std::string upErr;
+                                if (!CreateAttachmentTextureFromRgba(rgba, target->ImageWidth, target->ImageHeight,
+                                                                     target->ThumbnailTextureData, upErr)) {
+                                    target->PreviewError = upErr;
+                                    LOG_WARN("SmatchetUI: thumbnail upload failed url=%s err=%s", urlKey.c_str(),
+                                             upErr.c_str());
+                                } else {
+                                    LOG_DEBUG("SmatchetUI: thumbnail uploaded url=%s size=%dx%d", urlKey.c_str(),
+                                              target->ImageWidth, target->ImageHeight);
+                                }
+                            });
+                    });
                 }
-#endif
             } else if (!thumbnailSupport.CanRenderBitmapThumbnails && entry.PreviewError.empty()) {
                 LOG_DEBUG("SmatchetUI: bitmap thumbnails unavailable for file=%s detail=%s", entry.Filename.c_str(),
                           thumbnailSupport.Reason.c_str());
@@ -633,6 +722,20 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", thumbnailSupport.Reason.c_str());
         }
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+        // S5 visible cue: thumbnail decode now runs off the UI thread, so surface in-flight
+        // work (Pillar 2 — a worker-deferred operation must show a cue) driven off the same
+        // pendingThumbnailUploads gauge the perf.memory snapshot reads.
+        {
+            const std::size_t loadingThumbs =
+                smatchet::memtel::PendingThumbnailUploads().load(std::memory_order_relaxed);
+            if (loadingThumbs > 0) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("attachment.thumbnails.loading",
+                                                                   "loading thumbnails..."));
+            }
+        }
+#endif
         ImGui::Separator();
         ImGui::BeginChild("AttachmentListPane", ImVec2(390, 0), true);
         const float cardWidth = 120.0f;

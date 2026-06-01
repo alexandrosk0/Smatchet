@@ -82,8 +82,16 @@ class MainThreadDispatcher {
     /// Returns 0 before the first drain.
     std::size_t LastDrainTaskCount() const noexcept { return lastDrainTaskCount_.load(std::memory_order_acquire); }
 
+    /// Pending-task count right now, for the `perf.memory` gauge. Snapshot-only —
+    /// takes `mutex_` (which `mutable` permits in this const accessor). Not for
+    /// flow-control: a non-zero value can drain to 0 the next frame.
+    std::size_t QueueLen() const {
+        std::lock_guard<std::mutex> lk(mutex_);
+        return queue_.size();
+    }
+
   private:
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::vector<Task> queue_;
     std::atomic<bool> shuttingDown_{false};
     std::atomic<std::size_t> lastDrainTaskCount_{0};

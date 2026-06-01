@@ -235,7 +235,9 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
                 clientCfg.TotalTimeoutMs = 15000;
 
                 MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
-                std::thread([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
+                // Joined background-task pool (not a raw detached thread — forbidden by the
+                // no-detach lint); joined at shutdown so &dispatcher stays valid for the task.
+                app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
                     std::string errMsg;
                     // Defensive try/catch — `MakeAiClient` / `ProbeReachability` /
                     // `SendStreaming` all run third-party transport (cpr/libcurl) +
@@ -322,7 +324,7 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
                             g_ui.assistantPrefsTestResultType = 2;
                         }
                     });
-                }).detach();
+                });
             };
 
             // --- Provider Combo (top). Picking from this dropdown seeds sensible

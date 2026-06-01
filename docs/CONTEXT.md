@@ -70,6 +70,13 @@ Vocabulary for the perf workflow. See [`docs/guides/perf-workflow.md`](guides/pe
 - **`perf.snapshot`** — CLI command that returns top-N rows by `lastTotalMs` from `UiPerfMonitor`. Standard loop: `perf.reset` → `scenario.run` → `perf.snapshot`. Run by `perf-measure` against a named scenario.
 - **Scenario** — a registered repro under `Source/Core/src/Commands/Scenarios/` that drives the app for a fixed number of frames or until a state condition. Deterministic (no live HTTP). Examples: `priority-grid-scroll`, `lua-recorder-fuzz`, `ui-test`. Adding a scenario is the canonical fix when `perf-measure` reports a `cli-gap` halt.
 
+## Concurrency & lifetime
+
+Vocabulary for off-UI-thread work and the object-lifetime rules that keep it crash-safe (Pillar 3).
+
+- **Background task pool** — `AppController::LaunchBackgroundTask` + `JoinBackgroundTasks` (`Source/Core/src/AppController.cpp:574` / `:595`). The joined fire-and-forget worker mechanism: each task runs on a `std::thread` appended to `backgroundWorkers_` and is **joined at shutdown** (before `~AppController` tears down app state). UI hand-back goes through `MainThreadDispatcher::PostToMainThread` — never touch ImGui state from a worker. This is the canonical replacement for raw `std::thread(...).detach()`, which is forbidden first-party-wide by the `no-detach` lint rule. Because the pool joins **only at shutdown**, a worker that must survive a *live* resource swap (e.g. the tracker backend changing) cannot rely on the join alone — it must additionally hold a `shared_ptr` to that resource (see *Active tracker backend* + ADR 0012).
+- **Active tracker backend** — the live `std::shared_ptr<ITrackerBackend> AppController::Backend`, built once in `Initialize` and **reassigned live** on a tracker switch (`TicketSyncService::SyncWithBackend` → `SetBackend`). Shared-owned (not `unique_ptr`) specifically so an in-flight background worker that captured a `shared_ptr` copy keeps the *old* backend alive until it finishes, even though a Jira→Plane switch has already swapped `Backend` to the new object. Rationale + rejected alternatives: [`docs/adr/0012-shared-ownership-active-tracker-backend.md`](adr/0012-shared-ownership-active-tracker-backend.md). Worker-spawning UI gets the strong reference via `AppController::BackendShared()`.
+
 ## Plugin architecture
 
 Optional Smatchet plugins gated by compile-time flags. See `Source/Plugins/` directory + `AGENTS.md` § Optional plugins.

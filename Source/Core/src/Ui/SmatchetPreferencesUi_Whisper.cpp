@@ -349,13 +349,15 @@ void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d) {
                         // Worker — minimal GET to /v1/models. cpr is already
                         // linked; reuse WhisperApiClient's transport idioms
                         // (5 s connect, 15 s total) so a hung DNS doesn't
-                        // freeze the result for a minute.
-                        std::thread([resolvedKey, &dispatcher]() {
+                        // freeze the result for a minute. Joined background-task
+                        // pool, not a raw detached thread — the no-detach lint forbids that.
+                        // Joined at shutdown so &dispatcher stays valid.
+                        app.LaunchBackgroundTask([resolvedKey, &dispatcher]() {
                             std::string okMsg;
                             std::string errMsg;
                             try {
-                                /* PILLAR2_WORKER_ONLY */ // est-latency: ~15000ms — enclosing std::thread (line 1539);
-                                                          // 15s total timeout.
+                                /* PILLAR2_WORKER_ONLY */ // est-latency: ~15000ms — enclosing background task
+                                                          // (LaunchBackgroundTask); 15s total timeout.
                                 cpr::Response r =
                                     cpr::Get(cpr::Url{"https://api.openai.com/v1/models"},
                                              cpr::Header{{"Authorization", std::string("Bearer ") + resolvedKey}},
@@ -388,7 +390,7 @@ void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d) {
                                     s_whisperTestResultType = 2;
                                 }
                             });
-                        }).detach();
+                        });
                     }
                 }
                 if (inFlight) {
@@ -436,7 +438,7 @@ void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d) {
                     s_micTestResult = "Capturing...";
                     s_micTestResultType = 0;
                     // Use the app-owned background task pool instead of raw
-                    // std::thread().detach() so AppController::JoinBackgroundTasks
+                    // a raw detached thread so AppController::JoinBackgroundTasks
                     // can join us at shutdown. PostToMainThread is itself
                     // shutdown-safe (no-ops once the dispatcher's
                     // shuttingDown_ atomic flips), but the worker thread

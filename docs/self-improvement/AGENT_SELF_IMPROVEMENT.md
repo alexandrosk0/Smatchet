@@ -97,7 +97,7 @@ without movement.
 |---|---|---|
 | bug         | 14  | [self-improvement/categories/bug.md](categories/bug.md) |
 | process     | 27  | [self-improvement/categories/process.md](categories/process.md) |
-| tooling     | 45  | [self-improvement/categories/tooling.md](categories/tooling.md) |
+| tooling     | 46  | [self-improvement/categories/tooling.md](categories/tooling.md) |
 | infra       | 17  | [self-improvement/categories/infra.md](categories/infra.md) |
 | test        | 19  | [self-improvement/categories/test.md](categories/test.md) |
 | security    | 14  | [self-improvement/categories/security.md](categories/security.md) |

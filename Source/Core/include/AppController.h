@@ -629,6 +629,12 @@ class AppController
     // PR 4b: non-const accessor for callers that invoke mutating client methods (e.g.
     // ListProjects() which populates a per-client in-memory cache).
     ITrackerBackend* GetTrackerBackendMutable() { return Backend.get(); }
+    /** Strong (shared) handle to the active backend, for OFF-THREAD work that must
+     *  outlive a live tracker swap. `Backend` is reassigned live on a tracker change
+     *  (`SyncWithBackend`→`SetBackend`), which frees the old object; a worker that
+     *  captured only a raw pointer would dangle. Capture this `shared_ptr` instead so
+     *  the old backend stays alive until the worker drops it. See ADR 0012. */
+    std::shared_ptr<ITrackerBackend> BackendShared() const { return Backend; }
 
     // ---- Create issue flow -------------------------------------------------
 
@@ -813,7 +819,9 @@ class AppController
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory>
         backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
-    std::unique_ptr<ITrackerBackend> Backend;
+    /// Shared (not unique) so off-thread workers can capture a strong handle that
+    /// survives a live tracker swap freeing this slot. See ADR 0012 + `BackendShared()`.
+    std::shared_ptr<ITrackerBackend> Backend;
     /// Implements `IOfflineQueueDeps` + `ITicketSyncDeps`. Constructed eagerly in `Initialize`
     /// before `offlineQueue_` / `ticketSync_` so they can capture an interface reference at
     /// construction time. The adapter never outlives this AppController (owned by it), so the
