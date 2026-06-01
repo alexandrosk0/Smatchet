@@ -3,7 +3,7 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --funcsize-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py --diff); this file is an informational snapshot, not the gate input._
 
-## function-too-long (40 entries, cap 200 lines)
+## function-too-long (38 entries, cap 200 lines)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 340 lines
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 945 lines
 - `AppController.cpp` · `AppController::Initialize/2` · 432 lines
@@ -11,8 +11,6 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `BuiltinCommands_Debug.cpp` · `RegisterDebugCommands/2` · 315 lines
 - `BuiltinCommands_Perf.cpp` · `RegisterPerfCommands/2` · 245 lines
 - `BuiltinCommands_TicketMutations.cpp` · `RegisterTicketMutationCommands/2` · 243 lines
-- `CliCommandRunner.cpp` · `RunCmdAttach/2` · 219 lines
-- `CliCommandRunner.cpp` · `SpawnAndRun/3` · 249 lines
 - `ConfigManager.cpp` · `ConfigManager::Load/1` · 619 lines
 - `ConfigManager.cpp` · `ConfigManager::Save/1` · 314 lines
 - `JiraIssueMutation.cpp` · `JiraClient::UpdateIssueFields/3` · 243 lines
@@ -45,15 +43,13 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
 - `main.cpp` · `main/2` · 561 lines
 
-## function-too-branchy (73 entries, cap 30 branches)
+## function-too-branchy (71 entries, cap 30 branches)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 44 branches
 - `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 33 branches
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 196 branches
 - `AppController.cpp` · `AppController::Initialize/2` · 61 branches
 - `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEdit/4` · 43 branches
 - `AppController_LuaBindings_Draw.cpp` · `ReplayCmdList/6` · 43 branches
-- `CliCommandRunner.cpp` · `RunCmdAttach/2` · 43 branches
-- `CliCommandRunner.cpp` · `SpawnAndRun/3` · 32 branches
 - `CodeColorView.cpp` · `TokenizeWithLd/4` · 37 branches
 - `CompactDateFormat.cpp` · `FormatCompactJiraDateForDisplay/3` · 36 branches
 - `ConfigManager.cpp` · `ConfigManager::Load/1` · 162 branches
@@ -121,4 +117,4 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `main.cpp` · `main/2` · 75 branches
 
 ## Totals
-- oversized functions grandfathered: 113
+- oversized functions grandfathered: 109

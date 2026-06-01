@@ -716,89 +716,237 @@ nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
     return out;
 }
 
+/// Phase 1 of SpawnAndRun: discover exe path, bind a free port, launch ephemeral instance,
+/// and wait until its MCP endpoint is reachable. Returns kExitOk on success; an error exit
+/// code on failure (error envelope already emitted to stderr). Fills host and port out-params.
+int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& outPort) {
+    const std::string exePath = GetExePath();
+    if (exePath.empty()) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = commandName;
+        env["error"] = {{"code", "not-connected"}, {"message", "--spawn: could not determine exe path to relaunch."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    const int port = FindFreePort();
+    if (port == 0) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = commandName;
+        env["error"] = {{"code", "not-connected"}, {"message", "--spawn: could not bind a free TCP port."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n",
+                 port); // CLI stdout — product output, not logging
+    std::string childLogPath;
+    if (!LaunchEphemeralInstance(exePath, port, &childLogPath)) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = commandName;
+        env["error"] = {{"code", "not-connected"}, {"message", "--spawn: failed to launch subprocess."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+    if (!childLogPath.empty()) {
+        std::fprintf(stderr, "[spawn] child stdout/stderr → %s\n",
+                     childLogPath.c_str()); // CLI stdout — product output, not logging
+    }
+
+    // Bumped 15s → 30s post Phase D/E AI merges: the addition of OpenAi, Anthropic,
+    // Ollama, AiNdjsonParser, and Lua glue pushed startup past the prior ready window
+    // and bucket-E gates regressed on develop tip. Env override SMATCHET_SPAWN_READY_MS
+    // allows tightening on faster runners or raising further on cold-cache CI.
+    // Lazy-loading AI clients is the architectural follow-up — entry remains open
+    // in docs/self-improvement/categories/tooling.md.
+    int readyTimeoutMs = 30000;
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+    if (const char* envOverride = std::getenv("SMATCHET_SPAWN_READY_MS")) {
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+        try {
+            int v = std::stoi(envOverride);
+            if (v > 0)
+                readyTimeoutMs = v;
+        } catch (...) {
+            // Ignore malformed override; fall through to default.
+        }
+    }
+    const std::string host = "127.0.0.1";
+    std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n",
+                 readyTimeoutMs / 1000); // CLI stdout — product output, not logging
+    if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = commandName;
+        env["error"] = {{"code", "timeout"},
+                        {"message", "--spawn: ephemeral instance did not become reachable in time."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+
+    outHost = host;
+    outPort = port;
+    return kExitOk;
+}
+
+/// Phase 2 of SpawnAndRun: POST the command and extract the response envelope.
+/// Returns kExitOk with envelope filled on success; otherwise emits an error to stderr,
+/// sends a best-effort app.quit, and returns the appropriate exit code.
+int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, const nlohmann::json& argsToSend,
+                        nlohmann::json& outEnvelope) {
+    nlohmann::json body;
+    body["name"] = commandName;
+    body["arguments"] = argsToSend;
+
+    auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
+    if (!res || res->status < 200 || res->status >= 300) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = commandName;
+        env["error"] = {{"code", "transport"}, {"message", "--spawn: command dispatch failed after launch."}};
+        EmitErrorToStderr(env);
+        return kExitTransport;
+    }
+
+    nlohmann::json parsedBody;
+    if (!SafeParseJson(res->body, parsedBody)) {
+        nlohmann::json env = MakeErrorEnvelope(commandName, "transport",
+                                               "--spawn: server returned non-JSON response (status " +
+                                                   std::to_string(res->status) + ").");
+        EmitErrorToStderr(env);
+        // Best-effort quit.
+        nlohmann::json qb;
+        qb["name"] = "app.quit";
+        qb["arguments"] = {{"__confirm", true}};
+        cli.Post("/mcp/tools/call", qb.dump(), "application/json");
+        return kExitTransport;
+    }
+
+    try {
+        outEnvelope = ExtractEnvelopeFromMcpResult(parsedBody);
+    } catch (...) {
+        outEnvelope = MakeErrorEnvelope(commandName, "transport", "--spawn: failed to extract envelope from response.");
+    }
+    return kExitOk;
+}
+
+/// Phase 3 of SpawnAndRun: handle async scenario.run result.
+/// Waits for the output file, reads it, and emits the result envelope.
+/// Returns kExitOk on success; 8 (timeout) or kExitHandler on failure.
+/// Does NOT send app.quit — the orchestrator always does that.
+int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std::string& commandName,
+                           const std::string& outPath, int frames, int scenarioWaitMs) {
+    std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames,
+                 frames / 60); // CLI stdout — product output, not logging
+    const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
+    // Small delay to ensure fwrite+fclose has fully flushed before we read.
+    // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
+    // but kernel write buffers can briefly show a partial file on some filesystems.
+    if (fileReady)
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    if (!fileReady) {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = commandName;
+        errEnv["error"] = {{"code", "timeout"},
+                           {"message", "--spawn: scenario did not finish within expected time."},
+                           {"hint", "Try --timeout=<larger-ms> or --frames=<smaller-n>"}};
+        EmitErrorToStderr(errEnv);
+        // Still try to quit the spawned app.
+        nlohmann::json quitBody;
+        quitBody["name"] = "app.quit";
+        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
+        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+        return 8;
+    }
+
+    // Read the result file and build an envelope around it.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
+#endif
+    std::FILE* f = std::fopen(outPath.c_str(), "rb");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    if (!f) {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = commandName;
+        errEnv["error"] = {{"code", "handler-error"}, {"message", "--spawn: could not read result file: " + outPath}};
+        EmitErrorToStderr(errEnv);
+        return kExitHandler;
+    }
+
+    std::string content;
+    char buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+        content.append(buf, n);
+    std::fclose(f);
+    try {
+        const nlohmann::json fileData = nlohmann::json::parse(content);
+        const bool captureRequested = SafeBool(fileData, "captureRequested", false);
+        const std::string screenshotPath = SafeString(fileData, "screenshotPath");
+        if (captureRequested && !screenshotPath.empty()) {
+            std::fprintf(stderr,
+                         "[spawn] waiting for screenshot capture ...\n"); // CLI stdout — product output, not logging
+            WaitForFile(screenshotPath, 2000);
+        }
+
+        nlohmann::json resultEnv;
+        resultEnv["ok"] = true;
+        resultEnv["command"] = commandName;
+        resultEnv["data"] = fileData;
+        EmitEnvelope(resultEnv, pa.pretty, pa.quiet);
+    } catch (...) {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = commandName;
+        errEnv["error"] = {{"code", "handler-error"},
+                           {"message", "--spawn: result file is not valid JSON: " + outPath}};
+        EmitErrorToStderr(errEnv);
+    }
+    return kExitOk;
+}
+
+/// Phase 4 of SpawnAndRun: handle a synchronous (non-async) command result.
+/// Emits the envelope and returns an exit code. On error, also sends app.quit.
+int SpawnAndRunHandleSync(const ParsedArgs& pa, httplib::Client& cli, const nlohmann::json& envelope) {
+    EmitEnvelope(envelope, pa.pretty, pa.quiet);
+    if (!SafeBool(envelope, "ok", false)) {
+        const nlohmann::json errObj = SafeObject(envelope, "error");
+        const std::string code = SafeString(errObj, "code");
+        nlohmann::json quitBody;
+        quitBody["name"] = "app.quit";
+        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
+        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+        return ExitCodeForErrorCode(code);
+    }
+    return kExitOk;
+}
+
 /// Full spawn-attach-run flow invoked when --spawn is set and no instance is reachable.
 /// Launches a hidden ephemeral app instance, sends the command, waits for results, quits the app.
 int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nlohmann::json& argsToSendRaw) {
     try {
         // Normalize outPath: relative paths must be made absolute so both processes agree on location.
         const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
-        const std::string exePath = GetExePath();
-        if (exePath.empty()) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = commandName;
-            env["error"] = {{"code", "not-connected"},
-                            {"message", "--spawn: could not determine exe path to relaunch."}};
-            EmitErrorToStderr(env);
-            return kExitNotConnected;
-        }
 
-        const int port = FindFreePort();
-        if (port == 0) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = commandName;
-            env["error"] = {{"code", "not-connected"}, {"message", "--spawn: could not bind a free TCP port."}};
-            EmitErrorToStderr(env);
-            return kExitNotConnected;
-        }
-
-        std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n",
-                     port); // CLI stdout — product output, not logging
-        std::string childLogPath;
-        if (!LaunchEphemeralInstance(exePath, port, &childLogPath)) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = commandName;
-            env["error"] = {{"code", "not-connected"}, {"message", "--spawn: failed to launch subprocess."}};
-            EmitErrorToStderr(env);
-            return kExitNotConnected;
-        }
-        if (!childLogPath.empty()) {
-            std::fprintf(stderr, "[spawn] child stdout/stderr → %s\n",
-                         childLogPath.c_str()); // CLI stdout — product output, not logging
-        }
-
-        const std::string host = "127.0.0.1";
-        // Bumped 15s → 30s post Phase D/E AI merges (OpenAi + Anthropic + Ollama clients
-        // + AiNdjsonParser + Lua glue pushed startup over the prior 15s ready window;
-        // bucket-E gates regressed on develop tip). Env override SMATCHET_SPAWN_READY_MS
-        // allows tightening on faster runners or raising further on cold-cache CI.
-        // Lazy-loading AI clients is the architectural follow-up — entry remains open
-        // in docs/self-improvement/categories/tooling.md.
-        int readyTimeoutMs = 30000;
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
-#endif
-        if (const char* envOverride = std::getenv("SMATCHET_SPAWN_READY_MS")) {
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-            try {
-                int v = std::stoi(envOverride);
-                if (v > 0)
-                    readyTimeoutMs = v;
-            } catch (...) {
-                // Ignore malformed override; fall through to default.
-            }
-        }
-        std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n",
-                     readyTimeoutMs / 1000); // CLI stdout — product output, not logging
-        if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = commandName;
-            env["error"] = {{"code", "timeout"},
-                            {"message", "--spawn: ephemeral instance did not become reachable in time."}};
-            EmitErrorToStderr(env);
-            return kExitNotConnected;
-        }
-
-        // Send the actual command.
-        nlohmann::json body;
-        body["name"] = commandName;
-        body["arguments"] = argsToSend;
+        // Phase 1: launch ephemeral instance and wait for MCP ready.
+        std::string host;
+        int port = 0;
+        const int setupResult = SpawnAndRunSetup(commandName, host, port);
+        if (setupResult != kExitOk)
+            return setupResult;
 
         // For scenario.run, compute a wait timeout from the frames param.
         // ParseArgs stores --key=value pairs as strings; coerce defensively.
@@ -816,135 +964,34 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         }
         const int scenarioWaitMs = (frames / 60 + 30) * 1000;
 
+        // Phase 2: dispatch the command and extract the response envelope.
         httplib::Client cli(host, port);
         cli.set_connection_timeout(2, 0);
         cli.set_read_timeout(30, 0);
-        auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
-        if (!res || res->status < 200 || res->status >= 300) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = commandName;
-            env["error"] = {{"code", "transport"}, {"message", "--spawn: command dispatch failed after launch."}};
-            EmitErrorToStderr(env);
-            return kExitTransport;
-        }
-
-        nlohmann::json parsedBody;
-        if (!SafeParseJson(res->body, parsedBody)) {
-            nlohmann::json env = MakeErrorEnvelope(commandName, "transport",
-                                                   "--spawn: server returned non-JSON response (status " +
-                                                       std::to_string(res->status) + ").");
-            EmitErrorToStderr(env);
-            // Best-effort quit.
-            nlohmann::json qb;
-            qb["name"] = "app.quit";
-            qb["arguments"] = {{"__confirm", true}};
-            cli.Post("/mcp/tools/call", qb.dump(), "application/json");
-            return kExitTransport;
-        }
-
         nlohmann::json envelope;
-        try {
-            envelope = ExtractEnvelopeFromMcpResult(parsedBody);
-        } catch (...) {
-            envelope =
-                MakeErrorEnvelope(commandName, "transport", "--spawn: failed to extract envelope from response.");
-        }
+        const int dispatchResult = SpawnAndRunDispatch(cli, commandName, argsToSend, envelope);
+        if (dispatchResult != kExitOk)
+            return dispatchResult;
 
+        // Phase 3 / 4: handle async or synchronous result.
         nlohmann::json envData = SafeObject(envelope, "data");
         const bool isAsync = SafeBool(envelope, "ok", false) && SafeBool(envData, "running", false) &&
                              envData.contains("outPath") && envData["outPath"].is_string();
-
-        // If scenario.run returned {running:true, outPath:...}, wait for the file then emit it.
+        int resultCode = kExitOk;
         if (isAsync) {
+            // Phase 3: wait for the output file and emit the result.
             const std::string outPath = SafeString(envData, "outPath");
-            std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames,
-                         frames / 60); // CLI stdout — product output, not logging
-            const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
-            // Small delay to ensure fwrite+fclose has fully flushed before we read.
-            // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
-            // but kernel write buffers can briefly show a partial file on some filesystems.
-            if (fileReady)
-                std::this_thread::sleep_for(std::chrono::milliseconds(150));
-            if (!fileReady) {
-                nlohmann::json errEnv;
-                errEnv["ok"] = false;
-                errEnv["command"] = commandName;
-                errEnv["error"] = {{"code", "timeout"},
-                                   {"message", "--spawn: scenario did not finish within expected time."},
-                                   {"hint", "Try --timeout=<larger-ms> or --frames=<smaller-n>"}};
-                EmitErrorToStderr(errEnv);
-                // Still try to quit the spawned app.
-                nlohmann::json quitBody;
-                quitBody["name"] = "app.quit";
-                quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
-                cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
-                return 8;
-            }
-
-            // Read the result file and build an envelope around it.
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
-#endif
-            std::FILE* f = std::fopen(outPath.c_str(), "rb");
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-            if (!f) {
-                nlohmann::json errEnv;
-                errEnv["ok"] = false;
-                errEnv["command"] = commandName;
-                errEnv["error"] = {{"code", "handler-error"},
-                                   {"message", "--spawn: could not read result file: " + outPath}};
-                EmitErrorToStderr(errEnv);
-            } else {
-                std::string content;
-                char buf[4096];
-                size_t n;
-                while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
-                    content.append(buf, n);
-                std::fclose(f);
-                try {
-                    const nlohmann::json fileData = nlohmann::json::parse(content);
-                    const bool captureRequested = SafeBool(fileData, "captureRequested", false);
-                    const std::string screenshotPath = SafeString(fileData, "screenshotPath");
-                    if (captureRequested && !screenshotPath.empty()) {
-                        std::fprintf(
-                            stderr,
-                            "[spawn] waiting for screenshot capture ...\n"); // CLI stdout — product output, not logging
-                        WaitForFile(screenshotPath, 2000);
-                    }
-
-                    nlohmann::json resultEnv;
-                    resultEnv["ok"] = true;
-                    resultEnv["command"] = commandName;
-                    resultEnv["data"] = fileData;
-                    EmitEnvelope(resultEnv, pa.pretty, pa.quiet);
-                } catch (...) {
-                    nlohmann::json errEnv;
-                    errEnv["ok"] = false;
-                    errEnv["command"] = commandName;
-                    errEnv["error"] = {{"code", "handler-error"},
-                                       {"message", "--spawn: result file is not valid JSON: " + outPath}};
-                    EmitErrorToStderr(errEnv);
-                }
-            }
+            resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs);
+            if (resultCode != kExitOk)
+                return resultCode; // async helper already sent app.quit on timeout
         } else {
-            // Non-async command: emit envelope directly.
-            EmitEnvelope(envelope, pa.pretty, pa.quiet);
-            if (!SafeBool(envelope, "ok", false)) {
-                const nlohmann::json errObj = SafeObject(envelope, "error");
-                const std::string code = SafeString(errObj, "code");
-                nlohmann::json quitBody;
-                quitBody["name"] = "app.quit";
-                quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
-                cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
-                return ExitCodeForErrorCode(code);
-            }
+            // Phase 4: synchronous command — emit directly.
+            resultCode = SpawnAndRunHandleSync(pa, cli, envelope);
+            if (resultCode != kExitOk)
+                return resultCode; // sync helper already sent app.quit on error
         }
 
-        // Quit the spawned instance (app.quit is Destructive → __confirm:true).
+        // Phase 5 (quit): send app.quit to the spawned instance (app.quit is Destructive → __confirm:true).
         std::fprintf(stderr, "[spawn] sending app.quit ...\n"); // CLI stdout — product output, not logging
         nlohmann::json quitBody;
         quitBody["name"] = "app.quit";
@@ -1183,6 +1230,213 @@ bool IsEphemeralMode(int argc, char** argv) {
     return false;
 }
 
+/// Phase 1 of RunCmdAttach: parse argv and discover the MCP host/port.
+/// Priority: explicit flag > env > instance.json (PID-verified) > default.
+/// Returns false and emits an error envelope if ParseArgs fails.
+bool RunCmdAttachResolveHostPort(int argc, char** argv, ParsedArgs& outPa, std::string& outHost, int& outPort) {
+    std::string parseErr;
+    if (!ParseArgs(argc, argv, outPa, parseErr)) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = "";
+        env["error"] = {{"code", "validation-error"}, {"message", parseErr}};
+        EmitErrorToStderr(env);
+        return false;
+    }
+
+    outHost = outPa.mcpHost.empty() ? EnvOr("SMATCHET_MCP_HOST", "127.0.0.1") : outPa.mcpHost;
+    outPort = outPa.mcpPort > 0 ? outPa.mcpPort : EnvIntOr("SMATCHET_MCP_PORT", 0);
+    if (outPort == 0) {
+        const std::string instPath = ConfigManager::GetUserDataDirectory() + "instance.json";
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
+#endif
+        std::FILE* f = std::fopen(instPath.c_str(), "rb");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+        if (f) {
+            std::string json;
+            char buf[512];
+            size_t n;
+            while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+                json.append(buf, n);
+            std::fclose(f);
+            nlohmann::json j;
+            if (SafeParseJson(json, j) && j.is_object())
+                try {
+                    const int instPort = SafeInt(j, "port", 0);
+                    const long long instPid = static_cast<long long>(SafeInt(j, "pid", 0));
+                    // Verify the PID is still alive before trusting this port.
+                    bool pidAlive = false;
+#if defined(_WIN32)
+                    if (instPid > 0) {
+                        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(instPid));
+                        if (h) {
+                            DWORD exitCode = 0;
+                            pidAlive = GetExitCodeProcess(h, &exitCode) && (exitCode == STILL_ACTIVE);
+                            CloseHandle(h);
+                        }
+                    }
+#else
+                    if (instPid > 0) {
+                        pidAlive = (::kill(static_cast<pid_t>(instPid), 0) == 0);
+                    }
+#endif
+                    if (pidAlive && instPort > 0 && instPort <= 65535) {
+                        outPort = instPort;
+                    }
+                } catch (...) {
+                }
+        }
+    }
+    if (outPort == 0)
+        outPort = SmatchetDefaults::Mcp::kDefaultPort;
+    return true;
+}
+
+/// Phase 2 of RunCmdAttach: resolve the effective tool name and args, injecting
+/// protocol-extension flags (--yes, --dry-run, --timeout) into argsToSend.
+/// Returns true when --help or --list-help was handled and the caller should return kExitOk.
+bool RunCmdAttachHandleHelp(const ParsedArgs& pa, const std::string& host, int port, std::string& outToolName,
+                            nlohmann::json& outArgs) {
+    // Top-level --help: print flag summary + fetch live catalog if possible.
+    // Discovery is much more useful when the user sees what commands actually exist
+    // on first run, so we do this after host/port resolution.
+    if (pa.wantListHelp) {
+        PrintCliHelp(stdout, host, port);
+        return true;
+    }
+
+    outArgs = pa.args;
+    outToolName = pa.commandName;
+    if (pa.wantHelp) {
+        // --help for a single command — call commands.help over the wire.
+        outToolName = "commands.help";
+        outArgs = nlohmann::json::object();
+        outArgs["name"] = pa.commandName;
+    }
+
+    // Inject protocol extensions for flags.
+    if (pa.yes)
+        outArgs["__confirm"] = true;
+    if (pa.dryRun)
+        outArgs["__dry_run"] = true;
+    if (pa.timeoutMs > 0)
+        outArgs["__timeout_ms"] = pa.timeoutMs;
+    return false;
+}
+
+/// Phase 3 of RunCmdAttach: POST the command to the MCP endpoint and extract the response envelope.
+/// On connection failure, delegates to SpawnAndRun if pa.spawn is set.
+/// Returns kExitOk with envelope filled; otherwise emits an error to stderr and returns exit code.
+int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port, const std::string& toolName,
+                         const nlohmann::json& argsToSend, nlohmann::json& outEnvelope) {
+    const int envSpawnTimeout = EnvIntOr("SMATCHET_SPAWN_TIMEOUT_MS", 0);
+    const int readTimeoutSec = (pa.timeoutMs > 0)      ? (pa.timeoutMs / 1000 + 5)
+                               : (envSpawnTimeout > 0) ? (envSpawnTimeout / 1000 + 5)
+                                                       : 30;
+    nlohmann::json body;
+    body["name"] = toolName;
+    body["arguments"] = argsToSend;
+
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(2, 0);
+    cli.set_read_timeout(readTimeoutSec, 0);
+
+    auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
+    if (!res) {
+        // --spawn: launch an ephemeral instance and retry in-process.
+        if (pa.spawn)
+            return SpawnAndRun(pa, toolName, argsToSend);
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = toolName;
+        env["error"] = {
+            {"code", "not-connected"},
+            {"message", "Could not reach Smatchet MCP at " + host + ":" + std::to_string(port) + "."},
+            {"hint", "Start Smatchet (with MCP enabled), or pass --spawn to launch automatically."},
+        };
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+    if (res->status < 200 || res->status >= 300) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = toolName;
+        env["error"] = {
+            {"code", "handler-error"},
+            {"message", "MCP server returned HTTP " + std::to_string(res->status) + "."},
+            {"details", {{"body", res->body}}},
+        };
+        EmitErrorToStderr(env);
+        return kExitTransport;
+    }
+
+    nlohmann::json parsed;
+    try {
+        parsed = nlohmann::json::parse(res->body);
+    } catch (const std::exception& e) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = toolName;
+        env["error"] = {
+            {"code", "handler-error"},
+            {"message", std::string("Could not parse MCP response: ") + e.what()},
+        };
+        EmitErrorToStderr(env);
+        return kExitTransport;
+    }
+
+    try {
+        outEnvelope = ExtractEnvelopeFromMcpResult(parsed);
+    } catch (...) {
+        outEnvelope = MakeErrorEnvelope(toolName, "transport", "Failed to extract envelope from MCP response.");
+    }
+    if (!outEnvelope.is_object())
+        outEnvelope = nlohmann::json::object();
+    if (!outEnvelope.contains("ok")) {
+        nlohmann::json wrap;
+        wrap["ok"] = true;
+        wrap["command"] = toolName;
+        wrap["data"] = std::move(outEnvelope);
+        outEnvelope = std::move(wrap);
+    }
+    return kExitOk;
+}
+
+/// Phase 4 of RunCmdAttach: emit the response envelope (or token estimate) and return exit code.
+int RunCmdAttachProcessResult(const ParsedArgs& pa, const nlohmann::json& envelope, bool doTokenEstimate) {
+    // --tokens: estimate size from serialized data, print to stderr, produce no stdout.
+    if (doTokenEstimate && SafeBool(envelope, "ok", false)) {
+        std::string dataStr;
+        try {
+            dataStr = envelope.contains("data") ? envelope["data"].dump() : std::string("{}");
+        } catch (...) {
+            dataStr = "{}";
+        }
+        const long long bytes = static_cast<long long>(dataStr.size());
+        const long long tokens = (bytes + 3) / 4; // rough ASCII heuristic (±30%)
+        nlohmann::json estimate;
+        estimate["tokens_estimate"] = tokens;
+        estimate["bytes"] = bytes;
+        std::fprintf(stderr, "%s\n", estimate.dump().c_str()); // CLI stdout — product output, not logging
+        return kExitOk;
+    }
+
+    if (SafeBool(envelope, "ok", false)) {
+        EmitEnvelope(envelope, pa.pretty, pa.quiet);
+        return kExitOk;
+    }
+
+    // Error path — envelope goes to stderr; exit code from error.code.
+    EmitErrorToStderr(envelope);
+    const nlohmann::json errObj = SafeObject(envelope, "error");
+    const std::string code = SafeString(errObj, "code", "handler-error");
+    return ExitCodeForErrorCode(code);
+}
+
 int RunCmdAttach(int argc, char** argv) {
 #if !defined(SMATCHET_WITH_MCP)
     return RunCmdInProcess(argc, argv);
@@ -1190,199 +1444,29 @@ int RunCmdAttach(int argc, char** argv) {
     std::set_terminate(&CliTerminateHandler);
 
     try {
+        // Phase 1: parse args and discover host/port.
         ParsedArgs pa;
-        std::string parseErr;
-        if (!ParseArgs(argc, argv, pa, parseErr)) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = "";
-            env["error"] = {{"code", "validation-error"}, {"message", parseErr}};
-            EmitErrorToStderr(env);
+        std::string host;
+        int port = 0;
+        if (!RunCmdAttachResolveHostPort(argc, argv, pa, host, port))
             return kExitValidation;
-        }
 
-        // Host/port discovery: explicit flag > env > instance.json (PID-verified) > default.
-        std::string host = pa.mcpHost.empty() ? EnvOr("SMATCHET_MCP_HOST", "127.0.0.1") : pa.mcpHost;
-        int port = pa.mcpPort > 0 ? pa.mcpPort : EnvIntOr("SMATCHET_MCP_PORT", 0);
-        if (port == 0) {
-            const std::string instPath = ConfigManager::GetUserDataDirectory() + "instance.json";
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
-#endif
-            std::FILE* f = std::fopen(instPath.c_str(), "rb");
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-            if (f) {
-                std::string json;
-                char buf[512];
-                size_t n;
-                while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
-                    json.append(buf, n);
-                std::fclose(f);
-                nlohmann::json j;
-                if (SafeParseJson(json, j) && j.is_object())
-                    try {
-                        const int instPort = SafeInt(j, "port", 0);
-                        const long long instPid = static_cast<long long>(SafeInt(j, "pid", 0));
-                        // Verify the PID is still alive before trusting this port.
-                        bool pidAlive = false;
-#if defined(_WIN32)
-                        if (instPid > 0) {
-                            HANDLE h =
-                                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(instPid));
-                            if (h) {
-                                DWORD exitCode = 0;
-                                pidAlive = GetExitCodeProcess(h, &exitCode) && (exitCode == STILL_ACTIVE);
-                                CloseHandle(h);
-                            }
-                        }
-#else
-                        if (instPid > 0) {
-                            pidAlive = (::kill(static_cast<pid_t>(instPid), 0) == 0);
-                        }
-#endif
-                        if (pidAlive && instPort > 0 && instPort <= 65535) {
-                            port = instPort;
-                        }
-                    } catch (...) {
-                    }
-            }
-        }
-        if (port == 0)
-            port = SmatchetDefaults::Mcp::kDefaultPort;
-
-        // Top-level --help: print flag summary + fetch live catalog if possible.
-        // Discovery is much more useful when the user sees what commands actually exist
-        // on first run, so we do this after host/port resolution.
-        if (pa.wantListHelp) {
-            PrintCliHelp(stdout, host, port);
+        // Phase 2: resolve tool name/args and handle --help early-exit.
+        std::string toolName;
+        nlohmann::json argsToSend;
+        if (RunCmdAttachHandleHelp(pa, host, port, toolName, argsToSend))
             return kExitOk;
-        }
 
-        // --help for a single command — call commands.help over the wire.
-        nlohmann::json argsToSend = pa.args;
-        std::string toolName = pa.commandName;
-        if (pa.wantHelp) {
-            toolName = "commands.help";
-            argsToSend = nlohmann::json::object();
-            argsToSend["name"] = pa.commandName;
-        }
-
-        // Inject protocol extensions for flags.
-        if (pa.yes)
-            argsToSend["__confirm"] = true;
-        if (pa.dryRun)
-            argsToSend["__dry_run"] = true;
-        if (pa.timeoutMs > 0)
-            argsToSend["__timeout_ms"] = pa.timeoutMs;
-
-        // --tokens: run the command, measure JSON output size, print estimate to stderr, no stdout.
         const bool doTokenEstimate = pa.tokens && !pa.wantHelp;
 
-        nlohmann::json body;
-        body["name"] = toolName;
-        body["arguments"] = argsToSend;
-
-        // Timeout: default from env for async commands.
-        const int envSpawnTimeout = EnvIntOr("SMATCHET_SPAWN_TIMEOUT_MS", 0);
-        const int readTimeoutSec = (pa.timeoutMs > 0)      ? (pa.timeoutMs / 1000 + 5)
-                                   : (envSpawnTimeout > 0) ? (envSpawnTimeout / 1000 + 5)
-                                                           : 30;
-
-        httplib::Client cli(host, port);
-        cli.set_connection_timeout(2, 0);
-        cli.set_read_timeout(readTimeoutSec, 0);
-
-        auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
-        if (!res) {
-            // --spawn: launch an ephemeral instance and retry in-process.
-            if (pa.spawn) {
-                return SpawnAndRun(pa, toolName, argsToSend);
-            }
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = toolName;
-            env["error"] = {
-                {"code", "not-connected"},
-                {"message", "Could not reach Smatchet MCP at " + host + ":" + std::to_string(port) + "."},
-                {"hint", "Start Smatchet (with MCP enabled), or pass --spawn to launch automatically."},
-            };
-            EmitErrorToStderr(env);
-            return kExitNotConnected;
-        }
-        if (res->status < 200 || res->status >= 300) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = toolName;
-            env["error"] = {
-                {"code", "handler-error"},
-                {"message", "MCP server returned HTTP " + std::to_string(res->status) + "."},
-                {"details", {{"body", res->body}}},
-            };
-            EmitErrorToStderr(env);
-            return kExitTransport;
-        }
-
-        nlohmann::json parsed;
-        try {
-            parsed = nlohmann::json::parse(res->body);
-        } catch (const std::exception& e) {
-            nlohmann::json env;
-            env["ok"] = false;
-            env["command"] = toolName;
-            env["error"] = {
-                {"code", "handler-error"},
-                {"message", std::string("Could not parse MCP response: ") + e.what()},
-            };
-            EmitErrorToStderr(env);
-            return kExitTransport;
-        }
-
+        // Phase 3: POST command and extract envelope.
         nlohmann::json envelope;
-        try {
-            envelope = ExtractEnvelopeFromMcpResult(parsed);
-        } catch (...) {
-            envelope = MakeErrorEnvelope(toolName, "transport", "Failed to extract envelope from MCP response.");
-        }
-        if (!envelope.is_object())
-            envelope = nlohmann::json::object();
-        if (!envelope.contains("ok")) {
-            nlohmann::json wrap;
-            wrap["ok"] = true;
-            wrap["command"] = toolName;
-            wrap["data"] = std::move(envelope);
-            envelope = std::move(wrap);
-        }
+        const int dispatchResult = RunCmdAttachDispatch(pa, host, port, toolName, argsToSend, envelope);
+        if (dispatchResult != kExitOk)
+            return dispatchResult;
 
-        // --tokens: estimate size from serialized data, print to stderr, produce no stdout.
-        if (doTokenEstimate && SafeBool(envelope, "ok", false)) {
-            std::string dataStr;
-            try {
-                dataStr = envelope.contains("data") ? envelope["data"].dump() : std::string("{}");
-            } catch (...) {
-                dataStr = "{}";
-            }
-            const long long bytes = static_cast<long long>(dataStr.size());
-            const long long tokens = (bytes + 3) / 4; // rough ASCII heuristic (±30%)
-            nlohmann::json estimate;
-            estimate["tokens_estimate"] = tokens;
-            estimate["bytes"] = bytes;
-            std::fprintf(stderr, "%s\n", estimate.dump().c_str()); // CLI stdout — product output, not logging
-            return kExitOk;
-        }
-
-        if (SafeBool(envelope, "ok", false)) {
-            EmitEnvelope(envelope, pa.pretty, pa.quiet);
-            return kExitOk;
-        }
-
-        // Error path — envelope goes to stderr; exit code from error.code.
-        EmitErrorToStderr(envelope);
-        const nlohmann::json errObj = SafeObject(envelope, "error");
-        const std::string code = SafeString(errObj, "code", "handler-error");
-        return ExitCodeForErrorCode(code);
+        // Phase 4: emit result or token estimate.
+        return RunCmdAttachProcessResult(pa, envelope, doTokenEstimate);
 
     } catch (const std::exception& e) {
         // Catch anything that escaped a lower-level handler. Emit a clean envelope and exit.
