@@ -72,6 +72,8 @@ void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::
     }
 }
 
+// SMATCHET_DEVIATION(rule=function-too-branchy; reason=extracted verbatim from JiraIssueSearch.cpp anon namespace —
+// decompose separately; owner=unowned; revisit=2026-Q3)
 bool AppendCachedTicketFromJiraSearchIssue(
     const nlohmann::json& issue, const std::vector<std::string>& selectedFields,
     const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,

@@ -5,7 +5,6 @@
 // extracted from JiraIssueSearch.cpp (which pulls cpr) so the doctest rig and the
 // fixture-backed fake can exercise Jira JSON normalization without HTTP. Mirrors the
 // Plane (Slice 2 of autonomous-debugging-no-creds) and GitHub (PR12) pure-mapping splits.
-//
 // Surfaces:
 //   - BuildFetchFieldListsFromView: builds the Jira `fields` query param list and the
 //     selected-fields subset from the active ViewsStore entry.
