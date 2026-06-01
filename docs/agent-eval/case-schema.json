@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://smatchet.dev/agent-eval/case-schema.json",
   "title": "Agent eval golden case",
-  "description": "One frozen golden case for the subagent eval harness (docs/plans/active/subagent-eval-harness.md). Records enough repo context to RECONSTRUCT the run — a frozen diff alone is not reproducible (plan § Case metadata / RISK review finding 5). Consumed by scripts/dev/agent-eval-run.sh to drive the agent; the resulting findings are scored by scripts/dev/agent-eval-score.py against this case's dimensions + referenceOutcome.",
+  "description": "One frozen golden case for the subagent eval harness (docs/plans/shipped/subagent-eval-harness.md). Records enough repo context to RECONSTRUCT the run — a frozen diff alone is not reproducible (plan § Case metadata / RISK review finding 5). Consumed by scripts/dev/agent-eval-run.sh to drive the agent; the resulting findings are scored by scripts/dev/agent-eval-score.py against this case's dimensions + referenceOutcome.",
   "type": "object",
   "additionalProperties": false,
   "required": [

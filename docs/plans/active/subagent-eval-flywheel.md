@@ -2,7 +2,7 @@
 
 > **Slug**: `subagent-eval-flywheel` (matches this file's basename without `.md`).
 >
-> **Status**: **BLOCKED** on `docs/plans/active/subagent-eval-harness.md` Phase 1 — the scoring contract (schemas + scorer + curated cases) must be proven and the judge calibrated before auto-harvesting cases is worth building. Split out of that plan per review (a security-sensitive subsystem that would make the MVP PR too large).
+> **Status**: **BLOCKED** on `docs/plans/shipped/subagent-eval-harness.md` Phase 1 — the scoring contract (schemas + scorer + curated cases) must be proven and the judge calibrated before auto-harvesting cases is worth building. Split out of that plan per review (a security-sensitive subsystem that would make the MVP PR too large).
 >
 > **Scope clarifier**: evaluates the **development agents** (`agents/*.md`), same as the parent plan. This plan adds **automatic golden-case growth** ("production traces become eval datasets").
 >

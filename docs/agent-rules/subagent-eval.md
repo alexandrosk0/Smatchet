@@ -2,7 +2,7 @@
 
 Eval-driven development for the **development agents** (`agents/*.md` — the orchestrator + the delegated subagents), NOT the product under development or any in-app AI-assistant surface. Mirrors the perf pipeline one level up the stack: instead of frame latency, it scores agent **decision quality** base-vs-head so a prompt edit ships on data, not judgment.
 
-Plan: [`../plans/active/subagent-eval-harness.md`](../plans/active/subagent-eval-harness.md). Phase-1 MVP — `code-review` only, **advisory**. The trace flywheel (auto-grown golden set) is the separate follow-up [`../plans/active/subagent-eval-flywheel.md`](../plans/active/subagent-eval-flywheel.md).
+Plan: [`../plans/shipped/subagent-eval-harness.md`](../plans/shipped/subagent-eval-harness.md). Phase-1 MVP — `code-review` only, **advisory**. The trace flywheel (auto-grown golden set) is the separate follow-up [`../plans/active/subagent-eval-flywheel.md`](../plans/active/subagent-eval-flywheel.md).
 
 ## Pieces
 

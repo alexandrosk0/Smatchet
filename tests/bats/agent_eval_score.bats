@@ -4,7 +4,7 @@
 # Bats tests for scripts/dev/agent-eval-score.py — the agent eval scorer.
 #
 # Proves the SCORING CONTRACT with NO live agent and NO live judge (plan
-# docs/plans/active/subagent-eval-harness.md § Approach step 3):
+# docs/plans/shipped/subagent-eval-harness.md § Approach step 3):
 #   * a FAKE judge command (deterministic python script) replaces the LLM, so
 #     judge-dimension scores are fixed and reproducible;
 #   * fixed base/head result fixtures drive the objective checks.

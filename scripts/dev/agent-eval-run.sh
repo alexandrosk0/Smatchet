@@ -4,7 +4,7 @@
 # Companion to scripts/dev/agent-eval-score.py, one level up the stack from
 # scripts/dev/perf-run.sh (whose CLI shape + output discipline this mirrors:
 # stale-file wipe, last-line-is-the-path). Plan:
-# docs/plans/active/subagent-eval-harness.md § Approach step 5.
+# docs/plans/shipped/subagent-eval-harness.md § Approach step 5.
 #
 # Runs ONE agent for ONE case across N trials and writes a result JSON per
 # docs/agent-eval/result-schema.json. Two non-negotiable seams:
