@@ -9,6 +9,7 @@
 #include "ITrackerIssueReader.h"
 #include "ConfigManager.h"
 
+#include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -159,6 +160,14 @@ class JiraClient : public ITrackerBackend,
     std::vector<RemoteProject> cachedProjects_;
     std::int64_t cachedProjectsAtUnix_ = 0;
     std::mutex listProjectsMutex_;
+
+    // UpdateIssueFields sub-paths — split to keep the public orchestrator within size caps.
+    bool UpdateIssueFieldsViaTransition(const std::string& issueId, const nlohmann::json& statusValue,
+                                        const std::string& base, const cpr::Header& headers,
+                                        const std::string& auditOp, std::string& outError);
+    bool UpdateIssueFieldsViaPut(const std::string& issueId, const nlohmann::json& fieldsAudited,
+                                 const std::string& base, const cpr::Header& headers,
+                                 const std::string& auditOp, std::string& outError);
 };
 
 #endif
