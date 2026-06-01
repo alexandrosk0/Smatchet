@@ -11,6 +11,7 @@
 #include "SmatchetThemedTextEditorPalette.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldValueParser.h"
+#include "ProjectResolver.h"
 #include "TrackerFieldPayload.h"
 #include "DictationInsertionRouter.h"
 #include "MarkdownConvert.h"
@@ -634,7 +635,22 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
                              const std::string& currentValue, SpreadsheetState& state,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                              bool singleClickToEdit) {
-    std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
+    // For the grid components MultiSelect on cross-project views, prefer options scoped to THIS
+    // row's own Jira project (resolved from the issue-key prefix). Falls back to the global
+    // AllowedValueOptions when the per-project map has not been warmed (or for non-components fields).
+    const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
+    std::vector<TrackerFieldOption> perProject;
+    if (field.Id == "components") {
+        perProject = app.GetComponentOptionsForProject(smatchet::ExtractIssueKeyPrefix(ticket.id));
+        if (!perProject.empty()) {
+            opts = &perProject;
+        }
+    }
+    // Resolve current selection ids against the effective option set (matters when a row's project
+    // uses a per-project list distinct from the global catalog).
+    TrackerField effectiveField = field;
+    effectiveField.AllowedValueOptions = *opts;
+    std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(effectiveField, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
     const float cellAvail = ImGui::GetContentRegionAvail().x;
@@ -696,7 +712,7 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
 
         const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.MultiSelectSearchBuf));
         bool drewAny = false;
-        for (const auto& option : field.AllowedValueOptions) {
+        for (const auto& option : *opts) {
             const std::string optionId = option.Id.empty() ? option.Value : option.Id;
             bool checked = (selectedSet.find(optionId) != selectedSet.end());
             const bool matchesFilter = filterLower.empty() ||

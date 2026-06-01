@@ -18,6 +18,7 @@
 #include "ConfigManager.h"
 #include "FieldCatalogCache.h"
 #include "JiraClient.h"
+#include "ProjectResolver.h"
 #include "TrackerFieldPayload.h"
 #include "TrackerHttpUtils.h"
 
@@ -432,11 +433,19 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
     std::vector<std::pair<std::string, std::string>> representatives;
     std::unordered_set<std::string> seenTypes;
     seenTypes.reserve(tickets.size());
+    // Distinct Jira project keys (issue-key prefixes) across the active tickets — warmed below into
+    // projectComponentOptions_ so the components MultiSelect editor can scope per row's own project.
+    std::vector<std::string> componentProjectKeys;
+    std::unordered_set<std::string> seenProjectKeys;
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         for (const auto& ticket : tickets) {
             if (ticket.id.empty()) {
                 continue;
+            }
+            const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+            if (!projectKey.empty() && seenProjectKeys.insert(projectKey).second) {
+                componentProjectKeys.push_back(projectKey);
             }
             const std::string typeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
             if (typeKey.empty()) {
@@ -454,10 +463,11 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
             representatives.push_back({typeKey, ticket.id});
         }
     }
-    if (representatives.empty()) {
+    if (representatives.empty() && componentProjectKeys.empty()) {
         return;
     }
-    LaunchBackgroundTask([this, representatives, trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
+    LaunchBackgroundTask([this, representatives, componentProjectKeys, backend,
+                          trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
         for (const auto& pair : representatives) {
             if (shuttingDown_.load()) {
                 break;
@@ -465,7 +475,43 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
             std::string ignored;
             EnsureIssueEditMetaLoaded(pair.second, &ignored, nullptr, &trackerCfgForWorker);
         }
+
+        ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
+        if (catalog == nullptr) {
+            return;
+        }
+        for (const auto& projectKey : componentProjectKeys) {
+            if (shuttingDown_.load()) {
+                break;
+            }
+            {
+                std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+                if (projectComponentOptions_.find(projectKey) != projectComponentOptions_.end()) {
+                    continue;
+                }
+            }
+            std::vector<TrackerComponent> comps;
+            std::vector<TrackerFieldOption> opts;
+            std::string err;
+            // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
+            if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
+                LOG_DEBUG("AppController: per-project component warm skipped for %s: %s", projectKey.c_str(),
+                          err.c_str());
+                continue;
+            }
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            projectComponentOptions_[projectKey] = std::move(opts);
+        }
     });
+}
+
+std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(const std::string& projectKey) const {
+    std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+    const auto it = projectComponentOptions_.find(projectKey);
+    if (it == projectComponentOptions_.end()) {
+        return std::vector<TrackerFieldOption>();
+    }
+    return it->second;
 }
 
 bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,

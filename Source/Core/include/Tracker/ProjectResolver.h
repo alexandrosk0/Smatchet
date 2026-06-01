@@ -6,6 +6,13 @@ class ITrackerConnectivity;
 
 namespace smatchet {
 
+/** "TICKET-123" -> "TICKET". Returns "" when no '-' is present, '-' is the first
+ *  char (e.g. "-123"), or the part before '-' contains any non-[A-Za-z0-9_]
+ *  character (Jira keys are uppercase letters and digits; the conservative
+ *  identifier set keeps the helper liberal without misclassifying obviously
+ *  non-key strings such as UUIDs). Pure; no I/O. */
+std::string ExtractIssueKeyPrefix(const std::string& id);
+
 /** Resolve the project key for a new draft / bulk-import row.
  *
  *  Resolution order (Jira):

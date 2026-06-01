@@ -6,15 +6,7 @@
 
 namespace smatchet {
 
-namespace {
-
-// "TICKET-123" -> "TICKET". Returns "" when:
-//   * no '-' present
-//   * '-' is the first char (e.g. "-123")
-//   * the part before '-' contains any non-[A-Za-z0-9_] character (Jira keys are uppercase letters
-//     and digits; we accept the conservative identifier set so the helper is liberal in what it
-//     accepts without misclassifying obviously non-key strings).
-std::string ExtractKeyPrefix(const std::string& id) {
+std::string ExtractIssueKeyPrefix(const std::string& id) {
     const auto dash = id.find('-');
     if (dash == std::string::npos || dash == 0) {
         return std::string();
@@ -27,8 +19,6 @@ std::string ExtractKeyPrefix(const std::string& id) {
     }
     return id.substr(0, dash);
 }
-
-} // namespace
 
 std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std::string& activeViewQuery,
                                    const std::string& lastVisibleTicketId, const std::string& legacyFallback) {
@@ -44,7 +34,7 @@ std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std
     //     so we skip this step when the backend reports itself as Plane.
     const bool isPlane = (client != nullptr && client->GetTrackerType() == "Plane");
     if (!isPlane && !lastVisibleTicketId.empty()) {
-        const std::string prefix = ExtractKeyPrefix(lastVisibleTicketId);
+        const std::string prefix = ExtractIssueKeyPrefix(lastVisibleTicketId);
         if (!prefix.empty()) {
             return prefix;
         }
@@ -58,7 +48,7 @@ std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, 
                                              const std::string& activeViewQuery, const std::string& legacyFallback) {
     const bool isPlane = (client != nullptr && client->GetTrackerType() == "Plane");
     if (!isPlane && !parentTicketId.empty()) {
-        const std::string prefix = ExtractKeyPrefix(parentTicketId);
+        const std::string prefix = ExtractIssueKeyPrefix(parentTicketId);
         if (!prefix.empty()) {
             return prefix;
         }

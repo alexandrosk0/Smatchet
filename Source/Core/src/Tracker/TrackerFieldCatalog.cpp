@@ -415,3 +415,79 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
     SortComponentCatalog(outFields, outComponents);
     return true;
 }
+
+bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::string& projectKey,
+                                        std::vector<TrackerComponent>& outComponents,
+                                        std::vector<TrackerFieldOption>& outOptions, std::string& outError) {
+    outComponents.clear();
+    outOptions.clear();
+    outError.clear();
+
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return false;
+    }
+    if (projectKey.empty()) {
+        outError = "FetchProjectComponents called with an empty project key.";
+        return false;
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+
+    // Paged GET /rest/api/3/project/{key}/component — mirrors MergeProjectComponentsFromEndpoint
+    // paging, but pushes component + option directly (no catalog/fields vector).
+    constexpr int kPageSize = 100;
+    constexpr int kMaxPages = 50;
+    for (int page = 0; page < kMaxPages; ++page) {
+        const int startAt = page * kPageSize;
+        const std::string url = base + "/rest/api/3/project/" + UrlEncode(projectKey) +
+                                "/component?startAt=" + std::to_string(startAt) +
+                                "&maxResults=" + std::to_string(kPageSize) + "&orderBy=name";
+        auto response = TrackerGetLogged("JiraClient", url, headers);
+        if (response.status_code != 200) {
+            LOG_WARN("JiraClient: per-project components fetch failed for %s. HTTP %d", projectKey.c_str(),
+                     response.status_code);
+            outError = "Per-project components fetch failed (HTTP " + std::to_string(response.status_code) + ").";
+            return false;
+        }
+
+        auto json = nlohmann::json::parse(response.text, nullptr, false);
+        if (json.is_discarded() || !json.is_object()) {
+            LOG_WARN("JiraClient: per-project components response parse failed for %s.", projectKey.c_str());
+            outError = "Per-project components response parse failed.";
+            return false;
+        }
+
+        const auto valuesIt = json.find("values");
+        if (valuesIt == json.end() || !valuesIt->is_array()) {
+            LOG_WARN("JiraClient: per-project components response missing values array for %s.", projectKey.c_str());
+            outError = "Per-project components response missing values array.";
+            return false;
+        }
+
+        for (const auto& node : *valuesIt) {
+            TrackerComponent component;
+            TrackerFieldOption option;
+            if (!ExtractComponentOption(node, component, option)) {
+                continue;
+            }
+            outComponents.push_back(component);
+            outOptions.push_back(option);
+        }
+
+        const bool isLast = json.value("isLast", false);
+        if (isLast || valuesIt->empty()) {
+            break;
+        }
+    }
+
+    std::sort(outOptions.begin(), outOptions.end(), [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
+        const std::string lowerA = ToLowerAsciiCopy(a.Value);
+        const std::string lowerB = ToLowerAsciiCopy(b.Value);
+        if (lowerA != lowerB) {
+            return lowerA < lowerB;
+        }
+        return a.Id < b.Id;
+    });
+    return true;
+}

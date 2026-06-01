@@ -20,6 +20,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/MemoryTelemetry.cpp"
     Core/BackgroundWorkerReap.test.cpp
     Core/JqlProjectScope.test.cpp
+    # Per-project Jira component dropdowns (PR #672) — pure coverage of issue-key-prefix
+    # extraction, distinct-project collection, and per-project option-map lookup.
+    # ProjectResolver.cpp depends only on the header-only ITrackerConnectivity interface
+    # (no cpr/sqlite), safe in the doctest rig.
+    Core/ProjectComponentResolution.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ProjectResolver.cpp"
     Core/TextMerge.test.cpp
     Core/CachedTicketFieldValueRef.test.cpp
     Core/JsonParseUtil.test.cpp

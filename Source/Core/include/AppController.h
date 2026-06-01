@@ -757,6 +757,11 @@ class AppController
 #endif
         ;
 
+    /** Component options valid for one Jira project key (e.g. "PROJ"), warmed async for cross-project
+     *  grid views. Returns a by-value copy taken under availableFieldsMutex_; empty when the project
+     *  has not been warmed yet (caller falls back to the global components catalog). */
+    std::vector<TrackerFieldOption> GetComponentOptionsForProject(const std::string& projectKey) const;
+
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.
      *
@@ -896,6 +901,11 @@ class AppController
      *  to write the snapshot under the right per-project cache entry now that
      *  TrackerConfig::ProjectKey / PlaneProjectId are gone. Guarded by availableFieldsMutex_. */
     std::string currentCatalogProjectKey_;
+    /** Per-project component option lists for cross-project grid views, keyed by Jira project key
+     *  (e.g. "PROJ"). Warmed async by WarmIssueTypeEditMetaAtStartAsync; read by the components
+     *  MultiSelect editor via GetComponentOptionsForProject. In-memory only (no disk persistence).
+     *  Guarded by availableFieldsMutex_. */
+    std::unordered_map<std::string, std::vector<TrackerFieldOption>> projectComponentOptions_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
     /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once
