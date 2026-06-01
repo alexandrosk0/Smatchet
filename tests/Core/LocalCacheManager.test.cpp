@@ -416,7 +416,7 @@ TEST_CASE("LocalCacheManager: Reopening on a fresh :memory: is consistent (idemp
     CHECK(fix.Ref().LoadDeadPendingFieldEdits().empty());
 }
 
-// --- Phase 3(a): batched SaveTickets (one transaction) — docs/plans/active/memory-budget-and-lifetime-hardening.md ---
+// --- Phase 3(a): batched SaveTickets (one transaction) — docs/plans/shipped/memory-budget-and-lifetime-hardening.md ---
 
 TEST_CASE("LocalCacheManager: SaveTickets persists every ticket in the batch") {
     SqliteMemFixture fix;

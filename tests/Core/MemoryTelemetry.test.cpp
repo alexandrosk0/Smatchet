@@ -1,5 +1,5 @@
 // MemoryTelemetry.test.cpp — S3 of
-// docs/plans/active/memory-budget-and-lifetime-hardening.md.
+// docs/plans/shipped/memory-budget-and-lifetime-hardening.md.
 //
 // Bucket-A coverage for the pull-based memory snapshot primitives in
 // Source/Core/include/MemoryTelemetry.h + Source/Core/src/Persistence/MemoryTelemetry.cpp:

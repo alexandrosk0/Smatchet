@@ -1,7 +1,7 @@
 #pragma once
 
 // MemoryTelemetry — a thin, pull-based memory-pressure snapshot for the
-// `perf.memory` command. Plan: docs/plans/active/memory-budget-and-lifetime-hardening.md § S3.
+// `perf.memory` command. Plan: docs/plans/shipped/memory-budget-and-lifetime-hardening.md § S3.
 // Deliberately NOT a push registry: gauges are read at snapshot time only, each
 // under its own source's existing lock, so no hot path gains a Report() call.
 // This header is backend-agnostic — NO Win32, NO GLFW/GL — so it compiles into

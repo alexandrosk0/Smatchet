@@ -62,7 +62,7 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
         result.Error = "Attachment preview path is empty.";
         return result;
     }
-    // Bounded header read (S4 of docs/plans/active/memory-budget-and-lifetime-hardening.md):
+    // Bounded header read (S4 of docs/plans/shipped/memory-budget-and-lifetime-hardening.md):
     // read at most kMaxHeaderBytes instead of slurping the whole file (was up to 50 MB) on the
     // UI thread. PNG/GIF/WEBP dimensions live in the first <30 bytes; the JPEG SOF marker walk
     // below is naturally capped to this window (a SOF buried past the cap by huge EXIF/thumbnail

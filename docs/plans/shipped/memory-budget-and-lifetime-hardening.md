@@ -168,7 +168,10 @@ Routed to backlog; reassessed after P0. Each becomes its own slice/PR with its o
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
-Shipped via PR #657 (squash-merge SHA pending merge). Branch commits:
+Shipped via PR #657 (squash-merge `bf921a6b` → develop, 2026-06-01). The three deferred-backlog
+follow-ups landed as their own PRs: `b49c1b7` (#658 Phase 5 pull-forward `GetFieldValueRef`),
+`5e8b7a3` (#660 Phase 3a coalesced ticket saves), `3d53a940` (#661 Phase 4 worker reaping).
+Branch commits on #657:
 
 - `9632e977` · feat(memory): S1–S5 in one PR — 6 detach→pool migrations + shared-backend ownership (ADR 0012); `no-detach` absolute lint + bats; `perf.memory` pull snapshot (`MemoryTelemetry` + dispatcher `QueueLen` + icon-cache gauges); bounded attachment header read; off-thread thumbnail decode + dispatcher upload + cue + `pendingThumbnailUploads` gauge.
 - `a97346d7` · fix(memory): satisfy Pillar-2 scanner (restore the dropped `TODO(pillar2)` marker on the bounded read) + Test-delta gate (`tests/Core/MemoryTelemetry.test.cpp` doctest).

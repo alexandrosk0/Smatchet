@@ -201,7 +201,7 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
     }
 }
 
-// Phase 3(a) of docs/plans/active/memory-budget-and-lifetime-hardening.md: persist a whole slice
+// Phase 3(a) of docs/plans/shipped/memory-budget-and-lifetime-hardening.md: persist a whole slice
 // of tickets in ONE transaction (the streaming-sync apply loop used to open a separate
 // SQLite::Transaction per ticket — up to 20 commits/frame on the UI thread). Reuses the cached
 // prepared statements across the batch.

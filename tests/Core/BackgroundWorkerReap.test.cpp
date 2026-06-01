@@ -1,5 +1,5 @@
 // BackgroundWorkerReap.test.cpp — Phase 4 of
-// docs/plans/active/memory-budget-and-lifetime-hardening.md.
+// docs/plans/shipped/memory-budget-and-lifetime-hardening.md.
 //
 // Unit-tests the pure ReapFinishedWorkers algorithm that backs AppController's mid-session
 // background-worker reaping, using a fake worker (no real std::thread / no AppController):

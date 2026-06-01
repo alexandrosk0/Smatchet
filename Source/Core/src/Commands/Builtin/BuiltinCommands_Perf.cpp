@@ -68,7 +68,7 @@ void RegisterPerfCommands(CommandRegistry& reg, AppController& app) {
 
     {
         // perf.memory — pull-based memory-pressure snapshot (S3 of
-        // docs/plans/active/memory-budget-and-lifetime-hardening.md). Each gauge reads its
+        // docs/plans/shipped/memory-budget-and-lifetime-hardening.md). Each gauge reads its
         // source under that source's existing lock at snapshot time; no push wiring in hot paths.
         Command c = MakeCommand(
             "perf.memory", "Pull-based memory snapshot: RSS, dispatcher queue, icon-cache occupancy, tickets.",
