@@ -110,6 +110,33 @@ The base dir contains `<name>-src/` + `<name>-build/` + `<name>-subbuild/` for e
 
 This is the right option for a static team that builds frequently against the same preset.
 
+## Troubleshooting
+
+**`git-sh-setup: file not found` during a fresh configure.** A from-scratch FetchContent populate of a dep with git submodules fails its submodule-update sub-step:
+
+```
+Cloning into 'json-src'...
+C:/Program Files/Git/mingw64/libexec/git-core\git-submodule: line 22: .: git-sh-setup: file not found
+CMake Error ... Failed to update submodules in: '.../.fetchcontent-src/json-src'
+  Build step for json failed: 1
+```
+
+The dep's *clone* succeeds; only its *submodule* step dies. Cause: the populate runs `git submodule` from a cmd.exe spawn whose PATH was sourced through `scripts/dev/with-msvc-env.sh` (vcvars64), and vcvars drops Git's `libexec/git-core` from PATH so the submodule wrapper can't find its `git-sh-setup` helper. The json declare now carries `GIT_SUBMODULES ""` (json's submodules are test-data only), so this no longer fires for json. If it recurs on a different dep:
+
+- Add `GIT_SUBMODULES ""` to that dep's `FetchContent_Declare` if its submodules aren't needed for the build, **or**
+- `export GIT_EXEC_PATH="$(git --exec-path)"` **and** prepend `$(git --exec-path)` to `PATH` before the configure step (GIT_EXEC_PATH alone is not enough — the wrapper resolves siblings via PATH), **or**
+- Use Option 1/2/3 above to skip the clone entirely (seed a clean source tree + `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`).
+
+**`.fetchcontent-src` cross-worktree cache poisoning.** Configure aborts at the generate step:
+
+```
+CMake Error: The current CMakeCache.txt directory <A>/.fetchcontent-src/<dep>-subbuild/CMakeCache.txt
+  is different than the directory <B>/.fetchcontent-src/<dep>-subbuild where CMakeCache.txt was created.
+CMake Generate step failed.
+```
+
+The per-dep **subbuild** caches embed the absolute path of the worktree that first populated them. `FETCHCONTENT_BASE_DIR` defaults to `${CMAKE_SOURCE_DIR}/.fetchcontent-src`, so each worktree owns a distinct copy by design — **never symlink or hand-copy one `.fetchcontent-src` across worktrees**. Recover by wiping the offending preset build dir + `.fetchcontent-src` and reconfiguring clean, or seed from a sibling whose cache was built in-place for the *current* path (Option 1).
+
 ## When NOT to do this
 
 Most contributors should accept the one-time ~5 min cost and skip this doc. The options above add operational complexity (mirror maintenance, drift between `GIT_TAG` pins and mirror state) that isn't worth it for occasional builds.
