@@ -2,7 +2,7 @@
 
 # Status
 
-**Accepted (2026-05-31)** — drives slice S1 of [`memory-budget-and-lifetime-hardening`](../plans/active/memory-budget-and-lifetime-hardening.md). Surfaced by a `grill-with-docs` session that overturned the plan's original "site #6 is a shutdown-only hazard" framing.
+**Accepted (2026-05-31)** — drives slice S1 of [`memory-budget-and-lifetime-hardening`](../plans/shipped/memory-budget-and-lifetime-hardening.md). Surfaced by a `grill-with-docs` session that overturned the plan's original "site #6 is a shutdown-only hazard" framing.
 
 # Context
 

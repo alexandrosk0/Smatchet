@@ -270,7 +270,7 @@ void TicketSyncService::TickStreamingApply() {
         }
 
         // Phase 3(a): persist the whole slice in ONE transaction instead of one-per-ticket
-        // (docs/plans/active/memory-budget-and-lifetime-hardening.md § Phase 3a). KeepIds + the
+        // (docs/plans/shipped/memory-budget-and-lifetime-hardening.md § Phase 3a). KeepIds + the
         // per-frame counter stay a separate cheap loop.
         if (deps_.Cache()) {
             deps_.Cache()->SaveTickets(batchToProcess);

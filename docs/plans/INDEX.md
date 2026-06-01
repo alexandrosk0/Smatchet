@@ -3,7 +3,7 @@
 Centralized tracker for plan-shaped work in this repo. Three buckets:
 
 1. **Applied / archived plans** — design docs whose work shipped. Source under [`docs/plans/shipped/`](../plans/shipped/). Indexed below with approximate date and one-line summary.
-2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
+2. **Deferred code items** — concrete C++ refactors / improvements explicitly waiting on either an unrelated PR (bundle-with-next) or an external upstream fix. Each entry is also tracked in [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) where it originated; this file is the **code-focused view** so future C++ touches can scan a single page for "what should I bundle in this PR?"
 3. **Agentic dependencies** — work that the agent ecosystem (prompts, harness, mirror, telemetry) needs in the codebase to unblock further automation.
 
 Format: `- <slug> · <approx-date> · <one-line>`.
@@ -94,6 +94,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | 2026-05-30 | Plan — Reduce source-comment bloat across first-party C++ |
 | [`split-scripts-build-vs-agentic`](shipped/split-scripts-build-vs-agentic.md) | 2026-05-30 | Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. |
 | [`subagent-eval-harness`](shipped/subagent-eval-harness.md) | 2026-05-30 | Plan — Subagent eval harness (eval-driven development for the dev-agent fleet) |
+| [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
 <!-- END auto-plan-index -->
 
 ### Notes
@@ -106,7 +107,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 
 ## 2. Deferred code items (C++ refactors / improvements)
 
-Each item is already tracked in [`AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md). This list is the **code-focused view** — when you're about to touch a relevant area, scan here for bundling opportunities.
+Each item is already tracked in [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md). This list is the **code-focused view** — when you're about to touch a relevant area, scan here for bundling opportunities.
 
 | Item | Where it bites | Bundle with |
 |---|---|---|

@@ -1,5 +1,5 @@
 // CachedTicketFieldValueRef.test.cpp — Phase 5 pull-forward of
-// docs/plans/active/memory-budget-and-lifetime-hardening.md.
+// docs/plans/shipped/memory-budget-and-lifetime-hardening.md.
 //
 // Locks the zero-copy CachedTicket::GetFieldValueRef accessor added to avoid the
 // per-comparison std::string copies GetFieldValue() made inside the grid's
