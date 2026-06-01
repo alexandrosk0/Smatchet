@@ -66,6 +66,6 @@ python scripts/dev/agent-eval-score.py "$BASE" "$HEAD" \
 
 ## Adding a case
 
-Drop a `tests/agent-eval/code-review/<caseId>.json` conforming to `case-schema.json` (the bats suite validates every case). Record enough to reconstruct the run: `repoRef`, `baseBranch`, `files`/`diff`, `toolPosture`, the exact `delegationPacket`, the scored `dimensions`, and the `referenceOutcome`. The current cases are **real and reproducible** — each is anchored to a historical commit (`repoRef` = the buggy parent of a real `fix(` commit), with `referenceOutcome` = the ground truth the fix established. Mine new ones the same way (`git log fix(`, diff the fix, take the parent as the buggy state); the flywheel will later auto-harvest them from live traces.
+Drop a `tests/agent-eval/code-review/<caseId>.json` conforming to `case-schema.json` (the bats suite validates every case). Record enough to reconstruct the run: `repoRef`, `baseBranch`, `files`/`diff`, `toolPosture`, the exact `delegationPacket`, the scored `dimensions`, and the `referenceOutcome`. The current cases are **real and reproducible** — each is anchored to a historical commit (`repoRef` = the buggy parent of a real `fix(` commit), with `referenceOutcome` = the ground truth the fix established. Mine new ones the same way (`git log --grep='^fix(' --oneline`, diff the fix, take the parent as the buggy state); the flywheel will later auto-harvest them from live traces.
 
 Coverage beyond `code-review` is added only after the MVP proves the gate catches a real prompt regression.
