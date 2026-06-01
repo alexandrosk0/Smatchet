@@ -22,7 +22,7 @@ class IdleScenario : public IScenario {
     std::string Name() const override { return "idle"; }
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
-        frames_ = std::max(1, args.value("frames", 600));
+        frames_ = (std::max)(1, args.value("frames", 600));
         // Reset so the captured numbers reflect this run only.
         UiPerfMonitor::Instance().Reset();
     }
