@@ -209,8 +209,60 @@ Per AGENTS.md § Verification automation — zero manual steps. Each slice's ver
 
 ## Implementation log
 
-(empty — populated as slices ship per AGENTS.md "Plan revision after implementation" rule)
+All slices shipped. Paths moved from the planned `Source_Core/` to `Source/Core/`
+after the source-root consolidation (#552); the symbols and shapes match the plan.
+
+- **Slice 1 — `CodeColorView` substrate** (shipped). `Source/Core/include/Ui/CodeColorView.h`
+  + `Source/Core/src/Ui/CodeColorView.cpp` (ns `smatchet::code_color`): `CodeLang`
+  enum, `FromTag` alias map, `LangFromFilePath`, `CanonicalName`, the LD-walking
+  `Tokenize`, hand-rolled Python/Bash/JSON LDs, and the `(content_hash, lang,
+  theme_revision)`-keyed cache. Doctest `tests/Core/CodeColorViewLang.test.cpp`.
+- **Slice 2 — markdown code-block wiring** (shipped). `MarkdownPreviewRender.cpp`
+  routes every fenced block through `DrawColoredCodeBlock`; non-empty tags that
+  `FromTag` classifies `Plain` fall back to `LangFromFilePath` (CR #353 — handles
+  `foo.py`-style fence names).
+- **Slice 3 — theme-swap cache invalidation** (shipped). `SmatchetTheme.cpp` carries
+  the monotonic `g_themeRevision` atomic, bumped in `ApplyStyle`; exposed via
+  `SmatchetTheme::GetThemeRevision()`; the cache key snapshots it so a theme switch
+  misses and re-resolves the palette. Doctest cases in `CodeColorViewLang.test.cpp`
+  (`GetCacheRebuildCountForTest` / `TokenizeCachedForTest`).
+- **Slice 4 — language-badge tooltip** (shipped). `MarkdownPreviewRender.cpp` draws a
+  ghosted `TextDisabled` badge + `DelayNormal` hover tooltip naming the LD + the
+  fence-tag origin.
+- **Slice 5a — annotate-view wiring** (shipped). `AnnotateAnalysisUi_Window.cpp`
+  consumes `CodeColorView`.
+- **Golden gate** (this PR, #651, merge `99318756`). `CodeSyntaxColoringScenario`
+  renders C++ / Python / Lua / Bash / JSON / Plain via `DrawColoredCodeBlock` into a
+  deterministic opaque window + triggers the PNG capture; registered in
+  `SmatchetScenarioRegistry.cpp` (+ stub + snapshot test), wired into
+  `scripts/dev/test-screenshot-diff.sh`, golden at
+  `tests/golden/code-syntax-coloring.png`. Closes the deferred golden-image gap.
 
 ## Deviations from plan
 
-(empty — populated as slices ship)
+- **Paths**: plan wrote `Source_Core/…`; the tree is `Source/Core/…` post-#552. No
+  semantic change.
+- **`SmatchetThemeSyntaxColors` grew an `Identifier` field** (slice 6, unplanned at
+  authoring): identifiers previously fell through to `ImGuiCol_Text` and read as
+  uncoloured on identifier-dominated views; a per-theme `Identifier` tint was added.
+- **Slice 5b/5c not shipped**: `SmatchetFieldRender` grid-cell-tooltip wiring (5b) and
+  per-token hover tooltips (5c) remain deferred — no consuming tracker schema for 5b
+  yet, and 5c is gated on a perf-headroom check. Tracked in the backlog.
+- **Known live bug (separate track)**: code-color slices 5+6+7 (#353) shipped with the
+  long-text editor + callstack-tooltip paths not visibly colouring (missing
+  `editor.Colorize(0, -1)` after `SetLanguageDefinition`; the annotate path calls it
+  and works). Filed P1 in `docs/self-improvement/categories/bug.md` (2026-05-21);
+  fix queued as a follow-up. NOT addressed by this golden PR, which covers the
+  markdown `DrawColoredCodeBlock` path only.
+
+## Verification (actual)
+
+- Standalone built clean (MSVC iter) in an isolated worktree; the new scenario TU
+  compiled into `SmatchetStandalone`.
+- `cmd scenario.run --name=code-syntax-coloring` returned
+  `captureRequested:true, sampleCount:6, ok:true`.
+- The captured render was reviewed and approved by the repo owner before the golden
+  was committed (golden-image-approval contract): per-language keyword / string /
+  comment / number / identifier colouring distinct; Plain renders flat-orange.
+- PR #651 CI green — Windows+MSVC (full + light), Bucket-C/E (Mesa headless GL),
+  ASAN, Perf-PR-fast, CodeRabbit 0-actionable. Squash-merged as `99318756`.
