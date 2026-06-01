@@ -64,6 +64,8 @@
 
 #include "FieldCatalogCache.h"
 
+#include "Ui/SmatchetFieldRender.h"
+
 #include <ghc/filesystem.hpp>
 
 #include "DefaultTrackerBackendFactory.h"
@@ -1534,6 +1536,20 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         } catch (...) {
             LOG_WARN("AppController::Initialize: project-scope audit failed: unknown exception");
         }
+    }
+
+    // Seed the callstack-field syntax-highlight hint from persisted config at startup.
+    // Without this, g_callstackFieldId stays empty until the Annotate window first
+    // hydrates (AnnotateAnalysisUi_Config.cpp::HydrateAnnotateCfgDiskOnce) — so opening
+    // a configured callstack field's grid cell / long-text editor before ever visiting
+    // the Annotate window rendered it as plain markdown instead of C++-coloured. Seeding
+    // here makes the hint live for the whole session regardless of UI navigation order.
+    try {
+        SetCallstackFieldIdHint(ConfigManager::LoadAnnotateAnalysis().CallstackTrackerFieldId);
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController::Initialize: callstack-field hint seed failed: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("AppController::Initialize: callstack-field hint seed failed: unknown exception");
     }
 
 #if defined(SMATCHET_WITH_AI)

@@ -417,19 +417,31 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
         }
         const std::string& tipSource =
             isDescriptionLike ? descMd : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
+        // Slice 7 of docs/plans/active/code-syntax-coloring-and-tooltips.md — when the field is
+        // the configured callstack field, colour the tooltip via the semantic callstack tokenizer
+        // (same as the cell + RenderClippedFieldText path). Without this branch the callstack
+        // tooltip fell through to plain TextUnformatted while the cell was coloured.
+        const bool isCallstack = IsCallstackFieldId(field.Id);
         if (!tipSource.empty()) {
             ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
             if (isDescriptionLike) {
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
                 MarkdownPreviewRender::Options opts;
                 opts.mode = MarkdownPreviewRender::Mode::Tooltip;
                 opts.clickableLinks = false;
                 opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
                 MarkdownPreviewRender::Render(tipSource, opts);
+                ImGui::PopTextWrapPos();
+            } else if (isCallstack) {
+                // No wrap-pos: callstack source lines are per-line semantic tokens
+                // (Module!Class::Method() [File:Line]); word-wrapping them mid-line
+                // mangles the layout. Render each line full-width like the cell path.
+                DrawColoredCallstackText(tipSource.c_str());
             } else {
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
                 ImGui::TextUnformatted(tipSource.c_str());
+                ImGui::PopTextWrapPos();
             }
-            ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
     }

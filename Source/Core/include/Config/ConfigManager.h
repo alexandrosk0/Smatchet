@@ -115,6 +115,10 @@ struct TrackerConfig {
     // When true (default), single click on a grid cell starts editing. False requires double-click.
     // Exposed in Settings -> Preferences -> Appearance.
     bool SingleClickToEditGridCells = true;
+    // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
+    // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
+    // Exposed in Settings -> Preferences -> Grid.
+    bool DefaultLongTextEditorPreview = false;
     // When true, tracker-changing actions are disabled. Defaults on only for first launch with no setup config.
     bool ReadOnlyMode = false;
     // True after at least one AuthenticatedReachable probe / live request has been observed.

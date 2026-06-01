@@ -35,6 +35,12 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
                 MarkPrefsDirty(d);
             }
             ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
+            if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
+                MarkPrefsDirty(d);
+            }
+            ImGui::SetItemTooltip("When on, the long-text edit modal (description, callstack, custom textarea fields) "
+                                  "opens showing the rendered preview. When off (default) it opens in edit mode. "
+                                  "Ctrl+P cycles Edit/Split/Preview either way.");
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Fields Inputs")) {

@@ -786,6 +786,7 @@ static void RenderUncachedRuns(const std::vector<StyledRun>& runs, const RenderS
 }
 
 // Emit a single plan block as ImGui draw calls.
+// SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy; reason=one switch over every markdown block kind (prose/heading/code/table/list/...); each case is a self-contained ImGui draw — splitting per-case adds indirection without reducing the dispatch's intrinsic branchiness; the inline code-block selection edit pushed it just over the 200L cap; owner=unowned; revisit=decompose-top-20-monoliths)
 static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
     using BK = PreviewPlan::Block;
     switch (b.kind) {
@@ -906,18 +907,69 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
             if (ImGui::SmallButton("Copy##codeblock")) {
                 ImGui::SetClipboardText(b.codeBuffer.c_str());
             }
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
-            const float h = ImGui::GetTextLineHeightWithSpacing() *
-                            static_cast<float>(1 + std::count(b.codeBuffer.begin(), b.codeBuffer.end(), '\n'));
-            ImGui::BeginChild("##mdpreview_code", ImVec2(-FLT_MIN, std::min(h + 12.0f, 240.0f)), true,
-                              ImGuiWindowFlags_HorizontalScrollbar);
+            // B1 unified selection (code-syntax-coloring follow-up): render the
+            // fenced block INLINE in the outer window — no nested BeginChild —
+            // so it shares the prose SelectableText context and the outer
+            // End()'s input routing makes code drag-selectable with zero special
+            // handling. Trade-off (user-approved): the block loses its own
+            // horizontal scrollbar + 240px height clamp; a very wide line now
+            // extends into the outer page scroll.
+            ImFont* const monoFont = fonts.Mono ? fonts.Mono : ImGui::GetFont();
+            const float lineH = ImGui::GetTextLineHeightWithSpacing();
+            const int lineCount =
+                1 + static_cast<int>(std::count(b.codeBuffer.begin(), b.codeBuffer.end(), '\n'));
+            const ImVec2 codeStart = ImGui::GetCursorScreenPos();
+            const float codeBgPad = 6.0f;
+            const float codeBlockH = static_cast<float>(lineCount) * lineH;
+            // Dark code-block background, drawn behind the glyphs (mirrors the
+            // prose loop's inline-code dl->AddRectFilled). Replaces the removed
+            // child's ImGuiCol_ChildBg. Span the full available width.
+            ImDrawList* const codeDl = ImGui::GetWindowDrawList();
+            const float codeAvailW = ImGui::GetContentRegionAvail().x;
+            codeDl->AddRectFilled(ImVec2(codeStart.x - codeBgPad, codeStart.y - codeBgPad * 0.5f),
+                                  ImVec2(codeStart.x + codeAvailW, codeStart.y + codeBlockH + codeBgPad * 0.5f),
+                                  ImGui::GetColorU32(ImVec4(0.12f, 0.12f, 0.14f, 1.0f)), 3.0f);
+            // Colored glyphs — DrawColoredCodeBlock owns its own cursor advance.
+            // Keep the mono font pushed across the segment-registration loop so
+            // line widths are measured under the same font the glyphs used.
             if (fonts.Mono)
                 ImGui::PushFont(fonts.Mono);
             smatchet::code_color::DrawColoredCodeBlock(b.codeBuffer.c_str(), lang, b.codeLang);
+            // Record-only selection segments, one per source line, with hit-rects aligned to where
+            // DrawColoredCodeBlock painted each row. Kept at one segment per line rather than per
+            // glyph so the hot AI-history path stays within the Pillar 1 budget. RegisterSegment
+            // records rects only (emits no glyphs), so it overlays the coloured draw above.
+            // Each segment includes its trailing newline (when present) in the byte range so a
+            // multi-line drag-copy preserves line breaks instead of collapsing the block.
+            if (r.selCtx) {
+                const char* const bufBegin = b.codeBuffer.c_str();
+                const char* const bufEnd = bufBegin + b.codeBuffer.size();
+                const char* lineBegin = bufBegin;
+                int lineIdx = 0;
+                // lineH is measured under the mono font (PushFont above) so the hit-rect height
+                // matches the glyphs' actual line advance, avoiding vertical drift when the mono
+                // font's line height differs from the default.
+                const float monoLineH = ImGui::GetTextLineHeightWithSpacing();
+                while (lineBegin <= bufEnd) {
+                    const char* lineTextEnd = lineBegin;
+                    while (lineTextEnd < bufEnd && *lineTextEnd != '\n') {
+                        ++lineTextEnd;
+                    }
+                    // Segment byte range spans through the newline (if any) so copy keeps '\n'.
+                    const char* const segEnd = (lineTextEnd < bufEnd) ? lineTextEnd + 1 : lineTextEnd;
+                    const ImVec2 lineScreenPos(codeStart.x, codeStart.y + static_cast<float>(lineIdx) * monoLineH);
+                    const float lineWidth = ImGui::CalcTextSize(lineBegin, lineTextEnd).x;
+                    SelectableText::RegisterSegment(*r.selCtx, lineBegin, segEnd, lineScreenPos, monoLineH, monoFont,
+                                                    lineWidth, nullptr);
+                    if (lineTextEnd == bufEnd) {
+                        break;
+                    }
+                    lineBegin = lineTextEnd + 1;
+                    ++lineIdx;
+                }
+            }
             if (fonts.Mono)
                 ImGui::PopFont();
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
             ImGui::PopID();
         }
         if (r.selCtx) {
