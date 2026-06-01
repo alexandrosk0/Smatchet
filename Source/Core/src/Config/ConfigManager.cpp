@@ -214,6 +214,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["jql"] = config.JqlQuery;
     j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
     j["single_click_to_edit_grid_cells"] = config.SingleClickToEditGridCells;
+    j["default_long_text_editor_preview"] = config.DefaultLongTextEditorPreview;
     j["read_only_mode"] = config.ReadOnlyMode;
     j["backend_has_been_reachable"] = config.BackendHasBeenReachable;
     j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
@@ -692,6 +693,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
             cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
             cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
             cfg.SingleClickToEditGridCells = j.value("single_click_to_edit_grid_cells", cfg.SingleClickToEditGridCells);
+            cfg.DefaultLongTextEditorPreview =
+                j.value("default_long_text_editor_preview", cfg.DefaultLongTextEditorPreview);
             cfg.ReadOnlyMode = j.value("read_only_mode", cfg.ReadOnlyMode);
             cfg.BackendHasBeenReachable = j.value("backend_has_been_reachable", cfg.BackendHasBeenReachable);
             cfg.GridEndWheelSwallowsBeforeHorizontal =

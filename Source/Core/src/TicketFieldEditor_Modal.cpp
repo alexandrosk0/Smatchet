@@ -13,11 +13,19 @@
 #include "TicketFieldEditorLongTextPure.h"
 #include "TrackerFieldSchema.h"
 
+#include "Ui/SmatchetUiSession.h"
+
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
+
+// g_ui — unconditional extern (defined in SmatchetUI.cpp without a
+// SMATCHET_WITH_LUA_AUTOMATION guard; the header-side extern is gated). Read for
+// the persisted default-view preference (cfg.DefaultLongTextEditorPreview) when
+// opening the long-text modal. Same shim DockGapSentinelScenario uses.
+extern UiDrawSession g_ui;
 
 #include <algorithm>
 #include <chrono>
@@ -102,6 +110,13 @@ void OpenLongTextEditor(AppController& app, const std::string& issueId, const Tr
     s_ActiveLongTextState.OriginalRichValue = currentRichValue;
     s_ActiveLongTextState.RichKind = ClassifyRichValue(currentRichValue);
     s_ActiveLongTextState.RawMode = false;
+    // Seed the default view mode from the persisted preference. Preview opens the
+    // rendered pane; Edit (default) opens the text editor. Ctrl+P still cycles
+    // Edit/Split/Preview at runtime. RawMode (set later for non-round-trippable
+    // HTML) forces EditOnly regardless via effectiveMode.
+    s_ActiveLongTextState.PreviewMode = g_ui.cfg.DefaultLongTextEditorPreview
+                                            ? ActiveLongTextEditorState::PreviewModeT::PreviewOnly
+                                            : ActiveLongTextEditorState::PreviewModeT::EditOnly;
     s_ActiveLongTextState.DroppedAdfNodeTypes.clear();
     s_ActiveLongTextState.LoadingMarkdown = false;
     ++s_ActiveLongTextState.LoadGen;
@@ -191,7 +206,11 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     }
 
-    if (ImGui::BeginPopupModal(kLongTextModalPopupId, nullptr,
+    // p_open drives the title-bar close (X), same affordance as every other window. Clicking it
+    // flips modalOpen=false and ImGui auto-closes the popup, so control falls to the `else` branch
+    // below which runs CloseLongTextEditor() — identical discard semantics to Esc / the Cancel button.
+    bool modalOpen = true;
+    if (ImGui::BeginPopupModal(kLongTextModalPopupId, &modalOpen,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::Text("Edit %s — %s", s_ActiveLongTextState.FieldLabel.c_str(), s_ActiveLongTextState.IssueId.c_str());
         // Required-field marker: red asterisk with tooltip, mirrors the inline-glyph in new-issue draft rows.

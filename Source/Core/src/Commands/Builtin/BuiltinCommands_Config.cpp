@@ -99,6 +99,7 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
             {"showLogWindow", "show_log_window", ""},
             {"enableFieldOverflowTooltips", "field_overflow_tooltips", ""},
             {"singleClickToEditGridCells", "single_click_to_edit_grid_cells", ""},
+            {"defaultLongTextEditorPreview", "default_long_text_editor_preview", ""},
             {"jqlQuery", "jql", "takes effect on next sync"},
             {"domain", "domain", "restart required to reconnect"},
             {"email", "email", "restart required to reconnect"},
