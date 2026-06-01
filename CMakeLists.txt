@@ -890,6 +890,16 @@ function(smatchet_configure_dx12_core_impl_target _target)
     )
     # SmatchetCore_DX12 is packaged into the Unreal plugin; enable embed-only UI affordances.
     target_compile_definitions("${_target}" PRIVATE SMATCHET_EMBEDDED_IN_UNREAL=1)
+    if(WIN32)
+        # NOMINMAX/WIN32_LEAN_AND_MEAN are defined in SmatchetPch.h, but the DX12 lib does
+        # not reliably get the PCH ahead of every transitive <windows.h>, so the min/max
+        # macros leak and break bare std::max/std::min (C2589). A command-line define
+        # precedes every include in every TU and bulletproofs the whole target at once.
+        # Unreal itself also defines NOMINMAX; matching that here avoids divergence. CMake
+        # de-dups identical definitions, and the values match Unreal's, so no redefinition
+        # warning results.
+        target_compile_definitions("${_target}" PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
     if(MSVC)
         # ConfigManager (and other TU) still use CRT APIs MSVC marks deprecated (e.g. getenv → C4996).
         target_compile_definitions("${_target}" PRIVATE _CRT_SECURE_NO_WARNINGS)

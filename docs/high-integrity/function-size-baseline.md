@@ -3,12 +3,10 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --funcsize-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py --diff); this file is an informational snapshot, not the gate input._
 
-## function-too-long (37 entries, cap 200 lines)
+## function-too-long (34 entries, cap 200 lines)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 340 lines
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 945 lines
 - `AppController.cpp` · `AppController::Initialize/2` · 448 lines
-- `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEdit/4` · 258 lines
-- `BuiltinCommands_Debug.cpp` · `RegisterDebugCommands/2` · 315 lines
 - `ConfigManager.cpp` · `ConfigManager::Load/1` · 621 lines
 - `ConfigManager.cpp` · `ConfigManager::Save/1` · 315 lines
 - `JiraIssueMutation.cpp` · `JiraClient::UpdateIssueFields/3` · 243 lines
@@ -38,16 +36,14 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 367 lines
 - `TicketSyncService.cpp` · `TicketSyncService::TickStreamingApply/0` · 279 lines
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 243 lines
-- `ViewCommands.cpp` · `RegisterViewCommands/2` · 295 lines
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
 - `main.cpp` · `main/2` · 561 lines
 
-## function-too-branchy (71 entries, cap 30 branches)
+## function-too-branchy (69 entries, cap 30 branches)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 44 branches
 - `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 33 branches
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 196 branches
 - `AppController.cpp` · `AppController::Initialize/2` · 63 branches
-- `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEdit/4` · 43 branches
 - `AppController_LuaBindings_Draw.cpp` · `ReplayCmdList/6` · 43 branches
 - `CodeColorView.cpp` · `TokenizeWithLd/4` · 37 branches
 - `CompactDateFormat.cpp` · `FormatCompactJiraDateForDisplay/3` · 36 branches
@@ -111,9 +107,8 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 44 branches
 - `TrackerFieldValueParser.cpp` · `NormalizeTrackerFieldValue/1` · 54 branches
 - `TrackerFieldValueParser.cpp` · `ParseChangelog/1` · 44 branches
-- `ViewCommands.cpp` · `RegisterViewCommands/2` · 32 branches
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 39 branches
 - `main.cpp` · `main/2` · 75 branches
 
 ## Totals
-- oversized functions grandfathered: 108
+- oversized functions grandfathered: 103

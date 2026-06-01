@@ -162,7 +162,7 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
         engine_ = nullptr;
     }
     out["passed"] = passed_;
-    out["failed"] = std::max(0, tested_ - passed_);
+    out["failed"] = (std::max)(0, tested_ - passed_);
     out["tested"] = tested_;
     out["filter"] = filter_;
     out["outPath"] = outPath_;
