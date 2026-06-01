@@ -94,7 +94,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | 2026-05-30 | Plan — Reduce source-comment bloat across first-party C++ |
 | [`split-scripts-build-vs-agentic`](shipped/split-scripts-build-vs-agentic.md) | 2026-05-30 | Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. |
 | [`subagent-eval-harness`](shipped/subagent-eval-harness.md) | 2026-05-30 | Plan — Subagent eval harness (eval-driven development for the dev-agent fleet) |
-| [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | — | Plan — Memory budget & lifetime hardening |
+| [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
 <!-- END auto-plan-index -->
 
 ### Notes
