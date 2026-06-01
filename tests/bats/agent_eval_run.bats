@@ -20,7 +20,7 @@ setup() {
     SCORER="$REPO_ROOT/scripts/dev/agent-eval-score.py"
     VALIDATOR="$REPO_ROOT/tests/agent-eval/validate_schema.py"
     POLICY="$REPO_ROOT/docs/agent-eval/scoring-policy.json"
-    CASE="$REPO_ROOT/tests/agent-eval/code-review/cr-null-deref-grid.json"
+    CASE="$REPO_ROOT/tests/agent-eval/code-review/cr-dpapi-secret-loss.json"
     export RUNNER SCORER VALIDATOR POLICY CASE
 
     if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
@@ -45,7 +45,7 @@ setup() {
     bash "$RUNNER" "$CASE" --prompt-root="$REPO_ROOT" --fake-runner --out="$out"
     run "$PY" -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d["caseId"], d["harness"], d["promptRoot"])' "$out"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"cr-null-deref-grid"* ]]
+    [[ "$output" == *"cr-dpapi-secret-loss"* ]]
     [[ "$output" == *"fake-runner"* ]]
 }
 

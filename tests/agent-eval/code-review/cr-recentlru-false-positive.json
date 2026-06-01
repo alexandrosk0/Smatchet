@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "caseId": "cr-recentlru-false-positive",
+  "agent": "code-review",
+  "description": "Real calibration case (commit 42aecd27 was a cppcheck useStlAlgorithm STYLE cleanup, NOT a bug fix): the hand-rolled remove-and-shift loop in RecentViewLru::Touch LOOKS like off-by-one / OOB bait (j < size_ - 1, entries_[j + 1]) but is correct \u2014 the last valid index is size_-1 and the shift stops one short. A strong reviewer reports zero genuine bugs.",
+  "repoRef": "82378809",
+  "baseBranch": "develop",
+  "files": [
+    "Source_Core/include/SmatchetUI.h"
+  ],
+  "diff": "--- a/Source_Core/include/SmatchetUI.h\n+++ b/Source_Core/include/SmatchetUI.h\n@@ RecentViewLru::Touch @@\n             // Remove existing occurrence to avoid duplicates.\n             for (int i = 0; i < size_; ++i) {\n                 if (entries_[i] == commandId) {\n                     for (int j = i; j < size_ - 1; ++j) {\n                         entries_[j] = entries_[j + 1];\n                     }\n                     --size_;\n                     break;\n                 }\n             }\n",
+  "toolPosture": "read-only",
+  "delegationPacket": "Review this diff to Source_Core/include/SmatchetUI.h (RecentViewLru::Touch) for correctness bugs. Report ONLY genuine correctness bugs, each with file:line, a severity (critical/high/medium/low/info), and a one-line summary. If there are no genuine bugs, say so explicitly.",
+  "dimensions": [
+    {
+      "key": "correctness",
+      "kind": "judge",
+      "description": "Did the agent correctly conclude the shift loop is bounds-safe (no off-by-one / OOB), rather than inventing a false positive?"
+    },
+    {
+      "key": "finding_count",
+      "kind": "objective",
+      "check": "finding_count",
+      "description": "Reference count is 0 \u2014 any reported finding lowers this score."
+    }
+  ],
+  "referenceOutcome": {
+    "expectedFindingCount": 0,
+    "allowedSeverities": [
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "info"
+    ],
+    "expectedFindings": [],
+    "notes": "Ground truth: commit 42aecd27 replaced this exact loop with std::find as a cppcheck useStlAlgorithm cleanup \u2014 behaviorally identical, no defect. repoRef 82378809 is the parent. The j < size_ - 1 / entries_[j + 1] shift is correct (last valid index size_-1); a naive reviewer flags a phantom OOB read. Correct outcome: zero findings."
+  }
+}

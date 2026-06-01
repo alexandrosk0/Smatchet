@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "caseId": "cr-env-cred-routing",
+  "agent": "code-review",
+  "description": "Real bug (fixed in c76256de): the SMATCHET_TRACKER_TOKEN and SMATCHET_TRACKER_BASE_URL env mappers branch only on Plane-vs-else(Jira). When TrackerType is 'github', the credential and base URL are silently routed to the wrong fields (ApiToken / Domain) and never reach GitHubPat / GitHubBaseUrl, so CI/agent runs start with empty GitHub creds.",
+  "repoRef": "5c6e97fd",
+  "baseBranch": "develop",
+  "files": [
+    "Source_Core/src/ConfigManager.cpp"
+  ],
+  "diff": "--- a/Source_Core/src/ConfigManager.cpp\n+++ b/Source_Core/src/ConfigManager.cpp\n@@ env-var credential mappers @@\n     if (const char* envToken = std::getenv(\"SMATCHET_TRACKER_TOKEN\")) {\n         if (envToken[0] != '\\0') {\n             if (cfg.TrackerType == \"Plane\") {\n                 cfg.PlaneApiKey = envToken;\n             } else {\n                 cfg.ApiToken = envToken;\n             }\n         }\n     }\n     if (const char* envBase = std::getenv(\"SMATCHET_TRACKER_BASE_URL\")) {\n         if (envBase[0] != '\\0') {\n             if (cfg.TrackerType == \"Plane\") {\n                 cfg.PlaneUrl = envBase;\n             } else {\n                 cfg.Domain = envBase;\n             }\n         }\n     }\n",
+  "toolPosture": "read-only",
+  "delegationPacket": "Review this diff to Source_Core/src/ConfigManager.cpp for correctness bugs. The env mappers route tracker credentials by TrackerType; 'github' is a valid TrackerType alongside 'Plane' and Jira. Report each finding with file:line, a severity (critical/high/medium/low/info), and a one-line summary.",
+  "dimensions": [
+    {
+      "key": "correctness",
+      "kind": "judge",
+      "description": "Did the agent spot that both two-way Plane/else branches omit the github case, mis-routing GitHub creds?"
+    },
+    {
+      "key": "actionability",
+      "kind": "judge",
+      "description": "Is each finding specific (names the missing branch + the right target field), not a vague 'handle all types'?"
+    },
+    {
+      "key": "cited_file_line",
+      "kind": "objective",
+      "check": "cited_file_line"
+    },
+    {
+      "key": "severity_enum",
+      "kind": "objective",
+      "check": "severity_enum"
+    },
+    {
+      "key": "finding_count",
+      "kind": "objective",
+      "check": "finding_count"
+    }
+  ],
+  "referenceOutcome": {
+    "expectedFindingCount": 2,
+    "allowedSeverities": [
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "info"
+    ],
+    "expectedFindings": [
+      {
+        "file": "Source_Core/src/ConfigManager.cpp",
+        "line": 1036,
+        "severity": "high",
+        "summary": "SMATCHET_TRACKER_TOKEN mapper has no github branch: a GitHub PAT lands in cfg.ApiToken (Jira field) and never reaches cfg.GitHubPat."
+      },
+      {
+        "file": "Source_Core/src/ConfigManager.cpp",
+        "line": 1049,
+        "severity": "high",
+        "summary": "SMATCHET_TRACKER_BASE_URL mapper has no github branch: the base URL lands in cfg.Domain and never reaches cfg.GitHubBaseUrl."
+      }
+    ],
+    "notes": "Ground truth = fix commit c76256de (added else-if github branches). repoRef 5c6e97fd is the buggy parent. Historical Source_Core/ layout. Two related findings; actionability dimension guards against a vague single 'handle github' non-answer."
+  }
+}

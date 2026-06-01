@@ -27,7 +27,7 @@
 #        [--trials=N] [--out=<path>] [--harness=<name>] [--exe=<path>] [--fake-runner]
 #
 # Examples:
-#   bash scripts/dev/agent-eval-run.sh tests/agent-eval/code-review/cr-null-deref-grid.json \
+#   bash scripts/dev/agent-eval-run.sh tests/agent-eval/code-review/cr-dpapi-secret-loss.json \
 #        --prompt-root=. --fake-runner
 #   bash scripts/dev/agent-eval-run.sh <case> --prompt-root=/path/to/head-worktree --trials=3
 #
