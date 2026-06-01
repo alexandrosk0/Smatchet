@@ -3,7 +3,7 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --funcsize-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py --diff); this file is an informational snapshot, not the gate input._
 
-## function-too-long (40 entries, cap 200 lines)
+## function-too-long (39 entries, cap 200 lines)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 340 lines
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 945 lines
 - `AppController.cpp` · `AppController::Initialize/2` · 432 lines
@@ -15,7 +15,6 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `CliCommandRunner.cpp` · `SpawnAndRun/3` · 249 lines
 - `ConfigManager.cpp` · `ConfigManager::Load/1` · 619 lines
 - `ConfigManager.cpp` · `ConfigManager::Save/1` · 314 lines
-- `JiraIssueMutation.cpp` · `JiraClient::UpdateIssueFields/3` · 243 lines
 - `LuaConsolePlugin.cpp` · `LuaConsolePlugin::OnDraw/1` · 381 lines
 - `OfflineQueueService.cpp` · `OfflineQueueService::TickOfflineFieldEdits/0` · 290 lines
 - `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 321 lines
@@ -45,7 +44,7 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
 - `main.cpp` · `main/2` · 561 lines
 
-## function-too-branchy (73 entries, cap 30 branches)
+## function-too-branchy (72 entries, cap 30 branches)
 - `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 44 branches
 - `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 33 branches
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 196 branches
@@ -64,7 +63,6 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `GitHubQueryFromJql.cpp` · `TranslateJqlToGitHubSearch/3` · 64 branches
 - `HotkeyParse.cpp` · `TokenToVirtualKey/1` · 33 branches
 - `IssueCreatePipeline.cpp` · `ApplyPostIssueSteps/5` · 31 branches
-- `JiraIssueMutation.cpp` · `JiraClient::UpdateIssueFields/3` · 61 branches
 - `JiraIssueSearch.cpp` · `JiraAppendCachedTicketFromSearchIssue/4` · 33 branches
 - `JiraIssueSearch.cpp` · `JiraClient::FetchIssuesStreamed/4` · 48 branches
 - `JiraUserAndMeta.cpp` · `JiraClient::FetchIssueEditMeta/4` · 35 branches
@@ -121,4 +119,4 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `main.cpp` · `main/2` · 75 branches
 
 ## Totals
-- oversized functions grandfathered: 113
+- oversized functions grandfathered: 111
