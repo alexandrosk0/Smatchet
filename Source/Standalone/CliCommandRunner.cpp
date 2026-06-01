@@ -63,7 +63,8 @@ constexpr int kExitHandler = 4;
 constexpr int kExitConfirmRequired = 5;
 constexpr int kExitNotConnected = 6;
 constexpr int kExitTransport = 7;
-// 8 (timeout) + 9 (dry-run-unsupported) are reachable once spawn/dry-run land.
+constexpr int kExitTimeout = 8;
+// 9 (dry-run-unsupported) is reachable once dry-run lands.
 
 // Safe JSON value extractors — never throw on type mismatch or missing keys.
 // ParseArgs stores every --key=value as a string, and external responses can
@@ -789,7 +790,7 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
         env["error"] = {{"code", "timeout"},
                         {"message", "--spawn: ephemeral instance did not become reachable in time."}};
         EmitErrorToStderr(env);
-        return kExitNotConnected;
+        return kExitTimeout;
     }
 
     outHost = host;
@@ -813,6 +814,11 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
         env["command"] = commandName;
         env["error"] = {{"code", "transport"}, {"message", "--spawn: command dispatch failed after launch."}};
         EmitErrorToStderr(env);
+        // Best-effort quit so a reachable-but-erroring instance isn't orphaned.
+        nlohmann::json qb;
+        qb["name"] = "app.quit";
+        qb["arguments"] = {{"__confirm", true}};
+        cli.Post("/mcp/tools/call", qb.dump(), "application/json");
         return kExitTransport;
     }
 
@@ -865,7 +871,7 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         quitBody["name"] = "app.quit";
         quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
         cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
-        return 8;
+        return kExitTimeout;
     }
 
     // Read the result file and build an envelope around it.
@@ -918,6 +924,7 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         errEnv["error"] = {{"code", "handler-error"},
                            {"message", "--spawn: result file is not valid JSON: " + outPath}};
         EmitErrorToStderr(errEnv);
+        return kExitHandler;
     }
     return kExitOk;
 }
@@ -1292,6 +1299,9 @@ bool RunCmdAttachResolveHostPort(int argc, char** argv, ParsedArgs& outPa, std::
                         outPort = instPort;
                     }
                 } catch (...) {
+                    // Best-effort instance.json port discovery: any failure here
+                    // (bad JSON shape, OS probe error) leaves outPort unset so the
+                    // caller falls through to the default port. Non-fatal by design.
                 }
         }
     }
