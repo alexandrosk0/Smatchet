@@ -46,6 +46,13 @@ struct ScriptedReply {
     std::string IssueKey;
 };
 
+struct ScriptedFetchResult {
+    std::vector<CachedTicket> Tickets;
+    bool FullSyncCompleted = true;
+    std::string FetchError;
+    std::string Warning;
+};
+
 struct CreateIssueCall {
     nlohmann::json Fields;
 };
@@ -103,6 +110,17 @@ class FakeTrackerClient : public ITrackerBackend,
                                           std::string* outFetchError = nullptr,
                                           std::string* outWarning = nullptr) override {
         ++fetchIssuesCalls_;
+        if (!fetchQueue_.empty()) {
+            ScriptedFetchResult r = std::move(fetchQueue_.front());
+            fetchQueue_.pop_front();
+            if (outFullSyncCompleted)
+                *outFullSyncCompleted = r.FullSyncCompleted;
+            if (outFetchError)
+                *outFetchError = r.FetchError;
+            if (outWarning)
+                *outWarning = r.Warning;
+            return std::move(r.Tickets);
+        }
         if (outFullSyncCompleted)
             *outFullSyncCompleted = fetchFullSyncCompleted_;
         if (outFetchError)
@@ -365,6 +383,19 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchWarning_ = warning;
     }
 
+    // Enqueue a sequenced fetch result consumed FIFO; once the queue is drained FetchIssues
+    // falls back to the static SetFetchIssuesResult values. Lets fixture-backed scenarios
+    // script "first fetch succeeds, second returns transport error" without resetting state.
+    void EnqueueFetchResult(std::vector<CachedTicket> tickets, bool fullSyncCompleted = true,
+                            const std::string& fetchError = std::string(), const std::string& warning = std::string()) {
+        ScriptedFetchResult r;
+        r.Tickets = std::move(tickets);
+        r.FullSyncCompleted = fullSyncCompleted;
+        r.FetchError = fetchError;
+        r.Warning = warning;
+        fetchQueue_.push_back(std::move(r));
+    }
+
     void SetFetchIssuesForKeysResult(bool ok, std::vector<CachedTicket> tickets,
                                      const std::string& error = std::string()) {
         fetchIssuesForKeysOk_ = ok;
@@ -385,6 +416,7 @@ class FakeTrackerClient : public ITrackerBackend,
         updateFieldCalls_.clear();
         addIssueToSprintCalls_.clear();
         attachFilesCalls_.clear();
+        fetchQueue_.clear();
         probeReachabilityCalls_ = 0;
         fetchIssuesCalls_ = 0;
         fetchIssuesForKeysCalls_ = 0;
@@ -408,7 +440,8 @@ class FakeTrackerClient : public ITrackerBackend,
     TrackerReachabilityProbeResult reachabilityResult_{TrackerReachabilityProbeKind::AuthenticatedReachable, ""};
     std::size_t probeReachabilityCalls_ = 0;
 
-    // FetchIssues
+    // FetchIssues — static fallback + sequenced queue (FIFO, drained before fallback)
+    std::deque<ScriptedFetchResult> fetchQueue_;
     std::vector<CachedTicket> fetchTickets_;
     bool fetchFullSyncCompleted_ = true;
     std::string fetchError_;
