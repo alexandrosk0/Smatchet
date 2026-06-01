@@ -1241,6 +1241,11 @@ bool IsEphemeralMode(int argc, char** argv) {
     return false;
 }
 
+#if defined(SMATCHET_WITH_MCP)
+// The RunCmdAttach phase helpers below dispatch over MCP/httplib and reference
+// MCP-only symbols (PrintCliHelp, SpawnAndRun, ExtractEnvelopeFromMcpResult).
+// They are only ever called from RunCmdAttach's MCP-on branch, so they must be
+// excluded from the light (MCP-off) build — which otherwise fails to compile.
 /// Phase 1 of RunCmdAttach: parse argv and discover the MCP host/port.
 /// Priority: explicit flag > env > instance.json (PID-verified) > default.
 /// Returns false and emits an error envelope if ParseArgs fails.
@@ -1450,6 +1455,7 @@ int RunCmdAttachProcessResult(const ParsedArgs& pa, const nlohmann::json& envelo
     const std::string code = SafeString(errObj, "code", "handler-error");
     return ExitCodeForErrorCode(code);
 }
+#endif // SMATCHET_WITH_MCP — RunCmdAttach phase helpers
 
 int RunCmdAttach(int argc, char** argv) {
 #if !defined(SMATCHET_WITH_MCP)
