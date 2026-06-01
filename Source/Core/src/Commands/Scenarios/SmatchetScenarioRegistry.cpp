@@ -26,6 +26,7 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeLuaRecorderFuzzScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeUiTestScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeDockGapSentinelScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeCodeSyntaxColoringScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario();
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario();
@@ -60,6 +61,11 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // captured PPM against tests/golden/<name>.ppm.
     runner.RegisterFactory("dock-gap-sentinel", []() { return ::MakeDockGapSentinelScenario(); });
     runner.RegisterFactory("command-palette-fuzzy", []() { return ::MakeCommandPaletteFuzzyScenario(); });
+    // code-syntax-coloring — bucket-C golden for the multi-language code-block
+    // colouring feature (docs/plans/active/code-syntax-coloring-and-tooltips.md).
+    // Closes the deferred tooling.md P3 (2026-05-15) "no golden-image screenshot
+    // diff for syntax highlighting" gap.
+    runner.RegisterFactory("code-syntax-coloring", []() { return ::MakeCodeSyntaxColoringScenario(); });
     // theme-switch-roundtrip — bucket-C guard for the user-reported residual-
     // colour bug on SmatchetDark <-> NortonCommander <-> SmatchetDark. See
     // Source/Core/include/Commands/Scenarios/ThemeSwitchRoundtripScenario.h.

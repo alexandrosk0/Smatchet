@@ -83,6 +83,7 @@ FAILED=0
 SCENARIOS=(
     "dock-gap-sentinel"
     "command-palette-fuzzy"
+    "code-syntax-coloring"
 )
 # NOTE: theme-switch-roundtrip is NOT in this list. Its assertion shape is
 # different — it does not gate against a committed golden PNG. Instead the
