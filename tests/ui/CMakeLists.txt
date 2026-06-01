@@ -17,6 +17,7 @@ option(SMATCHET_DEBUG_VISIBLE_CUE_HARNESS "Compile the synthetic visible-cue sta
 
 set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ui_tests_registry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/jira_deterministic_backend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/views_columns_reorder.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/callstack_tooltip_hover.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcp_lua_fresh_state_race.test.cpp"
@@ -42,6 +43,14 @@ set(_SMATCHET_UI_TEST_SOURCES
 # cascade).
 target_sources(SmatchetStandalone PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
 target_link_libraries(SmatchetStandalone PRIVATE SmatchetImGuiTestEngine)
+
+# Slice 3 of docs/plans/active/deterministic-jira-test-backend.md — fixture
+# support source + include path for the Jira backend injection hook in
+# StandaloneAppBootstrap.cpp. Also compiled into DX12 as a no-GL tripwire.
+target_sources(SmatchetStandalone PRIVATE
+    "${CMAKE_SOURCE_DIR}/tests/support/JiraFakeTrackerFixture.cpp")
+target_include_directories(SmatchetStandalone PRIVATE
+    "${CMAKE_SOURCE_DIR}/tests/support")
 
 if(TARGET SmatchetCore_DX12 AND TARGET SmatchetImGuiTestEngine_DX12)
     target_sources(SmatchetCore_DX12 PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
