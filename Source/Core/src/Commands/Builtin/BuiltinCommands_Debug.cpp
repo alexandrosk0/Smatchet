@@ -243,7 +243,7 @@ static void RegisterDebugDockDumpCommand(CommandRegistry& reg, AppController& ap
                                                      indent.c_str(), static_cast<unsigned int>(n->ID), n->Size.x,
                                                      n->Size.y, static_cast<int>(n->LocalFlags), n->Windows.Size,
                                                      static_cast<int>(n->IsEmpty()));
-                                            // Push children (right first so left is processed first).
+                                            // Push right child first — stack is LIFO so left is processed first.
                                             if (n->ChildNodes[1]) {
                                                 stack.push_back({n->ChildNodes[1], frame.depth + 1});
                                             }
