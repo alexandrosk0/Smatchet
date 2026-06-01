@@ -652,7 +652,10 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
     effectiveField.AllowedValueOptions = *opts;
     std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(effectiveField, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
-    const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+    // Resolve the collapsed-cell preview against the same per-project option set as the dropdown
+    // list (effectiveField). Passing the global &field here made cross-project component ids fall
+    // through ResolveDisplayValueForSubmittedSelection's allowed-value scan and render the raw id.
+    const std::string preview = app.ResolveDisplayValue(field.Id, &effectiveField, currentValue);
     const float cellAvail = ImGui::GetContentRegionAvail().x;
     // Arm-then-popup: see RenderSingleSelectEditor. Always Selectable preview; click threshold
     // gated by singleClickToEdit (any-click vs double-click).
@@ -922,7 +925,22 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             display =
                 DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
         } else {
-            display = app.ResolveDisplayValue(column.FieldId, field, currentValue);
+            // Components cells on cross-project views resolve their display name against this row's
+            // own project options (same per-project pattern as RenderMultiSelectEditor). The global
+            // components field has empty/wrong AllowedValueOptions cross-project, so without this the
+            // collapsed cell rendered the raw numeric component id instead of its name.
+            const TrackerField* displayField = field;
+            TrackerField effectiveField;
+            if (field != nullptr && column.FieldId == "components") {
+                std::vector<TrackerFieldOption> perProject =
+                    app.GetComponentOptionsForProject(smatchet::ExtractIssueKeyPrefix(ticket.id));
+                if (!perProject.empty()) {
+                    effectiveField = *field;
+                    effectiveField.AllowedValueOptions = std::move(perProject);
+                    displayField = &effectiveField;
+                }
+            }
+            display = app.ResolveDisplayValue(column.FieldId, displayField, currentValue);
         }
         if (disabled && display.empty()) {
             display = "-";
