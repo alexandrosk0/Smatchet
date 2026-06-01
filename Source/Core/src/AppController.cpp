@@ -53,6 +53,7 @@
 #include <vector>
 
 #include "BackendAuditTrail.h"
+#include "BackgroundWorkerReap.h"
 #include "ConfigManager.h"
 
 #include "Commands/BuiltinCommands.h"
@@ -581,18 +582,39 @@ void AppController::LaunchBackgroundTask(std::function<void()> task) {
         return;
     }
 
-    std::thread worker([this, task = std::move(task)]() mutable {
-        if (shuttingDown_.load()) {
-
-            return;
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread worker([this, task = std::move(task), done]() mutable {
+        if (!shuttingDown_.load()) {
+            task();
         }
-
-        task();
+        // Mark complete LAST so the pool's reap (which joins only done workers) sees a thread
+        // that's past task() — join() then returns essentially immediately.
+        done->store(true, std::memory_order_release);
     });
 
     std::lock_guard<std::mutex> lock(backgroundWorkersMutex_);
+    // Amortized mid-session reap: join + drop any previously-finished workers so the vector
+    // tracks only in-flight (plus just-finished) work, not every task ever spawned.
+    reapFinishedBackgroundWorkersLocked_();
+    backgroundWorkers_.push_back(BackgroundWorker{std::move(worker), std::move(done)});
+}
 
-    backgroundWorkers_.push_back(std::move(worker));
+void AppController::reapFinishedBackgroundWorkersLocked_() {
+    const std::thread::id selfId = std::this_thread::get_id();
+    smatchet::ReapFinishedWorkers(
+        backgroundWorkers_,
+        [&](const BackgroundWorker& w) {
+            // Reapable = task finished (done set) AND not the calling worker itself (never
+            // self-join; leave that one for JoinBackgroundTasks at shutdown).
+            const bool finished = w.done && w.done->load(std::memory_order_acquire);
+            const bool isSelf = w.thread.joinable() && w.thread.get_id() == selfId;
+            return finished && !isSelf;
+        },
+        [](BackgroundWorker& w) {
+            if (w.thread.joinable()) {
+                w.thread.join(); // done flag set → returns immediately
+            }
+        });
 }
 
 void AppController::RetireBackend(std::shared_ptr<ITrackerBackend> old) {
@@ -609,7 +631,7 @@ void AppController::RetireBackend(std::shared_ptr<ITrackerBackend> old) {
 
 void AppController::JoinBackgroundTasks() {
 
-    std::vector<std::thread> workers;
+    std::vector<BackgroundWorker> workers;
 
     {
 
@@ -622,12 +644,12 @@ void AppController::JoinBackgroundTasks() {
 
     for (auto& worker : workers) {
 
-        if (!worker.joinable()) {
+        if (!worker.thread.joinable()) {
 
             continue;
         }
 
-        if (worker.get_id() == selfId) {
+        if (worker.thread.get_id() == selfId) {
             // A background worker called JoinBackgroundTasks — cannot self-join.
             // Re-queue so ~AppController can join it from the main thread.
             // Detaching was the previous behaviour but let detached threads outlive
@@ -638,7 +660,7 @@ void AppController::JoinBackgroundTasks() {
             continue;
         }
 
-        worker.join();
+        worker.thread.join();
     }
 }
 
