@@ -260,7 +260,15 @@ if(NOT SMATCHET_FETCHCONTENT_VERBOSE)
 endif()
 
 smatchet_fetch_status("Fetching nlohmann/json...")
-FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3)
+# GIT_SUBMODULES "" — skip json's submodule fetch (test-data only; not needed for
+# the header-only lib). The submodule-update sub-step runs `git submodule` via a
+# cmd.exe spawn whose PATH (under a vcvars64-sourced shell) drops Git's
+# libexec/git-core, so the helper `git-sh-setup` can't be found and the clone
+# fails with "Failed to update submodules in: .../json-src". Declaring no
+# submodules sidesteps it entirely. See docs/guides/offline-builds.md
+# § Troubleshooting + agents/core/build-doctor.md § Common causes.
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3
+    GIT_SUBMODULES "")
 FetchContent_MakeAvailable(json)
 
 smatchet_fetch_status("Fetching cpr (C++ Requests)...")
