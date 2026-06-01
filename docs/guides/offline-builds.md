@@ -114,7 +114,7 @@ This is the right option for a static team that builds frequently against the sa
 
 **`git-sh-setup: file not found` during a fresh configure.** A from-scratch FetchContent populate of a dep with git submodules fails its submodule-update sub-step:
 
-```
+```text
 Cloning into 'json-src'...
 C:/Program Files/Git/mingw64/libexec/git-core\git-submodule: line 22: .: git-sh-setup: file not found
 CMake Error ... Failed to update submodules in: '.../.fetchcontent-src/json-src'
@@ -129,7 +129,7 @@ The dep's *clone* succeeds; only its *submodule* step dies. Cause: the populate 
 
 **`.fetchcontent-src` cross-worktree cache poisoning.** Configure aborts at the generate step:
 
-```
+```text
 CMake Error: The current CMakeCache.txt directory <A>/.fetchcontent-src/<dep>-subbuild/CMakeCache.txt
   is different than the directory <B>/.fetchcontent-src/<dep>-subbuild where CMakeCache.txt was created.
 CMake Generate step failed.
