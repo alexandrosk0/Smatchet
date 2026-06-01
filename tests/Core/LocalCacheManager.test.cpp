@@ -415,3 +415,62 @@ TEST_CASE("LocalCacheManager: Reopening on a fresh :memory: is consistent (idemp
     CHECK(fix.Ref().LoadDeadPendingCreates().empty());
     CHECK(fix.Ref().LoadDeadPendingFieldEdits().empty());
 }
+
+// --- Phase 3(a): batched SaveTickets (one transaction) — docs/plans/active/memory-budget-and-lifetime-hardening.md ---
+
+TEST_CASE("LocalCacheManager: SaveTickets persists every ticket in the batch") {
+    SqliteMemFixture fix;
+    std::vector<CachedTicket> batch = {MakeTicket("BATCH-1"), MakeTicket("BATCH-2"), MakeTicket("BATCH-3")};
+    fix.Ref().SaveTickets(batch);
+    for (const std::string id : {std::string("BATCH-1"), std::string("BATCH-2"), std::string("BATCH-3")}) {
+        CachedTicket got;
+        REQUIRE(fix.Ref().TryGetTicket(id, got));
+        CHECK(got.GetFieldValue("summary") == "summary for " + id);
+        CHECK(got.GetFieldValue("status") == "Open");
+    }
+}
+
+TEST_CASE("LocalCacheManager: SaveTickets is equivalent to per-ticket SaveTicket") {
+    SqliteMemFixture viaBatch;
+    SqliteMemFixture viaLoop;
+    std::vector<CachedTicket> batch = {MakeTicket("EQ-1"), MakeTicket("EQ-2")};
+    viaBatch.Ref().SaveTickets(batch);
+    for (const auto& t : batch) {
+        viaLoop.Ref().SaveTicket(t);
+    }
+    for (const auto& t : batch) {
+        CachedTicket a;
+        CachedTicket b;
+        REQUIRE(viaBatch.Ref().TryGetTicket(t.id, a));
+        REQUIRE(viaLoop.Ref().TryGetTicket(t.id, b));
+        CHECK(a.fieldValues == b.fieldValues);
+        CHECK(a.fieldRichValues == b.fieldRichValues);
+    }
+}
+
+TEST_CASE("LocalCacheManager: SaveTickets re-save replaces the field snapshot (prepared-stmt reuse across batch)") {
+    SqliteMemFixture fix;
+    CachedTicket t = MakeTicket("RS-1");
+    t.fieldValues["extra"] = "first";
+    fix.Ref().SaveTickets({t});
+    // Re-save the same id in a new batch with a different field set — the delete+insert must
+    // re-run correctly across the reused (reset) prepared statements.
+    CachedTicket revised;
+    revised.id = "RS-1";
+    revised.fieldValues["summary"] = "revised";
+    fix.Ref().SaveTickets({revised, MakeTicket("RS-2")});
+    CachedTicket got;
+    REQUIRE(fix.Ref().TryGetTicket("RS-1", got));
+    CHECK(got.GetFieldValue("summary") == "revised");
+    CHECK(got.GetFieldValue("extra").empty()); // old field gone
+    CHECK(got.fieldValues.size() == 1);
+    CachedTicket got2;
+    REQUIRE(fix.Ref().TryGetTicket("RS-2", got2)); // second ticket in the same batch also landed
+}
+
+TEST_CASE("LocalCacheManager: SaveTickets on an empty batch is a no-op") {
+    SqliteMemFixture fix;
+    fix.Ref().SaveTickets({});
+    CachedTicket got;
+    CHECK_FALSE(fix.Ref().TryGetTicket("anything", got));
+}
