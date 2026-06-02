@@ -417,11 +417,10 @@ static void ResolveExeAndUserDataDirs() {
 // InitAppAndPlugins. Fills `boot` (which WireUserDataAndLogSink already seeded
 // with logPath) on success. Caller must have already wired the log sink + run
 // the cmd/ephemeral short-circuits.
-//
-// Return contract: a non-negative value is an *exit code* — main() must return
-// it immediately (the early-return / cleanup paths below mirror main()'s prior
-// inline behaviour exactly, including glfwTerminate / ImGui shutdown ordering).
-// A return of -1 means "boot succeeded, proceed to RunFrameLoop".
+// Return contract: a non-negative result is an exit code that main returns
+// immediately; the early-return and cleanup paths mirror the prior inline
+// behaviour exactly, preserving glfwTerminate then ImGui shutdown order.
+// A result of -1 means boot succeeded, so proceed to RunFrameLoop.
 static int BootApplication(int argc, char** argv, MainBootState& boot) {
     const std::string& logPath = boot.logPath; // crash reporter records it for next-launch log-tail
 
