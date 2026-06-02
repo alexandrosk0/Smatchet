@@ -528,7 +528,9 @@ TEST_CASE("NormalizeTrackerFieldValue formats Jira timetracking object") {
     tt["timeSpentSeconds"] = 1800;
     const std::string out = NormalizeTrackerFieldValue(tt);
     CHECK(out.find("Original estimate 1h") != std::string::npos);
-    CHECK(out.find("Spent 30m") != std::string::npos);
+    // FormatWorkDurationFromSeconds always emits an hours component when the
+    // higher units are empty, so 1800s renders "0h 30m" (not "30m").
+    CHECK(out.find("Spent 0h 30m") != std::string::npos);
 }
 
 TEST_CASE("NormalizeTrackerFieldValue dumps an unrecognised object verbatim") {
