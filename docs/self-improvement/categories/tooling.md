@@ -7,6 +7,12 @@
 
 ## Triage log
 
+- 2026-06-02 · orchestrator · [tooling] · P3 — no headless probe verifying per-subsystem leaf-doc nearest-wins discovery across harnesses
+  Details: The per-subsystem-agent-docs feature (plan `docs/plans/active/per-subsystem-agent-docs.md`, shipped PR #720) loads each `Source/Core/src/<ctx>/AGENTS.md` per harness — Claude Code via a gitignored `CLAUDE.md` shim that `setup-harness.sh`'s `gen_subsystem_claude_shims()` generates, Codex via native nearest-`AGENTS.md`, Cursor/generic via the `CONTEXT-MAP.md` pointer (`docs/harness/SETUP.md` § Per-subsystem leaf discovery). Claude Code's path was verified live this session (reading a file under `Source/Core/src/Ui/` auto-loaded `Ui/CLAUDE.md`'s `@AGENTS.md`), but Codex + Cursor were NOT verified, and there is no automated regression that a leaf's rules actually reach an agent touching that dir. The plan's § Verification flagged this as semi-manual residue.
+  Concrete next action: script a headless probe — spawn a minimal agent session cd'd into `Source/Core/src/Tracker/`, ask it to cite the rule source for a Tracker invariant, assert it names the leaf `AGENTS.md` (not central `code-review.md`). Run per supported harness once a headless fixture exists; gate in `doc-validation.yml` if cheap. ~1-2 h once a headless harness fixture is available.
+  Status: open
+  Last-reviewed: 2026-06-02
+
 - **2026-05-18** — Triage sweep per [`docs/plans/shipped/agent-docs-improvements.md`](../../plans/shipped/agent-docs-improvements.md) § Action 2. Cadence trigger: category breached the ~20 open-items threshold (was 27).
   - Before: 27 entries
   - Dedup-merged: 1 (Bucket-E tooltip-content-identity helper — 2026-05-17 entry kept as survivor with `Supersedes: 2026-05-16` line; 2026-05-16 sibling dropped)
@@ -82,7 +88,6 @@
   Concrete next action: add `tests/ui/ai_assistant_model_change_strip.test.cpp` that (1) seeds `g_ui.assistantHistory` with one stub assistant message, (2) flips `cfg.AiProviderKind` between Anthropic and DeepSeek, (3) drives a synthetic Send through `AiClientFactory::SetTestOverride` returning a stub `IAiClient` that ack-streams a one-token reply, (4) asserts the strip renders the expected text after the second turn lands. Register via `IM_REGISTER_TEST` + bash driver `scripts/dev/test-ui-ai-assistant-model-change.sh`. ~2 h.
   Status: open
   Last-reviewed: 2026-05-20
-
 
 - 2026-05-18 · git-janitor · [tooling] · P3 — Worktree cross-checkout cleanup gap: `[gone]` branches stranded in sibling worktrees
   Details: After the whisper PR train squash-merged, `git branch -D <branch>` from the worktree that opened the PR failed for branches the active worktree didn't own — `git-janitor` correctly refused to reach into sibling worktrees to do checkout / pull / delete. End result: each operator has to manually visit each worktree at `git worktree list`, ff-pull develop, then delete the stale branch. Multi-worktree setups (this repo has 6 active) compound the friction.
@@ -263,7 +268,6 @@
   Concrete next action: author `scripts/dev/lock-claim-update-p4.sh` modelled on `lock-claim-p4.sh`. Read existing `<lock_prefix><slug>_meta` counter, rebuild claim JSON with updated write-set + bumped `updated`, write back via `p4 counter --from=<old-json> --to=<new-json>` (CAS on the meta counter itself preserves atomicity). Then flip `scripts/dev/lock-claim-update.sh` p4-counter dispatch from `exit 2` to `exec` of the new script. Estimated cost ~1 h. Surfaces only when a p4-backend session needs in-place lock growth — until then the release+re-claim workaround is fine.
   Status: parked
   Last-reviewed: 2026-05-22
-
 
 - 2026-05-28 · orchestrator · [tooling] · P3 — `merge_gates.bats` runs only 22/71 under a non-UTF-8 locale (unicode `→` in test names); force `LC_ALL=C.UTF-8` in the bats invocation
   Details: `tests/bats/merge_gates.bats` uses `→` (U+2192) in many `@test` names. Under a non-UTF-8 locale (the default in Git Bash on Windows here), bats mis-parses those names — emits `bats: unknown test name` and `Executed 22 instead of expected 71`. Pre-existing (reproduces on `develop` too); surfaced while validating PR #511's gh-bundled-jq refactor. `LC_ALL=C.UTF-8 LANG=C.UTF-8 bats tests/bats/merge_gates.bats` runs all 71 green. Not a correctness issue — CI / UTF-8 shells run the full suite — but a contributor running bats directly silently gets a 22/71 partial run with no clear signal it's truncated.
