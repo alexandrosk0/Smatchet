@@ -30,6 +30,14 @@ Slice 1a pattern doc (#630), and the function decompositions `drawActiveProjectW
 `HtmlToMarkdown` 337→67 (#639), `JiraClient::FetchFieldCatalog` 573→51 (#643), Plane
 `FetchFieldCatalog`+`FetchIssuesStreamed` (#647). Gate is **live** — nothing regrows.
 
+> **UPDATE 2026-06-01 — all remaining dedicated non-UI decompositions shipped.** The long-tail
+> command registrars + `SubmitFieldEdit` + `UpdateIssueFields` + `SpawnAndRun`/`RunCmdAttach` (#665–671)
+> and the flagship Phase-A set — `AppController::Initialize` (#676), `AiAssistantController::RunRequest`
+> (#677), `main` (#678), `ConfigManager::Load`/`Save` (#680), `TickOfflineFieldEdits`+`TickStreamingApply`
+> (#679) — have all landed (§ Implementation log). **No dedicated target remains over the 200/30 cap.**
+> Only two things outstand: **Phase B** (ImGui-draw monoliths, perpetual ride-along — by design) and the
+> **tiered-cap next ratchet** (120 non-UI / 200 UI / 100-warning, per user feedback — its own follow-up).
+
 > **Everything below is grandfathered behind the gate** (the delta gate only fails NEW or
 > just-crossed functions). Nothing here is blocking; each can land independently, in any order, as
 > its own PR. The full current oversized set is snapshotted in
@@ -336,6 +344,42 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   `DiscoverSprintBoardIds`, `EnrichSprintFields`) + 7 pure mappers in the existing
   `TrackerFieldCatalogPure` seam (no `ITrackerClient` interface delta). **3 extraction passes** (createmeta
   needed a 3rd-pass sub-split for the branch budget). **Test delta**: +21 cases (26/176 assertions PASS).
+
+### Flagship Phase-A + long-tail batch (2026-06-01) — all remaining dedicated non-UI monoliths
+
+Dispatched as parallel specialist PRs (each single-file, no `baseline.md` edit — confirmed
+informational-not-gate-input, so decomposition PRs need not touch it; this removed the cross-PR
+cascade entirely). Plus the command registrars / `SubmitFieldEdit` / `UpdateIssueFields` /
+`SpawnAndRun`+`RunCmdAttach` long-tail had already landed (#665–671). With this batch, **no dedicated
+target remains over the 200/30 cap** (verified `function_size_audit.py --list` on develop).
+
+- `679eed76` (PR #676) · `AppController::Initialize` 448 L/63 br → thin sequencer + 5 phase helpers
+  (`InitConfig`/`InitBackends`/`InitFieldCatalog`/`InitPlugins`/`InitCommands`). `tests-out-of-band`
+  (bootstrap not unit-testable without full app). Dual-target build PASS.
+- `c864c406` (PR #677) · `AiAssistantController::RunRequest` 340 L/44 br → ~21-line sequence + 5
+  member helpers + 2 pure header helpers (`ComposeSystemPrompt`/`ResolveChatModel`). **Test delta**:
+  +11 cases. Three CodeRabbit "Major" findings verified **pre-existing** vs develop (original made 3
+  `ConfigManager::Load` calls; same string-build; same client fallback) → backlogged (see bug.md).
+- `db353763` (PR #678) · `main()` 561 L/75 br → thin sequence + `BootApplication`/`RunFrameLoop`
+  (+ `WireUserDataAndLogSink`, frame-loop sub-helpers) threaded via a `MainBootState` struct.
+  Standalone-only TU. (Comment-noise gate hit on a doc comment, reworded.)
+- `b8de96dc` (PR #680) · `ConfigManager::Load` 621 L/162 br → **92** + `Save` 315 L/32 br → **70** via
+  typed `FieldDesc<T>` member-pointer registration tables (kills the Load↔Save parallel-duplication
+  class). **Test delta**: ~100-field round-trip + defaults + secret-encryption (27 cases/247 assn).
+  Caught a `db_path` read-only asymmetry the table would have regressed.
+- `dd01613e` (PR #679) · `OfflineQueueService::TickOfflineFieldEdits` 290 L/71 br + `TicketSyncService::
+  TickStreamingApply` 279 L/43 br → thin loops + phase helpers (+ pure `OfflineFieldEditMergeDetail`).
+  **Test delta**: +9 cases. Critical empty-catch (relocated verbatim from develop's unannotated
+  original) annotated `catch-all-ok`; `std::function`/ADF-detection findings rebutted (offline-replay,
+  not steady-state; detection pre-existing per develop).
+
+**Next ratchet (spun out, not this plan's scope):** per user feedback 2026-06-01, the flat 200/30 cap
+is the first ratchet; the maturity step is a **tiered cap** — non-UI **120** / ImGui-draw **200** /
+**100-line soft warning** / branch cap 30→20 for new code, delta-gated (grandfathers everything
+current). Tracked as its own follow-up.
+
+**Phase B (ImGui-draw monoliths) remains perpetual ride-along** per § Status — decompose-on-touch,
+gate-protected, never a sweep.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*

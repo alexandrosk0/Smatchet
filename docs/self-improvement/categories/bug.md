@@ -7,6 +7,24 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-01 · code-review · [bug] · P2 — `AiAssistantController` turn uses 3 separate `ConfigManager::Load()` snapshots (provider refresh, model/effort resolve, agents-cfg)
+  Details: A mid-turn Preferences edit can refresh `client_`/`clientConfig_` for provider A, resolve `chatReq.Model`/effort against a second reload, then build the payload against a third — a torn config view. Pre-existing (verified vs develop: original RunRequest made 3 loads); surfaced + relocated by the RunRequest phase-split (PR #677, CR finding).
+  Concrete next action: take ONE `TrackerConfig` snapshot at turn start, thread it through `RefreshProviderForTurn`/`ResolveModelAndEffort`/`BuildChatPayload` (helpers already take params — now cheap).
+  Status: open
+  Last-reviewed: 2026-06-01
+
+- 2026-06-01 · code-review · [bug] · P2 — `AiAssistantController::RefreshProviderForTurn` returns success on a stale client when rebuild yields null
+  Details: If `MakeAiClient` returns null but an old `client_` exists, the turn proceeds through the stale provider instead of failing closed. Pre-existing; behavior preserved by the refactor (PR #677, CR finding).
+  Concrete next action: on null rebuild, clear `client_` and return false so the turn fails closed with a clear error.
+  Status: open
+  Last-reviewed: 2026-06-01
+
+- 2026-06-01 · code-review · [bug] · P3 — `AiAssistantController::ComposeSystemPrompt` writes raw block name into `<smatchet_context block="...">` unescaped
+  Details: A `"`/`&`/`<` in a Lua-supplied or future dynamic context-block name corrupts the wrapper. Pre-existing (develop built the same string); now isolated in the `ComposeSystemPrompt` pure helper (PR #677, CR finding) — a clean place to fix.
+  Concrete next action: XML/attribute-escape `block.Name`, or assert names match `[A-Za-z0-9_-]`.
+  Status: open
+  Last-reviewed: 2026-06-01
+
 - 2026-05-28 · deep-audit · [bug] · P2 — 11 empty `catch(...){}` blocks lack the mandated `// catch-all-ok:` marker
   Details: `docs/agent-rules/exception-handling-policy.md` hard-rule #1 makes an unmarked empty `catch(...){}` a review CRITICAL. 11 such blocks are on develop: `Source/Standalone/CliCommandRunner.cpp:809,955,1074,1245,1390`; `Source/Core/src/TicketGridModel.cpp:46`; `Source/Core/src/Sync/OfflineQueueService.cpp:476,698`; `Source/Core/src/TicketFieldEditorLongTextPure.cpp:26`; `Source/Core/src/Tracker/PlaneIssueMutation.cpp:328`; `Source/Standalone/StandaloneAppBootstrap.cpp:294`. Running `.claude/hooks/lint-catch-all.py` on CliCommandRunner.cpp returns rc=2 with the exact five `[error]` lines. Most bodies are defensible (e.g. CliCommandRunner.cpp:807-810 is a `std::stoi` parse-fallback) but the policy requires the marker regardless. They shipped because the lint is a local PostToolUse hook, not a CI gate (paired tooling entry). Verified exhaustively (deep-audit, multiline-aware scan — exactly these 11).
   Concrete next action: add `// catch-all-ok: <reason>` to each of the 11 blocks (or a `LOG_DEBUG` where a silent swallow masks signal). ~45 min. Pair with the tooling entry that CI-gates `lint-catch-all.py`.
