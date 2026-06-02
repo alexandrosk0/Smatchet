@@ -146,7 +146,7 @@ void DrawColoredCppLine(const char* utf8Line) {
                 ++j;
             }
             const std::string word(utf8Line + i, utf8Line + j);
-            // Slice 6 of docs/plans/active/code-syntax-coloring-and-tooltips.md —
+            // Slice 6 of code-syntax-coloring-and-tooltips —
             // identifiers now use the per-theme Identifier color (was:
             // ImGuiCol_Text, indistinguishable from plain text).
             const ImVec4 col = IsKeyword(word) ? Rgba(colors.Keyword) : Rgba(colors.Identifier);

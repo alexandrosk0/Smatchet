@@ -418,7 +418,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
         }
         const std::string& tipSource =
             isDescriptionLike ? descMd : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
-        // Slice 7 of docs/plans/active/code-syntax-coloring-and-tooltips.md — when the field is
+        // Slice 7 of code-syntax-coloring-and-tooltips — when the field is
         // the configured callstack field, colour the tooltip via the semantic callstack tokenizer
         // (same as the cell + RenderClippedFieldText path). Without this branch the callstack
         // tooltip fell through to plain TextUnformatted while the cell was coloured.

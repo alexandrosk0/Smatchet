@@ -4,7 +4,7 @@
 // host-process surface (filesystem, subprocess, env, dynamic code load).
 //
 // This is a CONTRACT test, not an INTEGRATION test — `InitLuaCore` is Class C
-// per docs/plans/active/_plan-locks.md § Phase 6 (binding TU includes "imgui.h" + the
+// per _plan-locks § Phase 6 (binding TU includes "imgui.h" + the
 // `__smatchet_app = this` capture). LuaHostFixture mirrors the same lib
 // opens + os whitelist so the sandbox invariant is asserted at the sol2 layer
 // rather than by linking the binding TU.

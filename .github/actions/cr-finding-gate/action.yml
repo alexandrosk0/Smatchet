@@ -3,7 +3,7 @@ description: >-
   Posts a `CR findings (0 actionable)` commit StatusContext reflecting
   CodeRabbit's actionable-finding count on the PR's current head. Lifts the
   "0 actionable" semantics from agents/scripts/core/merge-gates.sh (client-side) to a
-  server-side required check. Plan: docs/plans/active/gate-enforcement-hardening.md
+  server-side required check. Plan: gate-enforcement-hardening
   § Slice 3.
 
 inputs:

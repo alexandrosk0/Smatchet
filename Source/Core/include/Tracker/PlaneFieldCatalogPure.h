@@ -1,7 +1,7 @@
 #ifndef SMATCHET_PLANE_FIELD_CATALOG_PURE_H
 #define SMATCHET_PLANE_FIELD_CATALOG_PURE_H
 
-// Monoliths Phase A (docs/plans/active/decompose-top-20-monoliths.md) — pure-logic
+// Monoliths Phase A of decompose-top-20-monoliths — pure-logic
 // JSON → TrackerField / option mapping helpers extracted out of PlaneFieldCatalog.cpp
 // (which pulls cpr via PlaneClient_Internal.h) so the doctest rig can exercise the
 // branchy Plane-property mapping without HTTP. Mirrors TrackerFieldCatalogPure.h

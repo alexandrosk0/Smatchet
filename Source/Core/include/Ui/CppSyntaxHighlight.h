@@ -8,7 +8,7 @@ void DrawColoredCppLine(const char* utf8Line);
 /** Draw a multi-line C/C++ blob — splits on '\n' and emits one ImGui row per line. */
 void DrawColoredCppText(const char* utf8Multiline);
 
-/** Slice 7 of docs/plans/active/code-syntax-coloring-and-tooltips.md — semantic
+/** Slice 7 of code-syntax-coloring-and-tooltips — semantic
  *  callstack tokenizer. Recognises the `Module!Class::Method(args) [Path\File.ext:Line]`
  *  pattern Smatchet sees from VS-debugger pastes + Unreal callstack dumps;
  *  emits per-element coloured spans:

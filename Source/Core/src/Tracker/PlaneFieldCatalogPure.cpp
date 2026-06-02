@@ -1,4 +1,4 @@
-// Monoliths Phase A (docs/plans/active/decompose-top-20-monoliths.md) — pure-logic
+// Monoliths Phase A of decompose-top-20-monoliths — pure-logic
 // Plane field-catalog mapping helpers extracted from PlaneFieldCatalog.cpp. No cpr,
 // no Logger, no PlaneClient instance state. See PlaneFieldCatalogPure.h for contract.
 

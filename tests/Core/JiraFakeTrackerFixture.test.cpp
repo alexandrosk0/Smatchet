@@ -1,4 +1,4 @@
-// Slice 2 of docs/plans/shipped/deterministic-jira-test-backend.md — Bucket A tests
+// Slice 2 of deterministic-jira-test-backend — Bucket A tests
 // for JiraFakeTrackerFixture (fixture JSON parser + FakeTrackerClient configurator).
 // No HTTP, no AppController, no threading.
 

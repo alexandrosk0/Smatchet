@@ -7,7 +7,7 @@
 // in `AppController_LuaBindings.cpp` whose top-level `#include "imgui.h"` (line 32)
 // + the `state["__smatchet_app"] = this` capture (line 766) drag the full
 // AppController + ImGui surface — Class C per the Phase 6 InitLuaCore
-// classification in docs/plans/active/_plan-locks.md. Tests instead replicate the
+// classification in _plan-locks. Tests instead replicate the
 // sandbox closure invariant (which globals are denied) and the timeout invariant
 // (debug-hook count -> luaL_error -> recoverable C++ exception) at the
 // sol::state level, so production's sandbox + timeout policy stays the single

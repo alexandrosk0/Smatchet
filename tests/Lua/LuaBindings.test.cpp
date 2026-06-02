@@ -1,5 +1,5 @@
 // LuaBindings.test.cpp -- end-to-end round-trip of the `smatchet::lua::InitLuaCore`
-// surface lifted by PR #144 (`docs/plans/active/_plan-locks.md` § Phase-6-unblocker).
+// surface lifted by PR #144 (`_plan-locks` § Phase-6-unblocker).
 // Drives the `Ticket` usertype + `smatchet` / `tracker` / `mcp` / `commands`
 // global tables through a `FakeLuaBindingHost`, asserting:
 //   - `CachedTicket` round-trips C++ -> Lua -> C++ via `smatchet.get_ticket`
