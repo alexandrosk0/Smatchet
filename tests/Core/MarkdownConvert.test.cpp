@@ -127,3 +127,41 @@ TEST_CASE("HtmlToMarkdown: collapses 3+ newlines") { CHECK(Md("<p>a</p><p>b</p><
 TEST_CASE("HtmlToMarkdown: mixed inline within paragraph") {
     CHECK(Md("<p>Hello <strong>bold</strong> and <em>italic</em></p>") == "Hello **bold** and *italic*\n\n");
 }
+
+// ---------------------------------------------------------------------------
+// ParseHtmlTag attribute / token-shape goldens, exercised through the public
+// HtmlSubsetToMarkdown surface. These pin the attribute-loop helper extraction
+// (ConsumeHtmlTagName / ParseOneHtmlAttribute / ApplyHtmlAttribute /
+// ParseHtmlBangOrPi) — output is byte-for-byte identical to the inline parser.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ParseHtmlTag: single-quoted href value") {
+    CHECK(Md("<a href='http://e.com'>link</a>") == "[link](http://e.com)");
+}
+
+TEST_CASE("ParseHtmlTag: unquoted href value stops at first '/'") {
+    // Unquoted attribute values terminate at '/' (the void-tag self-close marker),
+    // so a bare URL is truncated at the first slash. Pinned as-is to preserve the
+    // pre-refactor parser's byte-for-byte behaviour.
+    CHECK(Md("<a href=http://e.com>link</a>") == "[link](http:)");
+}
+
+TEST_CASE("ParseHtmlTag: href entity-decoded") {
+    CHECK(Md("<a href=\"http://e.com/a&amp;b\">link</a>") == "[link](http://e.com/a&b)");
+}
+
+TEST_CASE("ParseHtmlTag: extra ignored attribute before href") {
+    CHECK(Md("<a class=\"btn\" href=\"http://e.com\">link</a>") == "[link](http://e.com)");
+}
+
+TEST_CASE("ParseHtmlTag: img src and alt attributes") { CHECK(Md("<img alt=\"a\" src=\"u.png\">") == "![a](u.png)"); }
+
+TEST_CASE("ParseHtmlTag: self-closed void img") { CHECK(Md("<img src=\"u.png\" alt=\"a\"/>") == "![a](u.png)"); }
+
+TEST_CASE("ParseHtmlTag: uppercase tag name lowercased") { CHECK(Md("<STRONG>x</STRONG>") == "**x**"); }
+
+TEST_CASE("ParseHtmlTag: bang declaration ignored") { CHECK(Md("<!DOCTYPE html>text") == "text"); }
+
+TEST_CASE("ParseHtmlTag: processing instruction ignored") { CHECK(Md("<?xml version=\"1.0\"?>text") == "text"); }
+
+TEST_CASE("ParseHtmlTag: lone '<' is literal when no tag follows") { CHECK(Md("a < b") == "a < b"); }

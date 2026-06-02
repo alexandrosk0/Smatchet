@@ -117,6 +117,170 @@ TEST_CASE("MarkdownToAdf: nested list never lands inside paragraph content") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// AdfToMarkdown per-block / per-inline handler goldens. Each TEST_CASE pins the
+// byte-for-byte output of one block-type or inline-mark handler so the
+// table-driven dispatch refactor of EmitAdfBlock / EmitInlineText is provably
+// behaviour-preserving. AdfToMarkdown trims trailing whitespace/newlines, so the
+// goldens have no trailing blank line.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+json AdfDoc(json content) {
+    json d;
+    d["type"] = "doc";
+    d["content"] = std::move(content);
+    return d;
+}
+
+json AdfText(const std::string& text) {
+    json n;
+    n["type"] = "text";
+    n["text"] = text;
+    return n;
+}
+
+json AdfPara(json content) {
+    json p;
+    p["type"] = "paragraph";
+    p["content"] = std::move(content);
+    return p;
+}
+
+std::string Adf2Md(const json& doc) { return MarkdownConvert::AdfToMarkdown(doc, nullptr); }
+
+} // namespace
+
+TEST_CASE("AdfToMarkdown: paragraph block") {
+    const json doc = AdfDoc(json::array({AdfPara(json::array({AdfText("hello")}))}));
+    CHECK(Adf2Md(doc) == "hello");
+}
+
+TEST_CASE("AdfToMarkdown: heading block clamps level 1-6") {
+    json h;
+    h["type"] = "heading";
+    h["attrs"]["level"] = 2;
+    h["content"] = json::array({AdfText("Title")});
+    CHECK(Adf2Md(AdfDoc(json::array({h}))) == "## Title");
+
+    json h9;
+    h9["type"] = "heading";
+    h9["attrs"]["level"] = 9;
+    h9["content"] = json::array({AdfText("Big")});
+    CHECK(Adf2Md(AdfDoc(json::array({h9}))) == "###### Big");
+}
+
+TEST_CASE("AdfToMarkdown: bulletList / listItem") {
+    json li1;
+    li1["type"] = "listItem";
+    li1["content"] = json::array({AdfPara(json::array({AdfText("a")}))});
+    json li2;
+    li2["type"] = "listItem";
+    li2["content"] = json::array({AdfPara(json::array({AdfText("b")}))});
+    json list;
+    list["type"] = "bulletList";
+    list["content"] = json::array({li1, li2});
+    CHECK(Adf2Md(AdfDoc(json::array({list}))) == "- a\n- b");
+}
+
+TEST_CASE("AdfToMarkdown: orderedList honours start and numbers items") {
+    json li1;
+    li1["type"] = "listItem";
+    li1["content"] = json::array({AdfPara(json::array({AdfText("x")}))});
+    json li2;
+    li2["type"] = "listItem";
+    li2["content"] = json::array({AdfPara(json::array({AdfText("y")}))});
+    json list;
+    list["type"] = "orderedList";
+    list["attrs"]["order"] = 3;
+    list["content"] = json::array({li1, li2});
+    CHECK(Adf2Md(AdfDoc(json::array({list}))) == "3. x\n4. y");
+}
+
+TEST_CASE("AdfToMarkdown: codeBlock with language fence") {
+    json code;
+    code["type"] = "codeBlock";
+    code["attrs"]["language"] = "cpp";
+    code["content"] = json::array({AdfText("int x = 1;")});
+    CHECK(Adf2Md(AdfDoc(json::array({code}))) == "```cpp\nint x = 1;\n```");
+}
+
+TEST_CASE("AdfToMarkdown: blockquote prefixes paragraph") {
+    json bq;
+    bq["type"] = "blockquote";
+    bq["content"] = json::array({AdfPara(json::array({AdfText("quoted")}))});
+    CHECK(Adf2Md(AdfDoc(json::array({bq}))) == "> quoted");
+}
+
+TEST_CASE("AdfToMarkdown: rule emits ---") {
+    json rule;
+    rule["type"] = "rule";
+    CHECK(Adf2Md(AdfDoc(json::array({rule}))) == "---");
+}
+
+TEST_CASE("AdfToMarkdown: unknown block type is dropped") {
+    json weird;
+    weird["type"] = "panel";
+    std::vector<std::string> dropped;
+    const std::string md = MarkdownConvert::AdfToMarkdown(AdfDoc(json::array({weird})), &dropped);
+    CHECK(md.empty());
+    REQUIRE(dropped.size() == 1);
+    CHECK(dropped[0] == "panel");
+}
+
+TEST_CASE("AdfToMarkdown: inline text marks (strong/em/strike)") {
+    json t = AdfText("x");
+    t["marks"] = json::array({json{{"type", "strong"}}, json{{"type", "em"}}});
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({t}))}))) == "***x***");
+
+    json s = AdfText("y");
+    s["marks"] = json::array({json{{"type", "strike"}}});
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({s}))}))) == "~~y~~");
+}
+
+TEST_CASE("AdfToMarkdown: inline code mark wins over emphasis") {
+    json t = AdfText("z");
+    t["marks"] = json::array({json{{"type", "strong"}}, json{{"type", "code"}}});
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({t}))}))) == "`z`");
+}
+
+TEST_CASE("AdfToMarkdown: inline link mark and autolink shortcut") {
+    json link = AdfText("label");
+    link["marks"] = json::array({json{{"type", "link"}, {"attrs", {{"href", "http://e.com"}}}}});
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({link}))}))) == "[label](http://e.com)");
+
+    json bare = AdfText("http://e.com");
+    bare["marks"] = json::array({json{{"type", "link"}, {"attrs", {{"href", "http://e.com"}}}}});
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({bare}))}))) == "http://e.com");
+}
+
+TEST_CASE("AdfToMarkdown: hardBreak inline node") {
+    json hb;
+    hb["type"] = "hardBreak";
+    const std::string md = Adf2Md(AdfDoc(json::array({AdfPara(json::array({AdfText("a"), hb, AdfText("b")}))})));
+    CHECK(md == "a  \nb");
+}
+
+TEST_CASE("AdfToMarkdown: mention falls back to id when text missing") {
+    json m;
+    m["type"] = "mention";
+    m["attrs"]["id"] = "u123";
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({m}))}))) == "@u123");
+
+    json m2;
+    m2["type"] = "mention";
+    m2["attrs"]["text"] = "@alice";
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({m2}))}))) == "@alice");
+}
+
+TEST_CASE("AdfToMarkdown: inlineCard renders bare url") {
+    json card;
+    card["type"] = "inlineCard";
+    card["attrs"]["url"] = "http://card.example";
+    CHECK(Adf2Md(AdfDoc(json::array({AdfPara(json::array({card}))}))) == "http://card.example");
+}
+
 TEST_CASE("MarkdownToAdf: attachment image keeps mediaInline with type=file") {
     // Regression guard: the external-URL fallback must not affect attachment refs.
     const std::string md = "![Screenshot](attachment:abc-123)";
