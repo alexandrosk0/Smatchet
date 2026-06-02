@@ -36,10 +36,11 @@ CENTRAL="agents/core/code-review.md"
 MODE="diff"
 DIFF_REF="origin/develop"
 case "${1:-}" in
+  --diff=*)   DIFF_REF="${1#--diff=}" ;;
   --diff)     DIFF_REF="${2:-origin/develop}" ;;
   --selftest) MODE="selftest" ;;
   "")         ;;
-  *) echo "usage: test-subsystem-docs.sh [--diff <ref> | --selftest]" >&2; exit 2 ;;
+  *) echo "usage: test-subsystem-docs.sh [--diff[=]<ref> | --selftest]" >&2; exit 2 ;;
 esac
 # Staleness needs a resolvable base ref; degrade to structural-only if absent
 # (shallow CI clone, detached HEAD) rather than erroring.
