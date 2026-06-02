@@ -21,7 +21,9 @@ using builtin_detail::PInt;
 using builtin_detail::PString;
 using builtin_detail::ToLowerAscii;
 
-void RegisterTicketsCommands(CommandRegistry& reg, AppController& app) {
+namespace {
+
+void RegisterTicketsListActiveCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c = MakeCommand("tickets.list_active", "Tickets currently loaded in the active project grid.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
@@ -54,7 +56,9 @@ void RegisterTicketsCommands(CommandRegistry& reg, AppController& app) {
         c.Aliases = {"list_active_tickets"}; // back-compat with legacy MCP tool name.
         reg.Register(std::move(c));
     }
+}
 
+void RegisterTicketsSearchActiveCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c = MakeCommand("tickets.search_active",
                                 "Case-insensitive substring search across active-view tickets (id + field values).",
@@ -95,7 +99,9 @@ void RegisterTicketsCommands(CommandRegistry& reg, AppController& app) {
         c.Aliases = {"search_active_tickets"};
         reg.Register(std::move(c));
     }
+}
 
+void RegisterTicketsGetCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c =
             MakeCommand("tickets.get", "Full field map for a single active-view ticket.",
@@ -123,7 +129,9 @@ void RegisterTicketsCommands(CommandRegistry& reg, AppController& app) {
         c.Params = {PString("id", "Ticket id (e.g. 'PROJ-1').", /*required*/ true)};
         reg.Register(std::move(c));
     }
+}
 
+void RegisterTicketsExistsCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c = MakeCommand("tickets.exists", "Whether a ticket id is present in the active view.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
@@ -142,6 +150,15 @@ void RegisterTicketsCommands(CommandRegistry& reg, AppController& app) {
         c.Params = {PString("id", "Ticket id.", /*required*/ true)};
         reg.Register(std::move(c));
     }
+}
+
+} // namespace
+
+void RegisterTicketsCommands(CommandRegistry& reg, AppController& app) {
+    RegisterTicketsListActiveCommand(reg, app);
+    RegisterTicketsSearchActiveCommand(reg, app);
+    RegisterTicketsGetCommand(reg, app);
+    RegisterTicketsExistsCommand(reg, app);
 }
 
 } // namespace cmd
