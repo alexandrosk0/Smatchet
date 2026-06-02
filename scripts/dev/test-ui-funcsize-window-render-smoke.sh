@@ -21,10 +21,12 @@ set -euo pipefail
 EXE="${SMATCHET_EXE:-build/ninja-ui-test-msvc/Smatchet.exe}"
 PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58765}"
-# imgui_test_engine's filter is substring-match (NOT a glob). "FuncSizeWindowRender"
-# is the shared test category, matching all three window-render variants
-# registered in tests/ui/funcsize_window_render_smoke.test.cpp.
-FILTER="${UI_TEST_FILTER:-FuncSizeWindowRender}"
+# imgui_test_engine's filter is substring-match (NOT a glob). "FuncSize" is the
+# common prefix of both Phase-0 test categories — "FuncSizeWindowRender" (the
+# single-flag top-level windows: Log / Audit / Preferences / MCP Server / Bug
+# Report) and "FuncSizePreferencesTabs" (the per-tab body cycle) — so a single
+# substring run drives every Phase-0 green-class structural test.
+FILTER="${UI_TEST_FILTER:-FuncSize}"
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2

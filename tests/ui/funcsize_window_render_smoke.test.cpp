@@ -161,12 +161,94 @@ void RegisterPreferencesWindowRenderSmoke(ImGuiTestEngine* engine) {
     };
 }
 
+#if defined(SMATCHET_WITH_MCP)
+// --- MCP Server window ---------------------------------------------------
+// SmatchetDrawMcpServerPanel (SmatchetMcpServerUi.cpp), drawn by
+// SmatchetDrawMcpServerWindow. Title "MCP Server". Docked window, so the
+// focus re-arm is required exactly like Log/Audit/Preferences. The panel body
+// renders unconditionally (it reads the in-process plugin-host status, which
+// is valid with no tracker backend); "##mcp_panel_split" is an unconditional
+// InvisibleButton with a stable ID — the body has no labelled button/checkbox,
+// so this is the robust child probe. Guarded on SMATCHET_WITH_MCP because the
+// showMcpServerWindow flag only exists in that build.
+void RegisterMcpServerWindowRenderSmoke(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeWindowRender", "McpServerWindow_RendersAndShowsPanelSplit");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        RunWindowRenderSmoke(ctx, &UiDrawSession::showMcpServerWindow, &UiDrawSession::requestMcpServerFocus,
+                             "MCP Server", "##mcp_panel_split");
+    };
+}
+#endif // SMATCHET_WITH_MCP
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+// --- Scripting (Lua console) window --------------------------------------
+// LuaConsolePlugin::OnDraw (Source/Plugins/LuaConsole/LuaConsolePlugin.cpp).
+// Title "Scripting". Docked window opened via g_ui.showLuaAutomationWindow +
+// g_ui.requestLuaAutomationFocus, so it reuses the focus-re-arm recipe exactly
+// like Log/Audit/Preferences/MCP. Once Begin() succeeds the plugin submits the
+// "##lua_script_pane" child unconditionally (it hosts the Scripts/Tools tab
+// bar), so that child's stable ID is the robust probe — the body has no
+// always-present labelled button at the top. Renders with ZERO backend (it
+// lists scripts from disk, which is empty/absent under the test harness without
+// short-circuiting the draw). Guarded on SMATCHET_WITH_LUA_AUTOMATION because
+// the showLuaAutomationWindow flag only exists in that build.
+void RegisterScriptingWindowRenderSmoke(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeWindowRender", "ScriptingWindow_RendersAndShowsScriptPane");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        RunWindowRenderSmoke(ctx, &UiDrawSession::showLuaAutomationWindow, &UiDrawSession::requestLuaAutomationFocus,
+                             "Scripting", "##lua_script_pane");
+    };
+}
+#endif // SMATCHET_WITH_LUA_AUTOMATION
+
+// --- Bug Report window ---------------------------------------------------
+// SmatchetBugReportUi_Draw (SmatchetBugReportUi.cpp). Title "Report a Bug".
+// Unlike the docked windows above this is a plain FLOATING Begin() (no docking
+// prep, no requestXFocus latch) — so Begin() returns true on the first frame
+// and there is no inactive-tab problem to defeat. It opens via showBugReport +
+// the one-frame bugReportOpenLatch (the latch seeds the description buffer on
+// first paint). The "Attach screenshot (text redacted)" checkbox is submitted
+// unconditionally once Begin() succeeds and needs no backend. Because the open
+// recipe differs (latch, not focus flag), this test does not reuse
+// RunWindowRenderSmoke.
+void RegisterBugReportWindowRenderSmoke(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeWindowRender", "BugReportWindow_RendersAndShowsAttachCheckbox");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        g_ui.showBugReport = true;
+        g_ui.bugReportOpenLatch = true;
+        ctx->SetRef("Report a Bug");
+        const bool visible = YieldUntil(ctx, [&] { return WindowIsLive("Report a Bug"); });
+        IM_CHECK_NO_RET(visible);
+
+        if (visible) {
+            const bool itemPresent = ctx->ItemExists("Attach screenshot (text redacted)");
+            IM_CHECK_NO_RET(itemPresent);
+        }
+
+        g_ui.showBugReport = false;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterFuncSizeWindowRenderSmokeTests(ImGuiTestEngine* engine) {
     RegisterLogWindowRenderSmoke(engine);
     RegisterAuditWindowRenderSmoke(engine);
     RegisterPreferencesWindowRenderSmoke(engine);
+#if defined(SMATCHET_WITH_MCP)
+    RegisterMcpServerWindowRenderSmoke(engine);
+#endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    RegisterScriptingWindowRenderSmoke(engine);
+#endif
+    RegisterBugReportWindowRenderSmoke(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
