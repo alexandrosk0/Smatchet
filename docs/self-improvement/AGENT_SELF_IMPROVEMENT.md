@@ -103,7 +103,7 @@ without movement.
 | Category | Live count | File |
 |---|---|---|
 | bug         | 17  | [self-improvement/categories/bug.md](categories/bug.md) |
-| process     | 18  | [self-improvement/categories/process.md](categories/process.md) |
+| process     | 19  | [self-improvement/categories/process.md](categories/process.md) |
 | tooling     | 44  | [self-improvement/categories/tooling.md](categories/tooling.md) |
 | infra       | 16  | [self-improvement/categories/infra.md](categories/infra.md) |
 | test        | 18  | [self-improvement/categories/test.md](categories/test.md) |
