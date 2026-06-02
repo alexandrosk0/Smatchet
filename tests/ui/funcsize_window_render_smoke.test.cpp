@@ -88,7 +88,7 @@ bool WindowIsLive(const char* title) {
 // exactly mirroring how the View-menu open path brings a docked panel forward.
 void RunWindowRenderSmoke(ImGuiTestContext* ctx, bool UiDrawSession::* openFlag, bool UiDrawSession::* focusFlag,
                           const char* windowTitle, const char* childItemRef) {
-    AppController* app = SmatchetActiveUiTestAppController();
+    const AppController* app = SmatchetActiveUiTestAppController();
     if (app == nullptr) {
         ctx->LogInfo(
             "SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted under UiTestScenario");
@@ -214,7 +214,7 @@ void RegisterScriptingWindowRenderSmoke(ImGuiTestEngine* engine) {
 void RegisterBugReportWindowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeWindowRender", "BugReportWindow_RendersAndShowsAttachCheckbox");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-        AppController* app = SmatchetActiveUiTestAppController();
+        const AppController* app = SmatchetActiveUiTestAppController();
         if (app == nullptr) {
             ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
             return;
