@@ -488,7 +488,7 @@ def scan_ref_warnings(ref):
         if not text:
             continue
         base = os.path.basename(f)
-        for line, name, arity, ln, br, why in warnings_for(f, text):
+        for _line, name, arity, _ln, _br, _why in warnings_for(f, text):
             keys.add((base, name, arity))
     return keys
 
