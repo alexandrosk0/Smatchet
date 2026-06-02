@@ -53,7 +53,7 @@ docs/design/_plan-locks-archive.md     @alexandrosk0
 
 # Public C++ contracts whose ABI surface is consumed by both targets and
 # every tracker backend / command system / Lua binding.
-Source/Core/include/ITrackerClient.h   @alexandrosk0
+Source/Core/include/ITracker*.h        @alexandrosk0
 Source/Core/include/Commands/          @alexandrosk0
 
 # Top-level agent + project rules. AGENTS.md drives every agent's behaviour

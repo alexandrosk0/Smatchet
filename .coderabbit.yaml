@@ -77,7 +77,7 @@ reviews:
     - path: 'Source/Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}'
       instructions: |
         Backend-specific code (`Jira*`, `Plane*`) MUST NOT leak into
-        `ITrackerClient.h` or other shared interfaces. HTTP goes through
+        `ITrackerBackend.h` or other shared interfaces. HTTP goes through
         `TrackerHttpClient` — flag direct `cpr::` usage in feature files.
         Field-value flow: catalog → parser → payload (no bypasses).
         Tracker writes must wire to `OfflineQueueService` +

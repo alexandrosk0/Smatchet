@@ -8,7 +8,7 @@
 
 ## Context
 
-Smatchet already has a tracker abstraction (`ITrackerClient`) and three in-tree tracker backends: Jira, Plane, and GitHub. Linear fits this architecture as a fourth backend because its issue model maps cleanly onto Smatchet's grid concepts: issue identifier, title, description, workflow state, assignee, labels, priority, project, cycle, timestamps, comments, create, and update.
+Smatchet already has a tracker abstraction (`ITrackerBackend`) and three in-tree tracker backends: Jira, Plane, and GitHub. Linear fits this architecture as a fourth backend because its issue model maps cleanly onto Smatchet's grid concepts: issue identifier, title, description, workflow state, assignee, labels, priority, project, cycle, timestamps, comments, create, and update.
 
 Linear's public API is GraphQL at `https://api.linear.app/graphql`, supports personal API keys and OAuth2, and returns GraphQL errors in a normal `errors` array even when HTTP status is 200. The MVP should use personal API keys, not OAuth, matching Smatchet's existing local-user tracker profile model. References: Linear GraphQL getting started (`https://linear.app/developers/graphql?noRedirect=1`) and Linear rate limiting (`https://linear.app/developers/rate-limiting`).
 
@@ -16,7 +16,7 @@ After this lands, selecting `Linear` in Preferences lets a user sync Linear issu
 
 ## Approach
 
-Implement Linear as a normal `ITrackerClient` backend, mirroring the GitHub rollout rather than introducing a parallel abstraction. Keep the first production slice read-only so the GraphQL transport, pagination, field mapping, view defaults, and Preferences switch can stabilize before mutations are enabled.
+Implement Linear as a normal `ITrackerBackend` backend, mirroring the GitHub rollout rather than introducing a parallel abstraction. Keep the first production slice read-only so the GraphQL transport, pagination, field mapping, view defaults, and Preferences switch can stabilize before mutations are enabled.
 
 Use `cpr` plus `nlohmann::json` directly. Do not add a Linear SDK dependency: the project already has the HTTP and JSON stack, and a TypeScript SDK does not belong in the C++14 core. Build a tiny GraphQL helper that posts `{ "query": "...", "variables": { ... } }`, checks HTTP status, checks the `errors` array, and exposes rate-limit headers in diagnostics.
 
@@ -39,7 +39,7 @@ Key decisions:
 
 Core backend additions:
 
-1. `Source_Core/include/LinearClient.h`: new `ITrackerClient` implementation declaration.
+1. `Source_Core/include/LinearClient.h`: new `ITrackerBackend` implementation declaration.
 2. `Source_Core/src/LinearClient.cpp`: tracker shell, reachability probe, field catalog, browse URL, and routing for shared helpers.
 3. `Source_Core/include/LinearClientHelpers.h` and `Source_Core/src/LinearClientHelpers.cpp`: GraphQL headers, API URL normalization, issue key parsing, ISO timestamp parsing, and GraphQL error extraction.
 4. `Source_Core/src/LinearIssueSearch.h` and `Source_Core/src/LinearIssueSearch.cpp`: paginated issue fetch and per-key lookup.
@@ -79,7 +79,7 @@ Tests and build:
 
 ## Existing utilities reused
 
-- [`ITrackerClient`](../../Source_Core/include/ITrackerClient.h:58): existing tracker abstraction; Linear implements the same virtuals as Jira, Plane, and GitHub.
+- [`ITrackerBackend`](../../Source_Core/include/ITrackerBackend.h:58): existing tracker abstraction; Linear implements the same virtuals as Jira, Plane, and GitHub.
 - [`DefaultTrackerBackendFactory::Create`](../../Source_Core/src/DefaultTrackerBackendFactory.cpp:9): one construction point for backend selection.
 - [`TicketSyncService::StartStreamingSync`](../../Source_Core/src/TicketSyncService.cpp:443): existing async worker path; all Linear network I/O stays off the UI thread.
 - [`TrackerPostLogged`](../../Source_Core/src/TrackerHttpUtils.cpp:139): GraphQL is POST-only, so reuse tracker HTTP logging/timeouts instead of adding ad hoc `cpr::Post` calls.
