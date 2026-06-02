@@ -487,8 +487,19 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
             {
                 std::lock_guard<std::mutex> lock(availableFieldsMutex_);
                 if (projectComponentOptions_.find(projectKey) != projectComponentOptions_.end()) {
-                    continue;
+                    continue;  // already warmed
                 }
+                // Join the in-flight set so a concurrent lazy EnsureProjectComponentsLoaded for the
+                // same project skips its own fetch (and vice-versa). Marker erased on EVERY exit
+                // below (shutdown, fetch-fail, success), mirroring the lazy path's discipline.
+                if (!projectComponentsInFlight_.insert(projectKey).second) {
+                    continue;  // a lazy fetch for this project is already running
+                }
+            }
+            if (shuttingDown_.load()) {
+                std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+                projectComponentsInFlight_.erase(projectKey);
+                break;
             }
             std::vector<TrackerComponent> comps;
             std::vector<TrackerFieldOption> opts;
@@ -497,10 +508,13 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
             if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
                 LOG_DEBUG("AppController: per-project component warm skipped for %s: %s", projectKey.c_str(),
                           err.c_str());
+                std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+                projectComponentsInFlight_.erase(projectKey);  // allow a later lazy open to retry
                 continue;
             }
             std::lock_guard<std::mutex> lock(availableFieldsMutex_);
             projectComponentOptions_[projectKey] = std::move(opts);
+            projectComponentsInFlight_.erase(projectKey);
         }
     });
 }
