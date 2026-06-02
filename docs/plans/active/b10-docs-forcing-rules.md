@@ -8,7 +8,7 @@
 
 The self-improvement backlog accumulated ~14 P3 "process forcing-rule" suggestions — small doc edits each agent flagged after hitting the same friction (wrong git command, un-grepped TU name, mis-routed slice, etc.). They were deferred as a batch (campaign B10) because shipping 14 micro-PRs would burn CodeRabbit quota for one conceptual change. This plan lands them as **one pure-docs PR**.
 
-Pre-plan verification (2026-06-02) confirmed almost all are **genuinely live** (the rule is not yet in the target doc) — unlike B1–B3 which were stale. A few are **partial** (a sibling rule exists in a different scope). After this lands: the deferred forcing-rules are encoded in their natural home docs, and the ~12 source backlog entries flip to `applied`.
+Pre-plan verification (2026-06-02) confirmed almost all are **genuinely live** (the rule is not yet in the target doc) — unlike B1–B3 which were stale. A few are **partial** (a sibling rule exists in a different scope). After this lands: the deferred forcing-rules are encoded in their natural home docs, and the 14 source backlog entries flip to `applied`.
 
 Intended outcome: an agent that hits one of these frictions next time finds the rule already written, instead of re-discovering it.
 
@@ -44,7 +44,7 @@ Per-member table. **Status**: LIVE = not present anywhere; PARTIAL = a sibling r
 | 14 | When CR marks a finding "✅ Addressed", read the cited commit's diff to confirm before trusting (test 2026-05-18) | `AGENTS.md` § Merge gates (or `docs/agent-rules/process-rules.md`) | LIVE | depends on home |
 
 Plus, in the same PR:
-- `docs/self-improvement/categories/{process,tooling,test}.md` — remove the ~12 source entries; `applied.md` — add resolution lines; `AGENT_SELF_IMPROVEMENT.md` § Index — `--fix` count sync.
+- `docs/self-improvement/categories/{process,tooling,test}.md` — remove the 14 source entries (12 process + 1 tooling + 1 test); `applied.md` — add resolution lines; `AGENT_SELF_IMPROVEMENT.md` § Index — `--fix` count sync.
 - `docs/plans/active/agentic-backlog-campaign.md` § Implementation log + § Re-scoped remainder — mark B10 done (and add the deferred B4 plan-log line while here).
 
 ## Existing utilities reused
