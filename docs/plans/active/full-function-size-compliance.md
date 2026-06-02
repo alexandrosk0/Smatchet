@@ -55,6 +55,17 @@ the positional-ImGui risk and ride on the golden harness. The branch cap (30) is
 most pure-logic functions even when they're under the line cap — those decompose by **extracting branch
 clusters into named sub-helpers or table dispatch**, not by line-splitting.
 
+**Bucket-A coverage may need a prior pure-seam TU split (standing note, confirmed 3× in Phase 1).** Several
+target functions are "pure logic" but stranded in a TU that can't link into the doctest rig without dragging
+the UI / `AppController` stack (`TicketGridModel.cpp` pulls `TrackerGridFieldDisplay` + ImGui;
+`BuildJqlSuggestions` takes `const AppController&`). For these, the "one test per dispatch path" criterion is
+**unsatisfiable by helper-extraction alone** — it requires first moving the logic into a `<Foo>Pure.cpp` seam
+with no UI includes (as A6 did with `JiraEditMetaPure`). When a target is so stranded: (a) do the pure-seam
+split in the same PR if small, or (b) ship the decomposition gate-verified (audit + dual-target build +
+inspection) and **backlog the dedicated bucket-A test naming the seam split** — never fabricate a test that
+can't link. Budget a seam-split sub-slice when sequencing these. (Backlogged so far: `BuildJqlSuggestions`,
+`CompareFieldValuesForSort`, `ResolveRenderPlan`.)
+
 **Batching — one PR per file-cluster, grouped by owner, never one-PR-per-function for same-file siblings.**
 Functions sharing a `.cpp` (e.g. the four `TicketFieldEditor` editors, the three `MarkdownConvert` emitters)
 ship in **one** PR to respect the CodeRabbit review quota; a single 945-line monolith
