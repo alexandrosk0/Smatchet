@@ -110,9 +110,19 @@ bool IsLinkLocalLiteral(const unsigned char o[4]) {
     return o[0] == 169 && o[1] == 254;
 }
 
+// Loopback = always-safe target for plain http:// (the local-Ollama case).
+// Covers "localhost" by name and the whole 127.0.0.0/8 IPv4 block. IPv6 "::1"
+// is not handled (the validator never accepts bracketed IPv6 hosts anyway).
+bool IsLoopbackHost(const std::string& host) {
+    if (host == "localhost")
+        return true;
+    unsigned char octets[4];
+    return ParseIpv4Literal(host, octets) && octets[0] == 127;
+}
+
 } // namespace
 
-EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_url) {
+EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, const EndpointPolicy& policy, std::string& out_url) {
     out_url.clear();
     if (url.empty())
         return EndpointVerdict::Allowed; // empty = "use provider default" — the client TU handles that
@@ -141,8 +151,40 @@ EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_u
             return EndpointVerdict::RejectedLinkLocal;
     }
 
+    // Loopback is auto-exempt ONLY for unpinned providers (Ollama / DeepSeek):
+    // a pinned cloud provider repointed at http://127.0.0.1 is still a
+    // config-write redirect of a key-bearing request to an arbitrary local
+    // listener, so it must clear the same consent gates. Pinning makes the
+    // CanonicalHost non-empty.
+    const bool loopback = IsLoopbackHost(host);
+    const bool allowLoopbackWithoutConsent = loopback && policy.CanonicalHost.empty();
+    // Cleartext API key on the wire: plain http:// needs explicit consent unless
+    // it is loopback on an unpinned/local provider.
+    if (scheme == "http" && !allowLoopbackWithoutConsent && !policy.AllowInsecureHttp)
+        return EndpointVerdict::RejectedInsecureHttp;
+
+    // Per-provider host pin: a config-write attacker must not silently repoint a
+    // cloud provider's key-bearing request at an arbitrary host — including a
+    // local one. Empty CanonicalHost = unpinned provider (Ollama / DeepSeek).
+    if (!policy.CanonicalHost.empty() && !policy.AllowCustomHost && host != policy.CanonicalHost)
+        return EndpointVerdict::RejectedNonProviderHost;
+
     out_url = url;
     return EndpointVerdict::Allowed;
+}
+
+EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_url) {
+    return SanitizeAiEndpointUrl(url, EndpointPolicy(), out_url);
+}
+
+std::string ExtractUrlHost(const std::string& url) {
+    std::size_t schemeEnd = 0;
+    if (!ExtractScheme(url, schemeEnd))
+        return std::string();
+    const std::string hostPort = ExtractHostPort(url, schemeEnd);
+    if (hostPort.empty())
+        return std::string();
+    return LowerAscii(StripPort(hostPort));
 }
 
 const char* EndpointVerdictDescription(EndpointVerdict v) {
@@ -159,6 +201,10 @@ const char* EndpointVerdictDescription(EndpointVerdict v) {
         return "rejected: link-local IPv4 (169.254.0.0/16) blocked to prevent SSRF";
     case EndpointVerdict::RejectedMalformed:
         return "rejected: malformed URL (missing host)";
+    case EndpointVerdict::RejectedNonProviderHost:
+        return "rejected: non-provider host — enable 'allow custom endpoint' in Preferences to use a proxy/gateway";
+    case EndpointVerdict::RejectedInsecureHttp:
+        return "rejected: plain http:// to a non-loopback host would send the API key in cleartext";
     }
     return "rejected: unknown";
 }

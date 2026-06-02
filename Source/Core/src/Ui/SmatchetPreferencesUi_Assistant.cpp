@@ -13,6 +13,7 @@
 #include "SmatchetUI.h"
 #include "AiAssistantController.h"
 #include "AiClientFactory.h"
+#include "AiEndpointPolicy.h"
 #include "AiEndpointSanitize.h"
 #include "AiModelCatalog.h"
 #include "AiPrefsValidator.h"
@@ -219,8 +220,10 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
                 std::string sanitisedBase;
                 if (!baseUrl.empty()) {
                     std::string normalised;
+                    const smatchet::ai::pure::EndpointPolicy policy =
+                        smatchet::ai::EndpointPolicyForProvider(d.cfg, provider);
                     const smatchet::ai::pure::EndpointVerdict v =
-                        smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, normalised);
+                        smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, policy, normalised);
                     if (v == smatchet::ai::pure::EndpointVerdict::Allowed) {
                         sanitisedBase = normalised;
                     } else {
@@ -440,6 +443,54 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
                 }
             };
 
+            // Custom-endpoint consent toggle + one-time confirm modal (SSRF / cleartext-key
+            // defense-in-depth). By default OpenAi / Anthropic requests are pinned to the
+            // canonical host over https. Ticking it on opens a modal that explains the risk,
+            // the consent flag only commits on explicit confirm. Unticking commits false
+            // immediately. Local / DeepSeek providers are unpinned and don't render it.
+            static int s_consentModalProvider = -1; // -1 = none; else AiProviderKind awaiting confirm
+            auto renderCustomEndpointConsent = [&](AiProvider prov, bool& flag, const char* providerLabel,
+                                                   const char* canonicalHost) {
+                bool checked = flag;
+                if (ImGui::Checkbox("Allow custom endpoint (proxy / gateway)", &checked)) {
+                    if (checked && !flag) {
+                        s_consentModalProvider = static_cast<int>(prov);
+                        ImGui::OpenPopup("Allow custom AI endpoint?");
+                    } else if (!checked && flag) {
+                        flag = false;
+                        MarkPrefsDirty(d);
+                        clearStaleTestResult();
+                    }
+                }
+                if (s_consentModalProvider == static_cast<int>(prov)) {
+                    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Appearing);
+                    if (ImGui::BeginPopupModal("Allow custom AI endpoint?", nullptr,
+                                               ImGuiWindowFlags_AlwaysAutoResize)) {
+                        ImGui::TextWrapped("By default Smatchet sends your %s API key only to %s over HTTPS.",
+                                           providerLabel, canonicalHost);
+                        ImGui::Spacing();
+                        ImGui::TextWrapped("Enabling custom endpoints lets a proxy / gateway host (Azure OpenAI, "
+                                           "LiteLLM, openrouter) receive that key, and permits plain http:// to "
+                                           "non-loopback hosts - sending the key in cleartext. Enable only if you "
+                                           "trust the endpoint you configure.");
+                        ImGui::Separator();
+                        if (ImGui::Button("Enable custom endpoint")) {
+                            flag = true;
+                            MarkPrefsDirty(d);
+                            clearStaleTestResult();
+                            s_consentModalProvider = -1;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Cancel")) {
+                            s_consentModalProvider = -1;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndPopup();
+                    }
+                }
+            };
+
             if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
                 const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
                 const char* keyLabel = isLocalCompat ? "API key (optional for local)" : "OpenAI API key";
@@ -462,6 +513,11 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
                     MarkPrefsDirty(d);
                     clearStaleTestResult();
                 }
+                // Real OpenAi only. The local-compat shim is unpinned - its base URL is the config itself.
+                if (!isLocalCompat) {
+                    renderCustomEndpointConsent(AiProvider::OpenAi, d.cfg.AiAllowCustomEndpointOpenAi, "OpenAI",
+                                                "api.openai.com");
+                }
             } else if (selectedKind == AiProvider::Anthropic) {
                 if (ImGui::InputText("Anthropic API key", s_anthropicKeyBuf, sizeof(s_anthropicKeyBuf),
                                      ImGuiInputTextFlags_Password)) {
@@ -471,6 +527,8 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
                 }
                 renderModelPicker("Anthropic model", "Anthropic model", "", AiProvider::Anthropic, s_anthropicModelBuf,
                                   sizeof(s_anthropicModelBuf), d.cfg.AiModelAnthropic);
+                renderCustomEndpointConsent(AiProvider::Anthropic, d.cfg.AiAllowCustomEndpointAnthropic, "Anthropic",
+                                            "api.anthropic.com");
             } else if (selectedKind == AiProvider::OllamaNative) {
                 renderModelPicker("Ollama model", "Ollama model", "e.g. llama3, qwen2.5, mistral",
                                   AiProvider::OllamaNative, s_ollamaModelBuf, sizeof(s_ollamaModelBuf),

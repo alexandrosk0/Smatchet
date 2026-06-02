@@ -3,6 +3,7 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiClientFactory.h"
+#include "AiEndpointPolicy.h"
 #include "AiEndpointSanitize.h"
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -81,7 +82,8 @@ std::string DefaultBaseUrlFor(AiProvider provider) {
 // header-smuggling control characters from the key as cheap defence in depth
 // even though libcurl rejects them too, then runs the base URL through the
 // endpoint sanitiser, falling back to the empty provider default on rejection.
-AiClientConfig BuildProbeClientConfig(const std::string& apiKey, const std::string& baseUrl) {
+AiClientConfig BuildProbeClientConfig(const std::string& apiKey, const std::string& baseUrl,
+                                      const smatchet::ai::pure::EndpointPolicy& policy) {
     std::string sanitisedKey;
     sanitisedKey.reserve(apiKey.size());
     std::copy_if(apiKey.begin(), apiKey.end(), std::back_inserter(sanitisedKey),
@@ -89,7 +91,8 @@ AiClientConfig BuildProbeClientConfig(const std::string& apiKey, const std::stri
     std::string sanitisedBase;
     if (!baseUrl.empty()) {
         std::string normalised;
-        const smatchet::ai::pure::EndpointVerdict v = smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, normalised);
+        const smatchet::ai::pure::EndpointVerdict v =
+            smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, policy, normalised);
         if (v == smatchet::ai::pure::EndpointVerdict::Allowed) {
             sanitisedBase = normalised;
         } else {
@@ -216,7 +219,10 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
         target.BaseUrl = defaultedBaseUrl;
     }
 
-    const AiClientConfig clientCfg = BuildProbeClientConfig(target.ApiKey, target.BaseUrl);
+    // Same per-provider endpoint policy the live request uses (host pin + insecure-http
+    // consent) so Test-connection accepts/rejects exactly what the real turn would.
+    const smatchet::ai::pure::EndpointPolicy policy = smatchet::ai::EndpointPolicyForProvider(probeCfg, provider);
+    const AiClientConfig clientCfg = BuildProbeClientConfig(target.ApiKey, target.BaseUrl, policy);
     const std::string modelId = target.ModelId;
 
     MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
