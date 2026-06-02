@@ -110,9 +110,19 @@ bool IsLinkLocalLiteral(const unsigned char o[4]) {
     return o[0] == 169 && o[1] == 254;
 }
 
+// Loopback = always-safe target for plain http:// (the local-Ollama case).
+// Covers "localhost" by name and the whole 127.0.0.0/8 IPv4 block. IPv6 "::1"
+// is not handled (the validator never accepts bracketed IPv6 hosts anyway).
+bool IsLoopbackHost(const std::string& host) {
+    if (host == "localhost")
+        return true;
+    unsigned char octets[4];
+    return ParseIpv4Literal(host, octets) && octets[0] == 127;
+}
+
 } // namespace
 
-EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_url) {
+EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, const EndpointPolicy& policy, std::string& out_url) {
     out_url.clear();
     if (url.empty())
         return EndpointVerdict::Allowed; // empty = "use provider default" — the client TU handles that
@@ -141,8 +151,25 @@ EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_u
             return EndpointVerdict::RejectedLinkLocal;
     }
 
+    const bool loopback = IsLoopbackHost(host);
+    // Cleartext API key on the wire: plain http:// to anything but loopback needs
+    // explicit consent. Loopback http (local Ollama) is always fine.
+    if (scheme == "http" && !loopback && !policy.AllowInsecureHttp)
+        return EndpointVerdict::RejectedInsecureHttp;
+
+    // Per-provider host pin: a config-write attacker must not silently repoint a
+    // cloud provider's key-bearing request at an arbitrary host. Loopback is
+    // exempt (a pin'd cloud provider pointed at localhost is a user-run proxy,
+    // not exfil). Empty CanonicalHost = unpinned provider (Ollama / DeepSeek).
+    if (!policy.CanonicalHost.empty() && !policy.AllowCustomHost && !loopback && host != policy.CanonicalHost)
+        return EndpointVerdict::RejectedNonProviderHost;
+
     out_url = url;
     return EndpointVerdict::Allowed;
+}
+
+EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_url) {
+    return SanitizeAiEndpointUrl(url, EndpointPolicy(), out_url);
 }
 
 const char* EndpointVerdictDescription(EndpointVerdict v) {
@@ -159,6 +186,10 @@ const char* EndpointVerdictDescription(EndpointVerdict v) {
         return "rejected: link-local IPv4 (169.254.0.0/16) blocked to prevent SSRF";
     case EndpointVerdict::RejectedMalformed:
         return "rejected: malformed URL (missing host)";
+    case EndpointVerdict::RejectedNonProviderHost:
+        return "rejected: non-provider host — enable 'allow custom endpoint' in Preferences to use a proxy/gateway";
+    case EndpointVerdict::RejectedInsecureHttp:
+        return "rejected: plain http:// to a non-loopback host would send the API key in cleartext";
     }
     return "rejected: unknown";
 }

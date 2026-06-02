@@ -258,6 +258,8 @@ const FieldDesc<bool> kBoolFields[] = {
     {"assistant_context_block_active_view", &TrackerConfig::AssistantContextBlockActiveView},
     {"assistant_context_block_audit_trail", &TrackerConfig::AssistantContextBlockAuditTrail},
     {"ai_prefs_verify_on_save", &TrackerConfig::AiPrefsVerifyOnSave},
+    {"ai_allow_custom_endpoint_openai", &TrackerConfig::AiAllowCustomEndpointOpenAi},
+    {"ai_allow_custom_endpoint_anthropic", &TrackerConfig::AiAllowCustomEndpointAnthropic},
     {"show_primary_side_bar", &TrackerConfig::ShowPrimarySideBar},
     {"show_secondary_side_bar", &TrackerConfig::ShowSecondarySideBar},
     {"show_panel", &TrackerConfig::ShowPanel},
@@ -713,6 +715,22 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     }
     for (std::size_t i = 0; i < CountOf(kBoolFields); ++i) {
         cfg.*(kBoolFields[i].member) = j.value(kBoolFields[i].key, cfg.*(kBoolFields[i].member));
+    }
+    // Migration grandfather for AI custom-endpoint SSRF consent. A config written by
+    // a pre-feature build carries neither consent key. If such a config already has
+    // a non-canonical custom AiBaseUrl (the field both OpenAi + Anthropic read), the
+    // user deliberately configured a proxy before this gate existed — auto-grant
+    // consent for both so the upgrade does not silently fall back to the provider
+    // default and break their setup. A post-migration config has the keys present
+    // the bool loop above honours them, so a fresh repoint is NOT grandfathered.
+    if (!j.contains("ai_allow_custom_endpoint_openai") && !j.contains("ai_allow_custom_endpoint_anthropic")) {
+        const std::string& baseUrl = cfg.AiBaseUrl;
+        const bool hasCustomHost = !baseUrl.empty() && baseUrl.find("api.openai.com") == std::string::npos &&
+                                   baseUrl.find("api.anthropic.com") == std::string::npos;
+        if (hasCustomHost) {
+            cfg.AiAllowCustomEndpointOpenAi = true;
+            cfg.AiAllowCustomEndpointAnthropic = true;
+        }
     }
     for (std::size_t i = 0; i < CountOf(kIntFields); ++i) {
         cfg.*(kIntFields[i].member) = j.value(kIntFields[i].key, cfg.*(kIntFields[i].member));

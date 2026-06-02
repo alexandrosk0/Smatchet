@@ -3,6 +3,7 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiClientFactory.h"
+#include "AiEndpointPolicy.h"
 #include "AiEndpointSanitize.h"
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -88,7 +89,9 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
     std::string sanitisedBase;
     if (!baseUrl.empty()) {
         std::string normalised;
-        const smatchet::ai::pure::EndpointVerdict v = smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, normalised);
+        const smatchet::ai::pure::EndpointPolicy policy = smatchet::ai::EndpointPolicyForProvider(probeCfg, provider);
+        const smatchet::ai::pure::EndpointVerdict v =
+            smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, policy, normalised);
         if (v == smatchet::ai::pure::EndpointVerdict::Allowed) {
             sanitisedBase = normalised;
         } else {
