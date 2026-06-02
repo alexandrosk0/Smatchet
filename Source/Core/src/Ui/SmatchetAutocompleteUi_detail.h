@@ -1,14 +1,10 @@
 #ifndef SMATCHET_AUTOCOMPLETE_UI_DETAIL_H
 #define SMATCHET_AUTOCOMPLETE_UI_DETAIL_H
 
-// SmatchetAutocompleteUi pure list-navigation / completion-resolution helpers.
-//
-// The JQL/query-autocomplete InputText callback drives its keyboard list
-// navigation (Up/Down arrow index walk) and its commit decision (Enter / Tab /
-// apply-from-enter) through plain integer math that needs no ImGui context.
-// These helpers carry exactly that logic so the callback's ImGui-touching half
-// stays thin and under the function-size branch cap, and so the math is
-// bucket-A testable without an ImGui frame.
+// SmatchetAutocompleteUi pure list-navigation / completion-resolution helpers —
+// the JQL/query-autocomplete InputText callback's Up/Down arrow index walk and
+// Enter/Tab commit decision, as plain integer math needing no ImGui context, so
+// the callback stays under the branch cap and the math is bucket-A testable.
 
 namespace SmatchetAutocompleteDetail {
 
