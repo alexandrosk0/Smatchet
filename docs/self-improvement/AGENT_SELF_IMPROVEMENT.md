@@ -104,11 +104,11 @@ without movement.
 |---|---|---|
 | bug         | 12  | [self-improvement/categories/bug.md](categories/bug.md) |
 | process     | 17  | [self-improvement/categories/process.md](categories/process.md) |
-| tooling     | 45  | [self-improvement/categories/tooling.md](categories/tooling.md) |
-| infra       | 16  | [self-improvement/categories/infra.md](categories/infra.md) |
-| test        | 19  | [self-improvement/categories/test.md](categories/test.md) |
+| tooling     | 42  | [self-improvement/categories/tooling.md](categories/tooling.md) |
+| infra       | 15  | [self-improvement/categories/infra.md](categories/infra.md) |
+| test        | 15  | [self-improvement/categories/test.md](categories/test.md) |
 | security    | 11  | [self-improvement/categories/security.md](categories/security.md) |
 | external    | 1   | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |
-| applied (archive) | 173 | [self-improvement/categories/applied.md](categories/applied.md) |
+| applied (archive) | 181 | [self-improvement/categories/applied.md](categories/applied.md) |
 
 > **Count maintenance**: each "Live count" is the number of `^- 20YY-MM-DD` entries in the linked file (`grep -c '^- 20' self-improvement/categories/<file>.md`). The applied-archive count is the same `grep -c '^- 20' self-improvement/categories/applied.md`. `agents/scripts/core/test-backlog-counts.sh` runs at the pre-push gate (`test-all.sh` discovery) and refuses if any row diverges from the actual file. Update the row in the same commit that adds / archives / removes an entry, or run `bash agents/scripts/core/test-backlog-counts.sh --fix` to rewrite the table from current file counts.
