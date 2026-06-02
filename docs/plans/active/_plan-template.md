@@ -18,6 +18,11 @@ The recommended approach in 1-3 paragraphs. Not the alternatives — only the on
 
 Numbered list. Each entry: `path:line` link + one-line per-file rationale. Group by subsystem when the list runs past ~10 entries.
 
+Before you add a row here:
+- **Grep before naming a new TU.** Before listing a new `<Foo>.{h,cpp}`, run `rg -l '<Foo>' Source/Core/` to confirm it doesn't already exist under that name or a synonym — pure helpers routinely already shipped under a different name, and a parallel duplicate is expensive to unwind.
+- **Anchor the dual-target build to the gated files.** If the diff touches `SMATCHET_WITH_*` source-list gating, name the specific files and anchor `cmake --build … --target SmatchetStandalone SmatchetCore_DX12` to them (don't rely on the generic § Verification line alone).
+- **Inline a not-yet-merged sibling's shape.** If a slice depends on or copies a pattern from a sibling slice that hasn't merged yet, include that pattern's intended shape (3–5 lines of code or a fixture-name list) inline here, so the implementing agent doesn't have to invent it.
+
 ## Existing utilities reused
 
 Bullet list. Each entry: `Class::method` or `function_name` + `file:line` + one-line reason. Prevents the "reinvented the wheel" review finding.

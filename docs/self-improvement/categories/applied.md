@@ -9,6 +9,51 @@
 
 <!-- Latest first. Append on archival. -->
 
+> **Backlog-campaign B10 (2026-06-02)** — 14 deferred process forcing-rules encoded into their home docs (one pure-docs PR). Each entry below flipped to applied; rule text verified live (not stale) before writing.
+
+- 2026-06-01 · orchestrator · [process] · P2 — Decomposition PRs must NOT edit function-size-baseline.md — informational snapshot, not gate input
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in imgui-draw-pattern.md Rule 7 + decompose plan rule 7.
+
+- 2026-05-30 · orchestrator · [process] · P2 — Loss/residue audits must diff vs origin/<base> post-fetch; ahead-count + tip-diff are NOT loss signals
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in process-rules.md § Git/p4 discipline.
+
+- 2026-05-30 · orchestrator · [process] · P3 — Backlog/SI/plan entries must verify the cited file before asserting file-behavior claims
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENT_SELF_IMPROVEMENT.md § Workflow step 2.
+
+- 2026-05-26 · orchestrator · [process] · P3 — Source/Core source files under 67 KB; split-recipe encoded
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENTS.md § Quality (File size + split recipe).
+
+- 2026-05-21 · architect · [process] · P3 — Plan template dual-target build-gate callout
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in _plan-template.md § Files (one-liner, downgraded per B10 decision).
+
+- 2026-05-24 · orchestrator · [process] · P3 — plan-doc drafts should grep-verify pre-named TUs don't already exist
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in _plan-template.md § Files (rg -l before naming a new TU).
+
+- 2026-05-24 · orchestrator · [process] · P3 — slice coordination should inline a not-yet-merged sibling's pattern shape
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in _plan-template.md § Files (folded per B10 decision).
+
+- 2026-05-20 · orchestrator · [process] · P3 — Default git merge not rebase for squash-destined PR branches
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in process-rules.md § Git/p4 discipline (catch-up sync).
+
+- 2026-05-19 · orchestrator · [process] · P3 — Post-squash-merge branch -D fast-path (5-step pre-flight exempt)
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in git-janitor.md § cleanup.
+
+- 2026-05-17 · orchestrator · [process] · P3 — unique_ptr<incomplete-type> footgun in headers
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENTS.md § Quality.
+
+- 2026-05-17 · orchestrator · [process] · P3 — Plan packet pre-flight: INTERFACE target must be linked
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in delegation.md § Orchestrator delegation packet.
+
+- 2026-05-24 · orchestrator · [process] · P3 — slice->agent routing rejects test-rig for production-header slices
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in delegation.md § Subsystem specialists routing guard.
+
+- 2026-05-21 · architect · [tooling] · P3 — Architect: name the chokepoint binding-adapter shim, not the upstream caller
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in architect.md item 3 (Interface contracts).
+
+- 2026-05-18 · orchestrator · [test] · P3 — CodeRabbit '✅ Addressed' notation gives false confidence — verify the cited diff
+  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENTS.md § Merge gates.
+
+
 > **Backlog-campaign verification sweep (2026-06-02)** — `docs/plans/active/agentic-backlog-campaign.md` phase 0 verified each batch premise against the current tree before any code. The three entries immediately below were found ALREADY-SHIPPED (stale) and archived without new work — exactly the "verify file-claims before acting" process rule. More stale entries are expected as the sweep continues.
 
 - 2026-06-01 · orchestrator · [tooling] · P1 — Delta gates (`function_size_audit.py --diff`, `comment_audit.py --diff`) false-flag a PR branched before a decomposition landed, because CI's shallow clone defeats `git merge-base`

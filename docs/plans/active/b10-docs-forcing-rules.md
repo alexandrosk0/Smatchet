@@ -62,11 +62,11 @@ Plus, in the same PR:
 
 N/A — pure-docs diff, no `Source/Core/` touch (`agents/scripts/core/is-pure-docs-diff.sh` should classify this PR pure-docs → skips build + perf).
 
-## Decisions needed before implementation (flag, don't assume)
+## Decisions (locked 2026-06-02)
 
-1. **Member 5 (dual-target plan-template §)** — the template § Verification already carries `cmake --build … --target SmatchetStandalone SmatchetCore_DX12`. Options: (a) **downgrade** — add a one-line "if the diff touches `SMATCHET_WITH_*` source-list gating, anchor the dual-target build to the specific files" note to § Files to modify (cheap, no new section); (b) **full** — add a dedicated mandatory "## Dual-target compile gate" section between § Perf gates and § Risks (matches the architect's original ask, more ceremony). **Recommend (a).**
-2. **Member 7 (slice-coordination inline-shape)** — the template is single-feature and has no per-slice / Coordination section. Options: (a) add a short optional "## Per-slice coordination (multi-slice plans only)" section to the template; (b) fold the rule into § Files to modify as a one-liner about cross-slice pattern dependencies; (c) drop it as too-niche (it fired once, mild friction). **Recommend (b).**
-3. **Member 14 (CR "✅ Addressed" verify-the-diff)** — home is either `AGENTS.md` § Merge gates (project doc, literal-free anyway) or `process-rules.md` (portable). Either works; **recommend `AGENTS.md` § Merge gates** since it's CR-gate-adjacent.
+1. **Member 5 (dual-target plan-template §)** — **downgrade**: add a one-line note to `_plan-template.md` § Files to modify ("if the diff touches `SMATCHET_WITH_*` source-list gating, anchor the dual-target build to the specific files"). No new section; § Verification already carries the build command.
+2. **Member 7 (slice-coordination inline-shape)** — **fold into § Files** as a one-liner about cross-slice pattern dependencies (inline the 3–5-line shape when a slice copies a not-yet-merged sibling). No new template section.
+3. **Member 14 (CR "✅ Addressed" verify-the-diff)** — lands in `AGENTS.md` § Merge gates (CR-gate-adjacent; project doc, no portable constraint).
 
 ## Risks / non-goals
 
@@ -90,10 +90,17 @@ N/A — pure-docs diff, no `Source/Core/` touch (`agents/scripts/core/is-pure-do
 - Tooling that some entries *also* proposed (e.g. a `git-leftover-audit.sh` for member 2, a file-size check script for member 4) — those are **B9 / separate tooling batches**, not B10. B10 is the doc-rule half only; cross-link from each doc rule to its tooling sibling where one exists.
 
 ## Implementation log
-*(populated post-ship)*
+
+- All 14 rules encoded in one pure-docs change: AGENTS.md (§ Quality unique_ptr-incomplete + File-size 67 KB; § Merge gates CR-addressed-verify), `_plan-template.md` § Files (grep-before-naming + dual-target anchor + slice-coordination inline-shape), `process-rules.md` § Git/p4 (loss-audit-vs-origin + merge-not-rebase), `delegation.md` (INTERFACE-linkage packet check + test-rig routing guard), `git-janitor.md` (post-squash branch -D fast-path), `architect.md` item 3 (chokepoint-shim), `imgui-draw-pattern.md` Rule 7 + decompose plan rule 7 (baseline.md don't-edit), `AGENT_SELF_IMPROVEMENT.md` § Workflow step 2 (verify-file-claims).
+- Archived all 14 source entries (12 process + 1 tooling + 1 test) to `applied.md`; count index synced (`--fix`, 8/0).
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- Decisions locked as recommended: member 5 → one-liner (no new template section); member 7 → folded into § Files; member 14 → AGENTS.md § Merge gates.
+- No member found already-encoded — all 14 were genuinely live, none skipped.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- `test-portable-purity.sh` PASS (no new project literals in the 4 portable-dir edits — generic phrasing held).
+- `test-backlog-counts.sh` PASS 8/0 (process 28→16, tooling 45→44, test 20→19, applied 158→172).
+- Pure-docs: no build / ctest.

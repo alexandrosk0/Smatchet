@@ -95,6 +95,13 @@ void FooUi::Draw(AppController& app, UiDrawSession& d) {
    `SmatchetViewsDashboardUi.cpp` + `SmatchetViewsDashboardUi_widgets.cpp`,
    `SmatchetPreferencesUi_Whisper.cpp`, `SmatchetPreferencesUi_Assistant.cpp`.
    Naming: `<Owner>Ui_<Section>.cpp`.
+7. **Do NOT edit `docs/high-integrity/function-size-baseline.md` in a decomposition PR.**
+   That file is an **informational snapshot, not the gate input** — the live gate is
+   the `function_size_audit.py --diff origin/develop` merge-base delta. A decomposed
+   function simply leaves the over-cap set, so the delta gate passes with **zero**
+   baseline edit. Editing it per-PR creates a cross-PR merge cascade: every merge
+   re-conflicts every sibling decomposition PR on `baseline.md`, forcing repeated
+   regen + resolve. Regenerate the snapshot **once per campaign**, not per slice.
 
 ## Positional-ImGui hazards (the part that bites)
 
