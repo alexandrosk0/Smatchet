@@ -258,6 +258,8 @@ const FieldDesc<bool> kBoolFields[] = {
     {"assistant_context_block_active_view", &TrackerConfig::AssistantContextBlockActiveView},
     {"assistant_context_block_audit_trail", &TrackerConfig::AssistantContextBlockAuditTrail},
     {"ai_prefs_verify_on_save", &TrackerConfig::AiPrefsVerifyOnSave},
+    {"ai_allow_custom_endpoint_openai", &TrackerConfig::AiAllowCustomEndpointOpenAi},
+    {"ai_allow_custom_endpoint_anthropic", &TrackerConfig::AiAllowCustomEndpointAnthropic},
     {"show_primary_side_bar", &TrackerConfig::ShowPrimarySideBar},
     {"show_secondary_side_bar", &TrackerConfig::ShowSecondarySideBar},
     {"show_panel", &TrackerConfig::ShowPanel},
@@ -702,6 +704,29 @@ struct SecretMigrationFlags {
     }
 };
 
+// Extract the lowercased host (port stripped) from a `scheme://host[:port]/...` URL, or
+// "" if it has no parseable scheme://host. Inlined here rather than reusing
+// smatchet::ai::pure::ExtractUrlHost: that helper lives in the AI-gated
+// AiEndpointSanitize TU (pruned from the build when SMATCHET_WITH_AI=OFF), and
+// ConfigManager is always-compiled + AI-independent — a cross-dep breaks the light
+// (AI-off) link. The two parsers are intentionally tiny + independent.
+std::string ConfigUrlHostLower(const std::string& url) {
+    const std::size_t scheme = url.find("://");
+    if (scheme == std::string::npos)
+        return std::string();
+    const std::size_t hostStart = scheme + 3;
+    std::size_t hostEnd = url.find_first_of("/?#", hostStart);
+    if (hostEnd == std::string::npos)
+        hostEnd = url.size();
+    std::string host = url.substr(hostStart, hostEnd - hostStart);
+    const std::size_t colon = host.find(':'); // strip :port (IPv6 literals not expected here)
+    if (colon != std::string::npos)
+        host.erase(colon);
+    std::transform(host.begin(), host.end(), host.begin(),
+                   [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
+    return host;
+}
+
 // Table-driven plain-scalar load, one source-of-truth row per field. See the kStringFields
 // table for the list. Behavior is identical to the prior per-field json-value-with-default reads.
 void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -713,6 +738,24 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     }
     for (std::size_t i = 0; i < CountOf(kBoolFields); ++i) {
         cfg.*(kBoolFields[i].member) = j.value(kBoolFields[i].key, cfg.*(kBoolFields[i].member));
+    }
+    // Migration grandfather for AI custom-endpoint SSRF consent. A config written by
+    // a pre-feature build carries neither consent key. If such a config already has
+    // a non-canonical custom AiBaseUrl (the field both OpenAi + Anthropic read), the
+    // user deliberately configured a proxy before this gate existed — auto-grant
+    // consent for both so the upgrade does not silently fall back to the provider
+    // default and break their setup. A post-migration config has the keys present
+    // the bool loop above honours them, so a fresh repoint is NOT grandfathered.
+    if (!j.contains("ai_allow_custom_endpoint_openai") && !j.contains("ai_allow_custom_endpoint_anthropic")) {
+        // Compare the parsed HOST exactly — a substring match would treat a proxy
+        // such as https://api.openai.com.proxy.corp as canonical and fail to
+        // grandfather it, silently breaking that user's upgrade.
+        const std::string host = ConfigUrlHostLower(cfg.AiBaseUrl);
+        const bool hasCustomHost = !host.empty() && host != "api.openai.com" && host != "api.anthropic.com";
+        if (hasCustomHost) {
+            cfg.AiAllowCustomEndpointOpenAi = true;
+            cfg.AiAllowCustomEndpointAnthropic = true;
+        }
     }
     for (std::size_t i = 0; i < CountOf(kIntFields); ++i) {
         cfg.*(kIntFields[i].member) = j.value(kIntFields[i].key, cfg.*(kIntFields[i].member));

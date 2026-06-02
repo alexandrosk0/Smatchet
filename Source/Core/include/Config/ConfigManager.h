@@ -325,6 +325,17 @@ struct TrackerConfig {
     // rather than at first-message time. Uncheck to commit offline-entered
     // credentials without contacting the provider.
     bool AiPrefsVerifyOnSave = true;
+    // Custom-endpoint consent (SSRF / key-exfil defense-in-depth). Default false =
+    // OpenAi / Anthropic requests are pinned to their canonical host
+    // (api.openai.com / api.anthropic.com) and plain http:// to a non-loopback host
+    // is rejected — a config-write attacker cannot silently repoint the key-bearing
+    // POST. Enabling either (via the Preferences Assistant tab, behind a one-time
+    // consent modal) opts that provider into arbitrary hosts + cleartext http for
+    // legitimate proxy / gateway setups (Azure OpenAI, LiteLLM, openrouter). A
+    // pre-feature config that already carries a non-canonical AiBaseUrl is
+    // grandfathered to true on Load so an upgrade never silently breaks a proxy.
+    bool AiAllowCustomEndpointOpenAi = false;
+    bool AiAllowCustomEndpointAnthropic = false;
 
 #if defined(SMATCHET_WITH_WHISPER)
     // --- Whisper dictation (push-to-talk) — Phase A schema (additive; no schema bump). ---

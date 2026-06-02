@@ -6,6 +6,7 @@
 #include "AiChatTimestamp.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
+#include "AiEndpointPolicy.h"
 #include "AiEndpointSanitize.h"
 #include "AiModelSignature.h"
 #include "AppController.h"
@@ -63,13 +64,14 @@ std::string SanitizeHeaderValue(const std::string& v) {
     return out;
 }
 
-// Validate + (best-effort) normalise the user-configured endpoint URL. Returns
-// the sanitised URL on success; empty + logs a structured warning on rejection
-// (the empty string causes the provider client to fall back to its built-in
-// default, which is the safe choice).
-std::string SanitizeBaseUrlOrLog(const std::string& raw, const char* providerLabel) {
+// Validate + (best-effort) normalise the user-configured endpoint URL against
+// `policy`. Returns the sanitised URL on success; empty + logs a structured
+// warning on rejection (the empty string causes the provider client to fall
+// back to its built-in default, which is the safe choice).
+std::string SanitizeBaseUrlOrLog(const std::string& raw, const char* providerLabel,
+                                 const smatchet::ai::pure::EndpointPolicy& policy) {
     std::string normalised;
-    const smatchet::ai::pure::EndpointVerdict v = smatchet::ai::pure::SanitizeAiEndpointUrl(raw, normalised);
+    const smatchet::ai::pure::EndpointVerdict v = smatchet::ai::pure::SanitizeAiEndpointUrl(raw, policy, normalised);
     if (v == smatchet::ai::pure::EndpointVerdict::Allowed)
         return normalised;
     LOG_ERROR("AiAssistantController: %s endpoint URL %s — falling back to provider default. Raw URL withheld.",
@@ -79,20 +81,21 @@ std::string SanitizeBaseUrlOrLog(const std::string& raw, const char* providerLab
 
 AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) {
     AiClientConfig out;
+    const smatchet::ai::pure::EndpointPolicy policy = smatchet::ai::EndpointPolicyForProvider(cfg, provider);
     switch (provider) {
     case AiProvider::Anthropic:
         out.ApiKey = SanitizeHeaderValue(cfg.AiAnthropicApiKey);
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "anthropic");
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "anthropic", policy);
         break;
     case AiProvider::OllamaNative:
         out.ApiKey.clear(); // Ollama-native has no API key
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiOllamaBaseUrl, "ollama");
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiOllamaBaseUrl, "ollama", policy);
         break;
     case AiProvider::OllamaOpenAiCompat:
         out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
         // OllamaOpenAi-compat uses the user's base URL (typically http://localhost:11434/v1)
-        out.BaseUrl =
-            SanitizeBaseUrlOrLog(cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl, "ollama-openai-compat");
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl,
+                                           "ollama-openai-compat", policy);
         break;
     case AiProvider::DeepSeek:
         out.ApiKey = SanitizeHeaderValue(cfg.AiDeepSeekApiKey);
@@ -102,12 +105,12 @@ AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) 
         // rule applies uniformly.
         out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com")
                                                                          : cfg.AiDeepSeekBaseUrl,
-                                           "deepseek");
+                                           "deepseek", policy);
         break;
     case AiProvider::OpenAi:
     default:
         out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "openai");
+        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "openai", policy);
         break;
     }
     // Streaming chat replies from reasoning-tuned models (claude-opus-4-7,
@@ -413,13 +416,12 @@ void AiAssistantController::BuildChatPayload(const Request& req, AiChatRequest& 
     chatReq.History.push_back(std::move(userMsg));
 }
 
-void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, const AiCancelToken& cancel,
-                                              uint64_t turnGen) {
+IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
     // Capture turnGen by value so stale dispatcher tasks (after a newer Submit
     // or Cancel) can be dropped on the UI side via assistantTurnGen comparison.
     AppController* app = &app_;
 
-    auto onDelta = [app, turnGen](const AiStreamDelta& delta) {
+    return [app, turnGen](const AiStreamDelta& delta) {
         const std::string chunk = delta.TokenChunk;
         const bool isFinal = delta.IsFinal;
         app->mainThreadDispatcher.PostToMainThread([turnGen, chunk, isFinal]() {
@@ -472,8 +474,12 @@ void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, cons
             }
         });
     };
+}
 
-    auto onError = [this, app, turnGen](const AiStreamError& err) {
+IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
+    AppController* app = &app_;
+
+    return [this, app, turnGen](const AiStreamError& err) {
         const int httpStatus = err.HttpStatus;
         const std::string message = err.Message;
         const bool wasCancelled = err.WasCancelled;
@@ -527,7 +533,11 @@ void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, cons
             }
         });
     };
+}
 
+void AiAssistantController::RunStreaming(const AiChatRequest& chatReq, const AiCancelToken& cancel,
+                                         const IAiClient::DeltaCallback& onDelta,
+                                         const IAiClient::ErrorCallback& onError) {
     try {
         client_->SendStreaming(clientConfig_, chatReq, onDelta, onError, cancel);
     } catch (const std::exception& ex) {
@@ -545,6 +555,14 @@ void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, cons
         err.WasCancelled = false;
         onError(err);
     }
+}
+
+void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, const AiCancelToken& cancel,
+                                              uint64_t turnGen) {
+    const IAiClient::DeltaCallback onDelta = MakeOnDelta(turnGen);
+    const IAiClient::ErrorCallback onError = MakeOnError(turnGen);
+
+    RunStreaming(chatReq, cancel, onDelta, onError);
 
     // Worker keeps running for the next request; UI thread transitions State::Idle
     // when it observes a stable assistantInFlight=false.

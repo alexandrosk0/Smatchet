@@ -241,6 +241,26 @@ class AiAssistantController {
     /// terminal Idle state transition.
     void StreamAndDispatch(const AiChatRequest& chatReq, const AiCancelToken& cancel, uint64_t turnGen);
 
+    // --- StreamAndDispatch callback factories (worker-thread only) ----------
+    // Each returns the worker-thread streaming callback for a turn. The bodies
+    // hop the dispatcher to the UI thread before touching `g_ui`; `turnGen` is
+    // captured by value so stale callbacks (after a newer Submit or Cancel) drop
+    // via the `assistantTurnGen` comparison on the UI side.
+
+    /// Build the per-delta callback: appends streamed chunks to the UI stream
+    /// buffer (4 MiB hard cap) and, on the final delta, commits the assistant
+    /// message to history + the persist queue.
+    IAiClient::DeltaCallback MakeOnDelta(uint64_t turnGen);
+
+    /// Build the error/cancel callback: records the terminal state, then on the
+    /// UI thread either retains partial cancelled text or surfaces the API error.
+    IAiClient::ErrorCallback MakeOnError(uint64_t turnGen);
+
+    /// Run `SendStreaming` inside the worker-thread try/catch, funnelling any
+    /// thrown client exception through `onError` so UI state always recovers.
+    void RunStreaming(const AiChatRequest& chatReq, const AiCancelToken& cancel,
+                      const IAiClient::DeltaCallback& onDelta, const IAiClient::ErrorCallback& onError);
+
     AppController& app_;
 
     // Provider state. Constructed at controller init and rebuilt by the worker thread
