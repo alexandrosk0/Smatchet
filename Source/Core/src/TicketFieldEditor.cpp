@@ -764,10 +764,10 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
         }
         if (!drewAny) {
             if (field.Id == "components" && !componentsLoaded && filterLower.empty()) {
-                // Per-project list not yet loaded — EnsureProjectComponentsLoaded was kicked above;
-                // the real options appear next frame once the async fetch lands. A SUCCESSFUL fetch
-                // that returned zero components sets componentsLoaded=true, so a genuinely empty
-                // project falls through to "(no options)" rather than spinning here forever.
+                // Per-project options have not loaded yet. The lazy fetch was kicked above and the
+                // real options appear on a later frame once it lands. A successful fetch that
+                // returned zero components marks the project loaded, so a genuinely empty project
+                // shows the no-options text rather than spinning here forever.
                 ImGui::TextDisabled("Loading components\xE2\x80\xA6");
             } else {
                 ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
@@ -950,11 +950,11 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             if (field != nullptr && column.FieldId == "components") {
                 const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
                 std::vector<TrackerFieldOption> perProject = app.GetComponentOptionsForProject(projectKey);
-                // Always scope to this row's project — never fall back to the global cross-project
-                // union. When not yet loaded, kick a lazy fetch and use the empty per-project set;
-                // selected-id names resolve next frame once the fetch lands (raw id shows briefly).
-                // Gate on IsProjectComponentsLoaded (not perProject.empty()) so a successful zero-
-                // component fetch doesn't relaunch a worker every frame.
+                // Always scope to this row's project and never fall back to the global cross-project
+                // union. When not yet loaded, kick a lazy fetch and use the empty per-project set so
+                // selected-id names resolve on a later frame once the fetch lands (raw id shows
+                // briefly). Gate on the loaded flag rather than an empty vector so a successful zero-
+                // component fetch does not relaunch a worker every frame.
                 if (!app.IsProjectComponentsLoaded(projectKey)) {
                     app.EnsureProjectComponentsLoaded(projectKey);
                 }
