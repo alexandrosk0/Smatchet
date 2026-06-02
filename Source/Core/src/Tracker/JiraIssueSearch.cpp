@@ -59,6 +59,130 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
     return true;
 }
 
+// Outcome of parsing + mapping one Jira search page. `Stop` ends the pagination loop; `Token`
+// carries the next-page cursor when the loop should continue. Mirrors the original inline
+// control-flow byte-for-byte (isLast / empty-token / parse-error early exits).
+struct JiraSearchPageOutcome {
+    bool Stop = false;          // terminate the pagination loop after this page
+    bool EndedCleanly = false;  // value to assign to syncEndedCleanly
+    bool HadFetchError = false; // when set, FetchError carries the message
+    std::string FetchError;     // populated only when HadFetchError
+    std::string NextToken;      // next-page cursor (valid only when !Stop)
+};
+
+// Phase: parse one search-page body, map its issues onto `summary` + the batch callback, and
+// classify pagination. Reproduces the original inline per-page block exactly — including the
+// per-issue map-failure logging, the cancel checks, and the isLast / empty-token branches.
+JiraSearchPageOutcome
+ProcessJiraSearchPage(int page, const std::string& responseText, const std::string& lastResponseBody,
+                      const std::vector<std::string>& selectedFields,
+                      const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
+                      const JiraClient::BatchCallback& onBatch, const JiraClient::CancelCallback& shouldCancel,
+                      TrackerIssueFetchSummary& summary) {
+    JiraSearchPageOutcome outcome;
+    try {
+        auto json = nlohmann::json::parse(responseText);
+        if (!json.contains("issues")) {
+            LOG_WARN("JiraClient: page %d response has no 'issues' key. Body (truncated):\n%s", page,
+                     TruncateForLog(responseText, 800).c_str());
+            outcome.Stop = true;
+            outcome.EndedCleanly = false;
+            outcome.HadFetchError = true;
+            outcome.FetchError = "Jira search response missing 'issues' array.";
+            return outcome;
+        }
+
+        std::vector<CachedTicket> pageTickets;
+        for (const auto& issue : json["issues"]) {
+            if (shouldCancel && shouldCancel()) {
+                break;
+            }
+            if (!smatchet::jira::AppendCachedTicketFromJiraSearchIssue(issue, selectedFields, fetchIssueComments,
+                                                                       pageTickets)) {
+                const std::string issueKey = issue.is_object() ? JsonGetStringIfString(issue, "key") : std::string();
+                LOG_ERROR("JiraClient: JSON error on page %d while parsing issue %s", page,
+                          issueKey.empty() ? "(unknown key)" : issueKey.c_str());
+                outcome.EndedCleanly = false;
+            }
+        }
+
+        if (shouldCancel && shouldCancel()) {
+            outcome.Stop = true;
+            outcome.EndedCleanly = false;
+            return outcome;
+        }
+
+        size_t added = pageTickets.size();
+        summary.FetchedCount += added;
+        LOG_INFO("JiraClient: fetched page %d with %zu issues (total=%zu).", page, added, summary.FetchedCount);
+
+        if (onBatch && added > 0) {
+            onBatch(std::move(pageTickets));
+        }
+
+        const bool isLast = json.value("isLast", true);
+        std::string newToken = JsonGetStringIfString(json, "nextPageToken");
+        if (json.contains("nextPageToken") && !json["nextPageToken"].is_null() && !json["nextPageToken"].is_string()) {
+            LOG_WARN("JiraClient: page %d nextPageToken is not a string (JSON type: %s); pagination may stop.", page,
+                     json["nextPageToken"].type_name());
+        }
+        if (isLast) {
+            outcome.Stop = true;
+            outcome.EndedCleanly = true;
+            return outcome;
+        }
+        if (newToken.empty()) {
+            LOG_WARN("JiraClient: page %d indicates more pages but nextPageToken is empty. Stopping pagination.", page);
+            outcome.Stop = true;
+            outcome.EndedCleanly = false;
+            return outcome;
+        }
+        outcome.NextToken = std::move(newToken);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("JiraClient: JSON parse error on page %d: %s | response excerpt: %s", page, ex.what(),
+                  TruncateForLog(lastResponseBody).c_str());
+        outcome.Stop = true;
+        outcome.EndedCleanly = false;
+        outcome.HadFetchError = true;
+        outcome.FetchError = std::string("JSON parse error: ") + ex.what();
+    }
+    return outcome;
+}
+
+// Phase: when a 200-OK sync yields zero issues with no error, confirm which account the API sees.
+// Distinguishes authenticated-vs-anonymous 200 responses. Logs a WARN; no state mutation.
+void JiraDiagnoseZeroIssueResult(const TrackerConfig& cfg, const std::string& base, const cpr::Header& headers,
+                                 int fetchedPages) {
+    std::string who = cfg.Email;
+    bool verifiedIdentity = false;
+    std::string myselfUrl = base + "/rest/api/3/myself";
+    auto myselfResp = TrackerGetLogged("JiraClient", myselfUrl, headers);
+    if (myselfResp.status_code == 200) {
+        try {
+            auto me = nlohmann::json::parse(myselfResp.text);
+            std::string name = me.value("displayName", std::string());
+            std::string emailAddr = me.value("emailAddress", std::string());
+            who = name.empty() ? emailAddr : (name + " <" + emailAddr + ">");
+            verifiedIdentity = true;
+        } catch (const std::exception& ex) {
+            LOG_WARN("JiraClient: failed to parse /myself response: %s body=%s", ex.what(),
+                     TruncateForLog(myselfResp.text, 300).c_str());
+        }
+    }
+
+    if (verifiedIdentity) {
+        LOG_WARN("JiraClient: API returned 0 issues for your JQL after %d page(s). Verified identity: %s. "
+                 "If the same URL in the browser shows issues, compare browser account/permissions with this API "
+                 "identity.",
+                 fetchedPages, who.c_str());
+    } else {
+        LOG_WARN("JiraClient: API returned 0 issues and /myself was not authenticated (HTTP %d). "
+                 "This usually means the app sent invalid credentials (often a truncated API token). "
+                 "Re-open Settings → Preferences → Jira and paste the full API token.",
+                 myselfResp.status_code);
+    }
+}
+
 } // namespace
 
 std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
@@ -174,69 +298,16 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
         }
 
         fetchedPages++;
-        try {
-            auto json = nlohmann::json::parse(response.text);
-            if (!json.contains("issues")) {
-                LOG_WARN("JiraClient: page %d response has no 'issues' key. Body (truncated):\n%s", page,
-                         TruncateForLog(response.text, 800).c_str());
-                syncEndedCleanly = false;
-                summary.FetchError = "Jira search response missing 'issues' array.";
-                break;
-            }
-
-            std::vector<CachedTicket> pageTickets;
-            for (const auto& issue : json["issues"]) {
-                if (shouldCancel && shouldCancel()) {
-                    break;
-                }
-                if (!smatchet::jira::AppendCachedTicketFromJiraSearchIssue(issue, selectedFields, fetchIssueComments,
-                                                                           pageTickets)) {
-                    const std::string issueKey =
-                        issue.is_object() ? JsonGetStringIfString(issue, "key") : std::string();
-                    LOG_ERROR("JiraClient: JSON error on page %d while parsing issue %s", page,
-                              issueKey.empty() ? "(unknown key)" : issueKey.c_str());
-                    syncEndedCleanly = false;
-                }
-            }
-
-            if (shouldCancel && shouldCancel()) {
-                syncEndedCleanly = false;
-                break;
-            }
-
-            size_t added = pageTickets.size();
-            summary.FetchedCount += added;
-            LOG_INFO("JiraClient: fetched page %d with %zu issues (total=%zu).", page, added, summary.FetchedCount);
-
-            if (onBatch && added > 0) {
-                onBatch(std::move(pageTickets));
-            }
-
-            const bool isLast = json.value("isLast", true);
-            std::string newToken = JsonGetStringIfString(json, "nextPageToken");
-            if (json.contains("nextPageToken") && !json["nextPageToken"].is_null() &&
-                !json["nextPageToken"].is_string()) {
-                LOG_WARN("JiraClient: page %d nextPageToken is not a string (JSON type: %s); pagination may stop.",
-                         page, json["nextPageToken"].type_name());
-            }
-            if (isLast) {
-                syncEndedCleanly = true;
-                break;
-            }
-            if (newToken.empty()) {
-                LOG_WARN("JiraClient: page %d indicates more pages but nextPageToken is empty. Stopping pagination.",
-                         page);
-                syncEndedCleanly = false;
-                break;
-            }
-            nextPageToken = newToken;
-        } catch (const std::exception& ex) {
-            LOG_ERROR("JiraClient: JSON parse error on page %d: %s | response excerpt: %s", page, ex.what(),
-                      TruncateForLog(lastResponseBody).c_str());
-            syncEndedCleanly = false;
-            summary.FetchError = std::string("JSON parse error: ") + ex.what();
+        JiraSearchPageOutcome outcome = ProcessJiraSearchPage(page, response.text, lastResponseBody, selectedFields,
+                                                              fetchIssueComments, onBatch, shouldCancel, summary);
+        if (outcome.HadFetchError) {
+            summary.FetchError = std::move(outcome.FetchError);
+        }
+        if (outcome.Stop) {
+            syncEndedCleanly = outcome.EndedCleanly;
             break;
         }
+        nextPageToken = std::move(outcome.NextToken);
     }
 
     if (fetchedPages >= kMaxPages && !nextPageToken.empty()) {
@@ -246,35 +317,7 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
     summary.FullSyncCompleted = syncEndedCleanly && fetchedPages > 0 && (!shouldCancel || !shouldCancel());
 
     if (summary.FetchedCount == 0 && summary.FetchError.empty()) {
-        // Confirm which account the API sees. This distinguishes authenticated-vs-anonymous 200 responses.
-        std::string who = cfg.Email;
-        bool verifiedIdentity = false;
-        std::string myselfUrl = base + "/rest/api/3/myself";
-        auto myselfResp = TrackerGetLogged("JiraClient", myselfUrl, headers);
-        if (myselfResp.status_code == 200) {
-            try {
-                auto me = nlohmann::json::parse(myselfResp.text);
-                std::string name = me.value("displayName", std::string());
-                std::string emailAddr = me.value("emailAddress", std::string());
-                who = name.empty() ? emailAddr : (name + " <" + emailAddr + ">");
-                verifiedIdentity = true;
-            } catch (const std::exception& ex) {
-                LOG_WARN("JiraClient: failed to parse /myself response: %s body=%s", ex.what(),
-                         TruncateForLog(myselfResp.text, 300).c_str());
-            }
-        }
-
-        if (verifiedIdentity) {
-            LOG_WARN("JiraClient: API returned 0 issues for your JQL after %d page(s). Verified identity: %s. "
-                     "If the same URL in the browser shows issues, compare browser account/permissions with this API "
-                     "identity.",
-                     fetchedPages, who.c_str());
-        } else {
-            LOG_WARN("JiraClient: API returned 0 issues and /myself was not authenticated (HTTP %d). "
-                     "This usually means the app sent invalid credentials (often a truncated API token). "
-                     "Re-open Settings → Preferences → Jira and paste the full API token.",
-                     myselfResp.status_code);
-        }
+        JiraDiagnoseZeroIssueResult(cfg, base, headers, fetchedPages);
     }
 
     return summary;

@@ -157,6 +157,11 @@ add_executable(SmatchetTests
     # Plane and GitHub splits above.
     Core/JiraIssueMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMappingPure.cpp"
+    # PR A6 (function-size-compliance) — pure editmeta field-editability decision
+    # extracted from JiraUserAndMeta.cpp::FetchIssueEditMeta (which pulls cpr), to
+    # bring that fn under the 30-branch cap. Same pure-seam shape as the mappers.
+    Core/JiraEditMetaPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraEditMetaPure.cpp"
     # Slice 2 of deterministic-jira-test-backend — Jira
     # fixture parser + FakeTrackerClient configurator. Exercises LoadFromString,
     # jiraSearchPages round-trip through AppendCachedTicketFromJiraSearchIssue,
