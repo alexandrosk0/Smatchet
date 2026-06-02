@@ -245,144 +245,109 @@ void AiAssistantController::WorkerLoop() {
 }
 
 void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& cancel) {
-    // Worker-thread provider refresh. The user may have switched provider (and/or
-    // its API key / base URL / model id) in Preferences between turns. Rebuild
-    // `client_` only when the provider enum changed (avoids per-turn churn for
-    // the common URL/key/model edit), but always rebuild `clientConfig_` so a
-    // fresh key or URL takes effect on the very next turn.
-    {
-        const TrackerConfig refreshCfg = ConfigManager::Load();
-        const AiProvider refreshProvider = ProviderFromConfig(refreshCfg);
-        std::lock_guard<std::mutex> lk(providerStateMutex_);
-        if (refreshProvider != cachedProvider_ || !client_) {
-            std::unique_ptr<IAiClient> rebuilt = AiClientFactory::MakeAiClient(refreshProvider);
-            if (rebuilt) {
-                LOG_INFO("AiAssistantController: provider switched %d -> %d (client '%s' -> '%s')",
-                         static_cast<int>(cachedProvider_), static_cast<int>(refreshProvider),
-                         cachedProviderName_.c_str(), rebuilt->GetProviderName().c_str());
-                client_ = std::move(rebuilt);
-                cachedProvider_ = refreshProvider;
-                cachedProviderName_ = client_->GetProviderName();
-            } else {
-                LOG_ERROR("AiAssistantController: MakeAiClient returned null for provider %d — "
-                          "turn aborted, retaining prior client.",
-                          static_cast<int>(refreshProvider));
-            }
-        }
-        clientConfig_ = BuildClientConfig(refreshCfg, cachedProvider_);
-    }
-    if (!client_) {
+    // Thin sequence over the worker-thread phases. First refresh the provider,
+    // then build the chat payload with model, effort, system prompt and history,
+    // then stream the request and dispatch deltas back to the UI thread.
+    if (!RefreshProviderForTurn()) {
         state_.store(State::Errored, std::memory_order_release);
         return;
     }
 
     AiChatRequest chatReq;
-    {
-        // Re-read model + reasoning effort each turn so a Preferences change
-        // while a turn is queued takes effect on the next Submit, without a
-        // per-turn config snapshot leaking into the request struct. Per-turn
-        // overrides (chat-window Model + Effort Combos) win when non-empty;
-        // otherwise the live Preferences value applies.
-        const TrackerConfig cfg = ConfigManager::Load();
-        const AiProvider provider = ProviderFromConfig(cfg);
-        if (!req.ModelOverride.empty()) {
-            chatReq.Model = req.ModelOverride;
+    ResolveModelAndEffort(req, chatReq);
+    BuildChatPayload(req, chatReq);
+
+    // Trust the cancel atom captured in WorkerLoop under the queueMutex_. The
+    // earlier "re-acquire under lock; fallback to fresh atom if currentCancel_
+    // was reset" path could silently swallow a Cancel that arrived after the
+    // worker popped its turn but before this re-acquire — Submit() guarantees a
+    // non-null currentCancel_ exists by the time WorkerLoop reads it, so the
+    // fallback was dead code that masked a real race.
+    AiCancelToken liveCancel = cancel;
+    if (!liveCancel) {
+        liveCancel = std::make_shared<std::atomic<bool>>(false);
+    }
+    StreamAndDispatch(chatReq, liveCancel, req.TurnGen);
+}
+
+bool AiAssistantController::RefreshProviderForTurn() {
+    // Worker-thread provider refresh. The user may have switched provider (and/or
+    // its API key / base URL / model id) in Preferences between turns. Rebuild
+    // `client_` only when the provider enum changed (avoids per-turn churn for
+    // the common URL/key/model edit), but always rebuild `clientConfig_` so a
+    // fresh key or URL takes effect on the very next turn.
+    const TrackerConfig refreshCfg = ConfigManager::Load();
+    const AiProvider refreshProvider = ProviderFromConfig(refreshCfg);
+    std::lock_guard<std::mutex> lk(providerStateMutex_);
+    if (refreshProvider != cachedProvider_ || !client_) {
+        std::unique_ptr<IAiClient> rebuilt = AiClientFactory::MakeAiClient(refreshProvider);
+        if (rebuilt) {
+            LOG_INFO("AiAssistantController: provider switched %d -> %d (client '%s' -> '%s')",
+                     static_cast<int>(cachedProvider_), static_cast<int>(refreshProvider), cachedProviderName_.c_str(),
+                     rebuilt->GetProviderName().c_str());
+            client_ = std::move(rebuilt);
+            cachedProvider_ = refreshProvider;
+            cachedProviderName_ = client_->GetProviderName();
         } else {
-            switch (provider) {
-            case AiProvider::Anthropic:
-                chatReq.Model = cfg.AiModelAnthropic;
-                break;
-            case AiProvider::OllamaNative:
-            case AiProvider::OllamaOpenAiCompat:
-                chatReq.Model = cfg.AiModelOllama;
-                break;
-            case AiProvider::DeepSeek:
-                chatReq.Model = cfg.AiModelDeepSeek;
-                break;
-            case AiProvider::OpenAi:
-            default:
-                chatReq.Model = cfg.AiModelOpenAi;
-                break;
-            }
-        }
-        chatReq.ReasoningEffort = req.EffortOverride.empty() ? cfg.AiReasoningEffort : req.EffortOverride;
-        // Use the canonical provider enum string for both the log and the F2 signature.
-        // The client-side `GetProviderName()` returns the BACKING client identity
-        // (`OpenAiClient` serves OpenAi, OllamaOpenAiCompat, and DeepSeek — all three
-        // print as "openai") which would mask provider transitions for the auto-clear.
-        const std::string providerLabel = AiClientFactory::ProviderToString(provider);
-        LOG_INFO("AiAssistantController::RunRequest turnGen=%llu provider='%s' model='%s' effort='%s' "
-                 "systemPromptCap=64KB",
-                 static_cast<unsigned long long>(req.TurnGen), providerLabel.c_str(), chatReq.Model.c_str(),
-                 chatReq.ReasoningEffort.c_str());
-
-        // F2 — model-change auto-clear. Compose "<provider>|<effective-model>" and
-        // compare against the previous turn's signature. The per-turn model override
-        // (chat-window Combo) composes naturally because chatReq.Model already
-        // reflects override-wins-cfg above. ReasoningEffort deliberately omitted —
-        // effort-only changes must NOT discard chat history (decision Q in plan).
-        const smatchet::ai::ModelSignatureChangeResult sigResult =
-            smatchet::ai::DetectModelChange(lastModelSignature_, providerLabel, chatReq.Model);
-        if (sigResult.ShouldClear) {
-            LOG_INFO("AiAssistantController: model signature changed ('%s' -> '%s') — posting chat clear",
-                     lastModelSignature_.c_str(), sigResult.NewSignature.c_str());
-            // Capture by value: the task may run arbitrarily later on the UI thread
-            // and must remain safe even if the controller (or worker locals) go away
-            // between post and drain. No references to worker-thread state.
-            app_.mainThreadDispatcher.PostToMainThread([]() {
-                g_ui.assistantHistory.clear();
-                g_ui.assistantStreamBuf.clear();
-                g_ui.assistantLastError = "[model changed - chat cleared]";
-            });
-        }
-        lastModelSignature_ = sigResult.NewSignature;
-    }
-
-    // System-prompt assembly: agents.md prefix + "## Current Smatchet context" header
-    // (when any block has content) + each enabled block wrapped in
-    // `<smatchet_context block="...">...</smatchet_context>` tags. File I/O for
-    // agents.md happens here on the worker thread to honour pillar 2 (no synchronous
-    // I/O reaches the UI thread). Layers are capped at 64 KB each by AgentsMdLoader,
-    // so the total system-prompt overhead is bounded.
-    chatReq.SystemPrompt.clear();
-    {
-        // agents.md cache: avoid re-reading the (up to 64 KB × 2 layers) blob on
-        // every turn. Re-reads happen only when the cache is invalidated
-        // (`InvalidateAgentsMdCache` from the Preferences UI) or when the
-        // configured paths change between turns.
-        const TrackerConfig agentsCfg = ConfigManager::Load();
-        std::string agentsMd;
-        {
-            std::lock_guard<std::mutex> lk(agentsMdMutex_);
-            const bool pathsMatch = (agentsMdCachedGlobalPath_ == agentsCfg.AgentsMdGlobalPath) &&
-                                    (agentsMdCachedProjectPath_ == agentsCfg.ProjectAgentsMdPath);
-            if (agentsMdCacheValid_.load(std::memory_order_acquire) && pathsMatch) {
-                agentsMd = agentsMdCachedBody_;
-            } else {
-                agentsMd = AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath,
-                                                       agentsCfg.AgentsMdAutoDiscoverProject);
-                agentsMdCachedBody_ = agentsMd;
-                agentsMdCachedGlobalPath_ = agentsCfg.AgentsMdGlobalPath;
-                agentsMdCachedProjectPath_ = agentsCfg.ProjectAgentsMdPath;
-                agentsMdCacheValid_.store(true, std::memory_order_release);
-            }
-        }
-        if (!agentsMd.empty()) {
-            chatReq.SystemPrompt.append(agentsMd);
-            if (chatReq.SystemPrompt.back() != '\n') {
-                chatReq.SystemPrompt.push_back('\n');
-            }
-            chatReq.SystemPrompt.append("\n---\n\n");
+            LOG_ERROR("AiAssistantController: MakeAiClient returned null for provider %d — "
+                      "turn aborted, retaining prior client.",
+                      static_cast<int>(refreshProvider));
         }
     }
+    clientConfig_ = BuildClientConfig(refreshCfg, cachedProvider_);
+    return static_cast<bool>(client_);
+}
 
+void AiAssistantController::ResolveModelAndEffort(const Request& req, AiChatRequest& chatReq) {
+    // Re-read model + reasoning effort each turn so a Preferences change while a
+    // turn is queued takes effect on the next Submit, without a per-turn config
+    // snapshot leaking into the request struct. Per-turn overrides (chat-window
+    // Model + Effort Combos) win when non-empty; otherwise the live Preferences
+    // value applies.
+    const TrackerConfig cfg = ConfigManager::Load();
+    const AiProvider provider = ProviderFromConfig(cfg);
+    chatReq.Model = smatchet::ai::pure::ResolveChatModel(provider, req.ModelOverride, cfg.AiModelOpenAi,
+                                                         cfg.AiModelAnthropic, cfg.AiModelOllama, cfg.AiModelDeepSeek);
+    chatReq.ReasoningEffort = req.EffortOverride.empty() ? cfg.AiReasoningEffort : req.EffortOverride;
+    // Use the canonical provider enum string for both the log and the F2 signature.
+    // The client-side `GetProviderName()` returns the BACKING client identity
+    // (`OpenAiClient` serves OpenAi, OllamaOpenAiCompat, and DeepSeek — all three
+    // print as "openai") which would mask provider transitions for the auto-clear.
+    const std::string providerLabel = AiClientFactory::ProviderToString(provider);
+    LOG_INFO("AiAssistantController::RunRequest turnGen=%llu provider='%s' model='%s' effort='%s' "
+             "systemPromptCap=64KB",
+             static_cast<unsigned long long>(req.TurnGen), providerLabel.c_str(), chatReq.Model.c_str(),
+             chatReq.ReasoningEffort.c_str());
+
+    // F2 — model-change auto-clear. Compose "<provider>|<effective-model>" and
+    // compare against the previous turn's signature. The per-turn model override
+    // (chat-window Combo) composes naturally because chatReq.Model already
+    // reflects override-wins-cfg above. ReasoningEffort deliberately omitted —
+    // effort-only changes must NOT discard chat history (decision Q in plan).
+    const smatchet::ai::ModelSignatureChangeResult sigResult =
+        smatchet::ai::DetectModelChange(lastModelSignature_, providerLabel, chatReq.Model);
+    if (sigResult.ShouldClear) {
+        LOG_INFO("AiAssistantController: model signature changed ('%s' -> '%s') — posting chat clear",
+                 lastModelSignature_.c_str(), sigResult.NewSignature.c_str());
+        // Capture by value: the task may run arbitrarily later on the UI thread
+        // and must remain safe even if the controller (or worker locals) go away
+        // between post and drain. No references to worker-thread state.
+        app_.mainThreadDispatcher.PostToMainThread([]() {
+            g_ui.assistantHistory.clear();
+            g_ui.assistantStreamBuf.clear();
+            g_ui.assistantLastError = "[model changed - chat cleared]";
+        });
+    }
+    lastModelSignature_ = sigResult.NewSignature;
+}
+
+std::vector<AiContextBlock> AiAssistantController::ResolveDeferredContext(const Request& req) {
     // Fetch the audit-trail block on the worker thread when requested. The UI-side
     // BuildSendContext deliberately skips audit (the SQLite + filesystem read is too
     // heavy for the UI frame) and instead emits an `AuditTrail`-kind block with the
     // body `"__SMATCHET_DEFERRED__"` (literal sentinel). We rewrite it here using the
     // canonical pure helper. Disabled audit-trail blocks have empty bodies and are
-    // skipped by the block-emit loop below, so this is a no-op when the user
-    // disabled the toggle.
+    // skipped by the composer, so this is a no-op when the user disabled the toggle.
     std::vector<AiContextBlock> resolvedContext;
     resolvedContext.reserve(req.Context.size());
     for (const auto& block : req.Context) {
@@ -407,37 +372,51 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
             resolvedContext.push_back(block);
         }
     }
+    return resolvedContext;
+}
+
+void AiAssistantController::BuildChatPayload(const Request& req, AiChatRequest& chatReq) {
+    // System-prompt assembly: agents.md prefix + "## Current Smatchet context" header
+    // (when any block has content) + each enabled block wrapped in
+    // `<smatchet_context block="...">...</smatchet_context>` tags. File I/O for
+    // agents.md happens here on the worker thread to honour pillar 2 (no synchronous
+    // I/O reaches the UI thread). Layers are capped at 64 KB each by AgentsMdLoader,
+    // so the total system-prompt overhead is bounded.
+    std::string agentsMd;
     {
-        std::string contextSection;
-        for (const auto& block : resolvedContext) {
-            if (block.Body.empty()) {
-                continue;
-            }
-            if (!contextSection.empty()) {
-                contextSection.push_back('\n');
-            }
-            contextSection.append("<smatchet_context block=\"");
-            contextSection.append(block.Name);
-            contextSection.append("\">\n");
-            contextSection.append(block.Body);
-            if (block.Body.back() != '\n') {
-                contextSection.push_back('\n');
-            }
-            contextSection.append("</smatchet_context>\n");
-        }
-        if (!contextSection.empty()) {
-            chatReq.SystemPrompt.append("## Current Smatchet context\n\n");
-            chatReq.SystemPrompt.append(contextSection);
+        // agents.md cache: avoid re-reading the (up to 64 KB × 2 layers) blob on
+        // every turn. Re-reads happen only when the cache is invalidated
+        // (`InvalidateAgentsMdCache` from the Preferences UI) or when the
+        // configured paths change between turns.
+        const TrackerConfig agentsCfg = ConfigManager::Load();
+        std::lock_guard<std::mutex> lk(agentsMdMutex_);
+        const bool pathsMatch = (agentsMdCachedGlobalPath_ == agentsCfg.AgentsMdGlobalPath) &&
+                                (agentsMdCachedProjectPath_ == agentsCfg.ProjectAgentsMdPath);
+        if (agentsMdCacheValid_.load(std::memory_order_acquire) && pathsMatch) {
+            agentsMd = agentsMdCachedBody_;
+        } else {
+            agentsMd = AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath,
+                                                   agentsCfg.AgentsMdAutoDiscoverProject);
+            agentsMdCachedBody_ = agentsMd;
+            agentsMdCachedGlobalPath_ = agentsCfg.AgentsMdGlobalPath;
+            agentsMdCachedProjectPath_ = agentsCfg.ProjectAgentsMdPath;
+            agentsMdCacheValid_.store(true, std::memory_order_release);
         }
     }
+
+    const std::vector<AiContextBlock> resolvedContext = ResolveDeferredContext(req);
+    chatReq.SystemPrompt = smatchet::ai::pure::ComposeSystemPrompt(agentsMd, resolvedContext);
+
     AiMessage userMsg;
     userMsg.Role = "user";
     userMsg.Content = req.Prompt;
     chatReq.History.push_back(std::move(userMsg));
+}
 
+void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, const AiCancelToken& cancel,
+                                              uint64_t turnGen) {
     // Capture turnGen by value so stale dispatcher tasks (after a newer Submit
     // or Cancel) can be dropped on the UI side via assistantTurnGen comparison.
-    const uint64_t turnGen = req.TurnGen;
     AppController* app = &app_;
 
     auto onDelta = [app, turnGen](const AiStreamDelta& delta) {
@@ -549,19 +528,8 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
         });
     };
 
-    // Trust the cancel atom captured in WorkerLoop under the queueMutex_. The
-    // earlier "re-acquire under lock; fallback to fresh atom if currentCancel_
-    // was reset" path could silently swallow a Cancel that arrived after the
-    // worker popped its turn but before this re-acquire — Submit() guarantees a
-    // non-null currentCancel_ exists by the time WorkerLoop reads it, so the
-    // fallback was dead code that masked a real race.
-    AiCancelToken liveCancel = cancel;
-    if (!liveCancel) {
-        liveCancel = std::make_shared<std::atomic<bool>>(false);
-    }
-
     try {
-        client_->SendStreaming(clientConfig_, chatReq, onDelta, onError, liveCancel);
+        client_->SendStreaming(clientConfig_, chatReq, onDelta, onError, cancel);
     } catch (const std::exception& ex) {
         LOG_ERROR("AiAssistantController: SendStreaming threw: %s", ex.what());
         AiStreamError err;

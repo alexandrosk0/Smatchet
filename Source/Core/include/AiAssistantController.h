@@ -23,6 +23,87 @@
 
 class AppController;
 
+namespace smatchet {
+namespace ai {
+namespace pure {
+
+/// Compose the AI system prompt from a (possibly empty) merged agents.md blob and the
+/// already-resolved context blocks. Pure (no I/O, no AppController coupling) so it is
+/// bucket-A unit-testable. Mirrors the worker-thread assembly in
+/// `AiAssistantController::RunRequest`:
+///   * When `agentsMd` is non-empty: append it, ensure a trailing newline, then a
+///     `\n---\n\n` separator.
+///   * For each context block with a non-empty body: emit
+///     `<smatchet_context block="<name>">\n<body>\n</smatchet_context>\n`, blocks joined
+///     by a single `\n`. The whole context region is prefixed with a
+///     `## Current Smatchet context\n\n` header — only when at least one block has content.
+/// Blocks with empty bodies are skipped (matches the disabled-toggle no-op behaviour).
+/// `inline` (header-defined) so the pure-logic test rig links it without pulling in the
+/// controller TU's AppController / Ui-session dependencies.
+inline std::string ComposeSystemPrompt(const std::string& agentsMd,
+                                       const std::vector<AiContextBlock>& resolvedContext) {
+    std::string systemPrompt;
+    if (!agentsMd.empty()) {
+        systemPrompt.append(agentsMd);
+        if (systemPrompt.back() != '\n') {
+            systemPrompt.push_back('\n');
+        }
+        systemPrompt.append("\n---\n\n");
+    }
+
+    std::string contextSection;
+    for (std::vector<AiContextBlock>::const_iterator it = resolvedContext.begin(); it != resolvedContext.end(); ++it) {
+        const AiContextBlock& block = *it;
+        if (block.Body.empty()) {
+            continue;
+        }
+        if (!contextSection.empty()) {
+            contextSection.push_back('\n');
+        }
+        contextSection.append("<smatchet_context block=\"");
+        contextSection.append(block.Name);
+        contextSection.append("\">\n");
+        contextSection.append(block.Body);
+        if (block.Body.back() != '\n') {
+            contextSection.push_back('\n');
+        }
+        contextSection.append("</smatchet_context>\n");
+    }
+    if (!contextSection.empty()) {
+        systemPrompt.append("## Current Smatchet context\n\n");
+        systemPrompt.append(contextSection);
+    }
+    return systemPrompt;
+}
+
+/// Resolve the effective chat model for a turn. Pure switch over the provider enum +
+/// the per-provider configured model ids; a non-empty `modelOverride` (chat-window Combo)
+/// always wins. Mirrors the model-selection block in `RunRequest`. `inline` for the same
+/// link-without-the-controller-TU reason as `ComposeSystemPrompt`.
+inline std::string ResolveChatModel(AiProvider provider, const std::string& modelOverride,
+                                    const std::string& modelOpenAi, const std::string& modelAnthropic,
+                                    const std::string& modelOllama, const std::string& modelDeepSeek) {
+    if (!modelOverride.empty()) {
+        return modelOverride;
+    }
+    switch (provider) {
+    case AiProvider::Anthropic:
+        return modelAnthropic;
+    case AiProvider::OllamaNative:
+    case AiProvider::OllamaOpenAiCompat:
+        return modelOllama;
+    case AiProvider::DeepSeek:
+        return modelDeepSeek;
+    case AiProvider::OpenAi:
+    default:
+        return modelOpenAi;
+    }
+}
+
+} // namespace pure
+} // namespace ai
+} // namespace smatchet
+
 /// Worker-thread-backed coordinator for the Smatchet Assistant side panel.
 /// **Threading invariants** (UX pillar 2 + pillar 3):
 ///   * `Submit` / `Cancel` / `CurrentState` are UI-thread-only. They push work onto the
@@ -127,6 +208,38 @@ class AiAssistantController {
 
     void WorkerLoop();
     void RunRequest(const Request& req, const AiCancelToken& cancel);
+
+    // --- RunRequest phase helpers (worker-thread only) ---------------------
+    // RunRequest is a thin sequence over these phases: refresh provider →
+    // build the chat request (model/effort + system prompt + history) →
+    // stream + dispatch deltas/errors to the UI. Each runs on the worker
+    // thread; none reaches UI state directly (callbacks hop the dispatcher).
+
+    /// Worker-thread provider refresh. Rebuilds `client_` when the configured
+    /// provider enum changed (or the prior client was null) and always rebuilds
+    /// `clientConfig_` so a fresh key/URL takes effect next turn. Returns true
+    /// when a live client is available for the turn, false to abort early.
+    bool RefreshProviderForTurn();
+
+    /// Resolve the per-turn model + reasoning effort into `chatReq`, then run the
+    /// F2 model-change auto-clear (posts a UI-side history clear when the
+    /// "provider|model" signature changed since the previous turn).
+    void ResolveModelAndEffort(const Request& req, AiChatRequest& chatReq);
+
+    /// Resolve deferred context blocks (the worker-side audit-trail fetch) into a
+    /// fully-materialised block list. Worker thread — performs the SQLite +
+    /// filesystem read that the UI deliberately deferred.
+    std::vector<AiContextBlock> ResolveDeferredContext(const Request& req);
+
+    /// Assemble `chatReq.SystemPrompt` (cached agents.md blob + resolved context
+    /// section via the pure composer) and seed `chatReq.History` with the user
+    /// message.
+    void BuildChatPayload(const Request& req, AiChatRequest& chatReq);
+
+    /// Stream the request and dispatch deltas/errors back to the UI thread.
+    /// Owns the onDelta/onError callbacks + the SendStreaming try/catch + the
+    /// terminal Idle state transition.
+    void StreamAndDispatch(const AiChatRequest& chatReq, const AiCancelToken& cancel, uint64_t turnGen);
 
     AppController& app_;
 
