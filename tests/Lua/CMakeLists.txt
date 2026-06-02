@@ -29,6 +29,9 @@ add_executable(SmatchetLuaTests
     # FieldEditAuditSource, Logger, Commands::CommandRegistry/Command/FuzzyMatch)
     # are added below.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AppController_LuaBindingsCore.cpp"
+    # ConfigManager.cpp's migration grandfather calls smatchet::ai::pure::ExtractUrlHost
+    # (pure, cpr-free TU) — link it so the symbol resolves in this binary.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
