@@ -84,6 +84,33 @@ class TicketSyncService {
 
     void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
 
+    // --- TickStreamingApply phase helpers ------------------------------------------------
+    // TickStreamingApply is a thin dispatcher over these per-phase steps. Each operates on the
+    // member FSM state in place (no copies of the batch queue / ActiveTickets are introduced)
+    // so the hot per-frame path keeps its original allocation + branch profile. The first three
+    // yield a true result when the tick should return early, matching the original early-exit
+    // control flow at those points.
+
+    /// Phase 1a: if the active session was superseded, drain its queues, join the worker, reset
+    /// FSM state, and kick off any pending sync request. Returns true if the tick must return.
+    bool DiscardSupersededSessionIfNeeded();
+
+    /// Phase 1b: when no session is busy, join a finished worker thread and start a pending sync
+    /// request if one is queued. Returns true if the tick must return.
+    bool StartPendingSyncIfIdle(bool isSessionBusy);
+
+    /// Phase 2: progressive stale-ticket deletion within a per-frame budget (3 ms / 10 ids).
+    /// Returns true if the tick must return (stale-deletion is in progress this frame).
+    bool DrainStaleDeletionBudget();
+
+    /// Phase 3: drain pending streaming batches into the cache + ActiveTickets within the
+    /// per-frame budget (3 ms / 20 tickets), publishing the snapshot when state changed.
+    void DrainPendingStreamingBatches();
+
+    /// Phase 4: when the worker finished and the queue is drained, classify fetch error / soft
+    /// warning, raise toasts, seed stale-deletion, and emit the coalesced Lua window bump.
+    void FinalizeStreamingSessionIfDone();
+
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};
     StreamingSyncState activeStreamingSync_;
