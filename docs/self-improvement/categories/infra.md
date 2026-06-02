@@ -25,12 +25,6 @@
   Status: open
   Last-reviewed: 2026-05-29
 
-- 2026-05-28 · deep-audit · [infra] · P2 — Dead CI job `windows-msvc-no-agentic` tests a removed flag (zero differential coverage, burns a runner/PR)
-  Details: `.github/workflows/build-and-test.yml:163-190` runs `cmake --preset ninja-iter-msvc -DSMATCHET_WITH_AGENTIC=OFF`, but no `option(SMATCHET_WITH_AGENTIC ...)` exists — the flag was removed in PR #356 (`tests/ui/agent_proposal_store_sqlite.test.cpp:25` says so outright). CMake silently ignores unknown `-D` cache vars, so the job builds the identical default standalone config as the rest of the matrix and asserts nothing, while consuming a windows-2022 runner on every code PR (paths-ignore only skips docs). Contrast `windows-msvc-no-whisper` which flips the real `SMATCHET_WITH_WHISPER` option. Verified (deep-audit, adversarially confirmed).
-  Concrete next action: delete the `windows-msvc-no-agentic` job. If a stripped-feature build is still wanted, point it at a flag that actually exists. ~10 min.
-  Status: open
-  Last-reviewed: 2026-05-28
-
 - 2026-05-26 · orchestrator · [infra] · P2 — Advisory CI jobs need step-level non-blocking templates
   Details: PR #460 exposed that job-level `continue-on-error: true` was not enough to keep Bucket-C/Bucket-E soak-window failures from surfacing as red PR checks. Bucket-C and Bucket-E both needed step-level `continue-on-error` on the failing scenario/diff step, with artifact upload keyed off `steps.<id>.outcome` or `always()` so diagnostics still survive.
   Concrete next action: add a shared workflow snippet or documented pattern for advisory jobs: give the risky step an `id`, set `continue-on-error: true` on that step, and upload artifacts using `if: ${{ steps.<id>.outcome == 'failure' }}` or `if: always()` as appropriate. Then audit existing advisory jobs for the same shape. Estimated cost 30 min.
