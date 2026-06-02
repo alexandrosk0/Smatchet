@@ -98,6 +98,7 @@ v = c.get("vcs", {})
 emit("VCS_PRIMARY", v.get("primary", ""))
 emit("VCS_OPTIONAL_LAYER", v.get("optional_layer") or "")
 emit("VCS_P4_STREAMS", v.get("p4_streams", []))
+emit("VCS_PROTECTED_BRANCHES", v.get("protected_branches", []))
 
 ci = c.get("ci", {})
 emit("CI_REQUIRED_CHECKS", ci.get("required_checks", []))

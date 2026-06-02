@@ -48,7 +48,8 @@
   "vcs": {
     "primary": "git",
     "optional_layer": "p4",
-    "p4_streams": []
+    "p4_streams": [],
+    "protected_branches": ["bug-report-assets"]
   },
   "ci": {
     "required_checks": [
