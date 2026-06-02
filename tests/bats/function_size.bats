@@ -34,6 +34,72 @@ setup() {
     [[ "$output" == *"OversizedFunction"* ]]
 }
 
+# ---------- tiered line cap: UI/non-UI classification ----------
+
+# Build a single-file fixture with a function of $2 body lines; $3 = function name, $4 = subdir
+# under Source/Core/src (Tracker = non-UI, Ui = UI). Emitted to $1 (a .cpp path).
+_mk_file() {
+    local out="$1" body_lines="$2" name="$3"
+    {
+        echo "int ${name}(int seed) {"
+        echo "    int acc = seed;"
+        local i=0
+        while [ "$i" -lt "$body_lines" ]; do echo "    acc += $i;"; i=$((i+1)); done
+        echo "    return acc;"
+        echo "}"
+    } > "$out"
+}
+
+@test "tiered: a 130-line NON-UI function exceeds the 120 cap (function-too-long)" {
+    f="$BATS_TEST_TMPDIR/Compute.cpp"
+    _mk_file "$f" 126 "ComputeTotals"     # ~130 body lines incl signature/braces
+    run "$PY" "$AUD" --scan-file "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"function-too-long"* ]]
+    [[ "$output" == *"ComputeTotals"* ]]
+}
+
+@test "tiered: a 130-line ImGui-draw function (Draw-named) PASSES the 200 cap" {
+    f="$BATS_TEST_TMPDIR/DrawPanel.cpp"
+    _mk_file "$f" 126 "DrawAssistantPanel"   # Draw-prefixed -> 200 cap, 130 < 200
+    run "$PY" "$AUD" --scan-file "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"function-too-long"* ]]
+}
+
+@test "tiered: a 130-line function under a Ui/ path PASSES the 200 cap" {
+    mkdir -p "$BATS_TEST_TMPDIR/Source/Core/src/Ui"
+    f="$BATS_TEST_TMPDIR/Source/Core/src/Ui/Widget.cpp"
+    _mk_file "$f" 126 "HelperThing"          # non-Draw name but Ui/ path -> 200 cap
+    run "$PY" "$AUD" --scan-file "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"function-too-long"* ]]
+}
+
+# ---------- soft warning tier (advisory; stderr; exit 0) ----------
+
+@test "soft tier: a 105-line / 22-branch function WARNS but exits 0 with no hard violation" {
+    f="$BATS_TEST_TMPDIR/Warnable.cpp"
+    {
+        echo "int Warnable(int x) {"
+        echo "    int acc = 0;"
+        # 22 branches (> 20 soft, <= 30 hard) and ~105 lines (> 100 soft, < 120 hard non-UI).
+        i=0; while [ "$i" -lt 22 ]; do echo "    if (x == $i) acc += $i;"; i=$((i+1)); done
+        # pad to push line count past 100 but under 120
+        i=0; while [ "$i" -lt 78 ]; do echo "    acc += $i;"; i=$((i+1)); done
+        echo "    return acc;"
+        echo "}"
+    } > "$f"
+    run "$PY" "$AUD" --scan-file "$f"
+    [ "$status" -eq 0 ]
+    # no hard violation on stdout
+    [[ "$output" != *"function-too-long"* ]]
+    [[ "$output" != *"function-too-branchy"* ]]
+    # advisory warning is emitted (combined stdout+stderr via `run`)
+    [[ "$output" == *"WARN"* ]]
+    [[ "$output" == *"Warnable"* ]]
+}
+
 @test "function-too-branchy fires on a >30-branch function under the line cap" {
     run "$PY" "$AUD" --scan-file "$FIX/known-bad-branchy.cpp"
     [ "$status" -eq 0 ]
@@ -87,6 +153,29 @@ _mk_repo() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"function-too-long"* ]]
     [[ "$output" == *"Generated"* ]]
+}
+
+@test "tiered: --diff FAILS when a NEW non-UI function newly crosses the 120-line cap" {
+    repo="$BATS_TEST_TMPDIR/new120"
+    _mk_repo "$repo" 10               # base: small function (well under 120)
+    git -C "$repo" add -A && git -C "$repo" commit -qm base
+    _mk_repo "$repo" 150 ""           # grow to ~154 lines (> 120 non-UI cap, < 200)
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"function-too-long"* ]]
+    [[ "$output" == *"Generated"* ]]
+}
+
+@test "tiered: --diff PASSES (grandfathered) for an existing 150-line non-UI function under the new 120 cap" {
+    repo="$BATS_TEST_TMPDIR/grand120"
+    _mk_repo "$repo" 150              # base ALREADY over the new 120 cap (~154 lines)
+    git -C "$repo" add -A && git -C "$repo" commit -qm base
+    _mk_repo "$repo" 160 ""          # grows slightly further, same name -> still grandfathered
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }
 
 @test "--diff PASSES (grandfathered) when an already-oversized function only grows" {

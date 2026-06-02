@@ -3,10 +3,32 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --funcsize-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py --diff); this file is an informational snapshot, not the gate input._
 
-## function-too-long (26 entries, cap 200 lines)
+## function-too-long (55 entries, cap 120 lines non-UI / 200 lines ImGui-draw)
+- `AiAssistantController.cpp` · `AiAssistantController::StreamAndDispatch/3` · 139 lines
+- `AiPrefsTestConnection.cpp` · `TriggerProbe/3` · 164 lines
+- `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 121 lines
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 945 lines
+- `AppController.cpp` · `AppController::InitBackends/1` · 138 lines
+- `AppController_CatalogAndFieldEdit.cpp` · `AppController::SubmitFieldEditNetworkOnly/7` · 141 lines
+- `AppController_LuaBindings.cpp` · `AppController::RunAutomationJob/3` · 133 lines
+- `AppController_LuaBindings_Draw.cpp` · `ReplayCmdList/6` · 121 lines
+- `BuiltinCommands_Ai.cpp` · `RegisterSendOnceCommand/1` · 143 lines
+- `BuiltinCommands_Config.cpp` · `RegisterConfigCommands/2` · 165 lines
+- `BuiltinCommands_Meta.cpp` · `RegisterMetaCommands/2` · 147 lines
+- `BuiltinCommands_Tickets.cpp` · `RegisterTicketsCommands/2` · 122 lines
+- `CliCommandRunner.cpp` · `RunCmdInProcessImpl/2` · 160 lines
+- `CompactDateFormat.cpp` · `FormatCompactJiraDateForDisplay/3` · 143 lines
+- `GitHubIssueSearch.cpp` · `RunGraphQlIssueSearch/12` · 133 lines
+- `GitHubQueryFromJql.cpp` · `TranslateJqlToGitHubSearch/3` · 185 lines
+- `JiraIssueSearch.cpp` · `JiraClient::FetchIssuesStreamed/4` · 197 lines
+- `JqlSuggestEngine.cpp` · `BuildJqlSuggestions/8` · 125 lines
 - `LuaConsolePlugin.cpp` · `LuaConsolePlugin::OnDraw/1` · 381 lines
 - `MarkdownPreviewRender.cpp` · `RenderPlanBlock/2` · 216 lines
+- `McpPlugin.cpp` · `McpPlugin::RegisterTicketRoutes/0` · 143 lines
+- `McpPlugin.cpp` · `McpPlugin::RegisterToolsCallRoute/0` · 135 lines
+- `ModelDownloader.cpp` · `ModelDownloader::Start/4` · 190 lines
+- `OfflineQueueService.cpp` · `OfflineQueueService::TickOfflineCreates/0` · 188 lines
+- `PlaneIssueSearch.cpp` · `PlaneClient::FetchIssuesStreamed/4` · 186 lines
 - `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 315 lines
 - `SmatchetAiAssistantUi.cpp` · `DrawInputAndButtons/3` · 218 lines
 - `SmatchetAiAssistantUi.cpp` · `SmatchetDrawAiAssistantPanel/3` · 287 lines
@@ -25,11 +47,18 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `SmatchetUI.cpp` · `SmatchetUI::Draw/1` · 608 lines
 - `SmatchetUI_MainMenu.cpp` · `SmatchetUI::drawMainMenuBar/2` · 504 lines
 - `SmatchetViewsDashboardUi.cpp` · `SmatchetUI::drawViewsDashboardWindow/2` · 778 lines
+- `SubprocessCapture.cpp` · `RunPosix/3` · 193 lines
 - `SubprocessCapture.cpp` · `RunWindows/3` · 251 lines
 - `TicketFieldEditor.cpp` · `TicketFieldEditor::RenderFieldCell/15` · 382 lines
 - `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 367 lines
+- `TicketSyncService.cpp` · `TicketSyncService::StartStreamingSync/2` · 140 lines
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 243 lines
+- `TrackerFieldValueParser.cpp` · `ParseChangelog/1` · 134 lines
+- `WhisperPlugin.cpp` · `BuildTranscribeOnceCommand/0` · 169 lines
+- `WhisperPlugin.cpp` · `RunHotkeyRelease_Worker/1` · 142 lines
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
+- `main.cpp` · `BootApplication/3` · 153 lines
+- `main.cpp` · `RunFrameLoop/1` · 151 lines
 
 ## function-too-branchy (61 entries, cap 30 branches)
 - `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 33 branches
@@ -95,4 +124,4 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 39 branches
 
 ## Totals
-- oversized functions grandfathered: 87
+- oversized functions grandfathered: 116

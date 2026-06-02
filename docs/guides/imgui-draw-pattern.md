@@ -6,6 +6,14 @@
 > into `test-lint-rules.sh` — see `AGENTS.md` § Tiered enforcement). Plan:
 > [`docs/plans/active/decompose-top-20-monoliths.md`](../plans/active/decompose-top-20-monoliths.md)
 > § Approach A.
+>
+> **Tiered cap (2026-06-01):** non-UI functions block at **120 lines**; ImGui-draw
+> functions get a **200-line** escape hatch (path under `Ui/` OR name starting
+> `Draw`/`Render`/`draw`/`render`) because declarative UI is inherently noisier. The
+> 200-line headroom is for cases where **section-splitting would add more noise than
+> clarity** — not a licence to skip the pattern. A new/changed function over **100
+> lines** (or **20 branches**) also draws a non-blocking `[func-size] WARN` advisory;
+> prefer the 40-80-line ideal even when under the 200 hard cap.
 
 ## Why
 
