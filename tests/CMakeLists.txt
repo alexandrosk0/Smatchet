@@ -39,6 +39,10 @@ add_executable(SmatchetTests
     Core/FieldCatalogCacheScopedRoundTrip.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/FieldCatalogCache.cpp"
     Core/OfflineQueueReplayPolicy.test.cpp
+    # Pure filter/key/label helpers extracted from SmatchetProjectPicker::Draw. The _detail TU
+    # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
+    Core/ProjectPickerFilter.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
     Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
