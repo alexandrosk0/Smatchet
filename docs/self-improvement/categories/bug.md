@@ -7,6 +7,19 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-02 · code-review · [bug] · P2 — Whisper preferences: 4 pre-existing logic/copy bugs surfaced by the E2 decomposition CR review
+  Details: CodeRabbit flagged four issues in `SmatchetPreferencesUi_Whisper.cpp` on the E2 (#729) decomposition — all verified pre-existing (byte-identical to develop; E2 relocated them verbatim, positional-ImGui balance identical). (1) **Auto-mode E2E route prefers cloud-when-key (Major)**: `ResolveE2ERoute`/develop:583-593 uploads the E2E sample to cloud whenever an API key exists even if a local model is installed — contradicts the "Auto (local if present, cloud fallback)" mode description (privacy-relevant). (2) **Fallback model not seeded (Major)**: the model picker shows index 1 (Recommended) when `cfg.WhisperModel` is empty, but `modelPresent`/`dl.Start()` still read the empty/stale id. (3) **Hotkey validation fallback text wrong (Minor)**: rejects no-modifier combos but the message says a non-modifier key is missing (`capturedVk` guarantees the opposite). (4) **E2E hint overstates cloud upload (Minor)**: always says the test uploads audio, but a local transcription path exists — misleading privacy copy in local mode.
+  Concrete next action: (1) make the auto-mode E2E route prefer local-when-present (match the mode description) or reword the description; (2) seed `cfg.WhisperModel` to the recommended default when empty; (3) fix the hotkey fallback text; (4) make the E2E hint conditional on the resolved route. ~1-1.5h, dedicated Whisper-prefs PR.
+  Status: open
+  Last-reviewed: 2026-06-02
+
+
+- 2026-06-02 · code-review · [bug] · P2 — Assistant preferences: 3 pre-existing Major UI-state bugs surfaced by the E3 decomposition CR review
+  Details: CodeRabbit flagged three issues in `SmatchetPreferencesUi_Assistant.cpp` on the E3 (#730) decomposition — all verified pre-existing (E3's diff only hoists static buffers into a struct; no logic change, positional-ImGui balance identical to develop). (1) **Anthropic custom base URL hidden**: Anthropic resolves through `AiBaseUrl` but its section exposes only key/model/consent, so a custom Anthropic endpoint can't be viewed/edited. (2) **Stale probe completions**: the test-connection probe commits its Verified/Failed result even if provider/credentials changed mid-flight (no generation guard) — same class as the AiAssistantController stale-client bug already backlogged from #677. (3) **Implied catalog default not persisted**: the combo shows `catalog[0]` when `modelBuf` is empty but leaves `cfgField` unchanged, so Test-connection can fail with an empty/stale model while the combo looks selected (same class as the E2 Whisper fallback-model finding above).
+  Concrete next action: (1) add a base-URL field to the Anthropic section (or document it's shared); (2) gate the probe result-commit on a probe-generation counter captured at launch; (3) persist `cfgField` to `catalog[0]` when empty. ~1.5h, dedicated prefs-tab PR.
+  Status: open
+  Last-reviewed: 2026-06-02
+
 - 2026-06-02 · code-review · [bug] · P2 — tracker-config save logs the user's email at INFO (`Email='%s'`) — PII in logs
   Details: `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` Save & Sync logs `LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", ..., d.cfg.Email.c_str())` — raw user email (PII) into INFO logs. Pre-existing (byte-identical to develop:515-516); surfaced + relocated by the E1 `drawPreferencesWindow` decomposition (#727, CodeRabbit Major). NOT changed in #727 (behaviour-preserving refactor — redacting alters log output). Also flagged: `trackerTypeBuf` can persist non-canonical `"plane"/"github"` on Save (Minor, same PR; develop:175/219-227/440).
   Concrete next action: redact/mask the email in the log (or drop it — Domain is enough for diagnosis); canonicalize `trackerTypeBuf` to the dropdown item on Save. ~20min, dedicated PR.
