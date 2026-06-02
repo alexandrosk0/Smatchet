@@ -151,8 +151,18 @@ ImGui `IM_ASSERT` → test fails). Reusable skeleton + harness gotchas live in
   and without forcing focus they open as an *inactive* tab where `Begin()` returns false and no children
   submit). Probe visibility with `ImGui::FindWindowByName()` (NOT `ctx->WindowInfo()` — it doesn't resolve
   docked windows by title), and assert child items with a **bare** ref (`"Clear Log"`, not `"Window/Item"` —
-  the path double-prefixes against `SetRef`). Covers Log, Audit, Preferences, and the other ~13 single-flag
-  windows. → copy the skeleton.
+  the path double-prefixes against `SetRef`). Covers Log, Audit, Preferences, MCP-server, Scripting (Lua
+  console), BugReport + the Preferences tabs. → copy the skeleton.
+  - **Green ≠ "has a `g_ui` flag"** (green-batch-1 refinement): the real test is **"has its own `ImGui::Begin`
+    AND no early empty-state `return`."** `DrawUnifiedOfflineQueuesPanel` has a flag-like surface but is drawn
+    *inline* in the active-project grid (no own `Begin`) and `return false`s when all four queues are empty →
+    it's **yellow**, not green. Verify the `Begin` + guard before classifying.
+  - **Tab bodies (Preferences tabs) clip out of `ItemExists` in the headless harness** — a docked window opens
+    with a short content region, culling lower widgets from the engine item table (and `ctx->WindowResize`
+    can't resolve a docked window by title to grow it). To assert "this tab's body ran," drive
+    `ctx->ItemClick(<tab label>)` then check the tab bar's `SelectedTabId`
+    (`FindWindowByName → win->GetID("PreferencesTabs") → g.TabBars.GetByKey → TabBarGetTabName`) — a
+    clipping-independent signal. One tab-cycling test covers all 4 Preferences-tab draw fns.
 - **🟡 Yellow (needs the deterministic backend)** — windows whose body **short-circuits on an empty-state
   guard** with no active project / tickets / fields: the ticket grid, `drawViewsDashboardWindow`,
   `RenderNewIssueDraftRow`, `DrawGridHeaderToolbar`, `drawBulkImportWindow`, the `TicketFieldEditor` cell
