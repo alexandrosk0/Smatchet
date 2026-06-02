@@ -762,6 +762,12 @@ class AppController
      *  has not been warmed yet (caller falls back to the global components catalog). */
     std::vector<TrackerFieldOption> GetComponentOptionsForProject(const std::string& projectKey) const;
 
+    /** True once a component fetch for `projectKey` has SUCCEEDED (the key is present in
+     *  projectComponentOptions_), regardless of how many components it returned. Lets the editor
+     *  distinguish "not yet loaded" (show "Loading components…") from "loaded but genuinely empty"
+     *  (show "(no options)"). Read under availableFieldsMutex_. */
+    bool IsProjectComponentsLoaded(const std::string& projectKey) const;
+
     /** Lazily fetch one Jira project's component options into projectComponentOptions_ when the
      *  eager warm (WarmIssueTypeEditMetaAtStartAsync) missed it (race, or a project loaded after the
      *  warm ran). Non-blocking: checks the per-project map + in-flight set under availableFieldsMutex_
@@ -918,6 +924,12 @@ class AppController
      *  not-yet-warmed project opened in the editor fetches exactly once instead of per frame.
      *  Guarded by availableFieldsMutex_. */
     std::unordered_set<std::string> projectComponentsInFlight_;
+    /** Per-project backoff after a FAILED component fetch: the paint path re-checks
+     *  EnsureProjectComponentsLoaded every frame a components cell is visible+empty, so without a
+     *  backoff a failing project would re-launch a worker every frame (retry storm + log spam).
+     *  A failed fetch records now()+30s here; EnsureProjectComponentsLoaded skips relaunch until
+     *  the deadline passes. Cleared on a successful load. Guarded by availableFieldsMutex_. */
+    mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> projectComponentsRetryAfter_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
     /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once

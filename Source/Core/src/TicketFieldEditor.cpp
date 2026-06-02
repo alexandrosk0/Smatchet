@@ -643,10 +643,12 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     // frame once the async fetch lands. Non-components fields keep the global AllowedValueOptions.
     const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
     std::vector<TrackerFieldOption> perProject;
+    bool componentsLoaded = true; // non-components fields are always "loaded"
     if (field.Id == "components") {
         const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
         perProject = app.GetComponentOptionsForProject(projectKey);
-        if (perProject.empty()) {
+        componentsLoaded = app.IsProjectComponentsLoaded(projectKey);
+        if (!componentsLoaded) {
             // Non-blocking lazy fetch; mutates in-flight bookkeeping + spawns a worker.
             app.EnsureProjectComponentsLoaded(projectKey);
         }
@@ -761,9 +763,11 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
             ImGui::PopID();
         }
         if (!drewAny) {
-            if (field.Id == "components" && opts->empty() && filterLower.empty()) {
-                // Per-project list not yet warmed — EnsureProjectComponentsLoaded was kicked above;
-                // the real options appear next frame once the async fetch lands.
+            if (field.Id == "components" && !componentsLoaded && filterLower.empty()) {
+                // Per-project list not yet loaded — EnsureProjectComponentsLoaded was kicked above;
+                // the real options appear next frame once the async fetch lands. A SUCCESSFUL fetch
+                // that returned zero components sets componentsLoaded=true, so a genuinely empty
+                // project falls through to "(no options)" rather than spinning here forever.
                 ImGui::TextDisabled("Loading components\xE2\x80\xA6");
             } else {
                 ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
@@ -947,9 +951,11 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                 const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
                 std::vector<TrackerFieldOption> perProject = app.GetComponentOptionsForProject(projectKey);
                 // Always scope to this row's project — never fall back to the global cross-project
-                // union. When not yet warmed, kick a lazy fetch and use the empty per-project set;
+                // union. When not yet loaded, kick a lazy fetch and use the empty per-project set;
                 // selected-id names resolve next frame once the fetch lands (raw id shows briefly).
-                if (perProject.empty()) {
+                // Gate on IsProjectComponentsLoaded (not perProject.empty()) so a successful zero-
+                // component fetch doesn't relaunch a worker every frame.
+                if (!app.IsProjectComponentsLoaded(projectKey)) {
                     app.EnsureProjectComponentsLoaded(projectKey);
                 }
                 effectiveField = *field;

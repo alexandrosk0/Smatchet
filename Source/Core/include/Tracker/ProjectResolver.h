@@ -6,11 +6,13 @@ class ITrackerConnectivity;
 
 namespace smatchet {
 
-/** "TICKET-123" -> "TICKET". Returns "" when no '-' is present, '-' is the first
- *  char (e.g. "-123"), or the part before '-' contains any non-[A-Za-z0-9_]
- *  character (Jira keys are uppercase letters and digits; the conservative
- *  identifier set keeps the helper liberal without misclassifying obviously
- *  non-key strings such as UUIDs). Pure; no I/O. */
+/** "TICKET-123" -> "TICKET". The input must match a real Jira issue key shape:
+ *  `^[A-Za-z][A-Za-z0-9_]*-[0-9]+$`. Returns "" otherwise — including when no '-'
+ *  is present, '-' is the first char (e.g. "-123"), the prefix does not start with
+ *  an ASCII letter, the prefix contains a non-[A-Za-z0-9_] char, or the suffix is
+ *  not digits-only. The leading-letter requirement is what keeps UUIDs
+ *  ("550e8400-e29b-...") and other digit-leading strings from being misclassified
+ *  as keys. Pure; no I/O. */
 std::string ExtractIssueKeyPrefix(const std::string& id);
 
 /** Resolve the project key for a new draft / bulk-import row.

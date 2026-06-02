@@ -438,6 +438,7 @@ bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::str
     // paging, but pushes component + option directly (no catalog/fields vector).
     constexpr int kPageSize = 100;
     constexpr int kMaxPages = 50;
+    bool reachedTerminalPage = false;
     for (int page = 0; page < kMaxPages; ++page) {
         const int startAt = page * kPageSize;
         const std::string url = base + "/rest/api/3/project/" + UrlEncode(projectKey) +
@@ -477,8 +478,20 @@ bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::str
 
         const bool isLast = json.value("isLast", false);
         if (isLast || valuesIt->empty()) {
+            reachedTerminalPage = true;
             break;
         }
+    }
+
+    if (!reachedTerminalPage) {
+        // kMaxPages exhausted without an isLast / empty page — we silently dropped components for a
+        // very large project. Report failure so callers (and the per-project retry backoff) treat
+        // this as an incomplete fetch rather than a complete one.
+        LOG_WARN("JiraClient: per-project components fetch hit page cap (%d) for %s without a terminal page; "
+                 "result is incomplete.",
+                 kMaxPages, projectKey.c_str());
+        outError = "Per-project components fetch incomplete (page cap reached).";
+        return false;
     }
 
     std::sort(outOptions.begin(), outOptions.end(), [](const TrackerFieldOption& a, const TrackerFieldOption& b) {

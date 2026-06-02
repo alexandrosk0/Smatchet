@@ -31,7 +31,9 @@ TEST_CASE("ExtractIssueKeyPrefix returns empty for non-key strings") {
     CHECK(ExtractIssueKeyPrefix("PROJ") == "");  // no dash at all
     CHECK(ExtractIssueKeyPrefix("") == "");      // empty
     CHECK(ExtractIssueKeyPrefix("550e8400-e29b-41d4-a716-446655440000") ==
-          "550e8400"); // UUID: first segment is hex-only
+          ""); // UUID: leading-digit prefix is not a Jira key (must start with a letter)
+    CHECK(ExtractIssueKeyPrefix("123-456") == "");  // digit-leading prefix rejected
+    CHECK(ExtractIssueKeyPrefix("PROJ-abc") == ""); // non-numeric issue suffix rejected
 }
 
 TEST_CASE("ExtractIssueKeyPrefix rejects punctuation before the dash") {

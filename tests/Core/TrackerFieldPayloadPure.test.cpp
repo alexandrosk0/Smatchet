@@ -169,6 +169,27 @@ TEST_CASE("BuildValue: multi-option / array family — collect + skip empties") 
     }
 }
 
+TEST_CASE("BuildValue: id/name collision serializes the id-keyed option, not a value collision") {
+    // BLUUP ground truth: a component literally NAMED "10033" carries Id "10067"; another component
+    // (TestComponent1) carries Id "10033". A single-pass `Id == v || Value == v` would match the
+    // first option's Value=="10033" and serialize the WRONG id ("10067"). The id-first two-pass in
+    // FindOptionByIdOrValue must pick the option whose Id is "10033" → TestComponent1.
+    TrackerField f = MakeField("components");
+    f.IsArray = true;
+    f.ItemsType = "component";
+    f.AllowedValueOptions.push_back(MakeOption("10067", "10033", "{\"id\":\"10067\"}"));
+    f.AllowedValueOptions.push_back(MakeOption("10033", "TestComponent1", "{\"id\":\"10033\"}"));
+
+    json out;
+    std::string err;
+    CHECK(BuildValue(f, {"10033"}, out, err));
+    REQUIRE(out.is_array());
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].is_object());
+    REQUIRE(out[0].contains("id"));
+    CHECK(out[0]["id"].get<std::string>() == "10033"); // TestComponent1, NOT the Value-collision "10067"
+}
+
 TEST_CASE("BuildValue: labels family — comma-split + token sanitize + dedupe-of-empty") {
     TrackerField f = MakeField("labels");
     f.Family = TrackerFieldFamily::Labels;

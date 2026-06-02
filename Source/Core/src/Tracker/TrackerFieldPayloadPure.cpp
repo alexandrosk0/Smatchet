@@ -76,19 +76,32 @@ std::string ResolveOptionLabel(const std::vector<TrackerFieldOption>& options, c
     return ResolveOptionLabelByValueRecursive(options, value);
 }
 
-const TrackerFieldOption* FindOptionByIdOrValue(const std::vector<TrackerFieldOption>& options,
-                                                const std::string& idOrValue) {
+const TrackerFieldOption* FindOptionByValueRecursive(const std::vector<TrackerFieldOption>& options,
+                                                     const std::string& value) {
     for (const auto& option : options) {
-        if (option.Id == idOrValue || option.Value == idOrValue) {
+        if (option.Value == value) {
             return &option;
         }
         if (!option.Children.empty()) {
-            if (const TrackerFieldOption* nested = FindOptionByIdOrValue(option.Children, idOrValue)) {
+            if (const TrackerFieldOption* nested = FindOptionByValueRecursive(option.Children, value)) {
                 return nested;
             }
         }
     }
     return nullptr;
+}
+
+// Id-preferred resolution: a full id-first pass before any value match. Mirrors
+// ResolveOptionLabel's two-pass ordering so the payload path serializes the same
+// option the display path resolves. Avoids the id/name collision where a component
+// literally named "10033" shadows the option whose Id is 10033 — a single-pass
+// `Id == v || Value == v` would return the wrong (Value-matched) option first.
+const TrackerFieldOption* FindOptionByIdOrValue(const std::vector<TrackerFieldOption>& options,
+                                                const std::string& idOrValue) {
+    if (const TrackerFieldOption* byId = FindOptionById(options, idOrValue)) {
+        return byId;
+    }
+    return FindOptionByValueRecursive(options, idOrValue);
 }
 
 nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw) {
