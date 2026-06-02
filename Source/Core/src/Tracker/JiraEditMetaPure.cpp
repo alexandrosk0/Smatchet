@@ -39,9 +39,9 @@ bool JiraEditMetaFieldCanEdit(const std::string& fieldId, const nlohmann::json& 
             }
         }
     }
-    // Jira sometimes omits `operations` for nullable date/datetime fields (e.g. unset due date)
-    // while still listing the field in editmeta. Treat as editable only when the key is absent
-    // or not an array — not when operations is an explicit empty array.
+    // Jira sometimes omits the operations list for nullable date or datetime fields (for
+    // example an unset due date) while still listing the field in editmeta, so a missing or
+    // non-array operations entry still counts as editable, whereas an explicit empty list does not.
     if (!canEdit && meta.is_object() && !hasOperationsArray) {
         static const std::unordered_set<std::string> kSchemaOnlyDateDenylist = {"created", "updated", "resolutiondate"};
         if (kSchemaOnlyDateDenylist.find(fieldId) == kSchemaOnlyDateDenylist.end() && meta.contains("schema") &&
