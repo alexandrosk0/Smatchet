@@ -123,14 +123,6 @@ void RegisterToolbarEditorRenderSmoke(ImGuiTestEngine* engine) {
             return;
         }
 
-        // Drive the production open path: View → Customize Toolbar... This sets
-        // requestEditorOpen_, which RenderEditor consumes next frame to
-        // ImGui::OpenPopup the modal. We open the View menu first (single-level
-        // MenuClick, the form proven by MainMenuBar_RendersAndOpensViewMenu),
-        // then ItemClick the leaf inside the now-focused View popup. Driving the
-        // leaf directly (a multi-level MenuClick path) intermittently trips the
-        // engine's submenu-window probe in this ImGui build, so the two-step
-        // open is the robust form.
         // Open the editor via the toolbar's right-click context menu, which has
         // a stable-text "Customize Toolbar..." item (the View-menu path can't be
         // kept latched open across the headless engine's multi-frame menu
