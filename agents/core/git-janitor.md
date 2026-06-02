@@ -354,7 +354,7 @@ When a PR squash-merged and further commits landed on the same branch (common in
 
 The Standard cleanup loop only deletes branches whose PRs **this run** merged. Branches orphaned by *prior* sessions — PRs already merged or closed, their branches never cleaned — accumulate invisibly (local AND remote). This sweep is the idempotent pass that classifies **every** existing branch and clears the accumulated cruft. Run it once per session, after the cleanup loop, before "Bringing develop to latest".
 
-**Enumerate both spaces.** Local: `git -C "$MAIN_REPO" branch --format='%(refname:short)'`. Remote: `git -C "$MAIN_REPO" branch -r --format='%(refname:short)'` minus `origin/HEAD`, `origin/develop`, `origin/main`. De-dupe by short name.
+**Enumerate both spaces.** Local: `git -C "$MAIN_REPO" branch --format='%(refname:short)'` minus `develop`, `main` (the local enum lists them too — filter or they mis-classify as NO-PR and enter the worktree-remove path). Remote: `git -C "$MAIN_REPO" branch -r --format='%(refname:short)'` minus `origin/HEAD`, `origin/develop`, `origin/main`. De-dupe by short name.
 
 **Classify each branch by PR state — NOT by commit count.**
 
@@ -380,6 +380,13 @@ Protected-branch guards (config allowlist + code-reference net) run on **every**
 **Worktree-before-branch ordering + dirty-gate.** A branch checked out in a worktree cannot be `branch -D`'d until the worktree is removed. For each to-delete branch with a worktree:
 
 ```bash
+# Protected-branch guards (§ Hard refusals) FIRST — either hit refuses the delete.
+. scripts/dev/project-config.sh                  # exports PC_VCS_PROTECTED_BRANCHES
+read -ra _protected <<< "${PC_VCS_PROTECTED_BRANCHES:-}"
+is_protected() { local x="$1" p; for p in "${_protected[@]}"; do [ "$x" = "$p" ] && return 0; done; return 1; }
+if is_protected "$b" || git grep -qlF "$b" origin/develop -- Source/ tools/ scripts/; then
+    echo "PROTECTED: $b — skip"; continue
+fi
 wt=$(git worktree list --porcelain | awk -v b="$b" '/^worktree /{p=$2} $0=="branch refs/heads/"b{print p}')
 if [ -n "$wt" ]; then
     if [ -n "$(git -C "$wt" status --porcelain)" ]; then
