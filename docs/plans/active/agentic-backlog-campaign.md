@@ -137,10 +137,30 @@ Grouped by batch. `path` links are representative anchors; each batch's PR enume
 - DX12 backbuffer readback for bucket-C (infra P2) — `unreal-bridge` territory, multi-hour DX12 resource-state work; own slice.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `bedda57e` · #691 · B0 — plan doc + archived 3 already-shipped P1s (CI merge-base #688, bug-reporter relay, merge-watcher GH_API_DOWN). Squash-merged to develop.
+- `32040e3e` · #693 · Phase-0 staleness sweep — archived 11 more already-shipped entries (1 P1 + 8 P2 + 2 P3) with per-entry tree evidence.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Phase 0 (staleness sweep) became the dominant first deliverable, not B1-execution.** Verifying premises before coding revealed **14 prioritized entries already shipped** — including 5 of 6 P1s (B1 CI merge-base, B2 merge-watcher GH_API_DOWN, relay, tooling long-running-polls, bug code-color). Executing them as written would have produced redo-work PRs. This is the "verify file-claims before acting" process rule paying out at campaign scale.
+- **B6 and B11 shrank; B7 partially cleared.** Tracker option-resolution + Plane empty-page (B6) done; AiClientFactory-raw-new + 11-empty-catch (B11) done; CI dead-job + workflow-permissions (B7) done. Remaining members of those batches stay live.
+- **Sweep coverage is scoped to code-defect entries** (staleness detectable by grep/tree-check). Process-rule proposals (process.md, B10) and coverage-gap entries (test.md, most B8 dependents) do not go stale via code drift — they remain live by nature and were not re-verified one-by-one.
+
+## Re-scoped live remainder (post-sweep)
+
+Single live P1: **B4 AI-endpoint host allow-list**. Revised live batches:
+
+- **B4** (P1) — AI-endpoint allow-list + http→non-loopback consent. `AiEndpointSanitize.cpp` still only checks scheme.
+- **B5** — AI assistant cluster, all live: torn-config (4 `ConfigManager::Load()`/turn), `RefreshProviderForTurn` fail-open, `ComposeSystemPrompt` escape, `AgentsMdLoader` path-traversal, `ai.prompt` rate-limit, first-send consent modal, CR/LF persist-strip, `AiSseParser::Flush` partial-frame.
+- **B6** (shrunk) — JQL injection, tracker `cpr::Redirect(true,true)` ×5 cross-host auth forwarding.
+- **B7** (shrunk) — Lua tarball `EXPECTED_HASH`, action SHA-pins (23 floating `@v`), Mesa TOFU SHA256, narrowing-scan parallelize, C++ lint in CI.
+- **B8** — bucket-E unblock keystone (spawn flake + `SmatchetTests` `/EHsc` + perf-run worktree handshake) → ~10 dependent coverage TUs.
+- **B9** — `git-leftover-audit.sh` → `worktree-prune.sh` + `git-janitor --light`.
+- **B10** — ~12 doc/process forcing-rule edits (live by nature).
+- **B11** (shrunk) — `IAiClient ~ = default`, AiTypes sentinel comments, SSE/NDJSON `LOG_WARN` redact ×3, `merge_gates.bats` `LC_ALL`, PR-numbered comment sweep.
+- **Tier-3 (own plans)** — B12 AppController decomposition (1263 LOC, live), B13 TU-splits, B14 `#define ImGui` sweep (10+ TUs, live).
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- B0 + sweep: pure-docs. `test-backlog-counts.sh` 8/0 on both. #691 squash-merged clean (gates passed via watcher). #693 open.
