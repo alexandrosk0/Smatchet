@@ -83,6 +83,9 @@ std::string RichToMarkdown(const std::string& rich) {
             if (j.is_object() && j.value("type", std::string()) == "doc")
                 return MarkdownConvert::AdfToMarkdown(j);
         } catch (...) {
+            // catch-all-ok: malformed/partial rich JSON falls through to return the
+            // raw string verbatim below — a non-throwing deterministic fallback for
+            // untrusted queued payloads (mirrors the pre-refactor merge-path catch).
         }
     }
     if (i < rich.size() && rich[i] == '<') {
