@@ -9,6 +9,33 @@
 
 <!-- Latest first. Append on archival. -->
 
+> **Backlog-campaign B8 phase-0 (2026-06-02)** — 8 stale/moot bucket-E entries archived after verifying against current develop. The infra 'keystone' was already unblocked (warmup gate + file-result + /EHsc default all shipped); most coverage dependents are shipped or moot (AgentProposalStore / Agentic-tab / react-loop removed).
+
+- 2026-05-17 · test-author · [infra] · P2 — Bucket-E `--spawn` ephemeral runner flakes intermittently (pre-existing)
+  Resolution: STALE — deterministic spawn-warmup gate shipped (slice 9, autonomous-debugging-no-creds): tests/ui/spawn_warmup_deterministic_gate.test.cpp + runner ('Closes infra.md P2 line 16'). (B8 phase-0).
+
+- 2026-05-31 · general-agent · [test] · P2 — `SmatchetTests` link hard-errors locally on `tests/Core/OfflineQueueServiceRuntime.test.cpp` (`CHECK_THROWS` under exceptions-disabled MSVC) — blocks local ctest, forces a standalone-harness workaround
+  Resolution: STALE/env-specific — /EHsc is CMake's MSVC default (no explicit flag needed); OfflineQueueServiceRuntime.test.cpp no longer uses CHECK_THROWS; SmatchetTests builds + runs CHECK_THROWS-bearing TUs cleanly on ninja-test-msvc. (B8 phase-0).
+
+- 2026-06-01 · offline-sync/perf · [tooling] · P2 — `scripts/dev/perf-run.sh --spawn` can't complete its result-JSON handshake inside an isolated `.claude/worktrees/<id>/` subagent sandbox
+  Resolution: MOSTLY STALE — file-result mode exists (scenario.run --outPath + WaitForFile poll, CliCommandRunner.cpp:285/852). Residual (scenario completion in a headless worktree-GL sandbox) is narrow + non-blocking; bucket-E runs from the main checkout, not worktree subagents. (B8 phase-0).
+
+- 2026-05-17 · code-review · [test] · P2 — Bucket-E coverage missing for AI Assistant Preferences batch 1 + batch 2 user-visible flows
+  Resolution: STALE — 6 tests/ui/ai_assistant_preferences_*.test.cpp shipped (docking, enter_send, save_discard, test_connection, validation_banner, verify_on_save) covering all 6 flows. (B8 phase-0).
+
+- 2026-05-20 · orchestrator · [test] · P2 — Bucket-E coverage missing for description grid-cell tooltip rendering markdown
+  Resolution: STALE — tests/ui/description_tooltip_markdown_render.test.cpp shipped. (B8 phase-0).
+
+- 2026-05-19 · coderabbit-triage · [test] · P2 — `AgentProposalStore.test.cpp` SQLite tests live in pure-logic rig; no bucket-E SQLite lane exists yet
+  Resolution: MOOT — AgentProposalStore removed from the tree (agentic runtime deleted); no store, no SQLite-lane need. (B8 phase-0).
+
+- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E coverage for Preferences > Agentic tab (T7 residue)
+  Resolution: MOOT — the Agentic tab/poll UI was removed; only a vestigial ConfigManager field + a localization string remain, no panel to drive. (B8 phase-0).
+
+- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
+  Resolution: MOOT — the coderabbit-react-loop runtime was deleted (applied.md deleted-runtime banner). (B8 phase-0).
+
+
 > **Backlog-campaign B10 (2026-06-02)** — 14 deferred process forcing-rules encoded into their home docs (one pure-docs PR). Each entry below flipped to applied; rule text verified live (not stale) before writing.
 
 - 2026-06-01 · orchestrator · [process] · P2 — Decomposition PRs must NOT edit function-size-baseline.md — informational snapshot, not gate input

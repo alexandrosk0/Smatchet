@@ -1,0 +1,128 @@
+# Plan — B8: bucket-E coverage (post-verification re-scope)
+
+> **Slug**: `b8-bucket-e-coverage`. Sub-plan of [`agentic-backlog-campaign.md`](agentic-backlog-campaign.md) batch **B8**.
+>
+> Mandatory cross-link: `AGENTS.md` § Project rules § Plan-doc family, § Verification automation.
+
+## Context
+
+The campaign plan framed B8 as the **infra keystone** — three `--spawn`/bucket-E infra blockers (`spawn flake`, `SmatchetTests /EHsc`, `perf-run.sh` worktree handshake) gating ~10 deferred coverage entries. A pre-plan verification sweep (2026-06-02) against the tree shows **that framing is obsolete**: the infra is already unblocked, and most coverage dependents are already shipped or moot. B8 collapses to a small set of genuinely-live bucket-E authoring tasks plus a backlog archival.
+
+Intended outcome: the bucket-E backlog reflects reality — stale/moot entries archived, and the handful of real coverage gaps either written or explicitly deferred with a tracked reason.
+
+## Verification sweep (every B8-related entry, vs the tree)
+
+**Infra "blockers" — all resolved:**
+
+| Entry | Verdict | Evidence |
+|---|---|---|
+| infra P2 `--spawn` flake (2026-05-17) | **STALE** | Deterministic warmup gate shipped (slice 9 of `autonomous-debugging-no-creds`): `tests/ui/spawn_warmup_deterministic_gate.test.cpp` + `scripts/dev/test-ui-spawn-warmup-deterministic-gate.sh` whose header says *"Closes infra.md P2 line 16"*. Entry never archived. |
+| test P2 `SmatchetTests` `/EHsc` local link (2026-05-31) | **STALE (env-specific)** | No `/EHsc` in any CMake file because CMake's MSVC default already supplies it; `OfflineQueueServiceRuntime.test.cpp` no longer uses `CHECK_THROWS`; SmatchetTests built + ran `CHECK_THROWS`-bearing TUs (JiraFakeTrackerFixture, LuaTimeout) cleanly this session on `ninja-test-msvc`. Entry itself flagged it "toolchain/preset-dependent." |
+| tooling P2 `perf-run.sh` worktree handshake (2026-06-01) | **MOSTLY STALE** | File-result mode exists: `scenario.run --outPath` + `WaitForFile` poll (`CliCommandRunner.cpp:285,852`); `perf-run.sh` uses `--outPath`. Residual is narrow (scenario *completion* in a headless worktree-GL sandbox), not the missing file-result mode the entry asked for. |
+
+**Coverage dependents — mostly shipped or moot:**
+
+| Entry | Verdict | Evidence |
+|---|---|---|
+| test:70 AI Prefs batch 1+2 (6 flows) | **STALE** | 6× `tests/ui/ai_assistant_preferences_*.test.cpp` shipped (docking, enter_send, save_discard, test_connection, validation_banner, verify_on_save). |
+| test:46 description grid-cell tooltip markdown | **STALE** | `tests/ui/description_tooltip_markdown_render.test.cpp` shipped. |
+| test:52 AgentProposalStore SQLite bucket-E lane | **MOOT** | `AgentProposalStore` removed from the tree (agentic runtime deleted, per `applied.md` banner). No store → no lane needed. |
+| tooling:87 Preferences Agentic tab (T7) | **MOOT** | Agentic tab/poll UI removed — only a vestigial `ConfigManager` field + a localization string remain; no panel to drive. |
+| tooling:73 coderabbit-react-loop live-PR probe | **MOOT** | React-loop runtime deleted (`applied.md` deleted-runtime banner); only a leftover config field remains. |
+
+**Genuinely LIVE (the real B8 work):**
+
+| # | Entry | What's missing |
+|---|---|---|
+| L1 | test:118 Command Palette inline typing (2026-05-15) | No `command_palette_inline_typing.test.cpp`; the inline menu-bar palette → modal-filter path is manual-verified only. |
+| L2 | tooling:80 DeepSeek "[model changed - chat cleared]" strip (2026-05-20) | No TU exercises the rendered orange strip after a Send-with-different-model. |
+| L3 | tooling:101 tooltip-content-identity helper (2026-05-17) | `BucketE::TooltipContentMatches(ctx, sentinel)` helper not added; `callstack_tooltip_hover.test.cpp` uses the replica-flag workaround and dropped a production-driven variant. |
+| L4 | test:22 slice-9 `VerifyOnSave_TestConnection_SetsResult` flake (2026-05-24) | The variant exists in `ai_prefs_autosave_flow.test.cpp:216` (downgraded to "informational"), but still uses a 240-yield poll instead of a deterministic dispatcher wait → flake-prone. |
+| L5 | tooling:300 memory-hardening residue (2026-05-31) | The bucket-E "loading thumbnails" cue — a passive `TextDisabled` driven off `pendingThumbnailUploads` — has no test. **In B8 scope** (pulled in per decision). The sibling ASan live-swap + S4 bounded-read residues stay on tooling:300 (sanitizer/unit, not bucket-E). |
+
+## Approach
+
+Two phases, one PR each (or one combined PR if the live set stays small).
+
+**Phase 0 — archive the resolved/moot entries (pure-docs).** Archive the 3 infra entries + the 5 stale/moot coverage entries (8 total) to `applied.md` with per-entry tree evidence; `--fix` counts. This is the bulk of B8's backlog impact and is risk-free. The `perf-run.sh` entry archives with a residual note pointing at the (separate, low-priority) worktree-GL-completion gap rather than claiming full closure.
+
+**Phase 1 — author the live bucket-E TUs (L1, L2, L4; L3 as shared helper).** Each new TU mirrors the established scaffold: register via `IM_REGISTER_TEST` in `tests/ui/<name>.test.cpp`, wire into `tests/ui/ui_tests_registry.cpp` + `tests/ui/CMakeLists.txt`, add a `scripts/dev/test-ui-<name>.sh` driver, build with `cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone`, run via the `--spawn` ephemeral instance. The warmup gate (now shipped) makes these runs deterministic — the prior flake rationale for deferring is gone.
+
+- **L4 first (cheapest, highest-confidence)** — replace the 240-yield poll in the existing `VerifyOnSave_TestConnection_SetsResult` with a deterministic wait: drive `app.MainThreadDispatcher().Drain()` after the worker join (verified: the API is `Drain()`, FIFO-until-budget — there is no `DrainOnce()`), or arm a deterministic post-condition before `TriggerProbe`. Promotes a flaky informational variant to a real assertion. ~1 h.
+- **L3 — shared `BucketE::TooltipContentMatches(ctx, sentinel)` helper** in `tests/ui/_helpers/` (walk the tooltip window's `DrawList` `CmdBuffer` for a text command containing `sentinel`). Unblocks production-driven hover assertions; retrofit `callstack_tooltip_hover.test.cpp` variant 4. ~2 h. Do before L1/L2 if either needs content-identity.
+- **L1 — `command_palette_inline_typing.test.cpp`** — minimal `CommandRegistry` with 1-2 synthetic commands; `ItemInput` into the inline menu-bar palette; assert the filter state updates pre-Enter. **Verified: `CommandPaletteUi` exposes `SetFilterText()` but NO getter** — L1 adds a `const char* FilterText() const { return filterBuf_; }` accessor to `Source/Core/include/Commands/CommandPaletteUi.h`. That makes L1 the one Phase-1 item touching a `Source/Core/` header → its PR needs the **dual-target** build (`SmatchetStandalone SmatchetCore_DX12`), not test-only. ~2 h.
+- **L2 — `ai_assistant_model_change_strip.test.cpp`** — seed `g_ui.assistantHistory` with one stub message; flip `cfg.AiProviderKind`; drive a synthetic Send through `AiClientFactory::SetTestOverride` (the test seam already exists — see infra applied entry); assert the strip renders `"[model changed - chat cleared]"` after the second turn. ~2 h.
+- **L5 — `attachment_thumbnail_loading_cue.test.cpp`** — open the attachment preview with `pendingThumbnailUploads` non-empty; assert the passive cue renders. **Verified: the cue exists** at `SmatchetAttachmentPreviewUi.cpp:643` — `ImGui::TextDisabled(SmatchetLocalization::T("attachment.thumbnails.loading", "loading thumbnails..."))`, gated on the `pendingThumbnailUploads` count. Assert via `BucketE::TooltipContentMatches`-style DrawList scan for the localized string (or the `attachment.thumbnails.loading` key), and that it clears once pending drains. **Open seam check**: confirm a deterministic way to hold `pendingThumbnailUploads` non-empty for ≥1 frame (seed the count directly via `g_ui`/preview state, or an artificially-slow decode hook); if neither is cleanly drivable, fall back to a unit assertion on the gating predicate + leave the rendered-cue as the one deferred item. ~1.5 h.
+
+## Files to modify
+
+**Phase 0 (docs):**
+1. `docs/self-improvement/categories/{infra,test,tooling}.md` — remove the 8 stale/moot entries.
+2. `docs/self-improvement/categories/applied.md` — 8 resolution lines; `AGENT_SELF_IMPROVEMENT.md` § Index — `--fix`.
+
+**Phase 1 (tests only — no `Source/` production change expected; L1 may add one accessor):**
+3. `tests/ui/_helpers/BucketETooltip.h` (new) — `TooltipContentMatches` (L3).
+4. `tests/ui/command_palette_inline_typing.test.cpp` (new, L1) + `scripts/dev/test-ui-command-palette-inline-typing.sh`.
+5. `tests/ui/ai_assistant_model_change_strip.test.cpp` (new, L2) + `scripts/dev/test-ui-ai-assistant-model-change.sh`.
+6. `tests/ui/ai_prefs_autosave_flow.test.cpp` (edit, L4) — deterministic wait.
+7. `tests/ui/callstack_tooltip_hover.test.cpp` (edit, L3 retrofit) — production-driven variant 4.
+8. `tests/ui/attachment_thumbnail_loading_cue.test.cpp` (new, L5) + `scripts/dev/test-ui-attachment-thumbnail-cue.sh`.
+9. `tests/ui/ui_tests_registry.cpp` + `tests/ui/CMakeLists.txt` (explicit per-TU source list, verified lines 20+) — register the 3 new TUs.
+10. `Source/Core/include/Commands/CommandPaletteUi.h` (L1, confirmed) — add `const char* FilterText() const { return filterBuf_; }` getter (the class has `SetFilterText` but no reader). Only production-header touch in B8.
+
+## Existing utilities reused
+
+- `tests/ui/views_columns_reorder.test.cpp` — canonical bucket-E scaffold shape.
+- `tests/ui/spawn_warmup_deterministic_gate.test.cpp` — proof the warmup gate is wired; reference for deterministic frame-gating.
+- `AiClientFactory::SetTestOverride` (shipped per infra applied 2026-05-18) — stub `IAiClient` for L2 without live HTTP.
+- `scenario.run --outPath` + `WaitForFile` (`CliCommandRunner.cpp`) — file-result harness (already present).
+- `ninja-ui-test-msvc` preset (`CMakePresets.json:105`) — bucket-E build/run.
+
+## UX Pillar callouts
+
+- **Pillar 1/2/3**: N/A — test-only (Phase 1) + docs (Phase 0). No production runtime path changes (L1's possible `FilterText()` accessor is a const getter).
+- **Pillar 4**: N/A.
+
+## Perf-review-system gates
+
+N/A — no behavioural change on any hot path. L1 adds a `FilterText()` const getter to `CommandPaletteUi.h` (confirmed needed) — a one-line accessor returning `filterBuf_`, no runtime cost; it triggers the dual-target build gate (above) but no perf gate.
+
+## Decisions (locked 2026-06-02)
+
+1. **Phase 1 scope = all five** — L1 (command palette) + L2 (model-change strip) + L3 (tooltip-content helper) + L4 (deterministic VerifyOnSave) **+ L5** (memory-hardening "loading thumbnails" cue, pulled in per decision 2). Order: L3 helper → L4 → L1 → L2 → L5.
+2. **L5 pulled into B8** — author the loading-thumbnails bucket-E cue here. Its sibling residues on tooling:300 (ASan live-swap, S4 bounded-read) stay on that entry (sanitizer/unit, not bucket-E); only the bucket-E cue moves to B8.
+3. **Split PRs** — Phase 0 (archival) ships as its own risk-free pure-docs PR immediately; Phase 1 (TUs) ships separately after bucket-E build + run iterations.
+
+## Risks / non-goals
+
+- **Residual `--spawn` flake** — the warmup gate reduced but may not have eliminated intermittency. Mitigation: author against the gate; if a new TU flakes, that's a real gate regression to file, not a reason to defer. Re-confirm the gate holds by running the new TUs ~4× back-to-back (the old repro recipe).
+- **Worktree-GL completion (perf-run residual)** — NOT a B8 deliverable; bucket-E TUs run from the main checkout, not worktree-isolated subagents. Noted so Phase 0's perf-run archival carries the residual honestly.
+- **Non-goal**: redesigning the bucket-E harness, a SQLite bucket-E lane (moot — store removed), Agentic-tab / react-loop coverage (moot — features removed).
+- **Non-goal**: the ASan live-swap + S4 bounded-read residues (tooling:300) — sanitizer/unit work, not bucket-E.
+
+## Verification
+
+- **Bucket E**: each new/edited TU runs green via its `scripts/dev/test-ui-*.sh` on `ninja-ui-test-msvc`, ~4× back-to-back to confirm non-flaky.
+- **Bucket A**: none (no new pure helpers).
+- **Build gate**: `cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone` (bucket-E build). **L1 confirmed adds a `CommandPaletteUi.h` accessor → its PR runs dual-target** `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. L2/L3/L4/L5 are test-only (no dual-target needed).
+- **Phase 0**: `test-backlog-counts.sh` 8/0; pure-docs.
+- **Manual residue**: none intended — the whole point is converting manual-verify gaps to bucket-E. Any item that can't be made deterministic stays a tracked entry with a concrete reason (no silent drop).
+
+## Out of scope (flagged, not designed)
+
+- `perf-run.sh` worktree-GL scenario completion — separate, low-priority; bucket-E doesn't need it.
+- Coverage-threshold advisory→blocking flip — time-gated, unrelated.
+
+## Implementation log
+
+- #B8-phase0 · **Phase 0** — archived the 8 stale/moot bucket-E entries (3 infra "blockers" + 5 coverage dependents) to `applied.md` after re-verifying against current develop; count index synced (test 19→15, applied 173→181, 8/0). Pure-docs.
+- Phase 1 (L1-L5 TUs) — separate PR (pending).
+
+## Deviations from plan
+
+- **tooling:300 S4 bounded-read residue is now DONE** — develop `#657` (memory-budget hardening) shipped `ImageDimensionsPure.{h,cpp}` + `tests/Core/ParseImageDimensions.test.cpp`, closing the S4 bounded-read unit test. So L5's scope narrows to the rendered "loading thumbnails" cue only; the tooling:300 entry retains just its ASan live-swap residue (not bucket-E).
+- Re-verified all Phase-0 verdicts on current develop (post #701/#703/#704-707/#657) before archiving — all held.
+
+## Verification (actual)
+
+- Phase 0: pure-docs. `test-backlog-counts.sh` 8/0. (Phase 1 verification populated when its PR ships.)

@@ -22,12 +22,6 @@
   Status: open
   Last-reviewed: 2026-06-02
 
-- 2026-06-01 · offline-sync/perf · [tooling] · P2 — `scripts/dev/perf-run.sh --spawn` can't complete its result-JSON handshake inside an isolated `.claude/worktrees/<id>/` subagent sandbox
-  Details: During the decompose-monoliths perf-sensitive Tick-path decomposition (#679), a worktree-isolated subagent could init GL and reach scenario "running", but the parent never read the child result file — reproduced across `--spawn`, a larger timeout, and a manual fixed-port MCP attach. Perf-sensitive monolith/grid work is routinely delegated to worktree subagents (per the decompose plan + delegation rules), so the **mandatory perf-gate before/after step is effectively unrunnable there**; #679's agent correctly refused to fabricate numbers and fell back to a static no-regression argument (no per-iteration alloc/copy/indirection added). This is a coverage hole: a real Tick-path regression in a worktree-authored PR would not be caught locally, only (maybe) by CI's perf job.
-  Concrete next action: either (a) add a headless/file-result perf mode to `perf-run.sh`/`scenario.run` that bypasses the spawn socket handshake (write result JSON to a known path, parent polls the file), or (b) document in `agents/core/perf-gatekeeper.md` that worktree-isolated runs MUST defer perf capture to CI, and have the orchestrator run the affected scenario in the main checkout post-merge. ~1-2h for (a); ~15 min for (b).
-  Status: open
-  Last-reviewed: 2026-06-01
-
 - 2026-06-01 · build-doctor · [tooling] · P2 — `cl.exe` is not on PATH in agent worktree shells; every MSVC build in a subagent re-discovers vcvars from first principles
   Details: Subagents doing dual-target builds in `.claude/worktrees/<id>/` (the default for decomposition/build work) must import VS vcvars64.bat before `cmake --build` — `cl.exe` isn't on the bash PATH. Multiple agents this session (build-doctor, the Initialize/main/ConfigManager decomposers) each rediscovered the temp-`.ps1` + `-File` vcvars-import dance independently, costing tool-uses + tokens per agent.
   Concrete next action: add `scripts/dev/with-msvc.ps1` (vswhere → newest vcvars64.bat → exec the passed args in that env) and reference it from `agents/core/build-doctor.md` + the dual-target build note in AGENTS.md, so subagents call one wrapper instead of reinventing it. ~30 min.
@@ -76,24 +70,10 @@
   Status: applied (this PR fixes (1) + (2); autostart-wrapper env-var still open)
   Last-reviewed: 2026-05-22
 
-- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
-  Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
-  Details: The closing milestone (phase 9 of `docs/plans/shipped/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.
-  Concrete next action: add ImGui Test Engine assertions for: (a) the two new Preferences UI toggles' keyboard-nav contract (`coderabbit_react.enabled` + `ci_react.enabled`), (b) the panel state-row reads for in-flight react-loop runs (per-PR iteration-budget snapshot, last-tick timestamp), (c) the `CHECK_RUN.json` sentinel surfacing in the agent-handoff UI panel. Register via `IM_REGISTER_TEST` in a new `tests/ui/coderabbit_react_loop.test.cpp` + bash driver `scripts/dev/test-ui-coderabbit-react-loop.sh`. ~3 h.
-  Status: open
-  Last-reviewed: 2026-05-20
-
 - 2026-05-20 · handoff-implementer · [tooling] · P2 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
   Details: `docs/plans/shipped/deepseek-provider.md` § Verification plan flagged bucket-E as deferred at plan time. F2's pure-helper logic is covered by `tests/Core/AiModelSignature.test.cpp` (6 scenarios, 168 assertions). The remaining gap is rendered-strip verification: after a Send-with-different-model the chat history clears + `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange warning strip.
   Concrete next action: add `tests/ui/ai_assistant_model_change_strip.test.cpp` that (1) seeds `g_ui.assistantHistory` with one stub assistant message, (2) flips `cfg.AiProviderKind` between Anthropic and DeepSeek, (3) drives a synthetic Send through `AiClientFactory::SetTestOverride` returning a stub `IAiClient` that ack-streams a one-token reply, (4) asserts the strip renders the expected text after the second turn lands. Register via `IM_REGISTER_TEST` + bash driver `scripts/dev/test-ui-ai-assistant-model-change.sh`. ~2 h.
-  Status: open
-  Last-reviewed: 2026-05-20
-
-- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E coverage for Preferences > Agentic tab (T7 residue)
-  Promoted from parked: 2026-05-18 — bucket-E (ImGui Test Engine) is wired per `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
-  Details: T7 ships the scheduled-poll worker + Preferences "Agentic" tab (`SmatchetPreferencesUi.cpp` master toggle / interval / source / query / GitHub PAT / Run-now button). The worker thread itself is unit-test-hostile (std::thread + condition variable + 60..3600 s sleeps); we lean on `scripts/dev/test-agentic-triage-cli.sh` for the synchronous triage path the worker calls. The Preferences UI variants (toggle flip → RestartAgenticPoll, Run-now → LaunchBackgroundTask, last-poll/next-poll readout updates) are not exercised by any bucket — manual click verification today.
-  Concrete next action: add `tests/ui/agentic_prefs_tab.test.cpp` (bucket-E) parallel to `tests/ui/agent_proposals_panel.test.cpp` covering: toggle-on-without-PAT (no thread spawned), toggle-on-with-PAT (thread spawned + joined on Stop), Run-now button (dispatches a background task), last-poll readout transition from "never" → time-ago string. Runner: `scripts/dev/test-ui-agentic-prefs.sh`. ~2 h.
   Status: open
   Last-reviewed: 2026-05-20
 
