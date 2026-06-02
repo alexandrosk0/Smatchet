@@ -6,7 +6,7 @@
 #include "ITrackerConnectivity.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
-#include "StringUtil.h"
+#include "SmatchetProjectPicker_detail.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -18,28 +18,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace {
-
-bool ContainsCi(const std::string& haystack, const std::string& needle) {
-    if (needle.empty()) {
-        return true;
-    }
-    return ToLowerAsciiCopy(haystack).find(ToLowerAsciiCopy(needle)) != std::string::npos;
-}
-
-std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind) {
-    // Jira: "KEY — DisplayName". Plane: key is empty, display name only.
-    if (backendKind == "Plane" || p.key.empty()) {
-        return p.displayName.empty() ? p.id : p.displayName;
-    }
-    if (p.displayName.empty()) {
-        return p.key;
-    }
-    return p.key + " \xE2\x80\x94 " + p.displayName;
-}
-
-} // namespace
 
 namespace SmatchetProjectPicker {
 
@@ -69,16 +47,7 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
         std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
         int recentShown = 0;
         for (const auto& e : cached) {
-            if (e.projectKey.empty()) {
-                continue;
-            }
-            if (!backendKind.empty() && !e.backend.empty() && e.backend != backendKind) {
-                continue;
-            }
-            if (!endpoint.empty() && !e.endpoint.empty() && e.endpoint != endpoint) {
-                continue;
-            }
-            if (!filter.empty() && !ContainsCi(e.projectKey, filter)) {
+            if (!detail::RecentEntryPasses(e, backendKind, endpoint, filter)) {
                 continue;
             }
             const bool selected = (e.projectKey == selectedKey);
@@ -142,14 +111,11 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
                 }
                 int allShown = 0;
                 for (const auto& p : snapshot) {
-                    const std::string key = (backendKind == "Plane") ? p.id : p.key;
-                    if (key.empty()) {
+                    const std::string key = detail::AllProjectKey(p, backendKind);
+                    if (!detail::AllProjectPasses(key, p, filter)) {
                         continue;
                     }
-                    if (!filter.empty() && !ContainsCi(key, filter) && !ContainsCi(p.displayName, filter)) {
-                        continue;
-                    }
-                    const std::string label = MakeRowLabel(p, backendKind);
+                    const std::string label = detail::MakeRowLabel(p, backendKind);
                     const bool selected = (key == selectedKey);
                     ImGui::PushID(static_cast<int>(allShown));
                     if (ImGui::Selectable(label.c_str(), selected)) {
