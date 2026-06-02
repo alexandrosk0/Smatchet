@@ -254,6 +254,72 @@ TEST_CASE("IssueCreatePipeline: Create path with attachment failures returns Ok 
     CHECK(client.AttachFilesCalls()[0].Paths.size() == 2);
 }
 
+TEST_CASE("IssueCreatePipeline: create path applies status post-step and merges it into the cache") {
+    // Exercises ApplyPostIssueStatusStep: a draft "status" triggers a follow-up UpdateIssueFields
+    // call, and on success the status is merged back into the seeded cache row.
+    FakeTrackerClient client;
+    client.SetBuildCreatePayloadResult(true, nlohmann::json::object());
+    client.EnqueueCreateIssueSuccess("PROJ-50");
+    client.EnqueueUpdateIssueFieldsSuccess();
+
+    SqliteMemFixture fix;
+    IssueDraft draft = MakeBasicCreateDraft();
+    draft.FieldValues["status"] = "Done";
+
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    CHECK(result.Ok);
+    CHECK(result.IssueKey == "PROJ-50");
+    // One UpdateIssueFields call for the status transition (create path makes no other PUT).
+    CHECK(client.UpdateIssueFieldsCallCount() == 1);
+
+    CachedTicket cached;
+    REQUIRE(fix.Ref().TryGetTicket("PROJ-50", cached));
+    CHECK(cached.fieldValues["status"] == "Done");
+}
+
+TEST_CASE("IssueCreatePipeline: create path adds issue to each resolved sprint segment") {
+    // Exercises ApplyPostIssueSprintSteps + ApplySprintFieldSegments: a comma-separated
+    // sprint field resolves to two numeric ids and triggers two AddIssueToSprint calls.
+    FakeTrackerClient client;
+    client.SetBuildCreatePayloadResult(true, nlohmann::json::object());
+    client.EnqueueCreateIssueSuccess("PROJ-60");
+    client.SetDefaultAddIssueToSprintResult(true);
+
+    std::vector<TrackerField> catalog = BasicCatalog();
+    catalog.push_back(MakeField("sprint", TrackerFieldFamily::Sprint));
+
+    SqliteMemFixture fix;
+    IssueDraft draft = MakeBasicCreateDraft();
+    draft.FieldValues["sprint"] = "101, 202";
+
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), catalog);
+    CHECK(result.Ok);
+    CHECK(result.IssueKey == "PROJ-60");
+    REQUIRE(client.AddIssueToSprintCallCount() == 2);
+    CHECK(client.AddIssueToSprintCalls()[0].SprintId == "101");
+    CHECK(client.AddIssueToSprintCalls()[1].SprintId == "202");
+}
+
+TEST_CASE("IssueCreatePipeline: duplicate sprint ids are de-duplicated to a single AddIssueToSprint call") {
+    // Guards the appliedSprintIds set inside ApplySprintFieldSegments.
+    FakeTrackerClient client;
+    client.SetBuildCreatePayloadResult(true, nlohmann::json::object());
+    client.EnqueueCreateIssueSuccess("PROJ-61");
+    client.SetDefaultAddIssueToSprintResult(true);
+
+    std::vector<TrackerField> catalog = BasicCatalog();
+    catalog.push_back(MakeField("sprint", TrackerFieldFamily::Sprint));
+
+    SqliteMemFixture fix;
+    IssueDraft draft = MakeBasicCreateDraft();
+    draft.FieldValues["sprint"] = "303, 303";
+
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), catalog);
+    CHECK(result.Ok);
+    CHECK(client.AddIssueToSprintCallCount() == 1);
+    CHECK(client.AddIssueToSprintCalls()[0].SprintId == "303");
+}
+
 TEST_CASE("IssueCreatePipeline: Run dispatches to update via legacy FieldValues[\"key\"] fallback") {
     // Legacy callers passed the existing-issue key via `FieldValues["key"]`; production code
     // still honors it as a fallback — guard against regression.

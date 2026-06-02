@@ -47,40 +47,23 @@ std::string PlaneWorkItemTitleForDisplay(const nlohmann::json& issue) {
     return title;
 }
 
-} // namespace
-
-CachedTicket MapPlaneWorkItemJsonToCachedTicket(const nlohmann::json& issue, const std::string& projectIdentifier,
-                                                const std::vector<UserDisplayLookup>& users) {
-    CachedTicket ticket;
-
-    const std::string uuid = JsonFieldToString(issue, "id");
-    const std::string seqId = JsonFieldToString(issue, "sequence_id");
-
-    std::string visualKey;
-    if (!projectIdentifier.empty() && !seqId.empty()) {
-        visualKey = projectIdentifier + "-" + seqId;
-    } else if (!seqId.empty()) {
-        visualKey = "#" + seqId;
-    } else {
-        visualKey = uuid;
+// Resolve a value that Plane returns under one of three nesting shapes:
+// `<base>_detail.<innerKey>` (object), `<base>.<innerKey>` (object), or the
+// bare scalar `<base>`. Used for status, sprint (cycle), and issuetype.
+std::string NestedDetailValue(const nlohmann::json& issue, const char* detailKey, const char* baseKey,
+                              const char* innerKey) {
+    if (issue.contains(detailKey) && issue[detailKey].is_object()) {
+        return JsonFieldToString(issue[detailKey], innerKey);
     }
-
-    ticket.id = visualKey;
-    ticket.fieldValues["uuid"] = uuid;
-    ticket.fieldValues["key"] = visualKey;
-    ticket.fieldValues["summary"] = PlaneWorkItemTitleForDisplay(issue);
-
-    // Status — three nesting shapes.
-    if (issue.contains("state_detail") && issue["state_detail"].is_object()) {
-        ticket.fieldValues["status"] = JsonFieldToString(issue["state_detail"], "id");
-    } else if (issue.contains("state") && issue["state"].is_object()) {
-        ticket.fieldValues["status"] = JsonFieldToString(issue["state"], "id");
-    } else {
-        ticket.fieldValues["status"] = JsonFieldToString(issue, "state");
+    if (issue.contains(baseKey) && issue[baseKey].is_object()) {
+        return JsonFieldToString(issue[baseKey], innerKey);
     }
+    return JsonFieldToString(issue, baseKey);
+}
 
-    // Assignee — id from `assignees[0]`, display name from `assignee_details[0].display_name`
-    // or fall back to the `users` lookup vector. Mirrors the production fetcher exactly.
+// Assignee — id from `assignees[0]`, display name from `assignee_details[0].display_name`
+// or fall back to the `users` lookup vector. Mirrors the production fetcher exactly.
+std::string ResolvePlaneAssigneeName(const nlohmann::json& issue, const std::vector<UserDisplayLookup>& users) {
     std::string assigneeId;
     if (issue.contains("assignees") && issue["assignees"].is_array() && !issue["assignees"].empty()) {
         const auto& first = issue["assignees"][0];
@@ -105,20 +88,11 @@ CachedTicket MapPlaneWorkItemJsonToCachedTicket(const nlohmann::json& issue, con
             assigneeName = uIt->DisplayName;
         }
     }
-    ticket.fieldValues["assignee"] = assigneeName;
+    return assigneeName;
+}
 
-    ticket.fieldValues["priority"] = JsonFieldToString(issue, "priority");
-
-    // Sprint (Plane "cycle").
-    if (issue.contains("cycle_details") && issue["cycle_details"].is_object()) {
-        ticket.fieldValues["sprint"] = JsonFieldToString(issue["cycle_details"], "id");
-    } else if (issue.contains("cycle") && issue["cycle"].is_object()) {
-        ticket.fieldValues["sprint"] = JsonFieldToString(issue["cycle"], "id");
-    } else {
-        ticket.fieldValues["sprint"] = JsonFieldToString(issue, "cycle");
-    }
-
-    // Labels — comma-separated display names. Prefer label_details, fall back to labels.
+// Labels — comma-separated display names. Prefer label_details, fall back to labels.
+std::string ResolvePlaneLabelsString(const nlohmann::json& issue) {
     std::string labelStr;
     if (issue.contains("label_details") && issue["label_details"].is_array()) {
         for (const auto& lbl : issue["label_details"]) {
@@ -143,8 +117,31 @@ CachedTicket MapPlaneWorkItemJsonToCachedTicket(const nlohmann::json& issue, con
             }
         }
     }
-    ticket.fieldValues["labels"] = labelStr;
+    return labelStr;
+}
 
+// Identity + key fields: uuid, visual key, summary.
+void MapPlaneIdentityFields(const nlohmann::json& issue, const std::string& projectIdentifier, CachedTicket& ticket) {
+    const std::string uuid = JsonFieldToString(issue, "id");
+    const std::string seqId = JsonFieldToString(issue, "sequence_id");
+
+    std::string visualKey;
+    if (!projectIdentifier.empty() && !seqId.empty()) {
+        visualKey = projectIdentifier + "-" + seqId;
+    } else if (!seqId.empty()) {
+        visualKey = "#" + seqId;
+    } else {
+        visualKey = uuid;
+    }
+
+    ticket.id = visualKey;
+    ticket.fieldValues["uuid"] = uuid;
+    ticket.fieldValues["key"] = visualKey;
+    ticket.fieldValues["summary"] = PlaneWorkItemTitleForDisplay(issue);
+}
+
+// Description (stripped + rich HTML round-trip) and created/updated timestamps.
+void MapPlaneDescriptionAndTimestamps(const nlohmann::json& issue, CachedTicket& ticket) {
     ticket.fieldValues["created"] = JsonFieldToString(issue, "created_at");
     ticket.fieldValues["updated"] = JsonFieldToString(issue, "updated_at");
     ticket.fieldValues["description"] = JsonFieldToString(issue, "description_stripped");
@@ -155,15 +152,22 @@ CachedTicket MapPlaneWorkItemJsonToCachedTicket(const nlohmann::json& issue, con
     if (!descHtml.empty()) {
         ticket.fieldRichValues["description"] = descHtml;
     }
+}
 
-    // Issue Type.
-    if (issue.contains("type_detail") && issue["type_detail"].is_object()) {
-        ticket.fieldValues["issuetype"] = JsonFieldToString(issue["type_detail"], "name");
-    } else if (issue.contains("type") && issue["type"].is_object()) {
-        ticket.fieldValues["issuetype"] = JsonFieldToString(issue["type"], "name");
-    } else {
-        ticket.fieldValues["issuetype"] = JsonFieldToString(issue, "type");
-    }
+} // namespace
+
+CachedTicket MapPlaneWorkItemJsonToCachedTicket(const nlohmann::json& issue, const std::string& projectIdentifier,
+                                                const std::vector<UserDisplayLookup>& users) {
+    CachedTicket ticket;
+
+    MapPlaneIdentityFields(issue, projectIdentifier, ticket);
+    ticket.fieldValues["status"] = NestedDetailValue(issue, "state_detail", "state", "id");
+    ticket.fieldValues["assignee"] = ResolvePlaneAssigneeName(issue, users);
+    ticket.fieldValues["priority"] = JsonFieldToString(issue, "priority");
+    ticket.fieldValues["sprint"] = NestedDetailValue(issue, "cycle_details", "cycle", "id");
+    ticket.fieldValues["labels"] = ResolvePlaneLabelsString(issue);
+    MapPlaneDescriptionAndTimestamps(issue, ticket);
+    ticket.fieldValues["issuetype"] = NestedDetailValue(issue, "type_detail", "type", "name");
 
     return ticket;
 }

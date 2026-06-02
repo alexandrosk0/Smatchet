@@ -203,6 +203,64 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — custom object field stringi
     CHECK(!GetField(results[0], "customfield_10001").empty());
 }
 
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — watchers direct field stringified") {
+    nlohmann::json fields;
+    fields["watchers"] = {{"watchCount", 5}};
+
+    const nlohmann::json issue = MakeIssue("SMAT-W", fields);
+    const std::vector<std::string> selected = {"watchers"};
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    CHECK(!GetField(results[0], "watchers").empty());
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — timetracking object formatted via display helper") {
+    nlohmann::json tt;
+    tt["originalEstimate"] = "1d";
+    tt["timeSpent"] = "2h";
+
+    nlohmann::json fields;
+    fields["timetracking"] = tt;
+
+    const nlohmann::json issue = MakeIssue("SMAT-TT", fields);
+    const std::vector<std::string> selected = {"timetracking"};
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    CHECK(!GetField(results[0], "timetracking").empty());
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — duration-seconds integer field formatted") {
+    nlohmann::json fields;
+    fields["timespent"] = 3600; // 1h in seconds
+
+    const nlohmann::json issue = MakeIssue("SMAT-DS", fields);
+    const std::vector<std::string> selected = {"timespent"};
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    // 3600s formats to a non-empty duration string (not the raw "3600").
+    CHECK(!GetField(results[0], "timespent").empty());
+    CHECK(GetField(results[0], "timespent") != "3600");
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — attachment array stringified for grid") {
+    nlohmann::json fields;
+    fields["attachment"] = nlohmann::json::array({{{"filename", "a.png"}}, {{"filename", "b.png"}}});
+
+    const nlohmann::json issue = MakeIssue("SMAT-AT", fields);
+    const std::vector<std::string> selected = {"attachment"};
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    CHECK(!GetField(results[0], "attachment").empty());
+}
+
 TEST_CASE("AppendCachedTicketFromJiraSearchIssue — issuetype always populated from fields") {
     nlohmann::json fields;
     fields["issuetype"] = {{"name", "Bug"}};
