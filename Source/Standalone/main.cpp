@@ -411,23 +411,20 @@ static void ResolveExeAndUserDataDirs() {
 #endif
 }
 
-// Boot the visible standalone app: crash-handler install, GLFW init, window
-// creation + saved-position/maximize restore, ImGui context + style +
-// platform/renderer init, CLI parse + ConfigManager::Load(cli) +
-// InitAppAndPlugins. Fills `boot` (which WireUserDataAndLogSink already seeded
-// with logPath) on success. Caller must have already wired the log sink + run
-// the cmd/ephemeral short-circuits.
-// Return contract: a non-negative result is an exit code that main returns
-// immediately; the early-return and cleanup paths mirror the prior inline
-// behaviour exactly, preserving glfwTerminate then ImGui shutdown order.
-// A result of -1 means boot succeeded, so proceed to RunFrameLoop.
-static int BootApplication(int argc, char** argv, MainBootState& boot) {
+// GLFW init + crash-handler install + window creation. Resolves exe/user-data
+// dirs, installs crash handlers, peeks saved window state into `boot`, applies
+// GL/GLSL + visibility/maximize hints, creates the window, restores a saved
+// on-screen position, applies the icon, and makes the context current with
+// vsync. Returns the window on success, or null on a fatal init failure (the
+// caller maps null to exit code 1). `outGlslVersion` receives the chosen GLSL
+// string for the later renderer-backend init.
+static GLFWwindow* BootInitGlfwAndWindow(MainBootState& boot, const char*& outGlslVersion) {
     const std::string& logPath = boot.logPath; // crash reporter records it for next-launch log-tail
 
     // 1. Setup OS Window (GLFW)
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {
-        return 1;
+        return NULL;
     }
 
     ResolveExeAndUserDataDirs();
@@ -454,13 +451,13 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
 
     // Decide GL+GLSL versions
 #if defined(__APPLE__)
-    const char* glsl_version = "#version 150";
+    outGlslVersion = "#version 150";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #else
-    const char* glsl_version = "#version 130";
+    outGlslVersion = "#version 130";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
@@ -475,7 +472,7 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
     // Create window with graphics context
     GLFWwindow* window = glfwCreateWindow(initialWindowW, initialWindowH, "Smatchet - Standalone", NULL, NULL);
     if (window == NULL) {
-        return 1;
+        return NULL;
     }
 
     // Restore saved position if it still overlaps a connected monitor.
@@ -509,6 +506,13 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
 
     glfwSwapInterval(1); // Enable vsync
 
+    return window;
+}
+
+// ImGui context + ini-schema migration + style/font + platform/renderer init.
+// Runs after the GL context is current. Returns false if the OpenGL device
+// objects fail to create (caller maps that to exit code 1).
+static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version) {
     // 2. Setup Dear ImGui Context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -547,6 +551,29 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
     SmatchetLogOpenGLInfo();
     if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
         ::fprintf(stderr, "Failed to create ImGui OpenGL device objects.\n"); // pre-logger-init — LOG_* unavailable
+        return false;
+    }
+    return true;
+}
+
+// Boot the visible standalone app: crash-handler install, GLFW init, window
+// creation + saved-position/maximize restore, ImGui context + style +
+// platform/renderer init, CLI parse + ConfigManager::Load(cli) +
+// InitAppAndPlugins. Fills `boot` (which WireUserDataAndLogSink already seeded
+// with logPath) on success. Caller must have already wired the log sink + run
+// the cmd/ephemeral short-circuits.
+// Return contract: a non-negative result is an exit code that main returns
+// immediately; the early-return and cleanup paths mirror the prior inline
+// behaviour exactly, preserving glfwTerminate then ImGui shutdown order.
+// A result of -1 means boot succeeded, so proceed to RunFrameLoop.
+static int BootApplication(int argc, char** argv, MainBootState& boot) {
+    const char* glsl_version = NULL;
+    GLFWwindow* window = BootInitGlfwAndWindow(boot, glsl_version);
+    if (window == NULL) {
+        return 1;
+    }
+
+    if (!BootSetupImGui(window, glsl_version)) {
         return 1;
     }
 
@@ -702,6 +729,88 @@ static void MaybePrimeCrashReport() {
     LOG_WARN("Crash reporter: previous run crashed (%s) — opening pre-filled bug report.", ci.Reason.c_str());
 }
 
+// Render exactly one frame: poll events, apply any pending font reload, run the
+// redaction-font swap window, build + draw the ImGui frame via the SEH-guarded
+// bridge, clear with the active theme background, render the draw data, and swap
+// buffers (plus the bucket-E post-swap hook). Extracted verbatim from the loop
+// body — call order is load-bearing (steady-state render path); do not reorder.
+// Returns whether the redaction font was pushed this frame so the caller can pop
+// it after the post-swap screenshot capture (the original ordering).
+static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppController& smatchetApp,
+                           PluginHost& pluginHost, const ImVec4& clear_color) {
+    // Poll and handle events (inputs, window resize, etc.)
+    glfwPollEvents();
+
+    if (SmatchetCheckAndApplyFontReload()) {
+        ImGui_ImplOpenGL3_DestroyDeviceObjects();
+        ImGui_ImplOpenGL3_CreateDeviceObjects();
+    }
+
+    // font-redaction censor — if the bug-report modal armed a capture last frame,
+    // swap the whole UI to the redaction font BEFORE NewFrame so this (captured)
+    // frame renders all text as blocks. Popped after the screenshot capture below.
+    const bool redactThisFrame = g_ui.requestRedactFontThisFrame;
+    g_ui.requestRedactFontThisFrame = false;
+    if (redactThisFrame) {
+        SmatchetPushRedactionFonts();
+    }
+
+    // Start the ImGui frame
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    // THE BRIDGE: Hand control over to your engine-agnostic UI layer
+
+    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
+
+    // Draw the main application
+    SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);
+
+    // Rendering
+    ImGui::Render();
+    int display_w, display_h;
+    glfwGetFramebufferSize(window, &display_w, &display_h);
+    glViewport(0, 0, display_w, display_h);
+    // Clear with the active theme's WindowBg so any dock gaps blend with panel
+    // backgrounds — viewport background should never visibly differ from panels.
+    const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
+    glClear(GL_COLOR_BUFFER_BIT);
+    (void)clear_color;
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    glfwSwapBuffers(window);
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    // ImGui Test Engine bucket-E hookup. The engine is created /
+    // destroyed by UiTestScenario, which publishes the active pointer
+    // through the active-engine accessor. With no UI test running the
+    // pointer is null and PostSwap is skipped — zero cost on the
+    // normal frame path. See agents/test-author.md § Bucket E.
+    if (ImGuiTestEngine* uiTestEngine = SmatchetActiveUiTestEngine()) {
+        ImGuiTestEngine_PostSwap(uiTestEngine);
+    }
+#endif
+
+    return redactThisFrame;
+}
+
+// Persist window state for next launch. Read maximized attrib directly; use the
+// live-tracked windowed bounds so an exit-while-maximized still restores a sane
+// windowed rect after un-maximize.
+static void PersistWindowState(GLFWwindow* window, int persistWindowedX, int persistWindowedY, int persistWindowedW,
+                               int persistWindowedH) {
+    const bool maximized = (glfwGetWindowAttrib(window, GLFW_MAXIMIZED) != 0) || g_ui.cfg.FullScreen;
+    TrackerConfig saveCfg = ConfigManager::Load();
+    saveCfg.WindowX = persistWindowedX;
+    saveCfg.WindowY = persistWindowedY;
+    saveCfg.WindowWidth = persistWindowedW;
+    saveCfg.WindowHeight = persistWindowedH;
+    saveCfg.WindowMaximized = maximized;
+    ConfigManager::Save(saveCfg);
+}
+
 // Run the main render loop until the window closes, then persist windowed
 // bounds + tear down the app/plugin/window-owned UI via ShutdownApplication.
 // ImGui/GLFW teardown stays with main() (mirrors the original inline ordering).
@@ -738,60 +847,7 @@ static int RunFrameLoop(MainBootState& boot) {
         int s_persistWindowedH = initialWindowH;
 
         while (!glfwWindowShouldClose(window)) {
-            // Poll and handle events (inputs, window resize, etc.)
-            glfwPollEvents();
-
-            if (SmatchetCheckAndApplyFontReload()) {
-                ImGui_ImplOpenGL3_DestroyDeviceObjects();
-                ImGui_ImplOpenGL3_CreateDeviceObjects();
-            }
-
-            // font-redaction censor — if the bug-report modal armed a capture last frame,
-            // swap the whole UI to the redaction font BEFORE NewFrame so this (captured)
-            // frame renders all text as blocks. Popped after the screenshot capture below.
-            const bool redactThisFrame = g_ui.requestRedactFontThisFrame;
-            g_ui.requestRedactFontThisFrame = false;
-            if (redactThisFrame) {
-                SmatchetPushRedactionFonts();
-            }
-
-            // Start the ImGui frame
-            ImGui_ImplOpenGL3_NewFrame();
-            ImGui_ImplGlfw_NewFrame();
-            ImGui::NewFrame();
-
-            // THE BRIDGE: Hand control over to your engine-agnostic UI layer
-
-            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
-
-            // Draw the main application
-            SmatchetDrawFrameWithSeh(mainWindow, smatchetApp, pluginHost);
-
-            // Rendering
-            ImGui::Render();
-            int display_w, display_h;
-            glfwGetFramebufferSize(window, &display_w, &display_h);
-            glViewport(0, 0, display_w, display_h);
-            // Clear with the active theme's WindowBg so any dock gaps blend with panel
-            // backgrounds — viewport background should never visibly differ from panels.
-            const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-            glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
-            glClear(GL_COLOR_BUFFER_BIT);
-            (void)clear_color;
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-            glfwSwapBuffers(window);
-
-#if defined(SMATCHET_BUILD_UI_TESTS)
-            // ImGui Test Engine bucket-E hookup. The engine is created /
-            // destroyed by UiTestScenario, which publishes the active pointer
-            // via SmatchetActiveUiTestEngine(). When no UI test is running the
-            // pointer is null and PostSwap is skipped — zero cost on the
-            // normal frame path. See agents/test-author.md § Bucket E.
-            if (ImGuiTestEngine* uiTestEngine = SmatchetActiveUiTestEngine()) {
-                ImGuiTestEngine_PostSwap(uiTestEngine);
-            }
-#endif
+            const bool redactThisFrame = RenderOneFrame(window, mainWindow, smatchetApp, pluginHost, clear_color);
 
             // Snapshot windowed bounds whenever the window is in a normal (non-maximized,
             // non-fullscreen) state so we can persist them on exit.
@@ -822,19 +878,7 @@ static int RunFrameLoop(MainBootState& boot) {
 #endif
         }
 
-        // Persist window state for next launch. Read maximized attrib directly; use the
-        // live-tracked windowed bounds so an exit-while-maximized still restores a sane
-        // windowed rect after un-maximize.
-        {
-            const bool maximized = (glfwGetWindowAttrib(window, GLFW_MAXIMIZED) != 0) || g_ui.cfg.FullScreen;
-            TrackerConfig saveCfg = ConfigManager::Load();
-            saveCfg.WindowX = s_persistWindowedX;
-            saveCfg.WindowY = s_persistWindowedY;
-            saveCfg.WindowWidth = s_persistWindowedW;
-            saveCfg.WindowHeight = s_persistWindowedH;
-            saveCfg.WindowMaximized = maximized;
-            ConfigManager::Save(saveCfg);
-        }
+        PersistWindowState(window, s_persistWindowedX, s_persistWindowedY, s_persistWindowedW, s_persistWindowedH);
 
         smatchet::standalone::ShutdownApplication(bootCtx);
     } catch (const std::exception& ex) {

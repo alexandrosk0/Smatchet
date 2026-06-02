@@ -1056,6 +1056,86 @@ bool IsTier1MetaCommand(const std::string& name) {
     return std::any_of(std::begin(kAllow), std::end(kAllow), [&name](const char* allowed) { return name == allowed; });
 }
 
+// Drive an async scenario command to completion in-process: render-loop until
+// the scenario finishes (or the deadline lapses), wait for its out-file, read it,
+// and fold the parsed result back into `envelope` as the command data. Extracted
+// verbatim from RunCmdInProcessImpl's async branch. Returns a non-negative exit
+// code when it has already emitted an error + shut down `boot` (caller returns it
+// immediately), or -1 to signal success — caller proceeds to the shared emit path.
+static int RunAsyncScenarioInProcess(standalone::BootstrapContext& boot, const std::string& toolName,
+                                     const nlohmann::json& argsToSend, const ParsedArgs& pa,
+                                     const nlohmann::json& envData, nlohmann::json& envelope) {
+    const std::string outPath = SafeString(envData, "outPath");
+    int frames = 600;
+    if (argsToSend.contains("frames")) {
+        const auto& v = argsToSend["frames"];
+        if (v.is_number()) {
+            frames = v.get<int>();
+        } else if (v.is_string()) {
+            try {
+                frames = std::stoi(v.get<std::string>());
+            } catch (...) { // catch-all-ok: non-numeric frames string falls back to the default
+            }
+        }
+    }
+    const int scenarioWaitMs = (pa.timeoutMs > 0) ? pa.timeoutMs : ((frames / 60 + 30) * 1000);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
+
+    standalone::RunRenderLoop(boot, [&boot, deadline]() {
+        return !boot.app->Scenarios().Active() || std::chrono::steady_clock::now() >= deadline;
+    });
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto remainingMs =
+        (deadline > now) ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count() : 0;
+    const bool fileReady = WaitForFile(outPath, static_cast<int>(remainingMs));
+    if (fileReady) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    }
+    if (!fileReady) {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = toolName;
+        errEnv["error"] = {{"code", "timeout"}, {"message", "Scenario did not finish within expected time."}};
+        EmitErrorToStderr(errEnv);
+        standalone::Shutdown(boot);
+        return 8;
+    }
+
+    std::FILE* f = std::fopen(outPath.c_str(), "rb");
+    if (!f) {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = toolName;
+        errEnv["error"] = {{"code", "handler-error"}, {"message", "Could not read scenario result file: " + outPath}};
+        EmitErrorToStderr(errEnv);
+        standalone::Shutdown(boot);
+        return kExitHandler;
+    }
+    std::string content;
+    char buf[4096];
+    size_t n = 0;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
+        content.append(buf, n);
+    }
+    std::fclose(f);
+    try {
+        envelope["ok"] = true;
+        envelope["command"] = toolName;
+        envelope["data"] = nlohmann::json::parse(content);
+    } catch (...) { // catch-all-ok: malformed scenario file → handler-error envelope below
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = toolName;
+        errEnv["error"] = {{"code", "handler-error"},
+                           {"message", "Scenario result file is not valid JSON: " + outPath}};
+        EmitErrorToStderr(errEnv);
+        standalone::Shutdown(boot);
+        return kExitHandler;
+    }
+    return -1; // success — caller proceeds to the shared emit path
+}
+
 int RunCmdInProcessImpl(int argc, char** argv) {
     std::set_terminate(&CliTerminateHandler);
     try {
@@ -1124,74 +1204,9 @@ int RunCmdInProcessImpl(int argc, char** argv) {
                                      envData.contains("outPath") && envData["outPath"].is_string();
 
         if (isAsyncScenario) {
-            const std::string outPath = SafeString(envData, "outPath");
-            int frames = 600;
-            if (argsToSend.contains("frames")) {
-                const auto& v = argsToSend["frames"];
-                if (v.is_number()) {
-                    frames = v.get<int>();
-                } else if (v.is_string()) {
-                    try {
-                        frames = std::stoi(v.get<std::string>());
-                    } catch (...) {
-                    }
-                }
-            }
-            const int scenarioWaitMs = (pa.timeoutMs > 0) ? pa.timeoutMs : ((frames / 60 + 30) * 1000);
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
-
-            standalone::RunRenderLoop(boot, [&boot, deadline]() {
-                return !boot.app->Scenarios().Active() || std::chrono::steady_clock::now() >= deadline;
-            });
-
-            const auto now = std::chrono::steady_clock::now();
-            const auto remainingMs =
-                (deadline > now) ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count() : 0;
-            const bool fileReady = WaitForFile(outPath, static_cast<int>(remainingMs));
-            if (fileReady) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(150));
-            }
-            if (!fileReady) {
-                nlohmann::json errEnv;
-                errEnv["ok"] = false;
-                errEnv["command"] = toolName;
-                errEnv["error"] = {{"code", "timeout"}, {"message", "Scenario did not finish within expected time."}};
-                EmitErrorToStderr(errEnv);
-                standalone::Shutdown(boot);
-                return 8;
-            }
-
-            std::FILE* f = std::fopen(outPath.c_str(), "rb");
-            if (!f) {
-                nlohmann::json errEnv;
-                errEnv["ok"] = false;
-                errEnv["command"] = toolName;
-                errEnv["error"] = {{"code", "handler-error"},
-                                   {"message", "Could not read scenario result file: " + outPath}};
-                EmitErrorToStderr(errEnv);
-                standalone::Shutdown(boot);
-                return kExitHandler;
-            }
-            std::string content;
-            char buf[4096];
-            size_t n = 0;
-            while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
-                content.append(buf, n);
-            }
-            std::fclose(f);
-            try {
-                envelope["ok"] = true;
-                envelope["command"] = toolName;
-                envelope["data"] = nlohmann::json::parse(content);
-            } catch (...) {
-                nlohmann::json errEnv;
-                errEnv["ok"] = false;
-                errEnv["command"] = toolName;
-                errEnv["error"] = {{"code", "handler-error"},
-                                   {"message", "Scenario result file is not valid JSON: " + outPath}};
-                EmitErrorToStderr(errEnv);
-                standalone::Shutdown(boot);
-                return kExitHandler;
+            const int asyncRc = RunAsyncScenarioInProcess(boot, toolName, argsToSend, pa, envData, envelope);
+            if (asyncRc >= 0) {
+                return asyncRc;
             }
         }
 
