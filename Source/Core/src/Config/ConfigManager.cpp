@@ -10,7 +10,6 @@
 #include "ConfigManager.h"
 #include "ConfigManager_Internal.h"
 
-#include "AiEndpointSanitize.h"
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
 #include "SmatchetDefaults.h"
@@ -705,6 +704,29 @@ struct SecretMigrationFlags {
     }
 };
 
+// Extract the lowercased host (port stripped) from a `scheme://host[:port]/...` URL, or
+// "" if it has no parseable scheme://host. Inlined here rather than reusing
+// smatchet::ai::pure::ExtractUrlHost: that helper lives in the AI-gated
+// AiEndpointSanitize TU (pruned from the build when SMATCHET_WITH_AI=OFF), and
+// ConfigManager is always-compiled + AI-independent — a cross-dep breaks the light
+// (AI-off) link. The two parsers are intentionally tiny + independent.
+std::string ConfigUrlHostLower(const std::string& url) {
+    const std::size_t scheme = url.find("://");
+    if (scheme == std::string::npos)
+        return std::string();
+    const std::size_t hostStart = scheme + 3;
+    std::size_t hostEnd = url.find_first_of("/?#", hostStart);
+    if (hostEnd == std::string::npos)
+        hostEnd = url.size();
+    std::string host = url.substr(hostStart, hostEnd - hostStart);
+    const std::size_t colon = host.find(':'); // strip :port (IPv6 literals not expected here)
+    if (colon != std::string::npos)
+        host.erase(colon);
+    std::transform(host.begin(), host.end(), host.begin(),
+                   [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
+    return host;
+}
+
 // Table-driven plain-scalar load, one source-of-truth row per field. See the kStringFields
 // table for the list. Behavior is identical to the prior per-field json-value-with-default reads.
 void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -728,7 +750,7 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
         // Compare the parsed HOST exactly — a substring match would treat a proxy
         // such as https://api.openai.com.proxy.corp as canonical and fail to
         // grandfather it, silently breaking that user's upgrade.
-        const std::string host = smatchet::ai::pure::ExtractUrlHost(cfg.AiBaseUrl);
+        const std::string host = ConfigUrlHostLower(cfg.AiBaseUrl);
         const bool hasCustomHost = !host.empty() && host != "api.openai.com" && host != "api.anthropic.com";
         if (hasCustomHost) {
             cfg.AiAllowCustomEndpointOpenAi = true;
