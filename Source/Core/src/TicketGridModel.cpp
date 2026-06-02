@@ -108,53 +108,62 @@ std::string TrimFieldId(const std::string& value) {
     return value.substr(start, end - start);
 }
 
-TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const TrackerField* field) {
-    if (fieldId == "timespent" || (field && field->Id == "timespent")) {
-        return TicketGridColumn::RenderPlan::SpecialTimeSpent;
-    }
-    if (field == nullptr) {
-        if (IsAttachmentFieldId(fieldId)) {
-            return TicketGridColumn::RenderPlan::SpecialAttachment;
-        }
-        if (TrackerGridFieldDisplay::IsWatchersColumnId(fieldId)) {
-            return TicketGridColumn::RenderPlan::SpecialWatchers;
-        }
-        if (TrackerGridFieldDisplay::IsVotesColumnId(fieldId)) {
-            return TicketGridColumn::RenderPlan::SpecialVotes;
-        }
-        if (TrackerGridFieldDisplay::IsWorklogColumnId(fieldId)) {
-            return TicketGridColumn::RenderPlan::SpecialWorklog;
-        }
-        if (TrackerGridFieldDisplay::IsProgressStyleColumnId(fieldId)) {
-            return TicketGridColumn::RenderPlan::SpecialProgress;
-        }
-        if (TrackerGridFieldDisplay::IsIssueRestrictionColumnId(fieldId)) {
-            return TicketGridColumn::RenderPlan::SpecialIssueRestriction;
-        }
-        return TicketGridColumn::RenderPlan::PlainText;
-    }
-
-    if (IsAttachmentFieldId(field->Id)) {
+// Returns a Special* render plan for id-only columns (field == null) by column-id
+// predicate, or PlainText when nothing special matches.
+TicketGridColumn::RenderPlan ResolveRenderPlanForFieldId(const std::string& fieldId) {
+    if (IsAttachmentFieldId(fieldId)) {
         return TicketGridColumn::RenderPlan::SpecialAttachment;
     }
-    if (TrackerGridFieldDisplay::IsWatchersColumnId(field->Id)) {
+    if (TrackerGridFieldDisplay::IsWatchersColumnId(fieldId)) {
         return TicketGridColumn::RenderPlan::SpecialWatchers;
     }
-    if (TrackerGridFieldDisplay::IsVotesColumnId(field->Id)) {
+    if (TrackerGridFieldDisplay::IsVotesColumnId(fieldId)) {
         return TicketGridColumn::RenderPlan::SpecialVotes;
     }
-    if (TrackerGridFieldDisplay::IsWorklogColumnId(field->Id)) {
+    if (TrackerGridFieldDisplay::IsWorklogColumnId(fieldId)) {
         return TicketGridColumn::RenderPlan::SpecialWorklog;
     }
-    if (TrackerGridFieldDisplay::IsProgressDisplayField(field)) {
+    if (TrackerGridFieldDisplay::IsProgressStyleColumnId(fieldId)) {
         return TicketGridColumn::RenderPlan::SpecialProgress;
     }
-    if (TrackerGridFieldDisplay::IsIssueRestrictionField(field)) {
+    if (TrackerGridFieldDisplay::IsIssueRestrictionColumnId(fieldId)) {
         return TicketGridColumn::RenderPlan::SpecialIssueRestriction;
     }
-    if (field->ReadOnly) {
-        return TicketGridColumn::RenderPlan::PlainText;
+    return TicketGridColumn::RenderPlan::PlainText;
+}
+
+// Special* render plans that apply to a resolved field by id/metadata predicate, before
+// edit-affordance dispatch. Returns true (with `out` set) when a special plan matches.
+bool TryResolveSpecialFieldPlan(const TrackerField* field, TicketGridColumn::RenderPlan& out) {
+    if (IsAttachmentFieldId(field->Id)) {
+        out = TicketGridColumn::RenderPlan::SpecialAttachment;
+        return true;
     }
+    if (TrackerGridFieldDisplay::IsWatchersColumnId(field->Id)) {
+        out = TicketGridColumn::RenderPlan::SpecialWatchers;
+        return true;
+    }
+    if (TrackerGridFieldDisplay::IsVotesColumnId(field->Id)) {
+        out = TicketGridColumn::RenderPlan::SpecialVotes;
+        return true;
+    }
+    if (TrackerGridFieldDisplay::IsWorklogColumnId(field->Id)) {
+        out = TicketGridColumn::RenderPlan::SpecialWorklog;
+        return true;
+    }
+    if (TrackerGridFieldDisplay::IsProgressDisplayField(field)) {
+        out = TicketGridColumn::RenderPlan::SpecialProgress;
+        return true;
+    }
+    if (TrackerGridFieldDisplay::IsIssueRestrictionField(field)) {
+        out = TicketGridColumn::RenderPlan::SpecialIssueRestriction;
+        return true;
+    }
+    return false;
+}
+
+// Edit-affordance dispatch for a resolved, editable (non-special, non-read-only) field.
+TicketGridColumn::RenderPlan ResolveEditableFieldPlan(const TrackerField* field) {
     if (TrackerLabelsEditor::IsLabelsField(field->Id)) {
         return TicketGridColumn::RenderPlan::Labels;
     }
@@ -193,6 +202,24 @@ TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const
     return TicketGridColumn::RenderPlan::TextEditor;
 }
 
+TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const TrackerField* field) {
+    if (fieldId == "timespent" || (field && field->Id == "timespent")) {
+        return TicketGridColumn::RenderPlan::SpecialTimeSpent;
+    }
+    if (field == nullptr) {
+        return ResolveRenderPlanForFieldId(fieldId);
+    }
+
+    TicketGridColumn::RenderPlan special = TicketGridColumn::RenderPlan::PlainText;
+    if (TryResolveSpecialFieldPlan(field, special)) {
+        return special;
+    }
+    if (field->ReadOnly) {
+        return TicketGridColumn::RenderPlan::PlainText;
+    }
+    return ResolveEditableFieldPlan(field);
+}
+
 bool RequiresAllowEditsCheck(TicketGridColumn::RenderPlan plan) {
     return plan == TicketGridColumn::RenderPlan::Labels || plan == TicketGridColumn::RenderPlan::Cascading ||
            plan == TicketGridColumn::RenderPlan::MultiSelect || plan == TicketGridColumn::RenderPlan::SingleSelect ||
@@ -228,6 +255,89 @@ static bool ParseWholeDouble(const std::string& s, double& out) {
     return errno != ERANGE;
 }
 
+namespace {
+
+/** Total-order case-insensitive string compare with length tie-break (-1 / 0 / +1). */
+int CompareCaseInsensitive(const std::string& x, const std::string& y) {
+    const size_t n = (std::min)(x.size(), y.size());
+    for (size_t i = 0; i < n; ++i) {
+        const int cxa = std::tolower(static_cast<unsigned char>(x[i]));
+        const int cxb = std::tolower(static_cast<unsigned char>(y[i]));
+        if (cxa != cxb) {
+            return (cxa < cxb) ? -1 : 1;
+        }
+    }
+    if (x.size() != y.size()) {
+        return (x.size() < y.size()) ? -1 : 1;
+    }
+    return 0;
+}
+
+/** Natural issue-key compare (key/issuekey fields). */
+int CompareIssueKeyValues(const std::string& aVal, const std::string& bVal) {
+    if (CompareIssueKeyNatural(aVal, bVal)) {
+        return -1;
+    }
+    if (CompareIssueKeyNatural(bVal, aVal)) {
+        return 1;
+    }
+    return 0;
+}
+
+/** Time-tracking duration compare (e.g. "2d 4h" -> seconds). */
+int CompareTimeTrackingValues(const std::string& aVal, const std::string& bVal) {
+    const long long sa = ParseDurationToSecondsForSort(aVal);
+    const long long sb = ParseDurationToSecondsForSort(bVal);
+    if (sa != sb) {
+        return (sa < sb) ? -1 : 1;
+    }
+    return 0;
+}
+
+/** Date/datetime compare — lexical on the raw ISO string (sortable as-is). */
+int CompareDateValues(const std::string& aVal, const std::string& bVal) {
+    const int cmp = aVal.compare(bVal);
+    if (cmp != 0) {
+        return (cmp < 0) ? -1 : 1;
+    }
+    return 0;
+}
+
+/** Numeric compare. `useDouble` picks the double parse (number-typed fields) vs the
+ *  int64 parse (everything else). On parse failure, `outNumeric` stays false and the
+ *  caller falls back to case-insensitive string compare. */
+int CompareNumericValues(const std::string& aVal, const std::string& bVal, bool useDouble, bool& outNumeric) {
+    outNumeric = false;
+    if (useDouble) {
+        double da = 0;
+        double db = 0;
+        const bool aNum = ParseWholeDouble(aVal, da);
+        const bool bNum = ParseWholeDouble(bVal, db);
+        if (aNum && bNum) {
+            outNumeric = true;
+            if (da != db) {
+                return (da < db) ? -1 : 1;
+            }
+            return 0;
+        }
+        return 0;
+    }
+    long long na = 0;
+    long long nb = 0;
+    const bool aInt = ParseWholeInt64Dec(aVal, na);
+    const bool bInt = ParseWholeInt64Dec(bVal, nb);
+    if (aInt && bInt) {
+        outNumeric = true;
+        if (na != nb) {
+            return (na < nb) ? -1 : 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+} // namespace
+
 int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fieldMeta, const std::string& aVal,
                               const std::string& bVal, int sortDirection) {
     const bool aEmpty = aVal.empty();
@@ -243,66 +353,22 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
     }
 
     if (fieldId == "key" || fieldId == "issuekey") {
-        if (CompareIssueKeyNatural(aVal, bVal))
-            return -1;
-        if (CompareIssueKeyNatural(bVal, aVal))
-            return 1;
-        return 0;
+        return CompareIssueKeyValues(aVal, bVal);
     }
-
     if (kTimeTrackingFieldIds.count(fieldId)) {
-        const long long sa = ParseDurationToSecondsForSort(aVal);
-        const long long sb = ParseDurationToSecondsForSort(bVal);
-        if (sa != sb) {
-            return (sa < sb) ? -1 : 1;
-        }
-        return 0;
+        return CompareTimeTrackingValues(aVal, bVal);
     }
     if (kDateFieldIds.count(fieldId) || (fieldMeta && (fieldMeta->Type == "date" || fieldMeta->Type == "datetime"))) {
-        const int cmp = aVal.compare(bVal);
-        if (cmp != 0) {
-            return (cmp < 0) ? -1 : 1;
-        }
-        return 0;
+        return CompareDateValues(aVal, bVal);
     }
-    if (fieldMeta && fieldMeta->Type == "number") {
-        double da = 0;
-        double db = 0;
-        const bool aNum = ParseWholeDouble(aVal, da);
-        const bool bNum = ParseWholeDouble(bVal, db);
-        if (aNum && bNum) {
-            if (da != db) {
-                return (da < db) ? -1 : 1;
-            }
-            return 0;
-        }
-    } else {
-        long long na = 0;
-        long long nb = 0;
-        const bool aInt = ParseWholeInt64Dec(aVal, na);
-        const bool bInt = ParseWholeInt64Dec(bVal, nb);
-        if (aInt && bInt) {
-            if (na != nb) {
-                return (na < nb) ? -1 : 1;
-            }
-            return 0;
-        }
+
+    const bool useDouble = fieldMeta && fieldMeta->Type == "number";
+    bool wasNumeric = false;
+    const int numericCmp = CompareNumericValues(aVal, bVal, useDouble, wasNumeric);
+    if (wasNumeric) {
+        return numericCmp;
     }
-    auto ciCompare = [](const std::string& x, const std::string& y) {
-        const size_t n = (std::min)(x.size(), y.size());
-        for (size_t i = 0; i < n; ++i) {
-            const int cxa = std::tolower(static_cast<unsigned char>(x[i]));
-            const int cxb = std::tolower(static_cast<unsigned char>(y[i]));
-            if (cxa != cxb) {
-                return (cxa < cxb) ? -1 : 1;
-            }
-        }
-        if (x.size() != y.size()) {
-            return (x.size() < y.size()) ? -1 : 1;
-        }
-        return 0;
-    };
-    return ciCompare(aVal, bVal);
+    return CompareCaseInsensitive(aVal, bVal);
 }
 
 bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField* field) {

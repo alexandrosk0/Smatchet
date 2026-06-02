@@ -194,6 +194,116 @@ std::string FormatAbsoluteFriendly(const std::chrono::system_clock::time_point& 
     return (n == 0) ? std::string() : std::string(buf, n);
 }
 
+struct ParsedDisplayTimePoint {
+    std::chrono::system_clock::time_point Tp;
+    bool HasWallTime = false;
+    bool Success = false;
+};
+
+// Parse `raw` to a UTC time_point (cached, thread-local). Mirrors the inline
+// CachedParsedDate logic lifted out of FormatCompactJiraDateForDisplay verbatim.
+ParsedDisplayTimePoint ParseDisplayTimePointCached(const std::string& raw) {
+    thread_local static std::unordered_map<std::string, ParsedDisplayTimePoint> s_parseCache;
+
+    auto it = s_parseCache.find(raw);
+    if (it != s_parseCache.end()) {
+        return it->second;
+    }
+
+    ParsedDisplayTimePoint cp;
+    const std::string s = TrimCopy(raw);
+    if (!s.empty()) {
+        ParsedJiraDateTime p;
+        if (TryParseJiraDateTime(s, p)) {
+            std::tm wall{};
+            if (ParsedToTm(p, wall)) {
+                const int offsetSec = p.HasTimeZoneSuffix ? p.OffsetSec : 0;
+                const std::time_t wallAsUtcGuess = TimeGmPortable(&wall);
+                if (wallAsUtcGuess != static_cast<std::time_t>(-1)) {
+                    cp.Tp =
+                        std::chrono::system_clock::from_time_t(wallAsUtcGuess - static_cast<std::time_t>(offsetSec));
+                    cp.HasWallTime = p.HasWallTime;
+                    cp.Success = true;
+                }
+            }
+        }
+    }
+    if (s_parseCache.size() > 8192) {
+        s_parseCache.clear();
+    }
+    s_parseCache[raw] = cp;
+    return cp;
+}
+
+// Relative-magnitude label ("-3d", "+2w", "0m") for a non-absolute format option.
+// `formatOption == "compact"` switches to a short local date once `mag` reaches the
+// threshold; on short-date failure it falls back to `raw`.
+std::string FormatRelativeMagnitude(const std::chrono::system_clock::time_point& tp, const std::string& raw,
+                                    const std::string& formatOption, int thresholdDays) {
+    const auto now = std::chrono::system_clock::now();
+    const auto diffSec = std::chrono::duration_cast<std::chrono::seconds>(now - tp).count();
+
+    constexpr long long kMinute = 60;
+    constexpr long long kHour = 3600;
+    constexpr long long kDay = 86400;
+    constexpr long long kWeek = 604800;
+    constexpr long long kMonth = 2592000;
+    constexpr long long kYear = 31536000;
+
+    const long long mag = (diffSec < 0) ? static_cast<long long>(-diffSec) : static_cast<long long>(diffSec);
+    const std::string sign = (diffSec >= 0) ? "-" : "+";
+
+    if (formatOption == "compact") {
+        const long long thresholdSec = static_cast<long long>(thresholdDays) * kDay;
+        if (mag >= thresholdSec) {
+            const std::string shortDate = FormatShortLocalDate(tp);
+            return shortDate.empty() ? raw : shortDate;
+        }
+    }
+
+    if (mag >= kYear) {
+        return sign + std::to_string(mag / kYear) + "y";
+    }
+    if (mag >= kMonth) {
+        return sign + std::to_string(mag / kMonth) + "mo";
+    }
+    if (mag >= kWeek) {
+        return sign + std::to_string(mag / kWeek) + "w";
+    }
+    if (mag >= kDay) {
+        return sign + std::to_string(mag / kDay) + "d";
+    }
+    if (mag >= kHour) {
+        return sign + std::to_string(mag / kHour) + "h";
+    }
+    if (mag >= kMinute) {
+        return sign + std::to_string(mag / kMinute) + "m";
+    }
+    if (mag > 0) {
+        return sign + "1m";
+    }
+    return "0m";
+}
+
+// Full value computation (parse + format-option dispatch) for one date string.
+std::string ComputeCompactJiraDisplay(const std::string& raw, const std::string& formatOption, int thresholdDays) {
+    const ParsedDisplayTimePoint cp = ParseDisplayTimePointCached(raw);
+    if (!cp.Success) {
+        return raw;
+    }
+
+    const auto& tp = cp.Tp;
+    if (formatOption == "absolute_iso") {
+        const std::string val = FormatAbsoluteIso(tp, cp.HasWallTime);
+        return val.empty() ? raw : val;
+    }
+    if (formatOption == "absolute_friendly") {
+        const std::string val = FormatAbsoluteFriendly(tp, cp.HasWallTime);
+        return val.empty() ? raw : val;
+    }
+    return FormatRelativeMagnitude(tp, raw, formatOption, thresholdDays);
+}
+
 } // namespace
 
 bool TryParseJiraDateTime(const std::string& raw, ParsedJiraDateTime& out) {
@@ -319,107 +429,11 @@ std::string FormatCompactJiraDateForDisplay(const std::string& raw, const std::s
         }
     }
 
-    auto computeFormat = [&]() -> std::string {
-        struct CachedParsedDate {
-            std::chrono::system_clock::time_point Tp;
-            bool HasWallTime = false;
-            bool Success = false;
-        };
-        thread_local static std::unordered_map<std::string, CachedParsedDate> s_parseCache;
-
-        CachedParsedDate cp;
-        auto it = s_parseCache.find(raw);
-        if (it != s_parseCache.end()) {
-            cp = it->second;
-        } else {
-            const std::string s = TrimCopy(raw);
-            if (!s.empty()) {
-                ParsedJiraDateTime p;
-                if (TryParseJiraDateTime(s, p)) {
-                    std::tm wall{};
-                    if (ParsedToTm(p, wall)) {
-                        const int offsetSec = p.HasTimeZoneSuffix ? p.OffsetSec : 0;
-                        const std::time_t wallAsUtcGuess = TimeGmPortable(&wall);
-                        if (wallAsUtcGuess != static_cast<std::time_t>(-1)) {
-                            cp.Tp = std::chrono::system_clock::from_time_t(wallAsUtcGuess -
-                                                                           static_cast<std::time_t>(offsetSec));
-                            cp.HasWallTime = p.HasWallTime;
-                            cp.Success = true;
-                        }
-                    }
-                }
-            }
-            if (s_parseCache.size() > 8192) {
-                s_parseCache.clear();
-            }
-            s_parseCache[raw] = cp;
-        }
-
-        if (!cp.Success) {
-            return raw;
-        }
-
-        const auto& tp = cp.Tp;
-
-        if (formatOption == "absolute_iso") {
-            const std::string val = FormatAbsoluteIso(tp, cp.HasWallTime);
-            return val.empty() ? raw : val;
-        }
-        if (formatOption == "absolute_friendly") {
-            const std::string val = FormatAbsoluteFriendly(tp, cp.HasWallTime);
-            return val.empty() ? raw : val;
-        }
-
-        const auto now = std::chrono::system_clock::now();
-        const auto diffSec = std::chrono::duration_cast<std::chrono::seconds>(now - tp).count();
-
-        constexpr long long kMinute = 60;
-        constexpr long long kHour = 3600;
-        constexpr long long kDay = 86400;
-        constexpr long long kWeek = 604800;
-        constexpr long long kMonth = 2592000;
-        constexpr long long kYear = 31536000;
-
-        const long long mag = (diffSec < 0) ? static_cast<long long>(-diffSec) : static_cast<long long>(diffSec);
-        const std::string sign = (diffSec >= 0) ? "-" : "+";
-
-        if (formatOption == "compact") {
-            const long long thresholdSec = static_cast<long long>(thresholdDays) * kDay;
-            if (mag >= thresholdSec) {
-                const std::string shortDate = FormatShortLocalDate(tp);
-                return shortDate.empty() ? raw : shortDate;
-            }
-        }
-
-        if (mag >= kYear) {
-            return sign + std::to_string(mag / kYear) + "y";
-        }
-        if (mag >= kMonth) {
-            return sign + std::to_string(mag / kMonth) + "mo";
-        }
-        if (mag >= kWeek) {
-            return sign + std::to_string(mag / kWeek) + "w";
-        }
-        if (mag >= kDay) {
-            return sign + std::to_string(mag / kDay) + "d";
-        }
-        if (mag >= kHour) {
-            return sign + std::to_string(mag / kHour) + "h";
-        }
-        if (mag >= kMinute) {
-            return sign + std::to_string(mag / kMinute) + "m";
-        }
-        if (mag > 0) {
-            return sign + "1m";
-        }
-        return "0m";
-    };
-
     const double nowSec = ctx ? ImGui::GetTime()
                               : static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
                                                         std::chrono::steady_clock::now().time_since_epoch())
                                                         .count());
-    std::string formattedVal = computeFormat();
+    std::string formattedVal = ComputeCompactJiraDisplay(raw, formatOption, thresholdDays);
     if (s_formatCache.size() > 8192) {
         s_formatCache.clear();
     }
