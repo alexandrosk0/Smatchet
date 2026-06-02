@@ -70,6 +70,14 @@ class JiraClient : public ITrackerBackend,
     bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
                            TrackerFieldCatalogResult& outCatalog, std::string& outError) override;
 
+    /** GET /rest/api/3/project/{key}/component (paged) — components valid for ONE project.
+     * Fills outComponents + outOptions directly (no catalog/fields vector). Used to warm the
+     * per-project component map for cross-project grid views. outOptions is sorted by lower-case
+     * value then id. */
+    bool FetchProjectComponents(const TrackerConfig& cfg, const std::string& projectKey,
+                                std::vector<TrackerComponent>& outComponents,
+                                std::vector<TrackerFieldOption>& outOptions, std::string& outError) override;
+
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
 
     /**

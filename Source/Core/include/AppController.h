@@ -646,6 +646,13 @@ class AppController
                          const std::string& error);
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error);
+    /// Pin the project key the next SetFieldCatalog() snapshot saves under. The grid's scoped
+    /// catalog fetch resolves a project from the active-view JQL but applies the result through
+    /// SetFieldCatalog() (not RefreshFieldCatalog()), so without this hint the scoped result would
+    /// persist under the unscoped ("") key and component options would be lost on next startup.
+    /// Pass the same project key the fetch was scoped to (empty = unscoped). Guarded by
+    /// availableFieldsMutex_.
+    void SetCurrentCatalogProject(const std::string& projectKey);
     /// Replace the cached user list (e.g. after a successful `FetchUsers`). Surfaces to
     /// `GetAvailableUsers()` for the JQL autocomplete to suggest assignees / reporters.
     /// Idempotent; safe to call with an empty vector to clear the cache.
@@ -782,6 +789,25 @@ class AppController
         override
 #endif
         ;
+
+    /** Component options valid for one Jira project key (e.g. "PROJ"), warmed async for cross-project
+     *  grid views. Returns a by-value copy taken under availableFieldsMutex_; empty when the project
+     *  has not been warmed yet (caller falls back to the global components catalog). */
+    std::vector<TrackerFieldOption> GetComponentOptionsForProject(const std::string& projectKey) const;
+
+    /** True once a component fetch for `projectKey` has SUCCEEDED (the key is present in
+     *  projectComponentOptions_), regardless of how many components it returned. Lets the editor
+     *  distinguish "not yet loaded" (show "Loading components…") from "loaded but genuinely empty"
+     *  (show "(no options)"). Read under availableFieldsMutex_. */
+    bool IsProjectComponentsLoaded(const std::string& projectKey) const;
+
+    /** Lazily fetch one Jira project's component options into projectComponentOptions_ when the
+     *  eager warm (WarmIssueTypeEditMetaAtStartAsync) missed it (race, or a project loaded after the
+     *  warm ran). Non-blocking: checks the per-project map + in-flight set under availableFieldsMutex_
+     *  and launches a background fetch; the HTTP runs on the worker. No-op when projectKey is empty,
+     *  already cached, or already in-flight. The components editor calls this instead of falling back
+     *  to the cross-project global catalog union. */
+    void EnsureProjectComponentsLoaded(const std::string& projectKey);
 
     /**
      * Per-issue tracker edit metadata: true if the field may be edited for this issue.
@@ -922,6 +948,21 @@ class AppController
      *  to write the snapshot under the right per-project cache entry now that
      *  TrackerConfig::ProjectKey / PlaneProjectId are gone. Guarded by availableFieldsMutex_. */
     std::string currentCatalogProjectKey_;
+    /** Per-project component option lists for cross-project grid views, keyed by Jira project key
+     *  (e.g. "PROJ"). Warmed async by WarmIssueTypeEditMetaAtStartAsync; read by the components
+     *  MultiSelect editor via GetComponentOptionsForProject. In-memory only (no disk persistence).
+     *  Guarded by availableFieldsMutex_. */
+    std::unordered_map<std::string, std::vector<TrackerFieldOption>> projectComponentOptions_;
+    /** Project keys with an in-flight lazy component fetch (EnsureProjectComponentsLoaded), so a
+     *  not-yet-warmed project opened in the editor fetches exactly once instead of per frame.
+     *  Guarded by availableFieldsMutex_. */
+    std::unordered_set<std::string> projectComponentsInFlight_;
+    /** Per-project backoff after a FAILED component fetch: the paint path re-checks
+     *  EnsureProjectComponentsLoaded every frame a components cell is visible+empty, so without a
+     *  backoff a failing project would re-launch a worker every frame (retry storm + log spam).
+     *  A failed fetch records now()+30s here; EnsureProjectComponentsLoaded skips relaunch until
+     *  the deadline passes. Cleared on a successful load. Guarded by availableFieldsMutex_. */
+    mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> projectComponentsRetryAfter_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
     /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once

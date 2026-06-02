@@ -234,6 +234,7 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
     return std::async(std::launch::async, [&app, fetchCfg, projectKey]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
+        result.ProjectKey = projectKey;
         std::string error;
         TrackerFieldCatalogResult catalog;
         // Pass active-view projectKey so Jira createmeta + /status enrichment populates
@@ -906,6 +907,11 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 return;
             }
             if (result.Ok) {
+                // Pin the project key the fetch was scoped to so the snapshot saves under the
+                // project-scoped cache entry (which carries Phase-3 component options), not the
+                // unscoped ("") key. Without this the scoped result is lost on next startup and
+                // the components column renders as text. See AppController::SetCurrentCatalogProject.
+                app.SetCurrentCatalogProject(result.ProjectKey);
                 app.SetFieldCatalog(std::move(result.Fields), std::move(result.Components),
                                     std::move(result.IssueTypeMeta), std::string());
                 // Push the fetched user list into the AppController cache so JQL

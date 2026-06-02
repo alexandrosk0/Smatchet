@@ -13,8 +13,7 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
 bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField* field);
 bool IsAttachmentFieldId(const std::string& fieldId);
 std::string DisplayValueForTrackerDateField(const std::string& fieldId, const TrackerField* field,
-                                            const std::string& currentValue,
-                                            const std::string& dateFormatOption = {},
+                                            const std::string& currentValue, const std::string& dateFormatOption = {},
                                             int thresholdDays = 0);
 
 class TrackerFieldCatalogIndex {
@@ -63,8 +62,6 @@ class TicketGridColumnsBuilder {
     static std::vector<TicketGridColumn> Build(const ViewDefinition& view, const TrackerFieldCatalogIndex& catalog);
 };
 
-
-
-
-
-
+/** Maps a catalog field to its grid edit-affordance. Exposed for deterministic unit tests; the
+ *  columns builder is the production caller. `field` may be null (id-only / unknown column). */
+TicketGridColumn::RenderPlan ResolveTicketGridRenderPlan(const std::string& fieldId, const TrackerField* field);

@@ -11,6 +11,7 @@
 #include "SmatchetThemedTextEditorPalette.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerFieldValueParser.h"
+#include "ProjectResolver.h"
 #include "TrackerFieldPayload.h"
 #include "DictationInsertionRouter.h"
 #include "MarkdownConvert.h"
@@ -630,13 +631,39 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     }
 }
 
-void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                              bool singleClickToEdit) {
-    std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(field, currentValue);
+    // For the grid components MultiSelect on cross-project views, options are scoped to THIS row's
+    // own Jira project (resolved from the issue-key prefix). When the per-project map has not been
+    // warmed for this project, kick a lazy fetch and use the (empty) per-project set anyway — never
+    // fall back to field.AllowedValueOptions, which is a CROSS-PROJECT UNION from the scoped catalog
+    // and would leak other projects' components into this row's dropdown. The list populates next
+    // frame once the async fetch lands. Non-components fields keep the global AllowedValueOptions.
+    const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
+    std::vector<TrackerFieldOption> perProject;
+    bool componentsLoaded = true; // non-components fields are always "loaded"
+    if (field.Id == "components") {
+        const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+        perProject = app.GetComponentOptionsForProject(projectKey);
+        componentsLoaded = app.IsProjectComponentsLoaded(projectKey);
+        if (!componentsLoaded) {
+            // Non-blocking lazy fetch; mutates in-flight bookkeeping + spawns a worker.
+            app.EnsureProjectComponentsLoaded(projectKey);
+        }
+        opts = &perProject;
+    }
+    // Resolve current selection ids against the effective option set (matters when a row's project
+    // uses a per-project list distinct from the global catalog).
+    TrackerField effectiveField = field;
+    effectiveField.AllowedValueOptions = *opts;
+    std::vector<std::string> selectedIds = ResolveCurrentSelectionIds(effectiveField, currentValue);
     std::unordered_set<std::string> selectedSet(selectedIds.begin(), selectedIds.end());
-    const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
+    // Resolve the collapsed-cell preview against the same per-project option set as the dropdown
+    // list (effectiveField). Passing the global &field here made cross-project component ids fall
+    // through ResolveDisplayValueForSubmittedSelection's allowed-value scan and render the raw id.
+    const std::string preview = app.ResolveDisplayValue(field.Id, &effectiveField, currentValue);
     const float cellAvail = ImGui::GetContentRegionAvail().x;
     // Arm-then-popup: see RenderSingleSelectEditor. Always Selectable preview; click threshold
     // gated by singleClickToEdit (any-click vs double-click).
@@ -696,7 +723,7 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
 
         const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.MultiSelectSearchBuf));
         bool drewAny = false;
-        for (const auto& option : field.AllowedValueOptions) {
+        for (const auto& option : *opts) {
             const std::string optionId = option.Id.empty() ? option.Value : option.Id;
             bool checked = (selectedSet.find(optionId) != selectedSet.end());
             const bool matchesFilter = filterLower.empty() ||
@@ -736,7 +763,15 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
             ImGui::PopID();
         }
         if (!drewAny) {
-            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+            if (field.Id == "components" && !componentsLoaded && filterLower.empty()) {
+                // Per-project options have not loaded yet. The lazy fetch was kicked above and the
+                // real options appear on a later frame once it lands. A successful fetch that
+                // returned zero components marks the project loaded, so a genuinely empty project
+                // shows the no-options text rather than spinning here forever.
+                ImGui::TextDisabled("Loading components\xE2\x80\xA6");
+            } else {
+                ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+            }
         }
         ImGui::EndCombo();
     }
@@ -906,7 +941,28 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
             display =
                 DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
         } else {
-            display = app.ResolveDisplayValue(column.FieldId, field, currentValue);
+            // Components cells on cross-project views resolve their display name against this row's
+            // own project options (same per-project pattern as RenderMultiSelectEditor). The global
+            // components field has empty/wrong AllowedValueOptions cross-project, so without this the
+            // collapsed cell rendered the raw numeric component id instead of its name.
+            const TrackerField* displayField = field;
+            TrackerField effectiveField;
+            if (field != nullptr && column.FieldId == "components") {
+                const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+                std::vector<TrackerFieldOption> perProject = app.GetComponentOptionsForProject(projectKey);
+                // Always scope to this row's project and never fall back to the global cross-project
+                // union. When not yet loaded, kick a lazy fetch and use the empty per-project set so
+                // selected-id names resolve on a later frame once the fetch lands (raw id shows
+                // briefly). Gate on the loaded flag rather than an empty vector so a successful zero-
+                // component fetch does not relaunch a worker every frame.
+                if (!app.IsProjectComponentsLoaded(projectKey)) {
+                    app.EnsureProjectComponentsLoaded(projectKey);
+                }
+                effectiveField = *field;
+                effectiveField.AllowedValueOptions = std::move(perProject);
+                displayField = &effectiveField;
+            }
+            display = app.ResolveDisplayValue(column.FieldId, displayField, currentValue);
         }
         if (disabled && display.empty()) {
             display = "-";
