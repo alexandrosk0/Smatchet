@@ -20,12 +20,24 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/MemoryTelemetry.cpp"
     Core/BackgroundWorkerReap.test.cpp
     Core/JqlProjectScope.test.cpp
+    # Per-project Jira component dropdowns (PR #672) — pure coverage of issue-key-prefix
+    # extraction, distinct-project collection, and per-project option-map lookup.
+    # ProjectResolver.cpp depends only on the header-only ITrackerConnectivity interface
+    # (no cpr/sqlite), safe in the doctest rig.
+    Core/ProjectComponentResolution.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ProjectResolver.cpp"
     Core/TextMerge.test.cpp
     Core/CachedTicketFieldValueRef.test.cpp
     Core/JsonParseUtil.test.cpp
     Core/TrackerFieldValueParser.test.cpp
     Core/TrackerFieldValueParser.extended.test.cpp
     Core/TrackerFieldValueUtils.test.cpp
+    # Fix C of jira-components-multiselect (PR #672) — scoped catalog save→load round-trip
+    # asserting `components.AllowedValueOptions` survive under the project-scoped cache key
+    # (and that the unscoped key never sees them). FieldCatalogCache.cpp depends only on
+    # ConfigManager (already linked) + nlohmann — no cpr/sqlite, safe in the doctest rig.
+    Core/FieldCatalogCacheScopedRoundTrip.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/FieldCatalogCache.cpp"
     Core/OfflineQueueReplayPolicy.test.cpp
     Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.

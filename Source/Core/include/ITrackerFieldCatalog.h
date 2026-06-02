@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include "TrackerFieldSchema.h"
 
 struct TrackerConfig;
@@ -19,6 +20,13 @@ class ITrackerFieldCatalog {
                                     std::unordered_map<std::string, bool>& /*outFieldIdCanEdit*/,
                                     std::string& outError) {
         outError = "FetchIssueEditMeta is not supported by this backend.";
+        return false;
+    }
+
+    virtual bool FetchProjectComponents(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
+                                        std::vector<TrackerComponent>& /*outComponents*/,
+                                        std::vector<TrackerFieldOption>& /*outOptions*/, std::string& outError) {
+        outError = "FetchProjectComponents is not supported by this backend.";
         return false;
     }
 };

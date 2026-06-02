@@ -33,7 +33,9 @@ Clarifications batched **once at start** via `AskUserQuestion`. After the user a
 
 After the loop completes, the orchestrator emits the **post-ship 4-option `AskUserQuestion`**: Manual verify / Review PR / Register with watcher (auto-merges when gates pass) / Done. Skip-condition: if the user already said "merge when green", enter option 3 directly.
 
-Full sequence + per-exception detail + P4-gated phases + post-ship protocol: [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md).
+**PR batching — one PR per logical feature, not one per slice/task.** Related slices that serve a single coherent goal accumulate on **one** feature branch and ship as a **single** PR; `open PR` is reached once per logical feature, not after each stage. This respects both CodeRabbit limits at once — the review **quota** (N tiny PRs burn N reviews for one conceptual change) and the per-PR **file ceiling** (above it CR posts *review-skipped — too many files* and the gate blocks). Cohesion is the seam: unrelated work in subsystem A vs B = two PRs; if one feature's cumulative diff would exceed the file ceiling, split along natural seams (don't batch past it expecting `cr-out-of-band` to cover routine batching). Earlier slices of a feature stop at `commit`/`push` to the shared branch and defer PR creation until the feature is whole. The do-not-pause checklist + merge gates + post-ship menu fire **per PR**, so one feature-PR may cover several session tasks.
+
+Full sequence + per-exception detail + P4-gated phases + post-ship protocol + PR-batching boundary rules: [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md).
 
 ## Merge gates
 

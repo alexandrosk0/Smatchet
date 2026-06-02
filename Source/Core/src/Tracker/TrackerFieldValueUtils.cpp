@@ -9,19 +9,49 @@ namespace {
 
 namespace TrackerFieldValueUtils {
 
-const TrackerFieldOption* FindOptionRecursive(const std::vector<TrackerFieldOption>& options,
-                                              const std::string& value) {
+namespace {
+
+const TrackerFieldOption* FindOptionByIdRecursive(const std::vector<TrackerFieldOption>& options,
+                                                  const std::string& value) {
     for (const auto& option : options) {
-        if (option.Id == value || option.Value == value) {
+        if (option.Id == value) {
             return &option;
         }
         if (!option.Children.empty()) {
-            if (const TrackerFieldOption* nested = FindOptionRecursive(option.Children, value)) {
+            if (const TrackerFieldOption* nested = FindOptionByIdRecursive(option.Children, value)) {
                 return nested;
             }
         }
     }
     return nullptr;
+}
+
+const TrackerFieldOption* FindOptionByValueRecursive(const std::vector<TrackerFieldOption>& options,
+                                                     const std::string& value) {
+    for (const auto& option : options) {
+        if (option.Value == value) {
+            return &option;
+        }
+        if (!option.Children.empty()) {
+            if (const TrackerFieldOption* nested = FindOptionByValueRecursive(option.Children, value)) {
+                return nested;
+            }
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+// Id-preferred two-pass: match option.Id across all options first, only then fall back to
+// option.Value. Keeps editor selection-id resolution consistent with ResolveOptionLabel and
+// avoids the id/name collision (a component named "10033" shadowing the option whose Id is 10033).
+const TrackerFieldOption* FindOptionRecursive(const std::vector<TrackerFieldOption>& options,
+                                              const std::string& value) {
+    if (const TrackerFieldOption* byId = FindOptionByIdRecursive(options, value)) {
+        return byId;
+    }
+    return FindOptionByValueRecursive(options, value);
 }
 
 std::string ResolveOptionId(const TrackerField& field, const std::string& value) {

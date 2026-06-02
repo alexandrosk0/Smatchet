@@ -67,6 +67,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | 2026-05-22 | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
 | [`agents-md-reduction`](shipped/agents-md-reduction.md) | 2026-05-23 | Plan — AGENTS.md size reduction via topical extraction |
 | [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | 2026-05-23 | Plan — description-field tooltip consolidation |
+| [`deterministic-jira-test-backend`](shipped/deterministic-jira-test-backend.md) | 2026-05-23 | Plan - Deterministic Jira test backend and frontend tests |
 | [`p4-gated-ship-loop`](shipped/p4-gated-ship-loop.md) | 2026-05-23 | Plan — P4-gated ship-loop |
 | [`autonomous-debugging-no-creds`](shipped/autonomous-debugging-no-creds.md) | 2026-05-24 | Plan — Fully autonomous debugging without credentials or user input |
 | [`light-release-unreal-default`](shipped/light-release-unreal-default.md) | 2026-05-25 | Plan - Lua-Capable Light Release and Unreal Default |

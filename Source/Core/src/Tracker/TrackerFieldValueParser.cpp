@@ -218,6 +218,9 @@ TrackerFieldFamily ClassifyTrackerFieldFamily(const TrackerField& field) {
     if (lowerId == "issuetype") {
         return TrackerFieldFamily::IssueType;
     }
+    if (lowerId == "components" || ToLowerAsciiCopy(field.ItemsType) == "component") {
+        return TrackerFieldFamily::SelectMulti;
+    }
     if (lowerCustom.find("gh-sprint") != std::string::npos) {
         return TrackerFieldFamily::Sprint;
     }
