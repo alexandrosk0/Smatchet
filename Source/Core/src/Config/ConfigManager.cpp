@@ -166,141 +166,155 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
     "    DockNode      ID=0x00000004 Parent=0x00000009 SizeRef=873,987 Selected=0x74648FC6\n"
     "  DockNode        ID=0x0000000A Parent=0x08BD597D SizeRef=1920,477 Selected=0x6A4695A4\n";
 
-} // namespace
+// -------- field-registration tables -------------------------------------------------
+// Load/Save were hand-written parallel read/write blocks (one read line plus one write line per
+// config field). That parallel duplication was the whole reason both methods blew past the
+// function-size caps and the recurring bug class (a field added to Save but not Load, or vice
+// versa). These typed descriptor tables collapse the bulk of the plain scalar fields into one
+// source-of-truth row per field; the table loops in LoadScalarFields and SaveScalarFields walk
+// them so Load and Save can never drift for a table-driven field.
+// Fields that need special handling (DPAPI secrets, enums, clamps, dual-key fallbacks,
+// nested objects, lists, migrations) are NOT in the table — they stay as explicit code in
+// the small helpers below, called from Load and Save. C++14: member-pointer rows only, no
+// std::variant / structured bindings.
 
-const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGuiDockLayoutIni; }
+template <typename T> struct FieldDesc {
+    const char* key;
+    T TrackerConfig::* member;
+};
 
-// ConfigManager — Save(TrackerConfig).
+// Plain string / bool / int fields: `cfg.member = j.value(key, cfg.member)` on Load,
+// `j[key] = cfg.member` on Save. The default on Load is the member's construct-time value,
+// matching the prior hand-written `j.value("k", cfg.X)` form exactly.
+// NOTE: `db_path` is intentionally NOT in this table. Load reads it (explicitly, in
+// LoadScalarFields) but Save must NOT persist it — DbPath is an env/CLI override-only field
+// (SMATCHET_DB_PATH / --db-path); persisting it would write ephemeral override values to disk,
+// breaking the "overrides take effect this process only" contract. The original hand-written
+// Save() omitted it for exactly this reason; keeping it table-symmetric would have regressed that.
+const FieldDesc<std::string> kStringFields[] = {
+    {"domain", &TrackerConfig::Domain},
+    {"email", &TrackerConfig::Email},
+    {"tracker_type", &TrackerConfig::TrackerType},
+    {"plane_url", &TrackerConfig::PlaneUrl},
+    {"plane_workspace_slug", &TrackerConfig::PlaneWorkspaceSlug},
+    {"github_base_url", &TrackerConfig::GitHubBaseUrl},
+    {"github_owner", &TrackerConfig::GitHubOwner},
+    {"github_repo", &TrackerConfig::GitHubRepo},
+    {"bugreport_relay_url", &TrackerConfig::BugReportRelayUrl},
+    {"bugreport_relay_key", &TrackerConfig::BugReportRelayKey},
+    {"bugreport_github_owner", &TrackerConfig::BugReportGitHubOwner},
+    {"bugreport_github_repo", &TrackerConfig::BugReportGitHubRepo},
+    {"bugreport_github_base_url", &TrackerConfig::BugReportGitHubBaseUrl},
+    {"bugreport_assets_repo", &TrackerConfig::BugReportAssetsRepo},
+    {"bugreport_hotkey", &TrackerConfig::BugReportHotkey},
+    {"jql", &TrackerConfig::JqlQuery},
+    {"log_min_level", &TrackerConfig::LogMinLevel},
+    {"ai_ollama_base_url", &TrackerConfig::AiOllamaBaseUrl},
+    {"ai_base_url", &TrackerConfig::AiBaseUrl},
+    {"ai_model_openai", &TrackerConfig::AiModelOpenAi},
+    {"ai_model_anthropic", &TrackerConfig::AiModelAnthropic},
+    {"ai_model_ollama", &TrackerConfig::AiModelOllama},
+    {"ai_deepseek_base_url", &TrackerConfig::AiDeepSeekBaseUrl},
+    {"ai_model_deepseek", &TrackerConfig::AiModelDeepSeek},
+    {"ai_reasoning_effort", &TrackerConfig::AiReasoningEffort},
+    {"agents_md_global_path", &TrackerConfig::AgentsMdGlobalPath},
+    {"project_agents_md_path", &TrackerConfig::ProjectAgentsMdPath},
+    {"default_issue_type_id", &TrackerConfig::DefaultIssueTypeId},
+    {"default_issue_type_name", &TrackerConfig::DefaultIssueTypeName},
+    {"last_import_directory", &TrackerConfig::LastImportDirectory},
+    {"last_export_directory", &TrackerConfig::LastExportDirectory},
+    {"date_format_option", &TrackerConfig::DateFormatOption},
+    {"selected_font_name", &TrackerConfig::SelectedFontName},
+    {"update_skip_version", &TrackerConfig::UpdateSkipVersion},
+    {"update_github_repo", &TrackerConfig::UpdateGithubRepo},
+};
 
-void ConfigManager::Save(const TrackerConfig& config) {
-    {
-        std::lock_guard<std::mutex> lock(GetCacheMutexRef());
-        GetHasCachedConfigRef() = false;
+const FieldDesc<bool> kBoolFields[] = {
+    {"bugreport_persist_pat", &TrackerConfig::BugReportPersistPat},
+    {"bugreport_hotkey_enabled", &TrackerConfig::BugReportHotkeyEnabled},
+    {"bugreport_screenshot_default", &TrackerConfig::BugReportScreenshotDefault},
+    {"field_overflow_tooltips", &TrackerConfig::EnableFieldOverflowTooltips},
+    {"single_click_to_edit_grid_cells", &TrackerConfig::SingleClickToEditGridCells},
+    {"default_long_text_editor_preview", &TrackerConfig::DefaultLongTextEditorPreview},
+    {"read_only_mode", &TrackerConfig::ReadOnlyMode},
+    {"backend_has_been_reachable", &TrackerConfig::BackendHasBeenReachable},
+    {"window_maximized", &TrackerConfig::WindowMaximized},
+    {"show_preferences_window", &TrackerConfig::ShowPreferencesWindow},
+    {"show_views_dashboard_window", &TrackerConfig::ShowViewsDashboardWindow},
+    {"show_performance_window", &TrackerConfig::ShowPerformanceWindow},
+    {"show_log_window", &TrackerConfig::ShowLogWindow},
+    {"log_p4_io", &TrackerConfig::LogP4Io},
+    {"mcp_enabled", &TrackerConfig::McpEnabled},
+    {"mcp_allow_remote", &TrackerConfig::McpAllowRemote},
+    {"mcp_allow_lua_execution", &TrackerConfig::McpAllowLuaExecution},
+    {"show_mcp_server_window", &TrackerConfig::ShowMcpServerWindow},
+    {"annotate_allow_custom_commands", &TrackerConfig::AnnotateAllowCustomCommands},
+    {"assistant_panel_open", &TrackerConfig::AssistantPanelOpen},
+    {"assistant_panel_on_secondary_side", &TrackerConfig::AssistantPanelOnSecondarySide},
+    {"agents_md_auto_discover_project", &TrackerConfig::AgentsMdAutoDiscoverProject},
+    {"assistant_context_block_selection", &TrackerConfig::AssistantContextBlockSelection},
+    {"assistant_context_block_visible_rows", &TrackerConfig::AssistantContextBlockVisibleRows},
+    {"assistant_context_block_active_ticket", &TrackerConfig::AssistantContextBlockActiveTicket},
+    {"assistant_context_block_active_view", &TrackerConfig::AssistantContextBlockActiveView},
+    {"assistant_context_block_audit_trail", &TrackerConfig::AssistantContextBlockAuditTrail},
+    {"ai_prefs_verify_on_save", &TrackerConfig::AiPrefsVerifyOnSave},
+    {"show_primary_side_bar", &TrackerConfig::ShowPrimarySideBar},
+    {"show_secondary_side_bar", &TrackerConfig::ShowSecondarySideBar},
+    {"show_panel", &TrackerConfig::ShowPanel},
+    {"show_status_bar", &TrackerConfig::ShowStatusBar},
+    {"primary_side_bar_on_right", &TrackerConfig::PrimarySideBarOnRight},
+    {"update_check_enabled", &TrackerConfig::UpdateCheckEnabled},
+    {"update_include_prerelease", &TrackerConfig::UpdateIncludePrerelease},
+};
+
+// Plain ints. Fields with a post-read clamp (ImportMaxConcurrent, GridEndWheel..., McpPort,
+// DateCompactRelativeThresholdDays) read through this table; their clamp stays explicit code.
+const FieldDesc<int> kIntFields[] = {
+    {"window_x", &TrackerConfig::WindowX},
+    {"window_y", &TrackerConfig::WindowY},
+    {"window_w", &TrackerConfig::WindowWidth},
+    {"window_h", &TrackerConfig::WindowHeight},
+    {"field_catalog_cache_max_projects", &TrackerConfig::FieldCatalogCacheMaxProjects},
+    {"mcp_port", &TrackerConfig::McpPort},
+    {"date_compact_relative_threshold_days", &TrackerConfig::DateCompactRelativeThresholdDays},
+    {"import_max_concurrent", &TrackerConfig::ImportMaxConcurrent},
+    {"grid_end_wheel_swallows_before_horizontal", &TrackerConfig::GridEndWheelSwallowsBeforeHorizontal},
+};
+
+// Floats persist as JSON doubles; read via `static_cast<float>(j.value(key, double(member)))`
+// to match the prior hand-written widening/narrowing exactly.
+const FieldDesc<float> kFloatFields[] = {
+    {"mcp_server_info_panel_height_px", &TrackerConfig::McpServerInfoPanelHeightPx},
+    {"mcp_server_activity_panel_height_px", &TrackerConfig::McpServerActivityPanelHeightPx},
+    {"assistant_panel_width", &TrackerConfig::AssistantPanelWidth},
+    {"view_field_picker_height", &TrackerConfig::ViewFieldPickerHeight},
+    {"views_sidebar_width", &TrackerConfig::ViewsSidebarWidth},
+    {"views_fields_split_ratio", &TrackerConfig::ViewsFieldsSplitRatio},
+};
+
+template <typename T, std::size_t N> std::size_t CountOf(const T (&)[N]) { return N; }
+
+// Table-driven plain-scalar save: `j[key] = cfg.member` for every row, the exact inverse of
+// LoadScalarFields. Floats serialise via the member value directly (nlohmann stores float as
+// a JSON number) — symmetric with the `static_cast<float>(...double...)` widening on load.
+void SaveScalarFields(nlohmann::json& j, const TrackerConfig& config) {
+    for (std::size_t i = 0; i < CountOf(kStringFields); ++i) {
+        j[kStringFields[i].key] = config.*(kStringFields[i].member);
     }
-    // Serialize the whole read-modify-write so a concurrent writer (the config-save worker, or
-    // SaveAnnotateAnalysis on another thread) can't lose-update. Distinct from GetIoMutexRef that
-    // WriteConfigJson holds internally — no recursive-lock deadlock.
-    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
-    nlohmann::json j = LoadMergedConfigJson();
-    j["domain"] = config.Domain;
-    j["email"] = config.Email;
-    // PR 5 of docs/plans/shipped/remove-global-project-key.md: stop persisting the legacy global
-    // project scope. The fields are still on `TrackerConfig` until PR 6 deletes them, but the
-    // on-disk JSON no longer round-trips them — older builds reading the new config will see
-    // them missing and default to empty, matching the new code path. Erase explicitly so any
-    // legacy keys carried in from disk via `LoadMergedConfigJson()` are dropped.
-    j.erase("project_key");
-    j.erase("plane_project_id");
-    j["tracker_type"] = config.TrackerType;
-    j["plane_url"] = config.PlaneUrl;
-    j["plane_workspace_slug"] = config.PlaneWorkspaceSlug;
-    // GitHub-as-tracker fields (PR2 of docs/plans/shipped/github-tracker-backend.md).
-    // PAT goes through DPAPI same as plane_api_key — see saveGithubPat block below.
-    j["github_base_url"] = config.GitHubBaseUrl;
-    j["github_owner"] = config.GitHubOwner;
-    j["github_repo"] = config.GitHubRepo;
-    // "Log a Bug" reporter config (docs/plans/shipped/log-a-bug-github.md).
-    // BugReportGitHubPat is a secret — encrypted below in the saveGithubPat block.
-    j["bugreport_relay_url"] = config.BugReportRelayUrl;
-    j["bugreport_relay_key"] = config.BugReportRelayKey;
-    j["bugreport_github_owner"] = config.BugReportGitHubOwner;
-    j["bugreport_github_repo"] = config.BugReportGitHubRepo;
-    j["bugreport_github_base_url"] = config.BugReportGitHubBaseUrl;
-    j["bugreport_assets_repo"] = config.BugReportAssetsRepo;
-    j["bugreport_persist_pat"] = config.BugReportPersistPat;
-    j["bugreport_hotkey"] = config.BugReportHotkey;
-    j["bugreport_hotkey_enabled"] = config.BugReportHotkeyEnabled;
-    j["bugreport_screenshot_default"] = config.BugReportScreenshotDefault;
-    j["jql"] = config.JqlQuery;
-    j["field_overflow_tooltips"] = config.EnableFieldOverflowTooltips;
-    j["single_click_to_edit_grid_cells"] = config.SingleClickToEditGridCells;
-    j["default_long_text_editor_preview"] = config.DefaultLongTextEditorPreview;
-    j["read_only_mode"] = config.ReadOnlyMode;
-    j["backend_has_been_reachable"] = config.BackendHasBeenReachable;
-    j["grid_end_wheel_swallows_before_horizontal"] = config.GridEndWheelSwallowsBeforeHorizontal;
-    j["window_x"] = config.WindowX;
-    j["window_y"] = config.WindowY;
-    j["window_w"] = config.WindowWidth;
-    j["window_h"] = config.WindowHeight;
-    j["window_maximized"] = config.WindowMaximized;
-    j["field_catalog_cache_max_projects"] = config.FieldCatalogCacheMaxProjects;
-    j["show_preferences_window"] = config.ShowPreferencesWindow;
-    j["show_views_dashboard_window"] = config.ShowViewsDashboardWindow;
-    j["show_performance_window"] = config.ShowPerformanceWindow;
-    j["show_log_window"] = config.ShowLogWindow;
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    j["show_lua_automation_window"] = config.ShowLuaAutomationWindow;
-#endif
-    j["log_min_level"] = config.LogMinLevel;
-    j["log_tracker_http_bodies"] = config.LogTrackerHttpBodies;
-    j["log_p4_io"] = config.LogP4Io;
-    // Smatchet Assistant (AI) — Phase A'. Legacy exploratory keys (`ai_model`, `show_ai_assistant_window`)
-    // pre-date the provider-pluggable schema and are erased; the new provider-aware keys are written below.
-    j.erase("ai_model");
-    j.erase("show_ai_assistant_window");
-    j["ai_provider_kind"] = config.AiProviderKind;
-    j["ai_ollama_base_url"] = config.AiOllamaBaseUrl;
-    j["ai_base_url"] = config.AiBaseUrl;
-    j["ai_model_openai"] = config.AiModelOpenAi;
-    j["ai_model_anthropic"] = config.AiModelAnthropic;
-    j["ai_model_ollama"] = config.AiModelOllama;
-    // DeepSeek — model + base URL serialise verbatim; the API key is handled
-    // alongside the other AI secrets in the DPAPI block below.
-    j["ai_deepseek_base_url"] = config.AiDeepSeekBaseUrl;
-    j["ai_model_deepseek"] = config.AiModelDeepSeek;
-    j["ai_reasoning_effort"] = config.AiReasoningEffort;
-    j["assistant_panel_open"] = config.AssistantPanelOpen;
-    j["assistant_panel_width"] = config.AssistantPanelWidth;
-    j["assistant_panel_on_secondary_side"] = config.AssistantPanelOnSecondarySide;
-    j["agents_md_global_path"] = config.AgentsMdGlobalPath;
-    j["project_agents_md_path"] = config.ProjectAgentsMdPath;
-    j["agents_md_auto_discover_project"] = config.AgentsMdAutoDiscoverProject;
-    j["assistant_context_block_selection"] = config.AssistantContextBlockSelection;
-    j["assistant_context_block_visible_rows"] = config.AssistantContextBlockVisibleRows;
-    j["assistant_context_block_active_ticket"] = config.AssistantContextBlockActiveTicket;
-    j["assistant_context_block_active_view"] = config.AssistantContextBlockActiveView;
-    j["assistant_context_block_audit_trail"] = config.AssistantContextBlockAuditTrail;
-    j["assistant_history_max_rows"] = config.AssistantHistoryMaxRows;
-    j["ai_prefs_verify_on_save"] = config.AiPrefsVerifyOnSave;
-#if defined(SMATCHET_WITH_WHISPER)
-    // Whisper dictation — Phase A schema (additive). Non-secret fields write
-    // here; WhisperApiKey is DPAPI-encrypted alongside AiApiKey below.
-    j["whisper_enabled"] = config.WhisperEnabled;
-    j["whisper_setup_completed"] = config.WhisperSetupCompleted;
-    j["whisper_setup_choice"] = config.WhisperSetupChoice;
-    j["whisper_mode"] = config.WhisperMode;
-    j["whisper_model"] = config.WhisperModel;
-    j["whisper_hotkey"] = config.WhisperHotkey;
-    j["whisper_consent_timestamp_sec"] = config.WhisperConsentTimestampSec;
-    // Phase F — language / trim / max-clip / auto-send. All additive; no schema bump.
-    j["whisper_language"] = config.WhisperLanguage;
-    j["whisper_trim"] = config.WhisperTrim;
-    j["whisper_max_clip_sec"] = config.WhisperMaxClipSec;
-    j["whisper_auto_send_on_punctuation"] = config.WhisperAutoSendOnPunctuation;
-#endif
-    j["mcp_enabled"] = config.McpEnabled;
-    j["mcp_port"] = config.McpPort;
-    j["mcp_allow_remote"] = config.McpAllowRemote;
-    j["mcp_allow_lua_execution"] = config.McpAllowLuaExecution;
-    j["mcp_export_fields"] = config.McpExportFields;
-    j["show_mcp_server_window"] = config.ShowMcpServerWindow;
-    j["quick_comment_templates"] = config.QuickCommentTemplates;
-    j["toolbar"] = config.Toolbar;
-    j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
-    j["duration_suggestions"] = config.DurationSuggestions;
-    j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
-    j["date_format_option"] = config.DateFormatOption;
-    j["date_compact_relative_threshold_days"] = config.DateCompactRelativeThresholdDays;
-    j["view_field_picker_height"] = config.ViewFieldPickerHeight;
-    j["views_sidebar_width"] = config.ViewsSidebarWidth;
-    j["views_fields_split_ratio"] = config.ViewsFieldsSplitRatio;
-    j["selected_font_name"] = config.SelectedFontName;
-    j["show_primary_side_bar"] = config.ShowPrimarySideBar;
-    j["show_secondary_side_bar"] = config.ShowSecondarySideBar;
-    j["show_panel"] = config.ShowPanel;
-    j["show_status_bar"] = config.ShowStatusBar;
-    j["layout_schema_version"] = config.LayoutSchemaVersion;
-    j["font_size_pt"] = config.FontSizePt;
+    for (std::size_t i = 0; i < CountOf(kBoolFields); ++i) {
+        j[kBoolFields[i].key] = config.*(kBoolFields[i].member);
+    }
+    for (std::size_t i = 0; i < CountOf(kIntFields); ++i) {
+        j[kIntFields[i].key] = config.*(kIntFields[i].member);
+    }
+    for (std::size_t i = 0; i < CountOf(kFloatFields); ++i) {
+        j[kFloatFields[i].key] = config.*(kFloatFields[i].member);
+    }
+}
+
+// Enum -> string writes (density / panel position / theme) + ui_language normalization. Inverse
+// of LoadEnumAndClampedFields's string<->enum mapping.
+void SaveEnumFields(nlohmann::json& j, const TrackerConfig& config) {
     {
         const char* densityStr = "Normal";
         switch (config.Density) {
@@ -315,73 +329,59 @@ void ConfigManager::Save(const TrackerConfig& config) {
         }
         j["ui_density"] = densityStr;
     }
-    {
-        j["panel_position"] = (config.PanelDockSide == TrackerConfig::PanelPosition::Right) ? "Right" : "Bottom";
+    j["panel_position"] = (config.PanelDockSide == TrackerConfig::PanelPosition::Right) ? "Right" : "Bottom";
+    const char* themeStr = "ImGuiDefaultDark";
+    switch (config.Theme) {
+    case ThemeId::ModernDark:
+        themeStr = "ModernDark";
+        break;
+    case ThemeId::Vs2022Dark:
+        themeStr = "Vs2022Dark";
+        break;
+    case ThemeId::Vs2022Light:
+        themeStr = "Vs2022Light";
+        break;
+    case ThemeId::HighContrast:
+        themeStr = "HighContrast";
+        break;
+    case ThemeId::NortonCommander:
+        themeStr = "NortonCommander";
+        break;
+    case ThemeId::SmatchetDark:
+        themeStr = "SmatchetDark";
+        break;
+    case ThemeId::ImGuiDefaultDark:
+    default:
+        themeStr = "ImGuiDefaultDark";
+        break;
     }
-    j["primary_side_bar_on_right"] = config.PrimarySideBarOnRight;
-    auto themeToString = [](ThemeId t) -> const char* {
-        switch (t) {
-        case ThemeId::ModernDark:
-            return "ModernDark";
-        case ThemeId::Vs2022Dark:
-            return "Vs2022Dark";
-        case ThemeId::Vs2022Light:
-            return "Vs2022Light";
-        case ThemeId::HighContrast:
-            return "HighContrast";
-        case ThemeId::NortonCommander:
-            return "NortonCommander";
-        case ThemeId::ImGuiDefaultDark:
-            return "ImGuiDefaultDark";
-        case ThemeId::SmatchetDark:
-            return "SmatchetDark";
-        default:
-            return "ImGuiDefaultDark";
-        }
-    };
-    j["theme"] = themeToString(config.Theme);
-    j["ui_language"] = NormalizeUiLanguageCode(config.UiLanguage);
-    j["update_check_enabled"] = config.UpdateCheckEnabled;
-    j["update_include_prerelease"] = config.UpdateIncludePrerelease;
-    j["update_skip_version"] = config.UpdateSkipVersion;
-    j["update_github_repo"] = config.UpdateGithubRepo;
-    j.erase("mcp_server_window_layout_valid");
-    j.erase("mcp_server_window_x");
-    j.erase("mcp_server_window_y");
-    j.erase("mcp_server_window_w");
-    j.erase("mcp_server_window_h");
-    j["mcp_server_info_panel_height_px"] = config.McpServerInfoPanelHeightPx;
-    j["mcp_server_activity_panel_height_px"] = config.McpServerActivityPanelHeightPx;
-    j["annotate_allow_custom_commands"] = config.AnnotateAllowCustomCommands;
-    j["default_issue_type_id"] = config.DefaultIssueTypeId;
-    j["default_issue_type_name"] = config.DefaultIssueTypeName;
-    j["import_max_concurrent"] = config.ImportMaxConcurrent;
-    j["last_import_directory"] = config.LastImportDirectory;
-    j["last_export_directory"] = config.LastExportDirectory;
-    {
+    j["theme"] = themeStr;
+    j["ui_language"] = ConfigManager::NormalizeUiLanguageCode(config.UiLanguage);
+}
+
+// The three inherit-id lists (each filtered to drop the implicit "summary" entry) + the
+// one-shot migration marker. Inverse of LoadInheritFieldIds / LoadListFields.
+void SaveInheritFieldIds(nlohmann::json& j, const TrackerConfig& config) {
+    const std::vector<std::string>* lists[3] = {&config.NewIssueInheritFieldIds, &config.NewIssueInheritFieldIdsPlane,
+                                                &config.NewIssueInheritFieldIdsGitHub};
+    const char* keys[3] = {"new_issue_inherit_field_ids", "new_issue_inherit_field_ids_plane",
+                           "new_issue_inherit_field_ids_github"};
+    for (int i = 0; i < 3; ++i) {
         nlohmann::json inheritIds = nlohmann::json::array();
-        std::copy_if(config.NewIssueInheritFieldIds.begin(), config.NewIssueInheritFieldIds.end(),
-                     std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
-        j["new_issue_inherit_field_ids"] = std::move(inheritIds);
-    }
-    {
-        nlohmann::json inheritIds = nlohmann::json::array();
-        std::copy_if(config.NewIssueInheritFieldIdsPlane.begin(), config.NewIssueInheritFieldIdsPlane.end(),
-                     std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
-        j["new_issue_inherit_field_ids_plane"] = std::move(inheritIds);
-    }
-    {
-        nlohmann::json inheritIds = nlohmann::json::array();
-        std::copy_if(config.NewIssueInheritFieldIdsGitHub.begin(), config.NewIssueInheritFieldIdsGitHub.end(),
-                     std::back_inserter(inheritIds), [](const std::string& id) { return id != "summary"; });
-        j["new_issue_inherit_field_ids_github"] = std::move(inheritIds);
+        std::copy_if(lists[i]->begin(), lists[i]->end(), std::back_inserter(inheritIds),
+                     [](const std::string& id) { return id != "summary"; });
+        j[keys[i]] = std::move(inheritIds);
     }
     j["migrated_inherit_issuetype_v1"] = config.MigratedInheritIssueTypeV1;
+}
+
+// Purges legacy keys carried over from LoadMergedConfigJson() and writes the secret fields
+// (DPAPI-encrypted on Win32 with a plaintext fallback when protection fails; plaintext on other
+// platforms). One source-of-truth for the full secret/erase contract — see the inline notes.
+void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config) {
     // Purge legacy keys carried over from the deleted SMATCHET_WITH_AGENTIC config block.
     // Save() merges over existing on-disk JSON via LoadMergedConfigJson(); without explicit
-    // j.erase() the agentic-era secrets + settings would persist indefinitely. Per
-    // CodeRabbit review on PR #356 (2026-05-21). Covers the GitHub PAT pair, the agentic-poll
-    // tunables, handoff knobs, coderabbit-react / ci-react nested objects.
+    // j.erase() the agentic-era secrets + settings would persist indefinitely.
     j.erase("github_pat");
     j.erase("github_pat_enc");
     j.erase("agentic_poll_enabled");
@@ -408,10 +408,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["plane_api_key_enc"] = ProtectSecretForConfig(config.PlaneApiKey);
     // GitHub PAT — same plaintext-fallback pattern as McpAuthToken / AiApiKey / WhisperApiKey
     // below. Only erase the plaintext `github_pat` when DPAPI protection succeeded; otherwise
-    // keep the plaintext so the user doesn't lose the only copy. Per CodeRabbit finding on
-    // PR #357 (HEAD `1a3ed3318d` review): the prior unconditional `j.erase("github_pat")` +
-    // `j["github_pat_enc"] = ProtectSecretForConfig(...)` ordering would delete the plaintext
-    // even on a failed protector call, leaving the user with neither plaintext nor encrypted.
+    // keep the plaintext so the user doesn't lose the only copy.
     const std::string githubPatEnc = ProtectSecretForConfig(config.GitHubPat);
     if (config.GitHubPat.empty() || !githubPatEnc.empty()) {
         j.erase("github_pat");
@@ -485,6 +482,82 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["whisper_api_key"] = config.WhisperApiKey;
 #endif
 #endif
+}
+
+} // namespace
+
+const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGuiDockLayoutIni; }
+
+// ConfigManager — Save(TrackerConfig).
+
+void ConfigManager::Save(const TrackerConfig& config) {
+    {
+        std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+        GetHasCachedConfigRef() = false;
+    }
+    // Serialize the whole read-modify-write so a concurrent writer (the config-save worker, or
+    // SaveAnnotateAnalysis on another thread) can't lose-update. Distinct from GetIoMutexRef that
+    // WriteConfigJson holds internally — no recursive-lock deadlock.
+    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+    nlohmann::json j = LoadMergedConfigJson();
+
+    // Table-driven plain scalar fields (string / bool / int / float). One source-of-truth row
+    // per field in kStringFields / kBoolFields / kIntFields / kFloatFields — see LoadScalarFields.
+    SaveScalarFields(j, config);
+
+    // PR 5 of docs/plans/shipped/remove-global-project-key.md: stop persisting the legacy global
+    // project scope. Erase explicitly so any legacy keys carried in from disk via
+    // LoadMergedConfigJson() are dropped.
+    j.erase("project_key");
+    j.erase("plane_project_id");
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    j["show_lua_automation_window"] = config.ShowLuaAutomationWindow;
+#endif
+    // Dual-key on load (`log_tracker_http_bodies` / legacy `log_jira_http_bodies`); on save only
+    // the current key is written. Not table-driven for that reason.
+    j["log_tracker_http_bodies"] = config.LogTrackerHttpBodies;
+    // Smatchet AI assistant, Phase A prime. The legacy exploratory keys ai_model and
+    // show_ai_assistant_window pre-date the provider-pluggable schema and are erased here; the
+    // new provider-aware keys are written below.
+    j.erase("ai_model");
+    j.erase("show_ai_assistant_window");
+    j["ai_provider_kind"] = config.AiProviderKind;
+    j["assistant_history_max_rows"] = config.AssistantHistoryMaxRows;
+#if defined(SMATCHET_WITH_WHISPER)
+    // Whisper dictation — Phase A schema (additive). Non-secret fields write here; WhisperApiKey
+    // is DPAPI-encrypted in SaveSecretsAndPurgeLegacy.
+    j["whisper_enabled"] = config.WhisperEnabled;
+    j["whisper_setup_completed"] = config.WhisperSetupCompleted;
+    j["whisper_setup_choice"] = config.WhisperSetupChoice;
+    j["whisper_mode"] = config.WhisperMode;
+    j["whisper_model"] = config.WhisperModel;
+    j["whisper_hotkey"] = config.WhisperHotkey;
+    j["whisper_consent_timestamp_sec"] = config.WhisperConsentTimestampSec;
+    // Phase F — language / trim / max-clip / auto-send. All additive; no schema bump.
+    j["whisper_language"] = config.WhisperLanguage;
+    j["whisper_trim"] = config.WhisperTrim;
+    j["whisper_max_clip_sec"] = config.WhisperMaxClipSec;
+    j["whisper_auto_send_on_punctuation"] = config.WhisperAutoSendOnPunctuation;
+#endif
+    j["mcp_export_fields"] = config.McpExportFields;
+    j["quick_comment_templates"] = config.QuickCommentTemplates;
+    j["toolbar"] = config.Toolbar;
+    j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
+    j["duration_suggestions"] = config.DurationSuggestions;
+    j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
+    j["layout_schema_version"] = config.LayoutSchemaVersion;
+    j["font_size_pt"] = config.FontSizePt;
+
+    SaveEnumFields(j, config);
+
+    j.erase("mcp_server_window_layout_valid");
+    j.erase("mcp_server_window_x");
+    j.erase("mcp_server_window_y");
+    j.erase("mcp_server_window_w");
+    j.erase("mcp_server_window_h");
+
+    SaveInheritFieldIds(j, config);
+    SaveSecretsAndPurgeLegacy(j, config);
     WriteConfigJson(j);
 }
 
@@ -601,535 +674,345 @@ void ConfigManager::SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b) {
     WriteConfigJson(j);
 }
 
-// ConfigManager — Load(CliOverrides).
+// ConfigManager — Load(CliOverrides) helper functions.
+// Each helper owns one cohesive slice of the former Load monolith. They are free functions in
+// the anonymous namespace (no ConfigManager state beyond the json and the cfg being built),
+// keeping every helper — and Load itself — under the function-size caps.
 
-TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
-    const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
-    if (canUseCache) {
-        std::lock_guard<std::mutex> lock(GetCacheMutexRef());
-        // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not
-        // model
-        if (GetHasCachedConfigRef()) {
-            return GetCachedConfigRef();
+namespace {
+
+// Flags raised when a secret is read from a legacy plaintext key (no `*_enc` present /
+// undecryptable). Load() re-Saves once when any flag is set so the next on-disk state holds
+// the DPAPI-protected form. Mirrors the prior local `migrateLegacyPlaintext*` bools verbatim.
+struct SecretMigrationFlags {
+    bool McpAuthToken = false;
+    bool AiApiKey = false;
+    bool AiAnthropicApiKey = false;
+    bool AiDeepSeekApiKey = false;
+#if defined(SMATCHET_WITH_WHISPER)
+    bool WhisperApiKey = false;
+#endif
+
+    bool Any() const {
+        bool any = McpAuthToken || AiApiKey || AiAnthropicApiKey || AiDeepSeekApiKey;
+#if defined(SMATCHET_WITH_WHISPER)
+        any = any || WhisperApiKey;
+#endif
+        return any;
+    }
+};
+
+// Table-driven plain-scalar load, one source-of-truth row per field. See the kStringFields
+// table for the list. Behavior is identical to the prior per-field json-value-with-default reads.
+void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
+    // `db_path` is read here but never persisted by Save (override-only field — see the note on
+    // kStringFields). Must stay outside the round-trip table so Save can't write it back.
+    cfg.DbPath = j.value("db_path", cfg.DbPath);
+    for (std::size_t i = 0; i < CountOf(kStringFields); ++i) {
+        cfg.*(kStringFields[i].member) = j.value(kStringFields[i].key, cfg.*(kStringFields[i].member));
+    }
+    for (std::size_t i = 0; i < CountOf(kBoolFields); ++i) {
+        cfg.*(kBoolFields[i].member) = j.value(kBoolFields[i].key, cfg.*(kBoolFields[i].member));
+    }
+    for (std::size_t i = 0; i < CountOf(kIntFields); ++i) {
+        cfg.*(kIntFields[i].member) = j.value(kIntFields[i].key, cfg.*(kIntFields[i].member));
+    }
+    for (std::size_t i = 0; i < CountOf(kFloatFields); ++i) {
+        cfg.*(kFloatFields[i].member) =
+            static_cast<float>(j.value(kFloatFields[i].key, static_cast<double>(cfg.*(kFloatFields[i].member))));
+    }
+    // Dual-key fallback (current `log_tracker_http_bodies`, legacy `log_jira_http_bodies`) —
+    // not table-expressible; kept explicit.
+    cfg.LogTrackerHttpBodies =
+        j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
+}
+
+// All DPAPI-encrypted secret fields with their legacy-plaintext fallback + migration flagging.
+void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrationFlags& migrate) {
+    (void)migrate;
+#if defined(_WIN32)
+    cfg.ApiToken = UnprotectSecretFieldFromConfig("token_enc", j.value("token_enc", std::string{}));
+    if (cfg.ApiToken.empty()) {
+        cfg.ApiToken = j.value("token", std::string{});
+    }
+    cfg.PlaneApiKey = UnprotectSecretFieldFromConfig("plane_api_key_enc", j.value("plane_api_key_enc", std::string{}));
+    if (cfg.PlaneApiKey.empty()) {
+        cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
+    }
+    // PR2 of github-tracker-backend.md — same DPAPI + legacy-plaintext shape as PlaneApiKey.
+    cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
+    if (cfg.GitHubPat.empty()) {
+        cfg.GitHubPat = j.value("github_pat", std::string{});
+    }
+    // Bug-report PAT — DPAPI + legacy-plaintext, same shape as GitHubPat.
+    cfg.BugReportGitHubPat =
+        UnprotectSecretFieldFromConfig("bugreport_github_pat_enc", j.value("bugreport_github_pat_enc", std::string{}));
+    if (cfg.BugReportGitHubPat.empty()) {
+        cfg.BugReportGitHubPat = j.value("bugreport_github_pat", std::string{});
+    }
+    cfg.McpAuthToken =
+        UnprotectSecretFieldFromConfig("mcp_auth_token_enc", j.value("mcp_auth_token_enc", std::string{}));
+    if (cfg.McpAuthToken.empty()) {
+        cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
+        migrate.McpAuthToken = !cfg.McpAuthToken.empty();
+    }
+    cfg.AiApiKey = UnprotectSecretFieldFromConfig("ai_api_key_enc", j.value("ai_api_key_enc", std::string{}));
+    if (cfg.AiApiKey.empty()) {
+        cfg.AiApiKey = j.value("ai_api_key", std::string{});
+        migrate.AiApiKey = !cfg.AiApiKey.empty();
+    }
+    cfg.AiAnthropicApiKey =
+        UnprotectSecretFieldFromConfig("ai_anthropic_api_key_enc", j.value("ai_anthropic_api_key_enc", std::string{}));
+    if (cfg.AiAnthropicApiKey.empty()) {
+        cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
+        migrate.AiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
+    }
+    cfg.AiDeepSeekApiKey =
+        UnprotectSecretFieldFromConfig("ai_deepseek_api_key_enc", j.value("ai_deepseek_api_key_enc", std::string{}));
+    if (cfg.AiDeepSeekApiKey.empty()) {
+        cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
+        migrate.AiDeepSeekApiKey = !cfg.AiDeepSeekApiKey.empty();
+    }
+#if defined(SMATCHET_WITH_WHISPER)
+    cfg.WhisperApiKey =
+        UnprotectSecretFieldFromConfig("whisper_api_key_enc", j.value("whisper_api_key_enc", std::string{}));
+    if (cfg.WhisperApiKey.empty()) {
+        cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
+        migrate.WhisperApiKey = !cfg.WhisperApiKey.empty();
+    }
+#endif
+#else
+    cfg.ApiToken = j.value("token", std::string{});
+    cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
+    cfg.GitHubPat = j.value("github_pat", std::string{});
+    cfg.BugReportGitHubPat = j.value("bugreport_github_pat", std::string{});
+    cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
+    cfg.AiApiKey = j.value("ai_api_key", std::string{});
+    cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
+    cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
+#if defined(SMATCHET_WITH_WHISPER)
+    cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
+#endif
+#endif
+}
+
+#if defined(SMATCHET_WITH_WHISPER)
+// Whisper non-secret fields + the WhisperMaxClipSec clamp. (WhisperApiKey loads in LoadSecretFields.)
+void LoadWhisperFields(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.WhisperEnabled = j.value("whisper_enabled", cfg.WhisperEnabled);
+    cfg.WhisperSetupCompleted = j.value("whisper_setup_completed", cfg.WhisperSetupCompleted);
+    cfg.WhisperSetupChoice = j.value("whisper_setup_choice", cfg.WhisperSetupChoice);
+    cfg.WhisperMode = j.value("whisper_mode", cfg.WhisperMode);
+    cfg.WhisperModel = j.value("whisper_model", cfg.WhisperModel);
+    cfg.WhisperHotkey = j.value("whisper_hotkey", cfg.WhisperHotkey);
+    cfg.WhisperConsentTimestampSec = j.value("whisper_consent_timestamp_sec", cfg.WhisperConsentTimestampSec);
+    cfg.WhisperLanguage = j.value("whisper_language", cfg.WhisperLanguage);
+    cfg.WhisperTrim = j.value("whisper_trim", cfg.WhisperTrim);
+    cfg.WhisperMaxClipSec = j.value("whisper_max_clip_sec", cfg.WhisperMaxClipSec);
+    cfg.WhisperAutoSendOnPunctuation = j.value("whisper_auto_send_on_punctuation", cfg.WhisperAutoSendOnPunctuation);
+    // Clamp WhisperMaxClipSec into the documented range so a hand-edited config can't drive
+    // runaway cloud cost. 0 disables; positive values clamp at 600 s.
+    if (cfg.WhisperMaxClipSec < 0) {
+        cfg.WhisperMaxClipSec = 0;
+    } else if (cfg.WhisperMaxClipSec > 600) {
+        cfg.WhisperMaxClipSec = 600;
+    }
+}
+#endif
+
+// Enum / clamped scalar fields that don't fit the plain-scalar table: ai_provider_kind clamp,
+// assistant_history_max_rows clamp, date-threshold clamp, layout-schema clamp, font-size clamp,
+// ui_density / panel_position / theme string<->enum, ui_language normalization.
+void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
+    // Clamp `ai_provider_kind` to the known enum range; a future-version persisted int (e.g. 99)
+    // on an older build degrades to OpenAi (0) rather than triggering UB on enum cast.
+    {
+        const int rawProvider = j.value("ai_provider_kind", cfg.AiProviderKind);
+        const int kProviderMin = static_cast<int>(AiProvider::OpenAi);
+        const int kProviderMax = static_cast<int>(AiProvider::DeepSeek);
+        cfg.AiProviderKind = (rawProvider < kProviderMin || rawProvider > kProviderMax)
+                                 ? static_cast<int>(AiProvider::OpenAi)
+                                 : rawProvider;
+    }
+    // Clamp on load — negative / zero would silently disable history; a stray very-large value
+    // would let the SQLite file grow without bound. Cap at 100k.
+    const int rawMaxRows = j.value("assistant_history_max_rows", cfg.AssistantHistoryMaxRows);
+    cfg.AssistantHistoryMaxRows = (rawMaxRows < 1) ? 1 : (rawMaxRows > 100000 ? 100000 : rawMaxRows);
+
+    if (cfg.DateCompactRelativeThresholdDays < 1)
+        cfg.DateCompactRelativeThresholdDays = 1;
+    if (cfg.DateCompactRelativeThresholdDays > 365)
+        cfg.DateCompactRelativeThresholdDays = 365;
+
+    cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
+    if (cfg.LayoutSchemaVersion < 0) {
+        cfg.LayoutSchemaVersion = 0;
+    }
+    cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
+    if (cfg.FontSizePt < 8) {
+        cfg.FontSizePt = 8;
+    }
+    if (cfg.FontSizePt > 32) {
+        cfg.FontSizePt = 32;
+    }
+    {
+        const std::string densityStr = j.value("ui_density", std::string("Normal"));
+        if (densityStr == "Compact")
+            cfg.Density = TrackerConfig::UiDensity::Compact;
+        else if (densityStr == "Comfortable")
+            cfg.Density = TrackerConfig::UiDensity::Comfortable;
+        else
+            cfg.Density = TrackerConfig::UiDensity::Normal;
+    }
+    {
+        const std::string panelPosStr = j.value("panel_position", std::string("Bottom"));
+        cfg.PanelDockSide =
+            (panelPosStr == "Right") ? TrackerConfig::PanelPosition::Right : TrackerConfig::PanelPosition::Bottom;
+    }
+    // Default-string mirrors the construct-time default in TrackerConfig::Theme — fresh installs
+    // (no `theme` key) land on ImGuiDefaultDark; existing configs round-trip their persisted value.
+    const std::string themeStr = j.value("theme", std::string("ImGuiDefaultDark"));
+    if (themeStr == "ModernDark")
+        cfg.Theme = ThemeId::ModernDark;
+    else if (themeStr == "Vs2022Dark")
+        cfg.Theme = ThemeId::Vs2022Dark;
+    else if (themeStr == "Vs2022Light")
+        cfg.Theme = ThemeId::Vs2022Light;
+    else if (themeStr == "HighContrast")
+        cfg.Theme = ThemeId::HighContrast;
+    else if (themeStr == "NortonCommander")
+        cfg.Theme = ThemeId::NortonCommander;
+    else if (themeStr == "SmatchetDark")
+        cfg.Theme = ThemeId::SmatchetDark;
+    else
+        // Covers the literal "ImGuiDefaultDark" string AND any unknown / future value —
+        // unknown serialized themes degrade to the fresh-install default.
+        cfg.Theme = ThemeId::ImGuiDefaultDark;
+    cfg.UiLanguage = ConfigManager::NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
+}
+
+// Trim leading/trailing ASCII space+tab in place (used by the inherit-field-id list parser).
+void TrimAsciiSpace(std::string& s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
+        s.erase(0, 1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
+        s.pop_back();
+    }
+}
+
+// Parse one "new_issue_inherit_field_ids*" array: trim each entry, drop empties + "summary",
+// fall back to the default list when the key is absent or yields an empty result.
+void LoadInheritFieldIds(const nlohmann::json& j, const char* key, std::vector<std::string>& out) {
+    out = DefaultNewIssueInheritFieldIdsList();
+    if (j.contains(key) && j[key].is_array()) {
+        out.clear();
+        for (const auto& item : j[key]) {
+            if (item.is_string()) {
+                std::string s = item.get<std::string>();
+                TrimAsciiSpace(s);
+                if (!s.empty() && s != "summary") {
+                    out.push_back(std::move(s));
+                }
+            }
+        }
+    }
+    if (out.empty()) {
+        out = DefaultNewIssueInheritFieldIdsList();
+    }
+}
+
+// List + nested-object fields: mcp_export_fields, comment-template arrays, duration/worklog
+// suggestion lists, the three inherit-id lists, and the one-shot issuetype-inject migration.
+void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
+    if (j.contains("mcp_export_fields") && j["mcp_export_fields"].is_array()) {
+        for (const auto& item : j["mcp_export_fields"]) {
+            if (item.is_string()) {
+                cfg.McpExportFields.push_back(item.get<std::string>());
+            }
         }
     }
 
-    nlohmann::json j = LoadMergedConfigJson();
-    const bool hasSetupConfig = !LoadJsonFile(GetConfigPath()).empty();
-    TrackerConfig cfg;
-    cfg.DbPath = SmatchetDefaults::kDefaultDbPath;
-    cfg.TrackerType = SmatchetDefaults::kDefaultBackendType;
-    cfg.McpPort = SmatchetDefaults::Mcp::kDefaultPort;
-#if defined(_WIN32)
-    bool migrateLegacyPlaintextMcpAuthToken = false;
-    bool migrateLegacyPlaintextAiApiKey = false;
-    bool migrateLegacyPlaintextAiAnthropicApiKey = false;
-    bool migrateLegacyPlaintextAiDeepSeekApiKey = false;
-#if defined(SMATCHET_WITH_WHISPER)
-    // Mirror of the AiApiKey migration shape — when Load() falls
-    // back to plaintext `whisper_api_key` (because `whisper_api_key_enc` was
-    // absent or undecryptable), flag for re-save so the next on-disk state
-    // holds the value under `whisper_api_key_enc` and removes the plaintext.
-    bool migrateLegacyPlaintextWhisperApiKey = false;
-#endif
-#endif
+    if (j.contains("quick_comment_templates") && j["quick_comment_templates"].is_array()) {
+        cfg.QuickCommentTemplates.clear();
+        for (const auto& item : j["quick_comment_templates"]) {
+            try {
+                cfg.QuickCommentTemplates.push_back(item.get<CommentTemplate>());
+            } catch (...) { // catch-all-ok: skip malformed template entry
+            }
+        }
+    } else {
+        cfg.QuickCommentTemplates = GetDefaultQuickCommentTemplates();
+    }
 
-    if (!j.empty()) {
+    if (j.contains("toolbar") && j["toolbar"].is_object()) {
         try {
-            cfg.DbPath = j.value("db_path", cfg.DbPath);
-            cfg.Domain = j.value("domain", std::string{});
-            cfg.Email = j.value("email", std::string{});
-#if defined(_WIN32)
-            cfg.ApiToken = UnprotectSecretFieldFromConfig("token_enc", j.value("token_enc", std::string{}));
-            if (cfg.ApiToken.empty()) {
-                cfg.ApiToken = j.value("token", std::string{});
-            }
-#else
-            cfg.ApiToken = j.value("token", std::string{});
-#endif
-            // PR 7: legacy `project_key` / `plane_project_id` migration carriers removed.
-            // The one-shot sweeps still run but with empty values; the cache_meta marker
-            // (`legacy_project_swept_v1`) ensures they no-op on installs that already migrated.
-            cfg.TrackerType = j.value("tracker_type", cfg.TrackerType);
-            cfg.PlaneUrl = j.value("plane_url", cfg.PlaneUrl);
-            cfg.PlaneWorkspaceSlug = j.value("plane_workspace_slug", cfg.PlaneWorkspaceSlug);
-
-#if defined(_WIN32)
-            cfg.PlaneApiKey =
-                UnprotectSecretFieldFromConfig("plane_api_key_enc", j.value("plane_api_key_enc", std::string{}));
-            if (cfg.PlaneApiKey.empty()) {
-                cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
-            }
-            // PR2 of github-tracker-backend.md — same DPAPI + legacy-plaintext shape as PlaneApiKey.
-            cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
-            if (cfg.GitHubPat.empty()) {
-                cfg.GitHubPat = j.value("github_pat", std::string{});
-            }
-            // Bug-report PAT — DPAPI + legacy-plaintext, same shape as GitHubPat.
-            cfg.BugReportGitHubPat = UnprotectSecretFieldFromConfig("bugreport_github_pat_enc",
-                                                                    j.value("bugreport_github_pat_enc", std::string{}));
-            if (cfg.BugReportGitHubPat.empty()) {
-                cfg.BugReportGitHubPat = j.value("bugreport_github_pat", std::string{});
-            }
-#else
-            cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
-            cfg.GitHubPat = j.value("github_pat", std::string{});
-            cfg.BugReportGitHubPat = j.value("bugreport_github_pat", std::string{});
-#endif
-            cfg.GitHubBaseUrl = j.value("github_base_url", cfg.GitHubBaseUrl);
-            cfg.GitHubOwner = j.value("github_owner", cfg.GitHubOwner);
-            cfg.GitHubRepo = j.value("github_repo", cfg.GitHubRepo);
-            cfg.BugReportRelayUrl = j.value("bugreport_relay_url", cfg.BugReportRelayUrl);
-            cfg.BugReportRelayKey = j.value("bugreport_relay_key", cfg.BugReportRelayKey);
-            cfg.BugReportGitHubOwner = j.value("bugreport_github_owner", cfg.BugReportGitHubOwner);
-            cfg.BugReportGitHubRepo = j.value("bugreport_github_repo", cfg.BugReportGitHubRepo);
-            cfg.BugReportGitHubBaseUrl = j.value("bugreport_github_base_url", cfg.BugReportGitHubBaseUrl);
-            cfg.BugReportAssetsRepo = j.value("bugreport_assets_repo", cfg.BugReportAssetsRepo);
-            cfg.BugReportPersistPat = j.value("bugreport_persist_pat", cfg.BugReportPersistPat);
-            cfg.BugReportHotkey = j.value("bugreport_hotkey", cfg.BugReportHotkey);
-            cfg.BugReportHotkeyEnabled = j.value("bugreport_hotkey_enabled", cfg.BugReportHotkeyEnabled);
-            cfg.BugReportScreenshotDefault = j.value("bugreport_screenshot_default", cfg.BugReportScreenshotDefault);
-
-            cfg.JqlQuery = j.value("jql", cfg.JqlQuery);
-            cfg.EnableFieldOverflowTooltips = j.value("field_overflow_tooltips", cfg.EnableFieldOverflowTooltips);
-            cfg.SingleClickToEditGridCells = j.value("single_click_to_edit_grid_cells", cfg.SingleClickToEditGridCells);
-            cfg.DefaultLongTextEditorPreview =
-                j.value("default_long_text_editor_preview", cfg.DefaultLongTextEditorPreview);
-            cfg.ReadOnlyMode = j.value("read_only_mode", cfg.ReadOnlyMode);
-            cfg.BackendHasBeenReachable = j.value("backend_has_been_reachable", cfg.BackendHasBeenReachable);
-            cfg.GridEndWheelSwallowsBeforeHorizontal =
-                j.value("grid_end_wheel_swallows_before_horizontal", cfg.GridEndWheelSwallowsBeforeHorizontal);
-            cfg.WindowX = j.value("window_x", cfg.WindowX);
-            cfg.WindowY = j.value("window_y", cfg.WindowY);
-            cfg.WindowWidth = j.value("window_w", cfg.WindowWidth);
-            cfg.WindowHeight = j.value("window_h", cfg.WindowHeight);
-            cfg.WindowMaximized = j.value("window_maximized", cfg.WindowMaximized);
-            cfg.FieldCatalogCacheMaxProjects =
-                j.value("field_catalog_cache_max_projects", cfg.FieldCatalogCacheMaxProjects);
-            cfg.ShowPreferencesWindow = j.value("show_preferences_window", cfg.ShowPreferencesWindow);
-            cfg.ShowViewsDashboardWindow = j.value("show_views_dashboard_window", cfg.ShowViewsDashboardWindow);
-            cfg.ShowPerformanceWindow = j.value("show_performance_window", cfg.ShowPerformanceWindow);
-            cfg.ShowLogWindow = j.value("show_log_window", cfg.ShowLogWindow);
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            cfg.ShowLuaAutomationWindow = j.value("show_lua_automation_window", cfg.ShowLuaAutomationWindow);
-#endif
-            cfg.LogMinLevel = j.value("log_min_level", cfg.LogMinLevel);
-            cfg.LogTrackerHttpBodies =
-                j.value("log_tracker_http_bodies", j.value("log_jira_http_bodies", cfg.LogTrackerHttpBodies));
-            cfg.LogP4Io = j.value("log_p4_io", cfg.LogP4Io);
-            cfg.McpEnabled = j.value("mcp_enabled", cfg.McpEnabled);
-            cfg.McpPort = j.value("mcp_port", cfg.McpPort);
-            cfg.McpAllowRemote = j.value("mcp_allow_remote", cfg.McpAllowRemote);
-#if defined(_WIN32)
-            cfg.McpAuthToken =
-                UnprotectSecretFieldFromConfig("mcp_auth_token_enc", j.value("mcp_auth_token_enc", std::string{}));
-            if (cfg.McpAuthToken.empty()) {
-                cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
-                migrateLegacyPlaintextMcpAuthToken = !cfg.McpAuthToken.empty();
-            }
-#else
-            cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
-#endif
-            cfg.McpAllowLuaExecution = j.value("mcp_allow_lua_execution", cfg.McpAllowLuaExecution);
-            if (j.contains("mcp_export_fields") && j["mcp_export_fields"].is_array()) {
-                for (const auto& item : j["mcp_export_fields"]) {
-                    if (item.is_string()) {
-                        cfg.McpExportFields.push_back(item.get<std::string>());
-                    }
-                }
-            }
-            cfg.ShowMcpServerWindow = j.value("show_mcp_server_window", cfg.ShowMcpServerWindow);
-            cfg.McpServerInfoPanelHeightPx = static_cast<float>(
-                j.value("mcp_server_info_panel_height_px", static_cast<double>(cfg.McpServerInfoPanelHeightPx)));
-            cfg.McpServerActivityPanelHeightPx = static_cast<float>(j.value(
-                "mcp_server_activity_panel_height_px", static_cast<double>(cfg.McpServerActivityPanelHeightPx)));
-            cfg.AnnotateAllowCustomCommands =
-                j.value("annotate_allow_custom_commands", cfg.AnnotateAllowCustomCommands);
-
-            // Smatchet Assistant (AI) — Phase A'. Clamp `ai_provider_kind` to the known enum range;
-            // a future-version persisted int (e.g. 99) on an older build degrades to OpenAi (0)
-            // rather than triggering UB on enum cast.
-            {
-                const int rawProvider = j.value("ai_provider_kind", cfg.AiProviderKind);
-                const int kProviderMin = static_cast<int>(AiProvider::OpenAi);
-                const int kProviderMax = static_cast<int>(AiProvider::DeepSeek);
-                cfg.AiProviderKind = (rawProvider < kProviderMin || rawProvider > kProviderMax)
-                                         ? static_cast<int>(AiProvider::OpenAi)
-                                         : rawProvider;
-            }
-#if defined(_WIN32)
-            cfg.AiApiKey = UnprotectSecretFieldFromConfig("ai_api_key_enc", j.value("ai_api_key_enc", std::string{}));
-            if (cfg.AiApiKey.empty()) {
-                cfg.AiApiKey = j.value("ai_api_key", std::string{});
-                migrateLegacyPlaintextAiApiKey = !cfg.AiApiKey.empty();
-            }
-            cfg.AiAnthropicApiKey = UnprotectSecretFieldFromConfig("ai_anthropic_api_key_enc",
-                                                                   j.value("ai_anthropic_api_key_enc", std::string{}));
-            if (cfg.AiAnthropicApiKey.empty()) {
-                cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
-                migrateLegacyPlaintextAiAnthropicApiKey = !cfg.AiAnthropicApiKey.empty();
-            }
-            cfg.AiDeepSeekApiKey = UnprotectSecretFieldFromConfig("ai_deepseek_api_key_enc",
-                                                                  j.value("ai_deepseek_api_key_enc", std::string{}));
-            if (cfg.AiDeepSeekApiKey.empty()) {
-                cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
-                migrateLegacyPlaintextAiDeepSeekApiKey = !cfg.AiDeepSeekApiKey.empty();
-            }
-#if defined(SMATCHET_WITH_WHISPER)
-            cfg.WhisperApiKey =
-                UnprotectSecretFieldFromConfig("whisper_api_key_enc", j.value("whisper_api_key_enc", std::string{}));
-            if (cfg.WhisperApiKey.empty()) {
-                cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
-                migrateLegacyPlaintextWhisperApiKey = !cfg.WhisperApiKey.empty();
-            }
-#endif
-#else
-            cfg.AiApiKey = j.value("ai_api_key", std::string{});
-            cfg.AiAnthropicApiKey = j.value("ai_anthropic_api_key", std::string{});
-            cfg.AiDeepSeekApiKey = j.value("ai_deepseek_api_key", std::string{});
-#if defined(SMATCHET_WITH_WHISPER)
-            cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
-#endif
-#endif
-#if defined(SMATCHET_WITH_WHISPER)
-            // Whisper dictation — Phase A schema (additive; missing fields fall back to defaults).
-            cfg.WhisperEnabled = j.value("whisper_enabled", cfg.WhisperEnabled);
-            cfg.WhisperSetupCompleted = j.value("whisper_setup_completed", cfg.WhisperSetupCompleted);
-            cfg.WhisperSetupChoice = j.value("whisper_setup_choice", cfg.WhisperSetupChoice);
-            cfg.WhisperMode = j.value("whisper_mode", cfg.WhisperMode);
-            cfg.WhisperModel = j.value("whisper_model", cfg.WhisperModel);
-            cfg.WhisperHotkey = j.value("whisper_hotkey", cfg.WhisperHotkey);
-            cfg.WhisperConsentTimestampSec = j.value("whisper_consent_timestamp_sec", cfg.WhisperConsentTimestampSec);
-            // Phase F — language / trim / max-clip / auto-send (additive; defaults
-            // survive when the field is missing from older config files).
-            cfg.WhisperLanguage = j.value("whisper_language", cfg.WhisperLanguage);
-            cfg.WhisperTrim = j.value("whisper_trim", cfg.WhisperTrim);
-            cfg.WhisperMaxClipSec = j.value("whisper_max_clip_sec", cfg.WhisperMaxClipSec);
-            cfg.WhisperAutoSendOnPunctuation =
-                j.value("whisper_auto_send_on_punctuation", cfg.WhisperAutoSendOnPunctuation);
-            // Clamp WhisperMaxClipSec into the documented range so a hand-edited
-            // config can't drive runaway cloud cost. 0 disables; positive values
-            // clamp at 600 s.
-            if (cfg.WhisperMaxClipSec < 0) {
-                cfg.WhisperMaxClipSec = 0;
-            } else if (cfg.WhisperMaxClipSec > 600) {
-                cfg.WhisperMaxClipSec = 600;
-            }
-#endif
-            cfg.AiOllamaBaseUrl = j.value("ai_ollama_base_url", cfg.AiOllamaBaseUrl);
-            cfg.AiBaseUrl = j.value("ai_base_url", cfg.AiBaseUrl);
-            cfg.AiModelOpenAi = j.value("ai_model_openai", cfg.AiModelOpenAi);
-            cfg.AiModelAnthropic = j.value("ai_model_anthropic", cfg.AiModelAnthropic);
-            cfg.AiModelOllama = j.value("ai_model_ollama", cfg.AiModelOllama);
-            // DeepSeek base URL + model — additive; older configs round-trip
-            // the construct-time defaults (empty URL → built-in default
-            // `https://api.deepseek.com`; model `deepseek-chat`).
-            cfg.AiDeepSeekBaseUrl = j.value("ai_deepseek_base_url", cfg.AiDeepSeekBaseUrl);
-            cfg.AiModelDeepSeek = j.value("ai_model_deepseek", cfg.AiModelDeepSeek);
-            cfg.AiReasoningEffort = j.value("ai_reasoning_effort", cfg.AiReasoningEffort);
-            cfg.AssistantPanelOpen = j.value("assistant_panel_open", cfg.AssistantPanelOpen);
-            cfg.AssistantPanelWidth =
-                static_cast<float>(j.value("assistant_panel_width", static_cast<double>(cfg.AssistantPanelWidth)));
-            cfg.AssistantPanelOnSecondarySide =
-                j.value("assistant_panel_on_secondary_side", cfg.AssistantPanelOnSecondarySide);
-            cfg.AgentsMdGlobalPath = j.value("agents_md_global_path", cfg.AgentsMdGlobalPath);
-            cfg.ProjectAgentsMdPath = j.value("project_agents_md_path", cfg.ProjectAgentsMdPath);
-            cfg.AgentsMdAutoDiscoverProject =
-                j.value("agents_md_auto_discover_project", cfg.AgentsMdAutoDiscoverProject);
-            cfg.AssistantContextBlockSelection =
-                j.value("assistant_context_block_selection", cfg.AssistantContextBlockSelection);
-            cfg.AssistantContextBlockVisibleRows =
-                j.value("assistant_context_block_visible_rows", cfg.AssistantContextBlockVisibleRows);
-            cfg.AssistantContextBlockActiveTicket =
-                j.value("assistant_context_block_active_ticket", cfg.AssistantContextBlockActiveTicket);
-            cfg.AssistantContextBlockActiveView =
-                j.value("assistant_context_block_active_view", cfg.AssistantContextBlockActiveView);
-            cfg.AssistantContextBlockAuditTrail =
-                j.value("assistant_context_block_audit_trail", cfg.AssistantContextBlockAuditTrail);
-            // Clamp on load — negative / zero would silently disable history; a stray
-            // very-large value would let the SQLite file grow without bound. Cap at
-            // 100k which is comfortably above any realistic conversation depth.
-            const int rawMaxRows = j.value("assistant_history_max_rows", cfg.AssistantHistoryMaxRows);
-            cfg.AssistantHistoryMaxRows = (rawMaxRows < 1) ? 1 : (rawMaxRows > 100000 ? 100000 : rawMaxRows);
-            cfg.AiPrefsVerifyOnSave = j.value("ai_prefs_verify_on_save", cfg.AiPrefsVerifyOnSave);
-
-            cfg.DateFormatOption = j.value("date_format_option", cfg.DateFormatOption);
-            cfg.DateCompactRelativeThresholdDays =
-                j.value("date_compact_relative_threshold_days", cfg.DateCompactRelativeThresholdDays);
-            if (cfg.DateCompactRelativeThresholdDays < 1)
-                cfg.DateCompactRelativeThresholdDays = 1;
-            if (cfg.DateCompactRelativeThresholdDays > 365)
-                cfg.DateCompactRelativeThresholdDays = 365;
-            cfg.DefaultIssueTypeId = j.value("default_issue_type_id", cfg.DefaultIssueTypeId);
-            cfg.DefaultIssueTypeName = j.value("default_issue_type_name", cfg.DefaultIssueTypeName);
-            cfg.ImportMaxConcurrent = j.value("import_max_concurrent", cfg.ImportMaxConcurrent);
-            cfg.LastImportDirectory = j.value("last_import_directory", cfg.LastImportDirectory);
-            cfg.LastExportDirectory = j.value("last_export_directory", cfg.LastExportDirectory);
-            cfg.ViewFieldPickerHeight = j.value("view_field_picker_height", cfg.ViewFieldPickerHeight);
-            cfg.ViewsSidebarWidth = j.value("views_sidebar_width", cfg.ViewsSidebarWidth);
-            cfg.ViewsFieldsSplitRatio = j.value("views_fields_split_ratio", cfg.ViewsFieldsSplitRatio);
-            cfg.ShowPrimarySideBar = j.value("show_primary_side_bar", cfg.ShowPrimarySideBar);
-            cfg.ShowSecondarySideBar = j.value("show_secondary_side_bar", cfg.ShowSecondarySideBar);
-            cfg.ShowPanel = j.value("show_panel", cfg.ShowPanel);
-            cfg.ShowStatusBar = j.value("show_status_bar", cfg.ShowStatusBar);
-            cfg.SelectedFontName = j.value("selected_font_name", cfg.SelectedFontName);
-            cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
-            if (cfg.LayoutSchemaVersion < 0) {
-                cfg.LayoutSchemaVersion = 0;
-            }
-            cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
-            if (cfg.FontSizePt < 8) {
-                cfg.FontSizePt = 8;
-            }
-            if (cfg.FontSizePt > 32) {
-                cfg.FontSizePt = 32;
-            }
-            {
-                const std::string densityStr = j.value("ui_density", std::string("Normal"));
-                if (densityStr == "Compact")
-                    cfg.Density = TrackerConfig::UiDensity::Compact;
-                else if (densityStr == "Comfortable")
-                    cfg.Density = TrackerConfig::UiDensity::Comfortable;
-                else
-                    cfg.Density = TrackerConfig::UiDensity::Normal;
-            }
-            {
-                const std::string panelPosStr = j.value("panel_position", std::string("Bottom"));
-                cfg.PanelDockSide = (panelPosStr == "Right") ? TrackerConfig::PanelPosition::Right
-                                                             : TrackerConfig::PanelPosition::Bottom;
-            }
-            cfg.PrimarySideBarOnRight = j.value("primary_side_bar_on_right", cfg.PrimarySideBarOnRight);
-            // Default-string mirrors the construct-time default in TrackerConfig::Theme — fresh
-            // installs (no `theme` key on disk) land on ImGuiDefaultDark. Existing configs with a
-            // serialized value round-trip back to whatever they persisted (so users on SmatchetDark
-            // keep SmatchetDark across the default change).
-            const std::string themeStr = j.value("theme", std::string("ImGuiDefaultDark"));
-            if (themeStr == "ModernDark")
-                cfg.Theme = ThemeId::ModernDark;
-            else if (themeStr == "Vs2022Dark")
-                cfg.Theme = ThemeId::Vs2022Dark;
-            else if (themeStr == "Vs2022Light")
-                cfg.Theme = ThemeId::Vs2022Light;
-            else if (themeStr == "HighContrast")
-                cfg.Theme = ThemeId::HighContrast;
-            else if (themeStr == "NortonCommander")
-                cfg.Theme = ThemeId::NortonCommander;
-            else if (themeStr == "SmatchetDark")
-                cfg.Theme = ThemeId::SmatchetDark;
-            else
-                // Covers the literal "ImGuiDefaultDark" string AND any unknown / future value —
-                // unknown serialized themes degrade to the fresh-install default.
-                cfg.Theme = ThemeId::ImGuiDefaultDark;
-            cfg.UiLanguage = NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
-            cfg.UpdateCheckEnabled = j.value("update_check_enabled", cfg.UpdateCheckEnabled);
-            cfg.UpdateIncludePrerelease = j.value("update_include_prerelease", cfg.UpdateIncludePrerelease);
-            cfg.UpdateSkipVersion = j.value("update_skip_version", cfg.UpdateSkipVersion);
-            cfg.UpdateGithubRepo = j.value("update_github_repo", cfg.UpdateGithubRepo);
-            if (j.contains("quick_comment_templates") && j["quick_comment_templates"].is_array()) {
-                cfg.QuickCommentTemplates.clear();
-                for (const auto& item : j["quick_comment_templates"]) {
-                    try {
-                        cfg.QuickCommentTemplates.push_back(item.get<CommentTemplate>());
-                    } catch (...) { // catch-all-ok: skip malformed template entry
-                    }
-                }
-            } else {
-                cfg.QuickCommentTemplates = GetDefaultQuickCommentTemplates();
-            }
-
-            if (j.contains("toolbar") && j["toolbar"].is_object()) {
-                try {
-                    cfg.Toolbar = j["toolbar"].get<ToolbarConfig>();
-                } catch (...) { // catch-all-ok: malformed toolbar block → defaults
-                    cfg.Toolbar = ToolbarConfig::Default();
-                }
-            } else {
-                cfg.Toolbar = ToolbarConfig::Default();
-            }
-
-            if (j.contains("annotate_comment_templates") && j["annotate_comment_templates"].is_array()) {
-                cfg.AnnotateCommentTemplates.clear();
-                for (const auto& item : j["annotate_comment_templates"]) {
-                    try {
-                        cfg.AnnotateCommentTemplates.push_back(item.get<CommentTemplate>());
-                    } catch (...) { // catch-all-ok: skip malformed template entry
-                    }
-                }
-            } else {
-                cfg.AnnotateCommentTemplates = GetDefaultAnnotateCommentTemplates();
-            }
-
-            if (j.contains("duration_suggestions") && j["duration_suggestions"].is_array()) {
-                cfg.DurationSuggestions.clear();
-                for (const auto& item : j["duration_suggestions"]) {
-                    if (item.is_string()) {
-                        cfg.DurationSuggestions.push_back(item.get<std::string>());
-                    }
-                }
-            } else {
-                cfg.DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
-            }
-
-            if (j.contains("worklog_comment_templates") && j["worklog_comment_templates"].is_array()) {
-                cfg.WorkLogCommentTemplates.clear();
-                for (const auto& item : j["worklog_comment_templates"]) {
-                    if (item.is_string()) {
-                        cfg.WorkLogCommentTemplates.push_back(item.get<std::string>());
-                    }
-                }
-            } else {
-                cfg.WorkLogCommentTemplates = {
-                    "Investigated and resolved the issue.", "Tested and verified on local environment.",
-                    "Refactored code and ran static analysis.", "Discussed with team and updated implementation.",
-                    "Wrote unit tests and verified all passing."};
-            }
-
-            {
-                cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
-                if (j.contains("new_issue_inherit_field_ids") && j["new_issue_inherit_field_ids"].is_array()) {
-                    cfg.NewIssueInheritFieldIds.clear();
-                    for (const auto& item : j["new_issue_inherit_field_ids"]) {
-                        if (item.is_string()) {
-                            std::string s = item.get<std::string>();
-                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
-                                s.erase(0, 1);
-                            }
-                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
-                                s.pop_back();
-                            }
-                            if (!s.empty() && s != "summary") {
-                                cfg.NewIssueInheritFieldIds.push_back(std::move(s));
-                            }
-                        }
-                    }
-                }
-                if (cfg.NewIssueInheritFieldIds.empty()) {
-                    cfg.NewIssueInheritFieldIds = DefaultNewIssueInheritFieldIdsList();
-                }
-            }
-            {
-                cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
-                if (j.contains("new_issue_inherit_field_ids_plane") &&
-                    j["new_issue_inherit_field_ids_plane"].is_array()) {
-                    cfg.NewIssueInheritFieldIdsPlane.clear();
-                    for (const auto& item : j["new_issue_inherit_field_ids_plane"]) {
-                        if (item.is_string()) {
-                            std::string s = item.get<std::string>();
-                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
-                                s.erase(0, 1);
-                            }
-                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
-                                s.pop_back();
-                            }
-                            if (!s.empty() && s != "summary") {
-                                cfg.NewIssueInheritFieldIdsPlane.push_back(std::move(s));
-                            }
-                        }
-                    }
-                }
-                if (cfg.NewIssueInheritFieldIdsPlane.empty()) {
-                    cfg.NewIssueInheritFieldIdsPlane = DefaultNewIssueInheritFieldIdsList();
-                }
-            }
-            {
-                cfg.NewIssueInheritFieldIdsGitHub = DefaultNewIssueInheritFieldIdsList();
-                if (j.contains("new_issue_inherit_field_ids_github") &&
-                    j["new_issue_inherit_field_ids_github"].is_array()) {
-                    cfg.NewIssueInheritFieldIdsGitHub.clear();
-                    for (const auto& item : j["new_issue_inherit_field_ids_github"]) {
-                        if (item.is_string()) {
-                            std::string s = item.get<std::string>();
-                            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
-                                s.erase(0, 1);
-                            }
-                            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
-                                s.pop_back();
-                            }
-                            if (!s.empty() && s != "summary") {
-                                cfg.NewIssueInheritFieldIdsGitHub.push_back(std::move(s));
-                            }
-                        }
-                    }
-                }
-                if (cfg.NewIssueInheritFieldIdsGitHub.empty()) {
-                    cfg.NewIssueInheritFieldIdsGitHub = DefaultNewIssueInheritFieldIdsList();
-                }
-            }
-
-            // One-shot migration: inject "issuetype" into the front of all inherit lists if it
-            // is absent. Older configs were persisted with the legacy default list (no issuetype),
-            // so a fresh-install benefit only ships to existing users via this migration.
-            cfg.MigratedInheritIssueTypeV1 = j.value("migrated_inherit_issuetype_v1", false);
-            if (!cfg.MigratedInheritIssueTypeV1) {
-                const auto injectIfMissing = [](std::vector<std::string>& list) {
-                    if (std::find(list.begin(), list.end(), std::string("issuetype")) == list.end()) {
-                        list.insert(list.begin(), "issuetype");
-                    }
-                };
-                injectIfMissing(cfg.NewIssueInheritFieldIds);
-                injectIfMissing(cfg.NewIssueInheritFieldIdsPlane);
-                injectIfMissing(cfg.NewIssueInheritFieldIdsGitHub);
-                cfg.MigratedInheritIssueTypeV1 = true;
-            }
-        } catch (const std::exception& ex) {
-            LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());
-        } catch (...) {
-            LOG_ERROR("ConfigManager: Load() parse error (unknown)");
+            cfg.Toolbar = j["toolbar"].get<ToolbarConfig>();
+        } catch (...) { // catch-all-ok: malformed toolbar block → defaults
+            cfg.Toolbar = ToolbarConfig::Default();
         }
+    } else {
+        cfg.Toolbar = ToolbarConfig::Default();
     }
 
-    if (!hasSetupConfig && !j.contains("read_only_mode")) {
-        cfg.ReadOnlyMode = true;
-    }
-    if (!hasSetupConfig && !j.contains("show_preferences_window")) {
-        cfg.ShowPreferencesWindow = true;
-    }
-
-    // AgentsMdGlobalPath default-at-Load (vs default-at-construct): blank in-memory state means
-    // "user has not picked a path"; only here do we know the platform shared dir. Resolving at
-    // construct time would lose the ability to distinguish blank-by-default from blank-by-user.
-    if (cfg.AgentsMdGlobalPath.empty()) {
-        const std::string shared = GetPlatformSharedUserDataDirectory();
-        if (!shared.empty()) {
-            cfg.AgentsMdGlobalPath = shared + "agents.md";
+    if (j.contains("annotate_comment_templates") && j["annotate_comment_templates"].is_array()) {
+        cfg.AnnotateCommentTemplates.clear();
+        for (const auto& item : j["annotate_comment_templates"]) {
+            try {
+                cfg.AnnotateCommentTemplates.push_back(item.get<CommentTemplate>());
+            } catch (...) { // catch-all-ok: skip malformed template entry
+            }
         }
+    } else {
+        cfg.AnnotateCommentTemplates = GetDefaultAnnotateCommentTemplates();
     }
 
-#if defined(_WIN32)
-    // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
-    // Ordering note (backlog #15): this Save(cfg) runs BEFORE the env/CLI override block below, by design.
-    // - cfg here reflects what disk contained (with the legacy plaintext token already decoded into cfg.McpAuthToken).
-    //   Save() re-encrypts McpAuthToken into mcp_auth_token_enc on disk, which is the whole point of the migration.
-    // - Env / CLI overrides (DbPath, TrackerType, McpPort, McpAllowRemote) are ephemeral and must NOT be persisted —
-    //   they're meant to take effect this process only. Running Save AFTER overrides would write override values
-    //   back to disk and pollute the next launch when the env/CLI is no longer set.
-    // - Consequence: for the rest of this Load(), in-memory cfg (and the cache filled at the bottom) hold
-    //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
-    //   pre-split behavior. The standing limitation that any subsequent Save() with this cfg would write
-    //   override values to disk is a pre-existing concern outside the scope of this migration.
-    bool migrateAny = migrateLegacyPlaintextMcpAuthToken || migrateLegacyPlaintextAiApiKey ||
-                      migrateLegacyPlaintextAiAnthropicApiKey || migrateLegacyPlaintextAiDeepSeekApiKey;
-#if defined(SMATCHET_WITH_WHISPER)
-    migrateAny = migrateAny || migrateLegacyPlaintextWhisperApiKey;
-#endif
-    if (migrateAny) {
-#if defined(SMATCHET_WITH_WHISPER)
-        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
-                 "(mcp=%d ai=%d anthropic=%d deepseek=%d whisper=%d)",
-                 migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
-                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0, migrateLegacyPlaintextAiDeepSeekApiKey ? 1 : 0,
-                 migrateLegacyPlaintextWhisperApiKey ? 1 : 0);
-#else
-        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
-                 "(mcp=%d ai=%d anthropic=%d deepseek=%d)",
-                 migrateLegacyPlaintextMcpAuthToken ? 1 : 0, migrateLegacyPlaintextAiApiKey ? 1 : 0,
-                 migrateLegacyPlaintextAiAnthropicApiKey ? 1 : 0, migrateLegacyPlaintextAiDeepSeekApiKey ? 1 : 0);
-#endif
-        Save(cfg);
+    if (j.contains("duration_suggestions") && j["duration_suggestions"].is_array()) {
+        cfg.DurationSuggestions.clear();
+        for (const auto& item : j["duration_suggestions"]) {
+            if (item.is_string()) {
+                cfg.DurationSuggestions.push_back(item.get<std::string>());
+            }
+        }
+    } else {
+        cfg.DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
     }
-#endif
 
-    // Apply Option 1 overrides (Environment Variables)
+    if (j.contains("worklog_comment_templates") && j["worklog_comment_templates"].is_array()) {
+        cfg.WorkLogCommentTemplates.clear();
+        for (const auto& item : j["worklog_comment_templates"]) {
+            if (item.is_string()) {
+                cfg.WorkLogCommentTemplates.push_back(item.get<std::string>());
+            }
+        }
+    } else {
+        cfg.WorkLogCommentTemplates = {
+            "Investigated and resolved the issue.", "Tested and verified on local environment.",
+            "Refactored code and ran static analysis.", "Discussed with team and updated implementation.",
+            "Wrote unit tests and verified all passing."};
+    }
+
+    LoadInheritFieldIds(j, "new_issue_inherit_field_ids", cfg.NewIssueInheritFieldIds);
+    LoadInheritFieldIds(j, "new_issue_inherit_field_ids_plane", cfg.NewIssueInheritFieldIdsPlane);
+    LoadInheritFieldIds(j, "new_issue_inherit_field_ids_github", cfg.NewIssueInheritFieldIdsGitHub);
+
+    // One-shot migration: inject "issuetype" into the front of all inherit lists if absent.
+    cfg.MigratedInheritIssueTypeV1 = j.value("migrated_inherit_issuetype_v1", false);
+    if (!cfg.MigratedInheritIssueTypeV1) {
+        const auto injectIfMissing = [](std::vector<std::string>& list) {
+            if (std::find(list.begin(), list.end(), std::string("issuetype")) == list.end()) {
+                list.insert(list.begin(), "issuetype");
+            }
+        };
+        injectIfMissing(cfg.NewIssueInheritFieldIds);
+        injectIfMissing(cfg.NewIssueInheritFieldIdsPlane);
+        injectIfMissing(cfg.NewIssueInheritFieldIdsGitHub);
+        cfg.MigratedInheritIssueTypeV1 = true;
+    }
+}
+
+// Env-var + CLI overrides applied post-disk-read, plus the final post-override safety clamps.
+void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConfig& cfg) {
     if (const char* envDbPath = std::getenv("SMATCHET_DB_PATH")) {
         cfg.DbPath = envDbPath;
     }
@@ -1163,13 +1046,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         }
     }
 
-    // SMATCHET_TRACKER_BASE_URL — tracker origin URL.
-    // For Jira: maps to cfg.Domain (e.g. "https://company.atlassian.net").
-    // For Plane: maps to cfg.PlaneUrl (e.g. "https://api.plane.so").
-    // For GitHub: maps to cfg.GitHubBaseUrl (e.g. "https://api.github.com" or
-    //   "https://<enterprise>/api/v3"). Per CodeRabbit finding on PR #357 — env-driven
-    //   trackerType=github used to run with empty credentials because this mapper only
-    //   targeted Jira/Plane.
+    // SMATCHET_TRACKER_BASE_URL — tracker origin URL. Jira→Domain, Plane→PlaneUrl, GitHub→GitHubBaseUrl.
     if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
         if (envBase[0] != '\0') {
             if (cfg.TrackerType == "Plane") {
@@ -1189,7 +1066,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         }
     }
 
-    // Apply Option 4 overrides (CLI parameters)
+    // Option 4 overrides (CLI parameters) — win over env.
     if (cli.HasDbPath) {
         cfg.DbPath = cli.DbPath;
     }
@@ -1203,7 +1080,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         cfg.McpAllowRemote = cli.McpAllowRemote;
     }
 
-    // Post-override clamp and safety bounds checking
+    // Post-override clamp and safety bounds checking.
     if (cfg.ImportMaxConcurrent < 1)
         cfg.ImportMaxConcurrent = 1;
     if (cfg.ImportMaxConcurrent > 32)
@@ -1215,6 +1092,95 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     if (cfg.McpPort < 1 || cfg.McpPort > 65535) {
         cfg.McpPort = SmatchetDefaults::Mcp::kDefaultPort;
     }
+}
+
+} // namespace
+
+// ConfigManager — Load(CliOverrides).
+
+TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
+    const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
+    if (canUseCache) {
+        std::lock_guard<std::mutex> lock(GetCacheMutexRef());
+        // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not
+        // model
+        if (GetHasCachedConfigRef()) {
+            return GetCachedConfigRef();
+        }
+    }
+
+    nlohmann::json j = LoadMergedConfigJson();
+    const bool hasSetupConfig = !LoadJsonFile(GetConfigPath()).empty();
+    TrackerConfig cfg;
+    cfg.DbPath = SmatchetDefaults::kDefaultDbPath;
+    cfg.TrackerType = SmatchetDefaults::kDefaultBackendType;
+    cfg.McpPort = SmatchetDefaults::Mcp::kDefaultPort;
+    SecretMigrationFlags migrate;
+
+    if (!j.empty()) {
+        try {
+            LoadScalarFields(j, cfg);
+            LoadSecretFields(j, cfg, migrate);
+            LoadEnumAndClampedFields(j, cfg);
+#if defined(SMATCHET_WITH_WHISPER)
+            LoadWhisperFields(j, cfg);
+#endif
+            LoadListFields(j, cfg);
+        } catch (const std::exception& ex) {
+            LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());
+        } catch (...) {
+            LOG_ERROR("ConfigManager: Load() parse error (unknown)");
+        }
+    }
+
+    if (!hasSetupConfig && !j.contains("read_only_mode")) {
+        cfg.ReadOnlyMode = true;
+    }
+    if (!hasSetupConfig && !j.contains("show_preferences_window")) {
+        cfg.ShowPreferencesWindow = true;
+    }
+
+    // AgentsMdGlobalPath default-at-Load (vs default-at-construct): blank in-memory state means
+    // "user has not picked a path"; only here do we know the platform shared dir. Resolving at
+    // construct time would lose the ability to distinguish blank-by-default from blank-by-user.
+    if (cfg.AgentsMdGlobalPath.empty()) {
+        const std::string shared = GetPlatformSharedUserDataDirectory();
+        if (!shared.empty()) {
+            cfg.AgentsMdGlobalPath = shared + "agents.md";
+        }
+    }
+
+#if defined(_WIN32)
+    // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
+    // Ordering note, backlog #15: this migration re-save runs BEFORE the env/CLI override block below, by design.
+    // - cfg here reflects what disk contained, with the legacy plaintext token already decoded into McpAuthToken.
+    //   The re-save re-encrypts McpAuthToken into mcp_auth_token_enc on disk, which is the whole point of the
+    //   migration.
+    // - The env/CLI overrides DbPath, TrackerType, McpPort and McpAllowRemote are ephemeral and must NOT persist.
+    //   They are meant to take effect this process only. Re-saving AFTER overrides would write override values
+    //   back to disk and pollute the next launch when the env/CLI is no longer set.
+    // - Consequence: for the rest of this Load, in-memory cfg (and the cache filled at the bottom) hold
+    //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
+    //   pre-split behavior. The standing limitation that any subsequent re-save with this cfg would write
+    //   override values to disk is a pre-existing concern outside the scope of this migration.
+    if (migrate.Any()) {
+#if defined(SMATCHET_WITH_WHISPER)
+        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
+                 "(mcp=%d ai=%d anthropic=%d deepseek=%d whisper=%d)",
+                 migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
+                 migrate.AiDeepSeekApiKey ? 1 : 0, migrate.WhisperApiKey ? 1 : 0);
+#else
+        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
+                 "(mcp=%d ai=%d anthropic=%d deepseek=%d)",
+                 migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
+                 migrate.AiDeepSeekApiKey ? 1 : 0);
+#endif
+        Save(cfg);
+    }
+#endif
+
+    // Env-var + CLI overrides (applied post-disk-read), then the final post-override clamps.
+    ApplyOverridesAndClamps(cli, cfg);
 
     if (canUseCache) {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());
