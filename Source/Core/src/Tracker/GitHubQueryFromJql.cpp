@@ -1,5 +1,6 @@
 #include "GitHubQueryFromJql.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <string>
@@ -29,11 +30,9 @@ struct Tok {
 };
 
 std::string ToLower(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    }
+    std::string out(s.size(), '\0');
+    std::transform(s.begin(), s.end(), out.begin(),
+                   [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
     return out;
 }
 
@@ -210,13 +209,8 @@ void AppendWarning(std::string& w, const std::string& msg) {
 // Quote a value if it contains whitespace, otherwise emit bare. GitHub's
 // search-qualifier syntax accepts both `label:bug` and `label:"needs review"`.
 std::string MaybeQuote(const std::string& v) {
-    bool needs = false;
-    for (char c : v) {
-        if (std::isspace(static_cast<unsigned char>(c)) != 0) {
-            needs = true;
-            break;
-        }
-    }
+    const bool needs =
+        std::any_of(v.begin(), v.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; });
     if (!needs) {
         return v;
     }
