@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-02 · code-review · [bug] · P3 — C++ syntax highlighter doesn't tokenize the C++14 digit separator (`'`) or uppercase `U` suffix as part of a number
+  Details: CodeRabbit (Minor) flagged `Source/Core/src/Ui/CppSyntaxLex.cpp` `IsNumberCont` — it omits `'` (valid C++14 integer-literal digit separator, e.g. `1'000`) and uppercase `U` (unsigned suffix; suffixes are case-insensitive, e.g. `1U`), so those literals split into multiple tokens and lose contiguous number highlighting. Pre-existing: develop's inline `DrawColoredCppLine` number-continuation chain (`CppSyntaxHighlight.cpp:132-136`) accepts exactly `0-9 . x X a-f A-F u l L` — the same set. The CppSyntaxHighlight decomposition (#739) extracted that set byte-for-byte into `IsNumberCont`; adding `'`/`U` would change the rendered token spans vs develop, so it was NOT done in the behaviour-preserving refactor (documented inline at the helper).
+  Concrete next action: extend `IsNumberCont` to also accept `'` and `U`; add a bucket-A case for `1'000` and `1U` lexing as single number tokens. ~20min, dedicated highlighter PR.
+  Status: open
+  Last-reviewed: 2026-06-02
+
 - 2026-06-02 · code-review · [bug] · P2 — bulk-import: `bulkImportFutures.clear()` can block the UI thread on window-close mid-import
   Details: CodeRabbit (Major) flagged `Source/Core/src/Ui/SmatchetBulkTicketsUi.cpp` — `d.bulkImportFutures.clear()` destroys `std::future`s while their async HTTP `CreateIssueAsync` calls may still be in flight; `std::future`'s destructor blocks until the shared state is ready, so closing the bulk-import window mid-import freezes the UI thread until every outstanding request finishes (potentially seconds). Pre-existing on develop — **3 occurrences (develop lines 132/226/311), byte-identical count in the E5 PR head (#733)**; surfaced + relocated by the `drawBulkImportWindow` function-size decomposition (#733). NOT changed in #733 (behaviour-preserving refactor — awaiting/detaching futures alters runtime behaviour). Violates UX Pillar 2 (no UI-thread block > 100 ms).
   Concrete next action: either await all futures with a short timeout before `clear()` and show a "finishing imports…" cue, or move to shared-ownership results + detached futures, or add a cancellation token to `CreateIssueAsync`. ~1.5h, dedicated bulk-import PR.
