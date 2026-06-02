@@ -1260,53 +1260,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
         }
     }
 
-    // Slice 1 of docs/plans/shipped/autonomous-debugging-no-creds.md — env-hook to
-    // swap the default tracker factory for a fixture-backed GitHub backend
-    // when SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path> is set AND the active
-    // tracker is GitHub. Keeps the no-credentials debug loop able to drive
-    // scenarios against a deterministic ticket set without consulting the PAT.
-    if (!backendFactory_) {
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996) // getenv: cross-platform read-only; _dupenv_s is MSVC-only
-#endif
-        if (const char* githubFixture = std::getenv("SMATCHET_TEST_GITHUB_BACKEND_FIXTURE")) {
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-            const std::string fixturePath(githubFixture);
-            if (!fixturePath.empty()) {
-                const std::string lowerActive = ToLowerAsciiCopy(activeTracker);
-                if (lowerActive == "github") {
-                    LOG_INFO("AppController: SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=%s — installing "
-                             "fixture-backed GitHub factory (no HTTP, no PAT lookup).",
-                             fixturePath.c_str());
-                    class FixtureGitHubFactory : public ITrackerBackendFactory {
-                      public:
-                        explicit FixtureGitHubFactory(const std::string& path) : path_(path) {}
-                        std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
-                            const std::string lower = ToLowerAsciiCopy(trackerType);
-                            if (lower == "github") {
-                                return std::make_unique<smatchet::github::GitHubFixtureBackend>(
-                                    path_, std::string(), std::string(), /*includePullRequests=*/true);
-                            }
-                            // Non-GitHub backends fall through to the default factory shape.
-                            DefaultTrackerBackendFactory fallback;
-                            return fallback.Create(trackerType);
-                        }
-
-                      private:
-                        std::string path_;
-                    };
-                    backendFactory_ = std::make_unique<FixtureGitHubFactory>(fixturePath);
-                } else {
-                    LOG_WARN("AppController: SMATCHET_TEST_GITHUB_BACKEND_FIXTURE set but active "
-                             "tracker is '%s', not 'GitHub' — ignoring fixture override.",
-                             activeTracker.c_str());
-                }
-            }
-        }
-    }
+    MaybeInstallGitHubFixtureFactory(activeTracker);
 
     if (!backendFactory_) {
         backendFactory_ = std::make_unique<DefaultTrackerBackendFactory>();
@@ -1322,13 +1276,76 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
 
     const std::string activeTrackerType = Backend ? Backend->Connectivity().GetTrackerType() : "Unknown";
 
+    RunLegacyStartupSweeps(activeTrackerType);
+
+    // Publish the resolved config, which an env hook may have mutated, so the next phase
+    // builds its field-catalog cache key from the exact TrackerConfig the backend used.
+    cfgOut = cfg;
+    return activeTrackerType;
+}
+
+void AppController::MaybeInstallGitHubFixtureFactory(const std::string& activeTracker) {
+    // Slice 1 of docs/plans/shipped/autonomous-debugging-no-creds.md — env-hook to
+    // swap the default tracker factory for a fixture-backed GitHub backend
+    // when SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=<path> is set AND the active
+    // tracker is GitHub. Keeps the no-credentials debug loop able to drive
+    // scenarios against a deterministic ticket set without consulting the PAT.
+    if (backendFactory_) {
+        return;
+    }
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform read-only; _dupenv_s is MSVC-only
+#endif
+    const char* githubFixture = std::getenv("SMATCHET_TEST_GITHUB_BACKEND_FIXTURE");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    if (!githubFixture) {
+        return;
+    }
+    const std::string fixturePath(githubFixture);
+    if (fixturePath.empty()) {
+        return;
+    }
+    const std::string lowerActive = ToLowerAsciiCopy(activeTracker);
+    if (lowerActive != "github") {
+        LOG_WARN("AppController: SMATCHET_TEST_GITHUB_BACKEND_FIXTURE set but active "
+                 "tracker is '%s', not 'GitHub' — ignoring fixture override.",
+                 activeTracker.c_str());
+        return;
+    }
+    LOG_INFO("AppController: SMATCHET_TEST_GITHUB_BACKEND_FIXTURE=%s — installing "
+             "fixture-backed GitHub factory (no HTTP, no PAT lookup).",
+             fixturePath.c_str());
+    class FixtureGitHubFactory : public ITrackerBackendFactory {
+      public:
+        explicit FixtureGitHubFactory(const std::string& path) : path_(path) {}
+        std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
+            const std::string lower = ToLowerAsciiCopy(trackerType);
+            if (lower == "github") {
+                return std::make_unique<smatchet::github::GitHubFixtureBackend>(path_, std::string(), std::string(),
+                                                                                /*includePullRequests=*/true);
+            }
+            // Non-GitHub backends fall through to the default factory shape.
+            DefaultTrackerBackendFactory fallback;
+            return fallback.Create(trackerType);
+        }
+
+      private:
+        std::string path_;
+    };
+    backendFactory_ = std::make_unique<FixtureGitHubFactory>(fixturePath);
+}
+
+void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType) {
     // PR 5 of docs/plans/shipped/remove-global-project-key.md: one-shot legacy-project sweeps.
     // Drain legacy global project state into per-entity carriers (offline-queue payloads,
     // Plane view query JSON). Each sweep is guarded by its own `cache_meta` flag so it runs
     // exactly once per database file; subsequent launches are no-ops.
     if (offlineQueue_) {
         try {
-            // PR 7: legacy carriers removed from TrackerConfig. Pass empty values; the sweep's
+            // Legacy carriers were removed from TrackerConfig. Pass empty values; the sweep's
             // `legacy_project_swept_v1` cache_meta marker short-circuits on already-migrated installs.
             offlineQueue_->RunLegacyProjectSweep(std::string(), std::string(), activeTrackerType);
         } catch (const std::exception& ex) {
@@ -1339,7 +1356,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
         try {
             static const std::string kPlaneSweepFlag = "legacy_plane_view_swept_v1";
             if (!Cache->HasCacheMetaFlag(kPlaneSweepFlag)) {
-                // PR 7: legacy `plane_project_id` carrier removed. Walk the views once to log
+                // The legacy `plane_project_id` carrier was removed. Walk the views once to log
                 // any that still lack project scope, then set the marker so we never look again.
                 PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
                 const std::string backendKey = ConfigManager::NormalizeViewsBackendKey("Plane");
@@ -1360,11 +1377,6 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
             LOG_ERROR("AppController::Initialize legacy Plane-view sweep failed: %s", ex.what());
         }
     }
-
-    // Publish the resolved config, which an env hook may have mutated, so the next phase
-    // builds its field-catalog cache key from the exact TrackerConfig the backend used.
-    cfgOut = cfg;
-    return activeTrackerType;
 }
 
 void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType) {
@@ -1404,47 +1416,12 @@ void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string
     RefreshLocalData();
 
     {
-
         std::vector<TrackerField> snapFields;
-
         std::vector<TrackerComponent> snapComponents;
-
         std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
-
         std::string snapErr;
 
-        // Resolve the active view's project from its JQL so the startup load hits the
-        // project-scoped snapshot (which carries Phase-3 component options). Falls back to the
-        // unscoped ("") key when no project resolves (filter-id / cross-project / non-`project=`
-        // JQL). Mirrors the grid's StartFieldCatalogFetchAsync scoping so the two key spaces agree.
-        std::string projectKeyForCache;
-        if (Backend) {
-            try {
-                const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
-                const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(activeTrackerType);
-                const auto bucketIt = disk.Backends.find(backendKey);
-                if (bucketIt != disk.Backends.end()) {
-                    const ViewWorkspaceState& bucket = bucketIt->second;
-                    const ViewDefinition* activeView = nullptr;
-                    for (const ViewDefinition& view : bucket.Views) {
-                        if (view.Id == bucket.ActiveViewId) {
-                            activeView = &view;
-                            break;
-                        }
-                    }
-                    if (activeView == nullptr && !bucket.Views.empty()) {
-                        activeView = &bucket.Views.front();
-                    }
-                    if (activeView != nullptr) {
-                        projectKeyForCache = Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
-                    }
-                }
-            } catch (const std::exception& ex) {
-                LOG_WARN("AppController::Initialize: active-view project resolve for catalog snapshot failed: %s",
-                         ex.what());
-                projectKeyForCache.clear();
-            }
-        }
+        std::string projectKeyForCache = ResolveActiveViewProjectKeyForCatalog(activeTrackerType);
         std::string cacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, projectKeyForCache);
         if (!projectKeyForCache.empty() && !FieldCatalogCache::TryLoadFieldCatalogSnapshot(
                                                cacheKey, snapFields, snapComponents, snapIssueTypeMeta, snapErr)) {
@@ -1456,55 +1433,79 @@ void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string
         }
 
         if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
-
                                                            snapErr)) {
-
-            AvailableFields = std::move(snapFields);
-
-            AvailableComponents = std::move(snapComponents);
-
-            AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-
-            fieldCatalogEverLoaded_ = true;
-
-            LastTrackerFieldCatalogError.clear();
-
-            if (activeTrackerType == "Plane") {
-
-                LastTrackerFieldCatalogWarning =
-
-                    "Working offline: Plane field catalog loaded from local snapshot until a live refresh succeeds.";
-
-            } else {
-
-                LastTrackerFieldCatalogWarning =
-
-                    "Working offline: tracker field catalog loaded from local snapshot until a live refresh succeeds.";
-            }
-
-            if (activeTrackerType == "Jira") {
-
-                for (auto& field : AvailableFields) {
-
-                    if (field.Id == "comment" || field.Id == "timespent" ||
-                        field.Id == "aggregatetimeoriginalestimate" ||
-
-                        field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
-
-                        field.ReadOnly = true;
-                    }
-                }
-
-                EnsureCatalogHistoryField();
-            }
-
-            TrackerFieldCatalogRevision.fetch_add(1);
-
-            LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)",
-
-                     AvailableFields.size());
+            ApplyStartupFieldCatalogSnapshot(std::move(snapFields), std::move(snapComponents),
+                                             std::move(snapIssueTypeMeta), activeTrackerType);
         }
     }
+}
+
+std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::string& activeTrackerType) const {
+    // Resolve the active view's project from its JQL so the startup load hits the
+    // project-scoped snapshot (which carries Phase-3 component options). Falls back to the
+    // unscoped ("") key when no project resolves (filter-id / cross-project / non-`project=`
+    // JQL). Mirrors the grid's StartFieldCatalogFetchAsync scoping so the two key spaces agree.
+    std::string projectKeyForCache;
+    if (!Backend) {
+        return projectKeyForCache;
+    }
+    try {
+        const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+        const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(activeTrackerType);
+        const auto bucketIt = disk.Backends.find(backendKey);
+        if (bucketIt != disk.Backends.end()) {
+            const ViewWorkspaceState& bucket = bucketIt->second;
+            const ViewDefinition* activeView = nullptr;
+            for (const ViewDefinition& view : bucket.Views) {
+                if (view.Id == bucket.ActiveViewId) {
+                    activeView = &view;
+                    break;
+                }
+            }
+            if (activeView == nullptr && !bucket.Views.empty()) {
+                activeView = &bucket.Views.front();
+            }
+            if (activeView != nullptr) {
+                projectKeyForCache = Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController::Initialize: active-view project resolve for catalog snapshot failed: %s", ex.what());
+        projectKeyForCache.clear();
+    }
+    return projectKeyForCache;
+}
+
+void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
+                                                     std::vector<TrackerComponent> snapComponents,
+                                                     std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
+                                                     const std::string& activeTrackerType) {
+    AvailableFields = std::move(snapFields);
+    AvailableComponents = std::move(snapComponents);
+    AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+    fieldCatalogEverLoaded_ = true;
+    LastTrackerFieldCatalogError.clear();
+
+    if (activeTrackerType == "Plane") {
+        LastTrackerFieldCatalogWarning =
+            "Working offline: Plane field catalog loaded from local snapshot until a live refresh succeeds.";
+    } else {
+        LastTrackerFieldCatalogWarning =
+            "Working offline: tracker field catalog loaded from local snapshot until a live refresh succeeds.";
+    }
+
+    if (activeTrackerType == "Jira") {
+        for (auto& field : AvailableFields) {
+            if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
+                field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
+                field.ReadOnly = true;
+            }
+        }
+        EnsureCatalogHistoryField();
+    }
+
+    TrackerFieldCatalogRevision.fetch_add(1);
+    LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)", AvailableFields.size());
 }
 
 void AppController::InitPlugins(const std::string& activeTrackerType) {

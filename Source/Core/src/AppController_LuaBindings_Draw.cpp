@@ -302,126 +302,161 @@ void InvokeLuaCallbackSandboxed3(sol::state& lua, sol::protected_function& fn, c
     }
 }
 
+// Shared mutable state threaded through one replay pass. `pushed` tracks the running
+// style-colour stack depth so the orchestrator can unwind any unbalanced colours at the
+// end; `fired` accumulates the LuaReplayCallbackKind bitset returned to the caller.
+struct ReplayCtx {
+    AppController& app;
+    sol::state& lua;
+    const std::string& cbArg1;
+    const std::string& cbArg2;
+    bool isReadOnly;
+    int pushed;
+    std::uint8_t fired;
+};
+
+// on_deactivated / on_deactivated_after_edit fire identically for Button and InputText
+// against the same just-submitted ImGui item. Centralised so both handlers stay in lockstep.
+void ReplayFireDeactivationCallbacks(ReplayCtx& ctx, AppController::ImCmd& c) {
+    using K = LuaReplayCallbackKind;
+    if (c.onDeactivated && ImGui::IsItemDeactivated()) {
+        InvokeLuaCallbackSandboxed(ctx.lua, c.onDeactivated, ctx.cbArg1, ctx.cbArg2);
+        ctx.fired |= static_cast<std::uint8_t>(K::Deactivated);
+    }
+    if (c.onDeactivatedAfterEdit && ImGui::IsItemDeactivatedAfterEdit()) {
+        InvokeLuaCallbackSandboxed(ctx.lua, c.onDeactivatedAfterEdit, ctx.cbArg1, ctx.cbArg2);
+        ctx.fired |= static_cast<std::uint8_t>(K::Deactivated);
+    }
+}
+
+void ReplayProgressBar(const AppController::ImCmd& c) {
+    ImVec2 sz(c.f2, c.f3);
+    if (c.f2 < 0.0f)
+        sz.x = ImGui::GetContentRegionAvail().x;
+    if (c.f3 <= 0.0f)
+        sz.y = ImGui::GetFrameHeight();
+    ImGui::ProgressBar(c.f1, sz, c.str.empty() ? nullptr : c.str.c_str());
+}
+
+void ReplayPushColor(ReplayCtx& ctx, const AppController::ImCmd& c) {
+    if (c.i1 < 0 || c.i1 >= ImGuiCol_COUNT)
+        return;
+    ImGui::PushStyleColor(c.i1, ImVec4(c.f1, c.f2, c.f3, c.f4));
+    ++ctx.pushed;
+}
+
+void ReplayPopColor(ReplayCtx& ctx, const AppController::ImCmd& c) {
+    int n = c.i1 > 0 ? c.i1 : 1;
+    if (n > ctx.pushed)
+        n = ctx.pushed;
+    if (n > 0) {
+        ImGui::PopStyleColor(n);
+        ctx.pushed -= n;
+    }
+}
+
+void ReplayButton(ReplayCtx& ctx, AppController::ImCmd& c) {
+    using K = LuaReplayCallbackKind;
+    // Read-only cells get visually disabled + no callback firing. Wrap the
+    // call in BeginDisabled so click events are suppressed at the ImGui layer
+    // (no input routing, no hover-active styling) and we don't have to
+    // double-check IsItemDeactivated* — the disabled item still reports
+    // deactivation when focus moves on, so explicit isReadOnly guards remain.
+    if (ctx.isReadOnly)
+        ImGui::BeginDisabled();
+    const bool clicked = ImGui::Button(c.str.c_str());
+    if (ctx.isReadOnly)
+        ImGui::EndDisabled();
+    if (!ctx.isReadOnly) {
+        if (clicked && c.callback) {
+            InvokeLuaCallbackSandboxed(ctx.lua, c.callback, ctx.cbArg1, ctx.cbArg2);
+            ctx.fired |= static_cast<std::uint8_t>(K::Click);
+        }
+        ReplayFireDeactivationCallbacks(ctx, c);
+    }
+}
+
+void ReplayInputText(ReplayCtx& ctx, AppController::ImCmd& c) {
+    using K = LuaReplayCallbackKind;
+    if (c.textBuf.empty())
+        return;
+    // Encode read_only into the ImGui call directly (input is rejected at the
+    // text widget layer, no need to skip-render). Callbacks are still gated:
+    // a ReadOnly InputText never fires IsItemDeactivatedAfterEdit-with-commit
+    // in practice, but the explicit guard keeps the invariant tight even if
+    // a future ImGui revision changes that behaviour.
+    const ImGuiInputTextFlags flags = ctx.isReadOnly ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None;
+    ImGui::InputText(c.str.c_str(), c.textBuf.data(), c.textBuf.size(), flags);
+    if (!ctx.isReadOnly) {
+        if (ImGui::IsItemDeactivatedAfterEdit() && c.callback) {
+            InvokeLuaCallbackSandboxed3(ctx.lua, c.callback, ctx.cbArg1, ctx.cbArg2, std::string(c.textBuf.data()));
+            ctx.fired |= static_cast<std::uint8_t>(K::Commit);
+        }
+        ReplayFireDeactivationCallbacks(ctx, c);
+    }
+}
+
+// Dispatch one recorded command to ImGui. Kept as a thin per-Op switch so the orchestrator
+// loop stays well under the branch cap; each multi-branch widget delegates to a handler.
+void ReplayOne(ReplayCtx& ctx, AppController::ImCmd& c) {
+    using Op = AppController::ImCmd::Op;
+    switch (c.op) {
+    case Op::Text:
+        ImGui::Text("%s", c.str.c_str());
+        break;
+    case Op::TextUnformatted:
+        ImGui::TextUnformatted(c.str.c_str());
+        break;
+    case Op::Image:
+        SmatchetFieldIconRender::DrawImagePathOrUrl(ctx.app, c.str, c.f1, c.f2);
+        break;
+    case Op::ProgressBar:
+        ReplayProgressBar(c);
+        break;
+    case Op::SameLine:
+        ImGui::SameLine(c.f1, c.f2);
+        break;
+    case Op::Separator:
+        ImGui::Separator();
+        break;
+    case Op::Dummy:
+        ImGui::Dummy(ImVec2(c.f1, c.f2));
+        break;
+    case Op::PushColor:
+        ReplayPushColor(ctx, c);
+        break;
+    case Op::PopColor:
+        ReplayPopColor(ctx, c);
+        break;
+    case Op::SetTooltip:
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", c.str.c_str());
+        break;
+    case Op::Button:
+        ReplayButton(ctx, c);
+        break;
+    case Op::InputText:
+        ReplayInputText(ctx, c);
+        break;
+    }
+}
+
 std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, AppController& app, sol::state& lua,
                            const std::string& cbArg1, const std::string& cbArg2, bool isReadOnly) {
     SMATCHET_UI_PERF_SCOPE("LuaDrawList::Replay");
-    int pushed = 0;
-    std::uint8_t fired = 0;
-    using K = LuaReplayCallbackKind;
-    using Op = AppController::ImCmd::Op;
+    ReplayCtx ctx{app, lua, cbArg1, cbArg2, isReadOnly, 0, 0};
     try {
         for (AppController::ImCmd& c : cmds) {
-            switch (c.op) {
-            case Op::Text:
-                ImGui::Text("%s", c.str.c_str());
-                break;
-            case Op::TextUnformatted:
-                ImGui::TextUnformatted(c.str.c_str());
-                break;
-            case Op::Image:
-                SmatchetFieldIconRender::DrawImagePathOrUrl(app, c.str, c.f1, c.f2);
-                break;
-            case Op::ProgressBar: {
-                ImVec2 sz(c.f2, c.f3);
-                if (c.f2 < 0.0f)
-                    sz.x = ImGui::GetContentRegionAvail().x;
-                if (c.f3 <= 0.0f)
-                    sz.y = ImGui::GetFrameHeight();
-                ImGui::ProgressBar(c.f1, sz, c.str.empty() ? nullptr : c.str.c_str());
-                break;
-            }
-            case Op::SameLine:
-                ImGui::SameLine(c.f1, c.f2);
-                break;
-            case Op::Separator:
-                ImGui::Separator();
-                break;
-            case Op::Dummy:
-                ImGui::Dummy(ImVec2(c.f1, c.f2));
-                break;
-            case Op::PushColor:
-                if (c.i1 < 0 || c.i1 >= ImGuiCol_COUNT)
-                    break;
-                ImGui::PushStyleColor(c.i1, ImVec4(c.f1, c.f2, c.f3, c.f4));
-                ++pushed;
-                break;
-            case Op::PopColor: {
-                int n = c.i1 > 0 ? c.i1 : 1;
-                if (n > pushed)
-                    n = pushed;
-                if (n > 0) {
-                    ImGui::PopStyleColor(n);
-                    pushed -= n;
-                }
-                break;
-            }
-            case Op::SetTooltip:
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", c.str.c_str());
-                break;
-            case Op::Button: {
-                // Read-only cells get visually disabled + no callback firing. Wrap the
-                // call in BeginDisabled so click events are suppressed at the ImGui layer
-                // (no input routing, no hover-active styling) and we don't have to
-                // double-check IsItemDeactivated* — the disabled item still reports
-                // deactivation when focus moves on, so explicit isReadOnly guards remain.
-                if (isReadOnly)
-                    ImGui::BeginDisabled();
-                const bool clicked = ImGui::Button(c.str.c_str());
-                if (isReadOnly)
-                    ImGui::EndDisabled();
-                if (!isReadOnly) {
-                    if (clicked && c.callback) {
-                        InvokeLuaCallbackSandboxed(lua, c.callback, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Click);
-                    }
-                    if (c.onDeactivated && ImGui::IsItemDeactivated()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivated, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
-                    }
-                    if (c.onDeactivatedAfterEdit && ImGui::IsItemDeactivatedAfterEdit()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivatedAfterEdit, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
-                    }
-                }
-                break;
-            }
-            case Op::InputText: {
-                if (c.textBuf.empty())
-                    break;
-                // Encode read_only into the ImGui call directly (input is rejected at the
-                // text widget layer, no need to skip-render). Callbacks are still gated:
-                // a ReadOnly InputText never fires IsItemDeactivatedAfterEdit-with-commit
-                // in practice, but the explicit guard keeps the invariant tight even if
-                // a future ImGui revision changes that behaviour.
-                const ImGuiInputTextFlags flags = isReadOnly ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None;
-                ImGui::InputText(c.str.c_str(), c.textBuf.data(), c.textBuf.size(), flags);
-                if (!isReadOnly) {
-                    if (ImGui::IsItemDeactivatedAfterEdit() && c.callback) {
-                        InvokeLuaCallbackSandboxed3(lua, c.callback, cbArg1, cbArg2, std::string(c.textBuf.data()));
-                        fired |= static_cast<std::uint8_t>(K::Commit);
-                    }
-                    if (c.onDeactivated && ImGui::IsItemDeactivated()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivated, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
-                    }
-                    if (c.onDeactivatedAfterEdit && ImGui::IsItemDeactivatedAfterEdit()) {
-                        InvokeLuaCallbackSandboxed(lua, c.onDeactivatedAfterEdit, cbArg1, cbArg2);
-                        fired |= static_cast<std::uint8_t>(K::Deactivated);
-                    }
-                }
-                break;
-            }
-            }
+            ReplayOne(ctx, c);
         }
     } catch (const std::exception& ex) {
         LOG_WARN("ReplayCmdList: C++ exception aborted replay: %s", ex.what());
     } catch (...) {
         LOG_WARN("ReplayCmdList: unknown C++ exception aborted replay");
     }
-    if (pushed > 0)
-        ImGui::PopStyleColor(pushed);
-    return fired;
+    if (ctx.pushed > 0)
+        ImGui::PopStyleColor(ctx.pushed);
+    return ctx.fired;
 }
 
 } // namespace
