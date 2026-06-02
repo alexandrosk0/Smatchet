@@ -68,7 +68,7 @@ Three waves. Work inside each wave is parallel-eligible (disjoint write sets); w
 
 ### Slice 1 — Pure GitHub issue mapping + deterministic backend (mirrors deterministic-jira-test-backend slice 1-3)
 
-**Wave A.** Per `docs/plans/active/deterministic-jira-test-backend.md`, repeat for GitHub:
+**Wave A.** Per `docs/plans/shipped/deterministic-jira-test-backend.md`, repeat for GitHub:
 
 - Extract pure helpers from `Source_Core/src/GitHubIssueSearch.cpp` (~22 KB, currently named anonymous-namespace functions) into `Source_Core/{include,src}/GitHubIssueMappingPure.{h,cpp}`. Targets — JSON-to-`CachedTicket` mapper, `BuildGitHubHeaders`, the query builder side that doesn't touch HTTP.
 - Add `tests/support/FakeGitHubFixture.h` — header-only, loads `tests/fixtures/github/<scenario>.json` (issue search response shape) and scripts `FakeTrackerClient("GitHub")` instances with the deserialised tickets.

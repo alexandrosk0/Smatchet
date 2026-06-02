@@ -1,5 +1,5 @@
 // jira_deterministic_backend.test.cpp — bucket-E tests for the deterministic Jira
-// test backend (Slice 4 of docs/plans/active/deterministic-jira-test-backend.md).
+// test backend (Slice 4 of docs/plans/shipped/deterministic-jira-test-backend.md).
 //
 // All tests require the app to have been booted with a fixture-backed factory via
 // SMATCHET_TEST_JIRA_BACKEND_FIXTURE (Slice 3 hook in StandaloneAppBootstrap.cpp).
