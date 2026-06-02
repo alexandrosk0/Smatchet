@@ -204,6 +204,10 @@ add_executable(SmatchetTests
     # (doc-order range walk + reverse normalisation + block-boundary
     # newline insertion). Constructs a synthetic Context directly so no
     # ImGui context is required.
+    # funcsize decomposition — pure list-navigation / completion-resolution
+    # helpers split out of TrackerQueryAcp_InputTextCallback (no ImGui dep).
+    Core/AutocompleteListNav.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetAutocompleteUi_detail.cpp"
     Core/SelectableTextRun.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SelectableTextRun.cpp"
     # funcsize decomposition — pure geometry / selection-math helpers split out

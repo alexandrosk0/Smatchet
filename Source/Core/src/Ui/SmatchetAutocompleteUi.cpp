@@ -1,5 +1,7 @@
 #include "SmatchetAutocompleteUi.h"
 
+#include "SmatchetAutocompleteUi_detail.h"
+
 #include "AppController.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
@@ -152,24 +154,13 @@ int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
             }
             const int n = static_cast<int>(ud->suggestBuild->Items.size());
             if (d != nullptr) {
-                if (n > 0) {
-                    if (data->EventKey == ImGuiKey_DownArrow) {
-                        if (d->jqlAcpListSelected < 0) {
-                            d->jqlAcpListSelected = 0;
-                        } else {
-                            d->jqlAcpListSelected = (std::min)(n - 1, d->jqlAcpListSelected + 1);
-                        }
-                        d->jqlAcpScrollToSelected = true;
-                    } else if (data->EventKey == ImGuiKey_UpArrow) {
-                        if (d->jqlAcpListSelected >= 0) {
-                            d->jqlAcpListSelected = (std::max)(0, d->jqlAcpListSelected - 1);
-                            d->jqlAcpScrollToSelected = true;
-                        }
-                    } else if (d->jqlAcpListSelected >= 0) {
-                        d->jqlAcpListSelected = (std::min)(d->jqlAcpListSelected, n - 1);
-                    }
-                } else {
-                    d->jqlAcpListSelected = -1;
+                const bool isDown = data->EventKey == ImGuiKey_DownArrow;
+                const bool isUp = data->EventKey == ImGuiKey_UpArrow;
+                const SmatchetAutocompleteDetail::AcpHistoryNav nav =
+                    SmatchetAutocompleteDetail::ResolveAcpHistoryNav(n, d->jqlAcpListSelected, isDown, isUp);
+                d->jqlAcpListSelected = nav.selected;
+                if (nav.scrollToSelected) {
+                    d->jqlAcpScrollToSelected = true;
                 }
             }
         }
@@ -219,20 +210,14 @@ int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
             const bool enterDown =
                 ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
             const bool tabDown = ImGui::IsKeyPressed(ImGuiKey_Tab, false);
-            if (n > 0) {
-                if (d->jqlAcpListSelected >= 0) {
-                    d->jqlAcpListSelected = (std::min)(d->jqlAcpListSelected, n - 1);
-                }
-                if ((enterDown || tabDown) && d->jqlAcpListSelected >= 0) {
-                    TrackerQueryAcp_QueueApplyReplacement(*d, *ud->suggestBuild, d->jqlAcpListSelected, false);
-                } else if (enterDown) {
-                    d->jqlWantsApplyFromEnter = true;
-                }
-            } else {
-                d->jqlAcpListSelected = -1;
-                if (enterDown) {
-                    d->jqlWantsApplyFromEnter = true;
-                }
+            const SmatchetAutocompleteDetail::AcpCommitDecision commit =
+                SmatchetAutocompleteDetail::ResolveAcpCommit(n, d->jqlAcpListSelected, enterDown, tabDown);
+            d->jqlAcpListSelected = commit.selected;
+            if (commit.queueApply) {
+                TrackerQueryAcp_QueueApplyReplacement(*d, *ud->suggestBuild, d->jqlAcpListSelected, false);
+            }
+            if (commit.wantsApplyFromEnter) {
+                d->jqlWantsApplyFromEnter = true;
             }
             d->jqlAcpLastCursor = data->CursorPos;
             d->jqlAcpLastSelectionStart = data->SelectionStart;
