@@ -59,13 +59,75 @@ clusters into named sub-helpers or table dispatch**, not by line-splitting.
 Functions sharing a `.cpp` (e.g. the four `TicketFieldEditor` editors, the three `MarkdownConvert` emitters)
 ship in **one** PR to respect the CodeRabbit review quota; a single 945-line monolith
 (`AnnotateAnalysisUi::DrawContent`) is its own PR. Each PR carries the full do-not-pause checklist + merge
-gates + verification bucket for its risk class. Target ≈ **32 PRs** across 5 phases.
+gates + verification bucket for its risk class. Target ≈ **32 decomposition PRs** across Phases 1-5, **plus
+≈ 5-6 Phase-0 coverage PRs** (pure `tests/ui/` additions, run in parallel with Phases 1-2). The Phase-0
+prerequisite is what makes the whole program runnable end-to-end without a human pause — see § Autonomy
+assessment.
+
+## Autonomy assessment (can this be applied whole autonomously?)
+
+**As a bare decomposition plan — no.** Verified against the live tree (2026-06-02): the
+**visual-validation exception** ([`ship-loops.md`](../../docs/agent-rules/ship-loops.md) § Exceptions 5)
+fires — and **pauses the ship-loop for a human visual verdict** — on any PR that touches
+`Source/Core/src/Smatchet*Ui*.cpp` *and* whose changed widget has **no bucket-C/E coverage**. A coverage
+sweep of `tests/ui/` shows **zero** bucket-E tests for ~16 of the Phase-5 targets (OfflineQueue, MainMenu,
+Templates-prefs, BulkImport, Toolbar, AttachmentPreview, BugReport, Audit, GridHeader, NewIssueDraft,
+ProjectPicker, Autocomplete, McpServer, LogWindow, Whisper-prefs tab, LuaConsole `OnDraw`) and the Phase-4
+field editors. Each of those PRs would halt mid-loop. The **golden-image-approval contract**
+([`golden-image-approval.md`](../../docs/agent-rules/golden-image-approval.md)) is a second mandated
+user-touch for any checked-in pixel golden.
+
+**With Phase 0 below — yes, end-to-end autonomous.** The exception's trigger is "touches visual path **AND
+no** bucket-C/E coverage." Establishing coverage **first** makes the second condition false, so the loop
+**continues** per the exception's own out-of-scope clause ("touches visual paths AND has bucket-C/E coverage
+— coverage is the gate; ship-loop continues"). The coverage we add is **interaction-assertion bucket-E**
+(ImGui Test Engine asserts a click toggles state / a field round-trips), **not** a checked-in pixel golden —
+so it satisfies the coverage clause **without** triggering the golden-approval pause. Net result:
+
+| Phase | Autonomous as-is? | Why |
+|---|---|---|
+| 1 (pure-logic) | ✅ yes | off the render thread; bucket-A only; no visual path |
+| 2 (registrars / controllers / boot) | ✅ yes | non-UI; ASan + build gate are headless |
+| 0 (coverage bootstrap) | ✅ yes | writing interaction bucket-E tests needs no golden approval |
+| 3 (plugins) | ⚠️ C4 (`LuaConsole::OnDraw`) needs Phase 0 first | the two MCP route PRs are non-visual → autonomous |
+| 4 (editors / markdown render) | ⚠️ needs Phase 0 first | positional ImGui on uncovered widgets |
+| 5 (26 window draws) | ⚠️ needs Phase 0 first | the whole reason Phase 0 exists |
+
+**The one residual non-autonomous risk**: a Phase-0 interaction test can't assert *pixel* fidelity, so a
+decomposition that preserves behaviour but subtly shifts layout (a stray `SameLine`, a dropped
+`PushID`) passes bucket-E yet looks wrong. Mitigation: each Phase-4/5 PR additionally asserts the
+**positional-ImGui balance invariant** (Begin/End, BeginTable/EndTable, BeginChild/EndChild, PushID/PopID
+counts byte-identical to base — a headless `grep`-countable check, no human needed; the canary #632 used
+exactly this). Where genuine pixel-fidelity matters (syntax coloring, markdown render — D5/D6), a bucket-C
+golden is used and **that single `approve-golden` step is the sole sanctioned user-touch**, flagged in
+§ Verification. Everything else runs hands-off.
 
 ## Files to modify
 
 > Paths + line numbers are locators from the 2026-06-02 `--list` sweep; they drift — **cross-check the live
 > `--list` output before starting each batch** (parent plan's standing correction: verify against the audit,
 > not the named symbol). Every row decomposes to ≤ 120 (non-UI) / ≤ 200 (UI) lines **and** ≤ 30 branches.
+
+### Phase 0 — Coverage bootstrap (prerequisite for Phases 3-C4/4/5; `test-author`)
+
+**Gate: no Phase-4/5 (or C4) decomposition PR may open until its target window has an interaction-assertion
+bucket-E test on `develop`.** These PRs add **no product-code change** — pure `tests/ui/*.test.cpp` additions
+— so they're independently mergeable, low-risk, and run while Phases 1-2 proceed in parallel. Each test
+drives the *current* (pre-decomposition) widget and asserts behaviour (a control toggles state, a field
+round-trips, a row selects), captured against today's tree. **No checked-in pixel golden** → no
+`approve-golden` pause. Batch by owning window (one PR per ~3-4 windows to respect the CR quota):
+
+P0. `tests/ui/` — new interaction tests for every uncovered target: `AnnotateAnalysisUi::DrawContent`,
+`DrawWhisperPreferencesTab`, `SmatchetUI::Draw` (main window smoke + dock), `DrawUnifiedOfflineQueuesPanel`,
+`DrawTemplatePreferencesTabs`, `DrawLocalAndAppearancePreferencesTabs`, `drawMainMenuBar`,
+`RenderNewIssueDraftRow`, `DrawGridHeaderToolbar`, `drawPreferencesWindow`, `drawBulkImportWindow`,
+`RenderEditor` (toolbar), `drawAttachmentPreviewWindow`, `SmatchetBugReportUi_Draw`, `drawAuditWindow`,
+`SmatchetDrawMcpServerPanel`, `drawLogWindow`, `SmatchetProjectPicker::Draw`,
+`TrackerQueryAcp_InputTextCallback`, the `TicketFieldEditor` cell editors (D1-D3), `LuaConsolePlugin::OnDraw`.
+*Already-covered (skip): AI assistant panel + prefs (`ai_assistant_*`), views columns
+(`views_columns_reorder`), syntax coloring (`code-syntax-coloring` golden + `callstack_tooltip_hover`),
+markdown tooltip (`description_tooltip_markdown_render`), sync visible-cue (`sync_stall_visible_cue`).*
+Cross-check each against `tests/ui/ui_tests_registry.cpp` before writing — coverage may have grown.
 
 ### Phase 1 — Pure-logic, bucket-A testable (lowest risk; `tracker-backend` + core)
 
@@ -158,7 +220,7 @@ gates + verification bucket for its risk class. Target ≈ **32 PRs** across 5 p
 
 Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`. Applied **per PR**, not plan-wide.
 
-1. **PR-fast CI** — each PR declares the scenario for its changed window/path (map in `agents/core/perf-gatekeeper.md`): e.g. PR E4 → `app-main-window-render`, E3 → `views-dashboard-render`, B10/E5 → the offline-queue scenario, A6 → `bulk-issue-fetch`. Pure-logic Phase-1 PRs with no per-frame path → declare `N/A — pure-logic, off the render thread` in the PR body.
+1. **PR-fast CI** — declare the scenario per the **actual** curated map in `agents/core/perf-gatekeeper.md` § Curated diff → scenario map (verified 2026-06-02 — the map is sparse; do **not** invent scenario names). Concretely: `SmatchetAiAssistantUi.cpp` / `MarkdownPreviewRender.cpp` (PR E13, D5) → `ai-chat-history-render` + `idle`; all other `Source/Core/src/Ui/*` draws with no specific row → `idle` (the catch-all render scenario). Pure-logic Phase-1/2 PRs and non-UI controllers → `N/A — pure-logic / off the render thread` in the PR body. If a touched file has **no** map row, the gate flags it to `test-author` for scenario coverage (per perf-gatekeeper.md) rather than fabricating a name. Several candidate scenarios are **bucket-C-only** (don't emit `rows[]`) — do not rely on them for a numeric delta.
 2. **Pillar 2 static scanner** — N/A across all PRs; no new sync I/O reachable from `ImGui::*` (pure layout/dispatch reorg).
 3. **Dispatcher drain** — N/A; `MainThreadDispatcher::Drain()` not touched.
 4. **Visible-cue bucket-E harness** — N/A; no new > 100 ms sync-stall path introduced.
@@ -170,7 +232,8 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`. Applied **per PR**, n
 
 ## Risks / non-goals
 
-- **Risk (the headline): positional-ImGui regression in the 26-window Phase-5 sweep.** This is exactly the risk the parent plan avoided by keeping UI ride-along. Mitigation: each Phase-5 PR runs bucket-C screenshot diff + bucket-E interaction test against the **pre-refactor golden**; any pixel/interaction delta = revert. The canary (#632) proves this is tractable but it is the dominant cost-and-risk centre of the plan — sequenced last, one window per PR, never fanned out blindly.
+- **Risk (the headline): positional-ImGui regression in the 26-window Phase-5 sweep.** Exactly the risk the parent plan avoided by keeping UI ride-along. Mitigation: Phase 0 establishes interaction bucket-E coverage **first** (also the autonomy enabler — § Autonomy assessment); each Phase-5 PR keeps that test green + asserts the positional-ImGui balance invariant; any delta = revert. The canary (#632) proves this is tractable but it is the dominant cost-and-risk centre — sequenced last, one window per PR, never fanned out blindly.
+- **Risk: autonomy depends entirely on Phase 0 landing before Phases 4/5.** If a decomposition PR opens against an uncovered window, the ship-loop **pauses** on the visual-validation exception (verified live — ~16 windows uncovered today). Mitigation: the Phase-0 gate is a hard prerequisite, enforced per-PR by the "no decomposition without prior coverage" rule in § Files Phase 0; Phase 0 runs in parallel with Phases 1-2 so it's not on the critical path.
 - **Risk: churn vs in-flight UI feature work.** A 26-window sweep collides with any concurrent UI feature branch. Mitigation: serialize Phase 5 (don't parallel-dispatch all UI PRs); merge `develop` into each branch before merge (parent plan's CI-shallow-clone caveat — `tooling.md` P1); pause a window's decomposition if a feature PR is open on the same file.
 - **Risk: branch-cap functions under the line cap need a different move.** ~15 functions (e.g. `ResolveRenderPlan` 84L/36br, `TokenToVirtualKey` 60L/33br) are only over the **branch** cap. Line-splitting won't help; they need table/dispatch extraction or sub-helper grouping of branch clusters. Mitigation: called out per-row in § Files.
 - **Risk: branchy monoliths need 2nd/3rd extraction passes** (parent plan confirmed 3× on `FetchFieldCatalog`, the canary, `RegisterJsonRpcRoutes`). Expect it on every > 60-branch target (`DrawContent` 196br, `Draw` 147br, `drawViewsDashboardWindow` 146br, `DrawWhisperPreferencesTab` 135br, `DrawUnifiedOfflineQueuesPanel` 130br, `RenderNewIssueDraftRow` 129br). Budget for it.
@@ -184,11 +247,12 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`. Applied **per PR**, n
 Per `AGENTS.md` § Verification automation — zero manual steps where possible. **Per PR**, keyed to risk class:
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: Phase 1 (every Tracker parser/mapper/query fn + `CompactDateFormat`, `TicketGridModel`, `TokenToVirtualKey`, `ParseImageDimensions`) and Phase 4 Markdown (`EmitAdfBlock`/`EmitInlineText`/`ParseHtmlTag`) ship a test delta — one case per dispatch-table entry, goldens captured pre-refactor (mirrors `MarkdownConvert.test.cpp` #639, `BuildValue` #633). PR B9 covers `ValidateAiPrefs`.
-- **Bucket E (ImGui Test Engine, `ninja-ui-test-msvc`)**: every Phase-3-UI (C4), Phase-4 editor/render (D1–D7), and **all** Phase-5 PRs gated on a screenshot-diff test vs the pre-refactor golden. Windows without existing bucket-E coverage ship the refactor + a `docs/self-improvement/categories/test.md` entry naming the missing scenario (no silent residue).
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: coverage is established **up front in Phase 0** as interaction-assertion tests (no pixel golden → no `approve-golden` pause), which is what keeps Phases 3-C4/4/5 autonomous (see § Autonomy assessment). Each Phase-4/5 PR re-runs its window's bucket-E test (must stay green) **plus** the headless **positional-ImGui balance check** — `Begin/End`, `BeginTable/EndTable`, `BeginChild/EndChild`, `PushID/PopID` counts byte-identical to base (the canary #632 method; grep-countable, no human). No window ships a decomposition without prior Phase-0 coverage — that's the gate, not a deferral.
+- **Bucket C (screenshot golden) — the *only* sanctioned user-touch**: used solely where pixel fidelity is the actual contract (D5 `MarkdownPreviewRender`, D6 `CppSyntaxHighlight` — there's already a `code-syntax-coloring.png` golden). Those PRs hand the regenerated golden + launched exe to the user for an explicit `approve-golden` verdict per [`golden-image-approval.md`](../../docs/agent-rules/golden-image-approval.md). Everywhere else, prefer interaction bucket-E to keep the loop hands-off.
 - **Bash-driver scenario / sanitizer**: PR B5 (subprocess), B7 (`main`/boot), C2/C3 (Whisper threads), B10/E5 (sync Tick) run ASan/UBSan on their path + the matching scenario.
 - **Build gate**: every PR — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target). Asserts preprocessor-guard balance for plugin PRs.
 - **Gate self-check**: every PR runs `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` locally pre-push — confirms the targeted function dropped out of the oversized set and nothing new crossed.
-- **Manual residue**: any window lacking bucket-E coverage → refactor ships + `test.md` deferral entry with the named scenario. No silent residue.
+- **Manual residue**: by construction there is none — coverage is a *prerequisite* (Phase 0), not a deferral. The only sanctioned human step in the whole program is the bucket-C `approve-golden` verdict on D5/D6 (pixel-fidelity render paths); every other PR is hands-off. If Phase 0 surfaces a window that genuinely cannot be driven headlessly by ImGui Test Engine, *that* window's decomposition is deferred with a `docs/self-improvement/categories/test.md` entry — it does not silently ship an unverified visual change.
 
 ## Out of scope (flagged, not designed)
 
