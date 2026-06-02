@@ -232,7 +232,32 @@ static void SmatchetEnsureDirectoryExists(const std::string& path) {
     fs::create_directories(fs::path(path), ec);
 }
 
-int main(int argc, char** argv) {
+namespace smatchet {
+namespace standalone {
+namespace {
+
+// File-local boot state threaded from BootApplication() into RunFrameLoop().
+// Carries the GLFW window, the per-frame app/plugin handles (owned by bootCtx),
+// the persisted window-state cfg peeked from config, and the resolved log path.
+// Mirrors BootstrapContext's role but for the *visible* standalone boot, which
+// owns its ImGui/GLFW lifetime directly in main() (vs the bootstrap helpers'
+// hidden-window path). main() fills this via BootApplication, hands it to
+// RunFrameLoop, then tears down ImGui/GLFW after the loop returns.
+struct MainBootState {
+    BootstrapContext bootCtx;
+    TrackerConfig windowStateCfg;
+    int initialWindowW = 0;
+    int initialWindowH = 0;
+    bool restoreMaximized = false;
+    std::string logPath; // recorded for the crash reporter's next-launch log-tail
+};
+
+// Resolve the SMATCHET_USER_DATA override + wire the default file log sink.
+// Runs FIRST in main() — before the cmd/ephemeral short-circuits — so those
+// agent-facing paths inherit the same user-data dir + log file as the GUI boot
+// (order-preserving extraction of main()'s original prologue). Records the
+// resolved path into `boot.logPath` for the crash reporter's next-launch tail.
+static void WireUserDataAndLogSink(MainBootState& boot) {
     // SMATCHET_USER_DATA — override the writable user data directory.
     // Applied here, before ConfigManager::Load(), so the config file, SQLite DB,
     // views, recents, and instance.json all resolve under the overridden path.
@@ -266,7 +291,7 @@ int main(int argc, char** argv) {
     // The per-PID suffix means concurrent Smatchet processes (e.g. spawn-mode
     // ephemeral + the user's manual instance) get distinct log files instead
     // of interleaving + corrupting a shared sink.
-    std::string logPath; // hoisted so the crash reporter can record it for next-launch log-tail
+    std::string& logPath = boot.logPath; // crash reporter records it for next-launch log-tail
     {
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -316,35 +341,12 @@ int main(int argc, char** argv) {
             LOG_INFO("Logger file sink: %s", logPath.c_str());
         }
     }
+}
 
-    // Unified Command System — when the first non-flag positional after the
-    // program name is `cmd`, short-circuit the GUI boot and run as an HTTP
-    // client to a running Smatchet instance. This is the agent-friendly path
-    // (see docs/plans/active/applied/command-system-plan.md §CLI). All output is structured JSON
-    // on stdout / errors on stderr; no GLFW / ImGui init happens in this mode.
-    if (smatchet::cli::ArgvHasCmdSubcommand(argc, argv)) {
-        return smatchet::cli::RunCmdAttach(argc, argv);
-    }
-
-    if (smatchet::cli::IsEphemeralMode(argc, argv)) {
-        std::string bootErr;
-        if (!smatchet::standalone::BootEphemeral(argc, argv, bootErr)) {
-            if (!bootErr.empty()) {
-                std::fprintf(stderr, "%s\n", bootErr.c_str()); // pre-logger-init — LOG_* unavailable
-            }
-            return 1;
-        }
-        return 0;
-    }
-
-    // 1. Setup OS Window (GLFW)
-    glfwSetErrorCallback(glfw_error_callback);
-    if (!glfwInit()) {
-        return 1;
-    }
-
-    // Resolve user-data dir BEFORE creating the GLFW window so the saved window
-    // pos/size/maximized state in config can drive the initial window hints.
+// Resolve the runtime-asset dir (exe dir) + the writable user-data dir from the
+// running executable's path. Runs BEFORE window creation so the saved window
+// pos/size/maximized state in config can drive the initial window hints.
+static void ResolveExeAndUserDataDirs() {
     const auto resolveStandaloneUserDataDir = [](const std::string& exeDir) -> std::string {
         const ConfigManager::StoragePreference pref =
             ConfigManager::GetStoragePreference(exeDir, ConfigManager::StoragePreference::Shared);
@@ -407,6 +409,29 @@ int main(int argc, char** argv) {
         }
     }
 #endif
+}
+
+// Boot the visible standalone app: crash-handler install, GLFW init, window
+// creation + saved-position/maximize restore, ImGui context + style +
+// platform/renderer init, CLI parse + ConfigManager::Load(cli) +
+// InitAppAndPlugins. Fills `boot` (which WireUserDataAndLogSink already seeded
+// with logPath) on success. Caller must have already wired the log sink + run
+// the cmd/ephemeral short-circuits.
+//
+// Return contract: a non-negative value is an *exit code* — main() must return
+// it immediately (the early-return / cleanup paths below mirror main()'s prior
+// inline behaviour exactly, including glfwTerminate / ImGui shutdown ordering).
+// A return of -1 means "boot succeeded, proceed to RunFrameLoop".
+static int BootApplication(int argc, char** argv, MainBootState& boot) {
+    const std::string& logPath = boot.logPath; // crash reporter records it for next-launch log-tail
+
+    // 1. Setup OS Window (GLFW)
+    glfwSetErrorCallback(glfw_error_callback);
+    if (!glfwInit()) {
+        return 1;
+    }
+
+    ResolveExeAndUserDataDirs();
 
     // log-a-bug-github phase 2 — install crash handlers now that the user-data dir is
     // resolved (CrashSinkInit writes its marker/dump there). Runs before any heavy work
@@ -417,10 +442,15 @@ int main(int argc, char** argv) {
     smatchet::diagnostics::CrashSinkBreadcrumb("startup");
 
     // Peek window state from saved config so we can hint MAXIMIZED + initial size.
-    const TrackerConfig windowStateCfg = ConfigManager::Load();
-    const int initialWindowW = std::max(320, windowStateCfg.WindowWidth);
-    const int initialWindowH = std::max(240, windowStateCfg.WindowHeight);
-    const bool restoreMaximized = windowStateCfg.WindowMaximized;
+    // Stored into `boot` so RunFrameLoop can seed the windowed-bounds persistence.
+    boot.windowStateCfg = ConfigManager::Load();
+    const TrackerConfig& windowStateCfg = boot.windowStateCfg;
+    boot.initialWindowW = std::max(320, windowStateCfg.WindowWidth);
+    boot.initialWindowH = std::max(240, windowStateCfg.WindowHeight);
+    boot.restoreMaximized = windowStateCfg.WindowMaximized;
+    const int initialWindowW = boot.initialWindowW;
+    const int initialWindowH = boot.initialWindowH;
+    const bool restoreMaximized = boot.restoreMaximized;
     const bool havePosHint = (windowStateCfg.WindowX != -1 && windowStateCfg.WindowY != -1);
 
     // Decide GL+GLSL versions
@@ -529,7 +559,7 @@ int main(int argc, char** argv) {
 
     const TrackerConfig cfg = ConfigManager::Load(cli);
 
-    smatchet::standalone::BootstrapContext bootCtx;
+    BootstrapContext& bootCtx = boot.bootCtx;
     bootCtx.window = window;
     bootCtx.glslVersion = glsl_version;
     std::string bootErr;
@@ -542,6 +572,150 @@ int main(int argc, char** argv) {
         glfwTerminate();
         return 1;
     }
+
+    return -1; // boot succeeded — main() proceeds to RunFrameLoop
+}
+
+// Full screen toggle — requested by F11 handler in SmatchetUI::Draw.
+// Saved windowed rect lives in function-local statics (singleton window → identical
+// to the prior loop-body statics).
+static void HandleFullScreenToggle(GLFWwindow* window) {
+    static int s_windowedX = 100, s_windowedY = 100, s_windowedW = 1280, s_windowedH = 720;
+    if (g_ui.requestFullScreenToggle) {
+        g_ui.requestFullScreenToggle = false;
+        g_ui.cfg.FullScreen = !g_ui.cfg.FullScreen;
+        if (g_ui.cfg.FullScreen) {
+            glfwGetWindowPos(window, &s_windowedX, &s_windowedY);
+            glfwGetWindowSize(window, &s_windowedW, &s_windowedH);
+            GLFWmonitor* mon = glfwGetPrimaryMonitor();
+            const GLFWvidmode* mode = glfwGetVideoMode(mon);
+            glfwSetWindowMonitor(window, mon, 0, 0, mode->width, mode->height, mode->refreshRate);
+        } else {
+            glfwSetWindowMonitor(window, nullptr, s_windowedX, s_windowedY, s_windowedW, s_windowedH, 0);
+        }
+    }
+}
+
+// Resize request from `debug.window.resize` (visual-test automation).
+static void HandleResizeRequest(GLFWwindow* window) {
+    if (g_ui.requestWindowResize) {
+        g_ui.requestWindowResize = false;
+        const int w = std::max(320, g_ui.requestWindowWidth);
+        const int h = std::max(240, g_ui.requestWindowHeight);
+        glfwSetWindowSize(window, w, h);
+        LOG_INFO("debug.window.resize: %dx%d", w, h);
+    }
+}
+
+// Screenshot request from `debug.window.screenshot` — read framebuffer + write PNG
+// via stb_image_write. PNG keeps tests/golden/* repo bloat down (~40× smaller than
+// raw PPM-P6 on typical UI captures) and is readable by every image tool.
+static void HandleScreenshotRequest(GLFWwindow* window) {
+    if (!g_ui.requestScreenshot) {
+        return;
+    }
+    g_ui.requestScreenshot = false;
+    // "Log a Bug" capture — own the staging dir + signal completion here (the
+    // capture path is inherently main-thread and already writes to disk), so the
+    // bug-report modal never does UI-thread filesystem I/O.
+    const bool bugReportShot = g_ui.requestScreenshotBugReport;
+    g_ui.requestScreenshotBugReport = false;
+    const std::string screenshotPath = g_ui.requestScreenshotPath;
+    if (bugReportShot && !screenshotPath.empty()) {
+        std::error_code mkec;
+        ghc::filesystem::create_directories(ghc::filesystem::path(screenshotPath).parent_path(), mkec);
+    }
+    int fw = 0;
+    int fh = 0;
+    glfwGetFramebufferSize(window, &fw, &fh);
+    if (fw > 0 && fh > 0 && !screenshotPath.empty()) {
+        std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
+        // Read from the back buffer; we have just SwapBuffers'd, so front == previous frame.
+        glReadBuffer(GL_FRONT);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        // Flip vertically: OpenGL origin is bottom-left, image files expect top-left.
+        // Drop the alpha channel — golden diffs only compare R/G/B.
+        const size_t rowBytesRgb = static_cast<size_t>(fw) * 3u;
+        std::vector<unsigned char> rgb(static_cast<size_t>(fh) * rowBytesRgb);
+        for (int y = 0; y < fh; ++y) {
+            const unsigned char* src = &pixels[static_cast<size_t>(fh - 1 - y) * static_cast<size_t>(fw) * 4u];
+            unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
+            for (int x = 0; x < fw; ++x) {
+                dst[0] = src[0];
+                dst[1] = src[1];
+                dst[2] = src[2];
+                dst += 3;
+                src += 4;
+            }
+        }
+        // "Log a Bug" capture: downscale so the base64 PNG fits the relay
+        // payload cap. A full-size frame is several times too big. Text
+        // redaction already happened at render time via the font swap, so
+        // there is no CPU filter here. Gated on bugReportShot so golden and
+        // test captures keep their native resolution.
+        if (bugReportShot) {
+            smatchet::imaging::DownscaleToMaxDimension(rgb, fw, fh, 3, 1280);
+        }
+        // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
+        // dev hardware) while still cutting the file ~40× vs raw PPM. Stride is
+        // recomputed from the (possibly downscaled) width.
+        stbi_write_png_compression_level = 8;
+        const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), fw * 3);
+        if (rc == 0) {
+            LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
+        } else {
+            LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PNG)", screenshotPath.c_str(), fw, fh);
+        }
+    } else {
+        LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
+    }
+    // Signal the bug-report modal regardless of capture success — on failure the
+    // staged PNG is absent and the worker degrades gracefully; either way the
+    // modal's handshake must unblock (never leave bugReportInFlight stuck).
+    if (bugReportShot) {
+        g_ui.bugReportShotReady = true;
+    }
+}
+
+// Pre-fill the bug-report modal from a crash marker left by the previous run.
+static void MaybePrimeCrashReport() {
+    if (!smatchet::diagnostics::CrashSinkHasPending()) {
+        return;
+    }
+    const smatchet::diagnostics::CrashInfo ci = smatchet::diagnostics::CrashSinkConsume();
+    std::string ctx = "Crash: " + ci.Reason;
+    if (!ci.Breadcrumb.empty()) {
+        ctx += "\nLast activity: " + ci.Breadcrumb;
+    }
+    if (!ci.DumpPath.empty()) {
+        ctx += "\nMinidump: " + ci.DumpPath + " (uploaded on submit)";
+    }
+    if (!ci.LogTail.empty()) {
+        ctx +=
+            "\n\n<details><summary>Log tail (crashed session)</summary>\n\n```\n" + ci.LogTail + "\n```\n\n</details>";
+    }
+    g_ui.bugReportCrashContext = ctx;
+    g_ui.bugReportCrashDumpPath = ci.DumpPath; // uploaded as a Release asset on submit
+    g_ui.bugReportCrashMode = true;
+    g_ui.showBugReport = true;
+    g_ui.bugReportOpenLatch = true;
+    LOG_WARN("Crash reporter: previous run crashed (%s) — opening pre-filled bug report.", ci.Reason.c_str());
+}
+
+// Run the main render loop until the window closes, then persist windowed
+// bounds + tear down the app/plugin/window-owned UI via ShutdownApplication.
+// ImGui/GLFW teardown stays with main() (mirrors the original inline ordering).
+// Returns the process exit code (0 normal; 1 on a top-level exception).
+static int RunFrameLoop(MainBootState& boot) {
+    BootstrapContext& bootCtx = boot.bootCtx;
+    GLFWwindow* window = bootCtx.window;
+    const TrackerConfig& windowStateCfg = boot.windowStateCfg;
+    const int initialWindowW = boot.initialWindowW;
+    const int initialWindowH = boot.initialWindowH;
+#if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
+    const bool restoreMaximized = boot.restoreMaximized;
+#endif
     AppController& smatchetApp = *bootCtx.app;
     PluginHost& pluginHost = *bootCtx.pluginHost;
 
@@ -551,26 +725,7 @@ int main(int argc, char** argv) {
 
         // log-a-bug-github phase 2 — if the previous run left a crash marker, open the
         // bug-report modal pre-filled with the crash context so the user can file it.
-        if (smatchet::diagnostics::CrashSinkHasPending()) {
-            const smatchet::diagnostics::CrashInfo ci = smatchet::diagnostics::CrashSinkConsume();
-            std::string ctx = "Crash: " + ci.Reason;
-            if (!ci.Breadcrumb.empty()) {
-                ctx += "\nLast activity: " + ci.Breadcrumb;
-            }
-            if (!ci.DumpPath.empty()) {
-                ctx += "\nMinidump: " + ci.DumpPath + " (uploaded on submit)";
-            }
-            if (!ci.LogTail.empty()) {
-                ctx += "\n\n<details><summary>Log tail (crashed session)</summary>\n\n```\n" + ci.LogTail +
-                       "\n```\n\n</details>";
-            }
-            g_ui.bugReportCrashContext = ctx;
-            g_ui.bugReportCrashDumpPath = ci.DumpPath; // uploaded as a Release asset on submit
-            g_ui.bugReportCrashMode = true;
-            g_ui.showBugReport = true;
-            g_ui.bugReportOpenLatch = true;
-            LOG_WARN("Crash reporter: previous run crashed (%s) — opening pre-filled bug report.", ci.Reason.c_str());
-        }
+        MaybePrimeCrashReport();
 
         // 4. The Main Render Loop
         ImVec4 clear_color = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
@@ -646,99 +801,9 @@ int main(int argc, char** argv) {
                 glfwGetWindowSize(window, &s_persistWindowedW, &s_persistWindowedH);
             }
 
-            // Full screen toggle — requested by F11 handler in SmatchetUI::Draw.
-            static int s_windowedX = 100, s_windowedY = 100, s_windowedW = 1280, s_windowedH = 720;
-            if (g_ui.requestFullScreenToggle) {
-                g_ui.requestFullScreenToggle = false;
-                g_ui.cfg.FullScreen = !g_ui.cfg.FullScreen;
-                if (g_ui.cfg.FullScreen) {
-                    glfwGetWindowPos(window, &s_windowedX, &s_windowedY);
-                    glfwGetWindowSize(window, &s_windowedW, &s_windowedH);
-                    GLFWmonitor* mon = glfwGetPrimaryMonitor();
-                    const GLFWvidmode* mode = glfwGetVideoMode(mon);
-                    glfwSetWindowMonitor(window, mon, 0, 0, mode->width, mode->height, mode->refreshRate);
-                } else {
-                    glfwSetWindowMonitor(window, nullptr, s_windowedX, s_windowedY, s_windowedW, s_windowedH, 0);
-                }
-            }
-
-            // Resize request from `debug.window.resize` (visual-test automation).
-            if (g_ui.requestWindowResize) {
-                g_ui.requestWindowResize = false;
-                const int w = std::max(320, g_ui.requestWindowWidth);
-                const int h = std::max(240, g_ui.requestWindowHeight);
-                glfwSetWindowSize(window, w, h);
-                LOG_INFO("debug.window.resize: %dx%d", w, h);
-            }
-
-            // Screenshot request from `debug.window.screenshot` — read framebuffer + write PNG
-            // via stb_image_write. PNG keeps tests/golden/* repo bloat down (~40× smaller than
-            // raw PPM-P6 on typical UI captures) and is readable by every image tool.
-            if (g_ui.requestScreenshot) {
-                g_ui.requestScreenshot = false;
-                // "Log a Bug" capture — own the staging dir + signal completion here (the
-                // capture path is inherently main-thread and already writes to disk), so the
-                // bug-report modal never does UI-thread filesystem I/O.
-                const bool bugReportShot = g_ui.requestScreenshotBugReport;
-                g_ui.requestScreenshotBugReport = false;
-                const std::string screenshotPath = g_ui.requestScreenshotPath;
-                if (bugReportShot && !screenshotPath.empty()) {
-                    std::error_code mkec;
-                    ghc::filesystem::create_directories(ghc::filesystem::path(screenshotPath).parent_path(), mkec);
-                }
-                int fw = 0;
-                int fh = 0;
-                glfwGetFramebufferSize(window, &fw, &fh);
-                if (fw > 0 && fh > 0 && !screenshotPath.empty()) {
-                    std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
-                    // Read from the back buffer; we have just SwapBuffers'd, so front == previous frame.
-                    glReadBuffer(GL_FRONT);
-                    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                    glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                    // Flip vertically: OpenGL origin is bottom-left, image files expect top-left.
-                    // Drop the alpha channel — golden diffs only compare R/G/B.
-                    const size_t rowBytesRgb = static_cast<size_t>(fw) * 3u;
-                    std::vector<unsigned char> rgb(static_cast<size_t>(fh) * rowBytesRgb);
-                    for (int y = 0; y < fh; ++y) {
-                        const unsigned char* src =
-                            &pixels[static_cast<size_t>(fh - 1 - y) * static_cast<size_t>(fw) * 4u];
-                        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
-                        for (int x = 0; x < fw; ++x) {
-                            dst[0] = src[0];
-                            dst[1] = src[1];
-                            dst[2] = src[2];
-                            dst += 3;
-                            src += 4;
-                        }
-                    }
-                    // "Log a Bug" capture: downscale so the base64 PNG fits the relay
-                    // payload cap. A full-size frame is several times too big. Text
-                    // redaction already happened at render time via the font swap, so
-                    // there is no CPU filter here. Gated on bugReportShot so golden and
-                    // test captures keep their native resolution.
-                    if (bugReportShot) {
-                        smatchet::imaging::DownscaleToMaxDimension(rgb, fw, fh, 3, 1280);
-                    }
-                    // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
-                    // dev hardware) while still cutting the file ~40× vs raw PPM. Stride is
-                    // recomputed from the (possibly downscaled) width.
-                    stbi_write_png_compression_level = 8;
-                    const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), fw * 3);
-                    if (rc == 0) {
-                        LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
-                    } else {
-                        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PNG)", screenshotPath.c_str(), fw, fh);
-                    }
-                } else {
-                    LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
-                }
-                // Signal the bug-report modal regardless of capture success — on failure the
-                // staged PNG is absent and the worker degrades gracefully; either way the
-                // modal's handshake must unblock (never leave bugReportInFlight stuck).
-                if (bugReportShot) {
-                    g_ui.bugReportShotReady = true;
-                }
-            }
+            HandleFullScreenToggle(window);
+            HandleResizeRequest(window);
+            HandleScreenshotRequest(window);
 
             // Restore normal fonts after the redacted capture frame (next frame is normal).
             if (redactThisFrame) {
@@ -792,4 +857,43 @@ int main(int argc, char** argv) {
     glfwTerminate();
 
     return exitCode;
+}
+
+} // namespace
+} // namespace standalone
+} // namespace smatchet
+
+int main(int argc, char** argv) {
+    smatchet::standalone::MainBootState boot;
+
+    // Resolve user-data + wire the log sink first so the cmd/ephemeral
+    // short-circuits below inherit them, exactly as the original prologue did.
+    smatchet::standalone::WireUserDataAndLogSink(boot);
+
+    // Unified Command System — when the first non-flag positional after the
+    // program name is `cmd`, short-circuit the GUI boot and run as an HTTP
+    // client to a running Smatchet instance. This is the agent-friendly path
+    // (see docs/plans/active/applied/command-system-plan.md §CLI). All output is structured JSON
+    // on stdout / errors on stderr; no GLFW / ImGui init happens in this mode.
+    if (smatchet::cli::ArgvHasCmdSubcommand(argc, argv)) {
+        return smatchet::cli::RunCmdAttach(argc, argv);
+    }
+
+    if (smatchet::cli::IsEphemeralMode(argc, argv)) {
+        std::string bootErr;
+        if (!smatchet::standalone::BootEphemeral(argc, argv, bootErr)) {
+            if (!bootErr.empty()) {
+                std::fprintf(stderr, "%s\n", bootErr.c_str()); // pre-logger-init — LOG_* unavailable
+            }
+            return 1;
+        }
+        return 0;
+    }
+
+    const int bootRc = smatchet::standalone::BootApplication(argc, argv, boot);
+    if (bootRc >= 0) {
+        return bootRc; // early-return / cleanup path already handled inside BootApplication
+    }
+
+    return smatchet::standalone::RunFrameLoop(boot);
 }
