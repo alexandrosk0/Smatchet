@@ -131,6 +131,19 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
         client.EnqueueFetchResult(fetch.Tickets, fetch.FullSyncCompleted, fetch.FetchError, fetch.Warning);
     }
 
+    // Make the final scripted fetch the sticky static fallback. The production streaming-sync
+    // path can fire more times than a fixture scripts (deferred initial auto-sync on first Draw
+    // PLUS each test's explicit SyncWithBackend, all sharing one backend instance). Without a
+    // fallback, the FakeTrackerClient returns an EMPTY result with FullSyncCompleted=true once
+    // the queue drains — which the real sync interprets as "all issues deleted server-side" and
+    // stale-prunes the previously-loaded tickets to nothing. Mirroring a real backend (idempotent
+    // re-fetch returns the same steady-state issue set) by replaying the last scripted fetch keeps
+    // re-syncs stable.
+    if (!fetches_.empty()) {
+        const JiraFixtureFetch& last = fetches_.back();
+        client.SetFetchIssuesResult(last.Tickets, last.FullSyncCompleted, last.FetchError, last.Warning);
+    }
+
     for (const auto& reply : updateIssueFieldsReplies_) {
         if (reply.Ok) {
             client.EnqueueUpdateIssueFieldsSuccess();
