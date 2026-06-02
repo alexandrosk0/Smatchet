@@ -222,6 +222,111 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
     return out;
 }
 
+// Translate cached TrackerUsers into the pure mapper's opaque (AccountId, DisplayName) lookup
+// pairs once, ahead of the page loop. Byte-for-byte mirror of the original inline build.
+std::vector<smatchet::plane::UserDisplayLookup> BuildPlaneUserLookups(const std::vector<TrackerUser>& cachedUsers) {
+    std::vector<smatchet::plane::UserDisplayLookup> userLookup;
+    userLookup.reserve(cachedUsers.size());
+    for (const auto& u : cachedUsers) {
+        smatchet::plane::UserDisplayLookup lk;
+        lk.AccountId = u.AccountId;
+        lk.DisplayName = u.DisplayName;
+        userLookup.push_back(std::move(lk));
+    }
+    return userLookup;
+}
+
+// Outcome of the work-items pagination loop. `HardFailed` ≡ the original inline `return summary`
+// (FetchError already on `summary`); the caller returns immediately. Otherwise the loop ran to a
+// clean or warned termination and `EndedCleanly` / `PageCount` drive FullSyncCompleted.
+struct PlanePageLoopResult {
+    bool HardFailed = false;
+    bool EndedCleanly = false;
+    int PageCount = 0;
+};
+
+// Phase 4-6: drive the cursor-paginated work-items loop — fetch + classify each page, map its
+// rows via the pure mapper, stream completed batches, and advance/terminate on the cursor.
+// Reproduces the original inline loop byte-for-byte: cancel checks, outer page cap soft-warning,
+// empty-results clean stop, and the per-page hard-failure early return.
+PlanePageLoopResult
+RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, const std::string& planeProjectId,
+                 const std::string& projectIdentifier, const cpr::Header& headers,
+                 const std::vector<smatchet::plane::UserDisplayLookup>& userLookup,
+                 const PlaneClient::BatchCallback& onBatch, const PlaneClient::CancelCallback& shouldCancel,
+                 std::unordered_map<std::string, std::string>& localKeyToId, TrackerIssueFetchSummary& summary) {
+    PlanePageLoopResult result;
+    const int pageSize = 100;
+    // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
+    // 50 pages × 100 work-items/page = 5,000 issues, comfortably above any active-view JQL
+    // and matches the per-server safety limit in JiraIssueSearch.cpp.
+    constexpr int kMaxPlanePages = 50;
+    std::string listCursor;
+
+    while (true) {
+        if (shouldCancel && shouldCancel()) {
+            result.EndedCleanly = false;
+            break;
+        }
+
+        if (result.PageCount >= kMaxPlanePages) {
+            const std::string warn = "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
+                                     ") reached; remaining issues not fetched. Narrow your view or raise the cap.";
+            LOG_WARN("PlaneClient::FetchIssuesStreamed %s", warn.c_str());
+            // Soft warning: the issues we did fetch are valid; treat as a partial success
+            // rather than a fetch failure so the UI fires its success notify and the
+            // connectivity banner stays clear.
+            summary.Warning = warn;
+            break;
+        }
+        ++result.PageCount;
+
+        // Phase 4: fetch + classify one page. Any hard failure carries a ready error string.
+        PlaneIssuePageFetch page =
+            FetchPlaneIssuePage(planeApi, workspaceSlug, planeProjectId, headers, pageSize, listCursor);
+        if (!page.Ok) {
+            LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", page.Error.c_str());
+            summary.FetchError = page.Error;
+            result.HardFailed = true;
+            return result;
+        }
+
+        auto results = (page.Body.is_object() && page.Body.contains("results")) ? page.Body["results"] : page.Body;
+
+        if (results.empty()) {
+            result.EndedCleanly = true;
+            break;
+        }
+
+        // Phase 5: map this page's work-items into CachedTickets via the pure mapper, which
+        // reproduces the per-issue field mapping (status / assignee / sprint / labels / type /
+        // description-html) and silently skips rows that throw — parity with the old inline
+        // try/catch. Fills localKeyToId with the visual-key → uuid associations.
+        std::vector<CachedTicket> pageIssues = smatchet::plane::MapPlaneWorkItemsArrayToCachedTickets(
+            results, projectIdentifier, userLookup, &localKeyToId);
+
+        if (shouldCancel && shouldCancel()) {
+            result.EndedCleanly = false;
+            break;
+        }
+
+        size_t added = pageIssues.size();
+        summary.FetchedCount += added;
+
+        if (onBatch && added > 0) {
+            onBatch(std::move(pageIssues));
+        }
+
+        // Phase 6: cursor pagination — advance or terminate.
+        listCursor = smatchet::plane::NextPaginationCursor(page.Body);
+        if (listCursor.empty()) {
+            result.EndedCleanly = true;
+            break;
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
@@ -329,87 +434,18 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
             }
         }
 
-        const int pageSize = 100;
-        // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
-        // 50 pages × 100 work-items/page = 5,000 issues, comfortably above any active-view JQL
-        // and matches the per-server safety limit in JiraIssueSearch.cpp.
-        constexpr int kMaxPlanePages = 50;
-        std::string listCursor;
-        bool syncEndedCleanly = false;
-        int pageCount = 0;
-
         // Assignee-display lookup for the pure mapper: translate cached TrackerUsers into the
         // mapper's opaque (AccountId, DisplayName) pairs once, ahead of the page loop.
-        std::vector<smatchet::plane::UserDisplayLookup> userLookup;
-        userLookup.reserve(localCachedUsers.size());
-        for (const auto& u : localCachedUsers) {
-            smatchet::plane::UserDisplayLookup lk;
-            lk.AccountId = u.AccountId;
-            lk.DisplayName = u.DisplayName;
-            userLookup.push_back(std::move(lk));
+        const std::vector<smatchet::plane::UserDisplayLookup> userLookup = BuildPlaneUserLookups(localCachedUsers);
+
+        // Phases 4-6: drive the cursor-paginated work-items fetch/map/stream loop.
+        PlanePageLoopResult loop =
+            RunPlanePageLoop(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, tempProjectIdentifier, headers,
+                             userLookup, onBatch, shouldCancel, localKeyToId, summary);
+        if (loop.HardFailed) {
+            return summary;
         }
-
-        while (true) {
-            if (shouldCancel && shouldCancel()) {
-                syncEndedCleanly = false;
-                break;
-            }
-
-            if (pageCount >= kMaxPlanePages) {
-                const std::string warn = "Plane pagination outer page cap (" + std::to_string(kMaxPlanePages) +
-                                         ") reached; remaining issues not fetched. Narrow your view or raise the cap.";
-                LOG_WARN("PlaneClient::FetchIssuesStreamed %s", warn.c_str());
-                // Soft warning: the issues we did fetch are valid; treat as a partial success
-                // rather than a fetch failure so the UI fires its success notify and the
-                // connectivity banner stays clear.
-                summary.Warning = warn;
-                break;
-            }
-            ++pageCount;
-
-            // Phase 4: fetch + classify one page. Any hard failure carries a ready error string.
-            PlaneIssuePageFetch page =
-                FetchPlaneIssuePage(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, headers, pageSize, listCursor);
-            if (!page.Ok) {
-                LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", page.Error.c_str());
-                summary.FetchError = page.Error;
-                return summary;
-            }
-
-            auto results = (page.Body.is_object() && page.Body.contains("results")) ? page.Body["results"] : page.Body;
-
-            if (results.empty()) {
-                syncEndedCleanly = true;
-                break;
-            }
-
-            // Phase 5: map this page's work-items into CachedTickets via the pure mapper, which
-            // reproduces the per-issue field mapping (status / assignee / sprint / labels / type /
-            // description-html) and silently skips rows that throw — parity with the old inline
-            // try/catch. Fills localKeyToId with the visual-key → uuid associations.
-            std::vector<CachedTicket> pageIssues = smatchet::plane::MapPlaneWorkItemsArrayToCachedTickets(
-                results, tempProjectIdentifier, userLookup, &localKeyToId);
-
-            if (shouldCancel && shouldCancel()) {
-                syncEndedCleanly = false;
-                break;
-            }
-
-            size_t added = pageIssues.size();
-            summary.FetchedCount += added;
-
-            if (onBatch && added > 0) {
-                onBatch(std::move(pageIssues));
-            }
-
-            // Phase 6: cursor pagination — advance or terminate.
-            listCursor = smatchet::plane::NextPaginationCursor(page.Body);
-            if (listCursor.empty()) {
-                syncEndedCleanly = true;
-                break;
-            }
-        }
-        summary.FullSyncCompleted = syncEndedCleanly && pageCount > 0 && (!shouldCancel || !shouldCancel());
+        summary.FullSyncCompleted = loop.EndedCleanly && loop.PageCount > 0 && (!shouldCancel || !shouldCancel());
         LOG_INFO("PlaneClient::FetchIssuesStreamed fetched %zu issues from Plane.", summary.FetchedCount);
     } catch (const nlohmann::json::exception& jex) {
         LOG_ERROR("PlaneClient::FetchIssuesStreamed outer json error: %s", jex.what());
