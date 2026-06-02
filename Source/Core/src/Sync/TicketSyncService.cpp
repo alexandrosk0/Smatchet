@@ -470,16 +470,7 @@ void TicketSyncService::SyncWithBackend(const TrackerConfig* configOverride, con
     StartStreamingSync(cfgCopy, viewsCopy);
 }
 
-void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy) {
-    if (activeStreamingSync_.WorkerThread.joinable()) {
-        activeStreamingSync_.WorkerThread.join();
-    }
-    // Reset per-session empty-sync counter so stale state from a previous run
-    // doesn't carry over and trigger an unexpected wipe on the very first batch.
-    consecutiveEmptyFullSyncs_ = 0;
-
-    SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
-
+void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy) {
     // Swap Backend type safely before starting the worker.
     std::string newTracker = cfgCopy.TrackerType;
     if (newTracker.empty())
@@ -528,6 +519,19 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         deps_.SetPendingLuaWindowBump(true);
         LOG_INFO("TicketSyncService: Cleared in-memory ActiveTickets on backend-kind change.");
     }
+}
+
+void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy) {
+    if (activeStreamingSync_.WorkerThread.joinable()) {
+        activeStreamingSync_.WorkerThread.join();
+    }
+    // Reset per-session empty-sync counter so stale state from a previous run
+    // doesn't carry over and trigger an unexpected wipe on the very first batch.
+    consecutiveEmptyFullSyncs_ = 0;
+
+    SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
+
+    SwapBackendIfTrackerChanged(cfgCopy);
 
     const std::uint64_t reqId = ++currentFetchRequestId_;
     activeStreamingSync_.RequestId = reqId;
@@ -551,62 +555,65 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     LOG_INFO("TicketSyncService: Spawning background worker for async streaming fetch request ID=%llu",
              static_cast<unsigned long long>(reqId));
 
-    activeStreamingSync_.WorkerThread = std::thread([this, reqId, cfgCopy, viewsCopy]() {
-        try {
-            std::unordered_set<std::string> workerKeepIds;
-            auto onBatch = [this, reqId, &workerKeepIds](std::vector<CachedTicket>&& batch) {
-                for (const auto& ticket : batch) {
-                    if (!ticket.id.empty()) {
-                        workerKeepIds.insert(ticket.id);
-                    }
-                }
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-                if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-                    activeStreamingSync_.PendingBatches.push_back(std::move(batch));
-                }
-            };
-            auto shouldCancel = [this, reqId]() -> bool {
-                return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
-            };
+    activeStreamingSync_.WorkerThread =
+        std::thread([this, reqId, cfgCopy, viewsCopy]() { RunStreamingWorkerBody(reqId, cfgCopy, viewsCopy); });
+}
 
-            TrackerIssueFetchSummary summary =
-                deps_.Backend()->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
-
-            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-                std::vector<std::string> localStaleIds;
-                if (summary.FullSyncCompleted && deps_.Cache()) {
-                    std::vector<std::string> existingIds = deps_.Cache()->GetAllTicketIds();
-                    std::copy_if(existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
-                                 [&workerKeepIds](const std::string& id) {
-                                     return workerKeepIds.find(id) == workerKeepIds.end();
-                                 });
-                }
-
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-                activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
-                activeStreamingSync_.FetchError = summary.FetchError;
-                activeStreamingSync_.Warning = summary.Warning;
-                activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
-                if (summary.FullSyncCompleted && deps_.Cache()) {
-                    activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
+void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy,
+                                               const ViewsStore& viewsCopy) {
+    try {
+        std::unordered_set<std::string> workerKeepIds;
+        auto onBatch = [this, reqId, &workerKeepIds](std::vector<CachedTicket>&& batch) {
+            for (const auto& ticket : batch) {
+                if (!ticket.id.empty()) {
+                    workerKeepIds.insert(ticket.id);
                 }
             }
-        } catch (const std::exception& ex) {
-            LOG_ERROR("TicketSyncService: Worker thread caught exception: %s", ex.what());
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-                activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
-                activeStreamingSync_.FullSyncCompleted = false;
+                activeStreamingSync_.PendingBatches.push_back(std::move(batch));
             }
-        } catch (...) {
-            LOG_ERROR("TicketSyncService: Worker thread caught unknown exception.");
-            if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-                std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-                activeStreamingSync_.FetchError = "Sync failed with unknown exception.";
-                activeStreamingSync_.FullSyncCompleted = false;
+        };
+        auto shouldCancel = [this, reqId]() -> bool {
+            return activeStreamingSync_.Cancelled || activeStreamingSync_.RequestId != reqId;
+        };
+
+        TrackerIssueFetchSummary summary =
+            deps_.Backend()->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
+
+        if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+            std::vector<std::string> localStaleIds;
+            if (summary.FullSyncCompleted && deps_.Cache()) {
+                std::vector<std::string> existingIds = deps_.Cache()->GetAllTicketIds();
+                std::copy_if(
+                    existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
+                    [&workerKeepIds](const std::string& id) { return workerKeepIds.find(id) == workerKeepIds.end(); });
+            }
+
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
+            activeStreamingSync_.FetchError = summary.FetchError;
+            activeStreamingSync_.Warning = summary.Warning;
+            activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
+            if (summary.FullSyncCompleted && deps_.Cache()) {
+                activeStreamingSync_.BackgroundStaleIds = std::move(localStaleIds);
             }
         }
+    } catch (const std::exception& ex) {
+        LOG_ERROR("TicketSyncService: Worker thread caught exception: %s", ex.what());
+        if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
+            activeStreamingSync_.FullSyncCompleted = false;
+        }
+    } catch (...) {
+        LOG_ERROR("TicketSyncService: Worker thread caught unknown exception.");
+        if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            activeStreamingSync_.FetchError = "Sync failed with unknown exception.";
+            activeStreamingSync_.FullSyncCompleted = false;
+        }
+    }
 
-        activeStreamingSync_.Active = false;
-    });
+    activeStreamingSync_.Active = false;
 }
