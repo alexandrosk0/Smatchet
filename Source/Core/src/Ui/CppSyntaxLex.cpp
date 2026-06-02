@@ -13,7 +13,10 @@ bool IsDigit(char c) { return c >= '0' && c <= '9'; }
 
 // Characters that continue a numeric literal after the leading digit: more
 // digits, the radix dot, hex prefix/digits (x/X, a-f, A-F), and the integer
-// suffixes (u/l/L). Matches the original inline `||` chain byte-for-byte.
+// suffixes (u/l/L). Matches the original inline `||` chain byte-for-byte — the
+// C++14 digit separator (') and uppercase U suffix are intentionally omitted to
+// preserve the legacy highlighter's exact token spans (backlogged as a cosmetic
+// improvement, not a refactor regression).
 bool IsNumberCont(char c) {
     if (IsDigit(c)) {
         return true;
