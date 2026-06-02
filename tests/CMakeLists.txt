@@ -51,6 +51,13 @@ add_executable(SmatchetTests
     Core/IssueDraft.test.cpp
     Core/IssueCreatePipeline.test.cpp
     Core/CallstackParser.test.cpp
+    # Function-size decomposition (feat/funcsize-cpp-syntax-highlight) — pure
+    # ImGui-free lexers extracted from CppSyntaxHighlight.cpp's draw helpers to
+    # bring DrawColoredCppLine / DrawColoredCallstackLine under the 30-branch
+    # cap. CppSyntaxLex.cpp has no ImGui dependency (header is pure), so the
+    # test rig links just that one TU.
+    Core/CppSyntaxLex.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxLex.cpp"
     Core/LocalCacheManager.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
