@@ -103,6 +103,6 @@
     - `Source/Core/src/TrackerDateTimeFieldEditor.cpp` — ISO-8601 parser lives next to ImGui calendar widget.
     - `Source/Core/src/TrackerFieldPayload.cpp` — payload builder pulls JiraClient → cpr → ConfigManager transitively.
     - `Source/Core/src/TrackerFieldCatalog.cpp` — catalog merge / lookup lives next to JiraClient catalog-fetch surface.
-  Concrete next action: per-unit TU split (lift pure helpers to a sibling `*Pure.cpp` + matching header with no ImGui/cpr includes), then add the doctest in a follow-up phase. Estimated cost ~1 h per unit (4 h total). Bonus: `IssueCreatePipeline::ApplyPostIssueSteps` decision logic also deferred — needs `ITrackerClient` mock fixture (Phase 3 HTTP layer). Pick up after Phase 3 ships the HTTP / SQLite fixtures.
+  Concrete next action: per-unit TU split (lift pure helpers to a sibling `*Pure.cpp` + matching header with no ImGui/cpr includes), then add the doctest in a follow-up phase. Estimated cost ~1 h per unit (4 h total). Bonus: `IssueCreatePipeline::ApplyPostIssueSteps` decision logic also deferred — needs `ITrackerBackend` mock fixture (Phase 3 HTTP layer). Pick up after Phase 3 ships the HTTP / SQLite fixtures.
   Status: open
   Last-reviewed: 2026-05-17

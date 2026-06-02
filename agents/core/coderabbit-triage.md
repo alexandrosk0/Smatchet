@@ -120,7 +120,7 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 
 | File / symbol pattern | Target agent |
 |---|---|
-| `Source/Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}` · `ITrackerClient.h` · `TrackerHttpClient*` · `TrackerFieldCatalog*` · `TrackerFieldValueParser*` · `TrackerFieldPayload*` | `tracker-backend` |
+| `Source/Core/**/{Tracker,Jira,Plane,IssueCreate}*.{cpp,h}` · `ITracker*.h` · `TrackerHttpClient*` · `TrackerFieldCatalog*` · `TrackerFieldValueParser*` · `TrackerFieldPayload*` | `tracker-backend` |
 | `Source/Core/**/SmatchetGrid*` · `Source/Core/**/SmatchetActiveProjectGridUi*` · `Source/Core/**/SmatchetViewsDashboardUi*` · `Source/Core/**/SmatchetFieldRender*` · `Source/Core/**/TicketGridModel*` · `Source/Core/**/SpreadsheetState*` · `Source/Core/**/TrackerGridFieldDisplay*` | `grid-engine` |
 | `Source/Core/**/LocalCacheManager*` · `OfflineQueueService*` · `SmatchetOfflineQueueUi*` · `TicketSyncService*` · `BackendAuditTrail*` · `FieldEditAuditSource*` | `offline-sync` |
 | `Source/Core/{src,include}/Commands/**` · `BuiltinCommands*` · `ViewCommands*` · `Scenarios/**` · `CommandPaletteUi*` · `FuzzyMatch*` | `command-system` |
@@ -158,7 +158,7 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 **Handoff packet** (paste into orchestrator → `tracker-backend` prompt):
 - **Scope**: replace direct `cpr::Post` in `Foo::Save` with `TrackerHttpClient::Post` posted to the existing worker thread; wire result back via `MainThreadDispatcher`.
 - **Allowed write set**: `Source/Core/src/Foo.cpp`, `Source/Core/include/Foo.h`.
-- **Out of scope**: any other tracker file. Do NOT touch `ITrackerClient.h`.
+- **Out of scope**: any other tracker file. Do NOT touch the shared `ITracker*.h` interface headers.
 - **Invariant pre-decisions**: HTTP-through-TrackerHttpClient (override rule #7 — confirmed live, not rejected); UI-thread non-blocking (pillar 2).
 - **Verification**: existing tests in `tests/Core/TrackerHttpClientPure.test.cpp` cover the call shape — no new test required. Manual: none.
 - **Reply to bot** (orchestrator may post once fix lands): `Addressed in <sha>; routed through TrackerHttpClient as suggested.`
