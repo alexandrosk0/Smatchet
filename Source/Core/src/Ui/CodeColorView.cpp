@@ -21,7 +21,7 @@ namespace code_color {
 namespace {
 
 // Tag → CodeLang alias map
-// Case-insensitive, alias-rich per docs/plans/active/code-syntax-coloring-and-tooltips.md
+// Case-insensitive, alias-rich per code-syntax-coloring-and-tooltips
 // § Slice 1 step 2. Order doesn't matter; linear-scan lookup against a small
 // constant table (~30 entries) is faster than std::unordered_map for this
 // size and gives compile-time-checkable coverage.
@@ -413,7 +413,7 @@ std::uint64_t Fnv1a64(const char* data, std::size_t len) {
 struct CacheKey {
     std::uint64_t contentHash;
     CodeLang lang;
-    // Slice 3 of docs/plans/active/code-syntax-coloring-and-tooltips.md.
+    // Slice 3 of code-syntax-coloring-and-tooltips.
     // Snapshot of `SmatchetTheme::GetThemeRevision()` at insert time. Theme
     // swap bumps the live revision; lookup miss fires when the live value
     // doesn't equal the snapshot stored in the key, so per-token colour

@@ -62,7 +62,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     runner.RegisterFactory("dock-gap-sentinel", []() { return ::MakeDockGapSentinelScenario(); });
     runner.RegisterFactory("command-palette-fuzzy", []() { return ::MakeCommandPaletteFuzzyScenario(); });
     // code-syntax-coloring — bucket-C golden for the multi-language code-block
-    // colouring feature (docs/plans/active/code-syntax-coloring-and-tooltips.md).
+    // colouring feature, see code-syntax-coloring-and-tooltips.
     // Closes the deferred tooling.md P3 (2026-05-15) "no golden-image screenshot
     // diff for syntax highlighting" gap.
     runner.RegisterFactory("code-syntax-coloring", []() { return ::MakeCodeSyntaxColoringScenario(); });

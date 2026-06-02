@@ -268,7 +268,7 @@ TEST_CASE("ConfigManager CLI overrides win over env vars on Load") {
 
 // --- Save/Load round-trip regression net for the field-registration-table refactor. -------
 //
-// docs/plans/active/decompose-top-20-monoliths.md § ConfigManager::Load/Save. These are the
+// decompose-top-20-monoliths § ConfigManager::Load/Save. These are the
 // real safety net: ConfigManager::Save/Load is the config boot path; a dropped or mismapped
 // field in the table would silently corrupt user config. Each persisted TrackerConfig field is
 // written to a NON-default value, Saved through the real ConfigManager seam, reloaded, and the

@@ -1,7 +1,7 @@
 #ifndef SMATCHET_JIRA_ISSUE_MAPPING_PURE_H
 #define SMATCHET_JIRA_ISSUE_MAPPING_PURE_H
 
-// Slice 1 of docs/plans/shipped/deterministic-jira-test-backend.md — pure-logic helpers
+// Slice 1 of deterministic-jira-test-backend — pure-logic helpers
 // extracted from JiraIssueSearch.cpp (which pulls cpr) so the doctest rig and the
 // fixture-backed fake can exercise Jira JSON normalization without HTTP. Mirrors the
 // Plane (Slice 2 of autonomous-debugging-no-creds) and GitHub (PR12) pure-mapping splits.

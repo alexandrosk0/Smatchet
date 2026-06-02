@@ -1,4 +1,4 @@
-// Monoliths Phase A (docs/plans/active/decompose-top-20-monoliths.md) — pure-logic doctest
+// Monoliths Phase A of decompose-top-20-monoliths — pure-logic doctest
 // for the Plane field-catalog property → TrackerField mapper. No HTTP, no PlaneClient.
 // Goldens captured from the pre-refactor TrackerFieldFromPlaneProperty behaviour.
 

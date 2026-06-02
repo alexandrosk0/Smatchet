@@ -849,7 +849,7 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
         break;
     case BK::kCode: {
         const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
-        // Slice 2 of docs/plans/active/code-syntax-coloring-and-tooltips.md — route
+        // Slice 2 of code-syntax-coloring-and-tooltips — route
         // every markdown code block through CodeColorView. C++/C delegates to
         // the existing DrawColoredCppText (zero behaviour change on Smatchet's
         // dominant path); Plain falls back to the same flat-orange tint the
@@ -873,7 +873,7 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
                 ImGui::PopFont();
         } else {
             ImGui::PushID(r.codeBlockNextId++);
-            // Slice 4 of docs/plans/active/code-syntax-coloring-and-tooltips.md — ghosted
+            // Slice 4 of code-syntax-coloring-and-tooltips — ghosted
             // language badge at the row's left + hover tooltip surfacing the LD's
             // canonical name + detection origin. ImGui::TextDisabled to keep the
             // visual weight muted (the code itself owns the row). DelayNormal so
