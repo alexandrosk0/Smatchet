@@ -49,6 +49,31 @@ The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt aft
 
    Pillar anchor: see [`docs/agent-rules/ux-pillars.md`](ux-pillars.md) § 4 § Visual-validation acceptance for the cross-link from the pillar side.
 
+## PR batching — logical-feature granularity
+
+**Rule**: the orchestrator opens **one PR per logical feature, not one PR per slice/task/fix**. Related slices that serve a single coherent goal accumulate on one feature branch and ship as a **single** PR. This is the default; it overrides any reflex to open a fresh PR per stage of the ship-loop.
+
+**Why** — CodeRabbit imposes two limits that one-PR-per-change violates from both ends:
+
+1. **Volume / review quota** — a finite number of CR reviews per period. N tiny PRs burn N reviews for what is conceptually one change; the quota is exhausted before the real work is reviewed.
+2. **Per-PR file-count ceiling** — above CodeRabbit's configured file limit, CR posts a *review-skipped — too many files* comment (marker `skip review by coderabbit.ai`) and the merge gate **blocks** (see [`docs/agent-rules/merge-gates.md`](merge-gates.md) § CodeRabbit gate). A PR batched past the ceiling ships unreviewed or stalls.
+
+Logical-feature granularity is the band between the two: few enough PRs to respect the quota, small enough each to stay reviewable.
+
+**What counts as one logical feature** — one coherent goal or subsystem change. A bug fix plus its test plus the doc note = one PR. Three unrelated typo fixes in three subsystems = still one PR if trivial, but a feature in subsystem A and an unrelated feature in subsystem B = **two** PRs. The seam is *conceptual cohesion*, not file count or commit count.
+
+**Boundary rules:**
+
+- **Default to batching.** Within a session, multiple small tasks that serve one goal commit to the **shared feature branch**; the PR opens **once** when the feature is coherent — not after each slice. Do not `gh pr create` per slice.
+- **File ceiling is a hard cap.** If a single logical feature's cumulative diff would exceed CodeRabbit's file ceiling (the review-skipped threshold), split it along natural seams (e.g. by layer or by independent sub-feature) into multiple PRs and note the split rationale in each PR body. Never batch past the ceiling expecting `cr-out-of-band` to paper over it — that label is for genuinely-unsplittable over-limit PRs, not routine batching.
+- **Unrelated work never shares a PR** just to cut count. Cohesion first, count second. Two unrelated changes in one PR makes review harder and couples their merge fates.
+- **Stacked / sequential slices** that depend on each other still land as one PR when they form one feature; only split when an earlier slice is independently shippable AND the combined diff risks the file ceiling.
+- The do-not-pause checklist, merge gates, and post-ship menu all fire **per PR** — with batching, one PR may cover several user tasks from the session. That is expected; the menu fires once per feature-PR, not once per task.
+
+**Interaction with the default sequence** — the `commit → push → open PR` stages still run, but `open PR` is reached once per logical feature. Earlier slices of the same feature stop at `commit` (+ `push` to the shared feature branch) and defer PR creation until the feature is whole.
+
+**P4-mode note** — the same logical-feature granularity governs the P4-gated loop: the single `gh pr create` at the end of the P4 flow covers the whole feature, and `code-review` is already dispatched once per task (cumulative diff), which aligns with one-PR-per-feature.
+
 ## P4-gated ship-loop
 
 When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a **P4-gated ship-loop** instead of the default git ship-loop. The variant exists so the user reviews a Perforce shelf in P4V before any `git push` or `gh pr create` happens — git remains the ship-line, but git is touched **once**, at the end, after the change is known-good. The pause-loop in [`docs/agent-rules/delegation.md`](delegation.md) § Debug-mode pause-loop continues to **override** this loop for debug-detective triggers (same as it does for the default git loop).
