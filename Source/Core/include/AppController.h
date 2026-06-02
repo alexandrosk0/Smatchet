@@ -159,9 +159,30 @@ class AppController
     /// resolved config into `cfgOut` and returns the active tracker type string.
     std::string InitBackends(TrackerConfig& cfgOut);
 
+    /// InitBackends helper — install a fixture-backed GitHub backend factory when
+    /// SMATCHET_TEST_GITHUB_BACKEND_FIXTURE is set and the active tracker is GitHub.
+    /// No-op (leaving backendFactory_ untouched) otherwise.
+    void MaybeInstallGitHubFixtureFactory(const std::string& activeTracker);
+
+    /// InitBackends helper — run the one-time legacy-project / legacy-Plane-view
+    /// sweeps for the resolved backend, each guarded by its own cache_meta marker.
+    void RunLegacyStartupSweeps(const std::string& activeTrackerType);
+
     /// Phase 3 — resolve the Lua scripts directory, probe script files, refresh
     /// local data, and restore the field catalog from a local snapshot when present.
     void InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType);
+
+    /// InitFieldCatalog helper — resolve the active view's project key from its JQL
+    /// so the startup catalog snapshot loads under the project-scoped cache entry.
+    /// Returns the resolved project key (empty when none resolves).
+    std::string ResolveActiveViewProjectKeyForCatalog(const std::string& activeTrackerType) const;
+
+    /// InitFieldCatalog helper — apply a loaded field-catalog snapshot to the live
+    /// AvailableFields/Components/IssueTypeMeta state and publish the offline warning.
+    void ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
+                                          std::vector<TrackerComponent> snapComponents,
+                                          std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
+                                          const std::string& activeTrackerType);
 
     /// Phase 4 — initialise Lua, start the merge-watch notify endpoint, run the Lua
     /// setup script + automation worker, and warm the Jira issue-type edit-meta.
@@ -646,6 +667,10 @@ class AppController
                          const std::string& error);
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                          std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error);
+    /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error
+    /// snapshot restore vs hard catalog clear) and publish the matching warning/error
+    /// state. `catalogPlane` mirrors the caller's tracker-kind classification.
+    void HandleFieldCatalogError(const std::string& error, const std::string& catalogCacheKey, bool catalogPlane);
     /// Pin the project key the next SetFieldCatalog() snapshot saves under. The grid's scoped
     /// catalog fetch resolves a project from the active-view JQL but applies the result through
     /// SetFieldCatalog() (not RefreshFieldCatalog()), so without this hint the scoped result would
@@ -838,6 +863,23 @@ class AppController
                                     const std::string& originalEstimateSnapshot,
                                     const std::string& remainingEstimateSnapshot,
                                     const std::string& issueTypeKeySnapshot, FieldEditResult& outResult);
+
+    /// SubmitFieldEditNetworkOnly helper — apply a sprint-field edit (add-to-sprint
+    /// mutation + optimistic display value). `handled` is set true when the field is a
+    /// sprint field; the return value is the network result in that case.
+    bool SubmitSprintFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                          const std::vector<std::string>& values, ITrackerIssueMutations& mutations,
+                                          FieldEditResult& outResult, bool& handled);
+
+    /// SubmitFieldEditNetworkOnly helper — apply a Jira timetracking-estimate edit.
+    /// `handled` is set true when the field is an editable timetracking estimate; the
+    /// return value is the network result in that case.
+    bool SubmitTimetrackingFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                                const std::vector<std::string>& values,
+                                                const std::string& originalEstimateSnapshot,
+                                                const std::string& remainingEstimateSnapshot,
+                                                ITrackerIssueMutations& mutations, FieldEditResult& outResult,
+                                                bool& handled);
 
     /**
      * Build the Jira fields payload + optimistic display map without calling the network.
