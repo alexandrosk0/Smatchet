@@ -17,7 +17,7 @@ Each packet should include:
 - **Owner + scope**: target agent, allowed write set, and files / modules that are explicitly out of scope.
 - **Inline task context**: paste only the relevant design-doc section(s). Say "do not reopen the design doc unless blocked" when the excerpt is complete.
 - **Shared inventory**: for exact symbol / literal work, do one exhaustive text-search in the orchestrator and pass matches as `<file>:<line>:<role>` (for example `(cfg-read)`, `(draft-write)`, `(audit-only)`). Do not make every agent rediscover the same inventory.
-- **Invariant decisions**: scan the task against the hard rules in this file first. If the plan collides with `ITrackerClient`, command registry contracts, view storage, MCP schemas, dual-target constraints, or other invariants, pre-resolve the intended option in the prompt.
+- **Invariant decisions**: scan the task against the hard rules in this file first. If the plan collides with `ITrackerBackend`, command registry contracts, view storage, MCP schemas, dual-target constraints, or other invariants, pre-resolve the intended option in the prompt.
 - **Subsystem split**: count the subsystem table rows touched. If a design-doc PR spans more than one subsystem row, split it before delegating unless a single cross-cutting design decision is still unresolved.
 - **Output budget**: for routine implementation agents, request `Report <= 200 words, table form, no prose paragraphs` unless the task needs a design write-up.
 - **Comment discipline**: remind implementation agents that code comments must explain durable code intent, never the task / PR / temporary plan (no comments like `PR 4:` or `remove in PR 7`).
@@ -283,7 +283,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 
 | Agent | Complexity · access | Use when |
 |---|---|---|
-| `architect` | high · read-only | Change spans `Source/Core` + `Plugins` (+ `Source/UnrealPlugins`), or alters `ITrackerClient`, the command registry contract, per-backend view storage, or MCP schemas. Hand off **before** writing code — returns a design doc; the orchestrator implements. |
+| `architect` | high · read-only | Change spans `Source/Core` + `Plugins` (+ `Source/UnrealPlugins`), or alters `ITrackerBackend`, the command registry contract, per-backend view storage, or MCP schemas. Hand off **before** writing code — returns a design doc; the orchestrator implements. |
 | `build-doctor` | high · read-edit | CMake / Ninja / MSVC / Clang / lld / LTO / `SmatchetPackageUnrealLibs_DX12` failures. Pass the preset name and the failing output verbatim. |
 | `perf-detective` | high · read-only | Steady-state perf — optimize / profile / FPS / sustained lag. Owns hypothesis + diagnose + validate over frame averages. Delegates to `perf-instrument` and `perf-measure`. Wraps `docs/guides/perf-workflow.md`. |
 | `spike-hunter` | high · read-only | Intermittent UI-thread stalls — spike / hitch / freeze / stutter / "occasionally slow". Looks at p99 / max outliers + blocking calls reaching the UI thread (HTTP, SQLite, p4, file I/O, locks). Delegates to `perf-instrument` and `perf-measure`. |
@@ -301,7 +301,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 
 | Agent | Complexity · access | Use when |
 |---|---|---|
-| `tracker-backend` | low · read-edit | `ITrackerClient`, `JiraClient`, `PlaneClient`, field catalog / value parser / payload, `TrackerHttpClient`, `IssueCreatePipeline`. Adding fields, fixing parsing, JQL / Plane queries, HTTP retries, audit-trail wiring. |
+| `tracker-backend` | low · read-edit | `ITrackerBackend`, `JiraClient`, `PlaneClient`, field catalog / value parser / payload, `TrackerHttpClient`, `IssueCreatePipeline`. Adding fields, fixing parsing, JQL / Plane queries, HTTP retries, audit-trail wiring. |
 | `grid-engine` | low · read-edit | Spreadsheet / ticket grid — `TicketGridModel`, `SpreadsheetState`, `SmatchetActiveProjectGridUi`, all `SmatchetGrid*`, `SmatchetViewsDashboardUi*`, `SmatchetFieldRender`, `TrackerGridFieldDisplay`. Columns, cell editors, sorting, drag-reorder, header UX, in-place edit flow. |
 | `offline-sync` | low · read-edit | SQLite cache, offline-queue replay, audit trail — `LocalCacheManager`, `OfflineQueueService`, `SmatchetOfflineQueueUi`, `TicketSyncService`, `BackendAuditTrail`, `FieldEditAuditSource`. Schema additions, replay, dead-letter, conflict resolution. |
 | `command-system` | low · read-edit | Adding / modifying commands in the unified registry (CLI + Palette + MCP + Lua + Scenarios). Touches `Source/Core/{include,src}/Commands/`. |
