@@ -52,6 +52,7 @@ class ITrackerIssueMutations;
 namespace TextMerge {
 struct MergeResult;
 }
+struct TrackerField;
 struct PendingCreate;
 struct DeadPendingCreate;
 struct PendingFieldEditRecord;
@@ -183,6 +184,33 @@ class OfflineQueueService {
     /// tracker mutation, and the success / transport-retry / rejection / archive bookkeeping.
     void ReplayOneFieldEdit(const PendingFieldEditRecord& row, LocalCacheManager* cache, ITrackerIssueReader* reader,
                             ITrackerIssueMutations* mutations, IOfflineQueueDeps& depsRef, FieldEditReplayTally& tally);
+
+    // --- TickOfflineCreates replay helpers ------------------------------------------------
+    // TickOfflineCreates dispatches a background task whose body is a thin loop over a per-row
+    // helper. The helper runs off the UI thread (inside the launched task) and operates on
+    // stack-local state passed by reference — no extra heap allocation or container copy is
+    // introduced versus the original inline loop. Mirrors the TickOfflineFieldEdits shape.
+
+    /// Running counters for one create-replay pass. Stack-allocated in the background task;
+    /// threaded through the per-row helper by reference.
+    struct CreateReplayTally {
+        int Successes = 0;
+        int Failures = 0;
+        int Archived = 0;
+        int CacheOpFailures = 0;
+        bool RanCreate = false;
+    };
+
+    /// Run a cache mutation under a uniform try/catch, counting failures into `tally`. Returns
+    /// true on success. The callable is taken by const ref (no forwarding-by-value copy).
+    bool RunCreateCacheMutation(const char* action, std::int64_t id, const std::function<void()>& fn,
+                                CreateReplayTally& tally);
+
+    /// Replay a single queued offline create: attempt-cap gate, payload parse, the create
+    /// pipeline run, and the success / retry / archive bookkeeping. Runs off the UI thread.
+    void ReplayOneCreate(const PendingCreate& pc, LocalCacheManager* cache, ITrackerIssueMutations* mutations,
+                         const std::vector<TrackerField>& catalog, IOfflineQueueDeps& depsRef,
+                         CreateReplayTally& tally);
 
     IOfflineQueueDeps& deps_;
 

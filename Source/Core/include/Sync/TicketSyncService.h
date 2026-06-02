@@ -84,6 +84,17 @@ class TicketSyncService {
 
     void StartStreamingSync(const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
 
+    // StartStreamingSync phases. Each mutates the member FSM state in place; lock scopes match
+    // the original inline body (same mutexes, same points).
+
+    /// Normalize the requested tracker kind, swap the live backend when it differs, and on a
+    /// cross-kind swap clear the in-memory ActiveTickets snapshot so stale items don't linger.
+    void SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy);
+
+    /// Background streaming-fetch worker body. Coordinates with the UI thread via FSM atomics
+    /// + `QueueMutex`.
+    void RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
+
     // --- TickStreamingApply phase helpers ------------------------------------------------
     // TickStreamingApply is a thin dispatcher over these per-phase steps. Each operates on the
     // member FSM state in place (no copies of the batch queue / ActiveTickets are introduced)

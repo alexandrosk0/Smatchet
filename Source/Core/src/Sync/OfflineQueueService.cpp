@@ -886,6 +886,125 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
     }
 }
 
+bool OfflineQueueService::RunCreateCacheMutation(const char* action, std::int64_t id, const std::function<void()>& fn,
+                                                 CreateReplayTally& tally) {
+    try {
+        fn();
+        return true;
+    } catch (const std::exception& ex) {
+        ++tally.CacheOpFailures;
+        LOG_ERROR("OfflineQueueService::TickOfflineCreates %s failed id=%lld err=%s", action,
+                  static_cast<long long>(id), ex.what());
+        return false;
+    } catch (...) {
+        ++tally.CacheOpFailures;
+        LOG_ERROR("OfflineQueueService::TickOfflineCreates %s failed id=%lld err=unknown exception", action,
+                  static_cast<long long>(id));
+        return false;
+    }
+}
+
+void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, LocalCacheManager* cache,
+                                          ITrackerIssueMutations* mutations, const std::vector<TrackerField>& catalog,
+                                          IOfflineQueueDeps& depsRef, CreateReplayTally& tally) {
+    const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
+    const auto archivePending = [&](const std::string& reason, const std::string& terminalError) -> bool {
+        return RunCreateCacheMutation(
+            "archive_pending_create", pc.Id, [&]() { cache->ArchivePendingCreate(pc.Id, reason, terminalError); },
+            tally);
+    };
+
+    if (OfflineQueueReplayPolicy::ShouldArchive(pc.Attempts)) {
+        char detailBuf[384];
+        std::snprintf(detailBuf, sizeof(detailBuf),
+                      "Queued offline create id %lld already at attempts=%d (max=%d). "
+                      "Offline replay did not call Jira create; entry moved to Failed offline creates.",
+                      static_cast<long long>(pc.Id), pc.Attempts, kMaxReplayAttempts);
+        const std::string terminal =
+            FormatOfflineQueueTerminalLine("offline_replay", "max_attempt_gate", "max_attempts", detailBuf);
+        if (archivePending("max_attempts", terminal)) {
+            ++tally.Archived;
+            BackendAuditTrail::AppendResult("offline_dead_letter", "offline_replay", std::string(),
+                                            std::to_string(pc.Id), true, std::string(),
+                                            nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "max_attempts"}});
+        } else {
+            ++tally.Failures;
+        }
+        return;
+    }
+    IssueDraft draft;
+    std::string parseErr;
+    if (!IssueDraftHelpers::FromJson(pc.Payload, draft, parseErr)) {
+        LOG_WARN("OfflineQueueService: archiving malformed pending_create id=%lld err=%s",
+                 static_cast<long long>(pc.Id), parseErr.c_str());
+        const std::string terminal =
+            FormatOfflineQueueTerminalLine("offline_replay", "parse_payload", "malformed_payload",
+                                           std::string("IssueDraft JSON parse failed: ") + parseErr);
+        if (archivePending("malformed_payload", terminal)) {
+            ++tally.Archived;
+            BackendAuditTrail::AppendResult(
+                "offline_dead_letter", "offline_replay", std::string(), std::to_string(pc.Id), true, std::string(),
+                nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "malformed_payload"}, {"error", parseErr}});
+        } else {
+            ++tally.Failures;
+        }
+        return;
+    }
+    const RequiredFieldSet required =
+        depsRef.GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
+    tally.RanCreate = true;
+    IssueCreateResult result = IssueCreatePipeline::Run(*mutations, cache, draft, required, catalog);
+    if (result.Ok) {
+        if (RunCreateCacheMutation(
+                "delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); }, tally)) {
+            ++tally.Successes;
+            depsRef.RequestDeferredLiveTrackerBackendSuccessNotify();
+            BackendAuditTrail::AppendResult(
+                "offline_replay_create", "offline_replay", result.IssueKey, std::to_string(pc.Id), true, std::string(),
+                nlohmann::json{{"pending_create_id", pc.Id}, {"attempts_before", pc.Attempts}});
+        } else {
+            ++tally.Failures;
+        }
+        return;
+    }
+    const int nextAttempts = pc.Attempts + 1;
+    if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
+        std::string trackerPart =
+            result.Error.empty() ? std::string("Create pipeline returned failure with empty error on final attempt.")
+                                 : std::string("Create pipeline error: ") + result.Error;
+        char headBuf[224];
+        std::snprintf(headBuf, sizeof(headBuf), "Offline replay attempts went from %d to %d (cap=%d). ", pc.Attempts,
+                      nextAttempts, kMaxReplayAttempts);
+        const std::string terminalError = FormatOfflineQueueTerminalLine(
+            "offline_replay", "issue_create", "max_attempts", std::string(headBuf) + trackerPart);
+        const bool archivedOk = RunCreateCacheMutation(
+            "archive_pending_create", pc.Id,
+            [&]() {
+                cache->UpdatePendingCreate(pc.Id, nextAttempts, terminalError);
+                cache->ArchivePendingCreate(pc.Id, "max_attempts", terminalError);
+            },
+            tally);
+        if (archivedOk) {
+            ++tally.Archived;
+            BackendAuditTrail::AppendResult(
+                "offline_dead_letter", "offline_replay", std::string(), std::to_string(pc.Id), true, std::string(),
+                nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "max_attempts"}, {"error", result.Error}});
+        } else {
+            ++tally.Failures;
+        }
+        return;
+    }
+    const bool updateOk = RunCreateCacheMutation(
+        "update_pending_create", pc.Id, [&]() { cache->UpdatePendingCreate(pc.Id, nextAttempts, result.Error); },
+        tally);
+    (void)updateOk;
+    BackendAuditTrail::AppendResult(
+        "offline_replay_create", "offline_replay", std::string(), std::to_string(pc.Id), false, result.Error,
+        nlohmann::json{
+            {"pending_create_id", pc.Id}, {"attempts_before", pc.Attempts}, {"attempts_after", nextAttempts}});
+    ++tally.Failures;
+}
+
 void OfflineQueueService::TickOfflineCreates() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
@@ -931,139 +1050,22 @@ void OfflineQueueService::TickOfflineCreates() {
 
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask([this, &depsRef, pending, mutations2, cache, catalogCopy]() {
-        const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
-        int successes = 0;
-        int failures = 0;
-        int archived = 0;
-        int cacheOpFailures = 0;
-        bool ranCreate = false;
-        const auto tryCacheMutation = [&](const char* action, std::int64_t id,
-                                          const std::function<void()>& fn) -> bool {
-            try {
-                fn();
-                return true;
-            } catch (const std::exception& ex) {
-                ++cacheOpFailures;
-                LOG_ERROR("OfflineQueueService::TickOfflineCreates %s failed id=%lld err=%s", action,
-                          static_cast<long long>(id), ex.what());
-                return false;
-            } catch (...) {
-                ++cacheOpFailures;
-                LOG_ERROR("OfflineQueueService::TickOfflineCreates %s failed id=%lld err=unknown exception", action,
-                          static_cast<long long>(id));
-                return false;
-            }
-        };
-        const auto archivePending = [&](const PendingCreate& pc, const std::string& reason,
-                                        const std::string& terminalError) -> bool {
-            return tryCacheMutation("archive_pending_create", pc.Id,
-                                    [&]() { cache->ArchivePendingCreate(pc.Id, reason, terminalError); });
-        };
+        CreateReplayTally tally;
         for (const auto& pc : pending) {
-            if (OfflineQueueReplayPolicy::ShouldArchive(pc.Attempts)) {
-                char detailBuf[384];
-                std::snprintf(detailBuf, sizeof(detailBuf),
-                              "Queued offline create id %lld already at attempts=%d (max=%d). "
-                              "Offline replay did not call Jira create; entry moved to Failed offline creates.",
-                              static_cast<long long>(pc.Id), pc.Attempts, kMaxReplayAttempts);
-                const std::string terminal =
-                    FormatOfflineQueueTerminalLine("offline_replay", "max_attempt_gate", "max_attempts", detailBuf);
-                if (archivePending(pc, "max_attempts", terminal)) {
-                    ++archived;
-                    BackendAuditTrail::AppendResult(
-                        "offline_dead_letter", "offline_replay", std::string(), std::to_string(pc.Id), true,
-                        std::string(), nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "max_attempts"}});
-                } else {
-                    ++failures;
-                }
-                continue;
-            }
-            IssueDraft draft;
-            std::string parseErr;
-            if (!IssueDraftHelpers::FromJson(pc.Payload, draft, parseErr)) {
-                LOG_WARN("OfflineQueueService: archiving malformed pending_create id=%lld err=%s",
-                         static_cast<long long>(pc.Id), parseErr.c_str());
-                const std::string terminal =
-                    FormatOfflineQueueTerminalLine("offline_replay", "parse_payload", "malformed_payload",
-                                                   std::string("IssueDraft JSON parse failed: ") + parseErr);
-                if (archivePending(pc, "malformed_payload", terminal)) {
-                    ++archived;
-                    BackendAuditTrail::AppendResult("offline_dead_letter", "offline_replay", std::string(),
-                                                    std::to_string(pc.Id), true, std::string(),
-                                                    nlohmann::json{{"pending_create_id", pc.Id},
-                                                                   {"reason", "malformed_payload"},
-                                                                   {"error", parseErr}});
-                } else {
-                    ++failures;
-                }
-                continue;
-            }
-            const RequiredFieldSet required =
-                depsRef.GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
-            ranCreate = true;
-            IssueCreateResult result = IssueCreatePipeline::Run(*mutations2, cache, draft, required, *catalogCopy);
-            if (result.Ok) {
-                if (tryCacheMutation("delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); })) {
-                    ++successes;
-                    depsRef.RequestDeferredLiveTrackerBackendSuccessNotify();
-                    BackendAuditTrail::AppendResult(
-                        "offline_replay_create", "offline_replay", result.IssueKey, std::to_string(pc.Id), true,
-                        std::string(), nlohmann::json{{"pending_create_id", pc.Id}, {"attempts_before", pc.Attempts}});
-                } else {
-                    ++failures;
-                }
-            } else {
-                const int nextAttempts = pc.Attempts + 1;
-                if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
-                    std::string trackerPart =
-                        result.Error.empty()
-                            ? std::string("Create pipeline returned failure with empty error on final attempt.")
-                            : std::string("Create pipeline error: ") + result.Error;
-                    char headBuf[224];
-                    std::snprintf(headBuf, sizeof(headBuf), "Offline replay attempts went from %d to %d (cap=%d). ",
-                                  pc.Attempts, nextAttempts, kMaxReplayAttempts);
-                    const std::string terminalError = FormatOfflineQueueTerminalLine(
-                        "offline_replay", "issue_create", "max_attempts", std::string(headBuf) + trackerPart);
-                    const bool archivedOk = tryCacheMutation("archive_pending_create", pc.Id, [&]() {
-                        cache->UpdatePendingCreate(pc.Id, nextAttempts, terminalError);
-                        cache->ArchivePendingCreate(pc.Id, "max_attempts", terminalError);
-                    });
-                    if (archivedOk) {
-                        ++archived;
-                        BackendAuditTrail::AppendResult("offline_dead_letter", "offline_replay", std::string(),
-                                                        std::to_string(pc.Id), true, std::string(),
-                                                        nlohmann::json{{"pending_create_id", pc.Id},
-                                                                       {"reason", "max_attempts"},
-                                                                       {"error", result.Error}});
-                    } else {
-                        ++failures;
-                    }
-                } else {
-                    const bool updateOk = tryCacheMutation("update_pending_create", pc.Id, [&]() {
-                        cache->UpdatePendingCreate(pc.Id, nextAttempts, result.Error);
-                    });
-                    (void)updateOk;
-                    BackendAuditTrail::AppendResult("offline_replay_create", "offline_replay", std::string(),
-                                                    std::to_string(pc.Id), false, result.Error,
-                                                    nlohmann::json{{"pending_create_id", pc.Id},
-                                                                   {"attempts_before", pc.Attempts},
-                                                                   {"attempts_after", nextAttempts}});
-                    ++failures;
-                }
-            }
+            ReplayOneCreate(pc, cache, mutations2, *catalogCopy, depsRef, tally);
         }
-        if (successes > 0) {
+        if (tally.Successes > 0) {
             depsRef.RefreshLocalData();
         }
-        if (successes > 0 || failures > 0 || archived > 0 || cacheOpFailures > 0) {
+        if (tally.Successes > 0 || tally.Failures > 0 || tally.Archived > 0 || tally.CacheOpFailures > 0) {
             LOG_INFO("OfflineQueueService: offline replay finished successes=%d failures=%d archived=%d "
                      "cache_op_failures=%d",
-                     successes, failures, archived, cacheOpFailures);
+                     tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
         }
         std::chrono::seconds delay{5};
-        if (!ranCreate && !pending.empty()) {
+        if (!tally.RanCreate && !pending.empty()) {
             delay = std::chrono::seconds(300);
-        } else if (failures > 0 && successes == 0) {
+        } else if (tally.Failures > 0 && tally.Successes == 0) {
             delay = std::chrono::seconds(30);
         }
         const auto nextAt = std::chrono::steady_clock::now() + delay;
