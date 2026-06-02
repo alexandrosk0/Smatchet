@@ -97,6 +97,8 @@ Full per-outcome semantics + halt-prompt return-code table + env-knob list + RES
 - **light** (not gated; existing inline exemptions apply): `Source/Core/src/Ui/`, `Source/Standalone/`.
 - **exempt** (not scanned): `ThirdParty/`, `build/`, non-C++ trees.
 
+**Subsystem guides** — heavy `Source/Core/src/<ctx>/` dirs carry their own leaf docs: an `AGENTS.md` (scoped rules — the subsystem invariants that used to live in `code-review.md`), and for the exemplar `Tracker/` also a `CONTEXT.md` (domain glossary) + `README.md` (orientation / request flow). When you touch a subsystem, read its leaf `AGENTS.md` and apply its invariants — they are the single source of truth for that dir and override any central summary. Leaves today: `Tracker/`, `Commands/`, `Persistence/`, `Sync/`, `Ui/` (the strict zones above + the light `Ui/`). The full registry + per-context coverage + harness-discovery index is [`CONTEXT-MAP.md`](CONTEXT-MAP.md); the coverage + README-staleness gate is `agents/scripts/project/test-subsystem-docs.sh`. Claude Code auto-loads each leaf via a gitignored `CLAUDE.md` shim that `setup-harness.sh claude-code` generates beside it (Claude Code reads nested `CLAUDE.md`, not nested `AGENTS.md`).
+
 **`SMATCHET_DEVIATION` comment** — forward-only superset of the inline exemption markers, for new strict-zone deviations. Grammar (pure comment; zero compile cost; the next non-blank line is the target):
 
 ```cpp
