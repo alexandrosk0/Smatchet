@@ -4,6 +4,7 @@
 #include "Commands/CommandPaletteUi.h"
 #include "ConfigManager.h"
 #include "SmatchetToolbarUi.h"
+#include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetThemeIds.h"
 #include "TicketGridModel.h"
 #include "Views.h"
@@ -132,6 +133,29 @@ class SmatchetUI {
     void drawAiAssistantPanel(AppController& app, UiDrawSession& d);
 #endif
     void drawPreferencesWindow(AppController& app, UiDrawSession& d);
+    // Section helpers for drawPreferencesWindow (full-function-size-compliance Phase 5,
+    // PR E11). The orchestrator owns the positional Begin/EndTabBar/End frame; each helper
+    // runs inside that frame and never splits a positional-ImGui pair across the call
+    // boundary. No SMATCHET_UI_PERF_SCOPE seams exist on this window, so the split is on
+    // logical sections only (no new perf scopes added).
+    void resetPreferencesWindowState(UiDrawSession& d);
+    bool beginPreferencesWindow(UiDrawSession& d);
+    void loadPreferencesBuffers(UiDrawSession& d);
+    void drawPreferencesTrackerTab(UiDrawSession& d);
+#if defined(SMATCHET_WITH_MCP)
+    void drawPreferencesIntegrationsTab(AppController& app, UiDrawSession& d);
+#endif
+    void onPreferencesSaveAndSync(AppController& app, UiDrawSession& d);
+
+    /// Hoisted singleton-window lazy-load flags that were a function-local `static`
+    /// inside drawPreferencesWindow. Behaviour-identical for this single-instance
+    /// window; promoting to a member removes the static so the section helpers stay
+    /// reentrant-safe and the close-reset path can clear it without a free-function
+    /// reach-around.
+    struct PreferencesWindowState {
+        SmatchetPreferencesUiTemplateFlags templateFlags;
+    };
+    PreferencesWindowState preferencesState_;
     void drawViewsDashboardWindow(AppController& app, UiDrawSession& d);
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
