@@ -17,15 +17,21 @@
 //                       command would flip (e.g. g_ui.showLogWindow = true).
 //                       This is exactly what ViewToggleCommands.cpp does
 //                       internally, so it drives the production code path.
-//   3. tick-until     — SetRef(<window title>) + YieldUntil(ctx->WindowInfo(...).Window
-//                       is non-null and Appearing settled). The real draw fn
-//                       runs each yielded frame.
-//   4. assert-widget  — ctx->ItemExists("<window>/<robust label>"); IM_CHECK it.
+//   3. tick-until     — SetRef(<window title>) + YieldUntil(ImGui::FindWindowByName(title)
+//                       is non-null and ->Active). Use FindWindowByName, NOT
+//                       ctx->WindowInfo() — WindowInfo() does not resolve a docked
+//                       window by plain title (see the inline note below). Re-arm the
+//                       request-focus flag every yielded frame or the window opens as an
+//                       inactive tab where Begin() returns false. The real draw fn runs
+//                       each yielded frame.
+//   4. assert-widget  — ctx->ItemExists("<robust label>") with a BARE ref (no
+//                       "<window>/" prefix — it double-prefixes against SetRef); IM_CHECK it.
 //   5. close-window   — clear the flag so the next test starts clean.
 //
-// Windows covered in this pilot (both open with ZERO backend state):
+// Windows covered in this pilot (all three open with ZERO backend state):
 //   - Log            (drawLogWindow,   SmatchetUtilityWindowsUi.cpp) — title "Log"
 //   - Backend Audit  (drawAuditWindow, SmatchetAuditUi.cpp)         — title "Backend Audit"
+//   - Preferences    (drawPreferencesWindow, SmatchetPreferencesUi.cpp) — title "Preferences"
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
