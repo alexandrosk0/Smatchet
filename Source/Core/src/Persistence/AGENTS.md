@@ -7,7 +7,7 @@ This is a **strict lint zone** (root `AGENTS.md` § Tiered enforcement zones).
 ## Invariants
 
 - **SQLite schema changes are additive only.** Add columns/tables; never drop, rename, or change the type of an existing column in place. The local cache is a long-lived per-user file — a destructive migration corrupts or discards a user's offline state. Flag any `DROP` / `ALTER ... RENAME` / type change. A genuine schema evolution needs a versioned migration step, not an in-place edit.
-- **All SQLite work is off the UI thread.** `SQLite::Database` calls never run inside a render frame — apply through `MainThreadDispatcher::PostToMainThread` and chunk large writes (this is the Pillar-2 UI-thread rule; see `Source/Core/src/Ui/AGENTS.md`).
+- **All SQLite work is off the UI thread.** `SQLite::Database` calls run on a worker thread, never inline in a render frame; the worker posts only the result back via `MainThreadDispatcher::PostToMainThread`, and chunks large writes (`SmatchetChatPersistWorker` is the reference pattern; this is the Pillar-2 UI-thread rule — see `Source/Core/src/Ui/AGENTS.md`).
 - **Audit trail is append-only + redacted.** `BackendAuditTrail` entries are begin/result pairs; secrets/tokens go through the redaction helpers before they land. Don't log raw payloads.
 
 ## Before you edit

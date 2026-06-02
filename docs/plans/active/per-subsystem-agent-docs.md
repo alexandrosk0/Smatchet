@@ -2,7 +2,7 @@
 
 > **Slug**: `per-subsystem-agent-docs` (matches this file's basename without `.md`).
 >
-> **Supersedes**: `docs/plans/active/nested-subsystem-agents-md.md` (rule-extraction) + `docs/plans/active/tracker-context-docs.md` (glossary/orientation). Both merged here — archive on adoption.
+> **Supersedes**: the never-filed `nested-subsystem-agents-md` rule-extraction intent + the `tracker-context-docs` glossary/orientation plan (now archived at `docs/plans/shipped/tracker-context-docs.md`). Both merged here.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
@@ -62,7 +62,7 @@ Grouped (list > 10 entries).
 14. `Source/Core/src/Tracker/README.md` (new) — orientation: backend-abstraction shape, create/update request flow, per-backend divergence points, fixture-vs-live split. Freshness header, no line numbers.
 
 **Supersession:**
-15. `docs/plans/active/nested-subsystem-agents-md.md` + `docs/plans/active/tracker-context-docs.md` — archive (merged here) once this plan is adopted.
+15. `tracker-context-docs` archived to `docs/plans/shipped/tracker-context-docs.md` (merged here via PR #717); `nested-subsystem-agents-md` was never filed as a standalone plan — its rule-extraction intent is absorbed here.
 
 ## Existing utilities reused
 

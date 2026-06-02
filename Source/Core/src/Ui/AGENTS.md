@@ -9,7 +9,7 @@ Scoped rules for `Source/Core/src/Ui/` (all ImGui render code). Global rules sta
 Flag any of these when reachable from `SmatchetUI::Draw` or any ImGui render path. These are **correctness** issues, not "performance" — they cause visible hitches and a CRITICAL review finding:
 
 - `cpr::Get` / `cpr::Post` / `cpr::Put` / `cpr::Delete` directly in render code — must go through `TrackerHttpClient` posted to a worker thread.
-- `SQLite::Database` calls inside a render frame — apply via `MainThreadDispatcher::PostToMainThread`; chunk large writes.
+- `SQLite::Database` calls inline in a render frame — the work must run on a worker thread; post only the result back via `MainThreadDispatcher::PostToMainThread`, and chunk large writes (`SmatchetChatPersistWorker` is the reference pattern).
 - `p4 ...` invocations (any `system()`, `_popen`, child-process spawn) — must run on a `std::thread` worker (see the `AnnotateAnalysisUi.cpp` pattern).
 - Synchronous file I/O (image decode + upload, font load, attachment download) on the UI thread — use `std::async(std::launch::async, …)` and poll per frame.
 - `std::future::get()` without a prior `wait_for(0s)` ready-check — blocks the frame.

@@ -15,8 +15,9 @@
 #   4. A context's .cpp/.h changed vs <ref> but its README.md did not (stale orientation).
 #
 # Modes:
-#   (no args)          structural FAIL checks 1-3.
-#   --diff <ref>       structural checks + staleness WARN vs <ref> (e.g. origin/develop).
+#   (no args)          structural checks 1-3 + staleness WARN vs origin/develop when that
+#                      ref resolves (degrades to structural-only if it doesn't).
+#   --diff[=]<ref>     structural checks 1-3 + staleness WARN vs <ref> (e.g. origin/develop).
 #   --selftest         assert the registry parses and matches on-disk leaves; checks 1-2 only.
 #
 # Project-bound (hardcodes Source/Core/src paths) — lives in agents/scripts/project/,
