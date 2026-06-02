@@ -210,78 +210,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     (void)catalogPlane;
 
     if (!error.empty()) {
-        if (IsTrackerTransportErrorText(error)) {
-            if (!AvailableFields.empty()) {
-                LastTrackerFieldCatalogError.clear();
-                const std::string nextWarning = std::string("Offline: using cached ") +
-                                                (catalogPlane ? "Plane" : "Jira") +
-                                                " field catalog. Last fetch failed: " + error;
-                if (nextWarning != LastTrackerFieldCatalogWarning) {
-                    LastTrackerFieldCatalogWarning = nextWarning;
-                    TrackerFieldCatalogRevision.fetch_add(1);
-                }
-                LOG_WARN("AppController::SetFieldCatalog transport failure (catalog preserved): %s", error.c_str());
-                return;
-            }
-
-            std::vector<TrackerField> snapFields;
-            std::vector<TrackerComponent> snapComponents;
-            std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
-            std::string snapErr;
-            if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents,
-                                                               snapIssueTypeMeta, snapErr)) {
-                AvailableFields = std::move(snapFields);
-                AvailableComponents = std::move(snapComponents);
-                AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-                fieldCatalogEverLoaded_ = true;
-                LastTrackerFieldCatalogError.clear();
-                LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
-                                                 " field catalog from local snapshot. Last fetch failed: " + error;
-                if (!catalogPlane) {
-                    for (auto& field : AvailableFields) {
-                        if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
-                            field.ReadOnly = true;
-                        }
-                    }
-                    EnsureCatalogHistoryField();
-                }
-                TrackerFieldCatalogRevision.fetch_add(1);
-                LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
-                return;
-            }
-
-            if (fieldCatalogEverLoaded_) {
-                LastTrackerFieldCatalogError.clear();
-                LastTrackerFieldCatalogWarning =
-                    "Offline: no field catalog snapshot could be loaded for this tracker context. Last fetch failed: " +
-                    error;
-                TrackerFieldCatalogRevision.fetch_add(1);
-                LOG_WARN("AppController::SetFieldCatalog transport failure; no snapshot (session had catalog): %s",
-                         error.c_str());
-                return;
-            }
-
-            AvailableFields.clear();
-            AvailableComponents.clear();
-            AvailableIssueTypeMeta.clear();
-            fieldCatalogEverLoaded_ = false;
-            LastTrackerFieldCatalogWarning.clear();
-            LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
-                                           " field catalog available. " +
-                                           (error.empty() ? std::string("Last fetch failed.") : error);
-            TrackerFieldCatalogRevision.fetch_add(1);
-            LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
-            return;
-        }
-
-        AvailableFields.clear();
-        AvailableComponents.clear();
-        AvailableIssueTypeMeta.clear();
-        fieldCatalogEverLoaded_ = false;
-        LastTrackerFieldCatalogWarning.clear();
-        LastTrackerFieldCatalogError = error;
-        TrackerFieldCatalogRevision.fetch_add(1);
-        LOG_ERROR("AppController::SetFieldCatalog error: %s", error.c_str());
+        HandleFieldCatalogError(error, catalogCacheKey, catalogPlane);
         return;
     }
 
@@ -316,6 +245,80 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     }
 
     TrackerFieldCatalogRevision.fetch_add(1);
+}
+
+void AppController::HandleFieldCatalogError(const std::string& error, const std::string& catalogCacheKey,
+                                            bool catalogPlane) {
+    if (!IsTrackerTransportErrorText(error)) {
+        AvailableFields.clear();
+        AvailableComponents.clear();
+        AvailableIssueTypeMeta.clear();
+        fieldCatalogEverLoaded_ = false;
+        LastTrackerFieldCatalogWarning.clear();
+        LastTrackerFieldCatalogError = error;
+        TrackerFieldCatalogRevision.fetch_add(1);
+        LOG_ERROR("AppController::SetFieldCatalog error: %s", error.c_str());
+        return;
+    }
+
+    if (!AvailableFields.empty()) {
+        LastTrackerFieldCatalogError.clear();
+        const std::string nextWarning = std::string("Offline: using cached ") + (catalogPlane ? "Plane" : "Jira") +
+                                        " field catalog. Last fetch failed: " + error;
+        if (nextWarning != LastTrackerFieldCatalogWarning) {
+            LastTrackerFieldCatalogWarning = nextWarning;
+            TrackerFieldCatalogRevision.fetch_add(1);
+        }
+        LOG_WARN("AppController::SetFieldCatalog transport failure (catalog preserved): %s", error.c_str());
+        return;
+    }
+
+    std::vector<TrackerField> snapFields;
+    std::vector<TrackerComponent> snapComponents;
+    std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
+    std::string snapErr;
+    if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents, snapIssueTypeMeta,
+                                                       snapErr)) {
+        AvailableFields = std::move(snapFields);
+        AvailableComponents = std::move(snapComponents);
+        AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+        fieldCatalogEverLoaded_ = true;
+        LastTrackerFieldCatalogError.clear();
+        LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
+                                         " field catalog from local snapshot. Last fetch failed: " + error;
+        if (!catalogPlane) {
+            for (auto& field : AvailableFields) {
+                if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
+                    field.ReadOnly = true;
+                }
+            }
+            EnsureCatalogHistoryField();
+        }
+        TrackerFieldCatalogRevision.fetch_add(1);
+        LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
+        return;
+    }
+
+    if (fieldCatalogEverLoaded_) {
+        LastTrackerFieldCatalogError.clear();
+        LastTrackerFieldCatalogWarning =
+            "Offline: no field catalog snapshot could be loaded for this tracker context. Last fetch failed: " + error;
+        TrackerFieldCatalogRevision.fetch_add(1);
+        LOG_WARN("AppController::SetFieldCatalog transport failure; no snapshot (session had catalog): %s",
+                 error.c_str());
+        return;
+    }
+
+    AvailableFields.clear();
+    AvailableComponents.clear();
+    AvailableIssueTypeMeta.clear();
+    fieldCatalogEverLoaded_ = false;
+    LastTrackerFieldCatalogWarning.clear();
+    LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
+                                   " field catalog available. " +
+                                   (error.empty() ? std::string("Last fetch failed.") : error);
+    TrackerFieldCatalogRevision.fetch_add(1);
+    LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
 }
 
 const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {
@@ -1164,24 +1167,11 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                  [](const std::string& value) { return !value.empty(); });
 
     if (IsSprintField(field)) {
-        if (values.empty()) {
-            outResult.Error = "Clearing sprint is not supported by this action.";
-            return false;
+        bool handled = false;
+        const bool ok = SubmitSprintFieldEditNetworkOnly(issueId, field, values, *mutations, outResult, handled);
+        if (handled) {
+            return ok;
         }
-        const std::string sprintId = values.front();
-        if (!mutations->AddIssueToSprint(issueId, sprintId, outResult.Error)) {
-            return false;
-        }
-        std::string displayValue = sprintId;
-        auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
-                                  [&](const auto& option) { return option.Id == sprintId; });
-        if (optIt != field.AllowedValueOptions.end()) {
-            displayValue = optIt->Value;
-        }
-        outResult.Ok = true;
-        outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-        return true;
     }
 
     if (IsNonEditableTimetrackingFieldId(field.Id)) {
@@ -1190,41 +1180,13 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
     }
 
     if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        const std::string editedValue = values.empty() ? std::string() : values.front();
-        if (editedValue.empty()) {
-            outResult.Error = "Clearing Jira timetracking estimates is not supported by this editor.";
-            return false;
+        bool handled = false;
+        const bool ok =
+            SubmitTimetrackingFieldEditNetworkOnly(issueId, field, values, originalEstimateSnapshot,
+                                                   remainingEstimateSnapshot, *mutations, outResult, handled);
+        if (handled) {
+            return ok;
         }
-        std::string originalEstimate = originalEstimateSnapshot;
-        std::string remainingEstimate = remainingEstimateSnapshot;
-        if (field.Id == "timeoriginalestimate") {
-            originalEstimate = editedValue;
-        } else {
-            remainingEstimate = editedValue;
-        }
-
-        nlohmann::json timetrackingPayload = nlohmann::json::object();
-        if (!originalEstimate.empty()) {
-            timetrackingPayload["originalEstimate"] = originalEstimate;
-        }
-        if (!remainingEstimate.empty()) {
-            timetrackingPayload["remainingEstimate"] = remainingEstimate;
-        }
-        if (timetrackingPayload.empty()) {
-            outResult.Error = "Timetracking update requires at least one estimate value.";
-            return false;
-        }
-
-        nlohmann::json fieldsPayload = nlohmann::json::object();
-        fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-        if (!mutations->UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
-            return false;
-        }
-        outResult.Ok = true;
-        outResult.UpdatedDisplayValues["timeoriginalestimate"] = std::move(originalEstimate);
-        outResult.UpdatedDisplayValues["timeestimate"] = std::move(remainingEstimate);
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-        return true;
     }
 
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
@@ -1267,6 +1229,75 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
 
     outResult.Ok = true;
     outResult.UpdatedDisplayValues = std::move(displayValues);
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return true;
+}
+
+bool AppController::SubmitSprintFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                                     const std::vector<std::string>& values,
+                                                     ITrackerIssueMutations& mutations, FieldEditResult& outResult,
+                                                     bool& handled) {
+    handled = true;
+    if (values.empty()) {
+        outResult.Error = "Clearing sprint is not supported by this action.";
+        return false;
+    }
+    const std::string sprintId = values.front();
+    if (!mutations.AddIssueToSprint(issueId, sprintId, outResult.Error)) {
+        return false;
+    }
+    std::string displayValue = sprintId;
+    auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
+                              [&](const auto& option) { return option.Id == sprintId; });
+    if (optIt != field.AllowedValueOptions.end()) {
+        displayValue = optIt->Value;
+    }
+    outResult.Ok = true;
+    outResult.UpdatedDisplayValues[field.Id] = std::move(displayValue);
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return true;
+}
+
+bool AppController::SubmitTimetrackingFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                                           const std::vector<std::string>& values,
+                                                           const std::string& originalEstimateSnapshot,
+                                                           const std::string& remainingEstimateSnapshot,
+                                                           ITrackerIssueMutations& mutations,
+                                                           FieldEditResult& outResult, bool& handled) {
+    handled = true;
+    const std::string editedValue = values.empty() ? std::string() : values.front();
+    if (editedValue.empty()) {
+        outResult.Error = "Clearing Jira timetracking estimates is not supported by this editor.";
+        return false;
+    }
+    std::string originalEstimate = originalEstimateSnapshot;
+    std::string remainingEstimate = remainingEstimateSnapshot;
+    if (field.Id == "timeoriginalestimate") {
+        originalEstimate = editedValue;
+    } else {
+        remainingEstimate = editedValue;
+    }
+
+    nlohmann::json timetrackingPayload = nlohmann::json::object();
+    if (!originalEstimate.empty()) {
+        timetrackingPayload["originalEstimate"] = originalEstimate;
+    }
+    if (!remainingEstimate.empty()) {
+        timetrackingPayload["remainingEstimate"] = remainingEstimate;
+    }
+    if (timetrackingPayload.empty()) {
+        outResult.Error = "Timetracking update requires at least one estimate value.";
+        return false;
+    }
+
+    nlohmann::json fieldsPayload = nlohmann::json::object();
+    fieldsPayload["timetracking"] = std::move(timetrackingPayload);
+    if (!mutations.UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
+        return false;
+    }
+    outResult.Ok = true;
+    outResult.UpdatedDisplayValues["timeoriginalestimate"] = std::move(originalEstimate);
+    outResult.UpdatedDisplayValues["timeestimate"] = std::move(remainingEstimate);
     requestDeferredLiveTrackerBackendSuccessNotify_();
     return true;
 }
