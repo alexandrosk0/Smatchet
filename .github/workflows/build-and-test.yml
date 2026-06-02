@@ -80,6 +80,14 @@ jobs:
                 # the gate skips the build and the gate never runs. Keep before the
                 # agents/* docs-class arm (case matches first pattern).
                 agents/scripts/project/test-lint-rules.sh) code=true; break ;;
+                # Docs-class scripts: test-docs.sh is the local mirror of
+                # .github/workflows/doc-validation.yml (anchors / agent-contract /
+                # plan-index / ...). It runs no compiler and touches no product
+                # code, so a change to it alone must NOT trigger the expensive
+                # Windows builds — doc-validation.yml re-validates it on its own.
+                # (Other scripts/dev/*.sh — doctor.sh, test-build-warnings.sh, etc.
+                # — DO affect the build and stay non-docs via the *) arm below.)
+                scripts/dev/test-docs.sh) ;;
                 *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
                 *) code=true; break ;;
               esac
