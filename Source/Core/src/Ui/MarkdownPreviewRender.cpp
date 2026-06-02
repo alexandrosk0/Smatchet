@@ -171,6 +171,70 @@ static void PreviewAppendRunString(PreviewState& s, const std::string& text) {
 // active plan. No ImGui calls. The actual draw happens in `RenderPlan`.
 static void PreviewFlushBlock(PreviewState& s) { PlanAppendFlush(s); }
 
+// Resolve the ordered/unordered/task list-item marker string at parse time so
+// the counter is baked into the plan. Pure (no ImGui); mutates the ordered
+// counter on `s` exactly as the inline switch case did.
+static std::string PreviewResolveListMarker(PreviewState& s, void* detail) {
+    auto* lid = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
+    const bool task = lid && lid->is_task;
+    const bool done = task && (lid->task_mark == 'x' || lid->task_mark == 'X');
+    std::string marker;
+    if (!s.listStack.empty() && s.listStack.back() == '1') {
+        ++s.orderedCounters.back();
+        marker = std::to_string(s.orderedCounters.back());
+        if (task) {
+            marker += done ? ". \xE2\x98\x91 " : ". \xE2\x98\x90 ";
+        } else {
+            marker += ". ";
+        }
+    } else {
+        if (task) {
+            marker = done ? "\xE2\x98\x91 " : "\xE2\x98\x90 ";
+        } else {
+            marker = "\xE2\x80\xA2 "; // U+2022 bullet
+        }
+    }
+    return marker;
+}
+
+// MD_BLOCK_LI enter handling — emit a kListItemBegin block carrying the marker
+// + depth, then prime the runs accumulator with the marker (matches the legacy
+// emit shape). No ImGui calls.
+static void PreviewEnterListItem(PreviewState& s, void* detail) {
+    PreviewFlushBlock(s);
+    const std::string marker = PreviewResolveListMarker(s, detail);
+    PreviewPlan::Block b;
+    b.kind = PreviewPlan::Block::kListItemBegin;
+    b.listMarker = marker;
+    b.listDepth = s.listDepth;
+    s.outPlan->blocks.push_back(std::move(b));
+    // Also prime the runs accumulator with the marker so the very next
+    // paragraph flush includes it (matches the legacy emit shape).
+    const uint8_t savedMarks = s.currentMarks;
+    const std::string savedHref = s.currentHref;
+    s.currentMarks = 0;
+    s.currentHref.clear();
+    PreviewAppendRunString(s, marker);
+    s.currentMarks = savedMarks;
+    s.currentHref = savedHref;
+}
+
+// MD_BLOCK_TABLE enter handling — flush any pending paragraph then begin
+// collecting cell runs. Render happens on MD_BLOCK_TABLE leave. No ImGui calls.
+static void PreviewEnterTable(PreviewState& s, void* detail) {
+    PreviewFlushBlock(s);
+    if (s.tableDepth > 0) {
+        ++s.tableDepth;
+        return; // nested table — skipped
+    }
+    ++s.tableDepth;
+    auto* d = static_cast<MD_BLOCK_TABLE_DETAIL*>(detail);
+    s.tableColCount = d ? static_cast<int>(d->col_count) : 0;
+    s.tableInHeader = false;
+    s.tableRows.clear();
+    s.tableCellRuns.clear();
+}
+
 static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
     auto& s = *static_cast<PreviewState*>(ud);
     // Inside a nested table (rare, non-standard) we ignore everything until the
@@ -204,64 +268,12 @@ static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
         ++s.listDepth;
         break;
     }
-    case MD_BLOCK_LI: {
-        PreviewFlushBlock(s);
-        // Resolve the marker at parse time so the counter is baked into the
-        // plan (RenderPlan doesn't need to know about ordered-list state).
-        auto* lid = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
-        const bool task = lid && lid->is_task;
-        const bool done = task && (lid->task_mark == 'x' || lid->task_mark == 'X');
-        std::string marker;
-        if (!s.listStack.empty() && s.listStack.back() == '1') {
-            ++s.orderedCounters.back();
-            marker = std::to_string(s.orderedCounters.back());
-            if (task) {
-                marker += done ? ". \xE2\x98\x91 " : ". \xE2\x98\x90 ";
-            } else {
-                marker += ". ";
-            }
-        } else {
-            if (task) {
-                marker = done ? "\xE2\x98\x91 " : "\xE2\x98\x90 ";
-            } else {
-                marker = "\xE2\x80\xA2 "; // U+2022 bullet
-            }
-        }
-        // Emit a kListItemBegin block carrying the marker + depth. RenderPlan
-        // does the indents + emits the marker as a leading styled run on the
-        // next paragraph flush.
-        PreviewPlan::Block b;
-        b.kind = PreviewPlan::Block::kListItemBegin;
-        b.listMarker = marker;
-        b.listDepth = s.listDepth;
-        s.outPlan->blocks.push_back(std::move(b));
-        // Also prime the runs accumulator with the marker so the very next
-        // paragraph flush includes it (matches the legacy emit shape).
-        const uint8_t savedMarks = s.currentMarks;
-        const std::string savedHref = s.currentHref;
-        s.currentMarks = 0;
-        s.currentHref.clear();
-        PreviewAppendRunString(s, marker);
-        s.currentMarks = savedMarks;
-        s.currentHref = savedHref;
+    case MD_BLOCK_LI:
+        PreviewEnterListItem(s, detail);
         break;
-    }
-    case MD_BLOCK_TABLE: {
-        // Flush any pending paragraph above the table, then begin collecting
-        // cell runs. Render happens on MD_BLOCK_TABLE leave.
-        PreviewFlushBlock(s);
-        if (s.tableDepth > 0) {
-            ++s.tableDepth;
-            break; // nested table — skipped
-        }
-        ++s.tableDepth;
-        auto* d = static_cast<MD_BLOCK_TABLE_DETAIL*>(detail);
-        s.tableColCount = d ? static_cast<int>(d->col_count) : 0;
-        s.tableInHeader = false;
-        s.tableRows.clear();
-        s.tableCellRuns.clear();
+    case MD_BLOCK_TABLE:
+        PreviewEnterTable(s, detail);
         break;
-    }
     case MD_BLOCK_THEAD:
         if (s.tableDepth == 1)
             s.tableInHeader = true;
@@ -637,6 +649,74 @@ static void DecomposeAndMeasure(const std::vector<StyledRun>& runs, const Render
     }
 }
 
+// Loop-invariant context shared across the per-word emit helpers. Bundles the
+// draw list, palette, and metrics computed once at the top of EmitWordsRS.
+struct EmitCtx {
+    ImDrawList* dl;
+    const RenderState* r;
+    float lineH;
+    float fontSize;
+    ImU32 textCol;
+    ImU32 linkCol;
+    ImU32 codeBgCol;
+    float codeBgRound;
+    float codeBgPadX;
+};
+
+// Draw the inline-code rounded background rect behind a code word. Extracted
+// from the EmitWordsRS per-word loop verbatim. ImGui-emitting.
+static void EmitCodeBackground(const EmitCtx& ctx, const std::vector<PlanWord>& words, size_t wi, const ImVec2& wordPos,
+                               float wordW, bool prevWasCode) {
+    const bool nextIsCode =
+        (wi + 1 < words.size()) && !words[wi + 1].forceBreak && (words[wi + 1].marks & MARK_CODE) != 0;
+    const float rl = prevWasCode ? 0.0f : ctx.codeBgRound;
+    const float rr = nextIsCode ? 0.0f : ctx.codeBgRound;
+    const ImVec2 r0(wordPos.x - (prevWasCode ? 0.0f : ctx.codeBgPadX), wordPos.y);
+    const ImVec2 r1(wordPos.x + wordW + (nextIsCode ? 0.0f : ctx.codeBgPadX), wordPos.y + ctx.lineH);
+    const ImDrawFlags flags = (rl > 0.0f ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersNone) |
+                              (rr > 0.0f ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
+    ctx.dl->AddRectFilled(r0, r1, ctx.codeBgCol, std::max(rl, rr), flags);
+}
+
+// Emit one word's glyphs + link underline / hover-click + strike line. Extracted
+// from the EmitWordsRS per-word loop verbatim. ImGui-emitting.
+static void EmitWordGlyph(const EmitCtx& ctx, const PlanWord& w, const ImVec2& wordPos, float wordW, ImFont* font,
+                          bool isLink) {
+    // Single ImDrawList::AddText — no ImGui::PushFont/TextUnformatted/PopFont/SameLine.
+    const ImU32 glyphCol = isLink ? ctx.linkCol : ctx.textCol;
+    ctx.dl->AddText(font, ctx.fontSize, wordPos, glyphCol, w.text.data(), w.text.data() + w.text.size());
+
+    if (ctx.r->selCtx) {
+        SelectableText::RegisterSegment(
+            *ctx.r->selCtx, w.text.data(), w.text.data() + w.text.size(), wordPos, ctx.lineH, font, wordW,
+            isLink && !w.href.empty() ? const_cast<void*>(static_cast<const void*>(w.href.c_str())) : nullptr);
+    }
+
+    if (isLink) {
+        ctx.dl->AddLine(ImVec2(wordPos.x, wordPos.y + ctx.lineH - 1.0f),
+                        ImVec2(wordPos.x + wordW, wordPos.y + ctx.lineH - 1.0f), ctx.textCol);
+        if (ctx.r->clickableLinks) {
+            const ImVec2 wMin(wordPos.x, wordPos.y);
+            const ImVec2 wMax(wordPos.x + wordW, wordPos.y + ctx.lineH);
+            if (ImGui::IsMouseHoveringRect(wMin, wMax)) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (!w.href.empty()) {
+                    ImGui::SetTooltip("%s", w.href.c_str());
+                }
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !w.href.empty()) {
+#if defined(_WIN32)
+                    ShellExecuteA(nullptr, "open", w.href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#endif
+                }
+            }
+        }
+    }
+    if (w.marks & MARK_STRIKE) {
+        const float midY = wordPos.y + ctx.lineH * 0.5f;
+        ctx.dl->AddLine(ImVec2(wordPos.x, midY), ImVec2(wordPos.x + wordW, midY), ctx.textCol);
+    }
+}
+
 // Direct-AddText emit. Bypasses per-word ImGui::PushFont / TextUnformatted /
 // PopFont / SameLine — all glyphs land via one `ImDrawList::AddText` call per
 // word. Manual cursor (curX, curY) walks the wrap layout in screen-space.
@@ -665,12 +745,17 @@ static void EmitWordsRS(const std::vector<PlanWord>& words, const RenderState& r
     float curY = startScreen.y;
     bool firstOnLine = true;
     bool prevWasCode = false;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImU32 codeBgCol = IM_COL32(48, 48, 60, 200);
-    const float codeBgRound = 3.0f;
-    const float codeBgPadX = 2.0f;
-    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
-    const ImU32 linkCol = ImGui::GetColorU32(ImVec4(0.45f, 0.78f, 1.0f, 1.0f));
+
+    EmitCtx ctx;
+    ctx.dl = ImGui::GetWindowDrawList();
+    ctx.r = &r;
+    ctx.lineH = lineH;
+    ctx.fontSize = fontSize;
+    ctx.textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    ctx.linkCol = ImGui::GetColorU32(ImVec4(0.45f, 0.78f, 1.0f, 1.0f));
+    ctx.codeBgCol = IM_COL32(48, 48, 60, 200);
+    ctx.codeBgRound = 3.0f;
+    ctx.codeBgPadX = 2.0f;
 
     for (size_t wi = 0; wi < words.size(); ++wi) {
         const PlanWord& w = words[wi];
@@ -695,7 +780,7 @@ static void EmitWordsRS(const std::vector<PlanWord>& words, const RenderState& r
         if (!firstOnLine) {
             const ImVec2 spacePos(curX, curY);
             if (prevWasCode && isCode) {
-                dl->AddRectFilled(spacePos, ImVec2(curX + spaceW, curY + lineH), codeBgCol, 0.0f);
+                ctx.dl->AddRectFilled(spacePos, ImVec2(curX + spaceW, curY + lineH), ctx.codeBgCol, 0.0f);
             }
             if (r.selCtx) {
                 const char* spaceLit = " ";
@@ -709,50 +794,10 @@ static void EmitWordsRS(const std::vector<PlanWord>& words, const RenderState& r
         ImFont* font = PickFontRS(r, w.marks);
 
         if (isCode) {
-            const bool nextIsCode =
-                (wi + 1 < words.size()) && !words[wi + 1].forceBreak && (words[wi + 1].marks & MARK_CODE) != 0;
-            const float rl = prevWasCode ? 0.0f : codeBgRound;
-            const float rr = nextIsCode ? 0.0f : codeBgRound;
-            const ImVec2 r0(wordPos.x - (prevWasCode ? 0.0f : codeBgPadX), wordPos.y);
-            const ImVec2 r1(wordPos.x + wordW + (nextIsCode ? 0.0f : codeBgPadX), wordPos.y + lineH);
-            const ImDrawFlags flags = (rl > 0.0f ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersNone) |
-                                      (rr > 0.0f ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
-            dl->AddRectFilled(r0, r1, codeBgCol, std::max(rl, rr), flags);
+            EmitCodeBackground(ctx, words, wi, wordPos, wordW, prevWasCode);
         }
 
-        // Single ImDrawList::AddText — no ImGui::PushFont/TextUnformatted/PopFont/SameLine.
-        const ImU32 glyphCol = isLink ? linkCol : textCol;
-        dl->AddText(font, fontSize, wordPos, glyphCol, w.text.data(), w.text.data() + w.text.size());
-
-        if (r.selCtx) {
-            SelectableText::RegisterSegment(
-                *r.selCtx, w.text.data(), w.text.data() + w.text.size(), wordPos, lineH, font, wordW,
-                isLink && !w.href.empty() ? const_cast<void*>(static_cast<const void*>(w.href.c_str())) : nullptr);
-        }
-
-        if (isLink) {
-            dl->AddLine(ImVec2(wordPos.x, wordPos.y + lineH - 1.0f),
-                        ImVec2(wordPos.x + wordW, wordPos.y + lineH - 1.0f), textCol);
-            if (r.clickableLinks) {
-                const ImVec2 wMin(wordPos.x, wordPos.y);
-                const ImVec2 wMax(wordPos.x + wordW, wordPos.y + lineH);
-                if (ImGui::IsMouseHoveringRect(wMin, wMax)) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    if (!w.href.empty()) {
-                        ImGui::SetTooltip("%s", w.href.c_str());
-                    }
-                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !w.href.empty()) {
-#if defined(_WIN32)
-                        ShellExecuteA(nullptr, "open", w.href.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-#endif
-                    }
-                }
-            }
-        }
-        if (w.marks & MARK_STRIKE) {
-            const float midY = wordPos.y + lineH * 0.5f;
-            dl->AddLine(ImVec2(wordPos.x, midY), ImVec2(wordPos.x + wordW, midY), textCol);
-        }
+        EmitWordGlyph(ctx, w, wordPos, wordW, font, isLink);
 
         curX += wordW;
         firstOnLine = false;
@@ -785,8 +830,212 @@ static void RenderUncachedRuns(const std::vector<StyledRun>& runs, const RenderS
     EmitWordsRS(tmpWords, r);
 }
 
+// Classify a code block's language from its fence tag. Pure (no ImGui).
+// Per CodeRabbit on PR #353 — fenced blocks like ```foo.py``` were classified
+// Plain by FromTag (which expects bare language tags). Fall back to
+// LangFromFilePath when FromTag yields Plain but the tag is non-empty, so
+// path-style fence names get the right tokenizer.
+static smatchet::code_color::CodeLang ClassifyCodeLang(const std::string& codeLang) {
+    smatchet::code_color::CodeLang lang = smatchet::code_color::FromTag(codeLang);
+    if (lang == smatchet::code_color::CodeLang::Plain && !codeLang.empty()) {
+        const smatchet::code_color::CodeLang fromPath = smatchet::code_color::LangFromFilePath(codeLang);
+        if (fromPath != smatchet::code_color::CodeLang::Plain) {
+            lang = fromPath;
+        }
+    }
+    return lang;
+}
+
+// Heading block — scale + tint + separator. ImGui-emitting.
+static void RenderHeadingBlock(const PreviewPlan::Block& b, RenderState& r) {
+    float scale = 1.0f;
+    if (b.headingLevel == 1)
+        scale = 1.6f;
+    else if (b.headingLevel == 2)
+        scale = 1.35f;
+    else if (b.headingLevel == 3)
+        scale = 1.15f;
+    const bool tinted = (b.headingLevel <= 2);
+    const bool isTooltip = (r.mode == MarkdownPreviewRender::Mode::Tooltip);
+    const float prevScale = ImGui::GetCurrentWindow()->FontWindowScale;
+    if (!isTooltip && scale != 1.0f)
+        ImGui::SetWindowFontScale(scale);
+    if (tinted)
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
+    RenderBlockRuns(b, r);
+    if (tinted)
+        ImGui::PopStyleColor();
+    if (!isTooltip && scale != 1.0f)
+        ImGui::SetWindowFontScale(prevScale);
+    if (!isTooltip && b.headingLevel <= 2)
+        ImGui::Separator();
+    if (r.selCtx) {
+        SelectableText::EndBlock(*r.selCtx);
+    }
+}
+
+// Record-only selection segments for an inline code block, one per source line,
+// with hit-rects aligned to where DrawColoredCodeBlock painted each row. Kept at
+// one segment per line rather than per glyph so the hot AI-history path stays
+// within the Pillar 1 budget. RegisterSegment records rects only (emits no
+// glyphs), so it overlays the coloured draw above. Each segment includes its
+// trailing newline, when present, in the byte range so a multi-line drag-copy
+// preserves line breaks instead of collapsing the block.
+static void RegisterCodeBlockSegments(const PreviewPlan::Block& b, RenderState& r, const ImVec2& codeStart,
+                                      ImFont* monoFont) {
+    const char* const bufBegin = b.codeBuffer.c_str();
+    const char* const bufEnd = bufBegin + b.codeBuffer.size();
+    const char* lineBegin = bufBegin;
+    int lineIdx = 0;
+    // lineH is measured under the mono font (PushFont by the caller) so the hit-rect height
+    // matches the glyphs' actual line advance, avoiding vertical drift when the mono
+    // font's line height differs from the default.
+    const float monoLineH = ImGui::GetTextLineHeightWithSpacing();
+    while (lineBegin <= bufEnd) {
+        const char* lineTextEnd = lineBegin;
+        while (lineTextEnd < bufEnd && *lineTextEnd != '\n') {
+            ++lineTextEnd;
+        }
+        // Segment byte range spans through the newline (if any) so copy keeps '\n'.
+        const char* const segEnd = (lineTextEnd < bufEnd) ? lineTextEnd + 1 : lineTextEnd;
+        const ImVec2 lineScreenPos(codeStart.x, codeStart.y + static_cast<float>(lineIdx) * monoLineH);
+        const float lineWidth = ImGui::CalcTextSize(lineBegin, lineTextEnd).x;
+        SelectableText::RegisterSegment(*r.selCtx, lineBegin, segEnd, lineScreenPos, monoLineH, monoFont, lineWidth,
+                                        nullptr);
+        if (lineTextEnd == bufEnd) {
+            break;
+        }
+        lineBegin = lineTextEnd + 1;
+        ++lineIdx;
+    }
+}
+
+// Full (non-tooltip) inline code block: language badge + hover tooltip + Copy
+// button + dark background + coloured glyphs + selection segments. ImGui-emitting.
+static void RenderInlineCodeBlock(const PreviewPlan::Block& b, RenderState& r, const SmatchetPreviewFonts& fonts,
+                                  smatchet::code_color::CodeLang lang) {
+    ImGui::PushID(r.codeBlockNextId++);
+    // Slice 4 of code-syntax-coloring-and-tooltips — ghosted
+    // language badge at the row's left + hover tooltip surfacing the LD's
+    // canonical name + detection origin. ImGui::TextDisabled to keep the
+    // visual weight muted (the code itself owns the row). DelayNormal so
+    // the tooltip doesn't fire while the user is scrolling past.
+    const char* langLabel = smatchet::code_color::CanonicalName(lang);
+    ImGui::TextDisabled("%s", langLabel);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(langLabel);
+        if (b.codeLang.empty()) {
+            ImGui::TextDisabled("(no language tag — rendering as plain text)");
+        } else {
+            ImGui::Text("(detected from markdown fence tag: `%s`)", b.codeLang.c_str());
+        }
+        ImGui::EndTooltip();
+    }
+    ImGui::SameLine();
+    // Per CodeRabbit on PR #351 — measure the Copy button width instead of hardcoding 60px.
+    // Hardcoded width clipped the language badge when CanonicalName(lang) returned a longer
+    // string (e.g. "TypeScript", "Objective-C"). Use the button's text-size + padding for
+    // an exact reservation.
+    // Per CodeRabbit follow-up on PR #359 — clamp the right-align math so the cursor never
+    // moves LEFT of where SameLine() put it. Without the clamp, narrow tooltips / parent
+    // columns (availW < btnW) push the button on top of the language badge.
+    const float availW = ImGui::GetContentRegionAvail().x;
+    const float btnW =
+        ImGui::CalcTextSize("Copy##codeblock", nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float curX = ImGui::GetCursorPosX();
+    const float targetX = curX + availW - btnW;
+    ImGui::SetCursorPosX(targetX > curX ? targetX : curX);
+    if (ImGui::SmallButton("Copy##codeblock")) {
+        ImGui::SetClipboardText(b.codeBuffer.c_str());
+    }
+    // B1 unified selection (code-syntax-coloring follow-up): render the
+    // fenced block INLINE in the outer window — no nested BeginChild —
+    // so it shares the prose SelectableText context and the outer
+    // End()'s input routing makes code drag-selectable with zero special
+    // handling. Trade-off (user-approved): the block loses its own
+    // horizontal scrollbar + 240px height clamp; a very wide line now
+    // extends into the outer page scroll.
+    ImFont* const monoFont = fonts.Mono ? fonts.Mono : ImGui::GetFont();
+    const float lineH = ImGui::GetTextLineHeightWithSpacing();
+    const int lineCount = 1 + static_cast<int>(std::count(b.codeBuffer.begin(), b.codeBuffer.end(), '\n'));
+    const ImVec2 codeStart = ImGui::GetCursorScreenPos();
+    const float codeBgPad = 6.0f;
+    const float codeBlockH = static_cast<float>(lineCount) * lineH;
+    // Dark code-block background, drawn behind the glyphs (mirrors the
+    // prose loop's inline-code dl->AddRectFilled). Replaces the removed
+    // child's ImGuiCol_ChildBg. Span the full available width.
+    ImDrawList* const codeDl = ImGui::GetWindowDrawList();
+    const float codeAvailW = ImGui::GetContentRegionAvail().x;
+    codeDl->AddRectFilled(ImVec2(codeStart.x - codeBgPad, codeStart.y - codeBgPad * 0.5f),
+                          ImVec2(codeStart.x + codeAvailW, codeStart.y + codeBlockH + codeBgPad * 0.5f),
+                          ImGui::GetColorU32(ImVec4(0.12f, 0.12f, 0.14f, 1.0f)), 3.0f);
+    // Colored glyphs — DrawColoredCodeBlock owns its own cursor advance.
+    // Keep the mono font pushed across the segment-registration loop so
+    // line widths are measured under the same font the glyphs used.
+    if (fonts.Mono)
+        ImGui::PushFont(fonts.Mono);
+    smatchet::code_color::DrawColoredCodeBlock(b.codeBuffer.c_str(), lang, b.codeLang);
+    if (r.selCtx) {
+        RegisterCodeBlockSegments(b, r, codeStart, monoFont);
+    }
+    if (fonts.Mono)
+        ImGui::PopFont();
+    ImGui::PopID();
+}
+
+// Code block dispatch — tooltip mode draws coloured glyphs only; full mode adds
+// badge / Copy / selection chrome. ImGui-emitting.
+static void RenderCodeBlock(const PreviewPlan::Block& b, RenderState& r) {
+    const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
+    // Slice 2 of code-syntax-coloring-and-tooltips — route
+    // every markdown code block through CodeColorView. C++/C delegates to
+    // the existing DrawColoredCppText (zero behaviour change on Smatchet's
+    // dominant path); Plain falls back to the same flat-orange tint the
+    // old code used; every other language now gets per-language colouring.
+    const smatchet::code_color::CodeLang lang = ClassifyCodeLang(b.codeLang);
+    if (r.mode == MarkdownPreviewRender::Mode::Tooltip) {
+        if (fonts.Mono)
+            ImGui::PushFont(fonts.Mono);
+        smatchet::code_color::DrawColoredCodeBlock(b.codeBuffer.c_str(), lang, b.codeLang);
+        if (fonts.Mono)
+            ImGui::PopFont();
+    } else {
+        RenderInlineCodeBlock(b, r, fonts, lang);
+    }
+    if (r.selCtx) {
+        SelectableText::EndBlock(*r.selCtx);
+    }
+}
+
+// Table block — borders/rowbg/stretch table, each cell its own uncached run set.
+// ImGui-emitting.
+static void RenderTableBlock(const PreviewPlan::Block& b, RenderState& r) {
+    if (b.tableRows.empty() || b.tableColCount <= 0) {
+        return;
+    }
+    ImGui::PushID(r.tableNextId++);
+    const ImGuiTableFlags flags =
+        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable;
+    if (ImGui::BeginTable("##mdpreview_tbl", b.tableColCount, flags)) {
+        for (const TableRowData& row : b.tableRows) {
+            ImGui::TableNextRow();
+            const size_t cellMax = (std::min)(row.cells.size(), static_cast<size_t>(b.tableColCount));
+            for (size_t ci = 0; ci < cellMax; ++ci) {
+                ImGui::TableNextColumn();
+                const TableCellData& cell = row.cells[ci];
+                RenderUncachedRuns(cell.runs, r);
+                if (r.selCtx) {
+                    SelectableText::EndBlock(*r.selCtx);
+                }
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopID();
+}
+
 // Emit a single plan block as ImGui draw calls.
-// SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy; reason=one switch over every markdown block kind (prose/heading/code/table/list/...); each case is a self-contained ImGui draw — splitting per-case adds indirection without reducing the dispatch's intrinsic branchiness; the inline code-block selection edit pushed it just over the 200L cap; owner=unowned; revisit=decompose-top-20-monoliths)
 static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
     using BK = PreviewPlan::Block;
     switch (b.kind) {
@@ -796,33 +1045,9 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
             SelectableText::EndBlock(*r.selCtx);
         }
         break;
-    case BK::kHeading: {
-        float scale = 1.0f;
-        if (b.headingLevel == 1)
-            scale = 1.6f;
-        else if (b.headingLevel == 2)
-            scale = 1.35f;
-        else if (b.headingLevel == 3)
-            scale = 1.15f;
-        const bool tinted = (b.headingLevel <= 2);
-        const bool isTooltip = (r.mode == MarkdownPreviewRender::Mode::Tooltip);
-        const float prevScale = ImGui::GetCurrentWindow()->FontWindowScale;
-        if (!isTooltip && scale != 1.0f)
-            ImGui::SetWindowFontScale(scale);
-        if (tinted)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.95f, 1.0f, 1.0f));
-        RenderBlockRuns(b, r);
-        if (tinted)
-            ImGui::PopStyleColor();
-        if (!isTooltip && scale != 1.0f)
-            ImGui::SetWindowFontScale(prevScale);
-        if (!isTooltip && b.headingLevel <= 2)
-            ImGui::Separator();
-        if (r.selCtx) {
-            SelectableText::EndBlock(*r.selCtx);
-        }
+    case BK::kHeading:
+        RenderHeadingBlock(b, r);
         break;
-    }
     case BK::kHr:
         ImGui::Separator();
         if (r.selCtx) {
@@ -847,160 +1072,12 @@ static void RenderPlanBlock(const PreviewPlan::Block& b, RenderState& r) {
             ImGui::Unindent(16.0f);
         }
         break;
-    case BK::kCode: {
-        const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
-        // Slice 2 of code-syntax-coloring-and-tooltips — route
-        // every markdown code block through CodeColorView. C++/C delegates to
-        // the existing DrawColoredCppText (zero behaviour change on Smatchet's
-        // dominant path); Plain falls back to the same flat-orange tint the
-        // old code used; every other language now gets per-language colouring.
-        // Per CodeRabbit on PR #353 — fenced blocks like ```foo.py``` were classified Plain
-        // by FromTag (which expects bare language tags). Fall back to LangFromFilePath when
-        // FromTag yields Plain but the tag is non-empty, so path-style fence names get the
-        // right tokenizer.
-        smatchet::code_color::CodeLang lang = smatchet::code_color::FromTag(b.codeLang);
-        if (lang == smatchet::code_color::CodeLang::Plain && !b.codeLang.empty()) {
-            const smatchet::code_color::CodeLang fromPath = smatchet::code_color::LangFromFilePath(b.codeLang);
-            if (fromPath != smatchet::code_color::CodeLang::Plain) {
-                lang = fromPath;
-            }
-        }
-        if (r.mode == MarkdownPreviewRender::Mode::Tooltip) {
-            if (fonts.Mono)
-                ImGui::PushFont(fonts.Mono);
-            smatchet::code_color::DrawColoredCodeBlock(b.codeBuffer.c_str(), lang, b.codeLang);
-            if (fonts.Mono)
-                ImGui::PopFont();
-        } else {
-            ImGui::PushID(r.codeBlockNextId++);
-            // Slice 4 of code-syntax-coloring-and-tooltips — ghosted
-            // language badge at the row's left + hover tooltip surfacing the LD's
-            // canonical name + detection origin. ImGui::TextDisabled to keep the
-            // visual weight muted (the code itself owns the row). DelayNormal so
-            // the tooltip doesn't fire while the user is scrolling past.
-            const char* langLabel = smatchet::code_color::CanonicalName(lang);
-            ImGui::TextDisabled("%s", langLabel);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted(langLabel);
-                if (b.codeLang.empty()) {
-                    ImGui::TextDisabled("(no language tag — rendering as plain text)");
-                } else {
-                    ImGui::Text("(detected from markdown fence tag: `%s`)", b.codeLang.c_str());
-                }
-                ImGui::EndTooltip();
-            }
-            ImGui::SameLine();
-            // Per CodeRabbit on PR #351 — measure the Copy button width instead of hardcoding 60px.
-            // Hardcoded width clipped the language badge when CanonicalName(lang) returned a longer
-            // string (e.g. "TypeScript", "Objective-C"). Use the button's text-size + padding for
-            // an exact reservation.
-            // Per CodeRabbit follow-up on PR #359 — clamp the right-align math so the cursor never
-            // moves LEFT of where SameLine() put it. Without the clamp, narrow tooltips / parent
-            // columns (availW < btnW) push the button on top of the language badge.
-            const float availW = ImGui::GetContentRegionAvail().x;
-            const float btnW =
-                ImGui::CalcTextSize("Copy##codeblock", nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-            const float curX = ImGui::GetCursorPosX();
-            const float targetX = curX + availW - btnW;
-            ImGui::SetCursorPosX(targetX > curX ? targetX : curX);
-            if (ImGui::SmallButton("Copy##codeblock")) {
-                ImGui::SetClipboardText(b.codeBuffer.c_str());
-            }
-            // B1 unified selection (code-syntax-coloring follow-up): render the
-            // fenced block INLINE in the outer window — no nested BeginChild —
-            // so it shares the prose SelectableText context and the outer
-            // End()'s input routing makes code drag-selectable with zero special
-            // handling. Trade-off (user-approved): the block loses its own
-            // horizontal scrollbar + 240px height clamp; a very wide line now
-            // extends into the outer page scroll.
-            ImFont* const monoFont = fonts.Mono ? fonts.Mono : ImGui::GetFont();
-            const float lineH = ImGui::GetTextLineHeightWithSpacing();
-            const int lineCount =
-                1 + static_cast<int>(std::count(b.codeBuffer.begin(), b.codeBuffer.end(), '\n'));
-            const ImVec2 codeStart = ImGui::GetCursorScreenPos();
-            const float codeBgPad = 6.0f;
-            const float codeBlockH = static_cast<float>(lineCount) * lineH;
-            // Dark code-block background, drawn behind the glyphs (mirrors the
-            // prose loop's inline-code dl->AddRectFilled). Replaces the removed
-            // child's ImGuiCol_ChildBg. Span the full available width.
-            ImDrawList* const codeDl = ImGui::GetWindowDrawList();
-            const float codeAvailW = ImGui::GetContentRegionAvail().x;
-            codeDl->AddRectFilled(ImVec2(codeStart.x - codeBgPad, codeStart.y - codeBgPad * 0.5f),
-                                  ImVec2(codeStart.x + codeAvailW, codeStart.y + codeBlockH + codeBgPad * 0.5f),
-                                  ImGui::GetColorU32(ImVec4(0.12f, 0.12f, 0.14f, 1.0f)), 3.0f);
-            // Colored glyphs — DrawColoredCodeBlock owns its own cursor advance.
-            // Keep the mono font pushed across the segment-registration loop so
-            // line widths are measured under the same font the glyphs used.
-            if (fonts.Mono)
-                ImGui::PushFont(fonts.Mono);
-            smatchet::code_color::DrawColoredCodeBlock(b.codeBuffer.c_str(), lang, b.codeLang);
-            // Record-only selection segments, one per source line, with hit-rects aligned to where
-            // DrawColoredCodeBlock painted each row. Kept at one segment per line rather than per
-            // glyph so the hot AI-history path stays within the Pillar 1 budget. RegisterSegment
-            // records rects only (emits no glyphs), so it overlays the coloured draw above.
-            // Each segment includes its trailing newline (when present) in the byte range so a
-            // multi-line drag-copy preserves line breaks instead of collapsing the block.
-            if (r.selCtx) {
-                const char* const bufBegin = b.codeBuffer.c_str();
-                const char* const bufEnd = bufBegin + b.codeBuffer.size();
-                const char* lineBegin = bufBegin;
-                int lineIdx = 0;
-                // lineH is measured under the mono font (PushFont above) so the hit-rect height
-                // matches the glyphs' actual line advance, avoiding vertical drift when the mono
-                // font's line height differs from the default.
-                const float monoLineH = ImGui::GetTextLineHeightWithSpacing();
-                while (lineBegin <= bufEnd) {
-                    const char* lineTextEnd = lineBegin;
-                    while (lineTextEnd < bufEnd && *lineTextEnd != '\n') {
-                        ++lineTextEnd;
-                    }
-                    // Segment byte range spans through the newline (if any) so copy keeps '\n'.
-                    const char* const segEnd = (lineTextEnd < bufEnd) ? lineTextEnd + 1 : lineTextEnd;
-                    const ImVec2 lineScreenPos(codeStart.x, codeStart.y + static_cast<float>(lineIdx) * monoLineH);
-                    const float lineWidth = ImGui::CalcTextSize(lineBegin, lineTextEnd).x;
-                    SelectableText::RegisterSegment(*r.selCtx, lineBegin, segEnd, lineScreenPos, monoLineH, monoFont,
-                                                    lineWidth, nullptr);
-                    if (lineTextEnd == bufEnd) {
-                        break;
-                    }
-                    lineBegin = lineTextEnd + 1;
-                    ++lineIdx;
-                }
-            }
-            if (fonts.Mono)
-                ImGui::PopFont();
-            ImGui::PopID();
-        }
-        if (r.selCtx) {
-            SelectableText::EndBlock(*r.selCtx);
-        }
+    case BK::kCode:
+        RenderCodeBlock(b, r);
         break;
-    }
-    case BK::kTable: {
-        if (!b.tableRows.empty() && b.tableColCount > 0) {
-            ImGui::PushID(r.tableNextId++);
-            const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                          ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable;
-            if (ImGui::BeginTable("##mdpreview_tbl", b.tableColCount, flags)) {
-                for (const TableRowData& row : b.tableRows) {
-                    ImGui::TableNextRow();
-                    const size_t cellMax = (std::min)(row.cells.size(), static_cast<size_t>(b.tableColCount));
-                    for (size_t ci = 0; ci < cellMax; ++ci) {
-                        ImGui::TableNextColumn();
-                        const TableCellData& cell = row.cells[ci];
-                        RenderUncachedRuns(cell.runs, r);
-                        if (r.selCtx) {
-                            SelectableText::EndBlock(*r.selCtx);
-                        }
-                    }
-                }
-                ImGui::EndTable();
-            }
-            ImGui::PopID();
-        }
+    case BK::kTable:
+        RenderTableBlock(b, r);
         break;
-    }
     }
 }
 
@@ -1010,7 +1087,10 @@ namespace MarkdownPreviewRender {
 
 void PreviewPlanDeleter::operator()(PreviewPlan* p) const noexcept { delete p; }
 
-PreviewPlanPtr MakePlan() { return PreviewPlanPtr(new PreviewPlan(), PreviewPlanDeleter{}); } // custom-deleter — make_unique inapplicable
+PreviewPlanPtr MakePlan() {
+    return PreviewPlanPtr(new PreviewPlan(), // custom-deleter — make_unique inapplicable
+                          PreviewPlanDeleter{});
+}
 
 // FNV-1a 64-bit. Stable cross-run; fine for in-process cache keying.
 std::uint64_t HashContent(const char* bytes, std::size_t len) {
