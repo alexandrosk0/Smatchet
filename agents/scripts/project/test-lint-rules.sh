@@ -19,8 +19,10 @@
 #   narrowing-conversions  clang-tidy cppcoreguidelines-narrowing-conversions (strict TUs)
 #   define-imgui           `#define ImGui...` macro-alias trick
 #   deviation-overdue      SMATCHET_DEVIATION whose calendar revisit= has passed
-#   function-too-long      function body > 200 lines (repo-wide, delta-gated; function_size_audit.py)
-#   function-too-branchy   function decision count > 30 (repo-wide, delta-gated)
+#   function-too-long      function body > 120 lines non-UI / > 200 lines ImGui-draw
+#                          (repo-wide, delta-gated; tiered; function_size_audit.py)
+#   function-too-branchy   function decision count > 30 (repo-wide, delta-gated, all functions)
+#   (advisory)             [func-size] WARN on > 100 lines / > 20 branches — never blocks
 #
 # Modes:
 #   (no args) / --diff [<ref>]   delta gate: fail only on (rule,basename,hash)
@@ -427,6 +429,14 @@ case "$MODE" in
     for r in "${FUNCSIZE_RULES[@]}"; do
         if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: function-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
+    # Delegate the tiered-cap + UI-classification in-sync assertion to the audit script's own
+    # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
+    st_py="$(resolve_python || true)"
+    if [ -n "$st_py" ]; then
+        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
+    else
+        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py --selftest" >&2
+    fi
     [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment + function-size rules in sync" || exit 1
     ;;
 
@@ -588,14 +598,18 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no first-party no-raw-new / deviation-overdue / no-detach (whole tree)"
     fi
 
-    # --- function-size rules (repo-wide, delta-gated; decompose-top-20-monoliths Slice 0) ---
-    # New functions over the cap (>200 lines / >30 branches) — or existing ones that JUST crossed
-    # it — fail anywhere in first-party C++. function_size_audit.py keys by (rule, basename,
-    # qualified-name) and diffs HEAD vs the merge-base of $BASE, so the existing monoliths are
-    # grandfathered (a grandfathered function growing further stays grandfathered — same model as
-    # the comment-regrowth rules). Fail CLOSED on infra error, identical contract to the comment
-    # gate (0 clean / 1 violations / >=2 infra). A `// SMATCHET_DEVIATION(rule=function-too-long;
-    # ...)` above the signature suppresses one. $cr_py is the validated interpreter from above.
+    # --- function-size rules (repo-wide, delta-gated, TIERED; decompose-top-20-monoliths Slice 0) ---
+    # New functions over the hard cap (>120 lines non-UI / >200 lines ImGui-draw / >30 branches) —
+    # or existing ones that JUST crossed it — fail anywhere in first-party C++. function_size_audit.py
+    # keys by (rule, basename, qualified-name) and diffs HEAD vs the merge-base of $BASE, so the
+    # existing monoliths are grandfathered (a grandfathered function growing further stays
+    # grandfathered — same model as the comment-regrowth rules; lowering non-UI to 120 does NOT
+    # retroactively fire existing 120-200-line functions — they're in both the HEAD and base sets).
+    # Fail CLOSED on infra error, identical contract to the comment gate (0 clean / 1 violations /
+    # >=2 infra). A `// SMATCHET_DEVIATION(rule=function-too-long; ...)` above the signature
+    # suppresses one. The advisory soft-warning tier (>100 lines / >20 branches) is printed to
+    # STDERR by the audit script, so it surfaces to the user but never enters $fs_out / the exit
+    # code. $cr_py is the validated interpreter from above.
     fs_aud="$REPO_ROOT/agents/scripts/core/function_size_audit.py"
     if [ ! -f "$fs_aud" ]; then
         echo "test-lint-rules: ERROR: missing $fs_aud; cannot enforce function-size gate" >&2
@@ -609,7 +623,7 @@ case "$MODE" in
     if [ -n "$fs_out" ]; then
         rc=1
         echo
-        echo "FAIL: new oversized functions vs $BASE (cap 200 lines / 30 branches):"
+        echo "FAIL: new oversized functions vs $BASE (cap 120 lines non-UI / 200 lines ImGui-draw / 30 branches):"
         printf '%s\n' "$fs_out" | sed 's/^/  /'
         echo "  Decompose it (see docs/plans/active/decompose-top-20-monoliths.md § Approach), or add"
         echo "  SMATCHET_DEVIATION(rule=function-too-long; reason=...; owner=...; revisit=...) above the signature"

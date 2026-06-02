@@ -3,19 +3,31 @@
 
 Walks tracked first-party C++ (Source/Core, Source/Plugins, Source/Standalone; excludes
 ThirdParty + tests), extracts every function *body* via a comment/string-neutralized brace
-scan, and flags functions over the line / branch caps. Two rule-ids:
+scan, and flags functions over the line / branch caps. The line cap is **tiered** by UI
+classification (per maintainer decision 2026-06-01):
 
-  function-too-long     body span > 200 lines
-  function-too-branchy  decision count > 30  (if/for/while/case/catch/&&/||/?)
+  function-too-long     body span > 120 lines (non-UI)  OR  > 200 lines (ImGui-draw)
+  function-too-branchy  decision count > 30  (if/for/while/case/catch/&&/||/?), all functions
+
+A function is "ImGui-draw" (the 200-line escape hatch — declarative UI is inherently noisier)
+if EITHER its path is under a `Ui/` dir OR its unqualified name starts with Draw/Render/draw/
+render (draw helpers live in non-Ui files too, e.g. SmatchetDrawAiAssistantPanel / drawMainMenuBar).
+See is_ui_function() — the single source of truth, asserted against AGENTS.md by --selftest.
+
+A non-blocking **soft-warning tier** nudges new code toward the 40-80-line ideal without failing
+CI: > 100 lines OR > 20 branches emits a warning line (exit code unaffected), mirroring the
+advisory comment-ratio warning (comment_audit.py --ratio-warn). Hard caps still block.
 
 Modes mirror comment_audit.py (the comment-regrowth sibling gate):
 
   function_size_audit.py                  # human report of all current oversized functions
   function_size_audit.py --list           # one `rule<TAB>file:line<TAB>name (NL/MB)` per violation
   function_size_audit.py --baseline-md     # deterministic markdown grandfather snapshot
-  function_size_audit.py --diff <ref>      # DELTA gate: emit only functions that are NEW or
-                                           #   crossed a cap vs the merge-base of <ref>
+  function_size_audit.py --diff <ref>      # DELTA gate: emit hard-cap violations that are NEW or
+                                           #   crossed a cap vs the merge-base of <ref>, PLUS
+                                           #   advisory `[func-size] WARN ...` lines (non-failing)
                                            #   rule<TAB>basename:line<TAB>name (NL/MB)
+  function_size_audit.py --selftest        # assert the UI-classification rule matches AGENTS.md
 
 Delta semantics (grandfathering): a function is keyed by (rule, basename, qualified-name). The
 existing monoliths live in the base set, so they never fire; a function fires only when it is
@@ -44,12 +56,38 @@ SWEEP_ROOTS = ("Source/Core/", "Source/Plugins/", "Source/Standalone/")
 EXCLUDE_SUBSTR = ("/ThirdParty/", "ThirdParty/")
 CPP_EXT = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-# --- caps ---------------------------------------------------------------------
-LINE_LIMIT = 200
+# --- caps (tiered; maintainer decision 2026-06-01) ----------------------------
+# Hard caps (delta-gated, BLOCK): non-UI line count 120, ImGui-draw line count 200,
+# branches 30 for ALL functions. Soft caps (advisory WARN, never block, never affect
+# exit code): line count 100, branches 20 — the nudge toward the 40-80-line ideal.
+LINE_LIMIT_NONUI = 120
+LINE_LIMIT_UI = 200
 BRANCH_LIMIT = 30
+SOFT_LINE_LIMIT = 100
+SOFT_BRANCH_LIMIT = 20
+
+# UI classification (KEEP IN SYNC with AGENTS.md § Tiered enforcement; --selftest guards).
+# A function is "ImGui-draw" (200-line cap) if its path is under a Ui/ dir OR its unqualified
+# name starts with one of these prefixes (draw/render helpers live in non-Ui files too).
+UI_PATH_SUBSTR = ("/Ui/", "Source/Core/src/Ui/", "Source/Core/include/Ui/")
+UI_NAME_RE = re.compile(r"^(Draw|Render|draw|render)")
 
 RULE_LONG = "function-too-long"
 RULE_BRANCHY = "function-too-branchy"
+
+
+def is_ui_function(path, name):
+    """True if (path, name) is an ImGui-draw function (the 200-line escape hatch). Single source
+    of truth for the UI/non-UI classification; --selftest asserts the rule text is in AGENTS.md."""
+    p = path.replace("\\", "/")
+    if any(s in p for s in UI_PATH_SUBSTR):
+        return True
+    simple = name.split("::")[-1].lstrip("~")
+    return bool(UI_NAME_RE.match(simple))
+
+
+def line_limit_for(path, name):
+    return LINE_LIMIT_UI if is_ui_function(path, name) else LINE_LIMIT_NONUI
 
 # Keywords that disqualify a `{` from being a function body.
 CONTROL_KW = {"if", "for", "while", "switch", "catch"}
@@ -339,12 +377,32 @@ def extract_functions(text):
 
 
 def violations_for(path, text):
-    """Yield (rule, line, name, arity, lines, branches) for each oversized function in `text`."""
+    """Yield (rule, line, name, arity, lines, branches) for each HARD-cap-oversized function in
+    `text`. The line cap is tiered by UI classification (120 non-UI / 200 ImGui-draw); the branch
+    cap is 30 for all. Soft-warning-tier functions are NOT yielded here — see warnings_for()."""
     for fn in extract_functions(text):
-        if fn.lines > LINE_LIMIT:
+        if fn.lines > line_limit_for(path, fn.name):
             yield (RULE_LONG, fn.start_line, fn.name, fn.arity, fn.lines, fn.branches)
         if fn.branches > BRANCH_LIMIT:
             yield (RULE_BRANCHY, fn.start_line, fn.name, fn.arity, fn.lines, fn.branches)
+
+
+def warnings_for(path, text):
+    """Yield (line, name, arity, lines, branches, why) for each function in the ADVISORY soft tier
+    (> 100 lines OR > 20 branches) that is NOT already a hard-cap violation. Never affects exit
+    code — the nudge toward the 40-80-line ideal."""
+    for fn in extract_functions(text):
+        hard_long = fn.lines > line_limit_for(path, fn.name)
+        hard_branchy = fn.branches > BRANCH_LIMIT
+        if hard_long or hard_branchy:
+            continue  # already a blocking violation; don't double-report as a warning
+        why = []
+        if fn.lines > SOFT_LINE_LIMIT:
+            why.append("%d lines > %d" % (fn.lines, SOFT_LINE_LIMIT))
+        if fn.branches > SOFT_BRANCH_LIMIT:
+            why.append("%d branches > %d" % (fn.branches, SOFT_BRANCH_LIMIT))
+        if why:
+            yield (fn.start_line, fn.name, fn.arity, fn.lines, fn.branches, "; ".join(why))
 
 
 # --- git plumbing -------------------------------------------------------------
@@ -407,6 +465,34 @@ def scan_head():
     return out
 
 
+def scan_head_warnings():
+    """{(basename, name, arity): (path, line, lines, branches, why)} of soft-tier functions in the
+    working tree (advisory; never gates). Keyed like scan_head so the delta logic grandfathers
+    pre-existing soft-tier functions — only new/changed ones warn."""
+    out = {}
+    for f in list_head_files():
+        text = _read_head(f)
+        if not text:
+            continue
+        base = os.path.basename(f)
+        for line, name, arity, ln, br, why in warnings_for(f, text):
+            out.setdefault((base, name, arity), (f, line, ln, br, why))
+    return out
+
+
+def scan_ref_warnings(ref):
+    """Set of (basename, name, arity) keys in the soft-warning tier at <ref>."""
+    keys = set()
+    for f in list_ref_files(ref):
+        text = _git_ok(["show", "%s:%s" % (ref, f)])
+        if not text:
+            continue
+        base = os.path.basename(f)
+        for _line, name, arity, _ln, _br, _why in warnings_for(f, text):
+            keys.add((base, name, arity))
+    return keys
+
+
 def scan_ref(ref):
     """Set of (rule, basename, name, arity) keys oversized at <ref>."""
     keys = set()
@@ -466,6 +552,18 @@ def run_diff(ref):
         violations.append("%s\t%s:%d\t%s/%d (%dL/%dbr)" % (rule, bname, line, name, arity, ln, br))
     for v in violations:
         print(v)
+    # Advisory soft-warning tier (NEVER affects exit code): new/changed functions over the soft
+    # caps (100 lines / 20 branches) but under the hard caps. Delta-gated like the hard rules so
+    # pre-existing soft-tier functions don't spam every run.
+    warn_head = scan_head_warnings()
+    warn_base = scan_ref_warnings(base)
+    for key in sorted(warn_head):
+        if key in warn_base:
+            continue
+        bname, name, arity = key
+        path, line, ln, br, why = warn_head[key]
+        print("[func-size] WARN %s:%d %s/%d — %s (soft tier; not blocking, aim for 40-80 lines)"
+              % (bname, line, name, arity, why), file=sys.stderr)
     return 1 if violations else 0
 
 
@@ -481,6 +579,10 @@ def run_scan_file(path):
         return 2
     for rule, line, name, arity, ln, br in sorted(violations_for(path, text)):
         print("%s\t%s:%d\t%s/%d (%dL/%dbr)" % (rule, path, line, name, arity, ln, br))
+    # Advisory soft-warning tier (to stderr — never affects exit code or the gate's stdout capture).
+    for line, name, arity, ln, br, why in sorted(warnings_for(path, text)):
+        print("[func-size] WARN %s:%d %s/%d — %s (soft tier; not blocking, aim for 40-80 lines)"
+              % (path, line, name, arity, why), file=sys.stderr)
     return 0
 
 
@@ -507,11 +609,14 @@ def run_baseline_md():
     print("_The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py "
           "--diff); this file is an informational snapshot, not the gate input._")
     total = 0
+    cap_desc = {
+        RULE_LONG: "%d lines non-UI / %d lines ImGui-draw" % (LINE_LIMIT_NONUI, LINE_LIMIT_UI),
+        RULE_BRANCHY: "%d branches" % BRANCH_LIMIT,
+    }
     for rule in (RULE_LONG, RULE_BRANCHY):
         rows = sorted(by_rule.get(rule, []))
         print()
-        print("## %s (%d entries, cap %s)" % (
-            rule, len(rows), "%d lines" % LINE_LIMIT if rule == RULE_LONG else "%d branches" % BRANCH_LIMIT))
+        print("## %s (%d entries, cap %s)" % (rule, len(rows), cap_desc[rule]))
         if rows:
             for r in rows:
                 print(r)
@@ -529,7 +634,9 @@ def run_report():
     longs = sum(1 for k in head if k[0] == RULE_LONG)
     branchy = sum(1 for k in head if k[0] == RULE_BRANCHY)
     print("## Function-size audit — first-party C++ (current tree)\n")
-    print("- cap: %d lines / %d branches" % (LINE_LIMIT, BRANCH_LIMIT))
+    print("- hard cap: %d lines non-UI / %d lines ImGui-draw / %d branches"
+          % (LINE_LIMIT_NONUI, LINE_LIMIT_UI, BRANCH_LIMIT))
+    print("- soft warning (advisory): %d lines / %d branches" % (SOFT_LINE_LIMIT, SOFT_BRANCH_LIMIT))
     print("- function-too-long: %d" % longs)
     print("- function-too-branchy: %d" % branchy)
     print("\n### Largest functions\n")
@@ -542,6 +649,46 @@ def run_report():
         print("- `%s` `%s/%d` — %d lines / %d branches (%s:%d)" % (bname, name, arity, ln, br, path, line))
         if len(seen) >= 30:
             break
+    return 0
+
+
+def run_selftest():
+    """Assert the tiered caps + UI-classification rule are documented in AGENTS.md, and that the
+    classifier behaves on canonical examples. Keeps the script's single-source-of-truth rule from
+    drifting out of sync with the human-facing policy. Exit 0 = in sync, 1 = drift."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))))
+    agents_md = os.path.join(repo_root, "AGENTS.md")
+    miss = 0
+    try:
+        with open(agents_md, "r", encoding="utf-8", errors="replace") as fh:
+            doc = fh.read()
+    except OSError as e:
+        print("SELFTEST FAIL: cannot read AGENTS.md (%s)" % e, file=sys.stderr)
+        return 1
+    # The tiered caps + UI-classification rule must appear verbatim-ish in AGENTS.md.
+    for needle in ("120", "200", "Ui/", "Draw"):
+        if needle not in doc:
+            print("SELFTEST FAIL: '%s' (tiered-cap / UI-rule token) missing from AGENTS.md" % needle,
+                  file=sys.stderr)
+            miss = 1
+    # Classifier behaviour: path-based, name-based, and negatives.
+    checks = [
+        ("Source/Core/src/Ui/Foo.cpp", "HelperThing", True),     # Ui/ path
+        ("Source/Core/src/Tracker/Foo.cpp", "DrawWidget", True),  # Draw-prefixed name
+        ("Source/Core/src/Tracker/Foo.cpp", "renderRow", True),   # render-prefixed name
+        ("Source/Core/src/Tracker/Foo.cpp", "ComputeTotals", False),  # non-UI
+        ("Source/Core/src/Config/Foo.cpp", "Cls::Save", False),   # qualified non-UI
+    ]
+    for path, name, expect in checks:
+        got = is_ui_function(path, name)
+        if got != expect:
+            print("SELFTEST FAIL: is_ui_function(%r, %r) = %s, expected %s"
+                  % (path, name, got, expect), file=sys.stderr)
+            miss = 1
+    if miss:
+        return 1
+    print("selftest: tiered caps + UI-classification rule in sync with AGENTS.md")
     return 0
 
 
@@ -560,8 +707,11 @@ def main():
     ap.add_argument("--scan-file", metavar="PATH")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--baseline-md", action="store_true")
+    ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     try:
+        if args.selftest:
+            sys.exit(run_selftest())
         if args.diff:
             sys.exit(run_diff(args.diff))
         if args.scan_file:

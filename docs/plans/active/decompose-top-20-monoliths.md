@@ -14,7 +14,7 @@ A line-count + branch-count sweep of `Source/Core/src/`, `Source/Plugins/`, `Sou
 - multiplies merge-conflict surface across feature branches,
 - *(claimed)* inflates per-frame `SMATCHET_UI_PERF_SCOPE` parent-scopes — **but this benefit is largely illusory under the original approach** (it preserves existing scopes verbatim, so sub-widget cost stays invisible; and several targets have **zero** perf scopes anyway — see § Approach A).
 
-Goal: no non-ThirdParty function exceeds **200 lines** / **30 branches**, enforced by a CI gate so it *stays* true, with a documented ImGui-draw pattern future authors copy by reflex.
+Goal: no non-ThirdParty function exceeds the line/branch caps, enforced by a CI gate so it *stays* true, with a documented ImGui-draw pattern future authors copy by reflex. (Caps are now **tiered** — non-UI **120 lines** / ImGui-draw **200 lines** / **30 branches**, plus a non-blocking **100-line / 20-branch** soft-warning tier; see § Status and § Next ratchet → shipped.)
 
 ## ROI (why this is re-scoped, not run whole)
 
@@ -35,8 +35,11 @@ Slice 1a pattern doc (#630), and the function decompositions `drawActiveProjectW
 > and the flagship Phase-A set — `AppController::Initialize` (#676), `AiAssistantController::RunRequest`
 > (#677), `main` (#678), `ConfigManager::Load`/`Save` (#680), `TickOfflineFieldEdits`+`TickStreamingApply`
 > (#679) — have all landed (§ Implementation log). **No dedicated target remains over the 200/30 cap.**
-> Only two things outstand: **Phase B** (ImGui-draw monoliths, perpetual ride-along — by design) and the
-> **tiered-cap next ratchet** (120 non-UI / 200 UI / 100-warning, per user feedback — its own follow-up).
+> Only one thing outstands: **Phase B** (ImGui-draw monoliths, perpetual ride-along — by design). The
+> **tiered-cap ratchet** (120 non-UI / 200 ImGui-draw hard caps + 100-line/20-branch soft warning, per
+> user feedback 2026-06-01) **SHIPPED** — `function_size_audit.py` line cap is now tiered by UI
+> classification (`is_ui_function()`), the soft-warning tier emits non-blocking `[func-size] WARN` lines,
+> and delta-gating grandfathers all current 120-200-line non-UI functions (see § Next ratchet → shipped).
 
 > **Everything below is grandfathered behind the gate** (the delta gate only fails NEW or
 > just-crossed functions). Nothing here is blocking; each can land independently, in any order, as
@@ -306,6 +309,17 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
     function is suppressible by one `SMATCHET_DEVIATION(rule=function-too-long,function-too-branchy)`.
     Added fixtures + 4 bats cases (operator detection, dual-cap fires both, comma-deviation
     suppresses both). Also resolved an AGENTS.md merge conflict from #626 (plan path active→shipped).
+- **Slice 0b — tiered line cap + soft-warning tier (2026-06-01).** `function_size_audit.py` line cap
+  parameterised by UI classification: `is_ui_function(path, name)` (single source of truth) → **120**
+  non-UI / **200** ImGui-draw; branch hard cap stays **30**. New non-blocking soft tier (`warnings_for`)
+  emits `[func-size] WARN` on **stderr** for new/changed functions over **100 lines / 20 branches**
+  (delta-gated like the hard rules; stderr keeps it out of the gate's stdout capture so it never
+  affects the exit code — mirrors the comment-ratio advisory). `--selftest` added (asserts the tiered
+  caps + UI-classification rule are documented in AGENTS.md + exercises the classifier); wired into
+  `test-lint-rules.sh --selftest`. 6 new bats cases (non-UI 130 fails / Draw-named 130 passes / Ui-path
+  130 passes / 105-line·22-branch warns·exit-0 / new non-UI crosses-120 fails / existing 150-line non-UI
+  grandfathered). Baseline regenerated (tiered caps → 55 too-long entries, all grandfathered). AGENTS.md
+  § Tiered enforcement + `imgui-draw-pattern.md` updated.
 - **Slice 1a — ImGui draw-function pattern doc (PR #630).** `docs/guides/imgui-draw-pattern.md`
   (new): canonical `DrawCtx` + section-helper shape, the 6 § Approach-A rules, a positional-ImGui
   hazards section (Begin/End + PushID/PopID pairing, byte-for-byte layout preservation, bucket-C/E
@@ -373,10 +387,15 @@ target remains over the 200/30 cap** (verified `function_size_audit.py --list` o
   original) annotated `catch-all-ok`; `std::function`/ADF-detection findings rebutted (offline-replay,
   not steady-state; detection pre-existing per develop).
 
-**Next ratchet (spun out, not this plan's scope):** per user feedback 2026-06-01, the flat 200/30 cap
-is the first ratchet; the maturity step is a **tiered cap** — non-UI **120** / ImGui-draw **200** /
-**100-line soft warning** / branch cap 30→20 for new code, delta-gated (grandfathers everything
-current). Tracked as its own follow-up.
+**Tiered ratchet — SHIPPED (2026-06-01):** the flat 200/30 cap was the first ratchet; the maturity
+step — a **tiered cap** — is now live. Hard caps (delta-gated, BLOCK): non-UI line count **120**,
+ImGui-draw line count **200** (escape hatch — declarative UI is noisier), branches **30** for all
+functions (unchanged). Soft tier (advisory, **non-blocking** `[func-size] WARN` on stderr, never
+changes exit code): **> 100 lines OR > 20 branches**. UI classification (`is_ui_function()`): path
+under a `Ui/` dir OR unqualified name matching `^(Draw|Render|draw|render)`. Delta-gating grandfathers
+every current 120-200-line non-UI function (in both HEAD and base sets at the new cap → never fires).
+`--selftest` asserts the rule stays in sync with AGENTS.md. (The branch *hard* cap stayed at 30, not
+30→20 as the earlier sketch mused — 20 became the soft-warning threshold instead.)
 
 **Phase B (ImGui-draw monoliths) remains perpetual ride-along** per § Status — decompose-on-touch,
 gate-protected, never a sweep.
