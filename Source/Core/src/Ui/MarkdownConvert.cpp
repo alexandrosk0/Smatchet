@@ -775,103 +775,140 @@ void AppendIndent(std::ostringstream& out, int spaces) {
         out << ' ';
 }
 
+// Per-node-type inline emitters for the ADF→Markdown walk. `EmitInlineText` is a
+// thin dispatch that looks up a handler keyed by node `type` and invokes it
+// against the shared output stream. Every handler emits exactly the bytes the
+// original if-else branch produced — output is byte-for-byte identical (pinned
+// by tests/Core/MarkdownConvert.test.cpp / MarkdownConvertAdf.test.cpp).
+
+// Collect the emphasis wrappers and link/code state for a text node's `marks`
+// array. `isCode` short-circuits other emphasis (inline code wins).
+void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, std::vector<const char*>& closeWrap,
+                        std::string& href, bool& isCode) {
+    if (!node.contains("marks") || !node["marks"].is_array())
+        return;
+    for (const auto& m : node["marks"]) {
+        const std::string mt = m.value("type", std::string());
+        if (mt == "strong") {
+            openWrap.push_back("**");
+            closeWrap.push_back("**");
+        } else if (mt == "em") {
+            openWrap.push_back("*");
+            closeWrap.push_back("*");
+        } else if (mt == "strike") {
+            openWrap.push_back("~~");
+            closeWrap.push_back("~~");
+        } else if (mt == "code") {
+            isCode = true;
+        } else if (mt == "link") {
+            if (m.contains("attrs") && m["attrs"].is_object()) {
+                href = m["attrs"].value("href", std::string());
+            }
+        }
+    }
+}
+
+void EmitInlineTextNode(const json& node, std::ostringstream& out) {
+    std::string text = node.value("text", std::string());
+    // Apply marks innermost-first when emitting; ADF stores marks innermost-last in its array.
+    // Scratch buffers are thread_local + const char* (no std::string heap churn on the hot
+    // text-node path); capacity persists across calls within a thread.
+    static thread_local std::vector<const char*> openWrap;
+    static thread_local std::vector<const char*> closeWrap;
+    openWrap.clear();
+    closeWrap.clear();
+    std::string href;
+    bool isCode = false;
+    CollectInlineMarks(node, openWrap, closeWrap, href, isCode);
+    if (isCode) {
+        // Inline code wins: drop other emphasis on this run.
+        out << "`" << text << "`";
+        return;
+    }
+    for (const auto& w : openWrap)
+        out << w;
+    // Autolink shortcut: when the visible text equals the link target, emit a bare URL
+    // instead of [url](url). md4c's MD_FLAG_PERMISSIVEAUTOLINKS turns it back into a link
+    // on save, so round-trip semantics are preserved with a cleaner editor surface.
+    const bool autolink = !href.empty() && text == href;
+    if (!href.empty() && !autolink)
+        out << "[";
+    out << text;
+    if (!href.empty() && !autolink) {
+        out << "](" << href << ")";
+    }
+    for (auto it = closeWrap.rbegin(); it != closeWrap.rend(); ++it) {
+        out << *it;
+    }
+}
+
+void EmitInlineHardBreak(const json&, std::ostringstream& out) { out << "  \n"; }
+
+void EmitInlineEmoji(const json& node, std::ostringstream& out) {
+    out << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
+}
+
+void EmitInlineCard(const json& node, std::ostringstream& out) {
+    // Jira smart link / Atlassian inline card. Render as a bare URL — Markdown's permissive
+    // autolinks turn it back into a hyperlink on save, so the round-trip preserves the link
+    // semantics with the cleanest possible editor surface (one URL, no [text](url) wrapping).
+    // The smart-card rendering is lost on save (becomes a regular hyperlink in ADF).
+    if (node.contains("attrs") && node["attrs"].is_object()) {
+        const std::string url = node["attrs"].value("url", std::string());
+        if (!url.empty()) {
+            out << url;
+        }
+    }
+}
+
+void EmitInlineMention(const json& node, std::ostringstream& out) {
+    // ADF @-mention. Use the display text from attrs.text; fall back to id if missing.
+    if (node.contains("attrs") && node["attrs"].is_object()) {
+        std::string mtxt = node["attrs"].value("text", std::string());
+        if (mtxt.empty())
+            mtxt = std::string("@") + node["attrs"].value("id", std::string());
+        out << mtxt;
+    }
+}
+
+void EmitInlineMedia(const json& node, std::ostringstream& out) {
+    const json attrs = node.value("attrs", json::object());
+    std::string url = attrs.value("url", std::string());
+    if (url.empty()) {
+        const std::string id = attrs.value("id", std::string());
+        if (!id.empty())
+            url = "attachment:" + id;
+    }
+    std::string alt = attrs.value("alt", std::string());
+    std::string escAlt;
+    escAlt.reserve(alt.size() + 4);
+    for (char ch : alt) {
+        if (ch == ']' || ch == '\\')
+            escAlt += '\\';
+        escAlt += ch;
+    }
+    out << "![" << escAlt << "](" << url << ")";
+}
+
+using InlineEmitter = void (*)(const json&, std::ostringstream&);
+
+const std::unordered_map<std::string, InlineEmitter>& InlineEmitters() {
+    static const std::unordered_map<std::string, InlineEmitter> m = {
+        {"text", EmitInlineTextNode},   {"hardBreak", EmitInlineHardBreak}, {"emoji", EmitInlineEmoji},
+        {"inlineCard", EmitInlineCard}, {"mention", EmitInlineMention},     {"mediaInline", EmitInlineMedia},
+        {"media", EmitInlineMedia},
+    };
+    return m;
+}
+
 void EmitInlineText(const json& node, std::ostringstream& out) {
     if (!node.is_object())
         return;
     const std::string type = node.value("type", std::string());
-    if (type == "text") {
-        std::string text = node.value("text", std::string());
-        // Apply marks innermost-first when emitting; ADF stores marks innermost-last in its array.
-        // Scratch buffers are thread_local + const char* (no std::string heap churn on the hot
-        // text-node path); capacity persists across calls within a thread.
-        static thread_local std::vector<const char*> openWrap;
-        static thread_local std::vector<const char*> closeWrap;
-        openWrap.clear();
-        closeWrap.clear();
-        std::string href;
-        bool isCode = false;
-        if (node.contains("marks") && node["marks"].is_array()) {
-            for (const auto& m : node["marks"]) {
-                const std::string mt = m.value("type", std::string());
-                if (mt == "strong") {
-                    openWrap.push_back("**");
-                    closeWrap.push_back("**");
-                } else if (mt == "em") {
-                    openWrap.push_back("*");
-                    closeWrap.push_back("*");
-                } else if (mt == "strike") {
-                    openWrap.push_back("~~");
-                    closeWrap.push_back("~~");
-                } else if (mt == "code") {
-                    isCode = true;
-                } else if (mt == "link") {
-                    if (m.contains("attrs") && m["attrs"].is_object()) {
-                        href = m["attrs"].value("href", std::string());
-                    }
-                }
-            }
-        }
-        if (isCode) {
-            // Inline code wins: drop other emphasis on this run.
-            out << "`" << text << "`";
-            return;
-        }
-        for (const auto& w : openWrap)
-            out << w;
-        // Autolink shortcut: when the visible text equals the link target, emit a bare URL
-        // instead of [url](url). md4c's MD_FLAG_PERMISSIVEAUTOLINKS turns it back into a link
-        // on save, so round-trip semantics are preserved with a cleaner editor surface.
-        const bool autolink = !href.empty() && text == href;
-        if (!href.empty() && !autolink)
-            out << "[";
-        out << text;
-        if (!href.empty() && !autolink) {
-            out << "](" << href << ")";
-        }
-        for (auto it = closeWrap.rbegin(); it != closeWrap.rend(); ++it) {
-            out << *it;
-        }
-    } else if (type == "hardBreak") {
-        out << "  \n";
-    } else if (type == "emoji") {
-        out << node.value("attrs", json::object()).value("shortName", node.value("text", std::string("")));
-    } else if (type == "inlineCard") {
-        // Jira smart link / Atlassian inline card. Render as a bare URL — Markdown's permissive
-        // autolinks turn it back into a hyperlink on save, so the round-trip preserves the link
-        // semantics with the cleanest possible editor surface (one URL, no [text](url) wrapping).
-        // The smart-card rendering is lost on save (becomes a regular hyperlink in ADF).
-        if (node.contains("attrs") && node["attrs"].is_object()) {
-            const std::string url = node["attrs"].value("url", std::string());
-            if (!url.empty()) {
-                out << url;
-            }
-        }
-    } else if (type == "mention") {
-        // ADF @-mention. Use the display text from attrs.text; fall back to id if missing.
-        if (node.contains("attrs") && node["attrs"].is_object()) {
-            std::string mtxt = node["attrs"].value("text", std::string());
-            if (mtxt.empty())
-                mtxt = std::string("@") + node["attrs"].value("id", std::string());
-            out << mtxt;
-        }
-    } else if (type == "mediaInline" || type == "media") {
-        const json attrs = node.value("attrs", json::object());
-        std::string url = attrs.value("url", std::string());
-        if (url.empty()) {
-            const std::string id = attrs.value("id", std::string());
-            if (!id.empty())
-                url = "attachment:" + id;
-        }
-        std::string alt = attrs.value("alt", std::string());
-        std::string escAlt;
-        escAlt.reserve(alt.size() + 4);
-        for (char ch : alt) {
-            if (ch == ']' || ch == '\\')
-                escAlt += '\\';
-            escAlt += ch;
-        }
-        out << "![" << escAlt << "](" << url << ")";
-    }
+    const auto& emitters = InlineEmitters();
+    const auto it = emitters.find(type);
+    if (it != emitters.end())
+        it->second(node, out);
 }
 
 static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
@@ -1007,146 +1044,194 @@ void EmitAdfChildren(const json& node, AdfWalkState& s) {
     }
 }
 
+// Table-driven ADF-block → Markdown dispatch. `EmitAdfBlock` is a thin lookup
+// that, per node `type`, finds a handler in `AdfBlockHandlers()` and invokes it
+// against the shared `AdfWalkState`. Unknown types record a dropped-node entry.
+// Every handler emits exactly the bytes the original if-else branch produced —
+// output is byte-for-byte identical (pinned by the MarkdownConvert tests).
+
+void EmitAdfParagraph(const json& node, AdfWalkState& s) {
+    AppendIndent(s.out, s.listIndent);
+    if (s.insideBlockquote)
+        s.out << "> ";
+    EmitInlineRun(node.value("content", json::array()), s.out);
+    s.out << "\n\n";
+}
+
+void EmitAdfHeading(const json& node, AdfWalkState& s) {
+    const int level = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("level", 1) : 1;
+    const int clamped = (std::max)(1, (std::min)(6, level));
+    for (int i = 0; i < clamped; ++i)
+        s.out << '#';
+    s.out << ' ';
+    EmitInlineRun(node.value("content", json::array()), s.out);
+    s.out << "\n\n";
+}
+
+void EmitAdfBulletList(const json& node, AdfWalkState& s) {
+    s.listMarkerStack.push_back('-');
+    s.orderedCounters.push_back(0);
+    EmitAdfChildren(node, s);
+    s.listMarkerStack.pop_back();
+    s.orderedCounters.pop_back();
+    if (s.listIndent == 0)
+        s.out << "\n";
+}
+
+void EmitAdfOrderedList(const json& node, AdfWalkState& s) {
+    const int start = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("order", 1) : 1;
+    s.listMarkerStack.push_back('1');
+    s.orderedCounters.push_back(start - 1);
+    EmitAdfChildren(node, s);
+    s.listMarkerStack.pop_back();
+    s.orderedCounters.pop_back();
+    if (s.listIndent == 0)
+        s.out << "\n";
+}
+
+// Emit the list-item marker ("1. ", "- ", or their task-list variants).
+void EmitListItemMarker(AdfWalkState& s, bool taskItem, bool taskDone) {
+    const char marker = s.listMarkerStack.empty() ? '-' : s.listMarkerStack.back();
+    if (marker == '1') {
+        ++s.orderedCounters.back();
+        s.out << s.orderedCounters.back();
+        if (taskItem) {
+            s.out << (taskDone ? ". [x] " : ". [ ] ");
+        } else {
+            s.out << ". ";
+        }
+    } else {
+        if (taskItem) {
+            s.out << (taskDone ? "- [x] " : "- [ ] ");
+        } else {
+            s.out << "- ";
+        }
+    }
+}
+
+// Render listItem children inline-style: the first paragraph stays on the marker
+// line, subsequent blocks indent.
+void EmitListItemChildren(const json& node, AdfWalkState& s, bool taskItem) {
+    if (!node.contains("content") || !node["content"].is_array()) {
+        s.out << "\n";
+        return;
+    }
+    const auto& children = node["content"];
+    bool first = true;
+    const int prevIndent = s.listIndent;
+    for (const auto& c : children) {
+        const std::string ct = c.is_object() ? c.value("type", std::string()) : std::string();
+        if (first && ct == "paragraph") {
+            if (taskItem) {
+                EmitParagraphInlineSkipTaskPrefix(c.value("content", json::array()), s.out);
+            } else {
+                EmitInlineRun(c.value("content", json::array()), s.out);
+            }
+            s.out << "\n";
+            first = false;
+        } else {
+            s.listIndent = prevIndent + 2;
+            EmitAdfBlock(c, s);
+            s.listIndent = prevIndent;
+            first = false;
+        }
+    }
+    if (first) {
+        // Empty list item — still need newline.
+        s.out << "\n";
+    }
+}
+
+void EmitAdfListItem(const json& node, AdfWalkState& s) {
+    AppendIndent(s.out, s.listIndent);
+    bool taskItem = false;
+    bool taskDone = false;
+    if (node.contains("content") && node["content"].is_array() && !node["content"].empty()) {
+        const auto& fc = node["content"][0];
+        if (fc.is_object() && fc.value("type", std::string()) == "paragraph") {
+            taskItem = MatchStoredTaskPrefix(fc.value("content", json::array()), &taskDone);
+        }
+    }
+    EmitListItemMarker(s, taskItem, taskDone);
+    EmitListItemChildren(node, s, taskItem);
+}
+
+void EmitAdfMediaSingle(const json& node, AdfWalkState& s) {
+    AppendIndent(s.out, s.listIndent);
+    if (node.contains("content") && node["content"].is_array()) {
+        for (const auto& ch : node["content"]) {
+            if (ch.value("type", std::string()) == "media") {
+                EmitInlineText(ch, s.out);
+            }
+        }
+    }
+    s.out << "\n\n";
+}
+
+void EmitAdfTable(const json& node, AdfWalkState& s) { EmitMarkdownTable(node, s); }
+
+void EmitAdfCodeBlock(const json& node, AdfWalkState& s) {
+    std::string lang;
+    if (node.contains("attrs") && node["attrs"].is_object()) {
+        lang = node["attrs"].value("language", std::string());
+    }
+    AppendIndent(s.out, s.listIndent);
+    s.out << "```" << lang << "\n";
+    if (node.contains("content") && node["content"].is_array()) {
+        for (const auto& c : node["content"]) {
+            if (c.is_object() && c.value("type", std::string()) == "text") {
+                s.out << c.value("text", std::string());
+            }
+        }
+    }
+    if (s.out.tellp() > 0) {
+        const std::string current = s.out.str();
+        if (!current.empty() && current.back() != '\n')
+            s.out << '\n';
+    }
+    AppendIndent(s.out, s.listIndent);
+    s.out << "```\n\n";
+}
+
+void EmitAdfBlockquote(const json& node, AdfWalkState& s) {
+    const bool prev = s.insideBlockquote;
+    s.insideBlockquote = true;
+    EmitAdfChildren(node, s);
+    s.insideBlockquote = prev;
+}
+
+void EmitAdfRule(const json&, AdfWalkState& s) { s.out << "---\n\n"; }
+
+void EmitAdfHardBreak(const json&, AdfWalkState& s) { s.out << "  \n"; }
+
+void EmitAdfDoc(const json& node, AdfWalkState& s) { EmitAdfChildren(node, s); }
+
+using AdfBlockEmitter = void (*)(const json&, AdfWalkState&);
+
+const std::unordered_map<std::string, AdfBlockEmitter>& AdfBlockHandlers() {
+    static const std::unordered_map<std::string, AdfBlockEmitter> m = {
+        {"paragraph", EmitAdfParagraph},   {"heading", EmitAdfHeading},
+        {"bulletList", EmitAdfBulletList}, {"orderedList", EmitAdfOrderedList},
+        {"listItem", EmitAdfListItem},     {"mediaSingle", EmitAdfMediaSingle},
+        {"table", EmitAdfTable},           {"codeBlock", EmitAdfCodeBlock},
+        {"blockquote", EmitAdfBlockquote}, {"rule", EmitAdfRule},
+        {"hardBreak", EmitAdfHardBreak},   {"doc", EmitAdfDoc},
+    };
+    return m;
+}
+
 void EmitAdfBlock(const json& node, AdfWalkState& s) {
     if (!node.is_object()) {
         return;
     }
     const std::string type = node.value("type", std::string());
-
-    if (type == "paragraph") {
-        AppendIndent(s.out, s.listIndent);
-        if (s.insideBlockquote)
-            s.out << "> ";
-        EmitInlineRun(node.value("content", json::array()), s.out);
-        s.out << "\n\n";
-    } else if (type == "heading") {
-        const int level = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("level", 1) : 1;
-        const int clamped = (std::max)(1, (std::min)(6, level));
-        for (int i = 0; i < clamped; ++i)
-            s.out << '#';
-        s.out << ' ';
-        EmitInlineRun(node.value("content", json::array()), s.out);
-        s.out << "\n\n";
-    } else if (type == "bulletList") {
-        s.listMarkerStack.push_back('-');
-        s.orderedCounters.push_back(0);
-        EmitAdfChildren(node, s);
-        s.listMarkerStack.pop_back();
-        s.orderedCounters.pop_back();
-        if (s.listIndent == 0)
-            s.out << "\n";
-    } else if (type == "orderedList") {
-        const int start = (node.contains("attrs") && node["attrs"].is_object()) ? node["attrs"].value("order", 1) : 1;
-        s.listMarkerStack.push_back('1');
-        s.orderedCounters.push_back(start - 1);
-        EmitAdfChildren(node, s);
-        s.listMarkerStack.pop_back();
-        s.orderedCounters.pop_back();
-        if (s.listIndent == 0)
-            s.out << "\n";
-    } else if (type == "listItem") {
-        AppendIndent(s.out, s.listIndent);
-        const char marker = s.listMarkerStack.empty() ? '-' : s.listMarkerStack.back();
-        bool taskItem = false;
-        bool taskDone = false;
-        if (node.contains("content") && node["content"].is_array() && !node["content"].empty()) {
-            const auto& fc = node["content"][0];
-            if (fc.is_object() && fc.value("type", std::string()) == "paragraph") {
-                taskItem = MatchStoredTaskPrefix(fc.value("content", json::array()), &taskDone);
-            }
-        }
-        if (marker == '1') {
-            ++s.orderedCounters.back();
-            s.out << s.orderedCounters.back();
-            if (taskItem) {
-                s.out << (taskDone ? ". [x] " : ". [ ] ");
-            } else {
-                s.out << ". ";
-            }
-        } else {
-            if (taskItem) {
-                s.out << (taskDone ? "- [x] " : "- [ ] ");
-            } else {
-                s.out << "- ";
-            }
-        }
-        // Render listItem children inline-style: the first paragraph stays on the marker line,
-        // subsequent blocks indent.
-        if (node.contains("content") && node["content"].is_array()) {
-            const auto& children = node["content"];
-            bool first = true;
-            const int prevIndent = s.listIndent;
-            for (const auto& c : children) {
-                const std::string ct = c.is_object() ? c.value("type", std::string()) : std::string();
-                if (first && ct == "paragraph") {
-                    if (taskItem) {
-                        EmitParagraphInlineSkipTaskPrefix(c.value("content", json::array()), s.out);
-                    } else {
-                        EmitInlineRun(c.value("content", json::array()), s.out);
-                    }
-                    s.out << "\n";
-                    first = false;
-                } else {
-                    s.listIndent = prevIndent + 2;
-                    EmitAdfBlock(c, s);
-                    s.listIndent = prevIndent;
-                    first = false;
-                }
-            }
-            if (first) {
-                // Empty list item — still need newline.
-                s.out << "\n";
-            }
-        } else {
-            s.out << "\n";
-        }
-    } else if (type == "mediaSingle") {
-        AppendIndent(s.out, s.listIndent);
-        if (node.contains("content") && node["content"].is_array()) {
-            for (const auto& ch : node["content"]) {
-                if (ch.value("type", std::string()) == "media") {
-                    EmitInlineText(ch, s.out);
-                }
-            }
-        }
-        s.out << "\n\n";
-    } else if (type == "table") {
-        EmitMarkdownTable(node, s);
-    } else if (type == "codeBlock") {
-        std::string lang;
-        if (node.contains("attrs") && node["attrs"].is_object()) {
-            lang = node["attrs"].value("language", std::string());
-        }
-        AppendIndent(s.out, s.listIndent);
-        s.out << "```" << lang << "\n";
-        if (node.contains("content") && node["content"].is_array()) {
-            for (const auto& c : node["content"]) {
-                if (c.is_object() && c.value("type", std::string()) == "text") {
-                    s.out << c.value("text", std::string());
-                }
-            }
-        }
-        if (s.out.tellp() > 0) {
-            const std::string current = s.out.str();
-            if (!current.empty() && current.back() != '\n')
-                s.out << '\n';
-        }
-        AppendIndent(s.out, s.listIndent);
-        s.out << "```\n\n";
-    } else if (type == "blockquote") {
-        const bool prev = s.insideBlockquote;
-        s.insideBlockquote = true;
-        EmitAdfChildren(node, s);
-        s.insideBlockquote = prev;
-    } else if (type == "rule") {
-        s.out << "---\n\n";
-    } else if (type == "hardBreak") {
-        s.out << "  \n";
-    } else if (type == "doc") {
-        EmitAdfChildren(node, s);
-    } else {
-        s.dropped.push_back(type.empty() ? std::string("<unknown>") : type);
+    const auto& handlers = AdfBlockHandlers();
+    const auto it = handlers.find(type);
+    if (it != handlers.end()) {
+        it->second(node, s);
+        return;
     }
+    s.dropped.push_back(type.empty() ? std::string("<unknown>") : type);
 }
 
 // HTML subset -> Markdown (state machine over a small tag allowlist)
@@ -1259,6 +1344,72 @@ struct HtmlTagToken {
     std::string alt;           // <img>
 };
 
+// Consume one whitespace-delimited tag-name run (alnum + '-'), lowercased.
+// Advances `pos` past the run and returns the collected name.
+std::string ConsumeHtmlTagName(const std::string& html, size_t& pos) {
+    std::string name;
+    while (pos < html.size() && (std::isalnum(static_cast<unsigned char>(html[pos])) || html[pos] == '-')) {
+        name += static_cast<char>(std::tolower(static_cast<unsigned char>(html[pos])));
+        ++pos;
+    }
+    return name;
+}
+
+// Parse one `name[=value]` attribute starting at `pos`. `pos` must point at a
+// non-space, non-'/' attribute-name char. Fills `attrName` (lowercased) and
+// `attrValue` (raw, undecoded) and advances `pos` past the attribute.
+void ParseOneHtmlAttribute(const std::string& html, size_t& pos, std::string& attrName, std::string& attrValue) {
+    while (pos < html.size() && !std::isspace(static_cast<unsigned char>(html[pos])) && html[pos] != '=' &&
+           html[pos] != '>' && html[pos] != '/') {
+        attrName += static_cast<char>(std::tolower(static_cast<unsigned char>(html[pos])));
+        ++pos;
+    }
+    if (pos < html.size() && html[pos] == '=') {
+        ++pos;
+        if (pos < html.size() && (html[pos] == '"' || html[pos] == '\'')) {
+            const char quote = html[pos++];
+            while (pos < html.size() && html[pos] != quote) {
+                attrValue += html[pos++];
+            }
+            if (pos < html.size())
+                ++pos;
+        } else {
+            while (pos < html.size() && !std::isspace(static_cast<unsigned char>(html[pos])) && html[pos] != '>' &&
+                   html[pos] != '/') {
+                attrValue += html[pos++];
+            }
+        }
+    }
+}
+
+// Skip a comment / declaration / processing instruction (`<!...>` or `<?...>`).
+// `pos` points just past '<'. Returns true if a (skipped) token was consumed.
+bool ParseHtmlBangOrPi(const std::string& html, size_t& pos, HtmlTagToken& outTok) {
+    const size_t end = html.find('>', pos);
+    if (end == std::string::npos) {
+        pos = html.size();
+        return false;
+    }
+    pos = end + 1;
+    outTok = HtmlTagToken{};
+    outTok.name = "!ignored";
+    return true;
+}
+
+// Apply one parsed attribute to the token, decoding entities for the subset we
+// care about: anchor href, plus image src and alt.
+void ApplyHtmlAttribute(const std::string& attrName, const std::string& attrValue, HtmlTagToken& outTok) {
+    if (attrName == "href" && outTok.name == "a") {
+        outTok.href = DecodeHtmlEntities(attrValue);
+    }
+    if (attrName == "src" && outTok.name == "img") {
+        outTok.src = DecodeHtmlEntities(attrValue);
+    }
+    if (attrName == "alt" && outTok.name == "img") {
+        outTok.alt = DecodeHtmlEntities(attrValue);
+    }
+}
+
 bool ParseHtmlTag(const std::string& html, size_t& pos, HtmlTagToken& outTok, bool& outFell) {
     // pos points at '<'; returns true if a tag was consumed; advances pos past '>'.
     if (pos >= html.size() || html[pos] != '<')
@@ -1270,16 +1421,7 @@ bool ParseHtmlTag(const std::string& html, size_t& pos, HtmlTagToken& outTok, bo
         return false;
     }
     if (html[pos] == '!' || html[pos] == '?') {
-        // Comment / declaration / processing instruction — skip until '>' or end.
-        const size_t end = html.find('>', pos);
-        if (end == std::string::npos) {
-            pos = html.size();
-            return false;
-        }
-        pos = end + 1;
-        outTok = HtmlTagToken{};
-        outTok.name = "!ignored";
-        return true;
+        return ParseHtmlBangOrPi(html, pos, outTok);
     }
 
     if (html[pos] == '/') {
@@ -1287,11 +1429,7 @@ bool ParseHtmlTag(const std::string& html, size_t& pos, HtmlTagToken& outTok, bo
         ++pos;
     }
 
-    std::string name;
-    while (pos < html.size() && (std::isalnum(static_cast<unsigned char>(html[pos])) || html[pos] == '-')) {
-        name += static_cast<char>(std::tolower(static_cast<unsigned char>(html[pos])));
-        ++pos;
-    }
+    std::string name = ConsumeHtmlTagName(html, pos);
     if (name.empty()) {
         pos = start;
         return false;
@@ -1310,37 +1448,9 @@ bool ParseHtmlTag(const std::string& html, size_t& pos, HtmlTagToken& outTok, bo
             continue;
         }
         std::string attrName;
-        while (pos < html.size() && !std::isspace(static_cast<unsigned char>(html[pos])) && html[pos] != '=' &&
-               html[pos] != '>' && html[pos] != '/') {
-            attrName += static_cast<char>(std::tolower(static_cast<unsigned char>(html[pos])));
-            ++pos;
-        }
         std::string attrValue;
-        if (pos < html.size() && html[pos] == '=') {
-            ++pos;
-            if (pos < html.size() && (html[pos] == '"' || html[pos] == '\'')) {
-                const char quote = html[pos++];
-                while (pos < html.size() && html[pos] != quote) {
-                    attrValue += html[pos++];
-                }
-                if (pos < html.size())
-                    ++pos;
-            } else {
-                while (pos < html.size() && !std::isspace(static_cast<unsigned char>(html[pos])) && html[pos] != '>' &&
-                       html[pos] != '/') {
-                    attrValue += html[pos++];
-                }
-            }
-        }
-        if (attrName == "href" && outTok.name == "a") {
-            outTok.href = DecodeHtmlEntities(attrValue);
-        }
-        if (attrName == "src" && outTok.name == "img") {
-            outTok.src = DecodeHtmlEntities(attrValue);
-        }
-        if (attrName == "alt" && outTok.name == "img") {
-            outTok.alt = DecodeHtmlEntities(attrValue);
-        }
+        ParseOneHtmlAttribute(html, pos, attrName, attrValue);
+        ApplyHtmlAttribute(attrName, attrValue, outTok);
         // Other attributes outside our allowlist tip the fallback when the tag itself is allowlisted
         // but the attribute changes meaning (e.g. `class` on <code> is fine; `onclick` on anything
         // else is suspicious). Conservative default: don't trip on unknown attrs to keep Plane's
