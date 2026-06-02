@@ -169,10 +169,18 @@ jobs:
           bash scripts/dev/test-markdown-lang-tag.sh
           # High-integrity C++ delta gate (docs/plans/shipped/high-integrity-cpp-enforcement.md):
           # fail on any NEW strict-zone violation vs origin/develop, grandfathering
-          # existing. The gate scans HEAD vs a base worktree of origin/develop, so
-          # fetch that ref (depth 1 is enough — no merge-base needed); warn-skips if
-          # unreachable.
-          git fetch --no-tags --depth=1 origin develop
+          # existing. The gate (function_size_audit / comment_audit --diff) diffs HEAD
+          # against `git merge-base origin/develop HEAD`, so it needs REAL HISTORY on
+          # both sides. A shallow clone (default checkout depth 1) + a depth-1 develop
+          # fetch leaves merge-base empty → the script silently falls back to develop's
+          # TIP and false-flags any PR branched before a sibling decomposition landed
+          # (tooling.md P1 — this taxed the whole decompose-monoliths rollout). Unshallow
+          # HEAD and fetch develop with full history so merge-base resolves the real
+          # branch point; then existing over-cap functions grandfather correctly.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --unshallow origin
+          fi
+          git fetch --no-tags origin develop
           git rev-parse --verify --quiet origin/develop >/dev/null || {
             echo "::error::origin/develop unavailable — cannot run high-integrity delta gate"; exit 1; }
           bash agents/scripts/project/test-lint-rules.sh --diff origin/develop
