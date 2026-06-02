@@ -55,12 +55,6 @@
   Status: open
   Last-reviewed: 2026-05-19
 
-- 2026-05-18 · orchestrator · [test] · P3 — CodeRabbit "✅ Addressed in commit X" notation gives false confidence
-  Details: On PR #250 follow-up triage, CodeRabbit flagged 5 findings with 2 marked `✅ Addressed in commits 5e7d75b to 29c3321` / `✅ Addressed in commit 85aa69f`. Verified against the actual merged code: the Test E2E mode-routing was genuinely fixed (✓), but the banner `ImGuiCol_TextDisabled` push was NOT — the merged banner still pushed 3 colors (`WindowBg / Border / Text`), missing `TextDisabled`. CR's check matched commit message keywords rather than the diff actually addressing the finding. Acting on the green check alone would have left a known low-contrast bug shipped.
-  Concrete next action: standing process rule — when CR labels a finding as addressed, ALWAYS read the cited commit's diff against the original finding to confirm the change matches the requested fix. Add a one-liner to `docs/agent-rules/REVIEW_TRIAGE.md` (or the CodeRabbit-handling section of `AGENTS.md`) so future orchestrators don't trust the green-check blindly. ~10 min doc edit.
-  Status: open
-  Last-reviewed: 2026-05-18
-
 - 2026-05-17 · test-author · [process] · P3 — test.md P2 item (4) "Save / Discard + 'Assistant *' dirty-tab label" describes a UI surface that was never shipped
   Details: `test.md` P2 item (4) (the AI Assistant Preferences batch 1 + 2 entry above) names "explicit Save / Discard buttons + 'Assistant *' dirty-tab label + Save-disabled-on-validation-error + tooltip-on-hover" as a flow needing bucket-E coverage. The Assistant tab is autosave (`MarkPrefsDirty` + ~100 ms debounce via `SmatchetUiSession.h:546-568` + `SmatchetUI.cpp:768-776`). There is NO Save button on the Assistant tab, NO Discard button, NO `Assistant *` dirty-tab label. The only "Save & Sync" button (`SmatchetPreferencesUi.cpp:1679`) is scoped to the Tracker + MCP tabs. Either ship explicit Save/Discard for the Assistant tab or amend test.md item (4) to describe autosave-and-verify. Cross-reference: `tests/ui/ai_prefs_autosave_flow.test.cpp` reframed per `docs/plans/shipped/ai-assistant-bucket-e-tus.md`.
   Concrete next action: triage decision — ship explicit Save/Discard (feature work, new PR) OR rewrite the item (4) bullet inside the P2 entry above to read "autosave debounce + Test-connection verify + cancel-on-close". ~10 min for the rewrite path.

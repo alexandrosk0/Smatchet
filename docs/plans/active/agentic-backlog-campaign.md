@@ -140,6 +140,8 @@ Grouped by batch. `path` links are representative anchors; each batch's PR enume
 
 - `bedda57e` · #691 · B0 — plan doc + archived 3 already-shipped P1s (CI merge-base #688, bug-reporter relay, merge-watcher GH_API_DOWN). Squash-merged to develop.
 - `32040e3e` · #693 · Phase-0 staleness sweep — archived 11 more already-shipped entries (1 P1 + 8 P2 + 2 P3) with per-entry tree evidence.
+- #701 · **B4** — AI-endpoint host allow-list + insecure-http consent (the lone live P1): `EndpointPolicy` host-pin + consent verdicts, single-source `AiEndpointPolicy`, migration grandfather, consent UI, 18 tests. Survived a CR round (loopback-bypass tightening + host-exact grandfather). Archived the source security P1.
+- #703 · **B10** — encoded 14 deferred process forcing-rules into their home docs (AGENTS.md, process-rules.md, delegation.md, git-janitor.md, architect.md, _plan-template.md, imgui-draw-pattern.md, SI workflow) + archived all 14 source entries. Sub-plan: `b10-docs-forcing-rules.md`.
 
 ## Deviations from plan
 

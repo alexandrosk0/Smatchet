@@ -46,6 +46,13 @@ Mandatory on every `open` entry.
    file** (`docs/self-improvement/categories/<category>.md`) — **not** this index
    file. Use the exact § Format block (date · agent · `[category]` · `P<0-3>` —
    title; then Details / Concrete next action / Status / Last-reviewed).
+   **Claims about a file's behaviour must cite a verified line.** Before asserting in
+   any backlog / self-improvement / plan entry that a specific file does or doesn't do
+   X, verify it against the committed tree — `git show origin/<base>:<file>` (never the
+   mid-session working tree, which a watcher HEAD-swap can stale) or a targeted `grep`.
+   Entries written from assumption get caught downstream at a CI / CodeRabbit round; a
+   5-second check at authoring time avoids the re-push. (This is the backlog/plan analogue
+   of the CR-reply post-push verification in `docs/agent-rules/process-rules.md`.)
 3. **Immediately sync the count index in the SAME commit** —
    `bash agents/scripts/core/test-backlog-counts.sh --fix` rewrites the § Index
    table from actual file counts (or hand-bump the one row). The pre-push gate
@@ -96,12 +103,12 @@ without movement.
 | Category | Live count | File |
 |---|---|---|
 | bug         | 12  | [self-improvement/categories/bug.md](categories/bug.md) |
-| process     | 29  | [self-improvement/categories/process.md](categories/process.md) |
-| tooling     | 46  | [self-improvement/categories/tooling.md](categories/tooling.md) |
+| process     | 17  | [self-improvement/categories/process.md](categories/process.md) |
+| tooling     | 45  | [self-improvement/categories/tooling.md](categories/tooling.md) |
 | infra       | 16  | [self-improvement/categories/infra.md](categories/infra.md) |
-| test        | 20  | [self-improvement/categories/test.md](categories/test.md) |
+| test        | 19  | [self-improvement/categories/test.md](categories/test.md) |
 | security    | 11  | [self-improvement/categories/security.md](categories/security.md) |
 | external    | 1   | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |
-| applied (archive) | 159 | [self-improvement/categories/applied.md](categories/applied.md) |
+| applied (archive) | 173 | [self-improvement/categories/applied.md](categories/applied.md) |
 
 > **Count maintenance**: each "Live count" is the number of `^- 20YY-MM-DD` entries in the linked file (`grep -c '^- 20' self-improvement/categories/<file>.md`). The applied-archive count is the same `grep -c '^- 20' self-improvement/categories/applied.md`. `agents/scripts/core/test-backlog-counts.sh` runs at the pre-push gate (`test-all.sh` discovery) and refuses if any row diverges from the actual file. Update the row in the same commit that adds / archives / removes an entry, or run `bash agents/scripts/core/test-backlog-counts.sh --fix` to rewrite the table from current file counts.

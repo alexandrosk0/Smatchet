@@ -361,6 +361,8 @@ fi
 
 Delete stale local branches. Use `branch -D` (force) — squash creates a different sha than the feature branch's HEAD, so `branch -d` (safe) rejects. Confirm content is on develop via the file-restore diff stat first.
 
+**Post-squash-merge fast-path — the 5-step pre-flight does NOT apply here.** The general "destructive ops on shared worktrees require the 5-step pre-flight" rule (§ Refusal conditions / AGENTS.md § Destructive git ops) targets branches that might hold *unmerged* work. A branch that was **just squash-merged this session and untouched by another agent** holds nothing at risk, so skip the 5-step and `branch -D` directly after confirming both: (a) `gh pr view <N> --json state` is `MERGED`, and (b) the PR's `mergeCommit.oid` is reachable from `origin/<base>`. This is the most common cleanup path and should not pay the full pre-flight tax; the 5-step still binds for any branch whose merge-state you have *not* positively confirmed.
+
 ```bash
 git -C "$MAIN_REPO" branch -D <branch-name>
 [ -n "${WORKTREE:-}" ] && git -C "$WORKTREE" branch -D <branch-name>

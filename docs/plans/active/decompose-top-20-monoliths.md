@@ -131,6 +131,7 @@ Rules of the pattern (codified in `docs/guides/imgui-draw-pattern.md`, added by 
 4. **Window-state extraction**. Persistent `static` locals (filter buffers, expanded-row sets, last-selection ids) move into a `<Foo>WindowState` member struct on the owning UI object. Caught by `grep "static.*Buf\|static bool s_" Source/Core/src/Smatchet*Ui*.cpp`.
 5. **Action handlers** (button click → mutation) move into `OnX()` methods returning `void` or `bool`. Keeps the draw body to layout-only.
 6. **Section-file split when a `.cpp` exceeds 1500 lines** — precedent: `SmatchetViewsDashboardUi.cpp` + `SmatchetViewsDashboardUi_widgets.cpp`. Naming: `<Owner>Ui_<Section>.cpp`.
+7. **Never edit `docs/high-integrity/function-size-baseline.md` in a decomposition PR** — it is an informational snapshot, not the gate input (the live gate is `function_size_audit.py --diff origin/develop`). A decomposed function just leaves the over-cap set, so the delta gate passes with no baseline edit. Per-PR baseline edits create a cross-PR merge cascade (every merge re-conflicts every sibling PR on `baseline.md`). Regenerate the snapshot **once per campaign**.
 
 ### B. Non-UI monolith pattern
 
