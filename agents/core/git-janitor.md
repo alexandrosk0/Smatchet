@@ -103,18 +103,18 @@ git -C "$MAIN_REPO" push origin develop
 
 #### Pure-docs sub-exception (precondition 4 relaxation)
 
-When the ahead-range diff is **strictly** within doc paths, the `test-all.sh` gate (precondition 4) is skipped — the test rig has nothing to validate when no executable code, no scripts, no agents, no CMake, and no Lua changed.
+When the ahead-range diff is **strictly** within doc paths, the `test-all.sh` gate (precondition 4) is skipped — the test rig has nothing to compile/validate when no C++/Lua/Python source, no build-affecting scripts (`scripts/**`), no agent-behaviour prose (`agents/**` outside `agents/scripts/`), no CMake, and no product code changed. Markdown (any depth) and the agentic shell under `agents/scripts/` are build-irrelevant.
 
 **Allow-list (must hold for every file in the ahead-range):**
 
 - `docs/**`
 - `backlog/**`
-- `AGENTS.md`
-- any root-level `*.md` (README, CONTEXT, CLAUDE)
+- `agents/scripts/**` (agentic shell / tooling — never compiled into a C++ build; shell-lint + `doc-validation.yml` cover them in CI)
+- any `*.md` at **any depth** (Markdown is never compiled) — this includes the per-subsystem leaf docs under `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md` and root `CONTEXT-MAP.md`, not just root-level `*.md`
 
 **Deny-list (any hit kicks back to the full FF-clean gate including `test-all.sh`):**
 
-- `agents/**` (changes agent behaviour; `agents/scripts/core/test-agent-contract.sh` covers this)
+- `agents/**` **except** `agents/scripts/**` (agent-behaviour prose changes; `agents/scripts/core/test-agent-contract.sh` covers this)
 - `scripts/**` (changes tooling / hooks)
 - `tests/**` (changes test surface)
 - `.gitignore`, `.github/**`, `CMakePresets.json`, `CMakeLists.txt` (CI / build)

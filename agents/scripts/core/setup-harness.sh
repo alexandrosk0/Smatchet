@@ -162,6 +162,25 @@ link_file() {
   echo "  link-file  $link -> $target"
 }
 
+# Generate gitignored CLAUDE.md shims beside each subsystem leaf AGENTS.md.
+# Claude Code lazy-loads nested CLAUDE.md (not nested AGENTS.md) when a file in
+# that dir is touched; the one-line `@AGENTS.md` import pulls in the leaf rules.
+# The shim is gitignored (`.gitignore` Source/Core/src/**/CLAUDE.md) so the
+# committed tree stays AGENTS.md-only (portable to Codex/Cursor, which read
+# AGENTS.md natively). Registry of leaves: root CONTEXT-MAP.md.
+gen_subsystem_claude_shims() {
+  local count=0 agents shim
+  while IFS= read -r agents; do
+    [[ -z "$agents" ]] && continue
+    shim="$(dirname "$agents")/CLAUDE.md"
+    if [[ ! -f "$shim" ]] || ! grep -q '^@AGENTS.md' "$shim" 2>/dev/null; then
+      printf '@AGENTS.md\n\n<!-- Generated gitignored shim (setup-harness.sh). Claude Code lazy-loads nested CLAUDE.md, not AGENTS.md; this imports the sibling leaf rules. Edit AGENTS.md, not this file. -->\n' > "$shim"
+      count=$((count + 1))
+    fi
+  done < <(git ls-files 'Source/Core/src/*/AGENTS.md' 2>/dev/null)
+  echo "  subsystem-shims  $count new CLAUDE.md shim(s) beside Source/Core/src/*/AGENTS.md (gitignored)"
+}
+
 copy_template() {
   local src="$1" dst="$2"
   mkdir -p "$(dirname "$dst")"
@@ -193,6 +212,8 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/autoregister-pr.sh"  ".claude/hooks/autoregister-pr.sh"
 
   link_agents
+
+  gen_subsystem_claude_shims
 
   # Auto-link every SKILL.md package under agents/_shared/skills/. Future
   # skills get picked up with no script edit. Existing skills here today:

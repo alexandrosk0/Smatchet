@@ -23,12 +23,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: high
-version: 3
+version: 4
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Banner** — open with: `🤖 AGENT: code-review · sonnet/high · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/high · read-only · v3`.
+**Banner** — open with: `🤖 AGENT: code-review · sonnet/high · read-only · v4`. Close (before `## Self-improvement`) with: `✅ END — code-review · sonnet/high · read-only · v4`.
 
 ## Process
 
@@ -79,26 +79,12 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 - No `using namespace` in headers
 - `LOG_TRACE` / `LOG_DEBUG` in non-trivial branches
 
-**Subsystem invariants:**
-- Backend-specific code (`Jira*`, `Plane*`) must NOT leak into `Source/Core/include/ITrackerClient.h` or other shared interfaces
-- HTTP through `TrackerHttpClient` — flag direct `cpr::` usage in feature files
-- Field-value flow: catalog → parser → payload — flag bypasses
-- Tracker writes wire to `OfflineQueueService` + `BackendAuditTrail` / `FieldEditAuditSource`
-- Commands take `const CommandContext&`, return structured error envelope, default `args` to `{}`
-- SQLite schema changes additive only — flag drops / renames / type changes
-- MCP / Lua / Scenarios go through `CommandRegistry` — flag bypass paths
-
-**UI-thread non-blocking** (flag any of these reachable from `SmatchetUI::Draw` or any ImGui render path — these are correctness issues, not "performance" — they cause hitches):
-- `cpr::Get` / `cpr::Post` / `cpr::Put` / `cpr::Delete` directly in render code — must go through `TrackerHttpClient` posted to a worker thread
-- `SQLite::Database` calls inside a render frame — apply via `MainThreadDispatcher::PostToMainThread`; chunk large writes
-- `p4 ...` invocations (any `system()`, `_popen`, child-process spawn) — must be on a `std::thread` worker (see `AnnotateAnalysisUi.cpp` pattern)
-- Synchronous file I/O (image decode + upload, font load, attachment download) on the UI thread — use `std::async(std::launch::async, …)` and poll per frame
-- `std::future::get()` without a prior `wait_for(0s)` ready-check — blocks the frame
-- `std::thread::join()` anywhere outside shutdown / destructor paths
-- `std::this_thread::sleep_for` on the UI thread — never legal
-- Long lambdas posted to `MainThreadDispatcher` — `Drain()` blocks the frame; chunk + repost instead
-- Holding a `std::mutex` across an HTTP / SQLite / p4 / file-I/O call from any thread (UI thread waiting on this mutex = spike)
-- New owners of `std::thread` / `std::async` futures missing the join contract in their destructor — `~AppController` (with `BeginShutdown()` + join) is the reference pattern; missing join → `std::terminate`
+**Subsystem invariants** — these live next to the code they govern, not here. For each touched `Source/Core/src/<sub>/` file, read that directory's `AGENTS.md` and apply its invariants (the leaf is the single source of truth — it overrides any summary). Leaves today + the registry of what each covers: root [`CONTEXT-MAP.md`](../../CONTEXT-MAP.md). Quick map:
+- `Tracker/` — backend no-leak into shared interfaces, HTTP via `TrackerHttpClient`, catalog→parser→payload field flow, write→offline-queue + audit wiring.
+- `Commands/` — `const CommandContext&` + structured error envelope; all front-ends dispatch through `CommandRegistry`.
+- `Persistence/` — SQLite schema additive-only.
+- `Sync/` — every backend write through `OfflineQueueService`; replay reuses the live pipelines.
+- `Ui/` — the UI-thread-non-blocking checklist. **Sync I/O reachable from any ImGui render path is a Pillar-2 CRITICAL finding, not a perf nit** — read the leaf for the full enumeration (cpr / SQLite / p4 / file-I/O off the render path, `future::get` ready-check, no `join` / `sleep_for` on the UI thread, no mutex held across I/O).
 
 If the change introduces an intermittent-stall risk, hand off to `spike-hunter` for measurement before merging.
 
