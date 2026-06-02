@@ -1,4 +1,4 @@
-// Slice 2 of docs/plans/active/deterministic-jira-test-backend.md — Jira fixture
+// Slice 2 of docs/plans/shipped/deterministic-jira-test-backend.md — Jira fixture
 // parser/configurator implementation. See JiraFakeTrackerFixture.h for the contract.
 
 #include "JiraFakeTrackerFixture.h"
