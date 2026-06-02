@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-01 · orchestrator · [bug] · P2 — Collision-safe option resolution must cover BOTH the display label AND the payload-serialize site; fixing one drifted and shipped a wrong-id save
+  Details: The Jira components feature (PR #672) fixed `ResolveOptionLabel` (display path, `Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp`) to resolve options id-first (two-pass) so a component *named* "10033" cannot shadow the option whose *id* is "10033". But the parallel payload-builder lookup `FindOptionByIdOrValue` in the same file (used by `BuildValue`) kept the single-pass `option.Id == v || option.Value == v` match — so the cell *displayed* the right name while a SAVE serialized the WRONG component id on the same id/name collision (would persist "10067" instead of "10033"). CodeRabbit caught it post-review (PR #672 finding); the original fix + a code-review pass both missed the second site. Root pattern: option-id resolution lives at ≥3 sites (display label, payload serialize, plus `ResolveOptionId`/`FindOptionRecursive` in `TrackerFieldValueUtils.cpp`) and fixing one without the others is a silent write-correctness bug.
+  Concrete next action: route all option id/value resolution through ONE shared id-first helper (or add a cross-referencing comment + a paired test at each site); add a `BuildValue` save-path regression with a colliding option set (`{Id:10067,Value:"10033"},{Id:10033,Value:"TestComponent1"}` → must serialize id "10033"). Forcing rule worth a one-liner in AGENTS.md § Quality: "when fixing a select/multiselect option resolver, grep the file for every `option.Id == … || option.Value == …` site and fix them together." ~30 min.
+  Status: open
+  Last-reviewed: 2026-06-01
+
 - 2026-06-01 · code-review · [bug] · P2 — `AiAssistantController` turn uses 3 separate `ConfigManager::Load()` snapshots (provider refresh, model/effort resolve, agents-cfg)
   Details: A mid-turn Preferences edit can refresh `client_`/`clientConfig_` for provider A, resolve `chatReq.Model`/effort against a second reload, then build the payload against a third — a torn config view. Pre-existing (verified vs develop: original RunRequest made 3 loads); surfaced + relocated by the RunRequest phase-split (PR #677, CR finding).
   Concrete next action: take ONE `TrackerConfig` snapshot at turn start, thread it through `RefreshProviderForTurn`/`ResolveModelAndEffort`/`BuildChatPayload` (helpers already take params — now cheap).
