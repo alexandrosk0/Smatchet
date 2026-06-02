@@ -82,6 +82,10 @@ add_executable(SmatchetTests
     Core/AiErrorRedact.test.cpp
     Core/AiModelCatalog.test.cpp
     Core/AiModelSignature.test.cpp
+    # Pure helpers extracted from AiAssistantController::RunRequest (monoliths
+    # decomposition). Header-only — the helpers are `inline` in
+    # AiAssistantController.h; no extra .cpp source.
+    Core/AiAssistantSystemPrompt.test.cpp
     Core/AiPrefsValidator.test.cpp
     Core/AiEndpointSanitize.test.cpp
     Core/CliArgCoercion.test.cpp
