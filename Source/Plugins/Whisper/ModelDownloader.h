@@ -30,12 +30,12 @@ namespace whisper {
 class ModelDownloader {
   public:
     enum class State {
-        Idle,         ///< No download has been started, or Cancel() ran to completion.
-        Downloading,  ///< HTTP fetch in progress; `bytesReceived` advances.
-        Verifying,    ///< Bytes complete; SHA-256 hashing the partial file.
-        Complete,     ///< Verification passed; file renamed to its final path.
-        Failed,       ///< Aborted with an error; see `Progress::error`.
-        Cancelled     ///< User cancelled via Cancel(); partial preserved for resume.
+        Idle,        ///< No download has been started, or Cancel() ran to completion.
+        Downloading, ///< HTTP fetch in progress; `bytesReceived` advances.
+        Verifying,   ///< Bytes complete; SHA-256 hashing the partial file.
+        Complete,    ///< Verification passed; file renamed to its final path.
+        Failed,      ///< Aborted with an error; see `Progress::error`.
+        Cancelled    ///< User cancelled via Cancel(); partial preserved for resume.
     };
 
     struct Progress {
@@ -87,6 +87,22 @@ class ModelDownloader {
 
   private:
     struct Impl;
+
+    // Worker-thread body for Start(). Streams the HTTP download to the
+    // `.partial` file, verifies SHA-256, and renames onto the final path.
+    // Co-owns `impl` so it outlives the ModelDownloader. Free of `this` —
+    // static so the dispatched task never dereferences a destroyed owner.
+    static void RunDownloadWorker(std::shared_ptr<Impl> impl, const std::string& url, const std::string& finalPath,
+                                  const std::string& partialPath, const std::string& expectedSha,
+                                  const std::string& modelId, std::shared_ptr<std::atomic<bool>> cancelAtom);
+
+    // Post-download verify + rename phase: SHA-256 the completed `.partial`,
+    // compare against `expectedSha`, then atomically rename onto `finalPath`.
+    // Updates progress + the running flag through `impl`. Split out of
+    // RunDownloadWorker to keep both halves under the size cap.
+    static void FinalizeDownload(std::shared_ptr<Impl> impl, const std::string& finalPath,
+                                 const std::string& partialPath, const std::string& expectedSha,
+                                 const std::string& modelId, std::uint64_t bytesWritten);
     // shared_ptr so the detached worker dispatched by Start() can co-own Impl
     // until the task exits. The destructor only flips the cancel atom; the
     // worker captures its own shared_ptr<Impl> and tears down on its own
