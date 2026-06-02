@@ -1,4 +1,4 @@
-// Slice 1 of docs/plans/active/deterministic-jira-test-backend.md — pure-logic doctest
+// Slice 1 of docs/plans/shipped/deterministic-jira-test-backend.md — pure-logic doctest
 // for the Jira JSON → CachedTicket mapper and field-list builder. No HTTP, no cpr,
 // no JiraClient instance. Mirrors PlaneIssueMappingPure.test.cpp in shape.
 

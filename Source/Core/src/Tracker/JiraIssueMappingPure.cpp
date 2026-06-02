@@ -1,4 +1,4 @@
-// Slice 1 of docs/plans/active/deterministic-jira-test-backend.md — pure-logic helpers
+// Slice 1 of docs/plans/shipped/deterministic-jira-test-backend.md — pure-logic helpers
 // extracted from the anonymous namespace of JiraIssueSearch.cpp. No cpr, no Logger,
 // no HTTP. See JiraIssueMappingPure.h for the public contract.
 
