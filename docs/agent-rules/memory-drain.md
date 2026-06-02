@@ -58,3 +58,15 @@ the verdict from *toss* to *backlog (regression)*.
   watcher-swapped sibling branch, not develop. Always `git show origin/develop:<file>`
   to verify, never trust the local working tree mid-session (see the very
   `project-watcher-janitor-branch-swap` rule this drain implemented).
+- 2026-06-01 — second drain. 8 items → 8 implemented, 0 backlogged, 0 tossed
+  (all verified against the tree first; none stale). Implemented into
+  `process-rules.md` (concurrent-worktree isolation incl. never `git add -A`,
+  leave-worktree-until-merged, verify-layout-before-path-edits via `git ls-files`,
+  re-verify-after-tool-batch-cancel-cascade), `ship-loops.md` (ship+auto-register
+  standing default with menu suppressed, register-only-after-every-commit-pushed),
+  and `AGENTS.md` (light build for core-feature work, Unreal-build lib-only cleanup).
+  Shipped in PR #685. **Process note**: the Unreal-cleanup item was first written
+  into `process-rules.md` but tripped `test-portable-purity` (its Unreal/DX-target
+  path literals may not leak into the portable `docs/agent-rules/` layer);
+  relocated to `AGENTS.md` (project-root doc, not purity-scanned) — project-specific
+  literals belong outside the portable agentic layer.

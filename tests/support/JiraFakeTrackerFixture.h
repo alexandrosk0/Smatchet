@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TESTS_JIRA_FAKE_TRACKER_FIXTURE_H
 #define SMATCHET_TESTS_JIRA_FAKE_TRACKER_FIXTURE_H
 
-// Slice 2 of docs/plans/active/deterministic-jira-test-backend.md — Jira fixture
+// Slice 2 of docs/plans/shipped/deterministic-jira-test-backend.md — Jira fixture
 // parser and configurator. Loads a JSON fixture into an immutable script, then
 // stamps a fresh FakeTrackerClient("Jira") from it. Two entry points:
 //
@@ -12,7 +12,7 @@
 //   auto fixture = JiraFakeTrackerFixture::LoadFromFile("basic-grid.json");
 //   auto client  = fixture.CreateClient();        // fresh per call — no state leak
 //
-// Fixture JSON schema: see docs/plans/active/deterministic-jira-test-backend.md § Slice 2.
+// Fixture JSON schema: see docs/plans/shipped/deterministic-jira-test-backend.md § Slice 2.
 
 #include "CachedTicketTypes.h"
 #include "FakeTrackerClient.h"

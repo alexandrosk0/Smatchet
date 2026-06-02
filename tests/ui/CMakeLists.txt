@@ -44,7 +44,7 @@ set(_SMATCHET_UI_TEST_SOURCES
 target_sources(SmatchetStandalone PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
 target_link_libraries(SmatchetStandalone PRIVATE SmatchetImGuiTestEngine)
 
-# Slice 3 of docs/plans/active/deterministic-jira-test-backend.md — fixture
+# Slice 3 of docs/plans/shipped/deterministic-jira-test-backend.md — fixture
 # support source + include path for the Jira backend injection hook in
 # StandaloneAppBootstrap.cpp. Also compiled into DX12 as a no-GL tripwire.
 target_sources(SmatchetStandalone PRIVATE

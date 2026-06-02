@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TESTS_SCRIPTED_TRACKER_BACKEND_FACTORY_H
 #define SMATCHET_TESTS_SCRIPTED_TRACKER_BACKEND_FACTORY_H
 
-// Slice 2 of docs/plans/active/deterministic-jira-test-backend.md — factory wrapper
+// Slice 2 of docs/plans/shipped/deterministic-jira-test-backend.md — factory wrapper
 // that returns fresh fixture-configured FakeTrackerClient("Jira") instances on Create().
 // Injected via AppController::SetBackendFactory before Initialize in UI-test builds.
 //
