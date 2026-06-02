@@ -11,7 +11,6 @@
 // (Id, or Value when Id is empty). Centralising it removes the repeated 4-way `||` chain
 // from three ImGui draw functions (cutting their branch counts) and makes the match rule
 // unit-testable without standing up ImGui.
-//
 // `filterLower` is expected to already be trimmed + lower-cased by the caller (the draw
 // code computes it once per combo open via ToLowerAsciiCopy(TrimCopy(buf))). An empty
 // filter matches every option, matching the original behaviour.
