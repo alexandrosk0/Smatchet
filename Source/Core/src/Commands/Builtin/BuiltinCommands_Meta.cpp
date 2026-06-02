@@ -19,7 +19,9 @@ using builtin_detail::PaginateString;
 using builtin_detail::PInt;
 using builtin_detail::PString;
 
-void RegisterMetaCommands(CommandRegistry& reg, AppController& /*app*/) {
+namespace {
+
+void RegisterCommandsListCommand(CommandRegistry& reg) {
     {
         Command c = MakeCommand("commands.list", "List registered commands, optionally filtered by category.",
                                 [&reg](const nlohmann::json& args, const CommandContext& /*ctx*/) {
@@ -101,7 +103,9 @@ void RegisterMetaCommands(CommandRegistry& reg, AppController& /*app*/) {
         };
         reg.Register(std::move(c));
     }
+}
 
+void RegisterCommandsHelpCommand(CommandRegistry& reg) {
     {
         Command c = MakeCommand(
             "commands.help", "Return the full schema (params, flags, examples) for one command.",
@@ -135,7 +139,9 @@ void RegisterMetaCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Description = "Returns inputSchema (JSON Schema) + helpText (human readable).";
         reg.Register(std::move(c));
     }
+}
 
+void RegisterCommandsSearchCommand(CommandRegistry& reg) {
     {
         Command c = MakeCommand("commands.search", "Fuzzy-match command names by query.",
                                 [&reg](const nlohmann::json& args, const CommandContext& /*ctx*/) {
@@ -151,7 +157,9 @@ void RegisterMetaCommands(CommandRegistry& reg, AppController& /*app*/) {
         };
         reg.Register(std::move(c));
     }
+}
 
+void RegisterCommandsRecentsCommand(CommandRegistry& reg) {
     {
         Command c = MakeCommand("commands.recents", "Most recently dispatched command names.",
                                 [&reg](const nlohmann::json& args, const CommandContext& /*ctx*/) {
@@ -162,6 +170,15 @@ void RegisterMetaCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Params = {PInt("limit", "Max items.", 16)};
         reg.Register(std::move(c));
     }
+}
+
+} // namespace
+
+void RegisterMetaCommands(CommandRegistry& reg, AppController& /*app*/) {
+    RegisterCommandsListCommand(reg);
+    RegisterCommandsHelpCommand(reg);
+    RegisterCommandsSearchCommand(reg);
+    RegisterCommandsRecentsCommand(reg);
 
     // `commands.invoke` is implemented inside the Lua bridge directly (it would
     // be circular here — see AppController_LuaBindings.cpp Phase 2).
