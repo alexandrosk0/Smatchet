@@ -357,7 +357,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
   fetch→parse→enrich→finalize orchestrator. 6 HTTP-phase helpers (`FetchAndParseFieldList`,
   `EnrichGlobalCatalogFields`, `EnrichFromCreateMeta`, `EnrichIssueTypeFromProject`,
   `DiscoverSprintBoardIds`, `EnrichSprintFields`) + 7 pure mappers in the existing
-  `TrackerFieldCatalogPure` seam (no `ITrackerClient` interface delta). **3 extraction passes** (createmeta
+  `TrackerFieldCatalogPure` seam (no `ITrackerBackend` interface delta). **3 extraction passes** (createmeta
   needed a 3rd-pass sub-split for the branch budget). **Test delta**: +21 cases (26/176 assertions PASS).
 
 ### Flagship Phase-A + long-tail batch (2026-06-01) — all remaining dedicated non-UI monoliths
