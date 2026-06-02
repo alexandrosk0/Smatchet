@@ -206,6 +206,12 @@ add_executable(SmatchetTests
     # ImGui context is required.
     Core/SelectableTextRun.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SelectableTextRun.cpp"
+    # Function-size compliance PR A9-A10 — pure byte-level image-dimension parser
+    # extracted from SmatchetAttachmentPreviewUi.cpp's ParseImageDimensions. No
+    # ImGui / file-I/O dependency; parses untrusted header bytes, so the test
+    # pins every signature/bounds/offset/endianness path (PNG/GIF/WEBP/JPEG).
+    Core/ParseImageDimensions.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImageDimensionsPure.cpp"
     # Perf Opt 1 + Opt B — BuildPlan / HashContent / PreviewPlan API surface.
     # Pure-logic only (the ImGui-side render is bucket E). Links the same
     # MarkdownPreviewRender.cpp the production targets compile.
