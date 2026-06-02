@@ -2,9 +2,21 @@
 
 #include "ITrackerConnectivity.h"
 
-#include <cctype>
-
 namespace smatchet {
+
+namespace {
+// ASCII-only classification — std::isalpha/isalnum/isdigit from <cctype> are locale-dependent and
+// can accept non-ASCII bytes, contradicting the ASCII-only Jira-key grammar documented in the header.
+bool IsAsciiAlpha(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+bool IsAsciiDigit(char c) {
+    return c >= '0' && c <= '9';
+}
+bool IsAsciiAlphaNum(char c) {
+    return IsAsciiAlpha(c) || IsAsciiDigit(c);
+}
+} // namespace
 
 std::string ExtractIssueKeyPrefix(const std::string& id) {
     const auto dash = id.find('-');
@@ -14,13 +26,12 @@ std::string ExtractIssueKeyPrefix(const std::string& id) {
     // Jira project keys match ^[A-Za-z][A-Za-z0-9_]* — they MUST start with a letter. The
     // leading-letter requirement is what keeps UUIDs ("550e8400-...") and other digit-leading
     // strings from being misclassified as keys (they return "" instead of a hex fragment).
-    const unsigned char first = static_cast<unsigned char>(id[0]);
-    if (std::isalpha(first) == 0) {
+    if (!IsAsciiAlpha(id[0])) {
         return std::string();
     }
     for (std::size_t i = 1; i < dash; ++i) {
-        const unsigned char c = static_cast<unsigned char>(id[i]);
-        if (std::isalnum(c) == 0 && c != '_') {
+        const char c = id[i];
+        if (!IsAsciiAlphaNum(c) && c != '_') {
             return std::string();
         }
     }
@@ -30,7 +41,7 @@ std::string ExtractIssueKeyPrefix(const std::string& id) {
         return std::string();
     }
     for (std::size_t i = dash + 1; i < id.size(); ++i) {
-        if (std::isdigit(static_cast<unsigned char>(id[i])) == 0) {
+        if (!IsAsciiDigit(id[i])) {
             return std::string();
         }
     }
