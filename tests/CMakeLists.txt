@@ -266,6 +266,10 @@ add_executable(SmatchetTests
     # Natural-order key/issuekey sort — exercises CompareIssueKeyNatural
     # (inline in StringUtil.h) which CompareFieldValuesForSort dispatches to.
     Core/TicketGridModelKeySort.test.cpp
+    # Function-size decomposition (PR A7-A8) — deterministic dispatch coverage for
+    # FormatCompactJiraDateForDisplay (parse-failure passthrough + absolute_iso /
+    # absolute_friendly). CompactDateFormat.cpp is already linked above (line ~233).
+    Core/CompactDateFormat.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent
