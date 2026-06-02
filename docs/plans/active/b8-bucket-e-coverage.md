@@ -85,7 +85,9 @@ Two phases, one PR each (or one combined PR if the live set stays small).
 
 ## Perf-review-system gates
 
-N/A — no behavioural change on any hot path. L1 adds a `FilterText()` const getter to `CommandPaletteUi.h` (confirmed needed) — a one-line accessor returning `filterBuf_`, no runtime cost; it triggers the dual-target build gate (above) but no perf gate.
+*(This is the plan template's `§ Perf-gate` contract section — the canonical heading per `docs/plans/active/_plan-template.md`. It covers the one `Source/Core/` touch in this plan.)*
+
+**§ Perf-gate** — **N/A (no hot-path impact)**. The only `Source/Core/` change is L1 adding a `FilterText()` const getter to `CommandPaletteUi.h` — a one-line accessor returning `filterBuf_`, zero runtime cost, not on any per-frame/render path. No `SMATCHET_UI_PERF_SCOPE` added, no scenario in the curated diff→scenario map exercises it. It triggers the dual-target **build** gate (above) but no perf-scenario gate. Owner: orchestrator.
 
 ## Decisions (locked 2026-06-02)
 
