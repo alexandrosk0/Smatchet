@@ -105,7 +105,7 @@ without movement.
 | bug         | 12  | [self-improvement/categories/bug.md](categories/bug.md) |
 | process     | 17  | [self-improvement/categories/process.md](categories/process.md) |
 | tooling     | 42  | [self-improvement/categories/tooling.md](categories/tooling.md) |
-| infra       | 15  | [self-improvement/categories/infra.md](categories/infra.md) |
+| infra       | 16  | [self-improvement/categories/infra.md](categories/infra.md) |
 | test        | 15  | [self-improvement/categories/test.md](categories/test.md) |
 | security    | 11  | [self-improvement/categories/security.md](categories/security.md) |
 | external    | 1   | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |

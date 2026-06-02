@@ -115,13 +115,15 @@ N/A — no behavioural change on any hot path. L1 adds a `FilterText()` const ge
 
 ## Implementation log
 
-- #B8-phase0 · **Phase 0** — archived the 8 stale/moot bucket-E entries (3 infra "blockers" + 5 coverage dependents) to `applied.md` after re-verifying against current develop; count index synced (test 19→15, applied 173→181, 8/0). Pure-docs.
-- Phase 1 (L1-L5 TUs) — separate PR (pending).
+- #711 · **Phase 0** — archived the 8 stale/moot bucket-E entries (3 infra "blockers" + 5 coverage dependents) to `applied.md` after re-verifying against current develop; count index synced (test 19→15, applied 173→181, 8/0). Pure-docs. Merged.
+- **Phase 1 L1** — `command_palette_inline_typing.test.cpp` authored + builds clean on `feat/b8-l1-command-palette-typing` (adds `CommandPaletteUi::FilterText()` getter). **Held, not shipped** — see Deviations.
 
 ## Deviations from plan
 
+- **Phase-0 over-archived the spawn-flake entry — re-filed.** Phase 0 archived the `--spawn` flake as stale ("warmup gate closed it"). During L1 authoring the bucket-E harness flaked ~80%; isolating with the existing `Views` TU (1/6 green under the same path) proved the flake is **harness-wide, not eliminated** — only reduced + tolerated-with-retries. Re-filed as a live 2026-06-02 infra P2 (warmup gate reduced-not-removed; empty-child-log diagnosability gap). The other two infra archivals (/EHsc, perf-run file-result) still hold.
+- **L1 held pending a verifiable harness.** L1 passes intermittently exactly like the 15 shipped bucket-E TUs, but a clean ×4 local verify isn't achievable under this session's machine load, so per the #707 "don't ship unverified tests" rule it stays on its branch until the harness is idle/fixed. L2-L5 not started.
 - **tooling:300 S4 bounded-read residue is now DONE** — develop `#657` (memory-budget hardening) shipped `ImageDimensionsPure.{h,cpp}` + `tests/Core/ParseImageDimensions.test.cpp`, closing the S4 bounded-read unit test. So L5's scope narrows to the rendered "loading thumbnails" cue only; the tooling:300 entry retains just its ASan live-swap residue (not bucket-E).
-- Re-verified all Phase-0 verdicts on current develop (post #701/#703/#704-707/#657) before archiving — all held.
+- Re-verified all Phase-0 verdicts on current develop (post #701/#703/#704-707/#657) before archiving — the coverage-dependent ones held; only the spawn-flake infra one was wrong (above).
 
 ## Verification (actual)
 
