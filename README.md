@@ -132,7 +132,7 @@ When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX
 
 ## Architecture
 
-* **`Source/Core/`**: The heart of the application. Contains the backend-agnostic tracker interface (`ITrackerClient`), concrete backends (`JiraClient`, `PlaneClient`), Perforce tools, local cache managers, and all ImGui UI definitions.
+* **`Source/Core/`**: The heart of the application. Contains the backend-agnostic tracker interface (`ITrackerBackend`), concrete backends (`JiraClient`, `PlaneClient`), Perforce tools, local cache managers, and all ImGui UI definitions.
 * **`Source/Standalone/`**: The main entry point, window management, and GLFW/OpenGL bootstrapping for the standalone application.
 * **`Source/Plugins/`**: Optional plugin modules (Lua Console, MCP server).
 * **`Source/UnrealPlugins/`**: Contains the Unreal Engine plugin scaffolding and DX12 render backend.

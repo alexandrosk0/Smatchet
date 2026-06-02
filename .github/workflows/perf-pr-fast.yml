@@ -31,6 +31,12 @@ on:
       - 'Source/Plugins/**'
       - 'Source/Standalone/**'
       - 'Source/UnrealPlugins/**'
+      # Markdown is never compiled — exclude the per-subsystem leaf docs now
+      # living under Source/Core/src/<ctx>/*.md (and any other .md) so a
+      # docs-only change doesn't spin up a perf build. Negation must follow the
+      # Source positives (GitHub: later matching pattern wins); the perf-*.{py,sh}
+      # positives below don't match .md, so they don't re-include it.
+      - '!**/*.md'
       - 'scripts/dev/perf-*.py'
       - 'scripts/dev/perf-*.sh'
       - 'scripts/dev/perf-*.json'

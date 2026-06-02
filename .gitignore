@@ -118,3 +118,10 @@ assets/fonts/*.ttf
 # vexp auto-generates this; per AGENTS.md § vexp, the canonical block lives
 # in .claude/CLAUDE.md — Copilot variant is not committed.
 .github/copilot-instructions.md
+
+# Per-subsystem Claude Code shims: setup-harness.sh generates a one-line
+# CLAUDE.md (@AGENTS.md) beside each Source/Core/src/<ctx>/AGENTS.md so Claude
+# Code lazy-loads the leaf rules (it reads nested CLAUDE.md, not nested
+# AGENTS.md). The committed tree stays AGENTS.md-only; the shim is local adapter
+# output. See AGENTS.md § Subsystem guides + CONTEXT-MAP.md § Harness discovery.
+Source/Core/src/**/CLAUDE.md

@@ -48,6 +48,21 @@ The setup script uses **directory junctions** (Windows) / **symlinks** (Unix) fo
 
 Templates that the user might locally tweak (`settings.json`, hook shell scripts, `CLAUDE.md`) are **copies**. The script preserves user-modified copies on re-run.
 
+## Per-subsystem leaf discovery
+
+Heavy `Source/Core/src/<ctx>/` subsystems carry a leaf `AGENTS.md` (scoped rules) — plus, for the `Tracker/` exemplar, `CONTEXT.md` + `README.md`. Registry + per-context coverage: root [`CONTEXT-MAP.md`](../../CONTEXT-MAP.md). How a harness picks up the leaf **rules** when you touch a file in that dir:
+
+| Harness | Nested-`AGENTS.md` auto-load? | Mechanism |
+|---|---|---|
+| Claude Code | **No** — it lazy-loads nested `CLAUDE.md`, not nested `AGENTS.md` | `setup-harness.sh claude-code` generates a gitignored one-line `CLAUDE.md` (`@AGENTS.md`) beside each leaf. Claude Code includes it when it reads a file in that dir (lazy — only that subsystem's rules cost tokens, only when touched). Committed tree stays `AGENTS.md`-only. |
+| Codex / OpenAI Agents | **Yes** — reads the nearest `AGENTS.md` per the [agents.md spec](https://agents.md/) | Native; no shim needed. |
+| Cursor | Partial — `.cursor/rules` globs, not path-nearest | Use `CONTEXT-MAP.md` + explicit reads, or author a per-glob `.mdc` (follow-up if locality matters). |
+| Aider / generic | No | Read the leaf explicitly (point at it via `CONTEXT-MAP.md`). |
+
+**`CONTEXT.md` / `README.md` are never auto-loaded** on any harness — they're read on demand (agent or semantic search). Only the leaf `AGENTS.md` participates in nearest-wins.
+
+Eager-load caveat: if a harness ever eager-loads *all* nested memory at session start (rather than lazily per touched dir), the per-subsystem token win inverts — every subsystem's rules load every session. Claude Code's nested `CLAUDE.md` is **lazy** (confirmed), so the shim is safe. A future eager-loading harness should stay pointer-only (`CONTEXT-MAP.md`) until it supports lazy nearest-wins.
+
 ## Optional: coverage tooling (`OpenCppCoverage`)
 
 `OpenCppCoverage` is **Windows-only** and **not required** for normal Smatchet development — `scripts/dev/coverage.sh` exits 2 with a clean install hint when the binary is absent, and CI runners install it via Chocolatey (`choco install opencppcoverage`). Install locally only if you're working on coverage gates / threshold tuning or want to inspect line-coverage in `coverage/coverage-html/index.html`.

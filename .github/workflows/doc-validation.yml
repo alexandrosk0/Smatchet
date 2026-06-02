@@ -37,6 +37,11 @@ on:
       - 'agents/scripts/core/test-portable-purity.sh'
       - 'agents/scripts/core/test-plan-naming.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
+      - 'agents/scripts/project/test-subsystem-docs.sh'
+      - 'CONTEXT-MAP.md'
+      - 'Source/Core/src/**/AGENTS.md'
+      - 'Source/Core/src/**/CONTEXT.md'
+      - 'Source/Core/src/**/README.md'
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
@@ -57,6 +62,11 @@ on:
       - 'agents/scripts/core/test-plan-index.sh'
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
+      - 'agents/scripts/project/test-subsystem-docs.sh'
+      - 'CONTEXT-MAP.md'
+      - 'Source/Core/src/**/AGENTS.md'
+      - 'Source/Core/src/**/CONTEXT.md'
+      - 'Source/Core/src/**/README.md'
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
@@ -113,3 +123,6 @@ jobs:
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         run: bash agents/scripts/core/test-agent-discovery-fixture.sh
+
+      - name: test-subsystem-docs — leaf-doc registry parity + README staleness
+        run: bash agents/scripts/project/test-subsystem-docs.sh --diff origin/develop

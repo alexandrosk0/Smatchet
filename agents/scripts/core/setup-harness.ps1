@@ -83,6 +83,24 @@ function Copy-Template {
     Write-Host "  copy       $Dst"
 }
 
+function Gen-SubsystemClaudeShims {
+    # Gitignored CLAUDE.md shims beside each subsystem leaf AGENTS.md so Claude
+    # Code lazy-loads the leaf rules (it reads nested CLAUDE.md, not nested
+    # AGENTS.md). Committed tree stays AGENTS.md-only. Registry: root CONTEXT-MAP.md.
+    $count = 0
+    foreach ($agents in (git ls-files 'Source/Core/src/*/AGENTS.md')) {
+        if (-not $agents) { continue }
+        $shim = Join-Path (Split-Path -Parent $agents) 'CLAUDE.md'
+        $needs = $true
+        if ((Test-Path $shim) -and (Select-String -Path $shim -Pattern '^@AGENTS.md' -Quiet)) { $needs = $false }
+        if ($needs) {
+            "@AGENTS.md`n`n<!-- Generated gitignored shim (setup-harness.ps1). Claude Code lazy-loads nested CLAUDE.md, not AGENTS.md; this imports the sibling leaf rules. Edit AGENTS.md, not this file. -->" | Set-Content -Path $shim -Encoding utf8
+            $count++
+        }
+    }
+    Write-Host "  subsystem-shims  $count new CLAUDE.md shim(s) beside Source/Core/src/*/AGENTS.md (gitignored)"
+}
+
 function Setup-ClaudeCode {
     Write-Host 'Setting up Claude Code adapter at .claude\ ...'
 
@@ -98,6 +116,8 @@ function Setup-ClaudeCode {
     Link-File '.claude\skills\agent-tokens\SKILL.md' 'agents\_shared\token-tracking\SKILL.md'
     Link-File '.claude\hooks\agent-token-log.py'     'agents\_shared\token-tracking\agent-token-log.py'
     Link-File '.claude\hooks\agents-statusline.py'   'agents\_shared\token-tracking\agents-statusline.py'
+
+    Gen-SubsystemClaudeShims
 
     Write-Host 'Done. .claude\ ready for Claude Code.'
 }

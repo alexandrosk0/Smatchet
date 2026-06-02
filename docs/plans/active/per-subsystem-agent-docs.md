@@ -2,7 +2,7 @@
 
 > **Slug**: `per-subsystem-agent-docs` (matches this file's basename without `.md`).
 >
-> **Supersedes**: `docs/plans/active/nested-subsystem-agents-md.md` (rule-extraction) + `docs/plans/active/tracker-context-docs.md` (glossary/orientation). Both merged here — archive on adoption.
+> **Supersedes**: the never-filed `nested-subsystem-agents-md` rule-extraction intent + the `tracker-context-docs` glossary/orientation plan (now archived at `docs/plans/shipped/tracker-context-docs.md`). Both merged here.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
@@ -44,13 +44,13 @@ Grouped (list > 10 entries).
 **Scaffold — convention, registry, gate (uniform):**
 1. `CONTEXT-MAP.md` (new, repo root) — registry of contexts: per-context the three artifacts + system-wide `docs/CONTEXT.md` + growth path. Root location is skill-literal so `grill-with-docs` infers structure; also the harness-discovery index.
 2. `agents/scripts/project/test-subsystem-docs.sh` (new) — unified gate: FAIL on structural/parity breakage, WARN on README staleness. Reuses the `test-lint-rules.sh --diff origin/develop` delta mechanism; goes through `test-shell-lint.sh` (5 rules). `project/` dir, not `core/` — it hardcodes project paths (`Source/Core/src/*`); matches the placement of existing project-bound scripts (`test-lint-rules.sh`, `p4-*.sh`) and keeps `agents/scripts/core/` path-agnostic per the portable/project split. Confirm against `test-portable-purity` scope at implementation.
-3. [`scripts/dev/test-all.sh`](scripts/dev/test-all.sh) (edit) — invoke the gate in the pre-push sequence (local + CI, not CI-only).
-4. [`docs/STRUCTURE.md`](docs/STRUCTURE.md) (edit) — add the 3-artifact per-subsystem convention to the normative taxonomy + portable/project boundary (leaves are project-specific → exempt from `test-portable-purity`).
-5. [`docs/harness/SETUP.md`](docs/harness/SETUP.md) (edit) — document nearest-wins discovery per harness (Claude on-demand subdir load, Codex/agents.md nearest-file, Cursor `.cursor/rules` glob, Aider/generic manual) + eager-load fallback (applies to `AGENTS.md` only).
+3. `scripts/dev/test-all.sh` (edit) — invoke the gate in the pre-push sequence (local + CI, not CI-only).
+4. `docs/STRUCTURE.md` (edit) — add the 3-artifact per-subsystem convention to the normative taxonomy + portable/project boundary (leaves are project-specific → exempt from `test-portable-purity`).
+5. `docs/harness/SETUP.md` (edit) — document nearest-wins discovery per harness (Claude on-demand subdir load, Codex/agents.md nearest-file, Cursor `.cursor/rules` glob, Aider/generic manual) + eager-load fallback (applies to `AGENTS.md` only).
 
 **Rule extraction — mechanical, 5 subsystems with scoped rules today (from `nested-subsystem-agents-md`):**
-6. [`AGENTS.md`](AGENTS.md) (edit) — **light touch.** AGENTS.md holds *global* rules + the strict-zone list (§ Tiered enforcement zones), not per-subsystem invariants, so nothing is extracted *from* it. Add a § Subsystem guides stub pointing at `CONTEXT-MAP.md` + the leaf set, and cross-link the strict-zone enumeration (§ Tiered enforcement zones) to the relevant leaves. Global rules untouched.
-7. [`agents/core/code-review.md:82`](agents/core/code-review.md) (edit) — **primary extraction source.** Replace § Subsystem invariants (82–89) + § UI-thread non-blocking (91–101) with "for each touched `Source/Core/src/<sub>/` file, read that dir's `AGENTS.md` and apply". Keep global C++14/dual-target/conventions/perf. Bump `version:`. **Side-effect fix:** deletes the stale `ITrackerClient.h` ref at line 83. **Eval note:** code-review is the subagent-eval Phase-1 MVP (AGENTS.md § Subagent eval) — this edit gets base-vs-head scored (advisory WARN, non-blocking).
+6. `AGENTS.md` (edit) — **light touch.** AGENTS.md holds *global* rules + the strict-zone list (§ Tiered enforcement zones), not per-subsystem invariants, so nothing is extracted *from* it. Add a § Subsystem guides stub pointing at `CONTEXT-MAP.md` + the leaf set, and cross-link the strict-zone enumeration (§ Tiered enforcement zones) to the relevant leaves. Global rules untouched.
+7. `agents/core/code-review.md:82` (edit) — **primary extraction source.** Replace § Subsystem invariants (82–89) + § UI-thread non-blocking (91–101) with "for each touched `Source/Core/src/<sub>/` file, read that dir's `AGENTS.md` and apply". Keep global C++14/dual-target/conventions/perf. Bump `version:`. **Side-effect fix:** deletes the stale `ITrackerClient.h` ref at line 83. **Eval note:** code-review is the subagent-eval Phase-1 MVP (AGENTS.md § Subagent eval) — this edit gets base-vs-head scored (advisory WARN, non-blocking).
 8. `Source/Core/src/Tracker/AGENTS.md` (new) — backend-specific (`Jira*`/`Plane*`) no-leak into shared interfaces; HTTP only via `TrackerHttpClient` (flag direct `cpr::`); field-value flow catalog→parser→payload; writes wire to `OfflineQueueService` + `BackendAuditTrail`/`FieldEditAuditSource`. **Authored against live `ITrackerBackend.h` + 5 role headers — never `ITrackerClient`.**
 9. `Source/Core/src/Commands/AGENTS.md` (new) — `const CommandContext&` sig, structured error envelope, `args` default `{}`; MCP/Lua/Scenarios route through `CommandRegistry` (flag bypass).
 10. `Source/Core/src/Persistence/AGENTS.md` (new) — SQLite schema additive-only (flag drops/renames/type changes).
@@ -62,7 +62,7 @@ Grouped (list > 10 entries).
 14. `Source/Core/src/Tracker/README.md` (new) — orientation: backend-abstraction shape, create/update request flow, per-backend divergence points, fixture-vs-live split. Freshness header, no line numbers.
 
 **Supersession:**
-15. `docs/plans/active/nested-subsystem-agents-md.md` + `docs/plans/active/tracker-context-docs.md` — archive (merged here) once this plan is adopted.
+15. `tracker-context-docs` archived to `docs/plans/shipped/tracker-context-docs.md` (merged here via PR #717); `nested-subsystem-agents-md` was never filed as a standalone plan — its rule-extraction intent is absorbed here.
 
 ## Existing utilities reused
 
@@ -126,10 +126,22 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - **Cursor `.cursor/rules` glob authoring** — if Step 2 shows Cursor needs per-glob files to honor locality, its own follow-up (documented in SETUP.md).
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `4a4888ea` · 5 leaf `AGENTS.md` (Tracker/Commands/Persistence/Sync/Ui) + Tracker `CONTEXT.md`/`README.md` + `code-review.md` extraction (v3→v4) + root `AGENTS.md` § Subsystem guides stub + `CONTEXT-MAP.md` registry + `test-subsystem-docs.sh` gate.
+- `fa729722` · `setup-harness.sh`/`.ps1` shim-gen + `.gitignore` shim pattern + `doc-validation.yml` gate wiring + `subsystem_docs.bats` (+ wrapper) + `STRUCTURE.md`/`SETUP.md` convention.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Step 2 resolved → gitignored `CLAUDE.md` shims (new mechanism).** The plan posed a binary (auto-load vs pointer-only). claude-code-guide confirmed (via the Claude Code memory docs) that Claude Code lazy-loads nested `CLAUDE.md` but **not** nested `AGENTS.md`. User chose the third path: `setup-harness.sh`/`.ps1` generate a gitignored one-line `CLAUDE.md` (`@AGENTS.md`) beside each leaf — full auto-load, committed tree stays `AGENTS.md`-only. Added two files not in the plan: `setup-harness.{sh,ps1}` edits + `.gitignore` pattern.
+- **Gate wired into `doc-validation.yml`, not `scripts/dev/test-all.sh`.** `test-all.sh` already auto-discovers `test-*.sh`, so no edit was needed there (the plan's "edit test-all.sh" row was a no-op). But the cheap doc CI lane (`doc-validation.yml`) invokes individual gates, **not** `test-all.sh` — so the gate was added there too (path triggers + a run step) to actually gate doc PRs. `Source/Core/src/**` *code* paths deliberately left out of the trigger (staleness is WARN-only; runs at pre-push).
+- **Added a bats wrapper** `test-subsystem-docs-bats.sh` (the plan named the `.bats` file but not the `test-all.sh`-discoverable wrapper that runs it).
+- **Scope held to the full plan in one PR** (5 leaves + Tracker exemplar + scaffold + gate) — the interdependence (code-review extraction needs all 5 leaves; gate needs the registry + leaves) made horizontal slicing produce broken intermediate states.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- `test-subsystem-docs.sh` — structural / `--selftest` / `--diff origin/develop` all exit 0 on the real tree; negative duplication path confirmed.
+- `tests/bats/subsystem_docs.bats` — **7/7 pass** (clean, selftest, missing-leaf FAIL, unregistered-leaf FAIL, central↔leaf duplication FAIL, README staleness WARN non-blocking, data-driven second-README discovery).
+- Shim-gen — generates 5 gitignored `CLAUDE.md` shims; `git check-ignore` + `git status` confirm they're ignored.
+- All cited symbols verified live (anti-rot): `ITrackerBackend` + 5 roles, `TrackerHttpClient`, `FieldEditAuditSource`, `CommandContext`, `CommandRegistry`, etc. — no `ITrackerClient` reintroduced.
+- Relative-link integrity: leaf→root, leaf→docs, code-review→CONTEXT-MAP, CONTEXT→docs/CONTEXT all resolve.
+- Pure-docs + shell + one CI-yaml; no C++ compiled → dual-target unaffected.

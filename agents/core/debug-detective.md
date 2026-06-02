@@ -102,7 +102,7 @@ Before considering scenario-add (phase 1 Reproduce step), search `Source/Core/sr
 
 **Bug-class** = the smallest grouping that shares:
 
-- an **injection point** — which `ITrackerClient` (GitHub / Plane / Jira / fake), which `IAiClient` (real / `StubAiClient`), which UI panel / command, which subsystem boundary, AND
+- an **injection point** — which `ITrackerBackend` (GitHub / Plane / Jira / fake), which `IAiClient` (real / `StubAiClient`), which UI panel / command, which subsystem boundary, AND
 - a **render path** — which scenario's `OnFinish` rows[] would have caught the regression (i.e., which `rows[]` emission shape matches the observable failure).
 
 Search recipe (semantic search first, text-search second per AGENTS.md § Semantic codebase search):
@@ -505,7 +505,7 @@ Do not keep adding logs across unrelated code.
 
 Once the cause is pinned, hand the implementation to the matching subsystem specialist. Map cause-area → owner using AGENTS.md § Delegation:
 
-- Tracker layer (`ITrackerClient` / `JiraClient` / `PlaneClient` / field catalog / `TrackerHttpClient`) → `tracker-backend`.
+- Tracker layer (`ITrackerBackend` / `JiraClient` / `PlaneClient` / field catalog / `TrackerHttpClient`) → `tracker-backend`.
 - Grid / spreadsheet UI / cell editors / `TicketGridModel` → `grid-engine`.
 - Offline queue / SQLite cache / replay / audit trail → `offline-sync`.
 - Unified command system (CLI / palette / MCP / Lua / scenarios) → `command-system`.
@@ -513,7 +513,7 @@ Once the cause is pinned, hand the implementation to the matching subsystem spec
 - MCP wire / `Source/Plugins/Mcp/` / tool schemas → `mcp-toolsmith`.
 - Perforce annotate / `P4Annotate` / callstack parsing → `p4-annotate`.
 - DX12 dual-target / `SmatchetCore_DX12` / Unreal packaging → `unreal-bridge`.
-- Cross-cutting design (`ITrackerClient` widening, save-format changes, schema versioning) → `architect`.
+- Cross-cutting design (`ITrackerBackend` widening, save-format changes, schema versioning) → `architect`.
 - One symbol across many files, no judgement → `mechanic`.
 
 Include in the handoff packet:
@@ -724,7 +724,7 @@ Include only real friction encountered during the investigation:
 - Repeated reproducer round-trips.
 - New useful debug pattern found in the codebase.
 - **`missing-scenario`** (optional category) — when the reproducer-first contract forced a scenario-add or scenario-parametrize before debugging could begin, record:
-  - **bug-class**: injection point (which `ITrackerClient` / `IAiClient` / UI panel / command) + render path (which `OnFinish` rows[] catches it).
+  - **bug-class**: injection point (which `ITrackerBackend` / `IAiClient` / UI panel / command) + render path (which `OnFinish` rows[] catches it).
   - **chosen scenario name** (newly added or pre-existing).
   - **parametrization shape** if forking — e.g. "added `--state=401` CLI arg + new `OnTick` sub-case to `ai-assistant-streaming-happy-path`". Empty when the scenario was added fresh per the hard-refusal rule.
 

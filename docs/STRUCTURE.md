@@ -11,7 +11,7 @@ Reuse guide: [`PORTABILITY.md`](PORTABILITY.md). Plan: [`plans/shipped/agentic-l
 **PORTABLE** (copy into another project as-is; project values come from `project.config.json`):
 `agents/core/`, `agents/_shared/`, `docs/agent-rules/`, `docs/harness/`, the self-improvement **framework**, the generic `scripts/dev/test-*.sh` + `merge-gates.*` + `project-config.sh`, and `AGENTS.md`'s structure.
 
-**PROJECT-SPECIFIC** (re-authored per project): `project.config.json`, `agents/project/`, `docs/plans/`, `docs/self-improvement/categories/*` (entries), `docs/CONTEXT.md`, `docs/adr/`, `docs/perf/`, `docs/perforce/`, `docs/high-integrity/`, `docs/reference/`, project-only scripts (`test-lint-rules.sh`, `perf-*`, `p4-*`).
+**PROJECT-SPECIFIC** (re-authored per project): `project.config.json`, `agents/project/`, `docs/plans/`, `docs/self-improvement/categories/*` (entries), `docs/CONTEXT.md`, `CONTEXT-MAP.md`, the per-subsystem leaf docs `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md`, `docs/adr/`, `docs/perf/`, `docs/perforce/`, `docs/high-integrity/`, `docs/reference/`, project-only scripts (`test-lint-rules.sh`, `test-subsystem-docs.sh`, `perf-*`, `p4-*`).
 
 The single seam for project values is **`project.config.json`** (schema-validated). `scripts/dev/project-config.sh` exports it as `PC_*` shell vars.
 
@@ -20,6 +20,8 @@ The single seam for project values is **`project.config.json`** (schema-validate
 | Path | Tier | Holds | Enforced by |
 |---|---|---|---|
 | `/AGENTS.md` | portable | rulebook (prose pointers to `project.config.json`) | `test-doc-anchors` |
+| `/CONTEXT-MAP.md` | project | registry of per-subsystem leaf docs + harness-discovery index | `test-subsystem-docs` |
+| `Source/Core/src/<ctx>/{AGENTS,CONTEXT,README}.md` | project | per-subsystem leaf rules / glossary / orientation | `test-subsystem-docs` |
 | `/project.config.json` (+ `.schema.json`) | project | the one value table | schema validation (`doc-validation.yml`) |
 | `agents/core/` | portable | generic engineering-role agents | `test-portable-purity`, `test-agent-contract` |
 | `agents/project/` | project | subsystem-bound agents | `test-agent-contract` |
