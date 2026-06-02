@@ -1265,105 +1265,111 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
     };
 
     if (job.type == AutomationJob::Type::RunAutoScript) {
-        const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
-        if (path.empty()) {
-            logErr("[LUA auto] ", "invalid script path");
-            return;
-        }
-
-        sol::load_result script = state.load_file(path);
-        if (!script.valid()) {
-            sol::error err = script;
-            logErr("[LUA auto] ", err.what());
-            return;
-        }
-
-        sol::protected_function func = script;
-        sol::environment runEnv = CreateSandboxEnvironment(state);
-        runEnv.set_on(func);
-
-        sol::protected_function_result init_pfr = func();
-        if (!init_pfr.valid()) {
-            sol::error err = init_pfr;
-            logErr("[LUA auto] ", err.what());
-            return;
-        }
-
-        sol::protected_function process_func = runEnv["process_ticket"];
-        if (!process_func.valid()) {
-            logErr("[LUA auto] ", "script must define function process_ticket(ticket)");
-            return;
-        }
-
-        const auto snap = GetActiveTicketsSnapshot();
-        std::unordered_set<std::string> selectedSet(job.selectedIds.begin(), job.selectedIds.end());
-
-        for (auto& ticket : *snap) {
-            if (!selectedSet.empty() && selectedSet.find(ticket.id) == selectedSet.end()) {
-                continue;
-            }
-            if (selectedSet.empty()) {
-                break;
-            }
-
-            // Copy ticket so we don't modify the snapshot elements in-place directly without protection
-            CachedTicket ticketCopy = ticket;
-            sol::protected_function_result pfr = process_func(&ticketCopy);
-            if (!pfr.valid()) {
-                sol::error err = pfr;
-                logErr("[LUA auto] ", err.what());
-            }
-        }
+        RunAutomationAutoScript(state, job, logErr);
     } else if (job.type == AutomationJob::Type::TicketAction) {
-        sol::protected_function func = env[job.scriptPathOrActionName];
-        if (func.valid()) {
-            sol::protected_function_result pfr = func(job.targetIssueId);
-            if (!pfr.valid()) {
-                sol::error err = pfr;
-                logErr("[LUA action] ", err.what());
-            }
-        } else {
-            logErr("[LUA action] ", "Function not found: " + job.scriptPathOrActionName);
-        }
+        RunAutomationActionCall(env, job, true, logErr);
     } else if (job.type == AutomationJob::Type::GlobalAction) {
-        sol::protected_function func = env[job.scriptPathOrActionName];
-        if (func.valid()) {
-            sol::protected_function_result pfr = func();
-            if (!pfr.valid()) {
-                sol::error err = pfr;
-                logErr("[LUA action] ", err.what());
-            }
-        } else {
-            logErr("[LUA action] ", "Function not found: " + job.scriptPathOrActionName);
-        }
+        RunAutomationActionCall(env, job, false, logErr);
     } else if (job.type == AutomationJob::Type::RunFlatScript) {
-        const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
-        if (path.empty()) {
-            logErr("[LUA run] ", "invalid script path");
-            return;
-        }
-
-        sol::load_result script = state.load_file(path);
-        if (!script.valid()) {
-            sol::error err = script;
-            logErr("[LUA run] ", err.what());
-            return;
-        }
-
-        sol::protected_function func = script;
-        sol::environment runEnv = CreateSandboxEnvironment(state);
-        runEnv.set_on(func);
-
-        sol::protected_function_result pfr = func();
-        if (!pfr.valid()) {
-            sol::error err = pfr;
-            logErr("[LUA run] ", err.what());
-        } else {
-            LOG_TRACE("RunAutomationJob: flat script finished.");
-        }
+        RunAutomationFlatScript(state, job, logErr);
     }
 
     lua_sethook(state.lua_state(), nullptr, 0, 0);
+}
+
+void AppController::RunAutomationAutoScript(sol::state& state, const AutomationJob& job,
+                                            const AutomationErrorSink& logErr) {
+    const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
+    if (path.empty()) {
+        logErr("[LUA auto] ", "invalid script path");
+        return;
+    }
+
+    sol::load_result script = state.load_file(path);
+    if (!script.valid()) {
+        sol::error err = script;
+        logErr("[LUA auto] ", err.what());
+        return;
+    }
+
+    sol::protected_function func = script;
+    sol::environment runEnv = CreateSandboxEnvironment(state);
+    runEnv.set_on(func);
+
+    sol::protected_function_result init_pfr = func();
+    if (!init_pfr.valid()) {
+        sol::error err = init_pfr;
+        logErr("[LUA auto] ", err.what());
+        return;
+    }
+
+    sol::protected_function process_func = runEnv["process_ticket"];
+    if (!process_func.valid()) {
+        logErr("[LUA auto] ", "script must define function process_ticket(ticket)");
+        return;
+    }
+
+    const auto snap = GetActiveTicketsSnapshot();
+    std::unordered_set<std::string> selectedSet(job.selectedIds.begin(), job.selectedIds.end());
+
+    for (auto& ticket : *snap) {
+        if (!selectedSet.empty() && selectedSet.find(ticket.id) == selectedSet.end()) {
+            continue;
+        }
+        if (selectedSet.empty()) {
+            break;
+        }
+
+        // Copy ticket so we don't modify the snapshot elements in-place directly without protection
+        CachedTicket ticketCopy = ticket;
+        sol::protected_function_result pfr = process_func(&ticketCopy);
+        if (!pfr.valid()) {
+            sol::error err = pfr;
+            logErr("[LUA auto] ", err.what());
+        }
+    }
+}
+
+void AppController::RunAutomationActionCall(sol::environment& env, const AutomationJob& job, bool passTargetId,
+                                            const AutomationErrorSink& logErr) {
+    sol::protected_function func = env[job.scriptPathOrActionName];
+    if (!func.valid()) {
+        logErr("[LUA action] ", "Function not found: " + job.scriptPathOrActionName);
+        return;
+    }
+    sol::protected_function_result pfr = passTargetId ? func(job.targetIssueId) : func();
+    if (!pfr.valid()) {
+        sol::error err = pfr;
+        logErr("[LUA action] ", err.what());
+    }
+}
+
+void AppController::RunAutomationFlatScript(sol::state& state, const AutomationJob& job,
+                                            const AutomationErrorSink& logErr) {
+    const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
+    if (path.empty()) {
+        logErr("[LUA run] ", "invalid script path");
+        return;
+    }
+
+    sol::load_result script = state.load_file(path);
+    if (!script.valid()) {
+        sol::error err = script;
+        logErr("[LUA run] ", err.what());
+        return;
+    }
+
+    sol::protected_function func = script;
+    sol::environment runEnv = CreateSandboxEnvironment(state);
+    runEnv.set_on(func);
+
+    sol::protected_function_result pfr = func();
+    if (!pfr.valid()) {
+        sol::error err = pfr;
+        logErr("[LUA run] ", err.what());
+    } else {
+        LOG_TRACE("RunAutomationJob: flat script finished.");
+    }
 }
 
 void AppController::RunLuaSetupScript(const std::string& scriptPath) {

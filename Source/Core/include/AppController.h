@@ -1277,6 +1277,13 @@ class AppController
     std::atomic<bool> automationWorkerShuttingDown_{false};
     void AutomationWorkerLoop();
     void RunAutomationJob(sol::state& state, sol::environment& env, const AutomationJob& job);
+    // RunAutomationJob branch bodies, split out to keep the dispatcher under the size cap.
+    // Each takes the job's error reporter so log routing stays identical across branch types.
+    using AutomationErrorSink = std::function<void(const char*, const std::string&)>;
+    void RunAutomationAutoScript(sol::state& state, const AutomationJob& job, const AutomationErrorSink& logErr);
+    void RunAutomationFlatScript(sol::state& state, const AutomationJob& job, const AutomationErrorSink& logErr);
+    void RunAutomationActionCall(sol::environment& env, const AutomationJob& job, bool passTargetId,
+                                 const AutomationErrorSink& logErr);
     std::vector<std::string> activeSetupScripts_;
 #endif
 
