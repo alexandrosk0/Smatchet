@@ -15,6 +15,13 @@ FetchContent_Declare(imgui_test_engine
     # C++14 compat. See docs/design/imgui-test-engine-bucket-e-execution.md
     # § Phase 0 for the probe transcript.
     GIT_TAG 8568767ad4c53d6ce02d65f01a09d30fb630bd80
+    # We consume only the 8 imgui_test_engine/*.cpp sources below — none under
+    # imgui_test_suite/thirdparty/implot. Skip submodule fetch entirely: it is
+    # unused AND its `git submodule update` fails under the MSVC-env shell where
+    # Git-for-Windows' git-submodule can't locate git-sh-setup. Empty string =
+    # "update no submodules" per CMake's GIT_SUBMODULES contract.
+    GIT_SUBMODULES ""
+    GIT_SUBMODULES_RECURSE OFF
 )
 FetchContent_GetProperties(imgui_test_engine)
 if(NOT imgui_test_engine_POPULATED)

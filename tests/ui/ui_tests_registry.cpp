@@ -18,6 +18,7 @@ extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine
 extern "C" void SmatchetRegisterDescriptionTooltipMarkdownRenderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotatePrefsPersistFlowTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterFuncSizeWindowRenderSmokeTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
@@ -44,6 +45,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterDescriptionTooltipMarkdownRenderTests(engine);
     SmatchetRegisterSpawnWarmupDeterministicGateTests(engine);
     SmatchetRegisterAnnotatePrefsPersistFlowTests(engine);
+    SmatchetRegisterFuncSizeWindowRenderSmokeTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
