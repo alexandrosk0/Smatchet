@@ -236,14 +236,145 @@ void McpPlugin::OnStart(AppController& app) {
 }
 
 void McpPlugin::RegisterTicketRoutes() {
-    impl_->svr.Get("/mcp/list_tickets", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!Authorize(req, res)) {
-            return;
+    impl_->svr.Get("/mcp/list_tickets",
+                   [this](const httplib::Request& req, httplib::Response& res) { HandleListTickets(req, res); });
+
+    // Attachment proxy:
+    // Tracker attachment URLs generally require Basic Auth headers; Unreal's WebBrowser won't attach them.
+    // We proxy through the MCP server (running in the same process) so Unreal can embed/load it.
+    impl_->svr.Get("/mcp/attachment_proxy",
+                   [this](const httplib::Request& req, httplib::Response& res) { HandleAttachmentProxy(req, res); });
+
+    impl_->svr.Get("/mcp/search",
+                   [this](const httplib::Request& req, httplib::Response& res) { HandleSearchTickets(req, res); });
+}
+
+void McpPlugin::HandleListTickets(const httplib::Request& req, httplib::Response& res) {
+    if (!Authorize(req, res)) {
+        return;
+    }
+    const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsPtr;
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& t : tickets) {
+        nlohmann::json fields = nlohmann::json::object();
+        for (const auto& fieldId : impl_->export_fields) {
+            const auto it = t.fieldValues.find(fieldId);
+            if (it != t.fieldValues.end()) {
+                fields[fieldId] = it->second;
+            }
         }
-        const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
-        const auto& tickets = *ticketsPtr;
-        nlohmann::json j = nlohmann::json::array();
-        for (const auto& t : tickets) {
+        j.push_back({{"id", t.id}, {"fields", std::move(fields)}});
+    }
+    res.set_content(j.dump(), "application/json");
+}
+
+void McpPlugin::HandleAttachmentProxy(const httplib::Request& req, httplib::Response& res) {
+    if (!Authorize(req, res)) {
+        return;
+    }
+    const std::string targetUrl = req.get_param_value("url");
+    if (targetUrl.empty()) {
+        res.status = 400;
+        res.set_content("Missing `url` query parameter.", "text/plain");
+        return;
+    }
+    if (!LooksLikeHttpUrl(targetUrl)) {
+        res.status = 400;
+        res.set_content("Invalid `url` parameter (expected http/https).", "text/plain");
+        return;
+    }
+    if (targetUrl.rfind("https://", 0) != 0) {
+        res.status = 400;
+        res.set_content("Attachment proxy requires https URLs.", "text/plain");
+        return;
+    }
+    const std::string targetHost = ExtractHostFromUrl(targetUrl);
+    if (!IsAllowedAttachmentHost(targetHost, impl_->tracker_domain)) {
+        res.status = 403;
+        res.set_content("Attachment host is not allowlisted.", "text/plain");
+        return;
+    }
+
+    const TrackerConfig currentCfg = ConfigManager::Load();
+    if (currentCfg.Email.empty() || currentCfg.ApiToken.empty() || currentCfg.Domain.empty()) {
+        res.status = 500;
+        res.set_content("Missing Tracker configuration (email/token/domain).", "text/plain");
+        return;
+    }
+
+    const std::string basicCred = currentCfg.Email + ":" + currentCfg.ApiToken;
+    const std::string authHeader = "Basic " + Base64Encode(basicCred);
+
+    cpr::Header headers{
+        {"Accept", "*/*"}, {"Authorization", authHeader}, {"User-Agent", "Smatchet/1.0 Tracker-Attachment-Proxy"}};
+    cpr::Redirect redirect(false, false);
+
+    constexpr size_t kMaxAttachmentProxyBytes = 10u * 1024u * 1024u;
+    bool sizeExceeded = false;
+    std::string bodyAccum;
+    bodyAccum.reserve(64 * 1024);
+    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
+        if (bodyAccum.size() + data.size() > kMaxAttachmentProxyBytes) {
+            sizeExceeded = true;
+            return false;
+        }
+        bodyAccum.append(data);
+        return true;
+    }};
+    const auto resp =
+        cpr::Get(cpr::Url{targetUrl}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{60000});
+    if (sizeExceeded) {
+        res.status = 413;
+        res.set_content("Attachment too large for proxy.", "text/plain");
+        return;
+    }
+    if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
+        res.status = 502;
+        res.set_content("Attachment upstream fetch failed.", "text/plain");
+        return;
+    }
+
+    std::string contentType = "application/octet-stream";
+    try {
+        const auto it = resp.header.find("Content-Type");
+        if (it != resp.header.end()) {
+            contentType = it->second;
+        }
+    } catch (...) { // catch-all-ok: keep default contentType on parse failure
+    }
+
+    res.status = resp.status_code;
+    res.set_content(bodyAccum, contentType);
+}
+
+void McpPlugin::HandleSearchTickets(const httplib::Request& req, httplib::Response& res) {
+    if (!Authorize(req, res)) {
+        return;
+    }
+    std::string query = req.get_param_value("q");
+    if (query.size() > 512) {
+        res.status = 400;
+        res.set_content("Query too long.", "text/plain");
+        return;
+    }
+    const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
+    const auto& tickets = *ticketsPtr;
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto& t : tickets) {
+        bool matches = (t.id.find(query) != std::string::npos);
+        if (!matches) {
+            for (const auto& fieldId : impl_->export_fields) {
+                const auto it = t.fieldValues.find(fieldId);
+                if (it == t.fieldValues.end())
+                    continue;
+                if (it->second.find(query) != std::string::npos) {
+                    matches = true;
+                    break;
+                }
+            }
+        }
+        if (matches) {
             nlohmann::json fields = nlohmann::json::object();
             for (const auto& fieldId : impl_->export_fields) {
                 const auto it = t.fieldValues.find(fieldId);
@@ -253,130 +384,8 @@ void McpPlugin::RegisterTicketRoutes() {
             }
             j.push_back({{"id", t.id}, {"fields", std::move(fields)}});
         }
-        res.set_content(j.dump(), "application/json");
-    });
-
-    // Attachment proxy:
-    // Tracker attachment URLs generally require Basic Auth headers; Unreal's WebBrowser won't attach them.
-    // We proxy through the MCP server (running in the same process) so Unreal can embed/load it.
-    impl_->svr.Get("/mcp/attachment_proxy", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!Authorize(req, res)) {
-            return;
-        }
-        const std::string targetUrl = req.get_param_value("url");
-        if (targetUrl.empty()) {
-            res.status = 400;
-            res.set_content("Missing `url` query parameter.", "text/plain");
-            return;
-        }
-        if (!LooksLikeHttpUrl(targetUrl)) {
-            res.status = 400;
-            res.set_content("Invalid `url` parameter (expected http/https).", "text/plain");
-            return;
-        }
-        if (targetUrl.rfind("https://", 0) != 0) {
-            res.status = 400;
-            res.set_content("Attachment proxy requires https URLs.", "text/plain");
-            return;
-        }
-        const std::string targetHost = ExtractHostFromUrl(targetUrl);
-        if (!IsAllowedAttachmentHost(targetHost, impl_->tracker_domain)) {
-            res.status = 403;
-            res.set_content("Attachment host is not allowlisted.", "text/plain");
-            return;
-        }
-
-        const TrackerConfig currentCfg = ConfigManager::Load();
-        if (currentCfg.Email.empty() || currentCfg.ApiToken.empty() || currentCfg.Domain.empty()) {
-            res.status = 500;
-            res.set_content("Missing Tracker configuration (email/token/domain).", "text/plain");
-            return;
-        }
-
-        const std::string basicCred = currentCfg.Email + ":" + currentCfg.ApiToken;
-        const std::string authHeader = "Basic " + Base64Encode(basicCred);
-
-        cpr::Header headers{
-            {"Accept", "*/*"}, {"Authorization", authHeader}, {"User-Agent", "Smatchet/1.0 Tracker-Attachment-Proxy"}};
-        cpr::Redirect redirect(false, false);
-
-        constexpr size_t kMaxAttachmentProxyBytes = 10u * 1024u * 1024u;
-        bool sizeExceeded = false;
-        std::string bodyAccum;
-        bodyAccum.reserve(64 * 1024);
-        cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
-            if (bodyAccum.size() + data.size() > kMaxAttachmentProxyBytes) {
-                sizeExceeded = true;
-                return false;
-            }
-            bodyAccum.append(data);
-            return true;
-        }};
-        const auto resp =
-            cpr::Get(cpr::Url{targetUrl}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{60000});
-        if (sizeExceeded) {
-            res.status = 413;
-            res.set_content("Attachment too large for proxy.", "text/plain");
-            return;
-        }
-        if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
-            res.status = 502;
-            res.set_content("Attachment upstream fetch failed.", "text/plain");
-            return;
-        }
-
-        std::string contentType = "application/octet-stream";
-        try {
-            const auto it = resp.header.find("Content-Type");
-            if (it != resp.header.end()) {
-                contentType = it->second;
-            }
-        } catch (...) { // catch-all-ok: keep default contentType on parse failure
-        }
-
-        res.status = resp.status_code;
-        res.set_content(bodyAccum, contentType);
-    });
-
-    impl_->svr.Get("/mcp/search", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!Authorize(req, res)) {
-            return;
-        }
-        std::string query = req.get_param_value("q");
-        if (query.size() > 512) {
-            res.status = 400;
-            res.set_content("Query too long.", "text/plain");
-            return;
-        }
-        const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
-        const auto& tickets = *ticketsPtr;
-        nlohmann::json j = nlohmann::json::array();
-        for (const auto& t : tickets) {
-            bool matches = (t.id.find(query) != std::string::npos);
-            if (!matches) {
-                for (const auto& fieldId : impl_->export_fields) {
-                    const auto it = t.fieldValues.find(fieldId);
-                    if (it == t.fieldValues.end())
-                        continue;
-                    if (it->second.find(query) != std::string::npos) {
-                        matches = true;
-                        break;
-                    }
-                }
-            }
-            if (matches) {
-                nlohmann::json fields = nlohmann::json::object();
-                for (const auto& fieldId : impl_->export_fields) {
-                    const auto it = t.fieldValues.find(fieldId);
-                    if (it != t.fieldValues.end()) {
-                        fields[fieldId] = it->second;
-                    }
-                }
-                j.push_back({{"id", t.id}, {"fields", std::move(fields)}});
-            }
-        }
-        res.set_content(j.dump(), "application/json");
-    });
+    }
+    res.set_content(j.dump(), "application/json");
 }
 
 void McpPlugin::RegisterToolsListRoute() {
@@ -407,139 +416,141 @@ void McpPlugin::RegisterToolsListRoute() {
 }
 
 void McpPlugin::RegisterToolsCallRoute() {
-    impl_->svr.Post("/mcp/tools/call", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!Authorize(req, res))
+    impl_->svr.Post("/mcp/tools/call",
+                    [this](const httplib::Request& req, httplib::Response& res) { HandleToolsCall(req, res); });
+}
+
+void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& res) {
+    if (!Authorize(req, res))
+        return;
+    const std::string remote = req.remote_addr;
+    try {
+        auto body = nlohmann::json::parse(req.body);
+        std::string name = body.value("name", "");
+        const nlohmann::json arguments = body.value("arguments", nlohmann::json::object());
+        std::string paramsStr = arguments.dump();
+        LOG_TRACE("MCP: REST POST /mcp/tools/call remote=%s tool=%s args_len=%zu body_len=%zu", req.remote_addr.c_str(),
+                  name.c_str(), paramsStr.size(), req.body.size());
+        std::string error;
+        std::string result;
+        // Unified Command System: try registry first. Always returns HTTP 200
+        // with a canonical envelope {ok, command, data|error} in content[0].text —
+        // even for structured errors (confirm-required, not-found, etc.). This lets
+        // callers parse the envelope rather than treating every error as a transport fail.
+        if (impl_->app->Commands().FindLocked(name) != nullptr) {
+            smatchet::cmd::CommandContext cctx;
+            cctx.App = impl_->app;
+            cctx.Source = smatchet::cmd::CommandSource::Mcp;
+            cctx.ConfirmedDestructive = arguments.value("__confirm", false);
+            cctx.DryRun = arguments.value("__dry_run", false);
+            cctx.TimeoutMs = arguments.value("__timeout_ms", 0);
+            smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
+            const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
+            const std::string envelopeStr = envelope.dump();
+            LOG_TRACE("MCP: REST tools/call registry tool=%s ok=%d", name.c_str(), cr.Ok ? 1 : 0);
+            AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + name +
+                                                  (cr.Ok ? " ok" : " FAIL(" + cr.Error.Message.substr(0, 80) + ")") +
+                                                  " remote=" + remote);
+            // Always HTTP 200: the envelope carries ok/error; isError=true only for
+            // genuine tool-call failures, not for structured command errors.
+            res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelopeStr}}}}}.dump(),
+                            "application/json");
             return;
-        const std::string remote = req.remote_addr;
-        try {
-            auto body = nlohmann::json::parse(req.body);
-            std::string name = body.value("name", "");
-            const nlohmann::json arguments = body.value("arguments", nlohmann::json::object());
-            std::string paramsStr = arguments.dump();
-            LOG_TRACE("MCP: REST POST /mcp/tools/call remote=%s tool=%s args_len=%zu body_len=%zu",
-                      req.remote_addr.c_str(), name.c_str(), paramsStr.size(), req.body.size());
-            std::string error;
-            std::string result;
-            // Unified Command System: try registry first. Always returns HTTP 200
-            // with a canonical envelope {ok, command, data|error} in content[0].text —
-            // even for structured errors (confirm-required, not-found, etc.). This lets
-            // callers parse the envelope rather than treating every error as a transport fail.
-            if (impl_->app->Commands().FindLocked(name) != nullptr) {
+        } else
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+            if (name == "run_lua") {
+            if (!impl_->allow_lua_execution) {
+                error = "run_lua is disabled by configuration";
+                LOG_TRACE("MCP: run_lua rejected (disabled in config)");
+                AppendMcpActivityLine(impl_->app, "MCP: REST tools/call run_lua FAIL remote=" + remote +
+                                                      " err=disabled by configuration");
+            } else {
+                const nlohmann::json args = arguments;
+                const std::string mode = args.value("mode", "");
+                LOG_TRACE("MCP: run_lua mode=%s", mode.c_str());
+                if (mode == "snippet") {
+                    result = impl_->app->ExecuteLuaSnippetForMcp(args.value("code", std::string()),
+                                                                 args.value("args", nlohmann::json::object()), error);
+                } else if (mode == "script") {
+                    result = impl_->app->ExecuteLuaScriptForMcp(args.value("script", std::string()),
+                                                                args.value("args", nlohmann::json::object()), error);
+                } else {
+                    error = "run_lua requires mode='snippet' or mode='script'";
+                }
+            }
+        } else {
+            // Check whether this name belongs to an mcp.register_tool Lua tool before
+            // trying ExecuteLuaMcpTool. If it's not a Lua MCP tool either, fall back to
+            // the registry for a structured unknown-command response with fuzzy suggestions.
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+            const auto luaTools = impl_->app->GetLuaMcpTools();
+            const bool isLuaMcpTool =
+                std::any_of(luaTools.begin(), luaTools.end(), [&name](const auto& lt) { return lt.name == name; });
+            if (isLuaMcpTool) {
+                result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
+            } else {
+#endif
+                // Not in registry, not run_lua, not a Lua MCP tool.
+                // Dispatch through registry to get a canonical unknown-command envelope
+                // with fuzzy suggestions (e.g. "did you mean 'tickets.search_active'?").
                 smatchet::cmd::CommandContext cctx;
                 cctx.App = impl_->app;
                 cctx.Source = smatchet::cmd::CommandSource::Mcp;
-                cctx.ConfirmedDestructive = arguments.value("__confirm", false);
-                cctx.DryRun = arguments.value("__dry_run", false);
-                cctx.TimeoutMs = arguments.value("__timeout_ms", 0);
                 smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
-                const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
-                const std::string envelopeStr = envelope.dump();
-                LOG_TRACE("MCP: REST tools/call registry tool=%s ok=%d", name.c_str(), cr.Ok ? 1 : 0);
-                AppendMcpActivityLine(impl_->app,
-                                      "MCP: REST tools/call " + name +
-                                          (cr.Ok ? " ok" : " FAIL(" + cr.Error.Message.substr(0, 80) + ")") +
-                                          " remote=" + remote);
-                // Always HTTP 200: the envelope carries ok/error; isError=true only for
-                // genuine tool-call failures, not for structured command errors.
-                res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelopeStr}}}}}.dump(),
+                const nlohmann::json envelope = cr.ToWireJson(name, false);
+                res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
                                 "application/json");
+                AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + name + " unknown-command remote=" + remote);
                 return;
-            } else
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-                if (name == "run_lua") {
-                if (!impl_->allow_lua_execution) {
-                    error = "run_lua is disabled by configuration";
-                    LOG_TRACE("MCP: run_lua rejected (disabled in config)");
-                    AppendMcpActivityLine(impl_->app, "MCP: REST tools/call run_lua FAIL remote=" + remote +
-                                                          " err=disabled by configuration");
-                } else {
-                    const nlohmann::json args = arguments;
-                    const std::string mode = args.value("mode", "");
-                    LOG_TRACE("MCP: run_lua mode=%s", mode.c_str());
-                    if (mode == "snippet") {
-                        result = impl_->app->ExecuteLuaSnippetForMcp(
-                            args.value("code", std::string()), args.value("args", nlohmann::json::object()), error);
-                    } else if (mode == "script") {
-                        result = impl_->app->ExecuteLuaScriptForMcp(
-                            args.value("script", std::string()), args.value("args", nlohmann::json::object()), error);
-                    } else {
-                        error = "run_lua requires mode='snippet' or mode='script'";
-                    }
-                }
-            } else {
-                // Check whether this name belongs to an mcp.register_tool Lua tool before
-                // trying ExecuteLuaMcpTool. If it's not a Lua MCP tool either, fall back to
-                // the registry for a structured unknown-command response with fuzzy suggestions.
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-                const auto luaTools = impl_->app->GetLuaMcpTools();
-                const bool isLuaMcpTool =
-                    std::any_of(luaTools.begin(), luaTools.end(), [&name](const auto& lt) { return lt.name == name; });
-                if (isLuaMcpTool) {
-                    result = impl_->app->ExecuteLuaMcpTool(name, paramsStr, error);
-                } else {
-#endif
-                    // Not in registry, not run_lua, not a Lua MCP tool.
-                    // Dispatch through registry to get a canonical unknown-command envelope
-                    // with fuzzy suggestions (e.g. "did you mean 'tickets.search_active'?").
-                    smatchet::cmd::CommandContext cctx;
-                    cctx.App = impl_->app;
-                    cctx.Source = smatchet::cmd::CommandSource::Mcp;
-                    smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
-                    const nlohmann::json envelope = cr.ToWireJson(name, false);
-                    res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
-                                    "application/json");
-                    AppendMcpActivityLine(impl_->app,
-                                          "MCP: REST tools/call " + name + " unknown-command remote=" + remote);
-                    return;
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-                }
-#endif
             }
-#else
-                // No Lua: unknown name → structured unknown-command from registry.
-                {
-                    smatchet::cmd::CommandContext cctx;
-                    cctx.App = impl_->app;
-                    cctx.Source = smatchet::cmd::CommandSource::Mcp;
-                    smatchet::cmd::CommandResult cr =
-                        impl_->app->Commands().Dispatch(name, arguments, cctx);
-                    const nlohmann::json envelope = cr.ToWireJson(name, false);
-                    res.set_content(
-                        nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
-                        "application/json");
-                    return;
-                }
 #endif
-            // cppcheck-suppress knownConditionTrueFalse  // !error.empty() is condition-
-            // dependent on SMATCHET_WITH_LUA_AUTOMATION; only "always true" under #else.
-            if (!error.empty()) {
-                LOG_TRACE("MCP: REST tools/call error tool=%s %s", name.c_str(), error.c_str());
-                res.status = (name == "run_lua" && !impl_->allow_lua_execution) ? 404 : 500;
-                res.set_content(
-                    nlohmann::json{{"isError", true}, {"content", {{{"type", "text"}, {"text", error}}}}}.dump(),
-                    "application/json");
-                if (!(name == "run_lua" && !impl_->allow_lua_execution)) {
-                    AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + (name.empty() ? "?" : name) +
-                                                          " FAIL remote=" + remote +
-                                                          " err=" + TruncateOneLine(error, 200));
-                }
-            } else {
-                LOG_TRACE("MCP: REST tools/call ok tool=%s result_len=%zu", name.c_str(), result.size());
-                res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", result}}}}}.dump(),
-                                "application/json");
-                const std::string summary =
-                    (name == "run_lua") ? BuildRunLuaSummary(arguments) : BuildToolCallSummary(name, arguments);
-                AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + (name.empty() ? "?" : name) +
-                                                      " ok remote=" + remote + " " + summary);
-            }
-        } catch (const std::exception& e) {
-            LOG_TRACE("MCP: REST tools/call parse_exception %s", e.what());
-            res.status = 400;
-            res.set_content(nlohmann::json{{"isError", true}, {"error", e.what()}}.dump(), "application/json");
-            AppendMcpActivityLine(impl_->app, "MCP: REST tools/call FAIL remote=" + remote +
-                                                  " err=parse error: " + TruncateOneLine(e.what(), 200));
         }
-    });
+#else
+        // No Lua: unknown name → structured unknown-command from registry.
+        {
+            smatchet::cmd::CommandContext cctx;
+            cctx.App = impl_->app;
+            cctx.Source = smatchet::cmd::CommandSource::Mcp;
+            smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
+            const nlohmann::json envelope = cr.ToWireJson(name, false);
+            res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
+                            "application/json");
+            return;
+        }
+#endif
+        EmitToolsCallResult(res, name, remote, arguments, error, result);
+    } catch (const std::exception& e) {
+        LOG_TRACE("MCP: REST tools/call parse_exception %s", e.what());
+        res.status = 400;
+        res.set_content(nlohmann::json{{"isError", true}, {"error", e.what()}}.dump(), "application/json");
+        AppendMcpActivityLine(impl_->app, "MCP: REST tools/call FAIL remote=" + remote +
+                                              " err=parse error: " + TruncateOneLine(e.what(), 200));
+    }
+}
+
+void McpPlugin::EmitToolsCallResult(httplib::Response& res, const std::string& name, const std::string& remote,
+                                    const nlohmann::json& arguments, const std::string& error,
+                                    const std::string& result) {
+    // cppcheck-suppress knownConditionTrueFalse  // !error.empty() is condition-
+    // dependent on SMATCHET_WITH_LUA_AUTOMATION; only "always true" under #else.
+    if (!error.empty()) {
+        LOG_TRACE("MCP: REST tools/call error tool=%s %s", name.c_str(), error.c_str());
+        res.status = (name == "run_lua" && !impl_->allow_lua_execution) ? 404 : 500;
+        res.set_content(nlohmann::json{{"isError", true}, {"content", {{{"type", "text"}, {"text", error}}}}}.dump(),
+                        "application/json");
+        if (!(name == "run_lua" && !impl_->allow_lua_execution)) {
+            AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + (name.empty() ? "?" : name) +
+                                                  " FAIL remote=" + remote + " err=" + TruncateOneLine(error, 200));
+        }
+    } else {
+        LOG_TRACE("MCP: REST tools/call ok tool=%s result_len=%zu", name.c_str(), result.size());
+        res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", result}}}}}.dump(), "application/json");
+        const std::string summary =
+            (name == "run_lua") ? BuildRunLuaSummary(arguments) : BuildToolCallSummary(name, arguments);
+        AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + (name.empty() ? "?" : name) +
+                                              " ok remote=" + remote + " " + summary);
+    }
 }
 
 void McpPlugin::RegisterSseRoute() {

@@ -50,6 +50,22 @@ class McpPlugin : public IPlugin {
     void RegisterJsonRpcRoutes();  ///< POST /mcp/messages + POST <kSsePath>
     void StartServerThread();      ///< bind + listen on the worker thread
 
+    /// Per-route REST handlers, extracted from the registration phases above so
+    /// each registrar stays a thin sequence of route installs under the size
+    /// cap. Each is the verbatim lambda body the registrar used to inline;
+    /// behaviour and wire shape are byte-for-byte identical.
+    void HandleListTickets(const httplib::Request& req, httplib::Response& res);
+    void HandleAttachmentProxy(const httplib::Request& req, httplib::Response& res);
+    void HandleSearchTickets(const httplib::Request& req, httplib::Response& res);
+    void HandleToolsCall(const httplib::Request& req, httplib::Response& res);
+
+    /// Emit the REST `tools/call` success/error envelope once the dispatch arm
+    /// has produced either `result` or `error`. Extracted from HandleToolsCall's
+    /// tail so that handler stays under the line cap; wire shape and status-code
+    /// selection are byte-for-byte identical to the inlined form.
+    void EmitToolsCallResult(httplib::Response& res, const std::string& name, const std::string& remote,
+                             const nlohmann::json& arguments, const std::string& error, const std::string& result);
+
     /// Handle a JSON-RPC `tools/call` request. Populates `jres["result"]` or
     /// `jres["error"]` (the caller already seeded jres with jsonrpc/id). Split
     /// out of RegisterJsonRpcRoutes to keep that registration phase under the
