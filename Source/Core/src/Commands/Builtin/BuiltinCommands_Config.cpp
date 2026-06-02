@@ -17,7 +17,9 @@ using builtin_detail::MakeCommand;
 using builtin_detail::ObservedSmatchetEnv;
 using builtin_detail::PString;
 
-void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
+namespace {
+
+void RegisterConfigPathCommand(CommandRegistry& reg) {
     {
         Command c = MakeCommand("config.path", "Paths + observed SMATCHET_* env vars (tokens redacted).",
                                 [](const nlohmann::json&, const CommandContext&) {
@@ -32,7 +34,9 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
                                 });
         reg.Register(std::move(c));
     }
+}
 
+void RegisterConfigGetCommand(CommandRegistry& reg) {
     {
         Command c = MakeCommand("config.get", "Get one or all keys from the loaded config.",
                                 [](const nlohmann::json& args, const CommandContext&) {
@@ -68,7 +72,9 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
         c.Params = {PString("key", "Config key name (omit for all safe keys).")};
         reg.Register(std::move(c));
     }
+}
 
+void RegisterConfigReloadCommand(CommandRegistry& reg) {
     {
         Command c =
             MakeCommand("config.reload", "Reload config from disk (picks up manual edits to smatchet_config.json).",
@@ -78,7 +84,9 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
                         });
         reg.Register(std::move(c));
     }
+}
 
+void RegisterConfigSetCommand(CommandRegistry& reg) {
     {
         // config.set — bidirectional key table: cmd key name → JSON file key name.
         // Precedence contract: env vars beat the JSON file. config.set writes to the JSON
@@ -181,6 +189,15 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
         };
         reg.Register(std::move(c));
     }
+}
+
+} // namespace
+
+void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
+    RegisterConfigPathCommand(reg);
+    RegisterConfigGetCommand(reg);
+    RegisterConfigReloadCommand(reg);
+    RegisterConfigSetCommand(reg);
 }
 
 } // namespace cmd
