@@ -144,9 +144,9 @@ void MapJiraPresentField(const std::string& fieldKey, const nlohmann::json& rawV
         ticket.fieldValues[fieldKey] = NormalizeTrackerFieldValue(rawValue);
     }
     if (rawValue.is_object()) {
-        // nlohmann's value(key, default) throws type_error.302 when "type" exists
-        // but isn't a string (default only applies to a MISSING key), so guard
-        // with find()+is_string() before comparing — malformed ADF must not throw.
+        // nlohmann's value-with-default overload throws type_error.302 when the type
+        // member exists but is not a string, since the default only applies to a missing
+        // key. Look it up and type-check it first so malformed ADF cannot throw.
         const nlohmann::json::const_iterator typeIt = rawValue.find("type");
         if (typeIt != rawValue.end() && typeIt->is_string() && typeIt->get_ref<const std::string&>() == "doc") {
             ticket.fieldRichValues[fieldKey] = rawValue.dump();
