@@ -395,6 +395,176 @@ smatchet::cmd::Command BuildCancelDownloadCommand() {
     return c;
 }
 
+// Resolve the effective backend for whisper.transcribe-once from the requested
+// `mode` + on-disk model presence. Returns a CommandResult::Failure when the
+// requested mode can't be satisfied (e.g. `local` with no model); on success
+// `outEffectiveMode` is set and the returned result is unused by the caller.
+// `outOk` distinguishes "resolved" from "early-failure".
+smatchet::cmd::CommandResult ResolveTranscribeOnceMode(const std::string& mode, const TrackerConfig& cfg,
+                                                       const std::string& modelDir, std::string& outEffectiveMode,
+                                                       bool& outOk) {
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::ErrorCode;
+    outOk = false;
+
+    // Phase C mode-router decision tree (see docs/plans/shipped/whisper-dictation.md
+    // § Mode router decision tree). `auto` prefers local-if-present, else
+    // falls back to cloud. `local` is hard-gated on a present model. `cloud`
+    // unconditionally takes the cloud path. Cloud-on-fallback after a local
+    // failure is handled at the higher Phase E layer; CLI is one-shot.
+    const bool localPresent =
+        !cfg.WhisperModel.empty() && smatchet::whisper::catalog::IsModelPresent(cfg.WhisperModel, modelDir);
+    if (mode == "cloud") {
+        outEffectiveMode = "cloud";
+    } else if (mode == "local") {
+        if (!localPresent) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "local mode requires a downloaded model; run "
+                                                                      "whisper.download-model --name <id> first");
+        }
+        outEffectiveMode = "local";
+    } else { // auto
+        outEffectiveMode = localPresent ? "local" : "cloud";
+    }
+    outOk = true;
+    return CommandResult::Success(nlohmann::json::object());
+}
+
+// Acquire the audio payload for whisper.transcribe-once — either by reading the
+// `--file` WAV from disk or by capturing `--seconds` of mic audio. Fills
+// `outWav` (always) + `outPcm` / `outSamples` (capture path only). Returns a
+// CommandResult::Failure on any acquisition error; `outOk` is true on success.
+smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& args, std::vector<std::uint8_t>& outWav,
+                                                        std::vector<std::int16_t>& outPcm, std::size_t& outSamples,
+                                                        bool& outOk) {
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::ErrorCode;
+    outOk = false;
+    outSamples = 0;
+
+    const std::string filePath = args.value("file", std::string());
+    if (!filePath.empty()) {
+        std::string err;
+        if (!ReadWavFile(filePath, outWav, err)) {
+            return CommandResult::Failure(ErrorCode::HandlerError, err);
+        }
+        outOk = true;
+        return CommandResult::Success(nlohmann::json::object());
+    }
+
+    const int seconds = args.value("seconds", 5);
+    if (seconds <= 0 || seconds > 600) {
+        return CommandResult::Failure(ErrorCode::ValidationError, "seconds must be in (0, 600]");
+    }
+    smatchet::whisper::WindowsAudioCapture cap;
+    std::string err;
+    if (!cap.Start(err)) {
+        return CommandResult::Failure(ErrorCode::HandlerError, std::string("audio capture start failed: ") + err);
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+    cap.Stop();
+    if (!cap.DrainCapturedPcm(outPcm)) {
+        return CommandResult::Failure(ErrorCode::HandlerError,
+                                      "no audio captured (mic permission denied or no default device)");
+    }
+    outSamples = outPcm.size();
+    outWav = smatchet::whisper::pure::EncodeWav(outPcm, smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
+                                                smatchet::whisper::WindowsAudioCapture::kCaptureChannels);
+    outOk = true;
+    return CommandResult::Success(nlohmann::json::object());
+}
+
+// Handler body for whisper.transcribe-once. Routes mode, resolves the API key +
+// consent (cloud path), acquires audio, runs the single transcription, and
+// shapes the {text, elapsed_ms, mode, captured_samples} success payload.
+smatchet::cmd::CommandResult RunTranscribeOnce(const nlohmann::json& args) {
+    using smatchet::cmd::CommandResult;
+    using smatchet::cmd::ErrorCode;
+
+    const std::string mode = args.value("mode", std::string("cloud"));
+    const TrackerConfig cfg = ConfigManager::Load();
+    const std::string modelDir = ResolveWhisperModelDir();
+
+    std::string effectiveMode;
+    bool modeOk = false;
+    CommandResult modeRes = ResolveTranscribeOnceMode(mode, cfg, modelDir, effectiveMode, modeOk);
+    if (!modeOk) {
+        return modeRes;
+    }
+
+    std::string apiKey;
+    if (effectiveMode == "cloud") {
+        apiKey = ResolveWhisperKeyFromConfig(cfg);
+        if (apiKey.empty()) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "no API key available - set WhisperApiKey or AiApiKey (provider=openai)");
+        }
+        // Phase C consent invariant #3 — no cloud API call without
+        // explicit opt-in. The CLI smoke command is exempt in Phase B
+        // because there was no opt-in surface; now that the banner +
+        // Preferences exist, the gate is the same one the Phase E hotkey
+        // path will use. The CLI consent bypass is removed.
+        if (!smatchet::whisper::consent::CanCallCloudApi(cfg, apiKey)) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "consent required: enable Whisper dictation via the setup banner or "
+                                          "Preferences first");
+        }
+    }
+
+    std::vector<std::uint8_t> wavBytes;
+    std::vector<std::int16_t> capturedPcm; // populated on capture path only
+    std::size_t capturedSamples = 0;
+    bool audioOk = false;
+    CommandResult audioRes = AcquireTranscribeOnceAudio(args, wavBytes, capturedPcm, capturedSamples, audioOk);
+    if (!audioOk) {
+        return audioRes;
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    std::string text;
+    std::string err;
+    bool ok = false;
+
+    if (effectiveMode == "local") {
+        if (capturedPcm.empty()) {
+            // --file input to local mode is intentionally out of scope for
+            // Phase C — we don't ship a WAV decoder yet. Use captured audio
+            // or `--mode cloud` for file input.
+            return CommandResult::Failure(
+                ErrorCode::ValidationError,
+                "local mode currently only accepts captured audio (omit --file). A WAV decoder "
+                "for --file lands with the Phase D scenario harness.");
+        }
+        const std::string modelPath = modelDir + "/" + cfg.WhisperModel + ".bin";
+        smatchet::whisper::WhisperLocal local;
+        std::string loadErr;
+        if (!local.LoadModel(modelPath, loadErr)) {
+            return CommandResult::Failure(ErrorCode::HandlerError, std::string("local model load failed: ") + loadErr);
+        }
+        ok = local.Transcribe(capturedPcm, text, err);
+    } else {
+        if (wavBytes.empty()) {
+            return CommandResult::Failure(ErrorCode::HandlerError, "WAV payload is empty");
+        }
+        smatchet::whisper::WhisperApiClient client;
+        ok = client.Transcribe(wavBytes, apiKey, text, err);
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    const long long elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+    if (!ok) {
+        // ErrorCode::HandlerError for transport / HTTP / parse / local — surface
+        // the redacted error message the inner client assembled.
+        return CommandResult::Failure(ErrorCode::HandlerError, err);
+    }
+
+    nlohmann::json out;
+    out["text"] = text;
+    out["elapsed_ms"] = elapsedMs;
+    out["mode"] = effectiveMode;
+    out["captured_samples"] = static_cast<std::int64_t>(capturedSamples);
+    return CommandResult::Success(std::move(out));
+}
+
 smatchet::cmd::Command BuildTranscribeOnceCommand() {
     using smatchet::cmd::Command;
     using smatchet::cmd::CommandContext;
@@ -440,126 +610,7 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
     c.Params = {std::move(fileParam), std::move(secondsParam), std::move(modeParam)};
 
     c.Handler = [](const nlohmann::json& args, const CommandContext& /*ctx*/) -> CommandResult {
-        const std::string mode = args.value("mode", std::string("cloud"));
-        const TrackerConfig cfg = ConfigManager::Load();
-
-        // Phase C mode-router decision tree (see docs/plans/shipped/whisper-dictation.md
-        // § Mode router decision tree). `auto` prefers local-if-present, else
-        // falls back to cloud. `local` is hard-gated on a present model. `cloud`
-        // unconditionally takes the cloud path. Cloud-on-fallback after a local
-        // failure is handled at the higher Phase E layer; CLI is one-shot.
-        const std::string modelDir = ResolveWhisperModelDir();
-        const bool localPresent =
-            !cfg.WhisperModel.empty() && smatchet::whisper::catalog::IsModelPresent(cfg.WhisperModel, modelDir);
-        std::string effectiveMode;
-        if (mode == "cloud") {
-            effectiveMode = "cloud";
-        } else if (mode == "local") {
-            if (!localPresent) {
-                return CommandResult::Failure(ErrorCode::ValidationError, "local mode requires a downloaded model; run "
-                                                                          "whisper.download-model --name <id> first");
-            }
-            effectiveMode = "local";
-        } else { // auto
-            effectiveMode = localPresent ? "local" : "cloud";
-        }
-
-        std::string apiKey;
-        if (effectiveMode == "cloud") {
-            apiKey = ResolveWhisperKeyFromConfig(cfg);
-            if (apiKey.empty()) {
-                return CommandResult::Failure(ErrorCode::ValidationError,
-                                              "no API key available - set WhisperApiKey or AiApiKey (provider=openai)");
-            }
-            // Phase C consent invariant #3 — no cloud API call without
-            // explicit opt-in. The CLI smoke command is exempt in Phase B
-            // because there was no opt-in surface; now that the banner +
-            // Preferences exist, the gate is the same one the Phase E hotkey
-            // path will use. The CLI consent bypass is removed.
-            if (!smatchet::whisper::consent::CanCallCloudApi(cfg, apiKey)) {
-                return CommandResult::Failure(ErrorCode::ValidationError,
-                                              "consent required: enable Whisper dictation via the setup banner or "
-                                              "Preferences first");
-            }
-        }
-
-        std::vector<std::uint8_t> wavBytes;
-        std::vector<std::int16_t> capturedPcm; // populated on capture path only
-        std::size_t capturedSamples = 0;
-        const std::string filePath = args.value("file", std::string());
-        if (!filePath.empty()) {
-            std::string err;
-            if (!ReadWavFile(filePath, wavBytes, err)) {
-                return CommandResult::Failure(ErrorCode::HandlerError, err);
-            }
-        } else {
-            const int seconds = args.value("seconds", 5);
-            if (seconds <= 0 || seconds > 600) {
-                return CommandResult::Failure(ErrorCode::ValidationError, "seconds must be in (0, 600]");
-            }
-            smatchet::whisper::WindowsAudioCapture cap;
-            std::string err;
-            if (!cap.Start(err)) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                                              std::string("audio capture start failed: ") + err);
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(seconds));
-            cap.Stop();
-            if (!cap.DrainCapturedPcm(capturedPcm)) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                                              "no audio captured (mic permission denied or no default device)");
-            }
-            capturedSamples = capturedPcm.size();
-            wavBytes = smatchet::whisper::pure::EncodeWav(capturedPcm,
-                                                          smatchet::whisper::WindowsAudioCapture::kCaptureSampleRate,
-                                                          smatchet::whisper::WindowsAudioCapture::kCaptureChannels);
-        }
-
-        const auto t0 = std::chrono::steady_clock::now();
-        std::string text;
-        std::string err;
-        bool ok = false;
-
-        if (effectiveMode == "local") {
-            if (capturedPcm.empty()) {
-                // --file input to local mode is intentionally out of scope for
-                // Phase C — we don't ship a WAV decoder yet. Use captured audio
-                // or `--mode cloud` for file input.
-                return CommandResult::Failure(
-                    ErrorCode::ValidationError,
-                    "local mode currently only accepts captured audio (omit --file). A WAV decoder "
-                    "for --file lands with the Phase D scenario harness.");
-            }
-            const std::string modelPath = modelDir + "/" + cfg.WhisperModel + ".bin";
-            smatchet::whisper::WhisperLocal local;
-            std::string loadErr;
-            if (!local.LoadModel(modelPath, loadErr)) {
-                return CommandResult::Failure(ErrorCode::HandlerError,
-                                              std::string("local model load failed: ") + loadErr);
-            }
-            ok = local.Transcribe(capturedPcm, text, err);
-        } else {
-            if (wavBytes.empty()) {
-                return CommandResult::Failure(ErrorCode::HandlerError, "WAV payload is empty");
-            }
-            smatchet::whisper::WhisperApiClient client;
-            ok = client.Transcribe(wavBytes, apiKey, text, err);
-        }
-        const auto t1 = std::chrono::steady_clock::now();
-        const long long elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-
-        if (!ok) {
-            // ErrorCode::HandlerError for transport / HTTP / parse / local — surface
-            // the redacted error message the inner client assembled.
-            return CommandResult::Failure(ErrorCode::HandlerError, err);
-        }
-
-        nlohmann::json out;
-        out["text"] = text;
-        out["elapsed_ms"] = elapsedMs;
-        out["mode"] = effectiveMode;
-        out["captured_samples"] = static_cast<std::int64_t>(capturedSamples);
-        return CommandResult::Success(std::move(out));
+        return RunTranscribeOnce(args);
     };
 
     return c;
@@ -734,6 +785,63 @@ void RunHotkeyPress_Worker(WhisperPlugin::PhaseEState* state) {
 // Hotkey-release path — worker-thread entry point. Stops capture, drains
 // the PCM, runs transcription, and posts the resulting text into the
 // focused InputText on the UI thread.
+// Mock-transcription lower half of the release path — when the mock seam is
+// armed, skip WASAPI drain entirely and queue the canned text for insertion
+// after the configured delay. Split out of RunHotkeyRelease_Worker to keep both
+// halves under the size cap. Production code never reaches this body (the caller
+// gates on WhisperPlugin::MockTranscriptionActive()).
+void RunHotkeyRelease_Mock_Worker(WhisperPlugin::PhaseEState* state) {
+    bool wasActive = state->captureActive.exchange(false, std::memory_order_acq_rel);
+    if (!wasActive) {
+        LOG_DEBUG("Whisper hotkey release ignored — no active capture (mock)");
+        return;
+    }
+    g_dictationRouter.SetRecording(false);
+    bool expectedFlight = false;
+    if (!state->transcribeInFlight.compare_exchange_strong(expectedFlight, true, std::memory_order_acq_rel)) {
+        LOG_DEBUG("Whisper hotkey release (mock): prior transcription still in flight");
+        return;
+    }
+    const WhisperPlugin::MockTranscription mock = WhisperPlugin::CurrentMockTranscription();
+    AppController* app = state->app;
+    WhisperPlugin::PhaseEState* localState = state;
+    // Mirror the production indicator wire-up — the menu-bar "REC" → amber
+    // "Transcribing..." switchover (SmatchetUI_MainMenu.cpp:492-499) keys
+    // off this flag pair. Without it, the mock seam couldn't exercise cell 4
+    // (Transcribing indicator) at all. Cleared inside the post-back on the
+    // UI thread so the splice and indicator-clear land in the same frame,
+    // matching the production semantics in RunHotkeyRelease_Worker.
+    g_dictationRouter.SetTranscribing(true);
+    app->LaunchBackgroundTask([app, localState, mock]() {
+        // Simulate the wall-clock delay a real round-trip would incur so
+        // the scenario observes the same press → asynchronous-post → insert
+        // ordering as the production cloud / local path. Then hand off via
+        // the same MainThreadDispatcher route the real release uses.
+        std::this_thread::sleep_for(mock.delay);
+        localState->transcribeInFlight.store(false, std::memory_order_release);
+        const std::string text = mock.text;
+        app->mainThreadDispatcher.PostToMainThread([text]() {
+            ImGuiContext* gctx = ::ImGui::GetCurrentContext();
+            const unsigned int activeId = gctx != nullptr ? static_cast<unsigned int>(gctx->ActiveId) : 0u;
+            g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
+            LOG_DEBUG("Whisper hotkey (mock): inserted %zu bytes of canned transcription", text.size());
+            // Mirror production auto-send-on-punctuation gate — required for
+            // scenario coverage of the AI Assistant hands-free chat round-trip.
+            // Config is re-read here so the scenario can flip the pref between
+            // press and release without restarting the plugin.
+            const TrackerConfig cfgPost = ConfigManager::Load();
+            const bool isAiFocus = g_dictationRouter.IsFocusedTargetAiAssistant();
+            const bool endsPunct = EndsWithSentencePunctuation(text);
+            if (cfgPost.WhisperAutoSendOnPunctuation && isAiFocus && endsPunct) {
+                LOG_DEBUG("Whisper hotkey (mock): auto-send on punctuation triggered for AI "
+                          "Assistant");
+                g_dictationRouter.TriggerAiAssistantSend();
+            }
+            g_dictationRouter.SetTranscribing(false);
+        });
+    });
+}
+
 void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
     if (state == nullptr || state->app == nullptr) {
         return;
@@ -744,56 +852,7 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
     // `WhisperPlugin::SetMockTranscription`. Production code never reaches
     // this branch.
     if (WhisperPlugin::MockTranscriptionActive()) {
-        bool wasActive = state->captureActive.exchange(false, std::memory_order_acq_rel);
-        if (!wasActive) {
-            LOG_DEBUG("Whisper hotkey release ignored — no active capture (mock)");
-            return;
-        }
-        g_dictationRouter.SetRecording(false);
-        bool expectedFlight = false;
-        if (!state->transcribeInFlight.compare_exchange_strong(expectedFlight, true, std::memory_order_acq_rel)) {
-            LOG_DEBUG("Whisper hotkey release (mock): prior transcription still in flight");
-            return;
-        }
-        const WhisperPlugin::MockTranscription mock = WhisperPlugin::CurrentMockTranscription();
-        AppController* app = state->app;
-        WhisperPlugin::PhaseEState* localState = state;
-        // Mirror the production indicator wire-up — the menu-bar "REC" → amber
-        // "Transcribing..." switchover (SmatchetUI_MainMenu.cpp:492-499) keys
-        // off this flag pair. Without it, the mock seam couldn't exercise cell 4
-        // (Transcribing indicator) at all. Cleared inside the post-back on the
-        // UI thread so the splice and indicator-clear land in the same frame,
-        // matching the production semantics at WhisperPlugin.cpp:874-876.
-        g_dictationRouter.SetTranscribing(true);
-        app->LaunchBackgroundTask([app, localState, mock]() {
-            // Simulate the wall-clock delay a real round-trip would incur so
-            // the scenario observes the same press → asynchronous-post → insert
-            // ordering as the production cloud / local path. Then hand off via
-            // the same MainThreadDispatcher route the real release uses.
-            std::this_thread::sleep_for(mock.delay);
-            localState->transcribeInFlight.store(false, std::memory_order_release);
-            const std::string text = mock.text;
-            app->mainThreadDispatcher.PostToMainThread([text]() {
-                ImGuiContext* gctx = ::ImGui::GetCurrentContext();
-                const unsigned int activeId = gctx != nullptr ? static_cast<unsigned int>(gctx->ActiveId) : 0u;
-                g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
-                LOG_DEBUG("Whisper hotkey (mock): inserted %zu bytes of canned transcription", text.size());
-                // Mirror production auto-send-on-punctuation gate
-                // (WhisperPlugin.cpp:867-873) — required for scenario coverage
-                // of the AI Assistant hands-free chat round-trip. Config is
-                // re-read here so the scenario can flip the pref between
-                // press and release without restarting the plugin.
-                const TrackerConfig cfgPost = ConfigManager::Load();
-                const bool isAiFocus = g_dictationRouter.IsFocusedTargetAiAssistant();
-                const bool endsPunct = EndsWithSentencePunctuation(text);
-                if (cfgPost.WhisperAutoSendOnPunctuation && isAiFocus && endsPunct) {
-                    LOG_DEBUG("Whisper hotkey (mock): auto-send on punctuation triggered for AI "
-                              "Assistant");
-                    g_dictationRouter.TriggerAiAssistantSend();
-                }
-                g_dictationRouter.SetTranscribing(false);
-            });
-        });
+        RunHotkeyRelease_Mock_Worker(state);
         return;
     }
 

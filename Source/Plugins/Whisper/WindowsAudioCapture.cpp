@@ -241,6 +241,206 @@ void EmitDecimated(std::int16_t s, DecimationState& st, std::vector<std::int16_t
     }
 }
 
+// Live WASAPI capture handles, kept together so the device-setup phase can hand
+// the whole rig to the capture loop. The COM RAII pointers own their interfaces
+// across the rig's lifetime; `negotiated` aliases the mixFormat allocation (NOT
+// a value copy — see the note in SetupCaptureRig).
+struct CaptureRig {
+    ComPtr<IMMDeviceEnumerator> deviceEnum;
+    ComPtr<IMMDevice> device;
+    ComPtr<IAudioClient> audioClient;
+    WaveFormatExPtr mixFormat;
+    ComPtr<IAudioCaptureClient> captureClient;
+    WinHandle wakeEvent;
+    const WAVEFORMATEX* negotiated = nullptr;
+    UINT32 frameSize = 0;
+};
+
+// Build the WASAPI capture rig: enumerate the default capture endpoint, activate
+// the audio client, negotiate the mix format, initialise event-driven shared
+// mode, wire the wake event, fetch the capture service, and Start(). Returns
+// true on success with `rig` fully populated; on failure returns false and sets
+// `outError` to the human-readable cause (the exact strings the inline path
+// used, so the deferred-error contract is byte-for-byte preserved).
+bool SetupCaptureRig(CaptureRig& rig, std::string& outError) {
+    IMMDeviceEnumerator* rawEnum = nullptr;
+    HRESULT hr = CoCreateInstance(kClsidMMDeviceEnumerator, nullptr, CLSCTX_ALL, kIidIMMDeviceEnumerator,
+                                  reinterpret_cast<void**>(&rawEnum));
+    if (FAILED(hr) || rawEnum == nullptr) {
+        outError = "CoCreateInstance(MMDeviceEnumerator) failed";
+        return false;
+    }
+    rig.deviceEnum.reset(rawEnum);
+
+    IMMDevice* rawDevice = nullptr;
+    hr = rig.deviceEnum->GetDefaultAudioEndpoint(eCapture, eConsole, &rawDevice);
+    if (FAILED(hr) || rawDevice == nullptr) {
+        outError = "GetDefaultAudioEndpoint(eCapture) failed - no default mic, or permission denied";
+        return false;
+    }
+    rig.device.reset(rawDevice);
+
+    IAudioClient* rawClient = nullptr;
+    hr = rig.device->Activate(kIidIAudioClient, CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&rawClient));
+    if (FAILED(hr) || rawClient == nullptr) {
+        outError = "IMMDevice::Activate(IAudioClient) failed";
+        return false;
+    }
+    rig.audioClient.reset(rawClient);
+
+    WAVEFORMATEX* rawMixFormat = nullptr;
+    hr = rig.audioClient->GetMixFormat(&rawMixFormat);
+    if (FAILED(hr) || rawMixFormat == nullptr) {
+        outError = "IAudioClient::GetMixFormat failed";
+        return false;
+    }
+    rig.mixFormat.reset(rawMixFormat);
+    // Reference, NOT value copy. `WAVEFORMATEX` itself is 18 bytes; when the
+    // mixer returns WAVE_FORMAT_EXTENSIBLE, the real allocation behind
+    // `mixFormat` is 40 bytes (18 + 22 of Samples/dwChannelMask/SubFormat).
+    // A value copy would slice off the extension and `reinterpret_cast` to
+    // WAVEFORMATEXTENSIBLE would read stack garbage at SubFormat (offset 24).
+    // That sliced read was the silent bug: ResolveFormat checked cbSize==22
+    // (correctly copied), then matched SubFormat against random bytes, always
+    // failed, returned 0, and every captured sample landed as int16(0).
+    rig.negotiated = rig.mixFormat.get();
+
+    hr = rig.audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, kBufferDuration, 0,
+                                     rig.mixFormat.get(), nullptr);
+    if (FAILED(hr)) {
+        outError = "IAudioClient::Initialize failed (HRESULT=" + std::to_string(hr) + ")";
+        return false;
+    }
+
+    rig.wakeEvent.reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+    if (!rig.wakeEvent) {
+        outError = "CreateEvent for WASAPI wake handle failed";
+        return false;
+    }
+    hr = rig.audioClient->SetEventHandle(rig.wakeEvent.get());
+    if (FAILED(hr)) {
+        outError = "IAudioClient::SetEventHandle failed";
+        return false;
+    }
+
+    IAudioCaptureClient* rawCapture = nullptr;
+    hr = rig.audioClient->GetService(kIidIAudioCaptureClient, reinterpret_cast<void**>(&rawCapture));
+    if (FAILED(hr) || rawCapture == nullptr) {
+        outError = "IAudioClient::GetService(IAudioCaptureClient) failed";
+        return false;
+    }
+    rig.captureClient.reset(rawCapture);
+
+    hr = rig.audioClient->Start();
+    if (FAILED(hr)) {
+        outError = "IAudioClient::Start failed";
+        return false;
+    }
+
+    rig.frameSize = rig.negotiated->nBlockAlign; // bytes per frame across all channels
+    return true;
+}
+
+// Resolve the negotiated mix format once + log it so a wrong format-unwrap path
+// surfaces without per-chunk DEBUG. Re-resolved per frame in MixToMonoInt16; the
+// log here is the human-readable single-shot. On EXTENSIBLE + unknown SubFormat,
+// also dumps the GUID bytes so a driver advertising a non-PCM / non-IEEE_FLOAT
+// SubFormat is identifiable from the log alone (no debugger needed).
+void LogNegotiatedFormat(const WAVEFORMATEX& negotiated, const WAVEFORMATEX* mixFormat) {
+    WORD effTag = 0;
+    WORD effBits = 0;
+    const bool resolved = ResolveFormat(negotiated, effTag, effBits);
+    LOG_INFO("WindowsAudioCapture: capture started (sourceRate=%lu ch=%u bps=%u tag=%u "
+             "cbSize=%u resolved=%d effTag=%u effBits=%u)",
+             static_cast<unsigned long>(negotiated.nSamplesPerSec), static_cast<unsigned>(negotiated.nChannels),
+             static_cast<unsigned>(negotiated.wBitsPerSample), static_cast<unsigned>(negotiated.wFormatTag),
+             static_cast<unsigned>(negotiated.cbSize), resolved ? 1 : 0, static_cast<unsigned>(effTag),
+             static_cast<unsigned>(effBits));
+    // Operator-visible "audio will be silent" warning when the resolved
+    // pair isn't one of the two MixToMonoInt16 handles. Catches both the
+    // EXTENSIBLE-with-unknown-SubFormat case AND the non-EXTENSIBLE tag
+    // that isn't WAVE_FORMAT_PCM int16 / WAVE_FORMAT_IEEE_FLOAT float32.
+    const bool supportedShape = resolved && ((effTag == WAVE_FORMAT_PCM && effBits == 16) ||
+                                             (effTag == WAVE_FORMAT_IEEE_FLOAT && effBits == 32));
+    if (!supportedShape) {
+        LOG_WARN("WindowsAudioCapture: unsupported mix format (tag=%u bits=%u resolved=%d "
+                 "effTag=%u effBits=%u) — capture will be silent",
+                 static_cast<unsigned>(negotiated.wFormatTag), static_cast<unsigned>(negotiated.wBitsPerSample),
+                 resolved ? 1 : 0, static_cast<unsigned>(effTag), static_cast<unsigned>(effBits));
+    }
+    if (!resolved && negotiated.wFormatTag == WAVE_FORMAT_EXTENSIBLE && negotiated.cbSize >= 22) {
+        // mixFormat is the canonical full-size buffer the WASAPI service
+        // returned; `negotiated` is a value-copy of just the WAVEFORMATEX
+        // prefix, so reach back through mixFormat to read SubFormat safely.
+        const WAVEFORMATEXTENSIBLE* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mixFormat);
+        const GUID& g = ext->SubFormat;
+        LOG_WARN("WindowsAudioCapture: EXTENSIBLE SubFormat unrecognised — "
+                 "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} "
+                 "(expected PCM=00000001-... or IEEE_FLOAT=00000003-...)",
+                 static_cast<unsigned long>(g.Data1), static_cast<unsigned>(g.Data2), static_cast<unsigned>(g.Data3),
+                 static_cast<unsigned>(g.Data4[0]), static_cast<unsigned>(g.Data4[1]),
+                 static_cast<unsigned>(g.Data4[2]), static_cast<unsigned>(g.Data4[3]),
+                 static_cast<unsigned>(g.Data4[4]), static_cast<unsigned>(g.Data4[5]),
+                 static_cast<unsigned>(g.Data4[6]), static_cast<unsigned>(g.Data4[7]));
+    }
+}
+
+// Running aggregate diagnostics for one capture session — logged on Stop so a
+// "captured but trim-dropped" session leaves a single greppable line.
+struct CaptureStats {
+    std::int32_t peakSessionAbs = 0;
+    std::uint64_t totalSourceFrames = 0;
+    std::uint64_t totalDownmixedSamples = 0;
+};
+
+// Drain + downmix one WASAPI packet: GetBuffer → per-frame mix-to-mono +
+// decimate → ReleaseBuffer, append to `pcmBuffer` under `pcmMutex`, and publish
+// the normalised peak amplitude. Returns true to continue the packet loop,
+// false on a GetBuffer failure (the caller records the error + breaks). Real-
+// time hot path — keep the buffer-handling + WASAPI call sequence intact.
+bool DrainCapturePacket(IAudioCaptureClient& captureClient, const WAVEFORMATEX& negotiated, UINT32 frameSize,
+                        DecimationState& decim, std::mutex& pcmMutex, std::vector<std::int16_t>& pcmBuffer,
+                        std::atomic<float>& lastPeakAmplitude, CaptureStats& stats) {
+    BYTE* data = nullptr;
+    UINT32 numFrames = 0;
+    DWORD flags = 0;
+    HRESULT hr = captureClient.GetBuffer(&data, &numFrames, &flags, nullptr, nullptr);
+    if (FAILED(hr)) {
+        return false;
+    }
+    std::vector<std::int16_t> downmixed;
+    downmixed.reserve(numFrames / 2 + 1);
+    const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+    // Track |sample| across this chunk for the amplitude-meter
+    // overlay (Phase E). Cheap: one branch per frame, no extra
+    // allocation.
+    std::int32_t peakAbs = 0;
+    for (UINT32 i = 0; i < numFrames; ++i) {
+        const BYTE* framePtr = data + (i * frameSize);
+        std::int16_t mono = silent ? 0 : MixToMonoInt16(framePtr, negotiated);
+        const std::int32_t magnitude = mono >= 0 ? static_cast<std::int32_t>(mono) : -static_cast<std::int32_t>(mono);
+        if (magnitude > peakAbs) {
+            peakAbs = magnitude;
+        }
+        EmitDecimated(mono, decim, downmixed);
+    }
+    captureClient.ReleaseBuffer(numFrames);
+    stats.totalSourceFrames += numFrames;
+    stats.totalDownmixedSamples += downmixed.size();
+    if (peakAbs > stats.peakSessionAbs) {
+        stats.peakSessionAbs = peakAbs;
+    }
+    if (!downmixed.empty()) {
+        std::lock_guard<std::mutex> lk(pcmMutex);
+        pcmBuffer.insert(pcmBuffer.end(), downmixed.begin(), downmixed.end());
+    }
+    // 32768.0 puts a full-scale int16 at exactly 1.0 — the meter UI
+    // expects [0, 1].
+    const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
+    lastPeakAmplitude.store(peakNorm > 1.0f ? 1.0f : peakNorm, std::memory_order_release);
+    return true;
+}
+
 } // namespace
 
 #endif // _WIN32
@@ -344,133 +544,16 @@ void WindowsAudioCapture::CaptureThreadMain() {
         LOG_ERROR("WindowsAudioCapture: %s", msg.c_str());
     };
 
-    IMMDeviceEnumerator* rawEnum = nullptr;
-    HRESULT hr = CoCreateInstance(kClsidMMDeviceEnumerator, nullptr, CLSCTX_ALL, kIidIMMDeviceEnumerator,
-                                  reinterpret_cast<void**>(&rawEnum));
-    if (FAILED(hr) || rawEnum == nullptr) {
-        recordError("CoCreateInstance(MMDeviceEnumerator) failed");
+    CaptureRig rig;
+    std::string setupErr;
+    if (!SetupCaptureRig(rig, setupErr)) {
+        recordError(setupErr);
         running_.store(false, std::memory_order_release);
         return;
     }
-    ComPtr<IMMDeviceEnumerator> deviceEnum(rawEnum);
+    const WAVEFORMATEX& negotiated = *rig.negotiated;
 
-    IMMDevice* rawDevice = nullptr;
-    hr = deviceEnum->GetDefaultAudioEndpoint(eCapture, eConsole, &rawDevice);
-    if (FAILED(hr) || rawDevice == nullptr) {
-        recordError("GetDefaultAudioEndpoint(eCapture) failed - no default mic, or permission denied");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-    ComPtr<IMMDevice> device(rawDevice);
-
-    IAudioClient* rawClient = nullptr;
-    hr = device->Activate(kIidIAudioClient, CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&rawClient));
-    if (FAILED(hr) || rawClient == nullptr) {
-        recordError("IMMDevice::Activate(IAudioClient) failed");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-    ComPtr<IAudioClient> audioClient(rawClient);
-
-    WAVEFORMATEX* rawMixFormat = nullptr;
-    hr = audioClient->GetMixFormat(&rawMixFormat);
-    if (FAILED(hr) || rawMixFormat == nullptr) {
-        recordError("IAudioClient::GetMixFormat failed");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-    WaveFormatExPtr mixFormat(rawMixFormat);
-    // Reference, NOT value copy. `WAVEFORMATEX` itself is 18 bytes; when the
-    // mixer returns WAVE_FORMAT_EXTENSIBLE, the real allocation behind
-    // `mixFormat` is 40 bytes (18 + 22 of Samples/dwChannelMask/SubFormat).
-    // A value copy would slice off the extension and `reinterpret_cast` to
-    // WAVEFORMATEXTENSIBLE would read stack garbage at SubFormat (offset 24).
-    // That sliced read was the silent bug: ResolveFormat checked cbSize==22
-    // (correctly copied), then matched SubFormat against random bytes, always
-    // failed, returned 0, and every captured sample landed as int16(0).
-    const WAVEFORMATEX& negotiated = *mixFormat;
-
-    hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, kBufferDuration, 0,
-                                 mixFormat.get(), nullptr);
-    if (FAILED(hr)) {
-        recordError("IAudioClient::Initialize failed (HRESULT=" + std::to_string(hr) + ")");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-
-    WinHandle wakeEvent(CreateEventW(nullptr, FALSE, FALSE, nullptr));
-    if (!wakeEvent) {
-        recordError("CreateEvent for WASAPI wake handle failed");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-    hr = audioClient->SetEventHandle(wakeEvent.get());
-    if (FAILED(hr)) {
-        recordError("IAudioClient::SetEventHandle failed");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-
-    IAudioCaptureClient* rawCapture = nullptr;
-    hr = audioClient->GetService(kIidIAudioCaptureClient, reinterpret_cast<void**>(&rawCapture));
-    if (FAILED(hr) || rawCapture == nullptr) {
-        recordError("IAudioClient::GetService(IAudioCaptureClient) failed");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-    ComPtr<IAudioCaptureClient> captureClient(rawCapture);
-
-    hr = audioClient->Start();
-    if (FAILED(hr)) {
-        recordError("IAudioClient::Start failed");
-        running_.store(false, std::memory_order_release);
-        return;
-    }
-
-    // Resolve once + log so a wrong format-unwrap path surfaces without
-    // having to enable per-chunk DEBUG. Re-resolved per frame in
-    // MixToMonoInt16; the log here is the human-readable single-shot.
-    // On EXTENSIBLE + unknown SubFormat, also dumps the GUID bytes so
-    // a driver advertising a non-PCM / non-IEEE_FLOAT SubFormat is
-    // identifiable from the log alone (no debugger needed).
-    {
-        WORD effTag = 0;
-        WORD effBits = 0;
-        const bool resolved = ResolveFormat(negotiated, effTag, effBits);
-        LOG_INFO("WindowsAudioCapture: capture started (sourceRate=%lu ch=%u bps=%u tag=%u "
-                 "cbSize=%u resolved=%d effTag=%u effBits=%u)",
-                 static_cast<unsigned long>(negotiated.nSamplesPerSec), static_cast<unsigned>(negotiated.nChannels),
-                 static_cast<unsigned>(negotiated.wBitsPerSample), static_cast<unsigned>(negotiated.wFormatTag),
-                 static_cast<unsigned>(negotiated.cbSize), resolved ? 1 : 0, static_cast<unsigned>(effTag),
-                 static_cast<unsigned>(effBits));
-        // Operator-visible "audio will be silent" warning when the resolved
-        // pair isn't one of the two MixToMonoInt16 handles. Catches both the
-        // EXTENSIBLE-with-unknown-SubFormat case AND the non-EXTENSIBLE tag
-        // that isn't WAVE_FORMAT_PCM int16 / WAVE_FORMAT_IEEE_FLOAT float32.
-        const bool supportedShape = resolved && ((effTag == WAVE_FORMAT_PCM && effBits == 16) ||
-                                                 (effTag == WAVE_FORMAT_IEEE_FLOAT && effBits == 32));
-        if (!supportedShape) {
-            LOG_WARN("WindowsAudioCapture: unsupported mix format (tag=%u bits=%u resolved=%d "
-                     "effTag=%u effBits=%u) — capture will be silent",
-                     static_cast<unsigned>(negotiated.wFormatTag), static_cast<unsigned>(negotiated.wBitsPerSample),
-                     resolved ? 1 : 0, static_cast<unsigned>(effTag), static_cast<unsigned>(effBits));
-        }
-        if (!resolved && negotiated.wFormatTag == WAVE_FORMAT_EXTENSIBLE && negotiated.cbSize >= 22) {
-            // mixFormat is the canonical full-size buffer the WASAPI service
-            // returned; `negotiated` is a value-copy of just the WAVEFORMATEX
-            // prefix, so reach back through mixFormat to read SubFormat safely.
-            const WAVEFORMATEXTENSIBLE* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mixFormat.get());
-            const GUID& g = ext->SubFormat;
-            LOG_WARN(
-                "WindowsAudioCapture: EXTENSIBLE SubFormat unrecognised — "
-                "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x} "
-                "(expected PCM=00000001-... or IEEE_FLOAT=00000003-...)",
-                static_cast<unsigned long>(g.Data1), static_cast<unsigned>(g.Data2), static_cast<unsigned>(g.Data3),
-                static_cast<unsigned>(g.Data4[0]), static_cast<unsigned>(g.Data4[1]), static_cast<unsigned>(g.Data4[2]),
-                static_cast<unsigned>(g.Data4[3]), static_cast<unsigned>(g.Data4[4]), static_cast<unsigned>(g.Data4[5]),
-                static_cast<unsigned>(g.Data4[6]), static_cast<unsigned>(g.Data4[7]));
-        }
-    }
+    LogNegotiatedFormat(negotiated, rig.mixFormat.get());
 
     DecimationState decim;
     if (negotiated.nSamplesPerSec > 0) {
@@ -478,73 +561,35 @@ void WindowsAudioCapture::CaptureThreadMain() {
             static_cast<double>(negotiated.nSamplesPerSec) / static_cast<double>(kCaptureSampleRate);
     }
 
-    const DWORD waitTimeoutMs = 200;                 // matches kBufferDuration so we wake reliably
-    const UINT32 frameSize = negotiated.nBlockAlign; // bytes per frame across all channels
+    const DWORD waitTimeoutMs = 200; // matches kBufferDuration so we wake reliably
 
     // Session-aggregate diagnostics — logged on Stop so a "captured but
     // trim-dropped" session leaves a single line a user / report can grep
     // for. peakSessionAbs in raw int16 magnitude; totalFrames before
     // decimation; totalDownmixedSamples after decimation (== what reaches
     // pcmBuffer_).
-    std::int32_t peakSessionAbs = 0;
-    std::uint64_t totalSourceFrames = 0;
-    std::uint64_t totalDownmixedSamples = 0;
+    CaptureStats stats;
 
     while (!stopRequested_.load(std::memory_order_acquire)) {
-        DWORD waitResult = WaitForSingleObject(wakeEvent.get(), waitTimeoutMs);
+        DWORD waitResult = WaitForSingleObject(rig.wakeEvent.get(), waitTimeoutMs);
         if (waitResult == WAIT_FAILED) {
             recordError("WaitForSingleObject on wake event failed");
             break;
         }
 
         UINT32 packetSize = 0;
-        hr = captureClient->GetNextPacketSize(&packetSize);
+        HRESULT hr = rig.captureClient->GetNextPacketSize(&packetSize);
         if (FAILED(hr)) {
             recordError("IAudioCaptureClient::GetNextPacketSize failed");
             break;
         }
         while (packetSize > 0) {
-            BYTE* data = nullptr;
-            UINT32 numFrames = 0;
-            DWORD flags = 0;
-            hr = captureClient->GetBuffer(&data, &numFrames, &flags, nullptr, nullptr);
-            if (FAILED(hr)) {
+            if (!DrainCapturePacket(*rig.captureClient, negotiated, rig.frameSize, decim, pcmMutex_, pcmBuffer_,
+                                    lastPeakAmplitude_, stats)) {
                 recordError("IAudioCaptureClient::GetBuffer failed");
                 break;
             }
-            std::vector<std::int16_t> downmixed;
-            downmixed.reserve(numFrames / 2 + 1);
-            const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
-            // Track |sample| across this chunk for the amplitude-meter
-            // overlay (Phase E). Cheap: one branch per frame, no extra
-            // allocation.
-            std::int32_t peakAbs = 0;
-            for (UINT32 i = 0; i < numFrames; ++i) {
-                const BYTE* framePtr = data + (i * frameSize);
-                std::int16_t mono = silent ? 0 : MixToMonoInt16(framePtr, negotiated);
-                const std::int32_t magnitude =
-                    mono >= 0 ? static_cast<std::int32_t>(mono) : -static_cast<std::int32_t>(mono);
-                if (magnitude > peakAbs) {
-                    peakAbs = magnitude;
-                }
-                EmitDecimated(mono, decim, downmixed);
-            }
-            captureClient->ReleaseBuffer(numFrames);
-            totalSourceFrames += numFrames;
-            totalDownmixedSamples += downmixed.size();
-            if (peakAbs > peakSessionAbs) {
-                peakSessionAbs = peakAbs;
-            }
-            if (!downmixed.empty()) {
-                std::lock_guard<std::mutex> lk(pcmMutex_);
-                pcmBuffer_.insert(pcmBuffer_.end(), downmixed.begin(), downmixed.end());
-            }
-            // 32768.0 puts a full-scale int16 at exactly 1.0 — the meter UI
-            // expects [0, 1].
-            const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
-            lastPeakAmplitude_.store(peakNorm > 1.0f ? 1.0f : peakNorm, std::memory_order_release);
-
-            hr = captureClient->GetNextPacketSize(&packetSize);
+            hr = rig.captureClient->GetNextPacketSize(&packetSize);
             if (FAILED(hr)) {
                 recordError("IAudioCaptureClient::GetNextPacketSize (loop) failed");
                 break;
@@ -552,12 +597,13 @@ void WindowsAudioCapture::CaptureThreadMain() {
         }
     }
 
-    audioClient->Stop();
-    const float peakSessionNorm = static_cast<float>(peakSessionAbs) / 32768.0f;
+    rig.audioClient->Stop();
+    const float peakSessionNorm = static_cast<float>(stats.peakSessionAbs) / 32768.0f;
     LOG_INFO("WindowsAudioCapture: capture stopped (sourceFrames=%llu downmixedSamples=%llu "
              "sessionPeakAbs=%d sessionPeakNorm=%.3f)",
-             static_cast<unsigned long long>(totalSourceFrames), static_cast<unsigned long long>(totalDownmixedSamples),
-             static_cast<int>(peakSessionAbs), peakSessionNorm);
+             static_cast<unsigned long long>(stats.totalSourceFrames),
+             static_cast<unsigned long long>(stats.totalDownmixedSamples), static_cast<int>(stats.peakSessionAbs),
+             peakSessionNorm);
 }
 
 #else // !_WIN32

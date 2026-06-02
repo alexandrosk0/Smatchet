@@ -121,9 +121,7 @@ std::string ComputeSha256HexBcryptStreaming(const std::string& path) {
 // (Source/Plugins/Whisper/CMakeLists.txt's WASAPI link list is `if(WIN32)`), but
 // keep the symbol so a future cross-platform port has one fewer thing to
 // stub. Returns empty so verification always fails.
-std::string ComputeSha256HexBcryptStreaming(const std::string& /*path*/) {
-    return std::string();
-}
+std::string ComputeSha256HexBcryptStreaming(const std::string& /*path*/) { return std::string(); }
 #endif
 
 std::string JoinPath(const std::string& dir, const std::string& name) {
@@ -176,9 +174,7 @@ ModelDownloader::Progress ModelDownloader::GetProgress() const {
     return impl_->progress;
 }
 
-bool ModelDownloader::IsRunning() const {
-    return impl_->running.load(std::memory_order_acquire);
-}
+bool ModelDownloader::IsRunning() const { return impl_->running.load(std::memory_order_acquire); }
 
 void ModelDownloader::Cancel() {
     if (impl_ && impl_->cancelAtom) {
@@ -243,139 +239,152 @@ bool ModelDownloader::Start(AppController& app, const std::string& modelId, cons
     std::shared_ptr<Impl> implPtr = impl_;
 
     app.LaunchBackgroundTask([implPtr, url, finalPath, partialPath, expectedSha, modelId, cancelAtom]() {
-        auto setProgress = [&implPtr](State st, std::uint64_t got, std::uint64_t expected,
-                                      const std::string& errMsg) {
-            std::lock_guard<std::mutex> lock(implPtr->mu);
-            implPtr->progress.state = st;
-            if (got != 0) {
-                implPtr->progress.bytesReceived = got;
-            }
-            if (expected != 0) {
-                implPtr->progress.bytesExpected = expected;
-            }
-            implPtr->progress.error = errMsg;
-        };
-        auto finalize = [&implPtr](State st, const std::string& errMsg) {
-            std::lock_guard<std::mutex> lock(implPtr->mu);
-            implPtr->progress.state = st;
-            implPtr->progress.error = errMsg;
-        };
-
-        // Resume: if `<final>.partial` exists with non-zero size, append
-        // via Range: bytes=<size>-. Else start from scratch.
-        std::uint64_t resumeFrom = 0;
-        {
-            std::error_code ec;
-            const bool exists = ghc::filesystem::exists(partialPath, ec);
-            if (!ec && exists) {
-                const auto sz = ghc::filesystem::file_size(partialPath, ec);
-                if (!ec) {
-                    resumeFrom = static_cast<std::uint64_t>(sz);
-                }
-            }
-        }
-
-        std::ios_base::openmode mode = std::ios::binary;
-        mode |= (resumeFrom > 0) ? std::ios::app : std::ios::trunc;
-        std::ofstream ofs(partialPath, mode);
-        if (!ofs.is_open()) {
-            finalize(State::Failed, "failed to open partial file for write: " + partialPath);
-            implPtr->running.store(false, std::memory_order_release);
-            return;
-        }
-
-        std::uint64_t bytesWritten = resumeFrom;
-        setProgress(State::Downloading, bytesWritten, 0, std::string());
-
-        cpr::Header headers{{"Accept", "application/octet-stream"},
-                            {"User-Agent", std::string("SmatchetWhisper/") + modelId}};
-        if (resumeFrom > 0) {
-            headers["Range"] = "bytes=" + std::to_string(resumeFrom) + "-";
-        }
-        cpr::Redirect redirect(true, true);
-        bool cancelled = false;
-
-        cpr::WriteCallback writeCb{[&, implPtr](const std::string& data, intptr_t /*sz*/) -> bool {
-            if (cancelAtom && cancelAtom->load(std::memory_order_acquire)) {
-                cancelled = true;
-                return false;
-            }
-            ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
-            if (!ofs.good()) {
-                return false;
-            }
-            bytesWritten += data.size();
-            // Cheap snapshot — UI polls each frame, no need to lock per byte.
-            // Lock here to keep the snapshot consistent with `error` updates.
-            std::lock_guard<std::mutex> lock(implPtr->mu);
-            implPtr->progress.bytesReceived = bytesWritten;
-            return true;
-        }};
-
-        cpr::Response resp = cpr::Get(cpr::Url{url},
-                                      headers,
-                                      redirect,
-                                      writeCb,
-                                      cpr::ConnectTimeout{10000},
-                                      cpr::Timeout{0}); // disable total-timeout; large models > 2 min
-        ofs.close();
-
-        if (cancelled) {
-            finalize(State::Cancelled, "download cancelled");
-            implPtr->running.store(false, std::memory_order_release);
-            LOG_INFO("ModelDownloader: cancelled at %llu bytes", static_cast<unsigned long long>(bytesWritten));
-            return;
-        }
-        if (resp.error.code != cpr::ErrorCode::OK ||
-            (resp.status_code != 200 && resp.status_code != 206 && resp.status_code != 0)) {
-            std::string err = "HTTP fetch failed";
-            if (!resp.error.message.empty()) {
-                err += ": " + resp.error.message;
-            } else if (resp.status_code > 0) {
-                err += " (HTTP " + std::to_string(resp.status_code) + ")";
-            }
-            finalize(State::Failed, err);
-            implPtr->running.store(false, std::memory_order_release);
-            return;
-        }
-
-        // Verification pass.
-        setProgress(State::Verifying, bytesWritten, 0, std::string());
-        const std::string actualSha = ComputeSha256HexBcryptStreaming(partialPath);
-        if (actualSha.empty()) {
-            finalize(State::Failed, "SHA-256 hashing failed (BCrypt unavailable or read error)");
-            implPtr->running.store(false, std::memory_order_release);
-            return;
-        }
-        if (actualSha != expectedSha) {
-            // Hash mismatch — delete the partial so a future Start() does
-            // not append onto corrupt bytes.
-            std::error_code rmEc;
-            ghc::filesystem::remove(partialPath, rmEc);
-            finalize(State::Failed,
-                     std::string("SHA-256 mismatch (expected ") + expectedSha + ", got " + actualSha + ")");
-            implPtr->running.store(false, std::memory_order_release);
-            return;
-        }
-
-        // Atomic rename onto the final path. ghc::filesystem::rename
-        // matches std::filesystem semantics — overwrites on Windows when
-        // the target file exists.
-        std::error_code mvEc;
-        ghc::filesystem::rename(partialPath, finalPath, mvEc);
-        if (mvEc) {
-            finalize(State::Failed, "rename to final path failed: " + mvEc.message());
-            implPtr->running.store(false, std::memory_order_release);
-            return;
-        }
-
-        finalize(State::Complete, std::string());
-        implPtr->running.store(false, std::memory_order_release);
-        LOG_INFO("ModelDownloader: model %s ready at %s (%llu bytes)", modelId.c_str(), finalPath.c_str(),
-                 static_cast<unsigned long long>(bytesWritten));
+        RunDownloadWorker(implPtr, url, finalPath, partialPath, expectedSha, modelId, cancelAtom);
     });
 
     return true;
+}
+
+void ModelDownloader::RunDownloadWorker(std::shared_ptr<Impl> implPtr, const std::string& url,
+                                        const std::string& finalPath, const std::string& partialPath,
+                                        const std::string& expectedSha, const std::string& modelId,
+                                        std::shared_ptr<std::atomic<bool>> cancelAtom) {
+    auto setProgress = [&implPtr](State st, std::uint64_t got, std::uint64_t expected, const std::string& errMsg) {
+        std::lock_guard<std::mutex> lock(implPtr->mu);
+        implPtr->progress.state = st;
+        if (got != 0) {
+            implPtr->progress.bytesReceived = got;
+        }
+        if (expected != 0) {
+            implPtr->progress.bytesExpected = expected;
+        }
+        implPtr->progress.error = errMsg;
+    };
+    auto finalize = [&implPtr](State st, const std::string& errMsg) {
+        std::lock_guard<std::mutex> lock(implPtr->mu);
+        implPtr->progress.state = st;
+        implPtr->progress.error = errMsg;
+    };
+
+    // Resume: if `<final>.partial` exists with non-zero size, append
+    // via Range: bytes=<size>-. Else start from scratch.
+    std::uint64_t resumeFrom = 0;
+    {
+        std::error_code ec;
+        const bool exists = ghc::filesystem::exists(partialPath, ec);
+        if (!ec && exists) {
+            const auto sz = ghc::filesystem::file_size(partialPath, ec);
+            if (!ec) {
+                resumeFrom = static_cast<std::uint64_t>(sz);
+            }
+        }
+    }
+
+    std::ios_base::openmode mode = std::ios::binary;
+    mode |= (resumeFrom > 0) ? std::ios::app : std::ios::trunc;
+    std::ofstream ofs(partialPath, mode);
+    if (!ofs.is_open()) {
+        finalize(State::Failed, "failed to open partial file for write: " + partialPath);
+        implPtr->running.store(false, std::memory_order_release);
+        return;
+    }
+
+    std::uint64_t bytesWritten = resumeFrom;
+    setProgress(State::Downloading, bytesWritten, 0, std::string());
+
+    cpr::Header headers{{"Accept", "application/octet-stream"},
+                        {"User-Agent", std::string("SmatchetWhisper/") + modelId}};
+    if (resumeFrom > 0) {
+        headers["Range"] = "bytes=" + std::to_string(resumeFrom) + "-";
+    }
+    cpr::Redirect redirect(true, true);
+    bool cancelled = false;
+
+    cpr::WriteCallback writeCb{[&, implPtr](const std::string& data, intptr_t /*sz*/) -> bool {
+        if (cancelAtom && cancelAtom->load(std::memory_order_acquire)) {
+            cancelled = true;
+            return false;
+        }
+        ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
+        if (!ofs.good()) {
+            return false;
+        }
+        bytesWritten += data.size();
+        // Cheap snapshot — UI polls each frame, no need to lock per byte.
+        // Lock here to keep the snapshot consistent with `error` updates.
+        std::lock_guard<std::mutex> lock(implPtr->mu);
+        implPtr->progress.bytesReceived = bytesWritten;
+        return true;
+    }};
+
+    cpr::Response resp = cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{10000},
+                                  cpr::Timeout{0}); // disable total-timeout; large models > 2 min
+    ofs.close();
+
+    if (cancelled) {
+        finalize(State::Cancelled, "download cancelled");
+        implPtr->running.store(false, std::memory_order_release);
+        LOG_INFO("ModelDownloader: cancelled at %llu bytes", static_cast<unsigned long long>(bytesWritten));
+        return;
+    }
+    if (resp.error.code != cpr::ErrorCode::OK ||
+        (resp.status_code != 200 && resp.status_code != 206 && resp.status_code != 0)) {
+        std::string err = "HTTP fetch failed";
+        if (!resp.error.message.empty()) {
+            err += ": " + resp.error.message;
+        } else if (resp.status_code > 0) {
+            err += " (HTTP " + std::to_string(resp.status_code) + ")";
+        }
+        finalize(State::Failed, err);
+        implPtr->running.store(false, std::memory_order_release);
+        return;
+    }
+
+    setProgress(State::Verifying, bytesWritten, 0, std::string());
+    FinalizeDownload(implPtr, finalPath, partialPath, expectedSha, modelId, bytesWritten);
+}
+
+void ModelDownloader::FinalizeDownload(std::shared_ptr<Impl> implPtr, const std::string& finalPath,
+                                       const std::string& partialPath, const std::string& expectedSha,
+                                       const std::string& modelId, std::uint64_t bytesWritten) {
+    auto finalize = [&implPtr](State st, const std::string& errMsg) {
+        std::lock_guard<std::mutex> lock(implPtr->mu);
+        implPtr->progress.state = st;
+        implPtr->progress.error = errMsg;
+    };
+
+    // Verification pass.
+    const std::string actualSha = ComputeSha256HexBcryptStreaming(partialPath);
+    if (actualSha.empty()) {
+        finalize(State::Failed, "SHA-256 hashing failed (BCrypt unavailable or read error)");
+        implPtr->running.store(false, std::memory_order_release);
+        return;
+    }
+    if (actualSha != expectedSha) {
+        // Hash mismatch — delete the partial so a future Start() does
+        // not append onto corrupt bytes.
+        std::error_code rmEc;
+        ghc::filesystem::remove(partialPath, rmEc);
+        finalize(State::Failed, std::string("SHA-256 mismatch (expected ") + expectedSha + ", got " + actualSha + ")");
+        implPtr->running.store(false, std::memory_order_release);
+        return;
+    }
+
+    // Atomic rename onto the final path. ghc::filesystem::rename
+    // matches std::filesystem semantics — overwrites on Windows when
+    // the target file exists.
+    std::error_code mvEc;
+    ghc::filesystem::rename(partialPath, finalPath, mvEc);
+    if (mvEc) {
+        finalize(State::Failed, "rename to final path failed: " + mvEc.message());
+        implPtr->running.store(false, std::memory_order_release);
+        return;
+    }
+
+    finalize(State::Complete, std::string());
+    implPtr->running.store(false, std::memory_order_release);
+    LOG_INFO("ModelDownloader: model %s ready at %s (%llu bytes)", modelId.c_str(), finalPath.c_str(),
+             static_cast<unsigned long long>(bytesWritten));
 }
 
 } // namespace whisper
