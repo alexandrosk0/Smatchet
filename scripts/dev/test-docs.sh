@@ -24,8 +24,9 @@
 # EXIT
 #   0 — every step passed.
 #   1 — at least one step failed (names printed in the summary).
+#   2 — cannot resolve repo root.
 
-set -uo pipefail
+set -euo pipefail
 
 # Resolve repo root so the script runs from anywhere.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
