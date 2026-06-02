@@ -1121,6 +1121,21 @@ bool AppController::IsOnUiThread() const {
 }
 
 void AppController::Initialize(const std::string& dbPath, const std::string& backendType) {
+    // Thin bootstrap sequencer (decompose-top-20-monoliths). Each phase runs in
+    // strict order; the ordering, error handling, and early-returns are identical
+    // to the former 448-line monolith. `cfg` and `activeTrackerType` are the only
+    // values that cross phase boundaries — InitBackends publishes both.
+    InitConfig(dbPath, backendType);
+
+    TrackerConfig cfg{};
+    const std::string activeTrackerType = InitBackends(cfg);
+
+    InitFieldCatalog(cfg, activeTrackerType);
+    InitPlugins(activeTrackerType);
+    InitCommands();
+}
+
+void AppController::InitConfig(const std::string& dbPath, const std::string& backendType) {
     // Record the UI thread identity first. Initialize() is invoked from main() before any
     // background thread is spawned, so this happens-before any worker that could call
     // IsOnUiThread() later. See AppController.h for the full reasoning.
@@ -1211,7 +1226,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
         LOG_ERROR("AppController::Initialize legacy pending cleanup failed: unknown exception");
     }
+}
 
+std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     TrackerConfig cfg = ConfigManager::Load();
 
     std::string activeTracker = cfg.TrackerType;
@@ -1344,6 +1361,13 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
         }
     }
 
+    // Publish the resolved config, which an env hook may have mutated, so the next phase
+    // builds its field-catalog cache key from the exact TrackerConfig the backend used.
+    cfgOut = cfg;
+    return activeTrackerType;
+}
+
+void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType) {
     const std::string& fileBase = ConfigManager::GetRuntimeAssetDirectory();
 
     if (!fileBase.empty()) {
@@ -1445,7 +1469,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
                      AvailableFields.size());
         }
     }
+}
 
+void AppController::InitPlugins(const std::string& activeTrackerType) {
     TrackerConfig jiraCfgForEditMetaWarmup{};
 
     if (activeTrackerType == "Jira") {
@@ -1478,7 +1504,9 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
 
         WarmIssueTypeEditMetaAtStartAsync(std::move(jiraCfgForEditMetaWarmup));
     }
+}
 
+void AppController::InitCommands() {
     // Scenario runner — constructed before the registry so scenario.* commands
     // can capture a reference to it in their handlers.
     scenarioRunner_ = std::make_unique<smatchet::cmd::ScenarioRunner>();
