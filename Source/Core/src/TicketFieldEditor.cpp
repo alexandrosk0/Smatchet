@@ -631,7 +631,7 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     }
 }
 
-void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
+void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
                              bool singleClickToEdit) {
@@ -647,8 +647,8 @@ void RenderMultiSelectEditor(const AppController& app, const CachedTicket& ticke
         const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
         perProject = app.GetComponentOptionsForProject(projectKey);
         if (perProject.empty()) {
-            // Non-blocking lazy fetch; mutates in-flight bookkeeping + spawns a worker, hence non-const.
-            const_cast<AppController&>(app).EnsureProjectComponentsLoaded(projectKey);
+            // Non-blocking lazy fetch; mutates in-flight bookkeeping + spawns a worker.
+            app.EnsureProjectComponentsLoaded(projectKey);
         }
         opts = &perProject;
     }
