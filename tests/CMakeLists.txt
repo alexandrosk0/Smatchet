@@ -206,6 +206,9 @@ add_executable(SmatchetTests
     # ImGui context is required.
     Core/SelectableTextRun.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SelectableTextRun.cpp"
+    # funcsize decomposition — pure geometry / selection-math helpers split out
+    # of SelectableTextRun::End (bounding box, point-in-segment, segment-span).
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SelectableTextRun_detail.cpp"
     # Function-size compliance PR A9-A10 — pure byte-level image-dimension parser
     # extracted from SmatchetAttachmentPreviewUi.cpp's ParseImageDimensions. No
     # ImGui / file-I/O dependency; parses untrusted header bytes, so the test

@@ -2,6 +2,8 @@
 
 #include "SelectableTextRun.h"
 
+#include "SelectableTextRun_detail.h"
+
 #include "imgui.h"
 #include "imgui_internal.h"
 
@@ -70,6 +72,38 @@ void NormaliseSelection(int& aSeg, int& aChar, int& bSeg, int& bChar) {
     if (aSeg > bSeg || (aSeg == bSeg && aChar > bChar)) {
         std::swap(aSeg, bSeg);
         std::swap(aChar, bChar);
+    }
+}
+
+// Draw the selection overlay rects when the persisted endpoints are still
+// in-range; otherwise silently clear the stale selection. Factored out of End()
+// to keep that function under the branch cap. Behaviour is byte-identical to the
+// inline block it replaced.
+void DrawSelectionOverlay(Context& ctx) {
+    if (detail::SelectionEndpointsInRange(ctx)) {
+        int aSeg = ctx.selStartSeg;
+        int aChar = ctx.selStartChar;
+        int bSeg = ctx.selEndSeg;
+        int bChar = ctx.selEndChar;
+        NormaliseSelection(aSeg, aChar, bSeg, bChar);
+
+        const ImU32 selCol = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        for (int i = aSeg; i <= bSeg; ++i) {
+            const Segment& s = ctx.segments[i];
+            const int segLen = static_cast<int>(s.textOwned.size());
+            const detail::SegmentSpan span = detail::ComputeSegmentSpan(i, aSeg, aChar, bSeg, bChar, segLen);
+            const float xFrom = s.pos.x + CharOffsetToPx(s, span.from);
+            const float xTo = s.pos.x + CharOffsetToPx(s, span.to);
+            if (xTo > xFrom) {
+                dl->AddRectFilled(ImVec2(xFrom, s.pos.y), ImVec2(xTo, s.pos.y + s.lineH), selCol);
+            }
+        }
+    } else if (ctx.hasSelection) {
+        // Endpoints stale — clear silently.
+        ctx.hasSelection = false;
+        ctx.selStartSeg = -1;
+        ctx.selEndSeg = -1;
     }
 }
 
@@ -146,25 +180,9 @@ void End(Context& ctx) {
     // window's drag-to-move doesn't fire when the user clicks inside the
     // selectable text. Width covers the widest line; height spans first
     // segment's top to last segment's bottom.
-    ImVec2 bbMin = ctx.segments[0].pos;
-    ImVec2 bbMax(bbMin.x + ctx.segments[0].totalWidth, bbMin.y + ctx.segments[0].lineH);
-    for (std::size_t i = 1; i < ctx.segments.size(); ++i) {
-        const Segment& s = ctx.segments[i];
-        if (s.pos.x < bbMin.x) {
-            bbMin.x = s.pos.x;
-        }
-        if (s.pos.y < bbMin.y) {
-            bbMin.y = s.pos.y;
-        }
-        const float rx = s.pos.x + s.totalWidth;
-        const float ry = s.pos.y + s.lineH;
-        if (rx > bbMax.x) {
-            bbMax.x = rx;
-        }
-        if (ry > bbMax.y) {
-            bbMax.y = ry;
-        }
-    }
+    const detail::BoundingBox bb = detail::ComputeBoundingBox(ctx.segments);
+    const ImVec2 bbMin = bb.min;
+    const ImVec2 bbMax = bb.max;
 
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (!window) {
@@ -198,17 +216,11 @@ void End(Context& ctx) {
     // Hit-test the mouse against registered segments — needed for the char
     // offset within the segment under the cursor. Tracks hover for the
     // GetHoveredHref accessor too.
-    ctx.hoveredSeg = -1;
+    ctx.hoveredSeg = detail::HitTestSegmentIndex(ctx.segments, mouse.x, mouse.y);
     ctx.hoveredChar = 0;
-    for (int i = 0; i < static_cast<int>(ctx.segments.size()); ++i) {
-        const Segment& s = ctx.segments[i];
-        const bool yIn = (mouse.y >= s.pos.y && mouse.y <= s.pos.y + s.lineH);
-        const bool xIn = (mouse.x >= s.pos.x && mouse.x <= s.pos.x + s.totalWidth);
-        if (yIn && xIn) {
-            ctx.hoveredSeg = i;
-            ctx.hoveredChar = HitTestCharOffset(s, mouse.x - s.pos.x);
-            break;
-        }
+    if (ctx.hoveredSeg >= 0) {
+        const Segment& s = ctx.segments[ctx.hoveredSeg];
+        ctx.hoveredChar = HitTestCharOffset(s, mouse.x - s.pos.x);
     }
     if (hovered && ctx.hoveredSeg >= 0) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
@@ -239,42 +251,7 @@ void End(Context& ctx) {
     // Draw selection overlay. Selection invalidated if either endpoint refers
     // to a segment that no longer exists (e.g. content shrank between frames).
     const int segCount = static_cast<int>(ctx.segments.size());
-    if (ctx.hasSelection && ctx.selStartSeg >= 0 && ctx.selStartSeg < segCount && ctx.selEndSeg >= 0 &&
-        ctx.selEndSeg < segCount) {
-        int aSeg = ctx.selStartSeg;
-        int aChar = ctx.selStartChar;
-        int bSeg = ctx.selEndSeg;
-        int bChar = ctx.selEndChar;
-        NormaliseSelection(aSeg, aChar, bSeg, bChar);
-
-        const ImU32 selCol = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        for (int i = aSeg; i <= bSeg; ++i) {
-            const Segment& s = ctx.segments[i];
-            const int segLen = static_cast<int>(s.textOwned.size());
-            int from = (i == aSeg) ? aChar : 0;
-            int to = (i == bSeg) ? bChar : segLen;
-            if (from > to) {
-                std::swap(from, to);
-            }
-            if (from < 0) {
-                from = 0;
-            }
-            if (to > segLen) {
-                to = segLen;
-            }
-            const float xFrom = s.pos.x + CharOffsetToPx(s, from);
-            const float xTo = s.pos.x + CharOffsetToPx(s, to);
-            if (xTo > xFrom) {
-                dl->AddRectFilled(ImVec2(xFrom, s.pos.y), ImVec2(xTo, s.pos.y + s.lineH), selCol);
-            }
-        }
-    } else if (ctx.hasSelection) {
-        // Endpoints stale — clear silently.
-        ctx.hasSelection = false;
-        ctx.selStartSeg = -1;
-        ctx.selEndSeg = -1;
-    }
+    DrawSelectionOverlay(ctx);
 
     // Keyboard shortcuts — gated on the hit area being hovered so they don't
     // collide with global Ctrl+A / Ctrl+C bindings outside the SelectableText
@@ -282,11 +259,7 @@ void End(Context& ctx) {
     const bool ctrl = io.KeyCtrl;
     if (hovered && ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && segCount > 0) {
         // Select all — span from start of first segment to end of last.
-        ctx.hasSelection = true;
-        ctx.selStartSeg = 0;
-        ctx.selStartChar = 0;
-        ctx.selEndSeg = segCount - 1;
-        ctx.selEndChar = static_cast<int>(ctx.segments[segCount - 1].textOwned.size());
+        detail::SelectAllSegments(ctx, segCount);
         ctx.dragging = false;
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && HasSelection(ctx)) {
@@ -311,11 +284,7 @@ void End(Context& ctx) {
             }
         }
         if (ImGui::MenuItem("Select all", "Ctrl+A", false, segCount > 0)) {
-            ctx.hasSelection = true;
-            ctx.selStartSeg = 0;
-            ctx.selStartChar = 0;
-            ctx.selEndSeg = segCount - 1;
-            ctx.selEndChar = static_cast<int>(ctx.segments[segCount - 1].textOwned.size());
+            detail::SelectAllSegments(ctx, segCount);
         }
         ImGui::EndPopup();
     }
@@ -350,24 +319,14 @@ std::string GetSelectedText(const Context& ctx) {
     for (int i = aSeg; i <= bSeg; ++i) {
         const Segment& s = ctx.segments[i];
         const int segLen = static_cast<int>(s.textOwned.size());
-        int from = (i == aSeg) ? aChar : 0;
-        int to = (i == bSeg) ? bChar : segLen;
-        if (from > to) {
-            std::swap(from, to);
-        }
-        if (from < 0) {
-            from = 0;
-        }
-        if (to > segLen) {
-            to = segLen;
-        }
+        const detail::SegmentSpan span = detail::ComputeSegmentSpan(i, aSeg, aChar, bSeg, bChar, segLen);
         // Block boundary → emit a newline before the next block's bytes (skip on
         // the very first segment so we don't lead with one).
         if (prevBlockId >= 0 && s.blockId != prevBlockId) {
             out.push_back('\n');
         }
-        if (to > from) {
-            out.append(s.textOwned.data() + from, static_cast<std::size_t>(to - from));
+        if (span.to > span.from) {
+            out.append(s.textOwned.data() + span.from, static_cast<std::size_t>(span.to - span.from));
         }
         prevBlockId = s.blockId;
     }
