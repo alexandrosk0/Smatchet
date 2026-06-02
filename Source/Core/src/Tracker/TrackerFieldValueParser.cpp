@@ -517,49 +517,127 @@ static std::string FormatChangelogTimeValue(const std::string& value) {
     return value;
 }
 
+namespace {
+
+// Convert one changelog scalar (the value behind a fromString/toString/from/to
+// key) to its string form. Returns empty for unhandled JSON types.
+std::string ChangelogScalarToString(const nlohmann::json& value) {
+    if (value.is_string())
+        return value.get<std::string>();
+    if (value.is_number_integer())
+        return std::to_string(value.get<long long>());
+    if (value.is_number_unsigned())
+        return std::to_string(value.get<unsigned long long>());
+    if (value.is_number_float()) {
+        std::ostringstream oss;
+        oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
+        return TrimTrailingZeros(oss.str());
+    }
+    if (value.is_boolean())
+        return value.get<bool>() ? "true" : "false";
+    if (value.is_object() || value.is_array())
+        return value.dump();
+    return std::string();
+}
+
+// Prefer the human-readable string key, then the raw identifier key. The
+// identifier path intentionally skips dumping nested objects and arrays —
+// preserved verbatim from the original two-block lambda.
+std::string ChangelogResolveValue(const nlohmann::json& changeItem, const char* stringKey, const char* idKey) {
+    if (changeItem.contains(stringKey) && !changeItem[stringKey].is_null()) {
+        const std::string s = ChangelogScalarToString(changeItem[stringKey]);
+        if (!s.empty() || changeItem[stringKey].is_string()) {
+            return s;
+        }
+    }
+    if (changeItem.contains(idKey) && !changeItem[idKey].is_null()) {
+        const auto& value = changeItem[idKey];
+        if (value.is_string())
+            return value.get<std::string>();
+        if (value.is_number_integer())
+            return std::to_string(value.get<long long>());
+        if (value.is_number_unsigned())
+            return std::to_string(value.get<unsigned long long>());
+        if (value.is_number_float()) {
+            std::ostringstream oss;
+            oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
+            return TrimTrailingZeros(oss.str());
+        }
+    }
+    return std::string();
+}
+
+// Process every change item in one history entry, appending formatted lines.
+// Returns once entryCount reaches the cap so the caller can stop iterating.
+void ParseChangelogHistory(const nlohmann::json& history, size_t maxEntries, size_t maxValueLength,
+                           std::ostringstream& formatted, size_t& entryCount) {
+    if (!history.is_object()) {
+        return;
+    }
+
+    std::string author = "Unknown";
+    if (history.contains("author") && history["author"].is_object()) {
+        const auto& authorObj = history["author"];
+        if (authorObj.contains("displayName") && authorObj["displayName"].is_string()) {
+            author = authorObj["displayName"].get<std::string>();
+        }
+    }
+
+    std::string created;
+    if (history.contains("created") && history["created"].is_string()) {
+        created = MaybeFormatDateString(history["created"].get<std::string>());
+    }
+
+    if (!history.contains("items") || !history["items"].is_array()) {
+        return;
+    }
+
+    for (const auto& changeItem : history["items"]) {
+        if (!changeItem.is_object()) {
+            continue;
+        }
+        std::string fieldName;
+        if (changeItem.contains("field") && !changeItem["field"].is_null()) {
+            const auto& f = changeItem["field"];
+            fieldName = f.is_string() ? f.get<std::string>() : f.dump();
+        }
+
+        std::string fromValue = ChangelogResolveValue(changeItem, "fromString", "from");
+        std::string toValue = ChangelogResolveValue(changeItem, "toString", "to");
+
+        if (TrackerFieldValueUtils::IsTimeDurationField(fieldName)) {
+            fromValue = FormatChangelogTimeValue(fromValue);
+            toValue = FormatChangelogTimeValue(toValue);
+        }
+
+        if (fromValue.size() > maxValueLength) {
+            fromValue.resize(maxValueLength);
+            fromValue += "...";
+        }
+        if (toValue.size() > maxValueLength) {
+            toValue.resize(maxValueLength);
+            toValue += "...";
+        }
+
+        if (entryCount > 0) {
+            formatted << "\n";
+        }
+        formatted << "[" << author << "] " << created << "\n"
+                  << fieldName << ": " << fromValue << " -> " << toValue << "\n";
+        entryCount++;
+
+        if (entryCount >= maxEntries) {
+            return;
+        }
+    }
+}
+
+} // namespace
+
 std::string ParseChangelog(const nlohmann::json& histories) {
     const size_t kMaxChangelogEntries = 60;
     const size_t kMaxValueLength = 200;
     const size_t kMaxRawChangelogChars = 16000;
-
-    auto safeValueString = [&](const nlohmann::json& changeItem, const char* stringKey,
-                               const char* idKey) -> std::string {
-        if (changeItem.contains(stringKey) && !changeItem[stringKey].is_null()) {
-            const auto& value = changeItem[stringKey];
-            if (value.is_string())
-                return value.get<std::string>();
-            if (value.is_number_integer())
-                return std::to_string(value.get<long long>());
-            if (value.is_number_unsigned())
-                return std::to_string(value.get<unsigned long long>());
-            if (value.is_number_float()) {
-                std::ostringstream oss;
-                oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
-                return TrimTrailingZeros(oss.str());
-            }
-            if (value.is_boolean())
-                return value.get<bool>() ? "true" : "false";
-            if (value.is_object() || value.is_array())
-                return value.dump();
-        }
-
-        if (changeItem.contains(idKey) && !changeItem[idKey].is_null()) {
-            const auto& value = changeItem[idKey];
-            if (value.is_string())
-                return value.get<std::string>();
-            if (value.is_number_integer())
-                return std::to_string(value.get<long long>());
-            if (value.is_number_unsigned())
-                return std::to_string(value.get<unsigned long long>());
-            if (value.is_number_float()) {
-                std::ostringstream oss;
-                oss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << value.get<double>();
-                return TrimTrailingZeros(oss.str());
-            }
-        }
-
-        return std::string();
-    };
 
     if (!histories.is_array() || histories.empty()) {
         return std::string();
@@ -569,67 +647,7 @@ std::string ParseChangelog(const nlohmann::json& histories) {
     size_t entryCount = 0;
 
     for (auto it = histories.begin(); it != histories.end() && entryCount < kMaxChangelogEntries; ++it) {
-        const auto& history = *it;
-        if (!history.is_object()) {
-            continue;
-        }
-
-        std::string author = "Unknown";
-        if (history.contains("author") && history["author"].is_object()) {
-            const auto& authorObj = history["author"];
-            if (authorObj.contains("displayName") && authorObj["displayName"].is_string()) {
-                author = authorObj["displayName"].get<std::string>();
-            }
-        }
-
-        std::string created;
-        if (history.contains("created") && history["created"].is_string()) {
-            created = MaybeFormatDateString(history["created"].get<std::string>());
-        }
-
-        if (!history.contains("items") || !history["items"].is_array()) {
-            continue;
-        }
-        const auto& items = history["items"];
-
-        for (const auto& changeItem : items) {
-            if (!changeItem.is_object()) {
-                continue;
-            }
-            std::string fieldName;
-            if (changeItem.contains("field") && !changeItem["field"].is_null()) {
-                const auto& f = changeItem["field"];
-                fieldName = f.is_string() ? f.get<std::string>() : f.dump();
-            }
-
-            std::string fromValue = safeValueString(changeItem, "fromString", "from");
-            std::string toValue = safeValueString(changeItem, "toString", "to");
-
-            if (TrackerFieldValueUtils::IsTimeDurationField(fieldName)) {
-                fromValue = FormatChangelogTimeValue(fromValue);
-                toValue = FormatChangelogTimeValue(toValue);
-            }
-
-            if (fromValue.size() > kMaxValueLength) {
-                fromValue.resize(kMaxValueLength);
-                fromValue += "...";
-            }
-            if (toValue.size() > kMaxValueLength) {
-                toValue.resize(kMaxValueLength);
-                toValue += "...";
-            }
-
-            if (entryCount > 0) {
-                formatted << "\n";
-            }
-            formatted << "[" << author << "] " << created << "\n"
-                      << fieldName << ": " << fromValue << " -> " << toValue << "\n";
-            entryCount++;
-
-            if (entryCount >= kMaxChangelogEntries) {
-                break;
-            }
-        }
+        ParseChangelogHistory(*it, kMaxChangelogEntries, kMaxValueLength, formatted, entryCount);
     }
 
     if (entryCount >= kMaxChangelogEntries) {
@@ -640,16 +658,12 @@ std::string ParseChangelog(const nlohmann::json& histories) {
         return formatted.str();
     }
 
-    if (histories.is_array() && !histories.empty()) {
-        std::string raw = histories.dump();
-        if (raw.size() > kMaxRawChangelogChars) {
-            raw.resize(kMaxRawChangelogChars);
-            raw += "...";
-        }
-        return raw;
+    std::string raw = histories.dump();
+    if (raw.size() > kMaxRawChangelogChars) {
+        raw.resize(kMaxRawChangelogChars);
+        raw += "...";
     }
-
-    return std::string();
+    return raw;
 }
 
 long long ParseWorkDurationToSeconds(const std::string& input) {
@@ -777,6 +791,129 @@ std::string FormatTrackerTimetrackingDisplay(const nlohmann::json& o) {
     return {};
 }
 
+namespace {
+
+// Resolve the "parent issue" shape ({key, fields:{summary}}). Sets `handled`
+// when this object owns a "key" string (even if both parts are empty, the
+// original returned nothing and fell through — so handled stays false then).
+std::string NormalizeParentRefObject(const nlohmann::json& value, bool& handled) {
+    handled = false;
+    if (!(value.contains("key") && value["key"].is_string())) {
+        return std::string();
+    }
+    std::string parentKey = value["key"].get<std::string>();
+    std::string parentSummary;
+    if (value.contains("fields") && value["fields"].is_object()) {
+        const auto& parentFields = value["fields"];
+        if (parentFields.contains("summary") && parentFields["summary"].is_string()) {
+            parentSummary = parentFields["summary"].get<std::string>();
+        }
+    }
+    if (!parentKey.empty() && !parentSummary.empty()) {
+        handled = true;
+        return parentKey + " - " + parentSummary;
+    }
+    if (!parentKey.empty()) {
+        handled = true;
+        return parentKey;
+    }
+    if (!parentSummary.empty()) {
+        handled = true;
+        return parentSummary;
+    }
+    return std::string();
+}
+
+// Resolve an "id" field to its string form. Sets `handled` only when a non-empty
+// string id or a numeric id is produced (matches the original fall-through).
+std::string NormalizeIdObject(const nlohmann::json& value, bool& handled) {
+    handled = false;
+    if (!value.contains("id")) {
+        return std::string();
+    }
+    if (value["id"].is_string()) {
+        const std::string sid = value["id"].get<std::string>();
+        if (!sid.empty()) {
+            handled = true;
+            return sid;
+        }
+    } else if (value["id"].is_number_integer()) {
+        handled = true;
+        return std::to_string(value["id"].get<long long>());
+    } else if (value["id"].is_number_unsigned()) {
+        handled = true;
+        return std::to_string(value["id"].get<unsigned long long>());
+    }
+    return std::string();
+}
+
+// Dispatch the object-shaped variants of a tracker field value. Order is
+// behaviour-significant and preserved verbatim from the original branch tower.
+std::string NormalizeTrackerObjectValue(const nlohmann::json& value) {
+    if (value.contains("comments") && value["comments"].is_array()) {
+        return ParseComments(value["comments"]);
+    }
+    const auto typeIt = value.find("type");
+    const bool isDoc = typeIt != value.end() && typeIt->is_string() && typeIt->get_ref<const std::string&>() == "doc";
+    if (isDoc && value.contains("content") && value["content"].is_array()) {
+        std::ostringstream out;
+        ExtractAdfTextToStream(value, out);
+        return TrimCopy(out.str());
+    }
+
+    bool handled = false;
+    const std::string parentRef = NormalizeParentRefObject(value, handled);
+    if (handled) {
+        return parentRef;
+    }
+
+    if (value.contains("accountId") && value["accountId"].is_string()) {
+        std::string displayName;
+        if (value.contains("displayName") && value["displayName"].is_string()) {
+            displayName = value["displayName"].get<std::string>();
+        }
+        return displayName.empty() ? value["accountId"].get<std::string>() : displayName;
+    }
+    if (value.contains("displayName") && value["displayName"].is_string()) {
+        const std::string dn = value["displayName"].get<std::string>();
+        if (!dn.empty()) {
+            return dn;
+        }
+    }
+    if (value.contains("value") && value["value"].is_string() && value.contains("child") &&
+        value["child"].is_object()) {
+        const std::string parentValue = value["value"].get<std::string>();
+        const std::string childValue = BuildTrackerOptionDisplayValue(value["child"]);
+        if (!parentValue.empty() && !childValue.empty()) {
+            return parentValue + " > " + childValue;
+        }
+    }
+    if (value.contains("value") && value["value"].is_string()) {
+        const std::string vv = value["value"].get<std::string>();
+        if (!vv.empty()) {
+            return vv;
+        }
+    }
+    if (value.contains("name") && value["name"].is_string()) {
+        const std::string nm = value["name"].get<std::string>();
+        if (!nm.empty()) {
+            return nm;
+        }
+    }
+
+    const std::string idStr = NormalizeIdObject(value, handled);
+    if (handled) {
+        return idStr;
+    }
+
+    if (JsonLooksLikeJiraTimetracking(value)) {
+        return FormatTrackerTimetrackingDisplay(value);
+    }
+    return value.dump();
+}
+
+} // namespace
+
 std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
     if (value.is_null()) {
         return std::string();
@@ -799,87 +936,7 @@ std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
         return value.get<bool>() ? "true" : "false";
     }
     if (value.is_object()) {
-        if (value.contains("comments") && value["comments"].is_array()) {
-            return ParseComments(value["comments"]);
-        }
-        const auto typeIt = value.find("type");
-        const bool isDoc =
-            typeIt != value.end() && typeIt->is_string() && typeIt->get_ref<const std::string&>() == "doc";
-        if (isDoc && value.contains("content") && value["content"].is_array()) {
-            std::ostringstream out;
-            ExtractAdfTextToStream(value, out);
-            return TrimCopy(out.str());
-        }
-
-        if (value.contains("key") && value["key"].is_string()) {
-            std::string parentKey = value["key"].get<std::string>();
-            std::string parentSummary;
-            if (value.contains("fields") && value["fields"].is_object()) {
-                const auto& parentFields = value["fields"];
-                if (parentFields.contains("summary") && parentFields["summary"].is_string()) {
-                    parentSummary = parentFields["summary"].get<std::string>();
-                }
-            }
-            if (!parentKey.empty() && !parentSummary.empty()) {
-                return parentKey + " - " + parentSummary;
-            }
-            if (!parentKey.empty()) {
-                return parentKey;
-            }
-            if (!parentSummary.empty()) {
-                return parentSummary;
-            }
-        }
-
-        if (value.contains("accountId") && value["accountId"].is_string()) {
-            std::string displayName;
-            if (value.contains("displayName") && value["displayName"].is_string()) {
-                displayName = value["displayName"].get<std::string>();
-            }
-            return displayName.empty() ? value["accountId"].get<std::string>() : displayName;
-        }
-        if (value.contains("displayName") && value["displayName"].is_string()) {
-            const std::string dn = value["displayName"].get<std::string>();
-            if (!dn.empty()) {
-                return dn;
-            }
-        }
-        if (value.contains("value") && value["value"].is_string() && value.contains("child") &&
-            value["child"].is_object()) {
-            const std::string parentValue = value["value"].get<std::string>();
-            const std::string childValue = BuildTrackerOptionDisplayValue(value["child"]);
-            if (!parentValue.empty() && !childValue.empty()) {
-                return parentValue + " > " + childValue;
-            }
-        }
-        if (value.contains("value") && value["value"].is_string()) {
-            const std::string vv = value["value"].get<std::string>();
-            if (!vv.empty()) {
-                return vv;
-            }
-        }
-        if (value.contains("name") && value["name"].is_string()) {
-            const std::string nm = value["name"].get<std::string>();
-            if (!nm.empty()) {
-                return nm;
-            }
-        }
-        if (value.contains("id")) {
-            if (value["id"].is_string()) {
-                const std::string sid = value["id"].get<std::string>();
-                if (!sid.empty()) {
-                    return sid;
-                }
-            } else if (value["id"].is_number_integer()) {
-                return std::to_string(value["id"].get<long long>());
-            } else if (value["id"].is_number_unsigned()) {
-                return std::to_string(value["id"].get<unsigned long long>());
-            }
-        }
-        if (JsonLooksLikeJiraTimetracking(value)) {
-            return FormatTrackerTimetrackingDisplay(value);
-        }
-        return value.dump();
+        return NormalizeTrackerObjectValue(value);
     }
     if (value.is_array()) {
         std::vector<std::string> parts;

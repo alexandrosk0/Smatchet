@@ -532,6 +532,101 @@ static JqlSuggestMode DetermineJqlSuggestMode(const std::vector<JqlToken>& token
     return JqlSuggestMode::Logical;
 }
 
+// Resolve the [replaceStart, replaceEnd) span and the prefix the suggestions replace.
+// Mirrors the original three-way branch: active selection, open-string token, or
+// the identifier run straddling the cursor.
+void ResolveJqlReplaceRange(const char* buf, int bufLen, int cursor, int selStart, int selEnd, int& replaceStart,
+                            int& replaceEnd, std::string& prefix) {
+    if (selStart != selEnd) {
+        const int lo = (std::min)(selStart, selEnd);
+        const int hi = (std::max)(selStart, selEnd);
+        replaceStart = lo;
+        replaceEnd = hi;
+        prefix.assign(buf + lo, buf + hi);
+        return;
+    }
+    bool inString = false;
+    int stringOpen = -1;
+    JqlScanStringStateToCursor(buf, bufLen, cursor, inString, stringOpen);
+    if (inString && stringOpen >= 0 && cursor > stringOpen + 1) {
+        replaceStart = stringOpen + 1;
+        replaceEnd = cursor;
+        prefix.assign(buf + replaceStart, buf + replaceEnd);
+        return;
+    }
+    int L = cursor;
+    int R = cursor;
+    while (L > 0 && IsJqlIdChar(static_cast<unsigned char>(buf[L - 1]))) {
+        --L;
+    }
+    while (R < bufLen && IsJqlIdChar(static_cast<unsigned char>(buf[R]))) {
+        ++R;
+    }
+    replaceStart = L;
+    replaceEnd = R;
+    prefix.assign(buf + L, buf + R);
+}
+
+void AppendJqlValueModeSuggestions(const AppController& app, const std::string& prefix, const TrackerField* valueField,
+                                   QuerySuggestBuild& out, std::unordered_set<std::string>& seen,
+                                   QuerySuggestMeta* metaOut) {
+    if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
+        AppendValueSuggestions(*valueField, prefix, out.Items, seen);
+    }
+    if (valueField != nullptr) {
+        AppendJqlFunctionSuggestions(*valueField, prefix, out.Items, seen);
+    }
+    // For user fields, also surface the cached non-system users from the catalog fetch.
+    // The async live-user search (driven via metaOut->UserValueToken below) still runs
+    // and merges results when the prefix is long enough — this just makes the offline
+    // catalog list available immediately without any network round-trip.
+    if (valueField != nullptr && IsJqlUserField(*valueField)) {
+        AppendJqlUserCatalogSuggestions(app, prefix, out.Items, seen);
+    }
+    if (metaOut != nullptr && valueField != nullptr && IsJqlUserField(*valueField)) {
+        metaOut->UserValueToken = true;
+        metaOut->UserSearchPrefix = prefix;
+    }
+}
+
+// Dispatch the resolved suggest mode onto the matching term/value appenders.
+void AppendJqlSuggestionsForMode(JqlSuggestMode mode, const AppController& app, const std::string& prefix,
+                                 const TrackerField* valueField, QuerySuggestBuild& out,
+                                 std::unordered_set<std::string>& seen, QuerySuggestMeta* metaOut) {
+    if (mode == JqlSuggestMode::Field || mode == JqlSuggestMode::OrderField) {
+        if (mode == JqlSuggestMode::Field) {
+            static const char* kClausePrefixes[] = {"NOT"};
+            AppendJqlTerms(prefix, kClausePrefixes,
+                           static_cast<int>(sizeof(kClausePrefixes) / sizeof(kClausePrefixes[0])), out.Items, seen);
+        }
+        AppendFieldCatalogSuggestions(app, prefix, out.Items, seen);
+    } else if (mode == JqlSuggestMode::Operator) {
+        static const char* kOperators[] = {"=", "!=", "IN", "NOT IN", "IS",  "IS NOT", "~",      "!~",
+                                           ">", ">=", "<",  "<=",     "WAS", "WAS IN", "CHANGED"};
+        AppendJqlTerms(prefix, kOperators, static_cast<int>(sizeof(kOperators) / sizeof(kOperators[0])), out.Items,
+                       seen);
+    } else if (mode == JqlSuggestMode::Value) {
+        AppendJqlValueModeSuggestions(app, prefix, valueField, out, seen, metaOut);
+    } else if (mode == JqlSuggestMode::IsOperand) {
+        static const char* kIsOperands[] = {"EMPTY", "NULL"};
+        AppendJqlTerms(prefix, kIsOperands, static_cast<int>(sizeof(kIsOperands) / sizeof(kIsOperands[0])), out.Items,
+                       seen);
+    } else if (mode == JqlSuggestMode::Logical) {
+        if (!prefix.empty()) {
+            static const char* kLogical[] = {"AND", "OR", "ORDER BY"};
+            AppendJqlTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
+        }
+    } else if (mode == JqlSuggestMode::OrderByKeyword) {
+        static const char* kOrderByTail[] = {"BY"};
+        AppendJqlTerms(prefix, kOrderByTail, static_cast<int>(sizeof(kOrderByTail) / sizeof(kOrderByTail[0])),
+                       out.Items, seen);
+    } else if (mode == JqlSuggestMode::SortDirection) {
+        static const char* kSortDirections[] = {"ASC", "DESC"};
+        AppendJqlTerms(prefix, kSortDirections, static_cast<int>(sizeof(kSortDirections) / sizeof(kSortDirections[0])),
+                       out.Items, seen);
+    }
+}
+
 } // namespace
 
 void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, int selEnd, const AppController& app,
@@ -556,34 +651,7 @@ void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, 
     std::string prefix;
     const TrackerField* valueField = nullptr;
 
-    if (selStart != selEnd) {
-        const int lo = (std::min)(selStart, selEnd);
-        const int hi = (std::max)(selStart, selEnd);
-        replaceStart = lo;
-        replaceEnd = hi;
-        prefix.assign(buf + lo, buf + hi);
-    } else {
-        bool inString = false;
-        int stringOpen = -1;
-        JqlScanStringStateToCursor(buf, bufLen, cursor, inString, stringOpen);
-        if (inString && stringOpen >= 0 && cursor > stringOpen + 1) {
-            replaceStart = stringOpen + 1;
-            replaceEnd = cursor;
-            prefix.assign(buf + replaceStart, buf + replaceEnd);
-        } else {
-            int L = cursor;
-            int R = cursor;
-            while (L > 0 && IsJqlIdChar(static_cast<unsigned char>(buf[L - 1]))) {
-                --L;
-            }
-            while (R < bufLen && IsJqlIdChar(static_cast<unsigned char>(buf[R]))) {
-                ++R;
-            }
-            replaceStart = L;
-            replaceEnd = R;
-            prefix.assign(buf + L, buf + R);
-        }
-    }
+    ResolveJqlReplaceRange(buf, bufLen, cursor, selStart, selEnd, replaceStart, replaceEnd, prefix);
 
     out.ReplaceStart = replaceStart;
     out.ReplaceEnd = replaceEnd;
@@ -591,54 +659,7 @@ void BuildJqlSuggestions(const char* buf, int bufLen, int cursor, int selStart, 
     const std::vector<JqlToken> leftTokens = TokenizeJqlPrefix(buf, replaceStart);
     const JqlSuggestMode mode = DetermineJqlSuggestMode(leftTokens, prefix, app, &valueField);
 
-    if (mode == JqlSuggestMode::Field || mode == JqlSuggestMode::OrderField) {
-        if (mode == JqlSuggestMode::Field) {
-            static const char* kClausePrefixes[] = {"NOT"};
-            AppendJqlTerms(prefix, kClausePrefixes,
-                           static_cast<int>(sizeof(kClausePrefixes) / sizeof(kClausePrefixes[0])), out.Items, seen);
-        }
-        AppendFieldCatalogSuggestions(app, prefix, out.Items, seen);
-    } else if (mode == JqlSuggestMode::Operator) {
-        static const char* kOperators[] = {"=", "!=", "IN", "NOT IN", "IS",  "IS NOT", "~",      "!~",
-                                           ">", ">=", "<",  "<=",     "WAS", "WAS IN", "CHANGED"};
-        AppendJqlTerms(prefix, kOperators, static_cast<int>(sizeof(kOperators) / sizeof(kOperators[0])), out.Items,
-                       seen);
-    } else if (mode == JqlSuggestMode::Value) {
-        if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
-            AppendValueSuggestions(*valueField, prefix, out.Items, seen);
-        }
-        if (valueField != nullptr) {
-            AppendJqlFunctionSuggestions(*valueField, prefix, out.Items, seen);
-        }
-        // For user fields, also surface the cached non-system users from the catalog fetch.
-        // The async live-user search (driven via metaOut->UserValueToken below) still runs
-        // and merges results when the prefix is long enough — this just makes the offline
-        // catalog list available immediately without any network round-trip.
-        if (valueField != nullptr && IsJqlUserField(*valueField)) {
-            AppendJqlUserCatalogSuggestions(app, prefix, out.Items, seen);
-        }
-        if (metaOut != nullptr && valueField != nullptr && IsJqlUserField(*valueField)) {
-            metaOut->UserValueToken = true;
-            metaOut->UserSearchPrefix = prefix;
-        }
-    } else if (mode == JqlSuggestMode::IsOperand) {
-        static const char* kIsOperands[] = {"EMPTY", "NULL"};
-        AppendJqlTerms(prefix, kIsOperands, static_cast<int>(sizeof(kIsOperands) / sizeof(kIsOperands[0])), out.Items,
-                       seen);
-    } else if (mode == JqlSuggestMode::Logical) {
-        if (!prefix.empty()) {
-            static const char* kLogical[] = {"AND", "OR", "ORDER BY"};
-            AppendJqlTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
-        }
-    } else if (mode == JqlSuggestMode::OrderByKeyword) {
-        static const char* kOrderByTail[] = {"BY"};
-        AppendJqlTerms(prefix, kOrderByTail, static_cast<int>(sizeof(kOrderByTail) / sizeof(kOrderByTail[0])),
-                       out.Items, seen);
-    } else if (mode == JqlSuggestMode::SortDirection) {
-        static const char* kSortDirections[] = {"ASC", "DESC"};
-        AppendJqlTerms(prefix, kSortDirections, static_cast<int>(sizeof(kSortDirections) / sizeof(kSortDirections[0])),
-                       out.Items, seen);
-    }
+    AppendJqlSuggestionsForMode(mode, app, prefix, valueField, out, seen, metaOut);
 
     auto labelLessAscii = [](const QuerySuggestion& a, const QuerySuggestion& b) {
         size_t i = 0;

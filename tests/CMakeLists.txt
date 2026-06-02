@@ -157,6 +157,11 @@ add_executable(SmatchetTests
     # Plane and GitHub splits above.
     Core/JiraIssueMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMappingPure.cpp"
+    # PR A6 (function-size-compliance) — pure editmeta field-editability decision
+    # extracted from JiraUserAndMeta.cpp::FetchIssueEditMeta (which pulls cpr), to
+    # bring that fn under the 30-branch cap. Same pure-seam shape as the mappers.
+    Core/JiraEditMetaPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraEditMetaPure.cpp"
     # Slice 2 of deterministic-jira-test-backend — Jira
     # fixture parser + FakeTrackerClient configurator. Exercises LoadFromString,
     # jiraSearchPages round-trip through AppendCachedTicketFromJiraSearchIssue,
@@ -201,6 +206,12 @@ add_executable(SmatchetTests
     # ImGui context is required.
     Core/SelectableTextRun.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SelectableTextRun.cpp"
+    # Function-size compliance PR A9-A10 — pure byte-level image-dimension parser
+    # extracted from SmatchetAttachmentPreviewUi.cpp's ParseImageDimensions. No
+    # ImGui / file-I/O dependency; parses untrusted header bytes, so the test
+    # pins every signature/bounds/offset/endianness path (PNG/GIF/WEBP/JPEG).
+    Core/ParseImageDimensions.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImageDimensionsPure.cpp"
     # Perf Opt 1 + Opt B — BuildPlan / HashContent / PreviewPlan API surface.
     # Pure-logic only (the ImGui-side render is bucket E). Links the same
     # MarkdownPreviewRender.cpp the production targets compile.
@@ -266,6 +277,10 @@ add_executable(SmatchetTests
     # Natural-order key/issuekey sort — exercises CompareIssueKeyNatural
     # (inline in StringUtil.h) which CompareFieldValuesForSort dispatches to.
     Core/TicketGridModelKeySort.test.cpp
+    # Function-size decomposition (PR A7-A8) — deterministic dispatch coverage for
+    # FormatCompactJiraDateForDisplay (parse-failure passthrough + absolute_iso /
+    # absolute_friendly). CompactDateFormat.cpp is already linked above (line ~233).
+    Core/CompactDateFormat.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent

@@ -494,3 +494,134 @@ TEST_CASE("AppendTrackerUsersFromJsonArray ignores non-array input") {
     AppendTrackerUsersFromJsonArray(nlohmann::json::object(), out);
     CHECK(out.empty());
 }
+
+// --- PR A2 decomposition goldens: exercise each split dispatch path so the
+// --- handler extraction stays byte-for-byte with the pre-refactor branch tower.
+
+TEST_CASE("NormalizeTrackerFieldValue resolves option 'value' then 'name' then string id") {
+    nlohmann::json byValue;
+    byValue["value"] = "High";
+    CHECK(NormalizeTrackerFieldValue(byValue) == "High");
+
+    nlohmann::json byName;
+    byName["name"] = "In Progress";
+    CHECK(NormalizeTrackerFieldValue(byName) == "In Progress");
+
+    nlohmann::json byStringId;
+    byStringId["id"] = "10042";
+    CHECK(NormalizeTrackerFieldValue(byStringId) == "10042");
+}
+
+TEST_CASE("NormalizeTrackerFieldValue resolves numeric id (int + unsigned)") {
+    nlohmann::json intId;
+    intId["id"] = 7;
+    CHECK(NormalizeTrackerFieldValue(intId) == "7");
+
+    nlohmann::json unsignedId;
+    unsignedId["id"] = 4000000000ULL;
+    CHECK(NormalizeTrackerFieldValue(unsignedId) == "4000000000");
+}
+
+TEST_CASE("NormalizeTrackerFieldValue formats Jira timetracking object") {
+    nlohmann::json tt;
+    tt["originalEstimate"] = "1h";
+    tt["timeSpentSeconds"] = 1800;
+    const std::string out = NormalizeTrackerFieldValue(tt);
+    CHECK(out.find("Original estimate 1h") != std::string::npos);
+    // FormatWorkDurationFromSeconds always emits an hours component when the
+    // higher units are empty, so 1800s renders "0h 30m" (not "30m").
+    CHECK(out.find("Spent 0h 30m") != std::string::npos);
+}
+
+TEST_CASE("NormalizeTrackerFieldValue dumps an unrecognised object verbatim") {
+    nlohmann::json mystery;
+    mystery["foo"] = "bar";
+    // No comments/doc/key/accountId/displayName/value/name/id/timetracking shape
+    // -> falls through to raw dump.
+    CHECK(NormalizeTrackerFieldValue(mystery) == mystery.dump());
+}
+
+TEST_CASE("NormalizeTrackerFieldValue empty value/name/id object falls through to dump") {
+    nlohmann::json empties;
+    empties["value"] = "";
+    empties["name"] = "";
+    empties["id"] = "";
+    // Every preferred label key is empty -> original returned the raw dump.
+    CHECK(NormalizeTrackerFieldValue(empties) == empties.dump());
+}
+
+TEST_CASE("ParseChangelog falls back to from/to id keys when *String absent") {
+    nlohmann::json history = nlohmann::json::object();
+    history["author"]["displayName"] = "Carol";
+    nlohmann::json item;
+    item["field"] = "assignee";
+    item["from"] = 101;    // numeric id fallback
+    item["to"] = "acct-2"; // string id fallback
+    history["items"] = nlohmann::json::array({item});
+    nlohmann::json hist = nlohmann::json::array({history});
+
+    const std::string out = ParseChangelog(hist);
+    CHECK(out.find("Carol") != std::string::npos);
+    CHECK(out.find("assignee: 101 -> acct-2") != std::string::npos);
+}
+
+TEST_CASE("ParseChangelog formats time-duration field values") {
+    nlohmann::json history = nlohmann::json::object();
+    history["author"]["displayName"] = "Dan";
+    nlohmann::json item;
+    item["field"] = "timespent"; // recognised time-duration field
+    item["fromString"] = "3600"; // seconds -> "1h"
+    item["toString"] = "7200";   // seconds -> "2h"
+    history["items"] = nlohmann::json::array({item});
+    nlohmann::json hist = nlohmann::json::array({history});
+
+    const std::string out = ParseChangelog(hist);
+    CHECK(out.find("1h") != std::string::npos);
+    CHECK(out.find("2h") != std::string::npos);
+}
+
+TEST_CASE("ParseChangelog truncates over-long values to 200 chars + ellipsis") {
+    const std::string longVal(500, 'x');
+    nlohmann::json history = nlohmann::json::object();
+    history["author"]["displayName"] = "Eve";
+    nlohmann::json item;
+    item["field"] = "description";
+    item["fromString"] = "";
+    item["toString"] = longVal;
+    history["items"] = nlohmann::json::array({item});
+    nlohmann::json hist = nlohmann::json::array({history});
+
+    const std::string out = ParseChangelog(hist);
+    CHECK(out.find(std::string(200, 'x') + "...") != std::string::npos);
+    // The full 500-char run must not survive un-truncated.
+    CHECK(out.find(std::string(201, 'x')) == std::string::npos);
+}
+
+TEST_CASE("ParseChangelog caps at 60 entries and appends truncated marker") {
+    nlohmann::json hist = nlohmann::json::array();
+    for (int i = 0; i < 80; ++i) {
+        nlohmann::json history = nlohmann::json::object();
+        history["author"]["displayName"] = "U";
+        nlohmann::json item;
+        item["field"] = "status";
+        item["fromString"] = "a" + std::to_string(i);
+        item["toString"] = "b" + std::to_string(i);
+        history["items"] = nlohmann::json::array({item});
+        hist.push_back(history);
+    }
+    const std::string out = ParseChangelog(hist);
+    CHECK(out.find("[... truncated ...]") != std::string::npos);
+    // 60th entry (index 59) present; 61st (index 60) dropped.
+    CHECK(out.find("a59 -> b59") != std::string::npos);
+    CHECK(out.find("a60 -> b60") == std::string::npos);
+}
+
+TEST_CASE("ParseChangelog dumps raw when no formattable items produced") {
+    // Array is non-empty but every history lacks an items array -> raw dump path.
+    nlohmann::json hist = nlohmann::json::array();
+    nlohmann::json history = nlohmann::json::object();
+    history["author"]["displayName"] = "NoItems";
+    hist.push_back(history);
+    const std::string out = ParseChangelog(hist);
+    CHECK(out == hist.dump());
+}

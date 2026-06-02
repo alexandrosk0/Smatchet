@@ -373,6 +373,69 @@ TEST_CASE("AiPrefsValidator: DeepSeek missing-key issue carries FieldKey kAiDeep
     CHECK(sawKeyIssue);
 }
 
+// --- Helper-decomposition coverage (PR B8-B9 function-size split) ---
+// ValidateAiPrefs was decomposed into CheckKeyPresence / ResolveActiveModel /
+// CheckBaseUrls / CheckKeyFormat / CheckUnknownModel without behaviour change.
+// These cases pin the per-helper branches the split surfaced.
+
+TEST_CASE("AiPrefsValidator: missing-model error carries the active provider's model FieldKey (Anthropic)") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 1; // Anthropic
+    cfg.AiAnthropicApiKey = "sk-ant-fake";
+    cfg.AiModelAnthropic.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "model ID required"));
+    bool sawModelIssue = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiModelAnthropic &&
+            iss.Severity == smatchet::ai::PrefsSeverity::Error) {
+            sawModelIssue = true;
+        }
+    }
+    CHECK(sawModelIssue);
+}
+
+TEST_CASE("AiPrefsValidator: OllamaOpenAiCompat resolves its model from the OpenAI model field") {
+    // The compat slot shares AiModelOpenAi. An empty AiModelOpenAi must yield a
+    // missing-model error keyed to the OpenAI model field, with the compat label.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 2; // OllamaOpenAiCompat
+    cfg.AiApiKey.clear();   // optional for local
+    cfg.AiModelOpenAi.clear();
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "model ID required"));
+    bool sawCompatModelKey = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiModelOpenAi &&
+            iss.Severity == smatchet::ai::PrefsSeverity::Error) {
+            sawCompatModelKey = true;
+        }
+    }
+    CHECK(sawCompatModelKey);
+}
+
+TEST_CASE("AiPrefsValidator: AiBaseUrl is validated for non-Ollama providers (DeepSeek)") {
+    // CheckBaseUrls validates AiBaseUrl unconditionally; a malformed value errors
+    // even when the active provider is DeepSeek (which reads its own DeepSeek URL).
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 4; // DeepSeek
+    cfg.AiDeepSeekApiKey = "sk-fake";
+    cfg.AiModelDeepSeek = "deepseek-chat";
+    cfg.AiBaseUrl = "not-a-url";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    bool sawBaseIssue = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiBaseUrl &&
+            iss.Severity == smatchet::ai::PrefsSeverity::Error) {
+            sawBaseIssue = true;
+        }
+    }
+    CHECK(sawBaseIssue);
+}
+
 TEST_CASE("AiPrefsValidator: bad AiBaseUrl issue carries FieldKey kAiBaseUrl") {
     TrackerConfig cfg = DefaultCfg();
     cfg.AiProviderKind = 0;

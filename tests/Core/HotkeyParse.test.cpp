@@ -108,6 +108,42 @@ TEST_CASE("HotkeyParse: named navigation keys") {
     CHECK(hk.vk == vk::kEnter);
 }
 
+TEST_CASE("HotkeyParse: every named-key token maps to its exact VK") {
+    // Pins the full named-key vocabulary tabulated in TokenToVirtualKey — one
+    // assertion per accepted spelling (incl. both aliases for enter/escape).
+    // A regression in the lookup table names the broken mapping here.
+    struct Row {
+        const char* token;
+        unsigned int vk;
+    };
+    const Row rows[] = {
+        {"Space", vk::kSpace},   {"Enter", vk::kEnter},   {"Return", vk::kEnter},        {"Escape", vk::kEscape},
+        {"Esc", vk::kEscape},    {"Tab", vk::kTab},       {"Backspace", vk::kBackspace}, {"Up", vk::kUp},
+        {"Down", vk::kDown},     {"Left", vk::kLeft},     {"Right", vk::kRight},         {"Home", vk::kHome},
+        {"End", vk::kEnd},       {"PageUp", vk::kPageUp}, {"PageDown", vk::kPageDown},   {"Insert", vk::kInsert},
+        {"Delete", vk::kDelete},
+    };
+    for (const Row& r : rows) {
+        Hotkey hk;
+        std::string err;
+        CHECK_MESSAGE(Parse(r.token, hk, err), "token failed to parse: ", r.token);
+        CHECK_MESSAGE(hk.vk == r.vk, "wrong VK for token: ", r.token);
+        CHECK(hk.mods == 0u);
+    }
+}
+
+TEST_CASE("HotkeyParse: unknown named-key tokens fall through to the default reject") {
+    // The named-key table returns 0 (unknown) for anything outside its vocabulary,
+    // and Parse surfaces that as a failure with a non-empty error.
+    Hotkey hk;
+    std::string err;
+    CHECK_FALSE(Parse("Spacebar", hk, err)); // not "Space"
+    CHECK_FALSE(err.empty());
+    CHECK_FALSE(Parse("Return2", hk, err));
+    CHECK_FALSE(Parse("PgUp", hk, err)); // only "PageUp" is accepted
+    CHECK_FALSE(Parse("Del", hk, err));  // only "Delete" is accepted
+}
+
 TEST_CASE("HotkeyParse: digits 0..9") {
     Hotkey hk;
     std::string err;
@@ -186,6 +222,4 @@ TEST_CASE("HotkeyParse: empty segment from stray plus rejected") {
     CHECK_FALSE(err.empty());
 }
 
-TEST_CASE("HotkeyParse: Stringify on default-constructed hotkey is empty") {
-    CHECK(Stringify(Hotkey()) == "");
-}
+TEST_CASE("HotkeyParse: Stringify on default-constructed hotkey is empty") { CHECK(Stringify(Hotkey()) == ""); }

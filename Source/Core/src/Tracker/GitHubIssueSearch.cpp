@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 // PR4 of docs/plans/shipped/github-tracker-backend.md — paginated fetcher.
@@ -155,6 +156,72 @@ std::string ExtractGraphQlErrors(const nlohmann::json& parsed) {
     return out;
 }
 
+// Outcome of parsing one GraphQL search-page HTTP response. `Fatal` true means
+// the page is unusable (sets `Error`); otherwise `Tickets` + paging fields are
+// populated. This is the bucket-A-testable seam — no I/O, pure JSON → struct.
+struct GraphQlPageParse {
+    bool Fatal = false;
+    std::string Error;
+    std::vector<CachedTicket> Tickets;
+    bool HasNext = false;
+    std::string EndCursor;
+};
+
+// Parse one GraphQL search-page HTTP response body into a GraphQlPageParse.
+// Covers: invalid JSON, GraphQL `errors[]`, missing `data.search`, non-array
+// `nodes`. On any of those sets `Fatal` + `Error`. Pure — unit-testable without
+// a live backend.
+GraphQlPageParse ParseGraphQlSearchPage(const std::string& responseText, const std::string& owner,
+                                        const std::string& repo, bool includePullRequests) {
+    GraphQlPageParse out;
+
+    nlohmann::json parsed = nlohmann::json::parse(responseText, nullptr, false);
+    if (parsed.is_discarded()) {
+        out.Fatal = true;
+        out.Error = "GitHub returned invalid JSON";
+        return out;
+    }
+
+    const std::string gqlErrors = ExtractGraphQlErrors(parsed);
+    if (!gqlErrors.empty()) {
+        out.Fatal = true;
+        out.Error = std::string("GitHub GraphQL error: ") + gqlErrors;
+        return out;
+    }
+
+    if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
+        !parsed["data"].contains("search") || !parsed["data"]["search"].is_object()) {
+        out.Fatal = true;
+        out.Error = "GitHub GraphQL response missing data.search";
+        return out;
+    }
+
+    const nlohmann::json& search = parsed["data"]["search"];
+    const nlohmann::json& nodes = search.value("nodes", nlohmann::json::array());
+    if (!nodes.is_array()) {
+        out.Fatal = true;
+        out.Error = "GitHub GraphQL search.nodes not an array";
+        return out;
+    }
+
+    out.Tickets = MapGraphQlNodesToTickets(nodes, owner, repo, includePullRequests);
+
+    const nlohmann::json& pageInfo = search.value("pageInfo", nlohmann::json::object());
+    {
+        const auto it = pageInfo.find("hasNextPage");
+        if (it != pageInfo.end() && it->is_boolean()) {
+            out.HasNext = it->get<bool>();
+        }
+    }
+    {
+        const auto it = pageInfo.find("endCursor");
+        if (it != pageInfo.end() && it->is_string()) {
+            out.EndCursor = it->get<std::string>();
+        }
+    }
+    return out;
+}
+
 // github-commit-tracker-rows — run the GraphQL issue/PR search loop. Appends
 // mapped tickets to `accum` and emits each page via `emitPage(page, isLast)`.
 // `isFinalSource` controls whether this source owns the terminal `isLast`
@@ -189,72 +256,22 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
             return false;
         }
 
-        nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
-        if (parsed.is_discarded()) {
+        GraphQlPageParse parse = ParseGraphQlSearchPage(resp.text, owner, repo, includePullRequests);
+        if (parse.Fatal) {
             if (outFetchError) {
-                *outFetchError = "GitHub returned invalid JSON";
+                *outFetchError = parse.Error;
             }
-            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL invalid JSON on page %d", page);
+            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch parse failure on page %d: %s", page,
+                      parse.Error.c_str());
             if (outFatal) {
                 *outFatal = true;
             }
             return false;
         }
 
-        const std::string gqlErrors = ExtractGraphQlErrors(parsed);
-        if (!gqlErrors.empty()) {
-            if (outFetchError) {
-                *outFetchError = std::string("GitHub GraphQL error: ") + gqlErrors;
-            }
-            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL errors on page %d: %s", page,
-                      gqlErrors.c_str());
-            if (outFatal) {
-                *outFatal = true;
-            }
-            return false;
-        }
-
-        if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
-            !parsed["data"].contains("search") || !parsed["data"]["search"].is_object()) {
-            if (outFetchError) {
-                *outFetchError = "GitHub GraphQL response missing data.search";
-            }
-            LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL response missing data.search on page %d", page);
-            if (outFatal) {
-                *outFatal = true;
-            }
-            return false;
-        }
-
-        const nlohmann::json& search = parsed["data"]["search"];
-        const nlohmann::json& nodes = search.value("nodes", nlohmann::json::array());
-        if (!nodes.is_array()) {
-            if (outFetchError) {
-                *outFetchError = "GitHub GraphQL search.nodes not an array";
-            }
-            if (outFatal) {
-                *outFatal = true;
-            }
-            return false;
-        }
-
-        std::vector<CachedTicket> pageTickets = MapGraphQlNodesToTickets(nodes, owner, repo, includePullRequests);
-
-        const nlohmann::json& pageInfo = search.value("pageInfo", nlohmann::json::object());
-        bool hasNext = false;
-        {
-            const auto it = pageInfo.find("hasNextPage");
-            if (it != pageInfo.end() && it->is_boolean()) {
-                hasNext = it->get<bool>();
-            }
-        }
-        std::string endCursor;
-        {
-            const auto it = pageInfo.find("endCursor");
-            if (it != pageInfo.end() && it->is_string()) {
-                endCursor = it->get<std::string>();
-            }
-        }
+        std::vector<CachedTicket> pageTickets = std::move(parse.Tickets);
+        const bool hasNext = parse.HasNext;
+        const std::string endCursor = parse.EndCursor;
 
         bool isLastPage = false;
         bool stopLoop = false;

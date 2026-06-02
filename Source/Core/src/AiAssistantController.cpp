@@ -416,13 +416,12 @@ void AiAssistantController::BuildChatPayload(const Request& req, AiChatRequest& 
     chatReq.History.push_back(std::move(userMsg));
 }
 
-void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, const AiCancelToken& cancel,
-                                              uint64_t turnGen) {
+IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
     // Capture turnGen by value so stale dispatcher tasks (after a newer Submit
     // or Cancel) can be dropped on the UI side via assistantTurnGen comparison.
     AppController* app = &app_;
 
-    auto onDelta = [app, turnGen](const AiStreamDelta& delta) {
+    return [app, turnGen](const AiStreamDelta& delta) {
         const std::string chunk = delta.TokenChunk;
         const bool isFinal = delta.IsFinal;
         app->mainThreadDispatcher.PostToMainThread([turnGen, chunk, isFinal]() {
@@ -475,8 +474,12 @@ void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, cons
             }
         });
     };
+}
 
-    auto onError = [this, app, turnGen](const AiStreamError& err) {
+IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
+    AppController* app = &app_;
+
+    return [this, app, turnGen](const AiStreamError& err) {
         const int httpStatus = err.HttpStatus;
         const std::string message = err.Message;
         const bool wasCancelled = err.WasCancelled;
@@ -530,7 +533,11 @@ void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, cons
             }
         });
     };
+}
 
+void AiAssistantController::RunStreaming(const AiChatRequest& chatReq, const AiCancelToken& cancel,
+                                         const IAiClient::DeltaCallback& onDelta,
+                                         const IAiClient::ErrorCallback& onError) {
     try {
         client_->SendStreaming(clientConfig_, chatReq, onDelta, onError, cancel);
     } catch (const std::exception& ex) {
@@ -548,6 +555,14 @@ void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, cons
         err.WasCancelled = false;
         onError(err);
     }
+}
+
+void AiAssistantController::StreamAndDispatch(const AiChatRequest& chatReq, const AiCancelToken& cancel,
+                                              uint64_t turnGen) {
+    const IAiClient::DeltaCallback onDelta = MakeOnDelta(turnGen);
+    const IAiClient::ErrorCallback onError = MakeOnError(turnGen);
+
+    RunStreaming(chatReq, cancel, onDelta, onError);
 
     // Worker keeps running for the next request; UI thread transitions State::Idle
     // when it observes a stable assistantInFlight=false.

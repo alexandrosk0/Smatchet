@@ -54,18 +54,56 @@ void EmitWarning(PrefsValidation& v, const char* fieldKey, std::string message) 
     v.Issues.push_back(std::move(issue));
 }
 
-} // namespace
+// Resolved per-provider view of the model field — the model ID plus the human
+// label and the structured field key used for both the missing-model error and
+// the unknown-catalog warning.
+struct ActiveModelView {
+    std::string Id;
+    const char* Label;
+    const char* FieldKey;
+};
 
-PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
-    PrefsValidation v;
-    const AiProvider provider = ClampProvider(cfg.AiProviderKind);
+ActiveModelView ResolveActiveModel(const TrackerConfig& cfg, AiProvider provider) {
+    ActiveModelView m;
+    m.Label = "";
+    m.FieldKey = nullptr;
+    switch (provider) {
+    case AiProvider::OpenAi:
+        m.Id = cfg.AiModelOpenAi;
+        m.Label = "OpenAI";
+        m.FieldKey = PrefsFieldKey::kAiModelOpenAi;
+        break;
+    case AiProvider::Anthropic:
+        m.Id = cfg.AiModelAnthropic;
+        m.Label = "Anthropic";
+        m.FieldKey = PrefsFieldKey::kAiModelAnthropic;
+        break;
+    case AiProvider::OllamaNative:
+        m.Id = cfg.AiModelOllama;
+        m.Label = "Ollama (native)";
+        m.FieldKey = PrefsFieldKey::kAiModelOllama;
+        break;
+    case AiProvider::OllamaOpenAiCompat:
+        m.Id = cfg.AiModelOpenAi;
+        m.Label = "OpenAI-compatible local";
+        m.FieldKey = PrefsFieldKey::kAiModelOpenAi;
+        break;
+    case AiProvider::DeepSeek:
+        m.Id = cfg.AiModelDeepSeek;
+        m.Label = "DeepSeek";
+        m.FieldKey = PrefsFieldKey::kAiModelDeepSeek;
+        break;
+    }
+    return m;
+}
 
-    // --- Key presence (per active provider) ---
-    // Only the hosted providers (OpenAi proper, Anthropic) require a key. Local
-    // OpenAI-compatible servers (LM Studio / Ollama / LocalAI / vLLM) and Ollama
-    // native ship without auth by default; even when the server is configured
-    // for token gating, users frequently leave the slot blank and provide auth
-    // out-of-band (header injection via reverse proxy, OS keychain helper, etc).
+// --- Key presence (per active provider) ---
+// Only the hosted providers (OpenAi proper, Anthropic, DeepSeek) require a key.
+// Local OpenAI-compatible servers (LM Studio / Ollama / LocalAI / vLLM) and Ollama
+// native ship without auth by default; even when the server is configured for token
+// gating, users frequently leave the slot blank and provide auth out-of-band (header
+// injection via reverse proxy, OS keychain helper, etc).
+void CheckKeyPresence(PrefsValidation& v, const TrackerConfig& cfg, AiProvider provider) {
     if (provider == AiProvider::OpenAi) {
         if (cfg.AiApiKey.empty()) {
             EmitError(v, PrefsFieldKey::kAiApiKey, "OpenAI: API key required");
@@ -80,43 +118,10 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
         }
     }
     // OllamaOpenAiCompat + OllamaNative: API key optional (no error when empty).
+}
 
-    // --- Model presence (per active provider) ---
-    std::string activeModelId;
-    const char* activeProviderLabel = "";
-    const char* activeModelFieldKey = nullptr;
-    switch (provider) {
-    case AiProvider::OpenAi:
-        activeModelId = cfg.AiModelOpenAi;
-        activeProviderLabel = "OpenAI";
-        activeModelFieldKey = PrefsFieldKey::kAiModelOpenAi;
-        break;
-    case AiProvider::Anthropic:
-        activeModelId = cfg.AiModelAnthropic;
-        activeProviderLabel = "Anthropic";
-        activeModelFieldKey = PrefsFieldKey::kAiModelAnthropic;
-        break;
-    case AiProvider::OllamaNative:
-        activeModelId = cfg.AiModelOllama;
-        activeProviderLabel = "Ollama (native)";
-        activeModelFieldKey = PrefsFieldKey::kAiModelOllama;
-        break;
-    case AiProvider::OllamaOpenAiCompat:
-        activeModelId = cfg.AiModelOpenAi;
-        activeProviderLabel = "OpenAI-compatible local";
-        activeModelFieldKey = PrefsFieldKey::kAiModelOpenAi;
-        break;
-    case AiProvider::DeepSeek:
-        activeModelId = cfg.AiModelDeepSeek;
-        activeProviderLabel = "DeepSeek";
-        activeModelFieldKey = PrefsFieldKey::kAiModelDeepSeek;
-        break;
-    }
-    if (activeModelId.empty()) {
-        EmitError(v, activeModelFieldKey, std::string(activeProviderLabel) + ": model ID required");
-    }
-
-    // --- Base URL well-formedness ---
+// --- Base URL well-formedness ---
+void CheckBaseUrls(PrefsValidation& v, const TrackerConfig& cfg, AiProvider provider) {
     if (!cfg.AiBaseUrl.empty() && !LooksLikeHttpUrl(cfg.AiBaseUrl)) {
         EmitError(v, PrefsFieldKey::kAiBaseUrl, "Base URL must start with http:// or https://");
     }
@@ -125,17 +130,18 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
             EmitError(v, PrefsFieldKey::kAiOllamaBaseUrl, "Ollama base URL must start with http:// or https://");
         }
     }
+}
 
-    // --- Key format sniff (warnings) ---
-    // Only nag for the hosted-provider key formats. Local-server keys (rare; sometimes used
-    // as a literal "sk-no-key-required" placeholder) don't follow a stable prefix.
-    //
-    // Cross-provider paste detection: `sk-ant-` is Anthropic-exclusive. If it shows up in
-    // the OpenAI or DeepSeek key field the user almost certainly pasted the wrong key into
-    // the wrong slot — that path used to produce a confusing HTTP 401 from the provider
-    // ("Authentication Fails, Your api key: ****GwAA is invalid") with no Smatchet-side
-    // signal that the key shape was wrong. Catch it at validate-time so the user gets a
-    // clear warning before any network round-trip.
+// --- Key format sniff (warnings) ---
+// Only nag for the hosted-provider key formats. Local-server keys (rare; sometimes used
+// as a literal "sk-no-key-required" placeholder) don't follow a stable prefix.
+// Cross-provider paste detection: `sk-ant-` is Anthropic-exclusive. If it shows up in
+// the OpenAI or DeepSeek key field the user almost certainly pasted the wrong key into
+// the wrong slot — that path used to produce a confusing HTTP 401 from the provider
+// ("Authentication Fails, Your api key: ****GwAA is invalid") with no Smatchet-side
+// signal that the key shape was wrong. Catch it at validate-time so the user gets a
+// clear warning before any network round-trip.
+void CheckKeyFormat(PrefsValidation& v, const TrackerConfig& cfg, AiProvider provider) {
     if (provider == AiProvider::OpenAi && !cfg.AiApiKey.empty()) {
         if (StartsWith(cfg.AiApiKey, "sk-ant-")) {
             EmitWarning(v, PrefsFieldKey::kAiApiKey,
@@ -158,16 +164,36 @@ PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
                         "DeepSeek: API key doesn't start with 'sk-' - likely malformed");
         }
     }
+}
 
-    // --- Unknown model warning (only when catalog non-empty) ---
-    if (!activeModelId.empty()) {
-        const std::vector<ModelOption> catalog = KnownModels(provider);
-        if (!catalog.empty() && !IsKnownModel(provider, activeModelId)) {
-            EmitWarning(v, activeModelFieldKey,
-                        std::string(activeProviderLabel) + ": model '" + activeModelId +
-                            "' not in known catalog - may not exist");
-        }
+// --- Unknown model warning (only when catalog non-empty) ---
+void CheckUnknownModel(PrefsValidation& v, AiProvider provider, const ActiveModelView& model) {
+    if (model.Id.empty()) {
+        return;
     }
+    const std::vector<ModelOption> catalog = KnownModels(provider);
+    if (!catalog.empty() && !IsKnownModel(provider, model.Id)) {
+        EmitWarning(v, model.FieldKey,
+                    std::string(model.Label) + ": model '" + model.Id + "' not in known catalog - may not exist");
+    }
+}
+
+} // namespace
+
+PrefsValidation ValidateAiPrefs(const TrackerConfig& cfg) {
+    PrefsValidation v;
+    const AiProvider provider = ClampProvider(cfg.AiProviderKind);
+
+    CheckKeyPresence(v, cfg, provider);
+
+    const ActiveModelView activeModel = ResolveActiveModel(cfg, provider);
+    if (activeModel.Id.empty()) {
+        EmitError(v, activeModel.FieldKey, std::string(activeModel.Label) + ": model ID required");
+    }
+
+    CheckBaseUrls(v, cfg, provider);
+    CheckKeyFormat(v, cfg, provider);
+    CheckUnknownModel(v, provider, activeModel);
 
     // --- Ollama default-URL hint ---
     if (provider == AiProvider::OllamaNative && cfg.AiOllamaBaseUrl.empty()) {

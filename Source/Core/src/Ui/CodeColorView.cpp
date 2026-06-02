@@ -259,131 +259,163 @@ TokenPalette ToTokenPalette(TextEditor::PaletteIndex p) {
     return TokenPalette::Default;
 }
 
+// Re-tag an Identifier token against the LD's keyword / known-identifier /
+// preproc-identifier tables. No-op for any other palette. Shared verbatim by
+// the LD-tokenize-callback path and the regex-fallback path (steps 4 + 5).
+void ReclassifyIdentifier(const char* tok_begin, const char* tok_end, const TextEditor::LanguageDefinition& ld,
+                          Token& t) {
+    if (t.palette != TokenPalette::Identifier) {
+        return;
+    }
+    std::string tok(tok_begin, tok_end);
+    const std::string lookup = ld.mCaseSensitive ? tok : ToLower(tok);
+    if (ld.mKeywords.find(lookup) != ld.mKeywords.end()) {
+        t.palette = TokenPalette::Keyword;
+    } else if (ld.mIdentifiers.find(lookup) != ld.mIdentifiers.end()) {
+        t.palette = TokenPalette::KnownIdentifier;
+    } else if (ld.mPreprocIdentifiers.find(lookup) != ld.mPreprocIdentifiers.end()) {
+        t.palette = TokenPalette::PreprocIdentifier;
+    }
+}
+
+// Step 1 — whitespace run as a Default-palette span (no colour, preserves byte
+// offsets). Returns true + advances `p` when it consumed a span.
+bool ScanWhitespace(const char* begin, const char*& p, const char* end, std::vector<Token>& outTokens) {
+    if (!std::isspace(static_cast<unsigned char>(*p))) {
+        return false;
+    }
+    const char* ws_start = p;
+    while (p < end && std::isspace(static_cast<unsigned char>(*p))) {
+        ++p;
+    }
+    Token t;
+    t.start = static_cast<int>(ws_start - begin);
+    t.length = static_cast<int>(p - ws_start);
+    t.palette = TokenPalette::Default;
+    outTokens.push_back(t);
+    return true;
+}
+
+// Step 2 — single-line comment shortcut (faster than regex; LDs that need it
+// always set mSingleLineComment).
+bool ScanSingleLineComment(const char* begin, const char*& p, const char* end, const TextEditor::LanguageDefinition& ld,
+                           std::vector<Token>& outTokens) {
+    if (ld.mSingleLineComment.empty() || static_cast<std::size_t>(end - p) < ld.mSingleLineComment.size() ||
+        std::memcmp(p, ld.mSingleLineComment.c_str(), ld.mSingleLineComment.size()) != 0) {
+        return false;
+    }
+    const char* line_end = p;
+    while (line_end < end && *line_end != '\n') {
+        ++line_end;
+    }
+    Token t;
+    t.start = static_cast<int>(p - begin);
+    t.length = static_cast<int>(line_end - p);
+    t.palette = TokenPalette::Comment;
+    outTokens.push_back(t);
+    p = line_end;
+    return true;
+}
+
+// Step 3 — block-comment shortcut.
+bool ScanBlockComment(const char* begin, const char*& p, const char* end, const TextEditor::LanguageDefinition& ld,
+                      std::vector<Token>& outTokens) {
+    if (ld.mCommentStart.empty() || ld.mCommentEnd.empty() ||
+        static_cast<std::size_t>(end - p) < ld.mCommentStart.size() ||
+        std::memcmp(p, ld.mCommentStart.c_str(), ld.mCommentStart.size()) != 0) {
+        return false;
+    }
+    const char* block_end = p + ld.mCommentStart.size();
+    while (block_end < end) {
+        if (static_cast<std::size_t>(end - block_end) >= ld.mCommentEnd.size() &&
+            std::memcmp(block_end, ld.mCommentEnd.c_str(), ld.mCommentEnd.size()) == 0) {
+            block_end += ld.mCommentEnd.size();
+            break;
+        }
+        ++block_end;
+    }
+    Token t;
+    t.start = static_cast<int>(p - begin);
+    t.length = static_cast<int>(block_end - p);
+    t.palette = TokenPalette::MultiLineComment;
+    outTokens.push_back(t);
+    p = block_end;
+    return true;
+}
+
+// Step 4 — LD-supplied tokenize callback (set by CPlusPlus / Lua / etc.).
+bool ScanLdTokenize(const char* begin, const char*& p, const char* end, const TextEditor::LanguageDefinition& ld,
+                    std::vector<Token>& outTokens) {
+    if (!ld.mTokenize) {
+        return false;
+    }
+    const char* out_begin = nullptr;
+    const char* out_end = nullptr;
+    TextEditor::PaletteIndex idx = TextEditor::PaletteIndex::Default;
+    if (!ld.mTokenize(p, end, out_begin, out_end, idx) || out_end <= out_begin) {
+        return false;
+    }
+    Token t;
+    t.start = static_cast<int>(out_begin - begin);
+    t.length = static_cast<int>(out_end - out_begin);
+    t.palette = ToTokenPalette(idx);
+    ReclassifyIdentifier(out_begin, out_end, ld, t);
+    outTokens.push_back(t);
+    p = out_end;
+    return true;
+}
+
+// Step 5 — regex-fallback path. Picks the longest match across all patterns.
+bool ScanRegexFallback(const char* begin, const char*& p, const char* end, const TextEditor::LanguageDefinition& ld,
+                       std::vector<Token>& outTokens) {
+    const char* best_end = nullptr;
+    TextEditor::PaletteIndex best_idx = TextEditor::PaletteIndex::Default;
+    for (const auto& kv : ld.mTokenRegexStrings) {
+        try {
+            std::regex re(kv.first);
+            std::cmatch m;
+            if (std::regex_search(p, end, m, re, std::regex_constants::match_continuous) && m.position(0) == 0) {
+                const char* match_end = p + m.length(0);
+                if (best_end == nullptr || match_end > best_end) {
+                    best_end = match_end;
+                    best_idx = kv.second;
+                }
+            }
+        } catch (const std::regex_error&) {
+            // Pathological LD regex — log once + skip. Defensive.
+            LOG_WARN("CodeColorView: regex compile failed for LD pattern");
+        }
+    }
+    if (best_end == nullptr || best_end <= p) {
+        return false;
+    }
+    Token t;
+    t.start = static_cast<int>(p - begin);
+    t.length = static_cast<int>(best_end - p);
+    t.palette = ToTokenPalette(best_idx);
+    ReclassifyIdentifier(p, best_end, ld, t);
+    outTokens.push_back(t);
+    p = best_end;
+    return true;
+}
+
 void TokenizeWithLd(const char* begin, const char* end, const TextEditor::LanguageDefinition& ld,
                     std::vector<Token>& outTokens) {
     const char* p = begin;
     while (p < end) {
-        // 1. Skip whitespace as a Default-palette span — no colour, preserves byte offsets.
-        if (std::isspace(static_cast<unsigned char>(*p))) {
-            const char* ws_start = p;
-            while (p < end && std::isspace(static_cast<unsigned char>(*p))) {
-                ++p;
-            }
-            Token t;
-            t.start = static_cast<int>(ws_start - begin);
-            t.length = static_cast<int>(p - ws_start);
-            t.palette = TokenPalette::Default;
-            outTokens.push_back(t);
+        if (ScanWhitespace(begin, p, end, outTokens)) {
             continue;
         }
-
-        // 2. Single-line comment shortcut (faster than regex; LDs that need
-        //    it always set mSingleLineComment).
-        if (!ld.mSingleLineComment.empty() && static_cast<std::size_t>(end - p) >= ld.mSingleLineComment.size() &&
-            std::memcmp(p, ld.mSingleLineComment.c_str(), ld.mSingleLineComment.size()) == 0) {
-            const char* line_end = p;
-            while (line_end < end && *line_end != '\n') {
-                ++line_end;
-            }
-            Token t;
-            t.start = static_cast<int>(p - begin);
-            t.length = static_cast<int>(line_end - p);
-            t.palette = TokenPalette::Comment;
-            outTokens.push_back(t);
-            p = line_end;
+        if (ScanSingleLineComment(begin, p, end, ld, outTokens)) {
             continue;
         }
-
-        // 3. Block-comment shortcut.
-        if (!ld.mCommentStart.empty() && !ld.mCommentEnd.empty() &&
-            static_cast<std::size_t>(end - p) >= ld.mCommentStart.size() &&
-            std::memcmp(p, ld.mCommentStart.c_str(), ld.mCommentStart.size()) == 0) {
-            const char* block_end = p + ld.mCommentStart.size();
-            while (block_end < end) {
-                if (static_cast<std::size_t>(end - block_end) >= ld.mCommentEnd.size() &&
-                    std::memcmp(block_end, ld.mCommentEnd.c_str(), ld.mCommentEnd.size()) == 0) {
-                    block_end += ld.mCommentEnd.size();
-                    break;
-                }
-                ++block_end;
-            }
-            Token t;
-            t.start = static_cast<int>(p - begin);
-            t.length = static_cast<int>(block_end - p);
-            t.palette = TokenPalette::MultiLineComment;
-            outTokens.push_back(t);
-            p = block_end;
+        if (ScanBlockComment(begin, p, end, ld, outTokens)) {
             continue;
         }
-
-        // 4. LD-supplied tokenize callback (set by CPlusPlus / Lua / etc.).
-        if (ld.mTokenize) {
-            const char* out_begin = nullptr;
-            const char* out_end = nullptr;
-            TextEditor::PaletteIndex idx = TextEditor::PaletteIndex::Default;
-            if (ld.mTokenize(p, end, out_begin, out_end, idx)) {
-                if (out_end > out_begin) {
-                    Token t;
-                    t.start = static_cast<int>(out_begin - begin);
-                    t.length = static_cast<int>(out_end - out_begin);
-                    t.palette = ToTokenPalette(idx);
-                    // Post-process — identifier lookup against mKeywords +
-                    // mIdentifiers + mPreprocIdentifiers.
-                    if (t.palette == TokenPalette::Identifier) {
-                        std::string tok(out_begin, out_end);
-                        const std::string lookup = ld.mCaseSensitive ? tok : ToLower(tok);
-                        if (ld.mKeywords.find(lookup) != ld.mKeywords.end()) {
-                            t.palette = TokenPalette::Keyword;
-                        } else if (ld.mIdentifiers.find(lookup) != ld.mIdentifiers.end()) {
-                            t.palette = TokenPalette::KnownIdentifier;
-                        } else if (ld.mPreprocIdentifiers.find(lookup) != ld.mPreprocIdentifiers.end()) {
-                            t.palette = TokenPalette::PreprocIdentifier;
-                        }
-                    }
-                    outTokens.push_back(t);
-                    p = out_end;
-                    continue;
-                }
-            }
+        if (ScanLdTokenize(begin, p, end, ld, outTokens)) {
+            continue;
         }
-
-        // 5. Regex-fallback path. Pick longest match across all patterns.
-        const char* best_end = nullptr;
-        TextEditor::PaletteIndex best_idx = TextEditor::PaletteIndex::Default;
-        for (const auto& kv : ld.mTokenRegexStrings) {
-            try {
-                std::regex re(kv.first);
-                std::cmatch m;
-                if (std::regex_search(p, end, m, re, std::regex_constants::match_continuous) && m.position(0) == 0) {
-                    const char* match_end = p + m.length(0);
-                    if (best_end == nullptr || match_end > best_end) {
-                        best_end = match_end;
-                        best_idx = kv.second;
-                    }
-                }
-            } catch (const std::regex_error&) {
-                // Pathological LD regex — log once + skip. Defensive.
-                LOG_WARN("CodeColorView: regex compile failed for LD pattern");
-            }
-        }
-        if (best_end != nullptr && best_end > p) {
-            Token t;
-            t.start = static_cast<int>(p - begin);
-            t.length = static_cast<int>(best_end - p);
-            t.palette = ToTokenPalette(best_idx);
-            if (t.palette == TokenPalette::Identifier) {
-                std::string tok(p, best_end);
-                const std::string lookup = ld.mCaseSensitive ? tok : ToLower(tok);
-                if (ld.mKeywords.find(lookup) != ld.mKeywords.end()) {
-                    t.palette = TokenPalette::Keyword;
-                } else if (ld.mIdentifiers.find(lookup) != ld.mIdentifiers.end()) {
-                    t.palette = TokenPalette::KnownIdentifier;
-                } else if (ld.mPreprocIdentifiers.find(lookup) != ld.mPreprocIdentifiers.end()) {
-                    t.palette = TokenPalette::PreprocIdentifier;
-                }
-            }
-            outTokens.push_back(t);
-            p = best_end;
+        if (ScanRegexFallback(begin, p, end, ld, outTokens)) {
             continue;
         }
 

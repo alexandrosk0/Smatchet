@@ -101,6 +101,92 @@ TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — state nesting variants all map
     }
 }
 
+TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — sprint (cycle) nesting variants all map to sprint") {
+    // cycle_details.id wins over cycle.id.
+    {
+        nlohmann::json issue;
+        issue["id"] = "u";
+        issue["sequence_id"] = 1;
+        issue["cycle_details"] = {{"id", "C1"}};
+        issue["cycle"] = {{"id", "C2"}};
+        const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", {});
+        CHECK(GetField(t, "sprint") == "C1");
+    }
+    // cycle.id wins when cycle_details missing.
+    {
+        nlohmann::json issue;
+        issue["id"] = "u";
+        issue["sequence_id"] = 1;
+        issue["cycle"] = {{"id", "C2"}};
+        const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", {});
+        CHECK(GetField(t, "sprint") == "C2");
+    }
+    // flat string fallback.
+    {
+        nlohmann::json issue;
+        issue["id"] = "u";
+        issue["sequence_id"] = 1;
+        issue["cycle"] = "C-flat";
+        const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", {});
+        CHECK(GetField(t, "sprint") == "C-flat");
+    }
+}
+
+TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — issuetype nesting variants use the name inner-key") {
+    // type_detail.name wins.
+    {
+        nlohmann::json issue;
+        issue["id"] = "u";
+        issue["sequence_id"] = 1;
+        issue["type_detail"] = {{"id", "T1"}, {"name", "Bug"}};
+        issue["type"] = {{"name", "Story"}};
+        const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", {});
+        CHECK(GetField(t, "issuetype") == "Bug");
+    }
+    // type.name wins when type_detail missing.
+    {
+        nlohmann::json issue;
+        issue["id"] = "u";
+        issue["sequence_id"] = 1;
+        issue["type"] = {{"name", "Story"}};
+        const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", {});
+        CHECK(GetField(t, "issuetype") == "Story");
+    }
+    // flat string fallback.
+    {
+        nlohmann::json issue;
+        issue["id"] = "u";
+        issue["sequence_id"] = 1;
+        issue["type"] = "Task";
+        const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", {});
+        CHECK(GetField(t, "issuetype") == "Task");
+    }
+}
+
+TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — assignee_details display_name preferred over user lookup") {
+    nlohmann::json issue;
+    issue["id"] = "u";
+    issue["sequence_id"] = 1;
+    issue["assignees"] = nlohmann::json::array({{{"id", "acct-alice"}}});
+    issue["assignee_details"] = nlohmann::json::array({{{"display_name", "Alice From Details"}}});
+
+    // Even though the lookup vector has a different display, assignee_details wins.
+    const std::vector<UserDisplayLookup> users = {{"acct-alice", "Alice Lookup"}};
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", users);
+    CHECK(GetField(t, "assignee") == "Alice From Details");
+}
+
+TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — assignee id passthrough when no details and no lookup hit") {
+    nlohmann::json issue;
+    issue["id"] = "u";
+    issue["sequence_id"] = 1;
+    issue["assignees"] = nlohmann::json::array({"acct-unknown"});
+
+    const std::vector<UserDisplayLookup> users = {{"acct-other", "Other"}};
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "P", users);
+    CHECK(GetField(t, "assignee") == "acct-unknown");
+}
+
 TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — labels join with comma; label_details preferred") {
     nlohmann::json issue;
     issue["id"] = "u";

@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "Logger.h"
 #include "MemoryTelemetry.h"
+#include "ImageDimensionsPure.h"
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
@@ -42,20 +43,6 @@ struct ParsedImageInfo {
     std::string Error;
 };
 
-static std::uint32_t ReadU32BE(const unsigned char* data) {
-    return (static_cast<std::uint32_t>(data[0]) << 24) | (static_cast<std::uint32_t>(data[1]) << 16) |
-           (static_cast<std::uint32_t>(data[2]) << 8) | static_cast<std::uint32_t>(data[3]);
-}
-
-static std::uint16_t ReadU16LE(const unsigned char* data) {
-    return static_cast<std::uint16_t>(data[0]) | static_cast<std::uint16_t>(data[1] << 8);
-}
-
-static std::uint32_t ReadU24LE(const unsigned char* data) {
-    return static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8) |
-           (static_cast<std::uint32_t>(data[2]) << 16);
-}
-
 static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::string& mimeType) {
     ParsedImageInfo result;
     if (path.empty()) {
@@ -65,7 +52,7 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
     // Bounded header read (S4 of docs/plans/shipped/memory-budget-and-lifetime-hardening.md):
     // read at most kMaxHeaderBytes instead of slurping the whole file (was up to 50 MB) on the
     // UI thread. PNG/GIF/WEBP dimensions live in the first <30 bytes; the JPEG SOF marker walk
-    // below is naturally capped to this window (a SOF buried past the cap by huge EXIF/thumbnail
+    // is naturally capped to this window (a SOF buried past the cap by huge EXIF/thumbnail
     // segments falls through to the existing "could not parse" degradation — rare, and the S5
     // decoder still reads the file in full off the UI thread).
     constexpr std::size_t kMaxHeaderBytes = 64u * 1024u;
@@ -81,95 +68,16 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
     std::vector<unsigned char> bytes(kMaxHeaderBytes);
     ifs.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(kMaxHeaderBytes));
     bytes.resize(static_cast<std::size_t>(ifs.gcount()));
-    if (bytes.empty()) {
-        result.Error = "Downloaded attachment file is empty.";
-        return result;
-    }
-    if (bytes.size() >= 24 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
-        bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A) {
-        const std::uint32_t width = ReadU32BE(&bytes[16]);
-        const std::uint32_t height = ReadU32BE(&bytes[20]);
-        if (width == 0 || height == 0) {
-            result.Error = "PNG dimensions are invalid.";
-            return result;
-        }
-        result.Ok = true;
-        result.Width = static_cast<int>(width);
-        result.Height = static_cast<int>(height);
-        return result;
-    }
-    if (bytes.size() >= 10 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && (bytes[3] == '8') &&
-        (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a') {
-        const std::uint16_t width = ReadU16LE(&bytes[6]);
-        const std::uint16_t height = ReadU16LE(&bytes[8]);
-        if (width == 0 || height == 0) {
-            result.Error = "GIF dimensions are invalid.";
-            return result;
-        }
-        result.Ok = true;
-        result.Width = static_cast<int>(width);
-        result.Height = static_cast<int>(height);
-        return result;
-    }
-    if (bytes.size() >= 30 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F' &&
-        bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
-        if (bytes[12] == 'V' && bytes[13] == 'P' && bytes[14] == '8' && bytes[15] == 'X') {
-            const std::uint32_t widthMinusOne = ReadU24LE(&bytes[24]);
-            const std::uint32_t heightMinusOne = ReadU24LE(&bytes[27]);
-            result.Ok = true;
-            result.Width = static_cast<int>(widthMinusOne + 1);
-            result.Height = static_cast<int>(heightMinusOne + 1);
-            return result;
-        }
-    }
-    if (bytes.size() >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8) {
-        size_t i = 2;
-        while (i + 9 < bytes.size()) {
-            if (bytes[i] != 0xFF) {
-                ++i;
-                continue;
-            }
-            while (i < bytes.size() && bytes[i] == 0xFF) {
-                ++i;
-            }
-            if (i >= bytes.size()) {
-                break;
-            }
-            const unsigned char marker = bytes[i++];
-            if (marker == 0xD8 || marker == 0xD9) {
-                continue;
-            }
-            if (i + 1 >= bytes.size()) {
-                break;
-            }
-            const std::uint16_t segmentLength =
-                static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[i]) << 8) | bytes[i + 1]);
-            if (segmentLength < 2 || i + segmentLength > bytes.size()) {
-                break;
-            }
-            const bool isSofMarker = (marker >= 0xC0 && marker <= 0xC3) || (marker >= 0xC5 && marker <= 0xC7) ||
-                                     (marker >= 0xC9 && marker <= 0xCB) || (marker >= 0xCD && marker <= 0xCF);
-            if (isSofMarker && segmentLength >= 7) {
-                const std::uint16_t height =
-                    static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[i + 3]) << 8) | bytes[i + 4]);
-                const std::uint16_t width =
-                    static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[i + 5]) << 8) | bytes[i + 6]);
-                if (width == 0 || height == 0) {
-                    result.Error = "JPEG dimensions are invalid.";
-                    return result;
-                }
-                result.Ok = true;
-                result.Width = static_cast<int>(width);
-                result.Height = static_cast<int>(height);
-                return result;
-            }
-            i += segmentLength;
-        }
-    }
 
-    result.Error = IsSupportedImageMime(mimeType)
-                       ? "Image format detected but dimensions could not be parsed by the in-app preview."
-                       : "Attachment is not a supported image format for in-app preview.";
+    // Byte-level format decode lives in the pure ImageDimensionsPure seam (unit-tested
+    // against untrusted-input cases). Behaviour is byte-for-byte identical to the
+    // pre-extraction monolith.
+    const smatchet::image_dim::ParsedImageInfo parsed =
+        smatchet::image_dim::ParseImageDimensionsFromBytes(bytes, mimeType);
+    result.Ok = parsed.Ok;
+    result.Width = parsed.Width;
+    result.Height = parsed.Height;
+    result.Error = parsed.Error;
     return result;
 }
 
@@ -732,8 +640,8 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
                 smatchet::memtel::PendingThumbnailUploads().load(std::memory_order_relaxed);
             if (loadingThumbs > 0) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s", SmatchetLocalization::T("attachment.thumbnails.loading",
-                                                                   "loading thumbnails..."));
+                ImGui::TextDisabled("%s",
+                                    SmatchetLocalization::T("attachment.thumbnails.loading", "loading thumbnails..."));
             }
         }
 #endif

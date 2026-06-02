@@ -374,6 +374,140 @@ void RegisterProbeCommand(CommandRegistry& reg) {
     }
 }
 
+// Collected outcome of a single-shot streaming call, accumulated across the
+// onDelta / onError callbacks plus any thrown exception.
+struct SendOnceResult {
+    std::string finalContent;
+    int deltasCount = 0;
+    bool sawFinal = false;
+    int httpStatus = 0;
+    std::string errorMessage;
+    std::string responseBodyExcerpt;
+    bool errored = false;
+};
+
+// Run the synchronous SendStreaming call with a best-effort timeout watchdog,
+// collecting deltas + errors into `res`. Behaviour is byte-for-byte identical
+// to the inlined handler body it was extracted from.
+void RunSendOnceStream(IAiClient& client, const AiClientConfig& clientCfg, const AiChatRequest& chatReq,
+                       SendOnceResult& res) {
+    std::mutex collectMu;
+
+    auto onDelta = [&](const AiStreamDelta& d) {
+        std::lock_guard<std::mutex> lk(collectMu);
+        if (!d.TokenChunk.empty()) {
+            res.finalContent.append(d.TokenChunk);
+        }
+        ++res.deltasCount;
+        if (d.IsFinal) {
+            res.sawFinal = true;
+        }
+    };
+    auto onError = [&](const AiStreamError& e) {
+        std::lock_guard<std::mutex> lk(collectMu);
+        res.errored = true;
+        res.httpStatus = e.HttpStatus;
+        res.errorMessage = e.Message;
+        // Surface the redacted body excerpt the client built into
+        // err.Message so the CLI consumer sees the same shape the
+        // Logger captured.
+        res.responseBodyExcerpt = e.Message;
+    };
+
+    AiCancelToken cancel = std::make_shared<std::atomic<bool>>(false);
+
+    // Best-effort timeout watchdog: a side thread flips the cancel
+    // atom after `timeoutMs`. cpr's Timeout already enforces the
+    // HTTP envelope; this is belt-and-braces for the rare case the
+    // stream stalls inside libcurl's read loop after the headers
+    // arrive.
+    std::atomic<bool> done{false};
+    std::thread watchdog;
+    if (clientCfg.TotalTimeoutMs > 0) {
+        watchdog = std::thread([&done, cancel, totalMs = clientCfg.TotalTimeoutMs]() {
+            const auto start = std::chrono::steady_clock::now();
+            while (!done.load(std::memory_order_acquire)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                const auto elapsed =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+                if (elapsed.count() > totalMs + 1000) {
+                    cancel->store(true, std::memory_order_release);
+                    return;
+                }
+            }
+        });
+    }
+
+    try {
+        client.SendStreaming(clientCfg, chatReq, onDelta, onError, cancel);
+    } catch (const std::exception& e) {
+        res.errored = true;
+        res.errorMessage = std::string("exception: ") + e.what();
+    } catch (...) {
+        res.errored = true;
+        res.errorMessage = "unknown exception";
+    }
+
+    done.store(true, std::memory_order_release);
+    if (watchdog.joinable()) {
+        watchdog.join();
+    }
+}
+
+CommandResult RunSendOnce(const nlohmann::json& args) {
+    const std::string providerStr = args.value("provider", std::string("openai"));
+    AiProvider provider;
+    if (!ResolveProvider(providerStr, provider)) {
+        return CommandResult::Failure(ErrorCode::ValidationError, "unknown provider '" + providerStr + "'");
+    }
+    const std::string prompt = args.value("prompt", std::string());
+    if (prompt.empty()) {
+        return CommandResult::Failure(ErrorCode::ValidationError, "prompt is required");
+    }
+    const std::string systemPrompt = args.value("system", std::string());
+    const int timeoutMs = static_cast<int>(args.value("timeout-ms", 30000));
+
+    std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
+    if (!client) {
+        return CommandResult::Failure(ErrorCode::HandlerError,
+                                      std::string("no client implementation for provider '") + providerStr + "'");
+    }
+
+    const TrackerConfig cfg = ConfigManager::Load();
+    AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
+    clientCfg.ConnectTimeoutMs = 5000;
+    clientCfg.TotalTimeoutMs = (timeoutMs > 0) ? timeoutMs : 30000;
+
+    AiChatRequest chatReq;
+    chatReq.Model = args.value("model", ResolveModelId(cfg, provider));
+    chatReq.SystemPrompt = systemPrompt;
+    AiMessage userMsg;
+    userMsg.Role = "user";
+    userMsg.Content = prompt;
+    chatReq.History.push_back(std::move(userMsg));
+
+    SendOnceResult res;
+    RunSendOnceStream(*client, clientCfg, chatReq, res);
+
+    nlohmann::json out;
+    out["provider"] = providerStr;
+    out["ok"] = !res.errored;
+    out["http_status"] = res.httpStatus;
+    out["final_content"] = res.finalContent;
+    out["deltas_count"] = res.deltasCount;
+    out["saw_final"] = res.sawFinal;
+    out["error_message"] = res.errorMessage;
+    // Cap response body excerpt to 1 KiB - the client already
+    // redacted, but extra defence-in-depth against log spam if a
+    // future provider returns a giant HTML stack trace.
+    if (res.responseBodyExcerpt.size() > 1024) {
+        res.responseBodyExcerpt.resize(1024);
+        res.responseBodyExcerpt += "...";
+    }
+    out["response_body_excerpt"] = res.responseBodyExcerpt;
+    return CommandResult::Success(std::move(out));
+}
+
 void RegisterSendOnceCommand(CommandRegistry& reg) {
     // --- ai.send-once -------------------------------------------------------
     {
@@ -382,126 +516,7 @@ void RegisterSendOnceCommand(CommandRegistry& reg) {
             "Send a single chat turn through the chosen AI provider synchronously. Collects streamed deltas + the "
             "final message. Network call. Reads keys from ConfigManager::Load(); returns HTTP status + body excerpt "
             "for failures so 400/401/429/5xx are diagnosable without spelunking the runtime log.",
-            [](const nlohmann::json& args, const CommandContext&) {
-                const std::string providerStr = args.value("provider", std::string("openai"));
-                AiProvider provider;
-                if (!ResolveProvider(providerStr, provider)) {
-                    return CommandResult::Failure(ErrorCode::ValidationError, "unknown provider '" + providerStr + "'");
-                }
-                const std::string prompt = args.value("prompt", std::string());
-                if (prompt.empty()) {
-                    return CommandResult::Failure(ErrorCode::ValidationError, "prompt is required");
-                }
-                const std::string systemPrompt = args.value("system", std::string());
-                const int timeoutMs = static_cast<int>(args.value("timeout-ms", 30000));
-
-                std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
-                if (!client) {
-                    return CommandResult::Failure(ErrorCode::HandlerError,
-                                                  std::string("no client implementation for provider '") + providerStr +
-                                                      "'");
-                }
-
-                const TrackerConfig cfg = ConfigManager::Load();
-                AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
-                clientCfg.ConnectTimeoutMs = 5000;
-                clientCfg.TotalTimeoutMs = (timeoutMs > 0) ? timeoutMs : 30000;
-
-                AiChatRequest chatReq;
-                chatReq.Model = args.value("model", ResolveModelId(cfg, provider));
-                chatReq.SystemPrompt = systemPrompt;
-                AiMessage userMsg;
-                userMsg.Role = "user";
-                userMsg.Content = prompt;
-                chatReq.History.push_back(std::move(userMsg));
-
-                std::string finalContent;
-                int deltasCount = 0;
-                bool sawFinal = false;
-                int httpStatus = 0;
-                std::string errorMessage;
-                std::string responseBodyExcerpt;
-                bool errored = false;
-                std::mutex collectMu;
-
-                auto onDelta = [&](const AiStreamDelta& d) {
-                    std::lock_guard<std::mutex> lk(collectMu);
-                    if (!d.TokenChunk.empty()) {
-                        finalContent.append(d.TokenChunk);
-                    }
-                    ++deltasCount;
-                    if (d.IsFinal) {
-                        sawFinal = true;
-                    }
-                };
-                auto onError = [&](const AiStreamError& e) {
-                    std::lock_guard<std::mutex> lk(collectMu);
-                    errored = true;
-                    httpStatus = e.HttpStatus;
-                    errorMessage = e.Message;
-                    // Surface the redacted body excerpt the client built into
-                    // err.Message so the CLI consumer sees the same shape the
-                    // Logger captured.
-                    responseBodyExcerpt = e.Message;
-                };
-
-                AiCancelToken cancel = std::make_shared<std::atomic<bool>>(false);
-
-                // Best-effort timeout watchdog: a side thread flips the cancel
-                // atom after `timeoutMs`. cpr's Timeout already enforces the
-                // HTTP envelope; this is belt-and-braces for the rare case the
-                // stream stalls inside libcurl's read loop after the headers
-                // arrive.
-                std::atomic<bool> done{false};
-                std::thread watchdog;
-                if (clientCfg.TotalTimeoutMs > 0) {
-                    watchdog = std::thread([&done, cancel, totalMs = clientCfg.TotalTimeoutMs]() {
-                        const auto start = std::chrono::steady_clock::now();
-                        while (!done.load(std::memory_order_acquire)) {
-                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                std::chrono::steady_clock::now() - start);
-                            if (elapsed.count() > totalMs + 1000) {
-                                cancel->store(true, std::memory_order_release);
-                                return;
-                            }
-                        }
-                    });
-                }
-
-                try {
-                    client->SendStreaming(clientCfg, chatReq, onDelta, onError, cancel);
-                } catch (const std::exception& e) {
-                    errored = true;
-                    errorMessage = std::string("exception: ") + e.what();
-                } catch (...) {
-                    errored = true;
-                    errorMessage = "unknown exception";
-                }
-
-                done.store(true, std::memory_order_release);
-                if (watchdog.joinable()) {
-                    watchdog.join();
-                }
-
-                nlohmann::json out;
-                out["provider"] = providerStr;
-                out["ok"] = !errored;
-                out["http_status"] = httpStatus;
-                out["final_content"] = finalContent;
-                out["deltas_count"] = deltasCount;
-                out["saw_final"] = sawFinal;
-                out["error_message"] = errorMessage;
-                // Cap response body excerpt to 1 KiB - the client already
-                // redacted, but extra defence-in-depth against log spam if a
-                // future provider returns a giant HTML stack trace.
-                if (responseBodyExcerpt.size() > 1024) {
-                    responseBodyExcerpt.resize(1024);
-                    responseBodyExcerpt += "...";
-                }
-                out["response_body_excerpt"] = responseBodyExcerpt;
-                return CommandResult::Success(std::move(out));
-            });
+            [](const nlohmann::json& args, const CommandContext&) { return RunSendOnce(args); });
         ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek", true);
         providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         ParamSpec timeoutParam = PInt("timeout-ms", "Total HTTP envelope timeout (ms). Default 30000.", 30000);

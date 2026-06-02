@@ -164,6 +164,30 @@ TEST_CASE("CodeColorView::Tokenize — JSON recognises true / false / null + num
     CHECK(h.count(TokenPalette::Punctuation) >= 1);
 }
 
+TEST_CASE("CodeColorView::Tokenize — C++ block comment spans to its terminator (ScanBlockComment seam)") {
+    ResetCacheForTest();
+    const char src[] = "int x; /* multi\nline comment */ int y;";
+    std::vector<Token> toks;
+    Tokenize(src, std::strlen(src), CodeLang::CPlusPlus, toks);
+    const auto h = Histogram(toks);
+    // The /* ... */ run collapses into a single MultiLineComment token.
+    CHECK(h.count(TokenPalette::MultiLineComment) >= 1);
+    // Keywords `int` survive on both sides of the comment.
+    CHECK(h.count(TokenPalette::Keyword) >= 1);
+}
+
+TEST_CASE("CodeColorView::Tokenize — keyword reclassification re-tags Identifier (ReclassifyIdentifier seam)") {
+    ResetCacheForTest();
+    // `return` is a C++ keyword; `myVar` is a bare identifier. The shared
+    // ReclassifyIdentifier helper must re-tag the former and leave the latter.
+    const char src[] = "return myVar;";
+    std::vector<Token> toks;
+    Tokenize(src, std::strlen(src), CodeLang::CPlusPlus, toks);
+    const auto h = Histogram(toks);
+    CHECK(h.count(TokenPalette::Keyword) >= 1);    // `return`
+    CHECK(h.count(TokenPalette::Identifier) >= 1); // `myVar`
+}
+
 TEST_CASE("CodeColorView::Tokenize — input cap silently truncates at 256 KiB") {
     ResetCacheForTest();
     // 300 KiB of `x`-padding — more than the cap.

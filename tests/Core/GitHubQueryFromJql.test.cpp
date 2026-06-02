@@ -266,3 +266,123 @@ TEST_CASE("TranslateJqlToGitHubSearch — unknown type value warning lists commi
     CHECK(Contains(r.Warning, "all"));
     CHECK(Contains(r.Warning, "any")); // CR #504 — accepted aliases listed
 }
+
+// PR A1 (full-function-size-compliance) — additional clause-dispatch coverage
+// locking byte-identical behaviour across the StripOrderByClause /
+// TranslateClauses / HandleFieldClause / HandleStatusClause / HandleTypeClause /
+// ComposeQuery decomposition.
+
+TEST_CASE("TranslateJqlToGitHubSearch — status = \"Open\" → is:open") {
+    const auto r = TranslateJqlToGitHubSearch("status = \"Open\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query == "is:open");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — status = \"Closed\" → is:closed") {
+    const auto r = TranslateJqlToGitHubSearch("status = \"Closed\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query == "is:closed");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — status != \"Open\" → is:closed") {
+    const auto r = TranslateJqlToGitHubSearch("status != \"Open\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query == "is:closed");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — status with no GitHub equivalent dropped with warning") {
+    const auto r = TranslateJqlToGitHubSearch("status = \"Backlog\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "Backlog"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — assignee != value drops as unsupported negation") {
+    const auto r = TranslateJqlToGitHubSearch("assignee != \"octocat\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "negation"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — unsupported operator ~ on assignee warns") {
+    const auto r = TranslateJqlToGitHubSearch("assignee ~ \"octo\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "Unsupported operator"));
+    CHECK(Contains(r.Warning, "assignee"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — reporter != currentUser() warns on operator") {
+    const auto r = TranslateJqlToGitHubSearch("reporter != currentUser()", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "Unsupported operator"));
+    CHECK(Contains(r.Warning, "reporter"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — author field aliases reporter → author:@me") {
+    const auto r = TranslateJqlToGitHubSearch("author = currentUser()", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query == "author:@me");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — empty label value dropped with warning") {
+    const auto r = TranslateJqlToGitHubSearch("labels = \"\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "Empty label"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — unsupported operator on labels warns") {
+    const auto r = TranslateJqlToGitHubSearch("labels ~ \"bug\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "Unsupported operator"));
+    CHECK(Contains(r.Warning, "labels"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — summary ~ phrase aliases text") {
+    const auto r = TranslateJqlToGitHubSearch("summary ~ \"crash on exit\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query == "\"crash on exit\"");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — description = bareword unquoted") {
+    const auto r = TranslateJqlToGitHubSearch("description = leak", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query == "leak");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — missing value after operator warns") {
+    const auto r = TranslateJqlToGitHubSearch("assignee =", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "Missing value"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — colon shorthand normalizes to = for status") {
+    const auto r = TranslateJqlToGitHubSearch("status:open", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query == "is:open");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — unterminated quote → Ok=false with error") {
+    const auto r = TranslateJqlToGitHubSearch("labels = \"bug", "", "");
+    CHECK_FALSE(r.Ok);
+    CHECK_FALSE(r.Error.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — stray bareword dropped with warning") {
+    const auto r = TranslateJqlToGitHubSearch("frobnicate", "", "");
+    CHECK(r.Ok);
+    CHECK(r.Query.empty());
+    CHECK(Contains(r.Warning, "Unrecognised token"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — ORDER BY after multiple clauses strips tail only") {
+    const auto r = TranslateJqlToGitHubSearch("labels = \"bug\" AND status = \"Open\" ORDER BY priority DESC", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "label:bug"));
+    CHECK(Contains(r.Query, "is:open"));
+    CHECK(Contains(r.Warning, "ORDER BY"));
+}
