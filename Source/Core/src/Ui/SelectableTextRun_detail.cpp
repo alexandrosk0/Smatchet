@@ -55,8 +55,16 @@ SegmentSpan ComputeSegmentSpan(int i, int aSeg, int aChar, int bSeg, int bChar, 
     if (span.from > span.to) {
         std::swap(span.from, span.to);
     }
+    // Clamp both endpoints fully into [0, segLen] so the helper honors its
+    // header contract even for unordered/out-of-range inputs (CR #736).
     if (span.from < 0) {
         span.from = 0;
+    }
+    if (span.from > segLen) {
+        span.from = segLen;
+    }
+    if (span.to < 0) {
+        span.to = 0;
     }
     if (span.to > segLen) {
         span.to = segLen;

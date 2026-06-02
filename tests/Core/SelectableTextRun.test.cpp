@@ -241,6 +241,15 @@ TEST_CASE("detail::ComputeSegmentSpan endpoints, middle, clamp, reverse") {
     const SegmentSpan rev = ComputeSegmentSpan(0, 0, 5, 0, 2, 3);
     CHECK(rev.from == 2);
     CHECK(rev.to == 3); // 5 clamped down to segLen 3
+    // Both endpoints out of range AND unordered (CR #736): aChar=10,bChar=8 on a
+    // 5-long segment -> swap to (8,10), then both clamp into [0,5] -> empty [5,5],
+    // always ordered and in-bounds (never from>to or from>segLen).
+    const SegmentSpan oob = ComputeSegmentSpan(0, 0, 10, 0, 8, 5);
+    CHECK(oob.from == 5);
+    CHECK(oob.to == 5);
+    CHECK(oob.from <= oob.to);
+    CHECK(oob.from >= 0);
+    CHECK(oob.to <= 5);
 }
 
 TEST_CASE("detail::SelectionEndpointsInRange matches the overlay guard") {

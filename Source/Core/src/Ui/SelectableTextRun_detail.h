@@ -1,13 +1,9 @@
 #ifndef SMATCHET_SELECTABLE_TEXT_RUN_DETAIL_H
 #define SMATCHET_SELECTABLE_TEXT_RUN_DETAIL_H
 
-// SelectableTextRun pure-geometry / selection-math helpers.
-//
-// These free functions carry NO ImGui-context dependency (they touch only
-// ImVec2 PODs and the exposed Segment vector) so the bucket-A doctest rig can
-// exercise the bounding-box, hit-containment, and per-segment selection-span
-// math without an ImGui context. SelectableTextRun.cpp's End() composes them so
-// the ImGui-emit half stays thin and under the function-size branch cap.
+// SelectableTextRun pure-geometry / selection-math helpers — no ImGui-context
+// dependency (only ImVec2 PODs + the Segment vector), so the bucket-A doctest
+// rig exercises them directly. End() composes them to keep the emit half thin.
 
 #include "SelectableTextRun.h"
 
