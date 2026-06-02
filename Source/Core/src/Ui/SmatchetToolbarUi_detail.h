@@ -14,8 +14,8 @@ namespace smatchet {
 namespace toolbar_editor {
 
 // Label shown for one button row in the editor's left-hand list. Separators get a
-// fixed marker; real buttons get an icon prefix (glyph when FontAwesome is loaded,
-// else a "[ ]" placeholder) followed by the tooltip, the command id, or "(unset)".
+// fixed marker; real buttons get an icon prefix (a FontAwesome glyph when loaded,
+// otherwise a bracket placeholder) plus the tooltip, the command id, or a fallback.
 inline std::string EditorRowLabel(const ToolbarButton& b, bool faLoaded) {
     if (b.Kind == ToolbarButtonKind::Separator) {
         return "--- separator ---";
