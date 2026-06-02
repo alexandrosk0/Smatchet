@@ -35,7 +35,7 @@ fi
 # Scripts that are known to be worktree-incompatible (per
 # docs/self-improvement/categories/tooling.md "test-all.sh baseline drift
 # across worktrees"). Extend this list as new worktree-only failures surface.
-WORKTREE_INCOMPATIBLE_RE='(test-lint-hook-split|test-ui-views-columns-reorder|test-ui-callstack-tooltip|test-ui-ai-assistant|test-ui-funcsize-window-render-smoke)'
+WORKTREE_INCOMPATIBLE_RE='(test-lint-hook-split|test-ui-views-columns-reorder|test-ui-callstack-tooltip|test-ui-ai-assistant|test-ui-funcsize-window-render-smoke|test-ui-funcsize-grid-render)'
 
 FILTER=""
 if [ "${1:-}" = "--filter" ]; then
