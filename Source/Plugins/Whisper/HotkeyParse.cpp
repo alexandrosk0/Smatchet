@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace smatchet {
@@ -66,10 +67,14 @@ std::vector<std::string> SplitOnPlus(const std::string& s) {
 // Map a lower-cased token to a modifier bit. Returns 0 when the token is not
 // a recognised modifier; the caller then tries the key-name table.
 unsigned int TokenToModifier(const std::string& lower) {
-    if (lower == "ctrl" || lower == "control") return mod::kControl;
-    if (lower == "alt") return mod::kAlt;
-    if (lower == "shift") return mod::kShift;
-    if (lower == "win" || lower == "meta" || lower == "super") return mod::kWin;
+    if (lower == "ctrl" || lower == "control")
+        return mod::kControl;
+    if (lower == "alt")
+        return mod::kAlt;
+    if (lower == "shift")
+        return mod::kShift;
+    if (lower == "win" || lower == "meta" || lower == "super")
+        return mod::kWin;
     return 0;
 }
 
@@ -117,21 +122,20 @@ unsigned int TokenToVirtualKey(const std::string& lower) {
         }
     }
 
-    if (lower == "space") return vk::kSpace;
-    if (lower == "enter" || lower == "return") return vk::kEnter;
-    if (lower == "escape" || lower == "esc") return vk::kEscape;
-    if (lower == "tab") return vk::kTab;
-    if (lower == "backspace") return vk::kBackspace;
-    if (lower == "up") return vk::kUp;
-    if (lower == "down") return vk::kDown;
-    if (lower == "left") return vk::kLeft;
-    if (lower == "right") return vk::kRight;
-    if (lower == "home") return vk::kHome;
-    if (lower == "end") return vk::kEnd;
-    if (lower == "pageup") return vk::kPageUp;
-    if (lower == "pagedown") return vk::kPageDown;
-    if (lower == "insert") return vk::kInsert;
-    if (lower == "delete") return vk::kDelete;
+    // Named keys — lower-cased token -> VK. One entry per accepted spelling
+    // (incl. the enter/return and escape/esc aliases). This table is the single
+    // source of truth for the named-key vocabulary; built once on first call.
+    static const std::unordered_map<std::string, unsigned int> kNamedKeys = {
+        {"space", vk::kSpace},   {"enter", vk::kEnter},   {"return", vk::kEnter},        {"escape", vk::kEscape},
+        {"esc", vk::kEscape},    {"tab", vk::kTab},       {"backspace", vk::kBackspace}, {"up", vk::kUp},
+        {"down", vk::kDown},     {"left", vk::kLeft},     {"right", vk::kRight},         {"home", vk::kHome},
+        {"end", vk::kEnd},       {"pageup", vk::kPageUp}, {"pagedown", vk::kPageDown},   {"insert", vk::kInsert},
+        {"delete", vk::kDelete},
+    };
+    const std::unordered_map<std::string, unsigned int>::const_iterator it = kNamedKeys.find(lower);
+    if (it != kNamedKeys.end()) {
+        return it->second;
+    }
 
     return 0;
 }
@@ -255,26 +259,31 @@ std::string Stringify(const Hotkey& hk) {
     std::string out;
     out.reserve(32);
     if ((hk.mods & mod::kControl) != 0) {
-        if (!out.empty()) out.push_back('+');
+        if (!out.empty())
+            out.push_back('+');
         out += "Ctrl";
     }
     if ((hk.mods & mod::kAlt) != 0) {
-        if (!out.empty()) out.push_back('+');
+        if (!out.empty())
+            out.push_back('+');
         out += "Alt";
     }
     if ((hk.mods & mod::kShift) != 0) {
-        if (!out.empty()) out.push_back('+');
+        if (!out.empty())
+            out.push_back('+');
         out += "Shift";
     }
     if ((hk.mods & mod::kWin) != 0) {
-        if (!out.empty()) out.push_back('+');
+        if (!out.empty())
+            out.push_back('+');
         out += "Win";
     }
     const std::string key = VirtualKeyToToken(hk.vk);
     if (key.empty()) {
         return std::string();
     }
-    if (!out.empty()) out.push_back('+');
+    if (!out.empty())
+        out.push_back('+');
     out += key;
     return out;
 }
