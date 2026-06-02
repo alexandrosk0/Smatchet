@@ -114,51 +114,140 @@ static bool BulkImportStatusIsTerminal(const std::string& status) {
     return true;
 }
 
-} // anonymous namespace
+/** Parse the source text into preview rows + reset per-row status/future tracking. */
+void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string& fallbackProject) {
+    const std::string text(d.bulkImportTextBuf.data());
+    const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
+    d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), fallbackProject,
+                                                            d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
+    d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), std::string());
+    d.bulkImportError = d.bulkImportPreview.Error;
+    d.bulkImportCompleted = 0;
+    d.bulkImportRunning = false;
+    d.bulkImportFutures.clear();
+    d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
+}
 
-void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
-    if (!d.showBulkImport) {
-        if (d.bulkImportWasOpen) {
-            // Closing the modal cancels any in-flight load; the worker still completes but its
-            // post-back checks the cancel atom and bails before touching d.bulkImportTextBuf.
-            if (d.bulkImportLoadCancel) {
-                d.bulkImportLoadCancel->store(true);
-            }
-            d.bulkImportTextBuf.clear();
-            d.bulkImportPathBuf[0] = '\0';
-            d.bulkImportFormatSel = 0;
-            d.bulkImportPreview = {};
-            d.bulkImportStatus.clear();
-            d.bulkImportFutures.clear();
-            d.bulkImportCompleted = 0;
-            d.bulkImportRunning = false;
-            d.bulkImportError.clear();
-            d.bulkImportWasOpen = false;
+/** Pick the next non-terminal, non-in-flight row to submit; returns nRows when none is ready. */
+size_t BulkImportPickNextRow(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>* ticketsSnap,
+                             size_t nRows) {
+    for (size_t idx = 0; idx < nRows; ++idx) {
+        if (d.bulkImportFutures[idx].valid()) {
+            continue;
         }
-        return;
-    }
-    d.bulkImportWasOpen = true;
-
-    const bool wantFocus = d.requestBulkImportFocus;
-    // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
-    prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f, wantFocus);
-    if (!ImGui::Begin("Bulk import tickets", &d.showBulkImport)) {
-        if (wantFocus) {
-            d.requestBulkImportFocus = false;
+        if (idx < d.bulkImportStatus.size() && BulkImportStatusIsTerminal(d.bulkImportStatus[idx])) {
+            continue;
         }
-        ImGui::End();
-        return;
+        const auto& scanRow = d.bulkImportPreview.Rows[idx];
+        if (!scanRow.Draft.ExistingIssueKey.empty() && scanRow.Error.empty() &&
+            !BulkImportFindTicketInSnapshot(scanRow.Draft.ExistingIssueKey, ticketsSnap) &&
+            app.IsBulkImportPrefetchInFlight(scanRow.Draft.ExistingIssueKey)) {
+            d.bulkImportStatus[idx] = "waiting for cache…";
+            continue;
+        }
+        return idx;
     }
-    repairTopLevelWindow(d, "bulk_import", 520.0f, 360.0f);
-    if (wantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestBulkImportFocus = false;
-        LOG_DEBUG("Bulk Import window: focused via menu request");
+    return nRows;
+}
+
+/** Build a human-readable failure status from a create result (transport hint + missing fields). */
+std::string BulkImportFormatFailure(AppController& app, const IssueCreateResult& r) {
+    std::string msg = r.Error.empty() ? "failed" : r.Error;
+    if (IsTrackerTransportErrorText(msg)) {
+        msg = "Network/unreachable: " + msg + " — retry when Jira is reachable.";
     }
+    if (!r.MissingFieldIds.empty()) {
+        msg += " [missing: ";
+        std::vector<std::string> names =
+            IssueDraftHelpers::MapFieldIdsToNames(r.MissingFieldIds, app.GetAvailableFields());
+        msg += JoinStrings(names, ", ");
+        msg += "]";
+    }
+    return msg;
+}
 
-    if (d.bulkImportTextBuf.empty())
-        d.bulkImportTextBuf.assign(1, '\0');
+/** Submit up to maxConcurrent rows, skipping parse-errors and no-op updates inline. */
+void BulkImportSubmitPending(AppController& app, UiDrawSession& d, int maxConcurrent,
+                             const std::vector<CachedTicket>* ticketsSnap) {
+    size_t inFlight = 0;
+    for (size_t i = 0; i < d.bulkImportFutures.size(); ++i) {
+        if (d.bulkImportFutures[i].valid())
+            ++inFlight;
+    }
+    const size_t nRows = d.bulkImportPreview.Rows.size();
+    while (inFlight < static_cast<size_t>(maxConcurrent)) {
+        const size_t pick = BulkImportPickNextRow(app, d, ticketsSnap, nRows);
+        if (pick == nRows) {
+            break;
+        }
+        const auto& row = d.bulkImportPreview.Rows[pick];
+        if (!row.Error.empty()) {
+            d.bulkImportStatus[pick] = "parse error: " + row.Error;
+            ++d.bulkImportCompleted;
+            continue;
+        }
+        if (BulkImportRowIsNoopUpdate(row, ticketsSnap)) {
+            d.bulkImportStatus[pick] = "skipped (no changes)";
+            ++d.bulkImportCompleted;
+            continue;
+        }
+        d.bulkImportFutures[pick] = app.CreateIssueAsync(row.Draft);
+        d.bulkImportStatus[pick] = "submitting...";
+        ++inFlight;
+    }
+}
 
+/** Reap ready futures, set per-row status, and push a toast on failure. */
+void BulkImportReapCompletions(AppController& app, UiDrawSession& d) {
+    for (size_t i = 0; i < d.bulkImportFutures.size(); ++i) {
+        auto& fut = d.bulkImportFutures[i];
+        if (!fut.valid())
+            continue;
+        if (fut.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            continue;
+        IssueCreateResult r = fut.get();
+        if (r.Ok) {
+            d.bulkImportStatus[i] = "ok " + r.IssueKey;
+        } else {
+            const std::string msg = BulkImportFormatFailure(app, r);
+            d.bulkImportStatus[i] = msg;
+            const auto& bulkRow = d.bulkImportPreview.Rows[i];
+            SmatchetToastManager::Instance().Push(
+                "Import Error", "Line " + std::to_string(bulkRow.SourceLine) + ": " + msg, ToastType::Error);
+        }
+        ++d.bulkImportCompleted;
+    }
+}
+
+/** Pump submissions + completions for one frame while an import run is active. */
+void BulkImportPumpRun(AppController& app, UiDrawSession& d, int maxConcurrent,
+                       const std::vector<CachedTicket>* ticketsSnap) {
+    BulkImportSubmitPending(app, d, maxConcurrent, ticketsSnap);
+    BulkImportReapCompletions(app, d);
+    if (d.bulkImportCompleted >= d.bulkImportPreview.Rows.size()) {
+        d.bulkImportRunning = false;
+    }
+}
+
+/** Reset transient bulk-import state when the window is closed (cancels any in-flight load). */
+void BulkImportResetOnClose(UiDrawSession& d) {
+    if (d.bulkImportLoadCancel) {
+        d.bulkImportLoadCancel->store(true);
+    }
+    d.bulkImportTextBuf.clear();
+    d.bulkImportPathBuf[0] = '\0';
+    d.bulkImportFormatSel = 0;
+    d.bulkImportPreview = {};
+    d.bulkImportStatus.clear();
+    d.bulkImportFutures.clear();
+    d.bulkImportCompleted = 0;
+    d.bulkImportRunning = false;
+    d.bulkImportError.clear();
+    d.bulkImportWasOpen = false;
+}
+
+/** Path field + Load/Paste/Format-combo toolbar row. */
+void DrawBulkImportSourceToolbar(AppController& app, UiDrawSession& d) {
     ImGui::TextUnformatted("Source:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(520);
@@ -214,19 +303,10 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     const char* kFormats[] = {"Auto", "CSV", "TSV", "JSON"};
     ImGui::Combo("##bulkImportFmt", &d.bulkImportFormatSel, kFormats, IM_ARRAYSIZE(kFormats));
     ImGui::SameLine();
-    auto runParse = [&](const std::string& fallbackProject) {
-        const std::string text(d.bulkImportTextBuf.data());
-        const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
-        d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), fallbackProject,
-                                                                d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
-        d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), std::string());
-        d.bulkImportError = d.bulkImportPreview.Error;
-        d.bulkImportCompleted = 0;
-        d.bulkImportRunning = false;
-        d.bulkImportFutures.clear();
-        d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
-    };
+}
 
+/** Parse-preview button + the target-project modal it opens when the view has no project scope. */
+void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
     if (ImGui::Button("Parse preview")) {
         // PR 4b: if the active view has no project scope, ask the user before parsing — the parser
         // needs a fallbackProjectKey for "create" rows that don't carry their own project column.
@@ -237,7 +317,7 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
             d.bulkImportProjectModalOpen = true;
             d.bulkImportProjectModalChosenKey.clear();
         } else {
-            runParse(scopeProj);
+            BulkImportRunParse(app, d, scopeProj);
         }
     }
 
@@ -274,7 +354,7 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
             d.bulkImportProjectModalOpen = false;
             d.bulkImportProjectModalChosenKey.clear();
             ImGui::CloseCurrentPopup();
-            runParse(chosen);
+            BulkImportRunParse(app, d, chosen);
         }
         if (!canConfirm) {
             ImGui::EndDisabled();
@@ -285,7 +365,10 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     if (!d.bulkImportError.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", d.bulkImportError.c_str());
     }
+}
 
+/** Source-text editor + the Run-import button/tooltip and the live completed counter. */
+void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
     ImGui::Separator();
     ImGui::TextDisabled("Paste / edit source text here (headers = field ids or display names):");
     ImGui::InputTextMultiline("##bulkImportText", d.bulkImportTextBuf.data(), d.bulkImportTextBuf.size(),
@@ -296,7 +379,6 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     ImGui::Separator();
     ImGui::Text("Parsed rows: %zu", d.bulkImportPreview.Rows.size());
     ImGui::SameLine();
-    const int maxConcurrent = (std::max)(1, d.cfg.ImportMaxConcurrent);
     ImGui::Text("| Max concurrent: %d", maxConcurrent);
     ImGui::SameLine();
     const bool canRun = !d.bulkImportPreview.Rows.empty() && !d.bulkImportRunning;
@@ -323,6 +405,142 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     }
     if (!canRun)
         ImGui::EndDisabled();
+}
+
+/** Render the per-row changes cell for an update row (field-count + diff tooltip). */
+void DrawBulkImportChangesCell(AppController& app, const IssueTableSerializer::ImportRow& row,
+                               const std::vector<CachedTicket>* ticketsSnap) {
+    const CachedTicket* existing = BulkImportFindTicketInSnapshot(row.Draft.ExistingIssueKey, ticketsSnap);
+    if (existing) {
+        const auto changes = IssueDraftHelpers::ComputeFieldChanges(row.Draft, *existing);
+        if (changes.empty()) {
+            ImGui::TextDisabled("no changes");
+        } else {
+            ImGui::Text("%zu field(s)", changes.size());
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+                for (const auto& c : changes) {
+                    ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", c.FieldId.c_str());
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "- %s",
+                                       c.OldValue.empty() ? "-" : c.OldValue.c_str());
+                    ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "+ %s",
+                                       c.NewValue.empty() ? "-" : c.NewValue.c_str());
+                    ImGui::Separator();
+                }
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+    } else if (app.IsBulkImportPrefetchInFlight(row.Draft.ExistingIssueKey)) {
+        ImGui::TextDisabled("loading…");
+    } else {
+        ImGui::TextDisabled("not in cache");
+    }
+}
+
+/** One preview-table row: index, action, summary, changes cell, status. */
+void DrawBulkImportPreviewRow(AppController& app, UiDrawSession& d, size_t i,
+                              const std::vector<CachedTicket>* ticketsSnap) {
+    const auto& row = d.bulkImportPreview.Rows[i];
+    const bool noopRow = BulkImportRowIsNoopUpdate(row, ticketsSnap);
+    ImGui::TableNextRow();
+    if (noopRow) {
+        ImGui::BeginDisabled();
+    }
+
+    ImGui::TableSetColumnIndex(0);
+    ImGui::Text("%d", row.SourceLine);
+
+    ImGui::TableSetColumnIndex(1);
+    if (!row.Draft.ExistingIssueKey.empty()) {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "update %s", row.Draft.ExistingIssueKey.c_str());
+    } else {
+        ImGui::Text("create %s / %s", row.Draft.ProjectKey.c_str(),
+                    row.Draft.IssueTypeName.empty() ? row.Draft.IssueTypeId.c_str() : row.Draft.IssueTypeName.c_str());
+    }
+
+    ImGui::TableSetColumnIndex(2);
+    const auto sumIt = row.Draft.FieldValues.find("summary");
+    ImGui::TextUnformatted(sumIt != row.Draft.FieldValues.end() ? sumIt->second.c_str() : "");
+
+    ImGui::TableSetColumnIndex(3);
+    if (!row.Draft.ExistingIssueKey.empty()) {
+        DrawBulkImportChangesCell(app, row, ticketsSnap);
+    } else {
+        ImGui::TextDisabled("new");
+    }
+
+    ImGui::TableSetColumnIndex(4);
+    const char* status = (i < d.bulkImportStatus.size()) ? d.bulkImportStatus[i].c_str() : "";
+    if (!row.Error.empty() && (i >= d.bulkImportStatus.size() || d.bulkImportStatus[i].empty())) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", row.Error.c_str());
+    } else {
+        ImGui::TextUnformatted(status);
+    }
+
+    if (noopRow) {
+        ImGui::EndDisabled();
+    }
+}
+
+/** The scrollable preview table (header + all parsed rows). */
+void DrawBulkImportPreviewTable(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>* ticketsSnap) {
+    if (ImGui::BeginTable("bulkImportPreview", 5,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+                              ImGuiTableFlags_Resizable,
+                          ImVec2(-FLT_MIN, 260.0f))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 48.0f);
+        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+        ImGui::TableSetupColumn("Summary", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Changes", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 220.0f);
+        ImGui::TableHeadersRow();
+
+        for (size_t i = 0; i < d.bulkImportPreview.Rows.size(); ++i) {
+            DrawBulkImportPreviewRow(app, d, i, ticketsSnap);
+        }
+        ImGui::EndTable();
+    }
+}
+
+} // anonymous namespace
+
+void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
+    if (!d.showBulkImport) {
+        if (d.bulkImportWasOpen) {
+            BulkImportResetOnClose(d);
+        }
+        return;
+    }
+    d.bulkImportWasOpen = true;
+
+    const bool wantFocus = d.requestBulkImportFocus;
+    // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
+    prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f, wantFocus);
+    if (!ImGui::Begin("Bulk import tickets", &d.showBulkImport)) {
+        if (wantFocus) {
+            d.requestBulkImportFocus = false;
+        }
+        ImGui::End();
+        return;
+    }
+    repairTopLevelWindow(d, "bulk_import", 520.0f, 360.0f);
+    if (wantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestBulkImportFocus = false;
+        LOG_DEBUG("Bulk Import window: focused via menu request");
+    }
+
+    if (d.bulkImportTextBuf.empty())
+        d.bulkImportTextBuf.assign(1, '\0');
+
+    DrawBulkImportSourceToolbar(app, d);
+    DrawBulkImportParseControls(app, d);
+
+    const int maxConcurrent = (std::max)(1, d.cfg.ImportMaxConcurrent);
+    DrawBulkImportRunControls(d, maxConcurrent);
 
     {
         std::vector<std::string> keysNeedingHydration;
@@ -338,174 +556,14 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
 
     const auto ticketsSnap = app.GetActiveTicketsSnapshot();
 
-    // Pump submissions + completions each frame.
     if (d.bulkImportRunning) {
-        // Submit up to maxConcurrent in-flight.
-        size_t inFlight = 0;
-        for (size_t i = 0; i < d.bulkImportFutures.size(); ++i) {
-            if (d.bulkImportFutures[i].valid())
-                ++inFlight;
-        }
-        const size_t nRows = d.bulkImportPreview.Rows.size();
-        while (inFlight < static_cast<size_t>(maxConcurrent)) {
-            const size_t noPick = nRows;
-            size_t pick = noPick;
-            for (size_t idx = 0; idx < nRows; ++idx) {
-                if (d.bulkImportFutures[idx].valid()) {
-                    continue;
-                }
-                if (idx < d.bulkImportStatus.size() && BulkImportStatusIsTerminal(d.bulkImportStatus[idx])) {
-                    continue;
-                }
-                const auto& scanRow = d.bulkImportPreview.Rows[idx];
-                if (!scanRow.Draft.ExistingIssueKey.empty() && scanRow.Error.empty() &&
-                    !BulkImportFindTicketInSnapshot(scanRow.Draft.ExistingIssueKey, ticketsSnap.get()) &&
-                    app.IsBulkImportPrefetchInFlight(scanRow.Draft.ExistingIssueKey)) {
-                    d.bulkImportStatus[idx] = "waiting for cache…";
-                    continue;
-                }
-                pick = idx;
-                break;
-            }
-            if (pick == noPick) {
-                break;
-            }
-            const auto& row = d.bulkImportPreview.Rows[pick];
-            if (!row.Error.empty()) {
-                d.bulkImportStatus[pick] = "parse error: " + row.Error;
-                ++d.bulkImportCompleted;
-                continue;
-            }
-            if (BulkImportRowIsNoopUpdate(row, ticketsSnap.get())) {
-                d.bulkImportStatus[pick] = "skipped (no changes)";
-                ++d.bulkImportCompleted;
-                continue;
-            }
-            d.bulkImportFutures[pick] = app.CreateIssueAsync(row.Draft);
-            d.bulkImportStatus[pick] = "submitting...";
-            ++inFlight;
-        }
-        // Reap.
-        for (size_t i = 0; i < d.bulkImportFutures.size(); ++i) {
-            auto& fut = d.bulkImportFutures[i];
-            if (!fut.valid())
-                continue;
-            if (fut.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
-                continue;
-            IssueCreateResult r = fut.get();
-            if (r.Ok) {
-                d.bulkImportStatus[i] = "ok " + r.IssueKey;
-            } else {
-                std::string msg = r.Error.empty() ? "failed" : r.Error;
-                if (IsTrackerTransportErrorText(msg)) {
-                    msg = "Network/unreachable: " + msg + " — retry when Jira is reachable.";
-                }
-                if (!r.MissingFieldIds.empty()) {
-                    msg += " [missing: ";
-                    std::vector<std::string> names =
-                        IssueDraftHelpers::MapFieldIdsToNames(r.MissingFieldIds, app.GetAvailableFields());
-                    msg += JoinStrings(names, ", ");
-                    msg += "]";
-                }
-                d.bulkImportStatus[i] = msg;
-                const auto& bulkRow = d.bulkImportPreview.Rows[i];
-                SmatchetToastManager::Instance().Push(
-                    "Import Error", "Line " + std::to_string(bulkRow.SourceLine) + ": " + msg, ToastType::Error);
-            }
-            ++d.bulkImportCompleted;
-        }
-        if (d.bulkImportCompleted >= d.bulkImportPreview.Rows.size()) {
-            d.bulkImportRunning = false;
-        }
+        BulkImportPumpRun(app, d, maxConcurrent, ticketsSnap.get());
     }
 
     ImGui::SameLine();
     ImGui::Text("Completed %zu / %zu", d.bulkImportCompleted, d.bulkImportPreview.Rows.size());
 
-    if (ImGui::BeginTable("bulkImportPreview", 5,
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
-                              ImGuiTableFlags_Resizable,
-                          ImVec2(-FLT_MIN, 260.0f))) {
-        ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 48.0f);
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-        ImGui::TableSetupColumn("Summary", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Changes", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 220.0f);
-        ImGui::TableHeadersRow();
-
-        for (size_t i = 0; i < d.bulkImportPreview.Rows.size(); ++i) {
-            const auto& row = d.bulkImportPreview.Rows[i];
-            const bool noopRow = BulkImportRowIsNoopUpdate(row, ticketsSnap.get());
-            ImGui::TableNextRow();
-            if (noopRow) {
-                ImGui::BeginDisabled();
-            }
-
-            ImGui::TableSetColumnIndex(0);
-            ImGui::Text("%d", row.SourceLine);
-
-            ImGui::TableSetColumnIndex(1);
-            if (!row.Draft.ExistingIssueKey.empty()) {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "update %s", row.Draft.ExistingIssueKey.c_str());
-            } else {
-                ImGui::Text("create %s / %s", row.Draft.ProjectKey.c_str(),
-                            row.Draft.IssueTypeName.empty() ? row.Draft.IssueTypeId.c_str()
-                                                            : row.Draft.IssueTypeName.c_str());
-            }
-
-            ImGui::TableSetColumnIndex(2);
-            const auto sumIt = row.Draft.FieldValues.find("summary");
-            ImGui::TextUnformatted(sumIt != row.Draft.FieldValues.end() ? sumIt->second.c_str() : "");
-
-            ImGui::TableSetColumnIndex(3);
-            if (!row.Draft.ExistingIssueKey.empty()) {
-                const CachedTicket* existing =
-                    BulkImportFindTicketInSnapshot(row.Draft.ExistingIssueKey, ticketsSnap.get());
-                if (existing) {
-                    const auto changes = IssueDraftHelpers::ComputeFieldChanges(row.Draft, *existing);
-                    if (changes.empty()) {
-                        ImGui::TextDisabled("no changes");
-                    } else {
-                        ImGui::Text("%zu field(s)", changes.size());
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::BeginTooltip();
-                            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
-                            for (const auto& c : changes) {
-                                ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", c.FieldId.c_str());
-                                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "- %s",
-                                                   c.OldValue.empty() ? "-" : c.OldValue.c_str());
-                                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "+ %s",
-                                                   c.NewValue.empty() ? "-" : c.NewValue.c_str());
-                                ImGui::Separator();
-                            }
-                            ImGui::PopTextWrapPos();
-                            ImGui::EndTooltip();
-                        }
-                    }
-                } else if (app.IsBulkImportPrefetchInFlight(row.Draft.ExistingIssueKey)) {
-                    ImGui::TextDisabled("loading…");
-                } else {
-                    ImGui::TextDisabled("not in cache");
-                }
-            } else {
-                ImGui::TextDisabled("new");
-            }
-
-            ImGui::TableSetColumnIndex(4);
-            const char* status = (i < d.bulkImportStatus.size()) ? d.bulkImportStatus[i].c_str() : "";
-            if (!row.Error.empty() && (i >= d.bulkImportStatus.size() || d.bulkImportStatus[i].empty())) {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", row.Error.c_str());
-            } else {
-                ImGui::TextUnformatted(status);
-            }
-
-            if (noopRow) {
-                ImGui::EndDisabled();
-            }
-        }
-        ImGui::EndTable();
-    }
+    DrawBulkImportPreviewTable(app, d, ticketsSnap.get());
 
     ImGui::TextDisabled(
         "Update rows with no field changes vs the cached ticket are skipped (not sent to Jira). While a "
