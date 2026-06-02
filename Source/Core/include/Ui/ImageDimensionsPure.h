@@ -4,7 +4,7 @@
 // UI so the format decoders (PNG / GIF / WEBP-VP8X / JPEG-SOF) are unit-testable
 // without file I/O or an ImGui context. These functions parse *untrusted* file
 // bytes — every bounds-check, byte-offset, and endianness read is load-bearing.
-//
+
 // The UI wrapper (SmatchetAttachmentPreviewUi.cpp) does the bounded header read
 // off disk, then hands the byte buffer here. Behaviour is byte-for-byte
 // identical to the pre-extraction monolith.
