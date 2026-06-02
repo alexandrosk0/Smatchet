@@ -7,6 +7,18 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-02 · code-review · [bug] · P2 — field-catalog error path mutates `AvailableFields` unlocked while other threads write it under `availableFieldsMutex_`
+  Details: `AppController::SetFieldCatalog`'s entire `if (!error.empty())` branch reads/`std::move`s/clears `AvailableFields` with NO lock held, yet `RefreshFieldCatalog` and the success path write the same vector under `availableFieldsMutex_` from other threads → potential data race / torn read on a fetch-failure concurrent with a refresh. Pre-existing (verified byte-identical vs develop: the unlocked accesses are at develop `AppController_CatalogAndFieldEdit.cpp:214/233/264/277`); surfaced + relocated into `HandleFieldCatalogError` by the B2-B3 size decomposition (PR #704, CodeRabbit Major). NOT fixed in #704 (behaviour-preserving refactor; naively acquiring the mutex risks a deadlock if a caller already holds it).
+  Concrete next action: audit the error-branch access pattern; either snapshot under one lock scope or confirm SetFieldCatalog is always called on a single thread. ~1h; do it in a dedicated concurrency PR, not a decomposition.
+  Status: open
+  Last-reviewed: 2026-06-02
+
+- 2026-06-02 · code-review · [bug] · P3 — Lua automation with an empty selection processes ZERO tickets (likely should mean "process all")
+  Details: `RunAutomationAutoScript`'s loop does `if (selectedSet.empty()) break;` on the first ticket, so an automation job with empty `job.selectedIds` runs `process_ticket` on nothing. CodeRabbit reads the intent as "empty = process all". Pre-existing (byte-identical vs develop loop at `AppController_LuaBindings.cpp:1302-1305`); surfaced by the B4 decomposition (PR #705). NOT changed in #705 (behaviour-preserving refactor; and "empty = nothing" may be an intentional guard against running automation across every ticket unselected).
+  Concrete next action: product decision — confirm whether empty selection should process all (then drop the `break`) or stays a deliberate no-op (then add a comment documenting the guard). ~15min once decided.
+  Status: open
+  Last-reviewed: 2026-06-02
+
 - 2026-06-01 · code-review · [bug] · P2 — `AiAssistantController` turn uses 3 separate `ConfigManager::Load()` snapshots (provider refresh, model/effort resolve, agents-cfg)
   Details: A mid-turn Preferences edit can refresh `client_`/`clientConfig_` for provider A, resolve `chatReq.Model`/effort against a second reload, then build the payload against a third — a torn config view. Pre-existing (verified vs develop: original RunRequest made 3 loads); surfaced + relocated by the RunRequest phase-split (PR #677, CR finding).
   Concrete next action: take ONE `TrackerConfig` snapshot at turn start, thread it through `RefreshProviderForTurn`/`ResolveModelAndEffort`/`BuildChatPayload` (helpers already take params — now cheap).
