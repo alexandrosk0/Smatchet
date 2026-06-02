@@ -70,22 +70,6 @@
   Status: applied (this PR fixes (1) + (2); autostart-wrapper env-var still open)
   Last-reviewed: 2026-05-22
 
-- 2026-05-21 · orchestrator · [tooling] · P1 — Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band
-  Details: This session (2026-05-21) spawned 6+ background polls (`scripts/dev/merge-gates.sh` shape, but inlined as ad-hoc Python invoked from Bash). Each poll runs 30-40 minutes waiting on CI + CR. Notifications fire back into the orchestrator's main session: each one consumes a conversation turn (reads the poll log, reasons about merge / triage / abort, commits + pushes if a fix is needed). Costs the user observed during the session:
-    (1) **Context-budget burn** — even when the orchestrator is idle waiting, the session keeps the full PR context loaded; multi-PR fan-out (5 polls live at once during the github-tracker + code-color cascade) amplified this.
-    (2) **Interruption pattern** — when the user kicked off new exploratory work mid-session ("double-check the plan", backlog entries, etc.), every poll notification yanked the orchestrator back to merge-bookkeeping. The user can't have a continuous conversation thread while polls are firing.
-    (3) **TIMEOUT escalations** — when CR is silent (#350 saw 40 polls = 40 min with no review), the user has to make the same "force-merge or wait?" decision repeatedly across PRs. A central watcher could apply the policy once.
-    (4) **Lossy on session crash** — bg polls die if the parent session closes. The user explicitly asked early in this session ("are we done?") whether they could close — current shape says no without losing in-flight polls.
-  Concrete next action: design + ship `smatchet-merge-watcher` as a separate process — runs on the host outside any specific Claude Code session. Reads a registry of "actively-watched PR numbers" (file at `.claude/.merge-watch/active.json` or `%LOCALAPPDATA%/Smatchet/merge-watch/active.json`). Polls each PR per the merge-gates contract (CI + CR + STALE-aware + user-comments). On state change:
-    - **PASS** → auto-`gh pr ready` (if draft) + REST squash-merge + cascade: detect stacked children via `gh pr list --search "base:<merged-branch>"`, pull develop into each, push, mark them PASS-ready in the registry.
-    - **CR_BLOCKED** → if a sibling `coderabbit-triage` worker is registered, spawn a sub-session via `claude --headless` with the PR # + CR feedback as inline context; on triage completion, push + flip poll back to start.
-    - **TIMEOUT_NO_CR** → log WARN + apply user-configured fallthrough policy (default: stay paused, send a Smatchet notification asking; opt-in: auto-force-merge).
-    - **CI_FAIL** / **CONFLICT** / **USER_COMMENT** → pause the PR + push a Smatchet notification (uses the existing in-app notification surface from `SmatchetToastManager` + Lua-bindings + bash hook) so the user sees it on whichever device runs Smatchet.
-  Integration with this session orchestrator: the main session registers PRs into the watcher's queue (`merge-watch register <pr>`), gets a registry-id, can query state (`merge-watch status <pr>`), or unregister. Session can exit at will; the watcher persists. Tests: bats around the registry + the state-transition logic; 1 integration test that walks a fake PR through PASS → cascade → merge using `gh api`-mocking.
-  Acceptance: this session's exact pattern (5 PRs cascading + 1 forced timeout) runs end-to-end with zero interactive prompts to the orchestrator. ~6 h initial: 2 h watcher daemon (Python or bash), 1 h registry + cli, 1 h Smatchet-notification surface, 2 h bats + integration tests.
-  Status: open
-  Last-reviewed: 2026-05-21
-
 - 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
   Promoted from parked: 2026-05-19 — bucket-E (ImGui Test Engine) is wired per `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`; gating premise removed.
   Details: The closing milestone (phase 9 of `docs/plans/shipped/coderabbit-react-loop.md`, sha `185418f`) shipped synthetic CLI smoke covering the dispatch logic but deferred the live-PR end-to-end probe documented in plan § Verification steps 3-4. Both react paths need a real PR with CodeRabbit feedback / a deliberately-bad CI commit to verify the full spawn → fix → push → resolve cycle end-to-end.

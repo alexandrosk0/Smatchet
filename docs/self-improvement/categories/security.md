@@ -74,13 +74,6 @@
   Status: open
   Last-reviewed: 2026-05-24
 
-- 2026-05-24 · coderabbit-triage · [security] · P3 — CI: workflow-level GITHUB_TOKEN `permissions: {}` + per-job least-privilege
-  Source: CodeRabbit on PR #441 thread `PRRT_kwDORqx0G86EYIXJ` (CR thread outdated; deferred to dedicated security PR).
-  Details: `.github/workflows/build-and-test.yml` has no `permissions:` block; `GITHUB_TOKEN` inherits the repo default (often `read-write-all` for forks → contents:write). `bucket-c-screenshot-diff` and `bucket-e-ui-tests` upload/download artefacts + curl external binaries — should be locked down.
-  Concrete next action: add workflow-root `permissions: contents: read`. Override per-job: `bucket-c-screenshot-diff` and `bucket-e-ui-tests` need `actions: write` (upload-artifact) + `contents: read`. `windows-msys2-ucrt64*` jobs only need `contents: read`. Pair with the action-SHA-pinning entry above — same file, same reviewer concern, batch as one security PR.
-  Status: open
-  Last-reviewed: 2026-05-24
-
 - 2026-05-24 · coderabbit-triage · [security] · P2 — CI: Mesa archive integrity verification (upstream publishes no checksum)
   Source: CodeRabbit on PR #441 thread `PRRT_kwDORqx0G86EYIXK`. Live in `.github/workflows/build-and-test.yml:302,395` (slice-6 introduction).
   Details: `bucket-c-screenshot-diff` + `bucket-e-ui-tests` jobs `curl` a 72 MB `mesa-3d-*.7z` from the `pal1000/mesa-dist-win` GitHub release with no SHA256 / signature check. Verified via `gh release view 24.2.5 --json assets` that upstream ships zero checksums: `digest: null` on every asset, no `.sha256` companion file, no checksum in the release body. CR's suggested `MESA_SHA256: "<published-sha256>"` literally cannot be filled with a publisher-attested value. Triage-mechanical-fix envelope insufficient.
