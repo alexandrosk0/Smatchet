@@ -72,7 +72,94 @@ void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::
     }
 }
 
-// SMATCHET_DEVIATION(rule=function-too-branchy; reason=verbatim extract; owner=unowned; revisit=2026-Q3)
+namespace {
+
+std::string StringifyJiraFieldForGrid(const nlohmann::json& v) {
+    if (v.is_object() || v.is_array()) {
+        return v.dump();
+    }
+    return NormalizeTrackerFieldValue(v);
+}
+
+bool IsJiraTimetrackingFieldKey(const std::string& fieldKey) {
+    return fieldKey == "timetracking" || fieldKey == "aggregatetimetracking";
+}
+
+bool IsJiraAttachmentFieldKey(const std::string& fieldKey) {
+    return fieldKey == "attachment" || fieldKey == "attachments";
+}
+
+bool IsJiraDurationSecondsFieldKey(const std::string& fieldKey) {
+    return fieldKey == "timeoriginalestimate" || fieldKey == "timeestimate" || fieldKey == "timespent" ||
+           fieldKey == "aggregatetimeoriginalestimate" || fieldKey == "aggregatetimeestimate" ||
+           fieldKey == "aggregatetimespent";
+}
+
+// Resolve the `comment` field, optionally fetching the full comment list when the
+// search payload only carried a total count.
+std::string
+ResolveJiraCommentField(const nlohmann::json& rawValue, const std::string& ticketId,
+                        const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments) {
+    const auto& commentObj = rawValue;
+    const auto& commentsArray = commentObj["comments"];
+    const int totalComments = commentObj.value("total", static_cast<int>(commentsArray.size()));
+    if (commentsArray.is_array() && !commentsArray.empty()) {
+        return ParseComments(commentsArray);
+    }
+    if (totalComments > 0) {
+        nlohmann::json fetchedComments = nlohmann::json::array();
+        if (fetchIssueComments(ticketId, fetchedComments) && fetchedComments.is_array()) {
+            return ParseComments(fetchedComments);
+        }
+        return ParseComments(commentsArray);
+    }
+    return std::string();
+}
+
+std::string ResolveJiraDurationSecondsField(const nlohmann::json& rawValue) {
+    long long seconds = 0;
+    if (rawValue.is_number_integer()) {
+        seconds = rawValue.get<long long>();
+    } else if (rawValue.is_number_unsigned()) {
+        seconds = static_cast<long long>(rawValue.get<unsigned long long>());
+    }
+    return FormatWorkDurationFromSeconds(seconds);
+}
+
+// Map a single present field key onto its grid string, dispatching by special-cased
+// field family. `comment` may trigger a lazy fetch via `fetchIssueComments`.
+void MapJiraPresentField(const std::string& fieldKey, const nlohmann::json& rawValue, const std::string& ticketId,
+                         const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
+                         CachedTicket& ticket) {
+    if (fieldKey == "comment" && rawValue.is_object() && rawValue.contains("comments")) {
+        ticket.fieldValues[fieldKey] = ResolveJiraCommentField(rawValue, ticketId, fetchIssueComments);
+    } else if (IsJiraTimetrackingFieldKey(fieldKey)) {
+        ticket.fieldValues[fieldKey] =
+            rawValue.is_object() ? FormatTrackerTimetrackingDisplay(rawValue) : NormalizeTrackerFieldValue(rawValue);
+    } else if (IsJiraAttachmentFieldKey(fieldKey)) {
+        ticket.fieldValues[fieldKey] = StringifyJiraFieldForGrid(rawValue);
+    } else if (IsJiraDurationSecondsFieldKey(fieldKey)) {
+        ticket.fieldValues[fieldKey] = ResolveJiraDurationSecondsField(rawValue);
+    } else {
+        ticket.fieldValues[fieldKey] = NormalizeTrackerFieldValue(rawValue);
+    }
+    if (rawValue.is_object() && rawValue.value("type", std::string()) == "doc") {
+        ticket.fieldRichValues[fieldKey] = rawValue.dump();
+    }
+}
+
+void MapJiraWatchersField(const nlohmann::json& issueFields, CachedTicket& ticket) {
+    if (issueFields.contains("watchers")) {
+        ticket.fieldValues["watchers"] = StringifyJiraFieldForGrid(issueFields["watchers"]);
+    } else if (issueFields.contains("watches")) {
+        ticket.fieldValues["watchers"] = StringifyJiraFieldForGrid(issueFields["watches"]);
+    } else {
+        ticket.fieldValues["watchers"] = std::string();
+    }
+}
+
+} // namespace
+
 bool AppendCachedTicketFromJiraSearchIssue(
     const nlohmann::json& issue, const std::vector<std::string>& selectedFields,
     const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
@@ -82,12 +169,6 @@ bool AppendCachedTicketFromJiraSearchIssue(
         ticket.id = JsonGetStringIfString(issue, "key");
 
         nlohmann::json issueFields = issue.value("fields", nlohmann::json::object());
-        const auto stringifyForGrid = [&](const nlohmann::json& v) -> std::string {
-            if (v.is_object() || v.is_array()) {
-                return v.dump();
-            }
-            return NormalizeTrackerFieldValue(v);
-        };
 
         for (const auto& fieldKey : selectedFields) {
             if (fieldKey == "history") {
@@ -97,57 +178,11 @@ bool AppendCachedTicketFromJiraSearchIssue(
                 continue;
             }
             if (fieldKey == "watchers") {
-                if (issueFields.contains("watchers")) {
-                    ticket.fieldValues["watchers"] = stringifyForGrid(issueFields["watchers"]);
-                } else if (issueFields.contains("watches")) {
-                    ticket.fieldValues["watchers"] = stringifyForGrid(issueFields["watches"]);
-                } else {
-                    ticket.fieldValues["watchers"] = std::string();
-                }
+                MapJiraWatchersField(issueFields, ticket);
                 continue;
             }
             if (issueFields.contains(fieldKey)) {
-                const auto& rawValue = issueFields[fieldKey];
-                if (fieldKey == "comment" && rawValue.is_object() && rawValue.contains("comments")) {
-                    const auto& commentObj = rawValue;
-                    const auto& commentsArray = commentObj["comments"];
-                    const int totalComments = commentObj.value("total", static_cast<int>(commentsArray.size()));
-                    if (commentsArray.is_array() && !commentsArray.empty()) {
-                        ticket.fieldValues[fieldKey] = ParseComments(commentsArray);
-                    } else if (totalComments > 0) {
-                        nlohmann::json fetchedComments = nlohmann::json::array();
-                        if (fetchIssueComments(ticket.id, fetchedComments) && fetchedComments.is_array()) {
-                            ticket.fieldValues[fieldKey] = ParseComments(fetchedComments);
-                        } else {
-                            ticket.fieldValues[fieldKey] = ParseComments(commentsArray);
-                        }
-                    } else {
-                        ticket.fieldValues[fieldKey] = std::string();
-                    }
-                } else if (fieldKey == "timetracking" || fieldKey == "aggregatetimetracking") {
-                    if (rawValue.is_object()) {
-                        ticket.fieldValues[fieldKey] = FormatTrackerTimetrackingDisplay(rawValue);
-                    } else {
-                        ticket.fieldValues[fieldKey] = NormalizeTrackerFieldValue(rawValue);
-                    }
-                } else if (fieldKey == "attachment" || fieldKey == "attachments") {
-                    ticket.fieldValues[fieldKey] = stringifyForGrid(rawValue);
-                } else if (fieldKey == "timeoriginalestimate" || fieldKey == "timeestimate" ||
-                           fieldKey == "timespent" || fieldKey == "aggregatetimeoriginalestimate" ||
-                           fieldKey == "aggregatetimeestimate" || fieldKey == "aggregatetimespent") {
-                    long long seconds = 0;
-                    if (rawValue.is_number_integer()) {
-                        seconds = rawValue.get<long long>();
-                    } else if (rawValue.is_number_unsigned()) {
-                        seconds = static_cast<long long>(rawValue.get<unsigned long long>());
-                    }
-                    ticket.fieldValues[fieldKey] = FormatWorkDurationFromSeconds(seconds);
-                } else {
-                    ticket.fieldValues[fieldKey] = NormalizeTrackerFieldValue(rawValue);
-                }
-                if (rawValue.is_object() && rawValue.value("type", std::string()) == "doc") {
-                    ticket.fieldRichValues[fieldKey] = rawValue.dump();
-                }
+                MapJiraPresentField(fieldKey, issueFields[fieldKey], ticket.id, fetchIssueComments, ticket);
             } else {
                 ticket.fieldValues[fieldKey] = std::string();
             }

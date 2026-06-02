@@ -46,41 +46,78 @@ bool IsSprintCatalogFieldId(const std::string& fieldId, const std::vector<Tracke
     return TrackerFieldPayload::IsSprintField(*sprintField);
 }
 
-PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerIssueMutations& client, const std::string& issueKey,
-                                          const IssueDraft& draft, const std::vector<TrackerField>& catalog,
-                                          IssueCreateResult& result) {
-    PostIssueStepsOutcome outcome;
+// Apply the draft's "status" via UpdateIssueFields. Returns true on a successful
+// transition, letting the caller merge the new status into the cached ticket.
+bool ApplyPostIssueStatusStep(ITrackerIssueMutations& client, const std::string& issueKey, const IssueDraft& draft,
+                              const std::vector<TrackerField>& catalog) {
     const auto statusIt = draft.FieldValues.find("status");
-    if (statusIt != draft.FieldValues.end()) {
-        const std::string statusRaw = TrimCopy(statusIt->second);
-        if (!statusRaw.empty()) {
-            const TrackerField* statusField = FindFieldById(catalog, "status");
-            TrackerField statusSynthetic;
-            if (!statusField) {
-                statusSynthetic = MakeSyntheticField("status");
-                statusField = &statusSynthetic;
-            }
-            const TrackerField jiraStatusField = *statusField;
-            nlohmann::json statusValue;
-            std::string statusBuildErr;
-            if (TrackerFieldPayload::BuildValue(jiraStatusField, {statusRaw}, statusValue, statusBuildErr) &&
-                !statusValue.is_null()) {
-                nlohmann::json statusUpdate = nlohmann::json::object();
-                statusUpdate["status"] = std::move(statusValue);
-                std::string transitionErr;
-                if (client.UpdateIssueFields(issueKey, statusUpdate, transitionErr)) {
-                    outcome.mergeStatusFromDraft = true;
-                } else {
-                    LOG_WARN("IssueCreatePipeline: issue %s: status not applied: %s", issueKey.c_str(),
-                             transitionErr.c_str());
-                }
-            } else if (!statusBuildErr.empty()) {
-                LOG_WARN("IssueCreatePipeline: issue %s: status payload invalid: %s", issueKey.c_str(),
-                         statusBuildErr.c_str());
-            }
+    if (statusIt == draft.FieldValues.end()) {
+        return false;
+    }
+    const std::string statusRaw = TrimCopy(statusIt->second);
+    if (statusRaw.empty()) {
+        return false;
+    }
+    const TrackerField* statusField = FindFieldById(catalog, "status");
+    TrackerField statusSynthetic;
+    if (!statusField) {
+        statusSynthetic = MakeSyntheticField("status");
+        statusField = &statusSynthetic;
+    }
+    const TrackerField jiraStatusField = *statusField;
+    nlohmann::json statusValue;
+    std::string statusBuildErr;
+    if (TrackerFieldPayload::BuildValue(jiraStatusField, {statusRaw}, statusValue, statusBuildErr) &&
+        !statusValue.is_null()) {
+        nlohmann::json statusUpdate = nlohmann::json::object();
+        statusUpdate["status"] = std::move(statusValue);
+        std::string transitionErr;
+        if (client.UpdateIssueFields(issueKey, statusUpdate, transitionErr)) {
+            return true;
+        }
+        LOG_WARN("IssueCreatePipeline: issue %s: status not applied: %s", issueKey.c_str(), transitionErr.c_str());
+    } else if (!statusBuildErr.empty()) {
+        LOG_WARN("IssueCreatePipeline: issue %s: status payload invalid: %s", issueKey.c_str(), statusBuildErr.c_str());
+    }
+    return false;
+}
+
+// Apply one sprint-typed draft field, adding the issue to each resolved sprint id.
+// Returns false if any segment failed to resolve / apply (so the caller withholds the merge).
+bool ApplySprintFieldSegments(ITrackerIssueMutations& client, const std::string& issueKey, const std::string& fieldId,
+                              const TrackerField& jiraSprintField, const std::string& raw,
+                              std::unordered_set<std::string>& appliedSprintIds) {
+    bool allOk = true;
+    bool sprintSegmentSeen = false;
+    for (const std::string& seg : TrackerFieldPayload::SplitCommaSeparatedValues(raw)) {
+        sprintSegmentSeen = true;
+        const std::string sprintId = TrackerFieldPayload::ResolveSprintIdForAgile(jiraSprintField, seg);
+        if (sprintId.empty()) {
+            allOk = false;
+            LOG_WARN("IssueCreatePipeline: issue %s: sprint segment could not be resolved to id "
+                     "(field %s, value '%s').",
+                     issueKey.c_str(), fieldId.c_str(), seg.c_str());
+            continue;
+        }
+        if (!appliedSprintIds.insert(sprintId).second) {
+            continue;
+        }
+        std::string sprintErr;
+        if (!client.AddIssueToSprint(issueKey, sprintId, sprintErr)) {
+            allOk = false;
+            LOG_WARN("IssueCreatePipeline: issue %s: AddIssueToSprint failed: %s", issueKey.c_str(), sprintErr.c_str());
         }
     }
+    if (!sprintSegmentSeen) {
+        allOk = false;
+    }
+    return allOk;
+}
 
+// Apply all sprint-typed draft fields. Returns true iff at least one sprint field did
+// work AND every segment resolved/applied cleanly (gating the cached-ticket merge).
+bool ApplyPostIssueSprintSteps(ITrackerIssueMutations& client, const std::string& issueKey, const IssueDraft& draft,
+                               const std::vector<TrackerField>& catalog) {
     bool sprintWork = false;
     bool sprintAllOk = true;
     std::unordered_set<std::string> appliedSprintIds;
@@ -107,50 +144,42 @@ PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerIssueMutations& client, const 
             continue;
         }
         sprintWork = true;
-        bool sprintSegmentSeen = false;
-        for (const std::string& seg : TrackerFieldPayload::SplitCommaSeparatedValues(raw)) {
-            sprintSegmentSeen = true;
-            const std::string sprintId = TrackerFieldPayload::ResolveSprintIdForAgile(jiraSprintField, seg);
-            if (sprintId.empty()) {
-                sprintAllOk = false;
-                LOG_WARN("IssueCreatePipeline: issue %s: sprint segment could not be resolved to id "
-                         "(field %s, value '%s').",
-                         issueKey.c_str(), fieldId.c_str(), seg.c_str());
-                continue;
-            }
-            if (!appliedSprintIds.insert(sprintId).second) {
-                continue;
-            }
-            std::string sprintErr;
-            if (!client.AddIssueToSprint(issueKey, sprintId, sprintErr)) {
-                sprintAllOk = false;
-                LOG_WARN("IssueCreatePipeline: issue %s: AddIssueToSprint failed: %s", issueKey.c_str(),
-                         sprintErr.c_str());
-            }
-        }
-        if (!sprintSegmentSeen) {
+        if (!ApplySprintFieldSegments(client, issueKey, fieldId, jiraSprintField, raw, appliedSprintIds)) {
             sprintAllOk = false;
         }
     }
-    outcome.mergeSprintFieldsFromDraft = sprintWork && sprintAllOk;
+    return sprintWork && sprintAllOk;
+}
 
-    if (!draft.StagedAttachments.empty()) {
-        std::vector<std::string> paths;
-        paths.reserve(draft.StagedAttachments.size());
-        for (const auto& a : draft.StagedAttachments) {
-            if (!a.AbsPath.empty()) {
-                paths.push_back(a.AbsPath);
-            }
-        }
-        if (!paths.empty()) {
-            std::string attachErr;
-            client.AttachFilesToIssue(issueKey, paths, result.AttachmentFailures, attachErr);
-            if (!result.AttachmentFailures.empty()) {
-                LOG_WARN("IssueCreatePipeline: %zu attachment(s) failed for %s", result.AttachmentFailures.size(),
-                         issueKey.c_str());
-            }
+void ApplyPostIssueAttachmentStep(ITrackerIssueMutations& client, const std::string& issueKey, const IssueDraft& draft,
+                                  IssueCreateResult& result) {
+    if (draft.StagedAttachments.empty()) {
+        return;
+    }
+    std::vector<std::string> paths;
+    paths.reserve(draft.StagedAttachments.size());
+    for (const auto& a : draft.StagedAttachments) {
+        if (!a.AbsPath.empty()) {
+            paths.push_back(a.AbsPath);
         }
     }
+    if (!paths.empty()) {
+        std::string attachErr;
+        client.AttachFilesToIssue(issueKey, paths, result.AttachmentFailures, attachErr);
+        if (!result.AttachmentFailures.empty()) {
+            LOG_WARN("IssueCreatePipeline: %zu attachment(s) failed for %s", result.AttachmentFailures.size(),
+                     issueKey.c_str());
+        }
+    }
+}
+
+PostIssueStepsOutcome ApplyPostIssueSteps(ITrackerIssueMutations& client, const std::string& issueKey,
+                                          const IssueDraft& draft, const std::vector<TrackerField>& catalog,
+                                          IssueCreateResult& result) {
+    PostIssueStepsOutcome outcome;
+    outcome.mergeStatusFromDraft = ApplyPostIssueStatusStep(client, issueKey, draft, catalog);
+    outcome.mergeSprintFieldsFromDraft = ApplyPostIssueSprintSteps(client, issueKey, draft, catalog);
+    ApplyPostIssueAttachmentStep(client, issueKey, draft, result);
     return outcome;
 }
 
