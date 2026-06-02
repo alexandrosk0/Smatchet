@@ -140,6 +140,37 @@ P0. `tests/ui/` — new interaction tests for every uncovered target: `AnnotateA
 markdown tooltip (`description_tooltip_markdown_render`), sync visible-cue (`sync_stall_visible_cue`).*
 Cross-check each against `tests/ui/ui_tests_registry.cpp` before writing — coverage may have grown.
 
+**Pilot findings (2026-06-02, `feat/funcsize-phase0-pilot` — Log/Audit/Preferences, 3/3 green).** The
+coverage shape that works is **boot the real app → open the window → tick frames so the REAL draw fn runs →
+assert a stable child widget exists** (a Begin/End or Push/PopID imbalance from a later decomposition fires an
+ImGui `IM_ASSERT` → test fails). Reusable skeleton + harness gotchas live in
+`tests/ui/funcsize_window_render_smoke.test.cpp`. Three window classes, each needing a different recipe:
+
+- **🟢 Green (no backend)** — top-level windows opened by a `g_ui.show<X>` flag + a matching
+  `g_ui.request<X>Focus` flag (the focus re-arm is **mandatory** every frame: these dock into a default slot
+  and without forcing focus they open as an *inactive* tab where `Begin()` returns false and no children
+  submit). Probe visibility with `ImGui::FindWindowByName()` (NOT `ctx->WindowInfo()` — it doesn't resolve
+  docked windows by title), and assert child items with a **bare** ref (`"Clear Log"`, not `"Window/Item"` —
+  the path double-prefixes against `SetRef`). Covers Log, Audit, Preferences, and the other ~13 single-flag
+  windows. → copy the skeleton.
+- **🟡 Yellow (needs the deterministic backend)** — windows whose body **short-circuits on an empty-state
+  guard** with no active project / tickets / fields: the ticket grid, `drawViewsDashboardWindow`,
+  `RenderNewIssueDraftRow`, `DrawGridHeaderToolbar`, `drawBulkImportWindow`, the `TicketFieldEditor` cell
+  editors (D1-D3). A no-backend smoke test only ticks the guard path — **coverage theater that would NOT catch
+  a regression in the rows-rendering body**. These MUST boot with `SMATCHET_TEST_JIRA_BACKEND_FIXTURE` (the
+  `jira_deterministic_backend.test.cpp` pattern): boot with fixture → trigger sync → `YieldUntil` tickets/fields
+  load → *then* open the window so the real body renders rows. More setup per window; this is the only way to
+  get meaningful coverage of the big grid/draft/dashboard targets.
+- **🔴 Red (modals)** — `SmatchetProjectPicker::Draw` + other `OpenPopup`/transient-state dialogs: no
+  persistent `g_ui` flag, so `FindWindowByName` + focus-re-arm doesn't apply cleanly. Needs a per-modal open
+  recipe (drive the trigger that calls `OpenPopup`). Deferred from the pilot.
+
+**Infra note**: `ninja-ui-test-msvc` cold-configure was broken (the `imgui_test_engine` `implot` submodule
+fetch fails under `with-msvc-env.sh`); fixed in the pilot via `GIT_SUBMODULES ""` in
+`cmake/ImGuiTestEngine.cmake` (we consume no `implot`). Also: that build dir can hold a stale
+`SMATCHET_BUILD_UI_TESTS=OFF` cache from a sibling preset — a driver pre-flight grep on `CMakeCache.txt`
+would turn the silent-wrong-build into an early error.
+
 ### Phase 1 — Pure-logic, bucket-A testable (lowest risk; `tracker-backend` + core)
 
 1. `Source/Core/src/Tracker/GitHubQueryFromJql.cpp:228` — `TranslateJqlToGitHubSearch` (185L/64br) → operator/clause-handler table. **(PR A1)**
