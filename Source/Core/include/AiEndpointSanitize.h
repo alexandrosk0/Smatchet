@@ -64,6 +64,14 @@ EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_u
 // UI error strip when the controller falls back to "no endpoint" mode.
 const char* EndpointVerdictDescription(EndpointVerdict v);
 
+// Extract the lowercased host (port stripped) from a URL, or empty string when
+// the URL has no parseable scheme://host. Exposed for callers that need a
+// host-level comparison without the full validation verdict — e.g. the config
+// migration that grandfathers a pre-existing custom endpoint must compare the
+// HOST exactly, not substring-match the whole URL (so api.openai.com.evil.test
+// is correctly treated as a non-canonical host).
+std::string ExtractUrlHost(const std::string& url);
+
 } // namespace pure
 } // namespace ai
 } // namespace smatchet

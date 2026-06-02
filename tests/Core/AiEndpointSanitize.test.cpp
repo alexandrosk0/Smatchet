@@ -82,6 +82,20 @@ TEST_CASE("EndpointVerdictDescription returns non-empty for every value" * docte
     CHECK(std::string(EndpointVerdictDescription(EndpointVerdict::RejectedInsecureHttp)).size() > 0);
 }
 
+TEST_CASE("ExtractUrlHost parses + lowercases the host, port stripped" * doctest::test_suite("[security]")) {
+    using smatchet::ai::pure::ExtractUrlHost;
+    CHECK(ExtractUrlHost("https://api.openai.com/v1") == "api.openai.com");
+    CHECK(ExtractUrlHost("https://API.OpenAI.com:443/v1") == "api.openai.com");
+    CHECK(ExtractUrlHost("http://127.0.0.1:11434") == "127.0.0.1");
+    // The subdomain-attack shape must NOT collapse to the canonical host — this is
+    // exactly why the config migration compares the host, not a substring.
+    CHECK(ExtractUrlHost("https://api.openai.com.proxy.corp/v1") == "api.openai.com.proxy.corp");
+    // unparseable / schemeless -> empty
+    CHECK(ExtractUrlHost("").empty());
+    CHECK(ExtractUrlHost("api.openai.com").empty());
+    CHECK(ExtractUrlHost("not a url").empty());
+}
+
 // --- Per-provider policy path (B4 — host pin + insecure-http consent) ---
 
 using smatchet::ai::pure::EndpointPolicy;
@@ -130,14 +144,32 @@ TEST_CASE("policy: plain http to a non-loopback host needs insecure-http consent
     CHECK(SanitizeAiEndpointUrl("http://proxy.corp:8080/v1", StrictOpenAi(), out) ==
           EndpointVerdict::RejectedInsecureHttp);
     CHECK(out.empty());
-    // loopback http is always allowed regardless of consent (local Ollama / proxy)
-    CHECK(SanitizeAiEndpointUrl("http://localhost:11434", StrictOpenAi(), out) == EndpointVerdict::Allowed);
-    CHECK(SanitizeAiEndpointUrl("http://127.0.0.1:1234/v1", StrictOpenAi(), out) == EndpointVerdict::Allowed);
+    // loopback http on a PINNED provider is NOT auto-exempt — repointing a
+    // key-bearing cloud request at a local listener still needs consent.
+    CHECK(SanitizeAiEndpointUrl("http://127.0.0.1:1234/v1", StrictOpenAi(), out) ==
+          EndpointVerdict::RejectedInsecureHttp);
+    CHECK(out.empty());
+    // loopback http is auto-allowed only for an UNPINNED/local provider (Ollama).
+    EndpointPolicy ollama; // permissive defaults, empty CanonicalHost
+    CHECK(SanitizeAiEndpointUrl("http://localhost:11434", ollama, out) == EndpointVerdict::Allowed);
+    CHECK(SanitizeAiEndpointUrl("http://127.0.0.1:1234/v1", ollama, out) == EndpointVerdict::Allowed);
     // with consent: a remote http proxy is allowed (host still pinned unless AllowCustomHost)
     EndpointPolicy httpOk = StrictOpenAi();
     httpOk.AllowInsecureHttp = true;
     httpOk.AllowCustomHost = true;
     CHECK(SanitizeAiEndpointUrl("http://proxy.corp:8080/v1", httpOk, out) == EndpointVerdict::Allowed);
+}
+
+TEST_CASE("policy: pinned provider rejects loopback https without custom-host consent" *
+          doctest::test_suite("[security]")) {
+    std::string out = "seed";
+    // https://127.0.0.1 for a pinned provider is a host mismatch (not the canonical
+    // host) and must be rejected unless custom-host consent is granted.
+    CHECK(SanitizeAiEndpointUrl("https://127.0.0.1:8443/v1", StrictOpenAi(), out) ==
+          EndpointVerdict::RejectedNonProviderHost);
+    EndpointPolicy consented = StrictOpenAi();
+    consented.AllowCustomHost = true;
+    CHECK(SanitizeAiEndpointUrl("https://127.0.0.1:8443/v1", consented, out) == EndpointVerdict::Allowed);
 }
 
 TEST_CASE("policy: SSRF pivots are rejected even with full consent" * doctest::test_suite("[security]")) {

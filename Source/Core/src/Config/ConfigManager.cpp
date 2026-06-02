@@ -10,6 +10,7 @@
 #include "ConfigManager.h"
 #include "ConfigManager_Internal.h"
 
+#include "AiEndpointSanitize.h"
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
 #include "SmatchetDefaults.h"
@@ -724,9 +725,11 @@ void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg) {
     // default and break their setup. A post-migration config has the keys present
     // the bool loop above honours them, so a fresh repoint is NOT grandfathered.
     if (!j.contains("ai_allow_custom_endpoint_openai") && !j.contains("ai_allow_custom_endpoint_anthropic")) {
-        const std::string& baseUrl = cfg.AiBaseUrl;
-        const bool hasCustomHost = !baseUrl.empty() && baseUrl.find("api.openai.com") == std::string::npos &&
-                                   baseUrl.find("api.anthropic.com") == std::string::npos;
+        // Compare the parsed HOST exactly — a substring match would treat a proxy
+        // such as https://api.openai.com.proxy.corp as canonical and fail to
+        // grandfather it, silently breaking that user's upgrade.
+        const std::string host = smatchet::ai::pure::ExtractUrlHost(cfg.AiBaseUrl);
+        const bool hasCustomHost = !host.empty() && host != "api.openai.com" && host != "api.anthropic.com";
         if (hasCustomHost) {
             cfg.AiAllowCustomEndpointOpenAi = true;
             cfg.AiAllowCustomEndpointAnthropic = true;

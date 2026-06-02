@@ -151,17 +151,22 @@ EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, const EndpointPoli
             return EndpointVerdict::RejectedLinkLocal;
     }
 
+    // Loopback is auto-exempt ONLY for unpinned providers (Ollama / DeepSeek):
+    // a pinned cloud provider repointed at http://127.0.0.1 is still a
+    // config-write redirect of a key-bearing request to an arbitrary local
+    // listener, so it must clear the same consent gates. Pinning makes the
+    // CanonicalHost non-empty.
     const bool loopback = IsLoopbackHost(host);
-    // Cleartext API key on the wire: plain http:// to anything but loopback needs
-    // explicit consent. Loopback http (local Ollama) is always fine.
-    if (scheme == "http" && !loopback && !policy.AllowInsecureHttp)
+    const bool allowLoopbackWithoutConsent = loopback && policy.CanonicalHost.empty();
+    // Cleartext API key on the wire: plain http:// needs explicit consent unless
+    // it is loopback on an unpinned/local provider.
+    if (scheme == "http" && !allowLoopbackWithoutConsent && !policy.AllowInsecureHttp)
         return EndpointVerdict::RejectedInsecureHttp;
 
     // Per-provider host pin: a config-write attacker must not silently repoint a
-    // cloud provider's key-bearing request at an arbitrary host. Loopback is
-    // exempt (a pin'd cloud provider pointed at localhost is a user-run proxy,
-    // not exfil). Empty CanonicalHost = unpinned provider (Ollama / DeepSeek).
-    if (!policy.CanonicalHost.empty() && !policy.AllowCustomHost && !loopback && host != policy.CanonicalHost)
+    // cloud provider's key-bearing request at an arbitrary host — including a
+    // local one. Empty CanonicalHost = unpinned provider (Ollama / DeepSeek).
+    if (!policy.CanonicalHost.empty() && !policy.AllowCustomHost && host != policy.CanonicalHost)
         return EndpointVerdict::RejectedNonProviderHost;
 
     out_url = url;
@@ -170,6 +175,16 @@ EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, const EndpointPoli
 
 EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, std::string& out_url) {
     return SanitizeAiEndpointUrl(url, EndpointPolicy(), out_url);
+}
+
+std::string ExtractUrlHost(const std::string& url) {
+    std::size_t schemeEnd = 0;
+    if (!ExtractScheme(url, schemeEnd))
+        return std::string();
+    const std::string hostPort = ExtractHostPort(url, schemeEnd);
+    if (hostPort.empty())
+        return std::string();
+    return LowerAscii(StripPort(hostPort));
 }
 
 const char* EndpointVerdictDescription(EndpointVerdict v) {
