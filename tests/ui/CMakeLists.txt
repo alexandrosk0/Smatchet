@@ -35,6 +35,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/annotate_prefs_persist_flow.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_window_render_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_preferences_tabs.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_main_ui_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/sync_stall_visible_cue.test.cpp"
 )

@@ -163,9 +163,18 @@ ImGui `IM_ASSERT` → test fails). Reusable skeleton + harness gotchas live in
     `ctx->ItemClick(<tab label>)` then check the tab bar's `SelectedTabId`
     (`FindWindowByName → win->GetID("PreferencesTabs") → g.TabBars.GetByKey → TabBarGetTabName`) — a
     clipping-independent signal. One tab-cycling test covers all 4 Preferences-tab draw fns.
+  - **Menu-triggered modals** (green-batch-2): the always-drawn main UI (`SmatchetUI::Draw`, `drawMainMenuBar`)
+    is covered by a boot-smoke asserting `##MainMenuBar` is live. But **main-menu navigation is fragile
+    headless** — a full-path `MenuClick("//##MainMenuBar/View/leaf")` trips the engine's `###Menu_00`
+    submenu-window probe (the app frame loop doesn't latch the menu popup across the multi-frame walk). Robust
+    recipe to open a menu/context-triggered modal (e.g. `RenderEditor` via "Customize Toolbar…"):
+    **`MouseMove(window) → MouseClick(Right) → ItemClick("//$FOCUSED/<stable-text-item>")`** (right-click
+    context menu, not the main menu bar). Glyph-labelled toolbar `Button`s have non-deterministic ids — drive
+    the context menu, not the button. `drawMainMenuBar`, `SmatchetUI::Draw`, `RenderEditor`, `drawBulkImportWindow`
+    are now **covered green** (green batch 2).
 - **🟡 Yellow (needs the deterministic backend)** — windows whose body **short-circuits on an empty-state
   guard** with no active project / tickets / fields: the ticket grid, `drawViewsDashboardWindow`,
-  `RenderNewIssueDraftRow`, `DrawGridHeaderToolbar`, `drawBulkImportWindow`, the `TicketFieldEditor` cell
+  `RenderNewIssueDraftRow`, `DrawGridHeaderToolbar`, `DrawUnifiedOfflineQueuesPanel`, the `TicketFieldEditor` cell
   editors (D1-D3). A no-backend smoke test only ticks the guard path — **coverage theater that would NOT catch
   a regression in the rows-rendering body**. These MUST boot with `SMATCHET_TEST_JIRA_BACKEND_FIXTURE` (the
   `jira_deterministic_backend.test.cpp` pattern): boot with fixture → trigger sync → `YieldUntil` tickets/fields
