@@ -2,33 +2,51 @@
 
 #include "ITrackerConnectivity.h"
 
-#include <cctype>
-
 namespace smatchet {
 
 namespace {
+// ASCII-only classification — std::isalpha/isalnum/isdigit from <cctype> are locale-dependent and
+// can accept non-ASCII bytes, contradicting the ASCII-only Jira-key grammar documented in the header.
+bool IsAsciiAlpha(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+bool IsAsciiDigit(char c) {
+    return c >= '0' && c <= '9';
+}
+bool IsAsciiAlphaNum(char c) {
+    return IsAsciiAlpha(c) || IsAsciiDigit(c);
+}
+} // namespace
 
-// "TICKET-123" -> "TICKET". Returns "" when:
-//   * no '-' present
-//   * '-' is the first char (e.g. "-123")
-//   * the part before '-' contains any non-[A-Za-z0-9_] character (Jira keys are uppercase letters
-//     and digits; we accept the conservative identifier set so the helper is liberal in what it
-//     accepts without misclassifying obviously non-key strings).
-std::string ExtractKeyPrefix(const std::string& id) {
+std::string ExtractIssueKeyPrefix(const std::string& id) {
     const auto dash = id.find('-');
     if (dash == std::string::npos || dash == 0) {
         return std::string();
     }
-    for (std::size_t i = 0; i < dash; ++i) {
-        const unsigned char c = static_cast<unsigned char>(id[i]);
-        if (!std::isalnum(c) && c != '_') {
+    // Jira project keys match ^[A-Za-z][A-Za-z0-9_]* — they MUST start with a letter. The
+    // leading-letter requirement is what keeps UUIDs ("550e8400-...") and other digit-leading
+    // strings from being misclassified as keys (they return "" instead of a hex fragment).
+    if (!IsAsciiAlpha(id[0])) {
+        return std::string();
+    }
+    for (std::size_t i = 1; i < dash; ++i) {
+        const char c = id[i];
+        if (!IsAsciiAlphaNum(c) && c != '_') {
+            return std::string();
+        }
+    }
+    // The part after the dash must be a Jira issue number (digits only) for the whole string to
+    // be a real "KEY-123" issue key — guards against "PROJ-foo" leaking through as a key.
+    if (dash + 1 >= id.size()) {
+        return std::string();
+    }
+    for (std::size_t i = dash + 1; i < id.size(); ++i) {
+        if (!IsAsciiDigit(id[i])) {
             return std::string();
         }
     }
     return id.substr(0, dash);
 }
-
-} // namespace
 
 std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std::string& activeViewQuery,
                                    const std::string& lastVisibleTicketId, const std::string& legacyFallback) {
@@ -44,7 +62,7 @@ std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std
     //     so we skip this step when the backend reports itself as Plane.
     const bool isPlane = (client != nullptr && client->GetTrackerType() == "Plane");
     if (!isPlane && !lastVisibleTicketId.empty()) {
-        const std::string prefix = ExtractKeyPrefix(lastVisibleTicketId);
+        const std::string prefix = ExtractIssueKeyPrefix(lastVisibleTicketId);
         if (!prefix.empty()) {
             return prefix;
         }
@@ -58,7 +76,7 @@ std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, 
                                              const std::string& activeViewQuery, const std::string& legacyFallback) {
     const bool isPlane = (client != nullptr && client->GetTrackerType() == "Plane");
     if (!isPlane && !parentTicketId.empty()) {
-        const std::string prefix = ExtractKeyPrefix(parentTicketId);
+        const std::string prefix = ExtractIssueKeyPrefix(parentTicketId);
         if (!prefix.empty()) {
             return prefix;
         }

@@ -97,6 +97,11 @@ struct FieldEditCommitResult {
 struct FieldCatalogFetchResult {
     bool Ok = false;
     std::string BackendKey;
+    /// Project key this catalog was scoped to (resolved from the active-view JQL). The grid
+    /// completion pins it via AppController::SetCurrentCatalogProject() before SetFieldCatalog()
+    /// so the snapshot lands under the project-scoped cache entry that carries component options.
+    /// Empty when the JQL resolves no project (unscoped fetch).
+    std::string ProjectKey;
     std::vector<TrackerField> Fields;
     std::vector<TrackerComponent> Components;
     std::vector<TrackerIssueTypeCreateMeta> IssueTypeMeta;

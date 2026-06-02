@@ -271,6 +271,26 @@ TEST_CASE("ClassifyTrackerFieldFamily falls back to Text when no signals") {
     CHECK(ClassifyTrackerFieldFamily(f) == TrackerFieldFamily::Text);
 }
 
+TEST_CASE("ClassifyTrackerFieldFamily picks SelectMulti for components with no options") {
+    TrackerField f;
+    f.Id = "components";
+    f.IsArray = true;
+    f.ItemsType = "component";
+    CHECK(ClassifyTrackerFieldFamily(f) == TrackerFieldFamily::SelectMulti);
+}
+
+TEST_CASE("ClassifyTrackerFieldFamily keeps components as SelectMulti when options are populated") {
+    TrackerField f;
+    f.Id = "components";
+    f.IsArray = true;
+    f.ItemsType = "component";
+    TrackerFieldOption opt;
+    opt.Id = "10001";
+    opt.Value = "Backend";
+    f.AllowedValueOptions.push_back(opt);
+    CHECK(ClassifyTrackerFieldFamily(f) == TrackerFieldFamily::SelectMulti);
+}
+
 TEST_CASE("NormalizeTrackerFieldValue handles primitives + nulls") {
     CHECK(NormalizeTrackerFieldValue(nlohmann::json(nullptr)) == "");
     CHECK(NormalizeTrackerFieldValue(nlohmann::json("hello")) == "hello");

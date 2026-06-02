@@ -175,6 +175,15 @@ TicketGridColumn::RenderPlan ResolveRenderPlan(const std::string& fieldId, const
     if (field->IsArray && !field->AllowedValueOptions.empty()) {
         return TicketGridColumn::RenderPlan::MultiSelect;
     }
+    // Fallback B: components on an unresolvable-JQL view (filter-id / cross-project / non-`project=`)
+    // can't be enriched, so AllowedValueOptions stays empty. Still render an (empty) MultiSelect
+    // dropdown rather than a text editor — it lazily populates once a project-scoped catalog lands.
+    // The common `project = X` case populates real options via the scoped catalog save/load path
+    // and matches the non-empty MultiSelect branch above; this is the degraded-only path.
+    if (field->IsArray &&
+        (field->Family == TrackerFieldFamily::SelectMulti || ToLowerAsciiCopy(field->ItemsType) == "component")) {
+        return TicketGridColumn::RenderPlan::MultiSelect;
+    }
     if (!field->AllowedValueOptions.empty()) {
         return TicketGridColumn::RenderPlan::SingleSelect;
     }
@@ -191,6 +200,10 @@ bool RequiresAllowEditsCheck(TicketGridColumn::RenderPlan plan) {
 }
 
 } // namespace
+
+TicketGridColumn::RenderPlan ResolveTicketGridRenderPlan(const std::string& fieldId, const TrackerField* field) {
+    return ResolveRenderPlan(fieldId, field);
+}
 
 /** Whole-string numeric parse; never throws (stable_sort comparator must not throw). */
 static bool ParseWholeInt64Dec(const std::string& s, long long& out) {
