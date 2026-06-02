@@ -265,3 +265,330 @@ TEST_CASE("ConfigManager CLI overrides win over env vars on Load") {
 #endif
     ConfigManager::InvalidateCache();
 }
+
+// --- Save/Load round-trip regression net for the field-registration-table refactor. -------
+//
+// docs/plans/active/decompose-top-20-monoliths.md § ConfigManager::Load/Save. These are the
+// real safety net: ConfigManager::Save/Load is the config boot path; a dropped or mismapped
+// field in the table would silently corrupt user config. Each persisted TrackerConfig field is
+// written to a NON-default value, Saved through the real ConfigManager seam, reloaded, and the
+// read-back asserted equal. The defaults case proves a missing/empty config yields struct
+// defaults; the secret case proves DPAPI-at-rest (Win32) + round-trip.
+
+namespace {
+
+// Hostile-non-default values chosen inside every documented clamp range so the round-trip is
+// exact. `summary` is intentionally avoided in inherit lists (Save filters it out).
+TrackerConfig MakeNonDefaultConfig() {
+    TrackerConfig c;
+    c.Domain = "rt.example.atlassian.net";
+    c.Email = "rt-user@example.com";
+    c.ApiToken = "rt-jira-token-zzz";
+    c.TrackerType = "Plane";
+    c.PlaneUrl = "https://api.plane.example";
+    c.PlaneWorkspaceSlug = "rt-workspace";
+    c.PlaneApiKey = "rt-plane-key-zzz";
+    c.GitHubPat = "rt-github-pat-zzz";
+    c.GitHubBaseUrl = "https://gh.example/api/v3";
+    c.GitHubOwner = "rt-owner";
+    c.GitHubRepo = "rt-repo";
+    c.BugReportRelayUrl = "https://relay.example";
+    c.BugReportRelayKey = "rt-relay-key";
+    c.BugReportGitHubOwner = "rt-bug-owner";
+    c.BugReportGitHubRepo = "rt-bug-repo";
+    c.BugReportGitHubBaseUrl = "https://bug.example/api/v3";
+    c.BugReportAssetsRepo = "rt-owner/rt-assets";
+    c.BugReportPersistPat = true; // must be true for BugReportGitHubPat to persist
+    c.BugReportGitHubPat = "rt-bugreport-pat-zzz";
+    c.BugReportHotkey = "Ctrl+Alt+J";
+    c.BugReportHotkeyEnabled = false;
+    c.BugReportScreenshotDefault = false;
+    c.JqlQuery = "project = RT";
+    c.EnableFieldOverflowTooltips = false;
+    c.SingleClickToEditGridCells = false;
+    c.DefaultLongTextEditorPreview = true;
+    c.ReadOnlyMode = true;
+    c.BackendHasBeenReachable = true;
+    c.GridEndWheelSwallowsBeforeHorizontal = 7;
+    c.WindowX = 11;
+    c.WindowY = 22;
+    c.WindowWidth = 1600;
+    c.WindowHeight = 900;
+    c.WindowMaximized = true;
+    c.FieldCatalogCacheMaxProjects = 24;
+    c.ShowPreferencesWindow = true;
+    c.ShowViewsDashboardWindow = false;
+    c.ShowPerformanceWindow = true;
+    c.ShowLogWindow = true;
+    c.LogMinLevel = "debug";
+    c.LogTrackerHttpBodies = true;
+    c.LogP4Io = true;
+    c.McpEnabled = true;
+    c.McpPort = 5599;
+    c.McpAllowRemote = true;
+    c.McpAuthToken = "rt-mcp-token-zzz";
+    c.McpAllowLuaExecution = true;
+    c.McpExportFields = {"status", "priority"};
+    c.ShowMcpServerWindow = true;
+    c.McpServerInfoPanelHeightPx = 123.0f;
+    c.McpServerActivityPanelHeightPx = 234.0f;
+    c.AnnotateAllowCustomCommands = true;
+    c.DefaultIssueTypeId = "10042";
+    c.DefaultIssueTypeName = "Bug";
+    c.ImportMaxConcurrent = 9;
+    c.LastImportDirectory = "/rt/import";
+    c.LastExportDirectory = "/rt/export";
+    c.NewIssueInheritFieldIds = {"issuetype", "labels", "priority"};
+    c.NewIssueInheritFieldIdsPlane = {"issuetype", "state"};
+    c.NewIssueInheritFieldIdsGitHub = {"issuetype", "assignees"};
+    c.MigratedInheritIssueTypeV1 = true; // avoid the one-shot issuetype injection on reload
+    c.DurationSuggestions = {"5m", "45m"};
+    c.WorkLogCommentTemplates = {"rt template one", "rt template two"};
+    c.DateFormatOption = "absolute";
+    c.DateCompactRelativeThresholdDays = 30;
+    c.ViewFieldPickerHeight = 333.0f;
+    c.ViewsSidebarWidth = 199.0f;
+    c.ViewsFieldsSplitRatio = 0.42f;
+    c.ShowPrimarySideBar = false;
+    c.ShowSecondarySideBar = true;
+    c.ShowPanel = false;
+    c.ShowStatusBar = false;
+    c.Density = TrackerConfig::UiDensity::Compact;
+    c.PanelDockSide = TrackerConfig::PanelPosition::Right;
+    c.PrimarySideBarOnRight = false;
+    c.AiProviderKind = 1;
+    c.AiApiKey = "rt-ai-openai-zzz";
+    c.AiAnthropicApiKey = "rt-ai-anthropic-zzz";
+    c.AiDeepSeekApiKey = "rt-ai-deepseek-zzz";
+    c.AiOllamaBaseUrl = "http://localhost:11999";
+    c.AiBaseUrl = "https://ai.example";
+    c.AiModelOpenAi = "gpt-rt";
+    c.AiModelAnthropic = "claude-rt";
+    c.AiModelOllama = "llama-rt";
+    c.AiDeepSeekBaseUrl = "https://deepseek.example";
+    c.AiModelDeepSeek = "deepseek-rt";
+    c.AiReasoningEffort = "high";
+    c.AssistantPanelOpen = true;
+    c.AssistantPanelWidth = 412.0f;
+    c.AssistantPanelOnSecondarySide = true;
+    c.AgentsMdGlobalPath = "/rt/agents.md";
+    c.ProjectAgentsMdPath = "/rt/project/AGENTS.md";
+    c.AgentsMdAutoDiscoverProject = true;
+    c.AssistantContextBlockSelection = false;
+    c.AssistantContextBlockVisibleRows = false;
+    c.AssistantContextBlockActiveTicket = false;
+    c.AssistantContextBlockActiveView = false;
+    c.AssistantContextBlockAuditTrail = true;
+    c.AssistantHistoryMaxRows = 777;
+    c.AiPrefsVerifyOnSave = false;
+    c.LayoutSchemaVersion = 4;
+    c.SelectedFontName = "Consolas";
+    c.FontSizePt = 20;
+    c.Theme = ThemeId::NortonCommander;
+    c.UiLanguage = "fr-FR";
+    c.UpdateCheckEnabled = false;
+    c.UpdateIncludePrerelease = true;
+    c.UpdateSkipVersion = "9.9.9";
+    c.UpdateGithubRepo = "rt-owner/rt-fork";
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persisted field") {
+    smatchet_tests::TestEnvGuard env;
+
+    const TrackerConfig in = MakeNonDefaultConfig();
+    ConfigManager::Save(in);
+    ConfigManager::InvalidateCache();
+    const TrackerConfig out = ConfigManager::Load();
+
+    // Strings.
+    CHECK(out.Domain == in.Domain);
+    CHECK(out.Email == in.Email);
+    CHECK(out.ApiToken == in.ApiToken);
+    CHECK(out.TrackerType == in.TrackerType);
+    CHECK(out.PlaneUrl == in.PlaneUrl);
+    CHECK(out.PlaneWorkspaceSlug == in.PlaneWorkspaceSlug);
+    CHECK(out.PlaneApiKey == in.PlaneApiKey);
+    CHECK(out.GitHubPat == in.GitHubPat);
+    CHECK(out.GitHubBaseUrl == in.GitHubBaseUrl);
+    CHECK(out.GitHubOwner == in.GitHubOwner);
+    CHECK(out.GitHubRepo == in.GitHubRepo);
+    CHECK(out.BugReportRelayUrl == in.BugReportRelayUrl);
+    CHECK(out.BugReportRelayKey == in.BugReportRelayKey);
+    CHECK(out.BugReportGitHubOwner == in.BugReportGitHubOwner);
+    CHECK(out.BugReportGitHubRepo == in.BugReportGitHubRepo);
+    CHECK(out.BugReportGitHubBaseUrl == in.BugReportGitHubBaseUrl);
+    CHECK(out.BugReportAssetsRepo == in.BugReportAssetsRepo);
+    CHECK(out.BugReportGitHubPat == in.BugReportGitHubPat);
+    CHECK(out.BugReportHotkey == in.BugReportHotkey);
+    CHECK(out.JqlQuery == in.JqlQuery);
+    CHECK(out.LogMinLevel == in.LogMinLevel);
+    CHECK(out.McpAuthToken == in.McpAuthToken);
+    CHECK(out.DefaultIssueTypeId == in.DefaultIssueTypeId);
+    CHECK(out.DefaultIssueTypeName == in.DefaultIssueTypeName);
+    CHECK(out.LastImportDirectory == in.LastImportDirectory);
+    CHECK(out.LastExportDirectory == in.LastExportDirectory);
+    CHECK(out.DateFormatOption == in.DateFormatOption);
+    CHECK(out.AiApiKey == in.AiApiKey);
+    CHECK(out.AiAnthropicApiKey == in.AiAnthropicApiKey);
+    CHECK(out.AiDeepSeekApiKey == in.AiDeepSeekApiKey);
+    CHECK(out.AiOllamaBaseUrl == in.AiOllamaBaseUrl);
+    CHECK(out.AiBaseUrl == in.AiBaseUrl);
+    CHECK(out.AiModelOpenAi == in.AiModelOpenAi);
+    CHECK(out.AiModelAnthropic == in.AiModelAnthropic);
+    CHECK(out.AiModelOllama == in.AiModelOllama);
+    CHECK(out.AiDeepSeekBaseUrl == in.AiDeepSeekBaseUrl);
+    CHECK(out.AiModelDeepSeek == in.AiModelDeepSeek);
+    CHECK(out.AiReasoningEffort == in.AiReasoningEffort);
+    CHECK(out.AgentsMdGlobalPath == in.AgentsMdGlobalPath);
+    CHECK(out.ProjectAgentsMdPath == in.ProjectAgentsMdPath);
+    CHECK(out.SelectedFontName == in.SelectedFontName);
+    CHECK(out.UiLanguage == in.UiLanguage);
+    CHECK(out.UpdateSkipVersion == in.UpdateSkipVersion);
+    CHECK(out.UpdateGithubRepo == in.UpdateGithubRepo);
+
+    // Bools.
+    CHECK(out.BugReportPersistPat == in.BugReportPersistPat);
+    CHECK(out.BugReportHotkeyEnabled == in.BugReportHotkeyEnabled);
+    CHECK(out.BugReportScreenshotDefault == in.BugReportScreenshotDefault);
+    CHECK(out.EnableFieldOverflowTooltips == in.EnableFieldOverflowTooltips);
+    CHECK(out.SingleClickToEditGridCells == in.SingleClickToEditGridCells);
+    CHECK(out.DefaultLongTextEditorPreview == in.DefaultLongTextEditorPreview);
+    CHECK(out.ReadOnlyMode == in.ReadOnlyMode);
+    CHECK(out.BackendHasBeenReachable == in.BackendHasBeenReachable);
+    CHECK(out.WindowMaximized == in.WindowMaximized);
+    CHECK(out.ShowPreferencesWindow == in.ShowPreferencesWindow);
+    CHECK(out.ShowViewsDashboardWindow == in.ShowViewsDashboardWindow);
+    CHECK(out.ShowPerformanceWindow == in.ShowPerformanceWindow);
+    CHECK(out.ShowLogWindow == in.ShowLogWindow);
+    CHECK(out.LogTrackerHttpBodies == in.LogTrackerHttpBodies);
+    CHECK(out.LogP4Io == in.LogP4Io);
+    CHECK(out.McpEnabled == in.McpEnabled);
+    CHECK(out.McpAllowRemote == in.McpAllowRemote);
+    CHECK(out.McpAllowLuaExecution == in.McpAllowLuaExecution);
+    CHECK(out.ShowMcpServerWindow == in.ShowMcpServerWindow);
+    CHECK(out.AnnotateAllowCustomCommands == in.AnnotateAllowCustomCommands);
+    CHECK(out.AssistantPanelOpen == in.AssistantPanelOpen);
+    CHECK(out.AssistantPanelOnSecondarySide == in.AssistantPanelOnSecondarySide);
+    CHECK(out.AgentsMdAutoDiscoverProject == in.AgentsMdAutoDiscoverProject);
+    CHECK(out.AssistantContextBlockSelection == in.AssistantContextBlockSelection);
+    CHECK(out.AssistantContextBlockVisibleRows == in.AssistantContextBlockVisibleRows);
+    CHECK(out.AssistantContextBlockActiveTicket == in.AssistantContextBlockActiveTicket);
+    CHECK(out.AssistantContextBlockActiveView == in.AssistantContextBlockActiveView);
+    CHECK(out.AssistantContextBlockAuditTrail == in.AssistantContextBlockAuditTrail);
+    CHECK(out.AiPrefsVerifyOnSave == in.AiPrefsVerifyOnSave);
+    CHECK(out.ShowPrimarySideBar == in.ShowPrimarySideBar);
+    CHECK(out.ShowSecondarySideBar == in.ShowSecondarySideBar);
+    CHECK(out.ShowPanel == in.ShowPanel);
+    CHECK(out.ShowStatusBar == in.ShowStatusBar);
+    CHECK(out.PrimarySideBarOnRight == in.PrimarySideBarOnRight);
+    CHECK(out.UpdateCheckEnabled == in.UpdateCheckEnabled);
+    CHECK(out.UpdateIncludePrerelease == in.UpdateIncludePrerelease);
+
+    // Ints.
+    CHECK(out.GridEndWheelSwallowsBeforeHorizontal == in.GridEndWheelSwallowsBeforeHorizontal);
+    CHECK(out.WindowX == in.WindowX);
+    CHECK(out.WindowY == in.WindowY);
+    CHECK(out.WindowWidth == in.WindowWidth);
+    CHECK(out.WindowHeight == in.WindowHeight);
+    CHECK(out.FieldCatalogCacheMaxProjects == in.FieldCatalogCacheMaxProjects);
+    CHECK(out.McpPort == in.McpPort);
+    CHECK(out.DateCompactRelativeThresholdDays == in.DateCompactRelativeThresholdDays);
+    CHECK(out.ImportMaxConcurrent == in.ImportMaxConcurrent);
+    CHECK(out.AiProviderKind == in.AiProviderKind);
+    CHECK(out.AssistantHistoryMaxRows == in.AssistantHistoryMaxRows);
+    CHECK(out.LayoutSchemaVersion == in.LayoutSchemaVersion);
+    CHECK(out.FontSizePt == in.FontSizePt);
+
+    // Floats.
+    CHECK(out.McpServerInfoPanelHeightPx == doctest::Approx(in.McpServerInfoPanelHeightPx));
+    CHECK(out.McpServerActivityPanelHeightPx == doctest::Approx(in.McpServerActivityPanelHeightPx));
+    CHECK(out.AssistantPanelWidth == doctest::Approx(in.AssistantPanelWidth));
+    CHECK(out.ViewFieldPickerHeight == doctest::Approx(in.ViewFieldPickerHeight));
+    CHECK(out.ViewsSidebarWidth == doctest::Approx(in.ViewsSidebarWidth));
+    CHECK(out.ViewsFieldsSplitRatio == doctest::Approx(in.ViewsFieldsSplitRatio));
+
+    // Enums.
+    CHECK(out.Density == in.Density);
+    CHECK(out.PanelDockSide == in.PanelDockSide);
+    CHECK(out.Theme == in.Theme);
+
+    // Lists.
+    CHECK(out.McpExportFields == in.McpExportFields);
+    CHECK(out.NewIssueInheritFieldIds == in.NewIssueInheritFieldIds);
+    CHECK(out.NewIssueInheritFieldIdsPlane == in.NewIssueInheritFieldIdsPlane);
+    CHECK(out.NewIssueInheritFieldIdsGitHub == in.NewIssueInheritFieldIdsGitHub);
+    CHECK(out.DurationSuggestions == in.DurationSuggestions);
+    CHECK(out.WorkLogCommentTemplates == in.WorkLogCommentTemplates);
+    CHECK(out.MigratedInheritIssueTypeV1 == in.MigratedInheritIssueTypeV1);
+}
+
+TEST_CASE("ConfigManager Load of an empty config yields documented struct defaults") {
+    smatchet_tests::TestEnvGuard env; // writes a minimal {"read_only_mode":false} config
+
+    ConfigManager::InvalidateCache();
+    const TrackerConfig cfg = ConfigManager::Load();
+    const TrackerConfig def; // construct-time defaults
+
+    CHECK(cfg.TrackerType == def.TrackerType);
+    CHECK(cfg.JqlQuery == def.JqlQuery);
+    CHECK(cfg.EnableFieldOverflowTooltips == def.EnableFieldOverflowTooltips);
+    CHECK(cfg.SingleClickToEditGridCells == def.SingleClickToEditGridCells);
+    CHECK(cfg.WindowWidth == def.WindowWidth);
+    CHECK(cfg.WindowHeight == def.WindowHeight);
+    CHECK(cfg.FieldCatalogCacheMaxProjects == def.FieldCatalogCacheMaxProjects);
+    CHECK(cfg.LogMinLevel == def.LogMinLevel);
+    CHECK(cfg.McpPort == def.McpPort);
+    CHECK(cfg.ImportMaxConcurrent == def.ImportMaxConcurrent);
+    CHECK(cfg.FontSizePt == def.FontSizePt);
+    CHECK(cfg.Theme == def.Theme);
+    CHECK(cfg.UiLanguage == def.UiLanguage);
+    CHECK(cfg.Density == def.Density);
+    CHECK(cfg.PanelDockSide == def.PanelDockSide);
+    CHECK(cfg.AiModelOpenAi == def.AiModelOpenAi);
+    CHECK(cfg.AiModelAnthropic == def.AiModelAnthropic);
+    CHECK(cfg.AiReasoningEffort == def.AiReasoningEffort);
+    CHECK(cfg.AssistantHistoryMaxRows == def.AssistantHistoryMaxRows);
+    CHECK(cfg.UpdateGithubRepo == def.UpdateGithubRepo);
+    CHECK(cfg.BugReportHotkey == def.BugReportHotkey);
+    // Secrets default to empty when absent.
+    CHECK(cfg.ApiToken.empty());
+    CHECK(cfg.PlaneApiKey.empty());
+    CHECK(cfg.GitHubPat.empty());
+    CHECK(cfg.McpAuthToken.empty());
+    CHECK(cfg.AiApiKey.empty());
+}
+
+TEST_CASE("ConfigManager secret round-trips and is stored encrypted-at-rest on Win32") {
+    smatchet_tests::TestEnvGuard env;
+
+    TrackerConfig in;
+    const std::string secret = "super-secret-plane-key-RoundTrip-1234567890";
+    in.PlaneApiKey = secret;
+    in.TrackerType = "Plane";
+    ConfigManager::Save(in);
+
+    // Read the raw on-disk config bytes.
+    const std::string cfgPath = ConfigManager::GetConfigPath();
+    std::ifstream f(cfgPath, std::ios::binary);
+    REQUIRE(f.good());
+    const std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    f.close();
+
+    // Round-trips back to the same plaintext through Load.
+    ConfigManager::InvalidateCache();
+    const TrackerConfig out = ConfigManager::Load();
+    CHECK(out.PlaneApiKey == secret);
+
+#if defined(_WIN32)
+    // On Win32 the secret is DPAPI-encrypted: the plaintext must NOT appear in the file, and the
+    // encrypted-at-rest key must be present.
+    CHECK(raw.find(secret) == std::string::npos);
+    CHECK(raw.find("plane_api_key_enc") != std::string::npos);
+#else
+    // Non-Win32 has no DPAPI: plaintext fallback is expected (documented behavior).
+    CHECK(raw.find(secret) != std::string::npos);
+#endif
+}
