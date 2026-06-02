@@ -7,6 +7,24 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-02 · debug-detective · [test] · P2 — `FakeTrackerClient` finite fetch-queue silently degrades to an empty `fullSyncCompleted=true` fallback (footgun that masquerades as a server-side mass-delete)
+  Details: Root cause of the "deterministic backend broken" P1 below, found + fixed via #728. `JiraFakeTrackerFixture::Configure()` enqueued a finite fetch queue (`EnqueueFetchResult`) but never set the static fallback; production streaming-sync fires more often than the fixture scripts (deferred initial auto-sync on first `SmatchetUI::Draw` + each bucket-E test's explicit `SyncWithBackend()`, all sharing one backend), so once the queue drains `FakeTrackerClient::FetchIssues` returns empty with `fetchFullSyncCompleted_=true` — which the **correct** real sync worker reads as "every issue deleted server-side" and stale-prunes the grid. It was a test-fixture wiring bug, NOT product code. #728 fixed it per-fixture (set the static fallback to the last scripted fetch); the durable fix is in the fake itself.
+  Concrete next action: make `EnqueueFetchResult` auto-sticky on its last entry, OR default `fetchFullSyncCompleted_=false` when the queue empties with no explicit static result, so an unscripted re-fetch can't trigger stale-pruning. ~30min in `FakeTrackerClient`.
+  Status: open
+  Last-reviewed: 2026-06-02
+
+- 2026-06-02 · debug-detective · [test] · P1 — RESOLVED (#728) — deterministic Jira fixture backend was broken: sync completed but tickets never loaded
+  Details: `tests/ui/jira_deterministic_backend.test.cpp` failed `!tickets.empty()` after a completed `SyncWithBackend()`. Root-caused (debug-detective, via Phase-0 yellow pilot) as a **test-fixture footgun, not product code** — see the P2 entry above. The real sync/stale-prune path was correct. **Fixed in #728** (13-line idempotent-refetch fix in `JiraFakeTrackerFixture.cpp`); deterministic driver now 3/3 (was 1/3), independently re-verified. Unblocks the Phase-0 yellow batch. Earlier framing (suspected scripted-client → `TicketSyncService` propagation in product code) was wrong — corrected here.
+  Concrete next action: none — resolved by #728; archive to applied.md on merge. Durable hardening tracked in the P2 above.
+  Status: open
+  Last-reviewed: 2026-06-02
+
+- 2026-06-02 · test-author · [test] · P2 — CI bucket-E job never sets `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`, so the deterministic-backend suite silently skips
+  Details: `.github/workflows/build-and-test.yml` Bucket-E job runs `Smatchet.exe scenario.run --name=ui-test --yes` (all registered tests) but does NOT export `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`, so every fixture-gated test hits its `FixtureEnvSet()` skip — and the step is `continue-on-error: true` anyway. The #663 deterministic suite has thus been invisible to CI; its breakage (entry above) surfaced only via a manual local run. The driver `test-ui-jira-deterministic-backend.sh` is also absent from `test-all.sh`'s `WORKTREE_INCOMPATIBLE_RE`.
+  Concrete next action: add a CI step (or extend the bucket-E job) that exports the fixture path + runs the deterministic-backend driver as a hard check, so fixture-backend regressions fail CI immediately. ~30min.
+  Status: open
+  Last-reviewed: 2026-06-02
+
 - 2026-06-01 · orchestrator · [test] · P2 — `JiraFakeTrackerFixture` injects a pre-built catalog and bypasses `FetchFieldCatalog`, so field-classification / enrichment bugs have zero fixture coverage
   Details: The components-rendered-as-text bug (PR #672) was a `FetchFieldCatalog` defect — `components` stayed `Family=Text` (→ grid text editor instead of a multi-select dropdown) because the unscoped catalog fetch skips Phase-3 component enrichment AND `ClassifyTrackerFieldFamily` had no opts-independent case for components. No test caught it: `JiraFakeTrackerFixture` injects a **pre-built** `TrackerFieldCatalogResult` and bypasses the live `FetchFieldCatalog` assembly entirely, so the fake exercises catalog *consumption* but never catalog *build*. The whole enrichment + classification pipeline (scoped vs unscoped fetch, per-project component options, family-classification ordering) is fixture-invisible; the bug was found only by live debugging against issue BLUUP-1. Same blind spot would hide any future tracker catalog-build regression.
   Concrete next action: add a fixture variant that drives the real `FetchFieldCatalog` / `MergeProjectComponentsFromEndpoint` assembly against scripted HTTP responses (cpp-httplib already linked for fakes) so catalog-build classification can be asserted — e.g. an unscoped fetch leaves `components` dropdown-eligible, a scoped fetch populates per-project options, and `customfield_*` arrays classify per their schema. Pair with the pure `ClassifyTrackerFieldFamily` tests already added in #672. ~3-4 h (fixture design + first cases).
