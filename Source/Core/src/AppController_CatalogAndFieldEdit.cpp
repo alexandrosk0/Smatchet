@@ -827,96 +827,73 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
     });
 }
 
-bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                    const std::vector<std::string>& rawValues, std::string& outError) {
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outError.clear();
-    if (ConfigManager::Load().ReadOnlyMode) {
-        outError = "Read-only mode is enabled in Preferences.";
-        LOG_WARN("AppController::SubmitFieldEdit blocked by read-only mode issue=%s field=%s", issueId.c_str(),
+// SubmitFieldEdit branch helpers. SubmitFieldEditCtx is a private AppController struct (AppController.h).
+
+bool AppController::SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx, std::string& outError) {
+    const std::string& issueId = ctx.issueId;
+    const TrackerField& field = ctx.field;
+    const auto& values = ctx.values;
+    const auto& tickets = *ctx.ticketsSnap;
+    ITrackerIssueMutations* mutations = ctx.mutations;
+    const std::string& fieldEditAuditOp = ctx.fieldEditAuditOp;
+    const char* const fieldEditAuditSource = ctx.fieldEditAuditSource;
+
+    if (values.empty()) {
+        outError = "Clearing sprint is not supported by this action.";
+        LOG_WARN("AppController::SubmitFieldEdit sprint clear not supported issue=%s field=%s", issueId.c_str(),
                  field.Id.c_str());
         return false;
     }
-    if (!backend || !Cache) {
-        outError = "Backend or cache is not initialized.";
-        LOG_WARN("AppController::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(), field.Id.c_str(),
-                 outError.c_str());
-        return false;
-    }
-    if (issueId.empty()) {
-        outError = "Issue id is empty.";
-        LOG_WARN("AppController::SubmitFieldEdit skipped field=%s: %s", field.Id.c_str(), outError.c_str());
-        return false;
-    }
-
-    ITrackerIssueMutations* const mutations = backend->Mutations();
-    if (!mutations) {
-        outError = "Tracker backend does not support issue mutations.";
-        return false;
-    }
-
-    const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
-    const char* const fieldEditAuditSource = FieldEditAuditSource::Current();
-    LOG_TRACE("SubmitFieldEdit: source=%s issue=%s field=%s raw_values=%zu", fieldEditAuditSource, issueId.c_str(),
-              field.Id.c_str(), rawValues.size());
-
-    std::vector<std::string> values;
-    values.reserve(rawValues.size());
-    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
-                 [](const std::string& value) { return !value.empty(); });
-
-    const std::shared_ptr<const std::vector<CachedTicket>> ticketsSnap = GetActiveTicketsSnapshot();
-    const auto& tickets = *ticketsSnap;
-
-    if (IsSprintField(field)) {
-        if (values.empty()) {
-            outError = "Clearing sprint is not supported by this action.";
-            LOG_WARN("AppController::SubmitFieldEdit sprint clear not supported issue=%s field=%s", issueId.c_str(),
-                     field.Id.c_str());
-            return false;
-        }
-        const std::string sprintId = values.front();
-        auto ticketIt = std::find_if(tickets.begin(), tickets.end(),
-                                     [&](const CachedTicket& ticket) { return ticket.id == issueId; });
-        BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
-                                       nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
-        if (!mutations->AddIssueToSprint(issueId, sprintId, outError)) {
-            LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
-                      issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
-            BackendAuditTrail::AppendResult(
-                "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
-                nlohmann::json{
-                    {"field_id", field.Id},
-                    {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
-                    {"after", sprintId}});
-            return false;
-        }
-        if (ticketIt != tickets.end()) {
-            CachedTicket updatedTicket = *ticketIt;
-            std::string displayValue = sprintId;
-            auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
-                                      [&](const auto& option) { return option.Id == sprintId; });
-            if (optIt != field.AllowedValueOptions.end()) {
-                displayValue = optIt->Value;
-            }
-            updatedTicket.fieldValues[field.Id] = displayValue;
-            UpdateTicket(updatedTicket);
-        } else {
-            RefreshLocalData();
-        }
+    const std::string sprintId = values.front();
+    auto ticketIt =
+        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
+    BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
+                                   nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
+    if (!mutations->AddIssueToSprint(issueId, sprintId, outError)) {
+        LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
+                  issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
         BackendAuditTrail::AppendResult(
-            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
+            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
             nlohmann::json{{"field_id", field.Id},
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                            {"after", sprintId}});
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-        return true;
+        return false;
     }
+    if (ticketIt != tickets.end()) {
+        CachedTicket updatedTicket = *ticketIt;
+        std::string displayValue = sprintId;
+        auto optIt = std::find_if(field.AllowedValueOptions.begin(), field.AllowedValueOptions.end(),
+                                  [&](const auto& option) { return option.Id == sprintId; });
+        if (optIt != field.AllowedValueOptions.end()) {
+            displayValue = optIt->Value;
+        }
+        updatedTicket.fieldValues[field.Id] = displayValue;
+        UpdateTicket(updatedTicket);
+    } else {
+        RefreshLocalData();
+    }
+    BackendAuditTrail::AppendResult(
+        "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
+        nlohmann::json{{"field_id", field.Id},
+                       {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
+                       {"after", sprintId}});
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return true;
+}
 
-    if (IsNonEditableTimetrackingFieldId(field.Id)) {
-        outError = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
-        LOG_WARN("AppController::SubmitFieldEdit blocked non-editable timetracking issue=%s field=%s", issueId.c_str(),
+bool AppController::SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx, std::string& outError) {
+    const std::string& issueId = ctx.issueId;
+    const TrackerField& field = ctx.field;
+    const auto& values = ctx.values;
+    const auto& tickets = *ctx.ticketsSnap;
+    ITrackerIssueMutations* mutations = ctx.mutations;
+    const std::string& fieldEditAuditOp = ctx.fieldEditAuditOp;
+    const char* const fieldEditAuditSource = ctx.fieldEditAuditSource;
+
+    const std::string editedValue = values.empty() ? std::string() : values.front();
+    if (editedValue.empty()) {
+        outError = "Clearing Jira timetracking estimates is not supported by this editor.";
+        LOG_WARN("AppController::SubmitFieldEdit blocked timetracking clear issue=%s field=%s", issueId.c_str(),
                  field.Id.c_str());
         return false;
     }
@@ -924,85 +901,84 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
     auto ticketIt =
         std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
 
-    if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        const std::string editedValue = values.empty() ? std::string() : values.front();
-        if (editedValue.empty()) {
-            outError = "Clearing Jira timetracking estimates is not supported by this editor.";
-            LOG_WARN("AppController::SubmitFieldEdit blocked timetracking clear issue=%s field=%s", issueId.c_str(),
-                     field.Id.c_str());
-            return false;
-        }
+    std::string originalEstimate =
+        (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeoriginalestimate") : std::string();
+    std::string remainingEstimate =
+        (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeestimate") : std::string();
+    const std::string beforeOriginalEstimate = originalEstimate;
+    const std::string beforeRemainingEstimate = remainingEstimate;
+    if (field.Id == "timeoriginalestimate") {
+        originalEstimate = editedValue;
+    } else {
+        remainingEstimate = editedValue;
+    }
 
-        std::string originalEstimate =
-            (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeoriginalestimate") : std::string();
-        std::string remainingEstimate =
-            (ticketIt != tickets.end()) ? ticketIt->GetFieldValue("timeestimate") : std::string();
-        const std::string beforeOriginalEstimate = originalEstimate;
-        const std::string beforeRemainingEstimate = remainingEstimate;
-        if (field.Id == "timeoriginalestimate") {
-            originalEstimate = editedValue;
-        } else {
-            remainingEstimate = editedValue;
-        }
+    nlohmann::json timetrackingPayload = nlohmann::json::object();
+    if (!originalEstimate.empty()) {
+        timetrackingPayload["originalEstimate"] = originalEstimate;
+    }
+    if (!remainingEstimate.empty()) {
+        timetrackingPayload["remainingEstimate"] = remainingEstimate;
+    }
+    if (timetrackingPayload.empty()) {
+        outError = "Timetracking update requires at least one estimate value.";
+        return false;
+    }
 
-        nlohmann::json timetrackingPayload = nlohmann::json::object();
-        if (!originalEstimate.empty()) {
-            timetrackingPayload["originalEstimate"] = originalEstimate;
+    nlohmann::json fieldsPayload = nlohmann::json::object();
+    fieldsPayload["timetracking"] = std::move(timetrackingPayload);
+    BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
+                                   nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
+    if (!mutations->UpdateIssueFields(issueId, fieldsPayload, outError)) {
+        std::string payloadForLog;
+        try {
+            payloadForLog = fieldsPayload.dump();
+        } catch (...) { // catch-all-ok: dump for logging
+            payloadForLog = "(payload dump failed)";
         }
-        if (!remainingEstimate.empty()) {
-            timetrackingPayload["remainingEstimate"] = remainingEstimate;
-        }
-        if (timetrackingPayload.empty()) {
-            outError = "Timetracking update requires at least one estimate value.";
-            return false;
-        }
-
-        nlohmann::json fieldsPayload = nlohmann::json::object();
-        fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-        BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
-                                       nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
-        if (!mutations->UpdateIssueFields(issueId, fieldsPayload, outError)) {
-            std::string payloadForLog;
-            try {
-                payloadForLog = fieldsPayload.dump();
-            } catch (...) { // catch-all-ok: dump for logging
-                payloadForLog = "(payload dump failed)";
-            }
-            LOG_ERROR("AppController::SubmitFieldEdit failed issue=%s field=%s tracker_error=%s request=%s",
-                      issueId.c_str(), field.Id.c_str(), outError.c_str(), TruncateForLog(payloadForLog, 1200).c_str());
-            BackendAuditTrail::AppendResult(
-                "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
-                nlohmann::json{{"field_id", "timetracking"},
-                               {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
-                                                         {"timeestimate", beforeRemainingEstimate}}},
-                               {"after", fieldsPayload["timetracking"]}});
-            return false;
-        }
-
-        if (ticketIt != tickets.end()) {
-            CachedTicket updatedTicket = *ticketIt;
-            updatedTicket.fieldValues["timeoriginalestimate"] = originalEstimate;
-            updatedTicket.fieldValues["timeestimate"] = remainingEstimate;
-            UpdateTicket(updatedTicket);
-        } else {
-            RefreshLocalData();
-        }
+        LOG_ERROR("AppController::SubmitFieldEdit failed issue=%s field=%s tracker_error=%s request=%s",
+                  issueId.c_str(), field.Id.c_str(), outError.c_str(), TruncateForLog(payloadForLog, 1200).c_str());
         BackendAuditTrail::AppendResult(
-            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
+            "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, false, outError,
             nlohmann::json{{"field_id", "timetracking"},
                            {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
                                                      {"timeestimate", beforeRemainingEstimate}}},
                            {"after", fieldsPayload["timetracking"]}});
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-        return true;
+        return false;
     }
 
-    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        EnsureIssueEditMetaLoaded(issueId, nullptr);
+    if (ticketIt != tickets.end()) {
+        CachedTicket updatedTicket = *ticketIt;
+        updatedTicket.fieldValues["timeoriginalestimate"] = originalEstimate;
+        updatedTicket.fieldValues["timeestimate"] = remainingEstimate;
+        UpdateTicket(updatedTicket);
+    } else {
+        RefreshLocalData();
     }
+    BackendAuditTrail::AppendResult(
+        "field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp, true, std::string(),
+        nlohmann::json{{"field_id", "timetracking"},
+                       {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
+                                                 {"timeestimate", beforeRemainingEstimate}}},
+                       {"after", fieldsPayload["timetracking"]}});
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return true;
+}
 
-    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
-        !CanEditFieldForIssue(issueId, field.Id, &field)) {
+bool AppController::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::string& outError) {
+    const std::string& issueId = ctx.issueId;
+    const TrackerField& field = ctx.field;
+    const auto& rawValues = ctx.rawValues;
+    const auto& values = ctx.values;
+    const auto& tickets = *ctx.ticketsSnap;
+    ITrackerIssueMutations* mutations = ctx.mutations;
+    const std::shared_ptr<ITrackerBackend>& backend = ctx.backend;
+    const std::string& fieldEditAuditOp = ctx.fieldEditAuditOp;
+    const char* const fieldEditAuditSource = ctx.fieldEditAuditSource;
+
+    EnsureIssueEditMetaLoaded(issueId, nullptr);
+
+    if (!CanEditFieldForIssue(issueId, field.Id, &field)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         LOG_WARN("AppController::SubmitFieldEdit blocked by editmeta issue=%s field=%s", issueId.c_str(),
                  field.Id.c_str());
@@ -1015,6 +991,9 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
                  field.Id.c_str(), outError.c_str());
         return false;
     }
+
+    auto ticketIt =
+        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
 
     BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
@@ -1085,6 +1064,68 @@ bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerFie
 
     requestDeferredLiveTrackerBackendSuccessNotify_();
     return true;
+}
+
+bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                                    const std::vector<std::string>& rawValues, std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
+        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    outError.clear();
+    if (ConfigManager::Load().ReadOnlyMode) {
+        outError = "Read-only mode is enabled in Preferences.";
+        LOG_WARN("AppController::SubmitFieldEdit blocked by read-only mode issue=%s field=%s", issueId.c_str(),
+                 field.Id.c_str());
+        return false;
+    }
+    if (!backend || !Cache) {
+        outError = "Backend or cache is not initialized.";
+        LOG_WARN("AppController::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(), field.Id.c_str(),
+                 outError.c_str());
+        return false;
+    }
+    if (issueId.empty()) {
+        outError = "Issue id is empty.";
+        LOG_WARN("AppController::SubmitFieldEdit skipped field=%s: %s", field.Id.c_str(), outError.c_str());
+        return false;
+    }
+
+    ITrackerIssueMutations* const mutations = backend->Mutations();
+    if (!mutations) {
+        outError = "Tracker backend does not support issue mutations.";
+        return false;
+    }
+
+    const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
+    const char* const fieldEditAuditSource = FieldEditAuditSource::Current();
+    LOG_TRACE("SubmitFieldEdit: source=%s issue=%s field=%s raw_values=%zu", fieldEditAuditSource, issueId.c_str(),
+              field.Id.c_str(), rawValues.size());
+
+    std::vector<std::string> values;
+    values.reserve(rawValues.size());
+    std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
+                 [](const std::string& value) { return !value.empty(); });
+
+    const std::shared_ptr<const std::vector<CachedTicket>> ticketsSnap = GetActiveTicketsSnapshot();
+
+    const SubmitFieldEditCtx ctx{
+        issueId, field, rawValues, values, mutations, backend, ticketsSnap, fieldEditAuditOp, fieldEditAuditSource};
+
+    if (IsSprintField(field)) {
+        return SubmitFieldEditSprint(ctx, outError);
+    }
+
+    if (IsNonEditableTimetrackingFieldId(field.Id)) {
+        outError = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
+        LOG_WARN("AppController::SubmitFieldEdit blocked non-editable timetracking issue=%s field=%s", issueId.c_str(),
+                 field.Id.c_str());
+        return false;
+    }
+
+    if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
+        return SubmitFieldEditTimetracking(ctx, outError);
+    }
+
+    return SubmitFieldEditRegular(ctx, outError);
 }
 
 bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,

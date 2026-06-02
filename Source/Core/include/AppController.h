@@ -140,6 +140,39 @@ class AppController
 
     void Initialize(const std::string& dbPath, const std::string& backendType);
 
+  private:
+    // Initialize() phase helpers (decompose-top-20-monoliths). Each is a private
+    // bootstrap step invoked in strict order by Initialize(); ordering, error
+    // handling, and early-returns are identical to the former monolith. They are
+    // not re-entrant and assume single-threaded call from the UI thread before any
+    // worker is spawned.
+
+    /// Phase 1 — record the UI thread, start the config-save / chat-persist workers,
+    /// open the LocalCacheManager, construct the deps adapter + offline-queue +
+    /// ticket-sync + Lua host, drain buffered log sinks, and run the one-time
+    /// legacy-pending offline cleanup.
+    void InitConfig(const std::string& dbPath, const std::string& backendType);
+
+    /// Phase 2 — load TrackerConfig, resolve the tracker backend factory (honouring
+    /// the SMATCHET_TEST_*_BACKEND_FIXTURE env hooks), instantiate the backend, and
+    /// run the one-time legacy-project / legacy-Plane-view sweeps. Publishes the
+    /// resolved config into `cfgOut` and returns the active tracker type string.
+    std::string InitBackends(TrackerConfig& cfgOut);
+
+    /// Phase 3 — resolve the Lua scripts directory, probe script files, refresh
+    /// local data, and restore the field catalog from a local snapshot when present.
+    void InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType);
+
+    /// Phase 4 — initialise Lua, start the merge-watch notify endpoint, run the Lua
+    /// setup script + automation worker, and warm the Jira issue-type edit-meta.
+    void InitPlugins(const std::string& activeTrackerType);
+
+    /// Phase 5 — construct the scenario runner + command registry, run the one-time
+    /// views-without-project-scope audit, seed the callstack-field hint, and (in AI
+    /// builds) construct the assistant controller.
+    void InitCommands();
+
+  public:
     /// True iff the calling thread is the one that called `Initialize` (the UI thread).
     /// Used by Command handlers to decide whether to mutate UI state inline (safe) or post
     /// the mutation to `mainThreadDispatcher` (required when called from an MCP / Lua worker).
@@ -1081,6 +1114,27 @@ class AppController
                                             std::unordered_map<std::string, std::string>& outDisplayValues,
                                             std::string& outError);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
+
+    /// Shared context for the three SubmitFieldEdit branch helpers. Holds references only —
+    /// lifetime is bounded to the SubmitFieldEdit call frame that builds the ctx on the stack.
+    struct SubmitFieldEditCtx {
+        const std::string& issueId;
+        const TrackerField& field;
+        const std::vector<std::string>& rawValues; ///< original, unfiltered
+        const std::vector<std::string>& values;    ///< filtered (non-empty entries only)
+        ITrackerIssueMutations* mutations;
+        const std::shared_ptr<ITrackerBackend>& backend;
+        const std::shared_ptr<const std::vector<CachedTicket>>& ticketsSnap;
+        const std::string& fieldEditAuditOp;
+        const char* fieldEditAuditSource;
+    };
+
+    /// Sprint-field branch of SubmitFieldEdit (AddIssueToSprint + local-cache sync).
+    bool SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx, std::string& outError);
+    /// Editable timetracking estimate branch of SubmitFieldEdit (UpdateIssueFields timetracking wrapper).
+    bool SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx, std::string& outError);
+    /// Regular field branch of SubmitFieldEdit (editmeta check + UpdateIssueFields + 400-retry).
+    bool SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::string& outError);
 
   public:
     /// Spawn `task` on a tracked background thread. Threads are joined either
