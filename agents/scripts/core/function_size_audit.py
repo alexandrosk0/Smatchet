@@ -512,7 +512,14 @@ def _merge_base_or_ref(ref):
     p = subprocess.run(["git", "merge-base", ref, "HEAD"], capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
     mb = p.stdout.strip()
-    return mb if (p.returncode == 0 and mb) else ref
+    if p.returncode == 0 and mb:
+        return mb
+    # merge-base unresolved — usually a shallow clone missing the fork point. Falling back to
+    # <ref>'s tip diffs against its LATEST, which false-flags a branch cut before a sibling change
+    # landed. Warn loudly so the misconfiguration is visible, not a silent false-fail (tooling.md P1).
+    sys.stderr.write("function_size_audit: WARN: `git merge-base %s HEAD` did not resolve "
+                     "(shallow clone?) — falling back to %s tip; delta may false-flag.\n" % (ref, ref))
+    return ref
 
 
 def _suppressed(path, sig_line, rule_id):

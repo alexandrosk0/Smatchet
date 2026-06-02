@@ -211,12 +211,17 @@ def _merge_base_or_ref(ref):
     """Resolve the fork point of <ref> and HEAD so the diff reflects only what THIS branch added —
     not <ref>'s own divergence since the branch point. If <ref> has advanced past our merge-base,
     a raw `git diff <ref> HEAD` misattributes <ref>'s newer lines (and our now-older lines) as our
-    additions, false-failing the gate. The merge-base is always an ancestor of HEAD, so it is
-    computable even when <ref> is a shallow fetch. Falls back to <ref> only if merge-base can't be
-    found (unrelated histories)."""
+    additions, false-failing the gate. NOTE: merge-base needs REAL HISTORY on both sides — a shallow
+    HEAD *and* a depth-1 <ref> fetch (the CI default) leave it unresolved, so the caller's workflow
+    must unshallow / fetch enough depth (tooling.md P1). Falls back to <ref>'s tip (with a stderr
+    WARN) only if merge-base can't be found."""
     p = subprocess.run(["git", "merge-base", ref, "HEAD"], capture_output=True, text=True)
     mb = p.stdout.strip()
-    return mb if (p.returncode == 0 and mb) else ref
+    if p.returncode == 0 and mb:
+        return mb
+    sys.stderr.write("comment_audit: WARN: `git merge-base %s HEAD` did not resolve "
+                     "(shallow clone?) — falling back to %s tip; delta may false-flag.\n" % (ref, ref))
+    return ref
 
 
 def run_diff_mode(ref):
