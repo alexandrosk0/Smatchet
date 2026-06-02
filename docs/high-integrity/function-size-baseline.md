@@ -3,15 +3,10 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/project/test-lint-rules.sh --funcsize-baseline` and commit._
 _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py --diff); this file is an informational snapshot, not the gate input._
 
-## function-too-long (33 entries, cap 200 lines)
-- `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 340 lines
+## function-too-long (26 entries, cap 200 lines)
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 945 lines
-- `AppController.cpp` · `AppController::Initialize/2` · 448 lines
-- `ConfigManager.cpp` · `ConfigManager::Load/1` · 621 lines
-- `ConfigManager.cpp` · `ConfigManager::Save/1` · 315 lines
 - `LuaConsolePlugin.cpp` · `LuaConsolePlugin::OnDraw/1` · 381 lines
 - `MarkdownPreviewRender.cpp` · `RenderPlanBlock/2` · 216 lines
-- `OfflineQueueService.cpp` · `OfflineQueueService::TickOfflineFieldEdits/0` · 290 lines
 - `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 315 lines
 - `SmatchetAiAssistantUi.cpp` · `DrawInputAndButtons/3` · 218 lines
 - `SmatchetAiAssistantUi.cpp` · `SmatchetDrawAiAssistantPanel/3` · 287 lines
@@ -33,21 +28,15 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `SubprocessCapture.cpp` · `RunWindows/3` · 251 lines
 - `TicketFieldEditor.cpp` · `TicketFieldEditor::RenderFieldCell/15` · 382 lines
 - `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 367 lines
-- `TicketSyncService.cpp` · `TicketSyncService::TickStreamingApply/0` · 279 lines
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 243 lines
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 231 lines
-- `main.cpp` · `main/2` · 561 lines
 
-## function-too-branchy (68 entries, cap 30 branches)
-- `AiAssistantController.cpp` · `AiAssistantController::RunRequest/2` · 44 branches
+## function-too-branchy (61 entries, cap 30 branches)
 - `AiPrefsValidator.cpp` · `ValidateAiPrefs/1` · 33 branches
 - `AnnotateAnalysisUi_Window.cpp` · `AnnotateAnalysisUi::DrawContent/3` · 196 branches
-- `AppController.cpp` · `AppController::Initialize/2` · 63 branches
 - `AppController_LuaBindings_Draw.cpp` · `ReplayCmdList/6` · 43 branches
 - `CodeColorView.cpp` · `TokenizeWithLd/4` · 37 branches
 - `CompactDateFormat.cpp` · `FormatCompactJiraDateForDisplay/3` · 36 branches
-- `ConfigManager.cpp` · `ConfigManager::Load/1` · 162 branches
-- `ConfigManager.cpp` · `ConfigManager::Save/1` · 32 branches
 - `CppSyntaxHighlight.cpp` · `DrawColoredCallstackLine/1` · 38 branches
 - `CppSyntaxHighlight.cpp` · `DrawColoredCppLine/1` · 59 branches
 - `GitHubIssueSearch.cpp` · `RunGraphQlIssueSearch/12` · 31 branches
@@ -65,7 +54,6 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `MarkdownPreviewRender.cpp` · `EmitWordsRS/2` · 33 branches
 - `MarkdownPreviewRender.cpp` · `PreviewEnterBlock/3` · 40 branches
 - `MarkdownPreviewRender.cpp` · `RenderPlanBlock/2` · 51 branches
-- `OfflineQueueService.cpp` · `OfflineQueueService::TickOfflineFieldEdits/0` · 71 branches
 - `PlaneIssueMappingPure.cpp` · `MapPlaneWorkItemJsonToCachedTicket/3` · 41 branches
 - `SelectableTextRun.cpp` · `End/1` · 48 branches
 - `SmatchetAiAssistantUi.cpp` · `DrawHistoryArea/3` · 53 branches
@@ -101,12 +89,10 @@ _The gate is a live merge-base delta vs `origin/develop` (function_size_audit.py
 - `TicketFieldEditor_Modal.cpp` · `TicketFieldEditor::RenderLongTextModal/1` · 79 branches
 - `TicketGridModel.cpp` · `CompareFieldValuesForSort/5` · 34 branches
 - `TicketGridModel.cpp` · `ResolveRenderPlan/2` · 33 branches
-- `TicketSyncService.cpp` · `TicketSyncService::TickStreamingApply/0` · 43 branches
 - `TrackerDateTimeFieldEditor.cpp` · `DrawCalendarPicker/11` · 44 branches
 - `TrackerFieldValueParser.cpp` · `NormalizeTrackerFieldValue/1` · 54 branches
 - `TrackerFieldValueParser.cpp` · `ParseChangelog/1` · 44 branches
 - `WindowsAudioCapture.cpp` · `WindowsAudioCapture::CaptureThreadMain/0` · 39 branches
-- `main.cpp` · `main/2` · 75 branches
 
 ## Totals
-- oversized functions grandfathered: 101
+- oversized functions grandfathered: 87
