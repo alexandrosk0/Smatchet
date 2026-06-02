@@ -116,118 +116,28 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
 }
 
 void TicketSyncService::TickStreamingApply() {
-    // 1. If we have a pending sync request and the previous session (worker + apply queue +
-    //    stale cleanup) is fully drained, start it safely now.
-    bool isWorkerActive = activeStreamingSync_.Active.load();
-    bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
+    // 1. Drain a superseded session, else start a pending request once the previous session
+    //    (worker + apply queue + stale cleanup) is fully drained.
+    const bool isWorkerActive = activeStreamingSync_.Active.load();
+    const bool isSessionBusy = isWorkerActive || activeStreamingSync_.ActiveSessionRunning || isDeletingStale_.load();
 
     if (activeStreamingSync_.Superseded.load()) {
-        {
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            activeStreamingSync_.PendingBatches.clear();
-            activeStreamingSync_.BackgroundStaleIds.clear();
-        }
-        staleIdsToDelete_.clear();
-        isDeletingStale_.store(false);
-        totalStaleToDelete_ = 0;
-        staleDeletedSoFar_ = 0;
-
-        if (isWorkerActive) {
+        if (DiscardSupersededSessionIfNeeded()) {
             return;
         }
-        if (activeStreamingSync_.WorkerThread.joinable()) {
-            activeStreamingSync_.WorkerThread.join();
-        }
-        activeStreamingSync_.Active = false;
-        activeStreamingSync_.ActiveSessionRunning = false;
-        activeStreamingSync_.FullSyncCompleted = false;
-        activeStreamingSync_.TotalFetchedCount = 0;
-        {
-            // FetchError contract: every read/write through QueueMutex (worker joined above).
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            activeStreamingSync_.FetchError.clear();
-            activeStreamingSync_.Warning.clear();
-        }
-        activeStreamingSync_.KeepIds.clear();
-        activeStreamingSync_.Cancelled = false;
-        activeStreamingSync_.Superseded = false;
-
-        LOG_INFO("TicketSyncService::TickStreamingApply discarded superseded streaming sync session.");
-
-        if (hasPendingSyncRequest_) {
-            hasPendingSyncRequest_ = false;
-            StartStreamingSync(pendingConfig_, pendingViews_);
-        }
-        return;
     }
 
     if (!isSessionBusy) {
-        if (activeStreamingSync_.WorkerThread.joinable()) {
-            activeStreamingSync_.WorkerThread.join();
-        }
-        if (hasPendingSyncRequest_) {
-            hasPendingSyncRequest_ = false;
-            StartStreamingSync(pendingConfig_, pendingViews_);
+        if (StartPendingSyncIfIdle(isSessionBusy)) {
             return;
         }
     }
 
     // 2. Progressive, budgeted stale ticket deletion over multiple frames to avoid UI hitches.
     if (isDeletingStale_.load()) {
-        auto start = std::chrono::high_resolution_clock::now();
-        size_t deletedThisFrame = 0;
-        bool inMemoryChanged = false;
-
-        while (!staleIdsToDelete_.empty()) {
-            std::string id = std::move(staleIdsToDelete_.back());
-            staleIdsToDelete_.pop_back();
-
-            if (deps_.Cache()) {
-                deps_.Cache()->DeleteTicket(id);
-            }
-            {
-                std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
-                deps_.ActiveTickets().erase(std::remove_if(deps_.ActiveTickets().begin(), deps_.ActiveTickets().end(),
-                                                           [&](const CachedTicket& t) { return t.id == id; }),
-                                            deps_.ActiveTickets().end());
-            }
-            inMemoryChanged = true;
-            deletedThisFrame++;
-            staleDeletedSoFar_++;
-
-            auto elapsed =
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start)
-                    .count();
-            if (elapsed >= 3 || deletedThisFrame >= 10) {
-                break;
-            }
+        if (DrainStaleDeletionBudget()) {
+            return;
         }
-
-        if (inMemoryChanged) {
-            std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
-            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(deps_.ActiveTickets()));
-            deps_.BumpActiveTicketsRevision();
-            // Stale-deletion shrinks visible state — windows that show ticket lists / counts
-            // must re-record. Coalesced via pendingLuaWindowBump_ so a 200-id prune fires one
-            // bump, not 200.
-            deps_.SetPendingLuaWindowBump(true);
-        }
-
-        if (staleIdsToDelete_.empty()) {
-            isDeletingStale_.store(false);
-            LOG_INFO("TicketSyncService::TickStreamingApply finished stale deletion. total_deleted=%zu",
-                     totalStaleToDelete_);
-            // Trigger editmeta warmup after cleanup completes
-            deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
-            // Flush coalesced Lua window bump now that stale deletion finished. The session-
-            // end flush above can't see this because stale-deletion runs across many frames
-            // after the session-end block has already fired.
-            if (deps_.GetPendingLuaWindowBump()) {
-                deps_.NotifyLuaTicketDataChanged();
-                deps_.SetPendingLuaWindowBump(false);
-            }
-        }
-        return;
     }
 
     if (!activeStreamingSync_.ActiveSessionRunning) {
@@ -235,6 +145,123 @@ void TicketSyncService::TickStreamingApply() {
     }
 
     // 3. Process incoming streaming ticket batches in-memory and write to SQLite with budget.
+    DrainPendingStreamingBatches();
+
+    // 4. When the worker finished and the queue is drained, finalise the session.
+    FinalizeStreamingSessionIfDone();
+}
+
+bool TicketSyncService::DiscardSupersededSessionIfNeeded() {
+    const bool isWorkerActive = activeStreamingSync_.Active.load();
+    {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        activeStreamingSync_.PendingBatches.clear();
+        activeStreamingSync_.BackgroundStaleIds.clear();
+    }
+    staleIdsToDelete_.clear();
+    isDeletingStale_.store(false);
+    totalStaleToDelete_ = 0;
+    staleDeletedSoFar_ = 0;
+
+    if (isWorkerActive) {
+        return true;
+    }
+    if (activeStreamingSync_.WorkerThread.joinable()) {
+        activeStreamingSync_.WorkerThread.join();
+    }
+    activeStreamingSync_.Active = false;
+    activeStreamingSync_.ActiveSessionRunning = false;
+    activeStreamingSync_.FullSyncCompleted = false;
+    activeStreamingSync_.TotalFetchedCount = 0;
+    {
+        // FetchError contract: every read/write through QueueMutex (worker joined above).
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.Warning.clear();
+    }
+    activeStreamingSync_.KeepIds.clear();
+    activeStreamingSync_.Cancelled = false;
+    activeStreamingSync_.Superseded = false;
+
+    LOG_INFO("TicketSyncService::TickStreamingApply discarded superseded streaming sync session.");
+
+    if (hasPendingSyncRequest_) {
+        hasPendingSyncRequest_ = false;
+        StartStreamingSync(pendingConfig_, pendingViews_);
+    }
+    return true;
+}
+
+bool TicketSyncService::StartPendingSyncIfIdle(bool /*isSessionBusy*/) {
+    if (activeStreamingSync_.WorkerThread.joinable()) {
+        activeStreamingSync_.WorkerThread.join();
+    }
+    if (hasPendingSyncRequest_) {
+        hasPendingSyncRequest_ = false;
+        StartStreamingSync(pendingConfig_, pendingViews_);
+        return true;
+    }
+    return false;
+}
+
+bool TicketSyncService::DrainStaleDeletionBudget() {
+    auto start = std::chrono::high_resolution_clock::now();
+    size_t deletedThisFrame = 0;
+    bool inMemoryChanged = false;
+
+    while (!staleIdsToDelete_.empty()) {
+        std::string id = std::move(staleIdsToDelete_.back());
+        staleIdsToDelete_.pop_back();
+
+        if (deps_.Cache()) {
+            deps_.Cache()->DeleteTicket(id);
+        }
+        {
+            std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
+            deps_.ActiveTickets().erase(std::remove_if(deps_.ActiveTickets().begin(), deps_.ActiveTickets().end(),
+                                                       [&](const CachedTicket& t) { return t.id == id; }),
+                                        deps_.ActiveTickets().end());
+        }
+        inMemoryChanged = true;
+        deletedThisFrame++;
+        staleDeletedSoFar_++;
+
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start)
+                .count();
+        if (elapsed >= 3 || deletedThisFrame >= 10) {
+            break;
+        }
+    }
+
+    if (inMemoryChanged) {
+        std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
+        deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(deps_.ActiveTickets()));
+        deps_.BumpActiveTicketsRevision();
+        // Stale-deletion shrinks visible state — windows that show ticket lists / counts
+        // must re-record. Coalesced via pendingLuaWindowBump_ so a 200-id prune fires one
+        // bump, not 200.
+        deps_.SetPendingLuaWindowBump(true);
+    }
+
+    if (staleIdsToDelete_.empty()) {
+        isDeletingStale_.store(false);
+        LOG_INFO("TicketSyncService::TickStreamingApply finished stale deletion. total_deleted=%zu",
+                 totalStaleToDelete_);
+        // Trigger editmeta warmup after cleanup completes
+        deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
+        // Flush coalesced Lua window bump now that stale deletion finished. The session-
+        // end flush above can't see this because stale-deletion runs across many frames
+        // after the session-end block has already fired.
+        if (deps_.GetPendingLuaWindowBump()) {
+            deps_.NotifyLuaTicketDataChanged();
+            deps_.SetPendingLuaWindowBump(false);
+        }
+    }
+    return true;
+}
+
+void TicketSyncService::DrainPendingStreamingBatches() {
     auto start = std::chrono::high_resolution_clock::now();
     size_t ticketsProcessedInFrame = 0;
     bool stateChanged = false;
@@ -312,7 +339,9 @@ void TicketSyncService::TickStreamingApply() {
         // Streaming-batch end-of-batch — flip the coalesced bump; session-end emits once.
         deps_.SetPendingLuaWindowBump(true);
     }
+}
 
+void TicketSyncService::FinalizeStreamingSessionIfDone() {
     bool isWorkerFinished = !activeStreamingSync_.Active.load();
     bool hasPending = false;
     {
@@ -320,78 +349,77 @@ void TicketSyncService::TickStreamingApply() {
         hasPending = !activeStreamingSync_.PendingBatches.empty();
     }
 
-    if (isWorkerFinished && !hasPending && activeStreamingSync_.ActiveSessionRunning) {
-        activeStreamingSync_.ActiveSessionRunning = false;
+    if (!(isWorkerFinished && !hasPending && activeStreamingSync_.ActiveSessionRunning)) {
+        return;
+    }
+    activeStreamingSync_.ActiveSessionRunning = false;
 
-        // FetchError + Warning are written by the worker thread under QueueMutex; acquire it
-        // for the read. FullSyncCompleted is atomic and can be read without the lock.
-        std::string fetchError;
-        std::string fetchWarning;
-        {
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            fetchError = activeStreamingSync_.FetchError;
-            fetchWarning = activeStreamingSync_.Warning;
+    // FetchError plus Warning are written by the worker thread under QueueMutex; acquire that
+    // mutex while reading them. The full-sync-completed flag is atomic and needs no lock.
+    std::string fetchError;
+    std::string fetchWarning;
+    {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        fetchError = activeStreamingSync_.FetchError;
+        fetchWarning = activeStreamingSync_.Warning;
+    }
+
+    bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
+
+    if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
+        deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " + fetchError);
+        LOG_WARN("TicketSyncService::TickStreamingApply transport-style fetch issue: %s", fetchError.c_str());
+        deps_.SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState::TransportDown);
+        const auto nowProbe = std::chrono::steady_clock::now();
+        deps_.SetNextTrackerConnectivityProbeAt(nowProbe);
+        deps_.PushOfflineReplayTimersDuringTransportOutage(nowProbe);
+        SmatchetToastManager::Instance().Push("Sync Failed", fetchError, ToastType::Error, 5000);
+    } else if (!fetchError.empty()) {
+        SmatchetToastManager::Instance().Push("Sync Warning", fetchError, ToastType::Warning, 5000);
+    } else {
+        // Soft warnings: data is good, just partial — still notify success but surface
+        // the caveat as a warning banner + toast.
+        if (!fetchWarning.empty()) {
+            deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning);
+            LOG_WARN("TicketSyncService::TickStreamingApply soft warning: %s", fetchWarning.c_str());
+            SmatchetToastManager::Instance().Push("Sync Warning", fetchWarning, ToastType::Warning, 5000);
         }
+        deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
 
-        bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
+        std::string msg =
+            "Synchronized " + std::to_string(activeStreamingSync_.KeepIds.size()) + " issues successfully.";
+        SmatchetToastManager::Instance().Push("Sync Complete", msg, ToastType::Success, 4000);
+    }
 
-        if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
-            deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " +
-                                                  fetchError);
-            LOG_WARN("TicketSyncService::TickStreamingApply transport-style fetch issue: %s", fetchError.c_str());
-            deps_.SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState::TransportDown);
-            const auto nowProbe = std::chrono::steady_clock::now();
-            deps_.SetNextTrackerConnectivityProbeAt(nowProbe);
-            deps_.PushOfflineReplayTimersDuringTransportOutage(nowProbe);
-            SmatchetToastManager::Instance().Push("Sync Failed", fetchError, ToastType::Error, 5000);
-        } else if (!fetchError.empty()) {
-            SmatchetToastManager::Instance().Push("Sync Warning", fetchError, ToastType::Warning, 5000);
-        } else {
-            // Soft warnings: data is good, just partial — still notify success but surface
-            // the caveat as a warning banner + toast.
-            if (!fetchWarning.empty()) {
-                deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning);
-                LOG_WARN("TicketSyncService::TickStreamingApply soft warning: %s", fetchWarning.c_str());
-                SmatchetToastManager::Instance().Push("Sync Warning", fetchWarning, ToastType::Warning, 5000);
-            }
-            deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
+    totalStaleToDelete_ = 0;
+    staleDeletedSoFar_ = 0;
+    staleIdsToDelete_.clear();
 
-            std::string msg =
-                "Synchronized " + std::to_string(activeStreamingSync_.KeepIds.size()) + " issues successfully.";
-            SmatchetToastManager::Instance().Push("Sync Complete", msg, ToastType::Success, 4000);
+    if (fullSyncCompleted) {
+        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+        staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
+
+        if (!staleIdsToDelete_.empty()) {
+            isDeletingStale_.store(true);
+            totalStaleToDelete_ = staleIdsToDelete_.size();
+            staleDeletedSoFar_ = 0;
         }
+    }
 
-        totalStaleToDelete_ = 0;
-        staleDeletedSoFar_ = 0;
-        staleIdsToDelete_.clear();
+    LOG_INFO("TicketSyncService::TickStreamingApply finished sync session. saved_or_kept=%zu total_stale=%zu "
+             "fullSync=%d err=%s",
+             activeStreamingSync_.KeepIds.size(), totalStaleToDelete_, fullSyncCompleted ? 1 : 0, fetchError.c_str());
 
-        if (fullSyncCompleted) {
-            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-            staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
+    if (!isDeletingStale_.load()) {
+        deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
+    }
 
-            if (!staleIdsToDelete_.empty()) {
-                isDeletingStale_.store(true);
-                totalStaleToDelete_ = staleIdsToDelete_.size();
-                staleDeletedSoFar_ = 0;
-            }
-        }
-
-        LOG_INFO("TicketSyncService::TickStreamingApply finished sync session. saved_or_kept=%zu total_stale=%zu "
-                 "fullSync=%d err=%s",
-                 activeStreamingSync_.KeepIds.size(), totalStaleToDelete_, fullSyncCompleted ? 1 : 0,
-                 fetchError.c_str());
-
-        if (!isDeletingStale_.load()) {
-            deps_.WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
-        }
-
-        // Session-end Lua window bump: emit exactly once if any apply-pack, stale-deletion,
-        // or streaming-batch scope set the flag during this session. Skipping when no flag
-        // was set avoids needless re-records when nothing actually changed.
-        if (deps_.GetPendingLuaWindowBump()) {
-            deps_.NotifyLuaTicketDataChanged();
-            deps_.SetPendingLuaWindowBump(false);
-        }
+    // Session-end Lua window bump: emit exactly once if any apply-pack, stale-deletion,
+    // or streaming-batch scope set the flag during this session. Skipping when no flag
+    // was set avoids needless re-records when nothing actually changed.
+    if (deps_.GetPendingLuaWindowBump()) {
+        deps_.NotifyLuaTicketDataChanged();
+        deps_.SetPendingLuaWindowBump(false);
     }
 }
 

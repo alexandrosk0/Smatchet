@@ -62,6 +62,7 @@ add_executable(SmatchetTests
     Core/TrackerFieldCatalogPure.test.cpp
     Core/TicketSyncService.test.cpp
     Core/OfflineQueueServiceRuntime.test.cpp
+    Core/OfflineFieldEditMerge.test.cpp
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp

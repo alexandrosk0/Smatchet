@@ -54,7 +54,59 @@ std::string FormatOfflineQueueTerminalLine(const char* action, const char* stage
     out += detail;
     return out;
 }
+
+// Skip leading ASCII whitespace, returning the index of the first non-space char (or size()).
+size_t FirstNonWhitespace(const std::string& s) {
+    size_t i = 0;
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r'))
+        ++i;
+    return i;
+}
 } // namespace
+
+namespace OfflineFieldEditMergeDetail {
+// Pure rich-content -> markdown helpers, factored out of the 3-way merge path so they are
+// unit-testable in isolation and keep `ResolveFieldEditThreeWayMerge` under the branch cap.
+
+bool DetectRichKindIsAdf(const std::string& rich) {
+    const size_t i = FirstNonWhitespace(rich);
+    return i < rich.size() && rich[i] == '{';
+}
+
+std::string RichToMarkdown(const std::string& rich) {
+    if (rich.empty())
+        return rich;
+    const size_t i = FirstNonWhitespace(rich);
+    if (i < rich.size() && rich[i] == '{') {
+        try {
+            auto j = nlohmann::json::parse(rich);
+            if (j.is_object() && j.value("type", std::string()) == "doc")
+                return MarkdownConvert::AdfToMarkdown(j);
+        } catch (...) {
+        }
+    }
+    if (i < rich.size() && rich[i] == '<') {
+        bool fell = false;
+        return MarkdownConvert::HtmlSubsetToMarkdown(rich, &fell);
+    }
+    return rich;
+}
+
+// Convert the queued "mine" payload value (ADF doc object or HTML/markdown string) to markdown.
+std::string MineValueToMarkdown(const nlohmann::json& myVal) {
+    if (myVal.is_object() && myVal.value("type", std::string()) == "doc") {
+        return MarkdownConvert::AdfToMarkdown(myVal);
+    }
+    if (myVal.is_string()) {
+        bool fell = false;
+        std::string mineMd = MarkdownConvert::HtmlSubsetToMarkdown(myVal.get<std::string>(), &fell);
+        if (fell)
+            mineMd = RichToMarkdown(myVal.get<std::string>());
+        return mineMd;
+    }
+    return std::string();
+}
+} // namespace OfflineFieldEditMergeDetail
 
 OfflineQueueService::OfflineQueueService(IOfflineQueueDeps& deps) : deps_(deps) {}
 
@@ -602,238 +654,27 @@ void OfflineQueueService::TickOfflineFieldEdits() {
 
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, reader, mutations]() {
-        int successes = 0;
-        int failures = 0;
-        int archived = 0;
-        int cacheOpFailures = 0;
-        bool ranUpdate = false;
-
-        const auto tryCacheMutation = [&](const char* action, std::int64_t id,
-                                          const std::function<void()>& fn) -> bool {
-            try {
-                fn();
-                return true;
-            } catch (const std::exception& ex) {
-                ++cacheOpFailures;
-                LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits %s failed id=%lld err=%s", action,
-                          static_cast<long long>(id), ex.what());
-                return false;
-            } catch (...) {
-                ++cacheOpFailures;
-                LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits %s failed id=%lld err=unknown exception", action,
-                          static_cast<long long>(id));
-                return false;
-            }
-        };
-
-        const int kMaxReplayAttempts = OfflineFieldEditQueue::kMaxReplayAttempts;
+        FieldEditReplayTally tally;
         for (const auto& row : pending) {
             if (row.HasMergeConflict) {
                 continue;
             }
-            if (OfflineQueueReplayPolicy::ShouldArchive(row.Attempts)) {
-                char detailBuf[384];
-                std::snprintf(detailBuf, sizeof(detailBuf),
-                              "Queued offline field edit id %lld already at attempts=%d (max=%d).",
-                              static_cast<long long>(row.Id), row.Attempts, kMaxReplayAttempts);
-                const std::string terminal = FormatOfflineQueueTerminalLine("offline_field_replay", "max_attempt_gate",
-                                                                            "max_attempts", detailBuf);
-                if (tryCacheMutation("archive_pending_field_edit", row.Id,
-                                     [&]() { cache->ArchivePendingFieldEdit(row.Id, "max_attempts", terminal); })) {
-                    ++archived;
-                } else {
-                    ++failures;
-                }
-                continue;
-            }
-
-            nlohmann::json fieldsPayload;
-            try {
-                fieldsPayload = nlohmann::json::parse(row.FieldsPayloadJson);
-            } catch (const std::exception& ex) {
-                const std::string terminal = FormatOfflineQueueTerminalLine("offline_field_replay", "parse_payload",
-                                                                            "malformed_json", ex.what());
-                if (tryCacheMutation("archive_pending_field_edit_malformed", row.Id,
-                                     [&]() { cache->ArchivePendingFieldEdit(row.Id, "malformed_json", terminal); })) {
-                    ++archived;
-                } else {
-                    ++failures;
-                }
-                continue;
-            }
-
-            ranUpdate = true;
-
-            // 3-way merge: if the edit carries an original rich value (base), fetch the current
-            // server document (theirs) and attempt to merge before replaying.
-            bool skipMergeConflict = false;
-            if (!row.OriginalRichValue.empty() && fieldsPayload.is_object()) {
-                const std::string& fid = row.FieldId;
-                std::string payloadKey = fid;
-                if (!fieldsPayload.contains(fid)) {
-                    const std::string altKey = fid + "_html";
-                    if (fieldsPayload.contains(altKey))
-                        payloadKey = altKey;
-                }
-                if (fieldsPayload.contains(payloadKey)) {
-                    size_t biDetect = 0;
-                    const std::string& brDetect = row.OriginalRichValue;
-                    while (biDetect < brDetect.size() && (brDetect[biDetect] == ' ' || brDetect[biDetect] == '\t' ||
-                                                          brDetect[biDetect] == '\n' || brDetect[biDetect] == '\r'))
-                        ++biDetect;
-                    const bool isAdf = biDetect < brDetect.size() && brDetect[biDetect] == '{';
-
-                    auto toMd = [](const std::string& rich) -> std::string {
-                        if (rich.empty())
-                            return rich;
-                        size_t i = 0;
-                        while (i < rich.size() &&
-                               (rich[i] == ' ' || rich[i] == '\t' || rich[i] == '\n' || rich[i] == '\r'))
-                            ++i;
-                        if (i < rich.size() && rich[i] == '{') {
-                            try {
-                                auto j = nlohmann::json::parse(rich);
-                                if (j.is_object() && j.value("type", std::string()) == "doc")
-                                    return MarkdownConvert::AdfToMarkdown(j);
-                            } catch (...) {
-                            }
-                        }
-                        if (i < rich.size() && rich[i] == '<') {
-                            bool fell = false;
-                            return MarkdownConvert::HtmlSubsetToMarkdown(rich, &fell);
-                        }
-                        return rich;
-                    };
-
-                    try {
-                        const TrackerConfig cfgForFetch = ConfigManager::Load();
-                        const ViewsStore viewsForFetch = ConfigManager::LoadViewsOrBootstrap(cfgForFetch);
-                        std::vector<CachedTicket> freshTickets;
-                        std::string fetchErr;
-                        const std::vector<std::string> keysForFetch = {row.IssueKey};
-                        if (reader->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch, freshTickets,
-                                                       fetchErr) &&
-                            !freshTickets.empty()) {
-
-                            const CachedTicket& fresh = freshTickets.front();
-                            const std::string theirsRich = fresh.GetFieldRichValue(fid);
-
-                            if (!theirsRich.empty() && theirsRich != row.OriginalRichValue) {
-                                const std::string baseMd = toMd(row.OriginalRichValue);
-                                const std::string theirsMd = toMd(theirsRich);
-
-                                std::string mineMd;
-                                const auto& myVal = fieldsPayload[payloadKey];
-                                if (myVal.is_object() && myVal.value("type", std::string()) == "doc") {
-                                    mineMd = MarkdownConvert::AdfToMarkdown(myVal);
-                                } else if (myVal.is_string()) {
-                                    bool fell = false;
-                                    mineMd = MarkdownConvert::HtmlSubsetToMarkdown(myVal.get<std::string>(), &fell);
-                                    if (fell)
-                                        mineMd = toMd(myVal.get<std::string>());
-                                }
-
-                                const TextMerge::MergeResult merged =
-                                    TextMerge::ThreeWayMerge(baseMd, mineMd, theirsMd);
-                                if (merged.IsClean) {
-                                    if (isAdf) {
-                                        fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(merged.Text);
-                                    } else {
-                                        fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(merged.Text);
-                                    }
-                                    LOG_INFO("TickOfflineFieldEdits: 3-way merge clean for issue=%s field=%s",
-                                             row.IssueKey.c_str(), fid.c_str());
-                                } else {
-                                    LOG_WARN("TickOfflineFieldEdits: 3-way merge conflict for issue=%s field=%s — "
-                                             "suspending replay pending user resolution",
-                                             row.IssueKey.c_str(), fid.c_str());
-                                    const nlohmann::json ctx = {{"base", baseMd},
-                                                                {"mine", mineMd},
-                                                                {"theirs", theirsMd},
-                                                                {"fieldId", fid},
-                                                                {"richKind", isAdf ? "adf" : "html"}};
-                                    tryCacheMutation("mark_field_edit_conflict", row.Id,
-                                                     [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); });
-                                    skipMergeConflict = true;
-                                }
-                            }
-                        }
-                    } catch (const std::exception& ex) {
-                        LOG_WARN("TickOfflineFieldEdits: 3-way merge fetch/merge failed issue=%s field=%s err=%s — "
-                                 "replaying original edit as-is",
-                                 row.IssueKey.c_str(), fid.c_str(), ex.what());
-                    } catch (...) {
-                        LOG_WARN("TickOfflineFieldEdits: 3-way merge failed (unknown) issue=%s field=%s — "
-                                 "replaying original edit as-is",
-                                 row.IssueKey.c_str(), fid.c_str());
-                    }
-                }
-            }
-
-            if (skipMergeConflict) {
-                ++failures;
-                continue;
-            }
-            std::string err;
-            if (!mutations->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
-                if (IsTrackerTransportErrorText(err)) {
-                    const int nextAttempts = row.Attempts + 1;
-                    if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
-                        const std::string terminal =
-                            FormatOfflineQueueTerminalLine("offline_field_replay", "transport_cap", "max_attempts",
-                                                           "Transport failures exhausted replay attempts: " + err);
-                        if (tryCacheMutation("archive_pending_field_edit_transport_cap", row.Id, [&]() {
-                                cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err);
-                                cache->ArchivePendingFieldEdit(row.Id, "transport_cap", terminal);
-                            })) {
-                            ++archived;
-                        } else {
-                            ++failures;
-                        }
-                    } else {
-                        (void)tryCacheMutation("update_pending_field_edit", row.Id,
-                                               [&]() { cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err); });
-                        ++failures;
-                    }
-                } else {
-                    const std::string terminal =
-                        FormatOfflineQueueTerminalLine("offline_field_replay", "replay_rejected", "jira_error", err);
-                    if (tryCacheMutation("archive_pending_field_edit_rejected", row.Id, [&]() {
-                            cache->ArchivePendingFieldEdit(row.Id, "replay_rejected", terminal);
-                        })) {
-                        ++archived;
-                    } else {
-                        ++failures;
-                    }
-                }
-                continue;
-            }
-
-            if (tryCacheMutation("delete_pending_field_edit", row.Id,
-                                 [&]() { cache->DeletePendingFieldEdit(row.Id); })) {
-                ++successes;
-                depsRef.RequestDeferredLiveTrackerBackendSuccessNotify();
-                BackendAuditTrail::AppendResult(
-                    "offline_replay_field_edit", "offline_field_replay", row.IssueKey, std::to_string(row.Id), true,
-                    std::string(), nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}});
-            } else {
-                ++failures;
-            }
+            ReplayOneFieldEdit(row, cache, reader, mutations, depsRef, tally);
         }
 
-        if (successes > 0) {
+        if (tally.Successes > 0) {
             depsRef.RefreshLocalData();
         }
-        if (successes > 0 || failures > 0 || archived > 0 || cacheOpFailures > 0) {
+        if (tally.Successes > 0 || tally.Failures > 0 || tally.Archived > 0 || tally.CacheOpFailures > 0) {
             LOG_INFO("OfflineQueueService: offline field edit replay finished successes=%d failures=%d archived=%d "
                      "cache_op_failures=%d",
-                     successes, failures, archived, cacheOpFailures);
+                     tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
         }
 
         std::chrono::seconds delay{5};
-        if (!ranUpdate && !pending.empty()) {
+        if (!tally.RanUpdate && !pending.empty()) {
             delay = std::chrono::seconds(300);
-        } else if (failures > 0 && successes == 0) {
+        } else if (tally.Failures > 0 && tally.Successes == 0) {
             delay = std::chrono::seconds(30);
         }
         const auto nextAt = std::chrono::steady_clock::now() + delay;
@@ -843,6 +684,203 @@ void OfflineQueueService::TickOfflineFieldEdits() {
             offlineFieldEditReplayInFlight_ = false;
         }
     });
+}
+
+bool OfflineQueueService::RunFieldEditCacheMutation(const char* action, std::int64_t id,
+                                                    const std::function<void()>& fn, FieldEditReplayTally& tally) {
+    try {
+        fn();
+        return true;
+    } catch (const std::exception& ex) {
+        ++tally.CacheOpFailures;
+        LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits %s failed id=%lld err=%s", action,
+                  static_cast<long long>(id), ex.what());
+        return false;
+    } catch (...) {
+        ++tally.CacheOpFailures;
+        LOG_ERROR("OfflineQueueService::TickOfflineFieldEdits %s failed id=%lld err=unknown exception", action,
+                  static_cast<long long>(id));
+        return false;
+    }
+}
+
+bool OfflineQueueService::ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row,
+                                                        nlohmann::json& fieldsPayload, LocalCacheManager* cache,
+                                                        ITrackerIssueReader* reader, FieldEditReplayTally& tally) {
+    // 3-way merge: if the edit carries an original rich value as the base, fetch the current
+    // server document as theirs and attempt to merge before replaying.
+    if (row.OriginalRichValue.empty() || !fieldsPayload.is_object()) {
+        return false;
+    }
+    const std::string& fid = row.FieldId;
+    std::string payloadKey = fid;
+    if (!fieldsPayload.contains(fid)) {
+        const std::string altKey = fid + "_html";
+        if (fieldsPayload.contains(altKey))
+            payloadKey = altKey;
+    }
+    if (!fieldsPayload.contains(payloadKey)) {
+        return false;
+    }
+
+    const bool isAdf = OfflineFieldEditMergeDetail::DetectRichKindIsAdf(row.OriginalRichValue);
+
+    bool skipMergeConflict = false;
+    try {
+        const TrackerConfig cfgForFetch = ConfigManager::Load();
+        const ViewsStore viewsForFetch = ConfigManager::LoadViewsOrBootstrap(cfgForFetch);
+        std::vector<CachedTicket> freshTickets;
+        std::string fetchErr;
+        const std::vector<std::string> keysForFetch = {row.IssueKey};
+        if (reader->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch, freshTickets, fetchErr) &&
+            !freshTickets.empty()) {
+
+            const CachedTicket& fresh = freshTickets.front();
+            const std::string theirsRich = fresh.GetFieldRichValue(fid);
+
+            if (!theirsRich.empty() && theirsRich != row.OriginalRichValue) {
+                const std::string baseMd = OfflineFieldEditMergeDetail::RichToMarkdown(row.OriginalRichValue);
+                const std::string theirsMd = OfflineFieldEditMergeDetail::RichToMarkdown(theirsRich);
+                const std::string mineMd = OfflineFieldEditMergeDetail::MineValueToMarkdown(fieldsPayload[payloadKey]);
+
+                const TextMerge::MergeResult merged = TextMerge::ThreeWayMerge(baseMd, mineMd, theirsMd);
+                skipMergeConflict = ApplyOrRecordMergeResult(row, fieldsPayload, payloadKey, isAdf, merged, baseMd,
+                                                             mineMd, theirsMd, cache, tally);
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("TickOfflineFieldEdits: 3-way merge fetch/merge failed issue=%s field=%s err=%s — "
+                 "replaying original edit as-is",
+                 row.IssueKey.c_str(), fid.c_str(), ex.what());
+    } catch (...) {
+        LOG_WARN("TickOfflineFieldEdits: 3-way merge failed (unknown) issue=%s field=%s — "
+                 "replaying original edit as-is",
+                 row.IssueKey.c_str(), fid.c_str());
+    }
+    return skipMergeConflict;
+}
+
+bool OfflineQueueService::ApplyOrRecordMergeResult(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
+                                                   const std::string& payloadKey, bool isAdf,
+                                                   const TextMerge::MergeResult& merged, const std::string& baseMd,
+                                                   const std::string& mineMd, const std::string& theirsMd,
+                                                   LocalCacheManager* cache, FieldEditReplayTally& tally) {
+    if (merged.IsClean) {
+        if (isAdf) {
+            fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(merged.Text);
+        } else {
+            fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(merged.Text);
+        }
+        LOG_INFO("TickOfflineFieldEdits: 3-way merge clean for issue=%s field=%s", row.IssueKey.c_str(),
+                 row.FieldId.c_str());
+        return false;
+    }
+    LOG_WARN("TickOfflineFieldEdits: 3-way merge conflict for issue=%s field=%s — "
+             "suspending replay pending user resolution",
+             row.IssueKey.c_str(), row.FieldId.c_str());
+    const nlohmann::json ctx = {{"base", baseMd},
+                                {"mine", mineMd},
+                                {"theirs", theirsMd},
+                                {"fieldId", row.FieldId},
+                                {"richKind", isAdf ? "adf" : "html"}};
+    RunFieldEditCacheMutation(
+        "mark_field_edit_conflict", row.Id, [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); }, tally);
+    return true;
+}
+
+void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, LocalCacheManager* cache,
+                                             ITrackerIssueReader* reader, ITrackerIssueMutations* mutations,
+                                             IOfflineQueueDeps& depsRef, FieldEditReplayTally& tally) {
+    const int kMaxReplayAttempts = OfflineFieldEditQueue::kMaxReplayAttempts;
+    if (OfflineQueueReplayPolicy::ShouldArchive(row.Attempts)) {
+        char detailBuf[384];
+        std::snprintf(detailBuf, sizeof(detailBuf),
+                      "Queued offline field edit id %lld already at attempts=%d (max=%d).",
+                      static_cast<long long>(row.Id), row.Attempts, kMaxReplayAttempts);
+        const std::string terminal =
+            FormatOfflineQueueTerminalLine("offline_field_replay", "max_attempt_gate", "max_attempts", detailBuf);
+        if (RunFieldEditCacheMutation(
+                "archive_pending_field_edit", row.Id,
+                [&]() { cache->ArchivePendingFieldEdit(row.Id, "max_attempts", terminal); }, tally)) {
+            ++tally.Archived;
+        } else {
+            ++tally.Failures;
+        }
+        return;
+    }
+
+    nlohmann::json fieldsPayload;
+    try {
+        fieldsPayload = nlohmann::json::parse(row.FieldsPayloadJson);
+    } catch (const std::exception& ex) {
+        const std::string terminal =
+            FormatOfflineQueueTerminalLine("offline_field_replay", "parse_payload", "malformed_json", ex.what());
+        if (RunFieldEditCacheMutation(
+                "archive_pending_field_edit_malformed", row.Id,
+                [&]() { cache->ArchivePendingFieldEdit(row.Id, "malformed_json", terminal); }, tally)) {
+            ++tally.Archived;
+        } else {
+            ++tally.Failures;
+        }
+        return;
+    }
+
+    tally.RanUpdate = true;
+
+    if (ResolveFieldEditThreeWayMerge(row, fieldsPayload, cache, reader, tally)) {
+        ++tally.Failures;
+        return;
+    }
+
+    std::string err;
+    if (!mutations->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
+        if (IsTrackerTransportErrorText(err)) {
+            const int nextAttempts = row.Attempts + 1;
+            if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
+                const std::string terminal =
+                    FormatOfflineQueueTerminalLine("offline_field_replay", "transport_cap", "max_attempts",
+                                                   "Transport failures exhausted replay attempts: " + err);
+                if (RunFieldEditCacheMutation(
+                        "archive_pending_field_edit_transport_cap", row.Id,
+                        [&]() {
+                            cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err);
+                            cache->ArchivePendingFieldEdit(row.Id, "transport_cap", terminal);
+                        },
+                        tally)) {
+                    ++tally.Archived;
+                } else {
+                    ++tally.Failures;
+                }
+            } else {
+                (void)RunFieldEditCacheMutation(
+                    "update_pending_field_edit", row.Id,
+                    [&]() { cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err); }, tally);
+                ++tally.Failures;
+            }
+        } else {
+            const std::string terminal =
+                FormatOfflineQueueTerminalLine("offline_field_replay", "replay_rejected", "jira_error", err);
+            if (RunFieldEditCacheMutation(
+                    "archive_pending_field_edit_rejected", row.Id,
+                    [&]() { cache->ArchivePendingFieldEdit(row.Id, "replay_rejected", terminal); }, tally)) {
+                ++tally.Archived;
+            } else {
+                ++tally.Failures;
+            }
+        }
+        return;
+    }
+
+    if (RunFieldEditCacheMutation(
+            "delete_pending_field_edit", row.Id, [&]() { cache->DeletePendingFieldEdit(row.Id); }, tally)) {
+        ++tally.Successes;
+        depsRef.RequestDeferredLiveTrackerBackendSuccessNotify();
+        BackendAuditTrail::AppendResult("offline_replay_field_edit", "offline_field_replay", row.IssueKey,
+                                        std::to_string(row.Id), true, std::string(),
+                                        nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}});
+    } else {
+        ++tally.Failures;
+    }
 }
 
 void OfflineQueueService::TickOfflineCreates() {

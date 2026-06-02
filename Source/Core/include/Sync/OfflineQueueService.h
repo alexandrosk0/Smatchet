@@ -18,9 +18,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json_fwd.hpp>
 
 // AppController.h is needed for the nested summary structs that several methods below return
 // (`DeadLetterRestoreSummary`, `DeadLetterDeleteSummary`, …). Pulling it here keeps the
@@ -28,7 +31,27 @@
 // since this service header is only consumed by AppController-side TUs.
 #include "AppController.h"
 
+namespace OfflineFieldEditMergeDetail {
+/// True when `rich` (after leading whitespace) begins with '{' — i.e. an ADF JSON document
+/// rather than HTML/markdown. Pure; unit-tested in OfflineFieldEditMerge.test.cpp.
+bool DetectRichKindIsAdf(const std::string& rich);
+
+/// Convert a stored rich value (ADF JSON `doc`, HTML subset, or plain markdown) to markdown.
+/// Falls back to returning the input unchanged when it is neither ADF nor HTML. Pure.
+std::string RichToMarkdown(const std::string& rich);
+
+/// Convert a queued field-payload value ("mine") to markdown: ADF `doc` objects and HTML/
+/// markdown strings are both handled; any other JSON type yields an empty string. Pure.
+std::string MineValueToMarkdown(const nlohmann::json& myVal);
+} // namespace OfflineFieldEditMergeDetail
+
 class IOfflineQueueDeps;
+class LocalCacheManager;
+class ITrackerIssueReader;
+class ITrackerIssueMutations;
+namespace TextMerge {
+struct MergeResult;
+}
 struct PendingCreate;
 struct DeadPendingCreate;
 struct PendingFieldEditRecord;
@@ -120,6 +143,47 @@ class OfflineQueueService {
                                const std::string& trackerType);
 
   private:
+    // --- TickOfflineFieldEdits replay helpers ---------------------------------------------
+    // TickOfflineFieldEdits dispatches a background task whose body is a thin loop over these
+    // per-row helpers. The helpers run off the UI thread (inside the launched task) and operate
+    // on stack-local state passed by reference — no extra heap allocation or container copy is
+    // introduced versus the original inline loop.
+
+    /// Running counters for one replay pass. Stack-allocated in the background task; threaded
+    /// through the per-row helpers by reference.
+    struct FieldEditReplayTally {
+        int Successes = 0;
+        int Failures = 0;
+        int Archived = 0;
+        int CacheOpFailures = 0;
+        bool RanUpdate = false;
+    };
+
+    /// Run a cache mutation under a uniform try/catch, counting failures into `tally`. Returns
+    /// true on success. Forwarding-by-value of the callable is avoided: it is taken by const ref.
+    bool RunFieldEditCacheMutation(const char* action, std::int64_t id, const std::function<void()>& fn,
+                                   FieldEditReplayTally& tally);
+
+    /// 3-way merge gate: if the row carries an original rich value, fetch the current server
+    /// document and merge before replay. Mutates `fieldsPayload` in place on a clean merge.
+    /// Returns true when a conflict was recorded and the row must be skipped this pass.
+    bool ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
+                                       LocalCacheManager* cache, ITrackerIssueReader* reader,
+                                       FieldEditReplayTally& tally);
+
+    /// Apply a computed 3-way merge result: on a clean merge, rewrite `fieldsPayload[payloadKey]`
+    /// to the merged ADF/HTML; on conflict, record the conflict context to the cache and return
+    /// true so the caller suspends replay of this row.
+    bool ApplyOrRecordMergeResult(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
+                                  const std::string& payloadKey, bool isAdf, const TextMerge::MergeResult& merged,
+                                  const std::string& baseMd, const std::string& mineMd, const std::string& theirsMd,
+                                  LocalCacheManager* cache, FieldEditReplayTally& tally);
+
+    /// Replay a single queued field edit: attempt-cap gate, payload parse, 3-way merge, the
+    /// tracker mutation, and the success / transport-retry / rejection / archive bookkeeping.
+    void ReplayOneFieldEdit(const PendingFieldEditRecord& row, LocalCacheManager* cache, ITrackerIssueReader* reader,
+                            ITrackerIssueMutations* mutations, IOfflineQueueDeps& depsRef, FieldEditReplayTally& tally);
+
     IOfflineQueueDeps& deps_;
 
     // Offline-replay throttle + in-flight guards. Moved here from AppController in Phase 1C.
