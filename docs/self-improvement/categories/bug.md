@@ -7,6 +7,13 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-02 · code-review · [bug] · P2 — Whisper preferences: 4 pre-existing logic/copy bugs surfaced by the E2 decomposition CR review
+  Details: CodeRabbit flagged four issues in `SmatchetPreferencesUi_Whisper.cpp` on the E2 (#729) decomposition — all verified pre-existing (byte-identical to develop; E2 relocated them verbatim, positional-ImGui balance identical). (1) **Auto-mode E2E route prefers cloud-when-key (Major)**: `ResolveE2ERoute`/develop:583-593 uploads the E2E sample to cloud whenever an API key exists even if a local model is installed — contradicts the "Auto (local if present, cloud fallback)" mode description (privacy-relevant). (2) **Fallback model not seeded (Major)**: the model picker shows index 1 (Recommended) when `cfg.WhisperModel` is empty, but `modelPresent`/`dl.Start()` still read the empty/stale id. (3) **Hotkey validation fallback text wrong (Minor)**: rejects no-modifier combos but the message says a non-modifier key is missing (`capturedVk` guarantees the opposite). (4) **E2E hint overstates cloud upload (Minor)**: always says the test uploads audio, but a local transcription path exists — misleading privacy copy in local mode.
+  Concrete next action: (1) make the auto-mode E2E route prefer local-when-present (match the mode description) or reword the description; (2) seed `cfg.WhisperModel` to the recommended default when empty; (3) fix the hotkey fallback text; (4) make the E2E hint conditional on the resolved route. ~1-1.5h, dedicated Whisper-prefs PR.
+  Status: open
+  Last-reviewed: 2026-06-02
+
+
 - 2026-06-02 · code-review · [bug] · P1 — WASAPI capture: UB on silent packets + thread doesn't terminate on GetBuffer failure
   Details: Two genuine pre-existing bugs in `WindowsAudioCapture::CaptureThreadMain` surfaced by the C2-3 decomposition CR review (PR #713), both verified byte-identical to develop (develop:523/513) so NOT changed by the refactor. (1) **Critical UB**: `const BYTE* framePtr = data + (i * frameSize)` is computed unconditionally, but `IAudioCaptureClient::GetBuffer` can return `ppData == NULL` when `AUDCLNT_BUFFERFLAGS_SILENT` is set → NULL pointer arithmetic is UB even though `mono` is then forced to 0. (2) **Major**: on `GetBuffer` failure the code breaks only the inner packet loop; the outer wait loop continues with `running_` still true, so the worker never terminates on a fatal capture error.
   Concrete next action: (1) guard the arithmetic — `const BYTE* framePtr = silent ? nullptr : data + (i * frameSize);` (MixToMonoInt16 is already skipped when silent). (2) on `GetBuffer` failure set `running_.store(false)` (or break the outer loop) before returning, so the thread exits. ~30min, dedicated audio-capture PR.
