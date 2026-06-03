@@ -34,22 +34,22 @@ Grouped by phase (list > 10 entries).
 **Phase A — packaging:**
 1. `agents/VERSION` (new) — SemVer, seed `0.1.0`. Single line.
 2. `agents/CHANGELOG.md` (new) — Keep-a-Changelog format. Breaking-change semantics defined inline: **MAJOR** = agent removed/renamed, capability tag dropped, or agent output-contract change; **MINOR** = new agent/skill or additive capability; **PATCH** = prompt wording / bugfix. Seed with the shipped `per-subsystem-agent-docs` work + this plan.
-3. `agents/scripts/core/gen-kit-manifest.py` (new) — scan `agents/core/*.md` + `agents/project/*.md` frontmatter (`name`, `description`, `complexity`, `capabilities`, `triggers`, `delegates-to`, `version`, `read-only`) + `agents/_shared/skills/*/SKILL.md` → emit `MANIFEST.md` (human table, ECC-roster shape) + `manifest.json` (machine). Reuses the python-probe pattern from `test-portable-purity.sh`.
+3. `agents/scripts/core/gen-kit-manifest.py` (new) — scan the **portable kit only** — `agents/core/*.md` frontmatter (`name`, `description`, `complexity`, `capabilities`, `triggers`, `delegates-to`, `version`, `read-only`) + `agents/_shared/skills/*/SKILL.md` → emit `MANIFEST.md` (human table, ECC-roster shape) + `manifest.json` (machine). Reuses the python-probe pattern from `test-portable-purity.sh`. **Scope = portable kit only**: `agents/project/*` is intentionally excluded (project-bound; see § Non-goals).
 4. `agents/scripts/core/gen-kit-manifest.sh` (new) — thin wrapper (git-root cd + python probe), passes `test-shell-lint.sh` (5 rules).
 5. `agents/MANIFEST.md` (new, generated) — the catalog. Header carries the `agents/VERSION` + a "generated, do not hand-edit" marker.
 6. `agents/manifest.json` (new, generated) — machine form for harness tooling.
 7. `agents/USAGE.md` (new) — consumer-facing: what the kit is, who it's for, the copy-tree + rewrite-`project.config.json` install recipe (lifted from the config `_doc` + `docs/PORTABILITY.md`), pointer to the § Harness adapter capability table, and a short external-use governance / attribution note (Ghostty `AI_POLICY` shape, reuse-scoped).
-8. `agents/scripts/core/test-kit-manifest.sh` (new) — selftest: `MANIFEST.md`/`manifest.json` ↔ on-disk agent/skill set parity (every `core/`+`project/` agent and `_shared/` skill present exactly once; `agents/VERSION` is valid SemVer; `CHANGELOG.md` has an entry for the current `VERSION`). FAIL on drift.
-9. [`project.config.json`](project.config.json) (edit) — add `test-kit-manifest` to `guards.doc_validation`; add a `kit` block (`version_file: agents/VERSION`, `manifest: agents/MANIFEST.md`).
+8. `agents/scripts/core/test-kit-manifest.sh` (new) — selftest: `MANIFEST.md`/`manifest.json` ↔ on-disk agent/skill set parity (every `core/` agent and `_shared/` skill present exactly once; `agents/VERSION` is valid SemVer; `CHANGELOG.md` has an entry for the current `VERSION`). FAIL on drift.
+9. `project.config.json` (edit) — add `test-kit-manifest` to `guards.doc_validation`; add a `kit` block (`version_file: agents/VERSION`, `manifest: agents/MANIFEST.md`).
 10. `tests/bats/kit_manifest.bats` (new) — covers manifest parity, SemVer-format, changelog-entry-present, and a hand-edited-manifest FAIL.
-11. [`docs/STRUCTURE.md`](docs/STRUCTURE.md) (edit) — taxonomy: where `VERSION` / `CHANGELOG.md` / `MANIFEST.md` / `USAGE.md` live + the "kit = `core` + `_shared` + `docs/agent-rules` + `docs/harness`" product boundary.
-12. [`scripts/dev/test-all.sh`](scripts/dev/test-all.sh) (edit) — invoke `test-kit-manifest.sh` in the doc-validation group.
+11. `docs/STRUCTURE.md` (edit) — taxonomy: where `VERSION` / `CHANGELOG.md` / `MANIFEST.md` / `USAGE.md` live + the "kit = `core` + `_shared` + `docs/agent-rules` + `docs/harness`" product boundary.
+12. `scripts/dev/test-all.sh` (edit) — invoke `test-kit-manifest.sh` in the doc-validation group.
 
 **Phase B — purity to zero:**
 13. `agents/core/*.md` + `agents/_shared/**` (edit, sweep) — replace project literals (`Smatchet`, `Source/Core`, `SMATCHET_*`, `ITrackerClient`, build presets) with `project.config.json`-sourced placeholders or generic phrasing; burn down `portable-purity-baseline.txt`. Mechanical, `mechanic`-agent shaped; per-file, reviewable.
-14. [`docs/high-integrity/portable-purity-baseline.txt`](docs/high-integrity/portable-purity-baseline.txt) (shrinks each sweep PR) — the burn-down ledger.
-15. [`agents/scripts/core/test-portable-purity.sh`](agents/scripts/core/test-portable-purity.sh) (edit) — add `--count` (print baseline size) for burn-down tracking + a `--strict` zero-tolerance mode that fails on ANY leakage (graduation switch, flipped once baseline empties).
-16. [`docs/PORTABILITY.md`](docs/PORTABILITY.md) (edit) — document the version/manifest/release model + the "purity-baseline = 0 before publish" bar.
+14. `docs/high-integrity/portable-purity-baseline.txt` (shrinks each sweep PR) — the burn-down ledger.
+15. `agents/scripts/core/test-portable-purity.sh` (edit) — add `--count` (print baseline size) for burn-down tracking + a `--strict` zero-tolerance mode that fails on ANY leakage (graduation switch, flipped once baseline empties).
+16. `docs/PORTABILITY.md` (edit) — document the version/manifest/release model + the "purity-baseline = 0 before publish" bar.
 
 **Phase C — install + publish (design-only build-deferred):**
 17. `agents/scripts/core/install-kit.sh` (new, Phase C) — `<target-repo-path>`: copy the four portable dirs into the target, scaffold `project.config.json` from `project.config.schema.json`, then run `setup-harness.sh <harness>` rooted in the target. Until built, `setup-harness.sh`'s hardcoded `cd "$(dirname)/../../.."` git-root assumption stays in-repo-only.
@@ -74,7 +74,7 @@ Grouped by phase (list > 10 entries).
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`)
 
-`N/A — no `Source/Core/` code touched; no `.cpp`/`.h` anywhere. Not pure-docs: `is-pure-docs-diff.sh` allow-lists `agents/scripts/**` + `*.md` + `docs/**`, but `agents/VERSION`, `agents/manifest.json`, `project.config.json`, `scripts/dev/test-all.sh`, and `tests/bats/*.bats` are deny-listed, so it returns false (exit 1) and `test-all.sh` runs in full. With no compiled change, the build/ctest + perf gates are no-ops; verification reduces to shell-lint + bats + doc-validation.`
+N/A — no `Source/Core/` code touched; no `.cpp`/`.h` anywhere. Not pure-docs: `is-pure-docs-diff.sh` allow-lists `agents/scripts/**` + `*.md` + `docs/**`, but `agents/VERSION`, `agents/manifest.json`, `project.config.json`, `scripts/dev/test-all.sh`, and `tests/bats/*.bats` are deny-listed, so it returns false (exit 1) and `test-all.sh` runs in full. With no compiled change, the build/ctest + perf gates are no-ops; verification reduces to shell-lint + bats + doc-validation.
 
 ## Risks / non-goals
 

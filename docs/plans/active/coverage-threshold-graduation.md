@@ -25,10 +25,10 @@ The structural test-delta gate stays exactly as-is (already hard-blocking) — t
 
 ## Files to modify
 
-1. [`scripts/dev/coverage.sh`](scripts/dev/coverage.sh) (edit) — add `--excluded_sources "Source.Core.src.Ui"` + `"Source.Core.include.Ui"` to `OCC_FILTER_ARGS` (confirm OpenCppCoverage path-pattern match semantics at impl). Optional: a `--print-pct` flag echoing the measured number for the Slice-1 readout.
-2. [`.github/workflows/coverage.yml`](.github/workflows/coverage.yml) (edit) — `continue-on-error: false`; `coverage.sh --xml-only --threshold <chosen>`; header comment rewrite (advisory → blocking, name the flip PR).
-3. [`project.config.json`](project.config.json) (edit) — add `coverage-out-of-band` to `merge_gates.override_labels`; add a `coverage` block (`threshold: <chosen>`, `excluded: ["Source/Core/src/Ui", "Source/Core/include/Ui"]`) so the number is config-sourced, not hardcoded in two places.
-4. [`docs/plans/shipped/test-suite-expansion-completion.md`](docs/plans/shipped/test-suite-expansion-completion.md) (edit, PR-only per § Plan revision) — one-line § Implementation-log / § End-state append: "line-coverage threshold flipped advisory→blocking at `<N>%` on `<date>` via this plan."
+1. `scripts/dev/coverage.sh` (edit) — add `--excluded_sources "Source.Core.src.Ui"` + `"Source.Core.include.Ui"` to `OCC_FILTER_ARGS` (confirm OpenCppCoverage path-pattern match semantics at impl). Optional: a `--print-pct` flag echoing the measured number for the Slice-1 readout.
+2. `.github/workflows/coverage.yml` (edit) — `continue-on-error: false`; `coverage.sh --xml-only --threshold <chosen>`; header comment rewrite (advisory → blocking, name the flip PR).
+3. `project.config.json` (edit) — add `coverage-out-of-band` to `merge_gates.override_labels`; add a `coverage` block (`threshold: <chosen>`, `excluded: ["Source/Core/src/Ui", "Source/Core/include/Ui"]`) so the number is config-sourced, not hardcoded in two places.
+4. `docs/plans/shipped/test-suite-expansion-completion.md` (edit, PR-only per § Plan revision) — one-line § Implementation-log / § End-state append: "line-coverage threshold flipped advisory→blocking at `<N>%` on `<date>` via this plan."
 5. `docs/self-improvement/categories/test.md` (edit) — backlog the **≥90% high-risk-unit** target (IssueCreatePipeline, IssueDraft, TrackerFieldValueParser, CallstackParser, LocalCacheManager, TicketSyncService, ConfigManager migrations, MCP dispatch, Lua bindings) + (if Slice-2 floor < 70) the raise-to-70 ramp.
 
 ## Existing utilities reused
@@ -44,7 +44,7 @@ The structural test-delta gate stays exactly as-is (already hard-blocking) — t
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`)
 
-`N/A — no `Source/Core/` source compiled-change. Edits `coverage.sh` (`scripts/dev/`, deny-listed) + `coverage.yml` (`.github/`, deny-listed) + `project.config.json` → not pure-docs (`is-pure-docs-diff.sh` false), but no `.cpp`/`.h`, so build/ctest/perf gates are no-ops. (If Slice 2 finds floor < 70 and tests are added to ramp, that test work is a separate PR with its own gates.)`
+N/A — no `Source/Core/` source compiled-change. Edits `coverage.sh` (`scripts/dev/`, deny-listed) + `coverage.yml` (`.github/`, deny-listed) + `project.config.json` → not pure-docs (`is-pure-docs-diff.sh` false), but no `.cpp`/`.h`, so build/ctest/perf gates are no-ops. (If Slice 2 finds floor < 70 and tests are added to ramp, that test work is a separate PR with its own gates.)
 
 ## Risks / non-goals
 

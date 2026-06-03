@@ -34,9 +34,9 @@ Proposed five (distilled from existing sections, not invented):
 
 ## Files to modify
 
-1. [`AGENTS.md`](AGENTS.md) (edit) — add § Operating principles (≤15 lines, 5 linked one-liners) above § UX Pillars. Each line cross-links its canonical section; carries a "navigation only — no rule detail here" guard note.
-2. [`docs/agent-rules/delegation.md`](docs/agent-rules/delegation.md) (edit, near line 345) — add § Context budget by task class (≤8 lines): ~80% utilization ceiling for large refactors → delegate before the last 20%; high tolerance for low-sensitivity edits.
-3. [`AGENTS.md`](AGENTS.md) § Delegation stub (edit) — one-line pointer to the new `delegation.md` § Context budget (the AGENTS.md delegation index already lists moved subsections; add this one).
+1. `AGENTS.md` (edit) — add § Operating principles (≤15 lines, 5 linked one-liners) above § UX Pillars. Each line cross-links its canonical section; carries a "navigation only — no rule detail here" guard note.
+2. `docs/agent-rules/delegation.md` (edit, near line 345) — add § Context budget by task class (≤8 lines): ~80% utilization ceiling for large refactors → delegate before the last 20%; high tolerance for low-sensitivity edits.
+3. `AGENTS.md` § Delegation stub (edit) — one-line pointer to the new `delegation.md` § Context budget (the AGENTS.md delegation index already lists moved subsections; add this one).
 
 ## Existing utilities reused
 
@@ -51,7 +51,7 @@ Proposed five (distilled from existing sections, not invented):
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`)
 
-`N/A — pure-docs. Only `AGENTS.md` + `docs/agent-rules/delegation.md` change; both `*.md`, so `is-pure-docs-diff.sh` returns true → build/ctest/perf gates skip.`
+N/A — pure-docs. Only `AGENTS.md` + `docs/agent-rules/delegation.md` change; both `*.md`, so `is-pure-docs-diff.sh` returns true → build/ctest/perf gates skip.
 
 ## Risks / non-goals
 
