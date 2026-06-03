@@ -1,6 +1,6 @@
-// Pure, ImGui-free decision helpers for the Backend Audit window. Extracted from
-// SmatchetUI::drawAuditWindow so the filter / pagination logic is bucket-A testable in the
-// doctest rig (no ImGui / AppController link) and the draw body stays under the branch cap.
+// Pure, ImGui-free decision helpers for the Backend Audit window, lifted out of the
+// drawAuditWindow body so the filter and pagination logic is bucket-A testable in the
+// doctest rig without an ImGui or AppController link, keeping the draw body under the cap.
 
 #include "Ui/SmatchetAudit_detail.h"
 
