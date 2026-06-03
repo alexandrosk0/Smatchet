@@ -43,6 +43,11 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Pure date-format index<->option helpers lifted out of
+    # DrawLocalAndAppearancePreferencesTabs during its function-size decomposition.
+    # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
+    # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
+    Core/PreferencesDateFormatIndex.test.cpp
     Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
