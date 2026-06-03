@@ -1,9 +1,9 @@
 # Plan — DRY Quality Pillar + duplication delta-gate
 
 > **Slug**: `dry-pillar-dup-gate` (matches this file's basename without `.md`).
-
+>
 > **Usage**: adds **DRY** as an **enforced Engineering Quality Pillar** backed by a duplication-detection **delta-gate** (grandfather existing, fail NEW only — like `function_size_audit.py` / `comment_audit.py`). Decided + grilled via `grill-with-docs` (2026-06-03); core decision in **[ADR-0015](../../adr/0015-dry-quality-pillar-duplication-gate.md)**.
-
+>
 > **Mandatory rules cross-link**: `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template. Touches **no `Source/` runtime code** (gate tooling + docs + CI) → perf-gate `N/A`.
 
 ## Context
