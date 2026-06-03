@@ -7,7 +7,7 @@ version: 1
 # gate-escape-postmortem
 
 The invocation shortcut for the gate-escape postmortem. Plan + rationale:
-[`docs/plans/active/gate-escape-postmortem.md`](../../../docs/plans/active/gate-escape-postmortem.md).
+[`docs/plans/shipped/gate-escape-postmortem.md`](../../../docs/plans/shipped/gate-escape-postmortem.md).
 This skill is the incident **finder**; the existing self-improvement apply-loop
 (`docs/self-improvement/categories/*` + `AGENT_SELF_IMPROVEMENT.md` threshold +
 triage) is the **applier**. No second system.
@@ -16,7 +16,8 @@ triage) is the **applier**. No second system.
 
 - The `postmortem-owed` SessionStart nudge fired (`agents/scripts/core/postmortem-owed.sh`).
 - User says "postmortem" / "gate escape" / "why did this ship" / "post-merge bug".
-- An override label / `Revert` / overdue `SMATCHET_DEVIATION` shipped and the
+- An override label / `Revert` / overdue deviation marker (the project's
+  `lint.deviation_keyword`) shipped and the
   escape has no `postmortems.md` entry yet.
 
 ## Workflow
