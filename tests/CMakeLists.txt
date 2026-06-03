@@ -43,6 +43,12 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
+    # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
+    # (the largest function in the tree) to cut its branch count. The _detail TU is
+    # ImGui-free + AppController-free, so the test rig links just that one cpp.
+    Core/AnnotateRowDisplayPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AnnotateAnalysisUi_Window_detail.cpp"
     # Pure audit-window filter/pagination helpers extracted from SmatchetUI::drawAuditWindow.
     # The _detail TU depends only on nlohmann/json — no ImGui, no AppController.
     Core/AuditWindowFilter.test.cpp
