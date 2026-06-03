@@ -27,6 +27,13 @@ struct CachedTicket;
 /// re-fetched per helper.
 struct ActiveProjectDrawCtx;
 
+/// Shared per-frame state for the section helpers that decompose
+/// SmatchetUI::drawViewsDashboardWindow. Defined at namespace scope in
+/// SmatchetViewsDashboardUi.cpp (the only TU that constructs it); forward-declared here so
+/// the private section-helper member signatures can name it. Holds references to the active
+/// view, store, and the action closures captured once at the top of the frame.
+struct ViewsDashboardDrawCtx;
+
 /// Per-frame cache for TrackerFieldCatalogIndex + TicketGridColumns, keyed by catalog revision and
 /// active view id. Built once per frame in SmatchetUI::Draw before drawMainMenuBar and
 /// drawActiveProjectWindow so neither rebuilds it independently.
@@ -126,6 +133,40 @@ class SmatchetUI {
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);
+
+    // Section helpers for SmatchetUI::Draw (function-size-compliance, monoliths campaign).
+    // No positional-ImGui scope pair is split across a helper boundary; each helper either
+    // opens and closes its own scope internally or runs entirely outside any scope.
+    // Pre-existing perf-scope seams are reused verbatim, so no new perf markers appear.
+    void drawInitConfigOnce(AppController& app, UiDrawSession& d);
+    void drawApplyAppearanceSettings(UiDrawSession& d);
+    void drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession& d);
+    void drawPreWindowOverlays(AppController& app, UiDrawSession& d);
+    void drawViewStateAndConnectivity(AppController& app, UiDrawSession& d);
+    void drawChromeAndModeToggles(AppController& app, UiDrawSession& d);
+    void handleViewKeyboardShortcuts(UiDrawSession& d);
+    void handlePanelVisibilityShortcuts(UiDrawSession& d);
+    void handleViewRevealShortcuts(UiDrawSession& d);
+    void drawSecondaryWindows(AppController& app, UiDrawSession& d);
+    void drawDockDebugOverlay(UiDrawSession& d);
+    void drawEndOfFramePersistence(UiDrawSession& d);
+
+    /// Hoisted Draw-body function-local `static`s. Behaviour-identical for this single
+    /// SmatchetUI instance; promoting to members removes the statics so the section
+    /// helpers stay reentrant-safe (no cross-window leakage). The Zen-mode key-chord
+    /// detector and the dock-debug throttle counters lived as `static` locals in the
+    /// pre-decomposition Draw body.
+    struct DrawBodyState {
+        // Zen Mode: Ctrl+M then Z chord (1 s timeout).
+        bool zenChordPrefixArmed = false;
+        float zenChordTimeoutSec = 0.0f;
+        // Esc Esc to exit Zen Mode.
+        int zenEscCount = 0;
+        float zenEscTimer = 0.0f;
+        // Dock-debug overlay LOG_DEBUG throttle (every 120 frames).
+        int dockDebugLogFrame = 0;
+    };
+    DrawBodyState drawBodyState_;
 #if defined(SMATCHET_WITH_AI)
     /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
     /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside
@@ -157,6 +198,18 @@ class SmatchetUI {
     };
     PreferencesWindowState preferencesState_;
     void drawViewsDashboardWindow(AppController& app, UiDrawSession& d);
+    // Section helpers for drawViewsDashboardWindow (function-size decomposition). Each owns its
+    // own positional-ImGui Begin/End pairs in full — no pair is split across the orchestrator/
+    // helper boundary. The per-tab helpers each own their BeginTabItem/EndTabItem (EndTabItem
+    // runs only when BeginTabItem returned true, preserved verbatim). ViewsDashboardDrawCtx
+    // carries the active view, store, and the action closures captured once at frame top.
+    void drawViewsSidebar(ViewsDashboardDrawCtx& ctx);
+    void drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx);
+    void drawViewsFilterTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsSortTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsModals(ViewsDashboardDrawCtx& ctx);
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
     // the pre-existing SMATCHET_UI_PERF_SCOPE seams VERBATIM. Positional-ImGui Begin/End

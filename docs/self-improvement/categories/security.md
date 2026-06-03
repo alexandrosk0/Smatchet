@@ -22,8 +22,8 @@
 - 2026-05-28 · deep-audit · [security] · P3 — Lua source tarball fetched with no integrity hash (only unpinned external fetch)
   Details: `CMakeLists.txt:377` `file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}")` has no `EXPECTED_HASH` (grep for EXPECTED_HASH/SHA256 across `CMakeLists.txt` + `cmake/` returns nothing). Every other dependency is pinned to an immutable git ref and FontAwesome's TTF is sha256-verified in CI (`build-and-test.yml:88-98`) — Lua is the lone gap. A compromised lua.org mirror or MITM injects unverified C source compiled into both standalone + Unreal targets. Inside `if(SMATCHET_WITH_LUA_AUTOMATION)` + guarded by `if(NOT EXISTS LUA_SRC_DIR)`, so the window is first-fetch / cache-miss CI runs. Mirrors the existing Mesa-archive-integrity entry (2026-05-24). Verified (deep-audit, adversarially confirmed).
   Concrete next action: add `EXPECTED_HASH SHA256=<hash of lua-5.3.6.tar.gz>` to the `file(DOWNLOAD)` call (CMake supports it directly). One line. ~15 min.
-  Status: open
-  Last-reviewed: 2026-05-28
+  Status: applied (2026-06-02 — `CMakeLists.txt` lua `file(DOWNLOAD)` now carries `EXPECTED_HASH SHA256=fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60`, TOFU-pinned from the canonical upstream artifact; cache-hit builds skip the download entirely, fresh fetches are validated)
+  Last-reviewed: 2026-06-02
 
 - 2026-05-17 · security-review · [security] · P2 — First-send outbound-context consent modal (consent-tracking field + UX)
   Details: Default flip of `AssistantContextBlockAuditTrail` to `false` shipped (`ConfigManager.h:248`); remaining work from the original P1 entry is the one-time first-send consent modal. Modal should list the 5 `AssistantContextBlock*` block names + sample payload sizes + a "what gets sent" expander before the first turn. Drive via a new `cfg.AssistantOutboundConsentShown = false` field. Severity downgraded P1→P2 because the riskiest default (audit-trail PII auto-shipping) is now off.
