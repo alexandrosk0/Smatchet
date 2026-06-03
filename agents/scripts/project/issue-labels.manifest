@@ -1,0 +1,34 @@
+# issue-labels.manifest — source of truth for the GitHub Issue label set.
+# Applied by sync-issue-labels.sh. Format: name|color|description (pipe-delimited,
+# one per line; # comments + blank lines ignored). Colors are 6-hex, no '#'.
+#
+# `bug` / `duplicate` / `wontfix` are GitHub defaults (already present) — NOT listed
+# here. This manifest carries only the NEW labels the issue-triage protocol adds.
+#
+# area:<x> labels mirror the agents/core/coderabbit-triage.md subsystem→agent map
+# (sync-issue-labels.sh --check-parity asserts it). Generic areas (ui, build) have
+# no 1:1 agent and live in the GENERIC_AREAS allowlist in that script.
+#
+# Plan: docs/plans/active/issue-triage-protocol.md § C. Protocol: docs/agent-rules/issue-triage.md.
+
+# --- priority (the backlog P0–P3 scale) ---
+P0|b60205|Critical — data corruption / exploitable / crash-on-launch
+P1|d93f0b|High — load-bearing / silent failure / production regression
+P2|fbca04|Medium — real but bounded
+P3|0e8a16|Low — cosmetic / minor
+
+# --- source marker (agent-found vs the log-a-bug user-report marker in the body) ---
+src:code-review|5319e7|Filed by an agent (CodeRabbit / code-review), not a user report
+
+# --- area:<subsystem> — mirrors the coderabbit-triage path→agent map ---
+area:tracker-backend|1d76db|Tracker backend — Jira/Plane/GitHub clients, HTTP, field catalog/parser
+area:grid-engine|1d76db|Ticket grid / spreadsheet UI
+area:offline-sync|1d76db|SQLite cache / offline queue / sync / audit trail
+area:command-system|1d76db|Unified command system (CLI / palette / MCP / Lua / scenarios)
+area:lua-binder|1d76db|Lua bindings / automation host
+area:mcp-toolsmith|1d76db|MCP server / wire protocol
+area:p4-annotate|1d76db|Perforce blame / annotate / callstack
+area:unreal-bridge|1d76db|DX12 / Unreal plugin (SMATCHET_EMBEDDED_IN_UNREAL)
+# --- generic areas (no 1:1 agent; GENERIC_AREAS allowlist) ---
+area:ui|1d76db|General UI — theme, layout, widgets, fonts
+area:build|1d76db|Build system / CMake / CI / packaging

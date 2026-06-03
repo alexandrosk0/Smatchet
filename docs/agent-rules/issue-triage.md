@@ -69,7 +69,7 @@ Triage *tracks + labels* Issues; **fixing one is user-initiated and label-routed
 
 ## Labels
 
-Managed by `agents/scripts/project/sync-issue-labels.sh` (added in Slice 2) from a checked-in manifest (so the set is reproducible + the `area:*` labels stay in parity with the `coderabbit-triage` subsystem map):
+Managed by [`agents/scripts/project/sync-issue-labels.sh`](../../agents/scripts/project/sync-issue-labels.sh) from a checked-in [manifest](../../agents/scripts/project/issue-labels.manifest) (so the set is reproducible + the `area:*` labels stay in parity with the `coderabbit-triage` subsystem map):
 
 - **`bug`** (exists) — every product bug Issue.
 - **`P0`–`P3`** — priority, the backlog scale.
