@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
+#include "Ui/SmatchetAudit_detail.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -30,62 +31,13 @@ void DrainAuditReloadFuture(UiDrawSession& d) {
     d.auditReloadPending = false;
 }
 namespace {
-std::string JsonStringValue(const nlohmann::json& j, const char* key) {
-    if (!j.is_object() || !j.contains(key)) {
-        return std::string();
-    }
-    const auto& v = j[key];
-    if (v.is_string()) {
-        return v.get<std::string>();
-    }
-    if (v.is_boolean()) {
-        return v.get<bool>() ? "true" : "false";
-    }
-    if (v.is_number_integer()) {
-        return std::to_string(v.get<long long>());
-    }
-    if (v.is_number_unsigned()) {
-        return std::to_string(v.get<unsigned long long>());
-    }
-    return v.dump();
-}
-bool ContainsNoCasePreLower(const std::string& haystackLower, const std::string& needleLower) {
-    if (needleLower.empty()) {
-        return true;
-    }
-    return haystackLower.find(needleLower) != std::string::npos;
-}
-bool ActionMatchesFilter(const std::string& action, int filter) {
-    switch (filter) {
-    case 1:
-        return action.find("create") != std::string::npos && action.find("offline") == std::string::npos;
-    case 2:
-        return action.find("update") != std::string::npos || action.find("transition") != std::string::npos ||
-               action.find("field_edit") != std::string::npos;
-    case 3:
-        return action.find("comment") != std::string::npos;
-    case 4:
-        return action.find("attach") != std::string::npos;
-    case 5:
-        return action.find("offline") != std::string::npos;
-    default:
-        return true;
-    }
-}
-bool ResultMatchesFilter(bool success, int filter) {
-    if (filter == 1)
-        return success;
-    if (filter == 2)
-        return !success;
-    return true;
-}
-int ClampRowsPerPage(int value) {
-    if (value < 25)
-        return 25;
-    if (value > 1000)
-        return 1000;
-    return value;
-}
+using SmatchetAudit::detail::ActionMatchesFilter;
+using SmatchetAudit::detail::ClampRowsPerPage;
+using SmatchetAudit::detail::CollectFilteredAuditIndices;
+using SmatchetAudit::detail::ComputeAuditPageCount;
+using SmatchetAudit::detail::ContainsNoCasePreLower;
+using SmatchetAudit::detail::JsonStringValue;
+using SmatchetAudit::detail::ResultMatchesFilter;
 // Tabs/newlines break TSV paste into spreadsheets.
 static std::string AuditSanitizeTsvCell(const std::string& s) {
     std::string out;
@@ -198,6 +150,91 @@ bool TryCompleteAuditReload(UiDrawSession& d) {
     }
     return true;
 }
+
+// Render the 8-column audit grid for the current page. Keeps the Begin/EndTable and
+// BeginPopup/EndPopup pairs together inside this helper so the orchestrator body stays
+// layout-only. Behaviour-identical to the original inline table block.
+void DrawAuditTable(UiDrawSession& d, const std::vector<nlohmann::json>& events,
+                    const std::vector<std::string>& eventFullJson, const std::vector<std::string>& eventDataJson,
+                    const std::vector<std::size_t>& filteredIndices) {
+    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                                  ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX;
+    if (!ImGui::BeginTable("BackendAuditTable", 8, flags, ImVec2(0.0f, 360.0f))) {
+        return;
+    }
+    ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    ImGui::TableSetupColumn("Phase", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+    ImGui::TableSetupColumn("Issue", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Error", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableHeadersRow();
+    const std::size_t begin = static_cast<std::size_t>(d.auditPage) * static_cast<std::size_t>(d.auditRowsPerPage);
+    const std::size_t end = (std::min)(filteredIndices.size(), begin + static_cast<std::size_t>(d.auditRowsPerPage));
+    for (std::size_t rowIndex = begin; rowIndex < end; ++rowIndex) {
+        const std::size_t eventIndex = filteredIndices[rowIndex];
+        const nlohmann::json& e = events[eventIndex];
+        const std::string action = JsonStringValue(e, "action");
+        const bool success = e.value("success", false);
+        const std::string& serialized = eventFullJson[eventIndex];
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(JsonStringValue(e, "timestamp_local").c_str());
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(JsonStringValue(e, "phase").c_str());
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextUnformatted(action.c_str());
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextUnformatted(success ? "OK" : "FAIL");
+        ImGui::TableSetColumnIndex(4);
+        ImGui::TextUnformatted(JsonStringValue(e, "issue_key").c_str());
+        ImGui::TableSetColumnIndex(5);
+        ImGui::TextUnformatted(JsonStringValue(e, "source").c_str());
+        ImGui::TableSetColumnIndex(6);
+        ImGui::TextUnformatted(JsonStringValue(e, "error").c_str());
+        ImGui::TableSetColumnIndex(7);
+        const std::string& detail = eventDataJson[eventIndex];
+        ImGui::TextUnformatted(detail.empty() ? "-" : detail.c_str());
+        const std::string popupId = "##audit_row_context_" + std::to_string(eventIndex);
+        if (ImGui::BeginPopupContextItem(popupId.c_str())) {
+            if (ImGui::MenuItem("Copy audit row JSON")) {
+                ImGui::SetClipboardText(serialized.c_str());
+            }
+            ImGui::EndPopup();
+        }
+    }
+    ImGui::EndTable();
+}
+
+// Filter toolbar: search box, Action/Result combos, newest-first toggle, rows-per-page input,
+// and the read-error banner. Mutating a filter resets to page 0, matching the original inline
+// behaviour exactly.
+void DrawAuditFilters(UiDrawSession& d, const std::string& readError) {
+    ImGui::InputTextWithHint("##audit_search", "Search action / issue / JSON", d.auditSearchBuf,
+                             sizeof(d.auditSearchBuf));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(170.0f);
+    ImGui::Combo("Action", &d.auditActionFilter,
+                 "All\0Creates\0Updates/Transitions\0Comments\0Attachments\0Offline\0\0");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::Combo("Result", &d.auditResultFilter, "All\0Success\0Failure\0\0");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Newest first", &d.auditNewestFirst)) {
+        d.auditPage = 0;
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputInt("Rows/page", &d.auditRowsPerPage)) {
+        d.auditRowsPerPage = ClampRowsPerPage(d.auditRowsPerPage);
+        d.auditPage = 0;
+    }
+    if (!readError.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", readError.c_str());
+    }
+}
 } // namespace
 void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     (void)app;
@@ -244,64 +281,13 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     const std::vector<std::string>& eventFullJson = d.auditCachedFullJson;
     const std::vector<std::string>& eventDataJson = d.auditCachedDataJson;
     const std::string& readError = d.auditCachedReadError;
-    ImGui::InputTextWithHint("##audit_search", "Search action / issue / JSON", d.auditSearchBuf,
-                             sizeof(d.auditSearchBuf));
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(170.0f);
-    ImGui::Combo("Action", &d.auditActionFilter,
-                 "All\0Creates\0Updates/Transitions\0Comments\0Attachments\0Offline\0\0");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(110.0f);
-    ImGui::Combo("Result", &d.auditResultFilter, "All\0Success\0Failure\0\0");
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Newest first", &d.auditNewestFirst)) {
-        d.auditPage = 0;
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(90.0f);
-    if (ImGui::InputInt("Rows/page", &d.auditRowsPerPage)) {
-        d.auditRowsPerPage = ClampRowsPerPage(d.auditRowsPerPage);
-        d.auditPage = 0;
-    }
-    if (!readError.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", readError.c_str());
-    }
-    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                  ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX;
-    std::vector<std::size_t> filteredIndices;
-    filteredIndices.reserve(events.size());
+    DrawAuditFilters(d, readError);
     const std::string query = d.auditSearchBuf;
     const std::string queryLower = ToLowerAsciiCopy(query);
-    const auto collectEvent = [&](std::size_t eventIndex) {
-        const nlohmann::json& e = events[eventIndex];
-        const std::string action = JsonStringValue(e, "action");
-        const bool success = e.value("success", false);
-        if (!ActionMatchesFilter(action, d.auditActionFilter) || !ResultMatchesFilter(success, d.auditResultFilter)) {
-            return;
-        }
-        if (eventIndex >= d.auditCachedSearchLower.size()) {
-            return;
-        }
-        if (!ContainsNoCasePreLower(d.auditCachedSearchLower[eventIndex], queryLower)) {
-            return;
-        }
-        filteredIndices.push_back(eventIndex);
-    };
-    if (d.auditNewestFirst) {
-        for (std::size_t i = events.size(); i > 0; --i) {
-            collectEvent(i - 1);
-        }
-    } else {
-        for (std::size_t idx = 0; idx < events.size(); ++idx) {
-            collectEvent(idx);
-        }
-    }
+    const std::vector<std::size_t> filteredIndices = CollectFilteredAuditIndices(
+        events, d.auditCachedSearchLower, d.auditActionFilter, d.auditResultFilter, queryLower, d.auditNewestFirst);
     d.auditRowsPerPage = ClampRowsPerPage(d.auditRowsPerPage);
-    const int pageCount =
-        filteredIndices.empty()
-            ? 1
-            : static_cast<int>((filteredIndices.size() + static_cast<std::size_t>(d.auditRowsPerPage) - 1) /
-                               static_cast<std::size_t>(d.auditRowsPerPage));
+    const int pageCount = ComputeAuditPageCount(filteredIndices.size(), d.auditRowsPerPage);
     if (d.auditPage < 0)
         d.auditPage = 0;
     if (d.auditPage >= pageCount)
@@ -329,53 +315,7 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
         ImGui::SetTooltip(
             "Copy all rows matching current filters and search (not only this page), as tab-separated text.");
     }
-    if (ImGui::BeginTable("BackendAuditTable", 8, flags, ImVec2(0.0f, 360.0f))) {
-        ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-        ImGui::TableSetupColumn("Phase", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-        ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Issue", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-        ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-        ImGui::TableSetupColumn("Error", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableHeadersRow();
-        const std::size_t begin = static_cast<std::size_t>(d.auditPage) * static_cast<std::size_t>(d.auditRowsPerPage);
-        const std::size_t end =
-            (std::min)(filteredIndices.size(), begin + static_cast<std::size_t>(d.auditRowsPerPage));
-        for (std::size_t rowIndex = begin; rowIndex < end; ++rowIndex) {
-            const std::size_t eventIndex = filteredIndices[rowIndex];
-            const nlohmann::json& e = events[eventIndex];
-            const std::string action = JsonStringValue(e, "action");
-            const bool success = e.value("success", false);
-            const std::string& serialized = eventFullJson[eventIndex];
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(JsonStringValue(e, "timestamp_local").c_str());
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(JsonStringValue(e, "phase").c_str());
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(action.c_str());
-            ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted(success ? "OK" : "FAIL");
-            ImGui::TableSetColumnIndex(4);
-            ImGui::TextUnformatted(JsonStringValue(e, "issue_key").c_str());
-            ImGui::TableSetColumnIndex(5);
-            ImGui::TextUnformatted(JsonStringValue(e, "source").c_str());
-            ImGui::TableSetColumnIndex(6);
-            ImGui::TextUnformatted(JsonStringValue(e, "error").c_str());
-            ImGui::TableSetColumnIndex(7);
-            const std::string& detail = eventDataJson[eventIndex];
-            ImGui::TextUnformatted(detail.empty() ? "-" : detail.c_str());
-            const std::string popupId = "##audit_row_context_" + std::to_string(eventIndex);
-            if (ImGui::BeginPopupContextItem(popupId.c_str())) {
-                if (ImGui::MenuItem("Copy audit row JSON")) {
-                    ImGui::SetClipboardText(serialized.c_str());
-                }
-                ImGui::EndPopup();
-            }
-        }
-        ImGui::EndTable();
-    }
+    DrawAuditTable(d, events, eventFullJson, eventDataJson, filteredIndices);
     ImGui::TextDisabled("Copy filtered table: all matching rows as TSV. Right-click a row detail for full JSON. Cached "
                         "tail shows latest "
                         "1000+ events.");
