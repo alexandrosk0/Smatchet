@@ -34,6 +34,7 @@ FAIL=0
 SKILL_ONLY_HELPERS=(
     grill-with-docs
     scratchpad-recall
+    author-plan-doc
 )
 
 is_skill_only() {

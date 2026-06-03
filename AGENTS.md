@@ -153,7 +153,7 @@ Under Claude Code this maps to `mcp__vexp__run_pipeline` (semantic search) and `
 
 ## Agent file locations
 
-Canonical, single source of truth: `agents/<name>.md` at the repo root (per the [agents.md spec](https://agents.md/)). Shared scripts + skills live at `agents/_shared/`.
+Canonical, single source of truth: `agents/<name>.md` at the repo root (per the [agents.md spec](https://agents.md/)). Shared scripts + skills live at `agents/_shared/`. **Agent vs skill** — which form a new recurring procedure should take is decided by the rubric in [`docs/agent-rules/AGENT-VS-SKILL.md`](docs/agent-rules/AGENT-VS-SKILL.md) (skill when all-bounded-deterministic-inline; agent when any-exploration-loop-spawn-delegates; dual-publish to keep cross-harness discovery).
 
 Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored** — they're regenerated locally from the canonical tree by `bash agents/scripts/core/setup-harness.sh <name>`. Adapters use directory junctions / symlinks where possible so edits to `agents/*.md` are picked up by the harness immediately, no sync step.
 
