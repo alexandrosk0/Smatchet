@@ -43,6 +43,10 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Pure audit-window filter/pagination helpers extracted from SmatchetUI::drawAuditWindow.
+    # The _detail TU depends only on nlohmann/json — no ImGui, no AppController.
+    Core/AuditWindowFilter.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetAudit_detail.cpp"
     # Pure field-categorization / column-label helpers lifted out of
     # SmatchetUI::drawViewsDashboardWindow during its function-size decomposition.
     # SmatchetViewsDashboardUi_detail.h defines them all `inline` and pulls only
