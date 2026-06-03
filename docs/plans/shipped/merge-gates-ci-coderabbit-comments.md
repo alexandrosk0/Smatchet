@@ -561,7 +561,7 @@ Deferred — do not implement under this plan:
 
 - **Shipped scope grew well beyond the plan.** `scripts/dev/merge-gates.sh` (not `merge-gates-prompt.sh`) is the operative entrypoint; the gate gained `MERGE_GATES_FLIP_READY`, the CR=`NONE` grace + auto-`@coderabbitai review` nudge, the review-skipped size block, STALE-resolved / streak handling, and per-PR label overrides — none in the original design.
 - **25 fixtures shipped vs the 8 planned** (`tests/fixtures/merge_gates_*.json`), covering the added CR / STALE / size-skip / label paths.
-- **Ongoing CR-gate hardening tracked separately** in `docs/plans/active/gate-enforcement-hardening.md` (agent→GitHub promotion), so this plan closes at the poller + bats level.
+- **Ongoing CR-gate hardening tracked separately** in `docs/plans/shipped/gate-enforcement-hardening.md` (agent→GitHub promotion), so this plan closes at the poller + bats level.
 
 ## Verification (actual)
 
