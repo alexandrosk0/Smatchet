@@ -53,6 +53,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.detect.outputs.code }}
+      source_core_cpp: ${{ steps.detect.outputs.source_core_cpp }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -108,6 +109,31 @@ jobs:
           fi
           echo "non-docs changes present: ${code}"
           echo "code=${code}" >> "$GITHUB_OUTPUT"
+          # ASAN Core-delta gate (docs/plans/active/ci-build-time-reduction.md Q5):
+          # the sanitizer-asan job builds Debug (uncacheable by sccache) and is the
+          # only real per-PR asan lever, so run it pre-merge ONLY when first-party
+          # shared C++ that can introduce UB changed — Source/Core or Source/Plugins
+          # (.cpp/.h/.hpp/.cc). Standalone-only / docs / yaml PRs skip asan pre-merge;
+          # sanitizer-nightly still covers them. **Fail-safe = TRUE on uncertainty**:
+          # an empty/failed `$files` means we could NOT classify the diff, so we must
+          # NOT skip the pre-merge sanitizer safety gate — default to running asan
+          # (mirrors the `code=true` fail-safe above). Only a *non-empty* file list
+          # with no Core/Plugins C++ match yields false (the intended skip on
+          # docs/yaml/Standalone-only PRs). In `case`, * spans '/', so nested paths match.
+          if [ -z "$files" ]; then
+            source_core_cpp=true
+          else
+            source_core_cpp=false
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|Source/Core/*.hh|Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|Source/Plugins/*.hh)
+                  source_core_cpp=true; break ;;
+              esac
+            done <<< "$files"
+          fi
+          echo "Source/Core|Plugins C++ changed (asan gate): ${source_core_cpp}"
+          echo "source_core_cpp=${source_core_cpp}" >> "$GITHUB_OUTPUT"
 
   windows-msvc:
     name: Windows + MSVC
@@ -470,7 +496,15 @@ jobs:
 
   sanitizer-asan:
     name: Sanitizer (ASAN via MSVC)
-    needs: windows-msvc
+    # Core-delta gate (docs/plans/active/ci-build-time-reduction.md Q5): run
+    # pre-merge ONLY when Source/Core|Plugins C++ changed (the `changes` job's
+    # source_core_cpp output). Standalone-only / docs / yaml PRs skip it here;
+    # sanitizer-nightly (cron) still covers them. asan builds Debug — uncacheable
+    # by sccache — so skipping it on non-Core PRs is the only real per-PR lever.
+    # `needs: changes` so the output is available; still after windows-msvc to
+    # avoid spending a runner when the main build is already broken.
+    needs: [changes, windows-msvc]
+    if: ${{ needs.changes.outputs.source_core_cpp == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 45
 
