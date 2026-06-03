@@ -27,14 +27,45 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
-## 2026-06-03 · PR #771, #774, #776, #778 · red-check (non-required gate) + PR #780 · red-check (CR-findings)
+## 2026-06-03 · PR #780, #784 · admin-merged past a red check
+
+### What escaped
+The orchestrator direct-merged two PRs (`gh api -X PUT … /merge`) while a check
+was RED: #780 past a red **CR-findings** check, #784 past a red **"Doc anchors +
+agent contract"** doc-validation job. Each shipped real breakage to `develop`
+(an unaddressed CR finding; a `SMATCHET_DEVIATION` portable-purity leak + a
+dangling `active/` plan ref) that needed a follow-up heal (#781, #785).
+
+### Root cause
+The merge decision gated only on the **four required** checks + CR-pass, treating
+any **non-required** red check as ignorable. "Non-required" governs what *blocks*
+in GitHub — it does not mean the failure is fake. Compounded by using a direct
+admin `gh api` merge, which bypasses the gate-poller that would have surfaced the
+red job. The orchestrator had local evidence the doc-suite was red but merged on
+the required-only signal anyway.
+
+### Preventing gate
+Encoded the rule in `AGENTS.md` § Merge gates: **never merge past ANY red check,
+required or not** — every check on the head must be terminal-green before a
+squash-merge, *especially* a direct admin `gh api` merge; the only exceptions are
+a named override label or a positively-confirmed irrelevant flake. Pairs with the
+infra-P2 "make doc-validation contexts required" (below) — that makes the gate
+*structural* so the discipline can't be forgotten.
+
+### Filed as
+`AGENTS.md` § Merge gates (the rule) + [`docs/self-improvement/categories/infra.md`](categories/infra.md)
+2026-06-03 "doc-validation gates are NON-required" (the structural fix).
+
+## 2026-06-03 · PR #771, #774, #776, #778 · red-check (non-required doc-validation gate)
+
+> #780's CR-findings escape is a distinct incident — see the "admin-merged past a
+> red check" entry above; this entry is the doc-validation-job class only.
 
 ### What escaped
 The whole `test-docs.sh` doc-validation suite (`test-portable-purity`,
 `test-plan-index`, `test-plan-ref-integrity`) runs only in the CI job **"Doc
 anchors + agent contract"**, which is **not** in the repo's required-status-check
-set. So PRs merged with that job RED. Separately, #780 was admin-merged past a
-red **CR-findings** check (also non-required).
+set. So PRs merged with that job RED.
 
 ### Root cause
 Branch protection gates only the four required contexts (`Test-delta gate`,
