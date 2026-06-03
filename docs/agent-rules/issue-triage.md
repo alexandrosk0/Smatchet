@@ -57,9 +57,19 @@ Run per open Issue (the `issue-sweep.sh` automates this; verdict keys on **autho
 - When closing a bot-stray as a dup (`mirror-then-close`), the close comment links the canonical Issue/entry: `Duplicate of #<n> — <one-line>`.
 - A migrated `bug.md` entry's Issue records its origin in the body (`migrated from bug.md`), and the `bug.md` entry is deleted (the Issue is now canonical).
 
+## Fixing an Issue — the elevation flow
+
+Triage *tracks + labels* Issues; **fixing one is user-initiated and label-routed** (the loop never autonomously works a product bug):
+
+1. **Elevate** — `gh issue view <n>` to read symptom · repro · `file:line`; `gh issue develop <n> -b develop` creates + links a `<n>-<slug>` fix branch.
+2. **Route** — the **`area:<subsystem>`** label names the specialist directly (it mirrors the `coderabbit-triage` path→agent map): `area:tracker-backend` → `tracker-backend`, `area:grid-engine` → `grid-engine`, `area:offline-sync` → `offline-sync`, etc. **`P0–P3`** sets urgency.
+3. **Fix** — run the normal ship-loop on that branch; the PR body carries **`Fixes #<n>`** so GitHub auto-closes the Issue on merge. The sweep/janitor then sees it closed — no manual close step.
+
+**Auto-propose, never auto-fix (the guardrail).** At ship-loop closeout the sweep, *after* triaging strays, **surfaces the highest-priority open bug as a proposal** — a `[issue-propose] #<n> <title> (P<k>, area:X) — elevate? gh issue develop <n>` line for the top open `P0` (then `P1`) — so the most urgent bug never sits unnoticed. It does **NOT** start a fix and does **NOT** pause the loop. The human elevates (`fix #<n>`); agents *propose* the next bug, the human *decides*. This keeps the never-silently-mutate-product-behaviour posture: the loop auto-files, auto-triages, and auto-*proposes*, but a product-code fix is always human-initiated.
+
 ## Labels
 
-Managed by [`agents/scripts/project/sync-issue-labels.sh`](../../agents/scripts/project/sync-issue-labels.sh) from a checked-in manifest (so the set is reproducible + the `area:*` labels stay in parity with the `coderabbit-triage` subsystem map):
+Managed by `agents/scripts/project/sync-issue-labels.sh` (added in Slice 2) from a checked-in manifest (so the set is reproducible + the `area:*` labels stay in parity with the `coderabbit-triage` subsystem map):
 
 - **`bug`** (exists) — every product bug Issue.
 - **`P0`–`P3`** — priority, the backlog scale.
@@ -73,5 +83,5 @@ Managed by [`agents/scripts/project/sync-issue-labels.sh`](../../agents/scripts/
 
 ## Triage cadence
 
-- **Closeout sweep** — `issue-sweep.sh --dry-run` runs in the ship-loop closeout (surfaces verdicts; `--apply` only on explicit authorisation).
-- **Periodic janitor** — [`issue-janitor`](../../agents/core/issue-janitor.md) (agent + scheduled workflow, mirroring `p4-janitor` / `git-janitor`) keeps Issues labelled / deduped / stale-swept off the ship-loop.
+- **Closeout sweep** — `issue-sweep.sh --dry-run` runs in the ship-loop closeout: surfaces triage verdicts (`--apply` only on explicit authorisation) **and** emits the top-`P0`/`P1` `[issue-propose]` line (§ Fixing an Issue) — propose-only, never auto-fix, never pauses.
+- **Periodic janitor** — `issue-janitor` (`agents/core/issue-janitor.md`, added in Slice 4 — agent + scheduled workflow, mirroring `p4-janitor` / `git-janitor`) keeps Issues labelled / deduped / stale-swept off the ship-loop.
