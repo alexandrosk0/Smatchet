@@ -113,7 +113,7 @@ N/A — no Source/Core code. The diff is `.github/workflows/*.yml` + `CMakePrese
 
 ## Out of scope (flagged, not designed)
 
-**Deferral residue-sweep** (AGENTS.md § Scope-reduction final-check grep): before this plan finalises, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred below, and revise or delete them.
+**Deferral residue-sweep** (AGENTS.md § Plan-doc family — the scope-reduction + final-check grep rule): before this plan finalises, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred below, and revise or delete them.
 
 - **Larger / self-hosted Windows runners** — a parallelism lever; cost trade, separate decision.
 - **Unifying the 5 per-preset FetchContent caches into one shared dep cache** — sccache covers dep *object* compilation; revisit only if dep *fetch* time dominates after Phase 1.
