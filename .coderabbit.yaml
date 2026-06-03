@@ -153,6 +153,12 @@ knowledge_base:
   opt_out: false
   learnings:
     scope: auto
+  # issues.scope:auto lets CodeRabbit auto-create Issues from @coderabbitai
+  # CR-triage replies (this opened the #734 stray). Per ADR-0014 the orchestrator
+  # is the authoritative Issue creator; CR's strays are EMBRACED + reconciled by
+  # agents/scripts/core/issue-sweep.sh (relabel / mirror-then-close, bot-authored
+  # only) rather than suppressed. See docs/agent-rules/issue-triage.md
+  # § CodeRabbit auto-Issue reconciliation. Tighten this knob only if strays get noisy.
   issues:
     scope: auto
   pull_requests:

@@ -136,6 +136,10 @@ Match the cited file path against the first rule that fires. Pure-rename / typo 
 | Security finding (CWE, injection, secret leakage, deserialisation) | `security-review` |
 | Anything cross-cutting that survives the table | `architect` (returns a design doc, then orchestrator dispatches) |
 
+## Pre-existing product bug → GitHub Issue (NOT `bug.md`)
+
+When a finding is a **confirmed pre-existing product bug** (a real defect in shipped behaviour the current PR didn't introduce and won't fix here), it is a **GitHub Issue**, per [ADR-0014](../../docs/adr/0014-github-issues-canonical-for-product-bugs.md) — **not** a `bug.md` entry (that category is deprecated). The orchestrator follows the dedup-first create-flow in [`docs/agent-rules/issue-triage.md`](../../docs/agent-rules/issue-triage.md) § Orchestrator create-flow: `gh issue list --search` to dedup, then (if none) `gh issue create` with `bug` + `P0–P3` + `area:<subsystem>` (the area = the target agent from the routing table above) + `src:code-review`. Apply the bug-vs-debt rule first — internal-maintainability-only findings (duplication, god-object, coupling) go to `debt.md`, not an Issue. Never append a product bug to `bug.md`.
+
 ## Output format
 
 ```
