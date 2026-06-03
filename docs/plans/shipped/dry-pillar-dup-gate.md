@@ -155,4 +155,30 @@ There is **no DRY / duplication enforcement** today (verified: no jscpd/cpd/pmd/
   consistent even before the umbrella heading is renamed.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+Shipped in 3 slices (PRs #797 → #798 → #801, all merged to develop 2026-06-03; the
+enabling reslice/postmortem/required-check landed in #793).
+
+- **Slice 1 — scanner (#797, `98d1cab0`).** `dup_audit.py --selftest` green; **9/9** `dup_audit.bats`
+  (selftest, intra-file detect, generated-path exclude, new-clone WARN, copy-then-rename caught,
+  grandfathered silent, sub-threshold silent, deviation suppresses) via `test-dup-audit-bats.sh`
+  (auto-run by `test-all.sh`); full-tree scan ~4.4s; baseline snapshot = 449 grandfathered cross-file
+  clones. A CodeRabbit finding (line-number drift when a token recurs in a comment) was fixed by
+  adding `comment_lib.code_tokens_with_offsets` (behavior-preserving refactor — verified token-list
+  identical + `function_size`/`comment_audit` consumers unaffected: `function_size.bats` 15/15).
+- **Slice 2 — wiring (#798, `66ab799d`).** `test-lint-rules.sh --selftest` green incl. the new
+  `dup_audit.py --selftest` + `duplication`-rule-in-AGENTS.md assertion; `--dup-baseline` byte-stable;
+  shell-lint green. The `dup-scan.yml` advisory CI job is **live and passing** on real PRs (confirmed
+  green on #798/#801) — WARN-first, not a required check, exits 0. `pre-ship.sh` inherits the dup WARN.
+- **Slice 3 — rename (#801, `7d9d204d`).** `## UX Pillars` → `## Quality Pillars`; `ux-pillars.md` →
+  `quality-pillars.md`. `test-doc-anchors` green — **every legacy `§ UX Pillars` ref still resolves**
+  via the kept `**UX Pillars**` bold sub-anchor (no 81-file sweep needed); `test-markdown-links` 0
+  dangling. Two CI-only failures were caught + fixed during merge: (a) `test-portable-purity` flagged
+  the rename's baseline-orphaned literals → refreshed the baseline (also dropped 5 confirmed-stale
+  `ITrackerClient` entries); (b) a CodeRabbit portable-literal finding on the new intro line →
+  removed the redundant `Smatchet` mention. Full 8-check doc-validation suite green post-fix.
+- **Build gate**: N/A — pure-docs/tooling, no `Source/` C++. CI required checks (Test-delta, Windows
+  MSVC ×2, Shell lint) + the now-required "Doc anchors + agent contract" all green at each merge.
+- **Calibration (the graduation gate)**: pending — the gate ships **WARN-first**; the WARN→block flip
+  is backlogged (`process.md`, FP < 10% over ~20 PRs) with the `*.h:1` header-boilerplate FP class
+  noted to address before graduation.
