@@ -90,7 +90,6 @@ There is **no DRY / duplication enforcement** today (verified: no jscpd/cpd/pmd/
 - Additional Engineering Pillars beyond DRY (the umbrella leaves room; none designed here).
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit)*
 
 - **Slice 1 — scanner core (`feat/dup-audit-scanner`).** Shipped the detector + its tests + the
   grandfather snapshot, WARN-first and self-contained (NOT yet wired into any blocking gate — that
@@ -139,7 +138,6 @@ There is **no DRY / duplication enforcement** today (verified: no jscpd/cpd/pmd/
   green, `md_lint` clean, `test-lint-rules.sh --selftest` green.
 
 ## Deviations from plan
-*(populated post-ship)*
 
 - **Slice reorder — wiring (Slice 2) shipped before the "Quality Pillars" rename (now Slice 3).**
   The plan's § Files-to-modify bundles the AGENTS.md `## UX Pillars`→`## Quality Pillars` rename +
