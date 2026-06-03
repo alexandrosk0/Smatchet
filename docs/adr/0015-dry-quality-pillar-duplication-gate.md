@@ -19,4 +19,4 @@ DRY (Don't-Repeat-Yourself) becomes a first-class **enforced quality invariant**
 - **Double-edged-DRY guardrail is a hard requirement**: the gate targets copy-paste only (token-normalized clones), exemptions are cheap and encouraged over abstraction, and a DRY-motivated refactor must not increase coupling across unrelated subsystems. Standing exemptions: dual-target forward-decls, per-backend `*Client` boilerplate, generated code.
 - **WARN→block graduation** is a committed follow-up gated on calibration data, mirroring the subagent-eval graduation pattern — the gate is "enforced (calibration phase)", stronger than aspirational, not yet a merge block.
 - **Owner**: `code-review` is the reviewer-of-record for duplication findings + exemption sign-off.
-- Full design + thresholds + migration: `docs/plans/active/dry-pillar-dup-gate.md`.
+- Full design + thresholds + migration: `docs/plans/shipped/dry-pillar-dup-gate.md`.

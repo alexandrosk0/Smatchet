@@ -65,7 +65,7 @@ Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are u
 
 **Enforceable invariant (WARN-first, calibration phase):**
 - `dup_audit.py --diff` (token-shingle + rolling-hash clone detector; identifier + literal normalized, so copy-then-rename is caught; min ~70 tokens / ~8 lines) flags any NEW cross-file copy-paste clone vs the merge-base. All existing duplication is grandfathered (snapshot `docs/high-integrity/dup-baseline.md`).
-- **WARN-first today**: a `[dup] WARN` line on stderr (via `test-lint-rules.sh --diff`, the `dup-scan.yml` advisory CI job, and `pre-ship.sh`); it does **not** block a merge yet. Graduation to a hard block is gated on a measured false-positive rate **< 10% over ~20 PRs** (plan `docs/plans/active/dry-pillar-dup-gate.md` § Verification).
+- **WARN-first today**: a `[dup] WARN` line on stderr (via `test-lint-rules.sh --diff`, the `dup-scan.yml` advisory CI job, and `pre-ship.sh`); it does **not** block a merge yet. Graduation to a hard block is gated on a measured false-positive rate **< 10% over ~20 PRs** (plan `docs/plans/shipped/dry-pillar-dup-gate.md` § Verification).
 
 **Double-edged-DRY guardrail (co-equal with the gate):** the gate flags **copy-paste only**, never structural similarity. An exemption is **cheap and preferred over abstracting across unrelated contexts** — `SMATCHET_DEVIATION(rule=duplication; reason=…; owner=…; revisit=…)` on/above the clone. A DRY-motivated refactor that introduces a shared helper **coupling two otherwise-independent subsystems is a code-review CRITICAL**, not an improvement. Standing exemptions: dual-target forward-decls, per-backend `*Client` boilerplate, generated code.
 

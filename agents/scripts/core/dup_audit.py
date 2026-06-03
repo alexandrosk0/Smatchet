@@ -39,7 +39,7 @@ seam for the shingle/normalize/extend core.
 Exit contract (so test-lint-rules.sh can fail CLOSED once graduated): 0 = clean / advisory-only,
 1 = blocking violations (reserved for post-graduation; unused while WARN-first), >=2 = infra error.
 
-See docs/plans/active/dry-pillar-dup-gate.md + docs/adr/0015-dry-quality-pillar-duplication-gate.md.
+See docs/plans/shipped/dry-pillar-dup-gate.md + docs/adr/0015-dry-quality-pillar-duplication-gate.md.
 """
 
 import argparse
