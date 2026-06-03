@@ -2,7 +2,7 @@
 
 > Lifted from [`AGENTS.md`](../../AGENTS.md) § Quality Pillars per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the pillars + their owning agents (with **UX Pillars** + **Engineering Pillars** sub-anchors) so external `AGENTS.md § <subsection>` references — including legacy `§ UX Pillars` — continue to resolve. Renamed from `ux-pillars.md` when DRY was added as an Engineering Pillar (ADR-0015). Edit this file directly — no parallel copy in AGENTS.md.
 
-Five north-star quality invariants for Smatchet in two sub-groups. **UX Pillars** (1-4) are user-facing: 1-3 are **enforceable** (agents auto-fail PRs that violate them); 4 is **aspirational** today (flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` category `process`, not a merge block, until the supporting infrastructure lands). **Engineering Pillars** (5: DRY) govern code-maintainability and are enforced like UX 1-3.
+Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are user-facing: 1-3 are **enforceable** (agents auto-fail PRs that violate them); 4 is **aspirational** today (flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` category `process`, not a merge block, until the supporting infrastructure lands). **Engineering Pillars** (5: DRY) govern code-maintainability and are enforced like UX 1-3.
 
 ## 1. Performance — sustain ≈ 144 Hz
 
