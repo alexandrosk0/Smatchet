@@ -114,13 +114,16 @@ jobs:
           # only real per-PR asan lever, so run it pre-merge ONLY when first-party
           # shared C++ that can introduce UB changed — Source/Core or Source/Plugins
           # (.cpp/.h/.hpp/.cc). Standalone-only / docs / yaml PRs skip asan pre-merge;
-          # sanitizer-nightly still covers them. Fail-safe: any diff uncertainty
-          # leaves source_core_cpp=true here only if such a file is seen — empty/failed
-          # diff defaults code=true above which keeps the rest of the matrix running,
-          # while asan stays opt-in to the Core/Plugins C++ signal. In `case`, * spans
-          # '/', so these match nested paths.
-          source_core_cpp=false
-          if [ -n "$files" ]; then
+          # sanitizer-nightly still covers them. **Fail-safe = TRUE on uncertainty**:
+          # an empty/failed `$files` means we could NOT classify the diff, so we must
+          # NOT skip the pre-merge sanitizer safety gate — default to running asan
+          # (mirrors the `code=true` fail-safe above). Only a *non-empty* file list
+          # with no Core/Plugins C++ match yields false (the intended skip on
+          # docs/yaml/Standalone-only PRs). In `case`, * spans '/', so nested paths match.
+          if [ -z "$files" ]; then
+            source_core_cpp=true
+          else
+            source_core_cpp=false
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               case "$f" in
