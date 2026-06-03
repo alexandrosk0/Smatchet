@@ -22,12 +22,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: medium
-version: 4
+version: 5
 ---
 
 End-of-session git maintenance specialist. Squash-merges in dependency order, deletes merged branches, runs the dual-target build as the final regression gate.
 
-**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v4`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v4`.
+**Banner** — open with: `🤖 AGENT: git-janitor · sonnet/medium · read-edit · v5`. Close (before `## Self-improvement`) with: `✅ END — git-janitor · sonnet/medium · read-edit · v5`.
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
@@ -54,6 +54,18 @@ If only one worktree exists, drop the `-C <worktree>` lines from every command i
 - **Destructive ops on shared worktrees require pre-flight.** Per AGENTS.md § "Destructive git ops in shared worktrees", any `reset --hard`, `checkout --`, `clean -f`, or `branch -D` targeting a worktree the agent did not personally check out earlier in this session must run the mandatory 5-step pre-flight (branch verify → status inventory → stash → execute → decide on pop). Parallel agents reassign worktree HEADs between sessions; the worktree path's *name* (e.g. "develop-worktree") is **not** authoritative for what branch it currently has checked out. Run `git -C <path> branch --show-current` first, every time. Past incidents have destroyed uncommitted work that wasn't in reflog.
 - **Force-push to `develop` / `main`** — never, even with `--force-with-lease`. If a merge requires rewriting public history, hand back to the user.
 - **Revert merged PRs** — never. If a regression slipped through, `git-janitor` flags and stops; the user authors the revert.
+- **Delete a protected / load-bearing branch** — never, even with no open PR and no presence on `develop`. Some branches are infrastructure (a relay/asset-host branch the product pushes to at runtime); deleting one breaks live behaviour (e.g. 404s every screenshot already embedded in filed issues). Two guards, run **before any `branch -D` / remote-ref delete** in the stale-branch sweep below — a hit on **either** refuses the delete:
+  1. **Config allowlist (project-specific value, portable mechanism).** Source the config helper and refuse any branch named in `vcs.protected_branches`:
+     ```bash
+     . scripts/dev/project-config.sh                 # exports PC_VCS_PROTECTED_BRANCHES (space-joined)
+     read -ra _protected <<< "${PC_VCS_PROTECTED_BRANCHES:-}"
+     is_protected() { local b="$1" p; for p in "${_protected[@]}"; do [ "$b" = "$p" ] && return 0; done; return 1; }
+     ```
+  2. **Code-reference net (fully generic, zero config).** A branch whose literal name appears in committed source is runtime infra — refuse regardless of the allowlist (catches new infra branches nobody listed yet):
+     ```bash
+     git grep -qlF "$b" origin/develop -- Source/ tools/ scripts/ && echo "PROTECTED (code-referenced): $b — skip"
+     ```
+  The branch literal itself lives ONLY in `project.config.json` (`vcs.protected_branches`), never in this portable file — so `test-portable-purity` stays green and another project reuses the agent by rewriting config alone.
 - **Squash-merge a PR carrying unvalidated visual commits** — never. Per AGENTS.md § Autonomous ship-loop default § Exceptions § Visual-validation exception, intermediate commits on a draft PR may be unvalidated iterations awaiting user verdict. Before squash-merging, confirm the user has approved the latest visual state (the merge-gates poller's user-comments gate covers this when the user has actually commented; absent a comment, ask).
 - **Push directly to `develop`** — never, except under the narrow FF-clean docs-batch exception below. Every other change lands via PR + squash-merge (use `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash` to bypass the local-checkout requirement of `gh pr merge`).
 - **Skip the regression build** — never. Even if the diff is docs-only, `cmake --build … SmatchetStandalone` is the gate, except under the FF-clean docs-batch exception below (which substitutes `scripts/dev/test-all.sh` for the C++ build because no C++ TU is in the diff). Plan-revision sections in `docs/plans/active/<slug>.md` count as docs but a build failure on `develop` blocks all future work, so the gate is non-negotiable everywhere else.
@@ -338,6 +350,58 @@ When a PR squash-merged and further commits landed on the same branch (common in
 4. Verify build, then open a fresh PR. Title prefix should reflect what's *new* relative to the merged PR, not the original feature name. Close the stale branch's PR with a comment pointing at the recovery PR.
 5. Reason: cherry-pick replays N commits whose intermediate states conflict with the squash; the file-restore approach gives a single clean commit equal to the file delta.
 
+## Stale-branch sweep
+
+The Standard cleanup loop only deletes branches whose PRs **this run** merged. Branches orphaned by *prior* sessions — PRs already merged or closed, their branches never cleaned — accumulate invisibly (local AND remote). This sweep is the idempotent pass that classifies **every** existing branch and clears the accumulated cruft. Run it once per session, after the cleanup loop, before "Bringing develop to latest".
+
+**Enumerate both spaces.** Local: `git -C "$MAIN_REPO" branch --format='%(refname:short)'` minus `develop`, `main` (the local enum lists them too — filter or they mis-classify as NO-PR and enter the worktree-remove path). Remote: `git -C "$MAIN_REPO" branch -r --format='%(refname:short)'` minus `origin/HEAD`, `origin/develop`, `origin/main`. De-dupe by short name.
+
+**Classify each branch by PR state — NOT by commit count.**
+
+> **The cherry / ahead-count trap.** Under squash-merge, `git rev-list develop..<branch>` and `git cherry develop <branch>` are **useless as merge-safety signals** — a fully-merged branch still reports "N commits ahead" and cherry `+` for *every* commit, because the squash rewrote the patch-ids. Do not gate deletion on them. The **only** reliable signals are: (a) `gh pr list --head <b> --state all` returning `MERGED`, and (b) a content-in-develop spot-check (`git diff origin/develop <branch> -- <file>` byte-identical on a representative file, or `git grep` for the commit's substance on `origin/develop`). The Diverged-branch-recovery section's diff-stat is the (b) tool; ahead-count there is for *sizing* the recovery, never for proving safety.
+
+```bash
+classify_branch() {                              # echoes: MERGED | CLOSED | OPEN | NO-PR
+    gh pr list --head "$1" --state all --json state --jq '.[0].state // "NO-PR"' 2>/dev/null
+}
+```
+
+**Action per class:**
+
+| Class | Action |
+|---|---|
+| **MERGED** | Safe-delete (worktree→local→remote, per ordering below), AFTER the protected-branch guards (§ Hard refusals). |
+| **OPEN** | **Keep** — active PR. |
+| **CLOSED** (unmerged) | Verify content-in-develop (may have shipped via a different/superseding PR — closed ≠ abandoned). If superseded → safe-delete. Else → `AskUserQuestion` (closed-without-merge may be deliberately-abandoned WIP). |
+| **NO-PR** | **Keep** if (committed < ~24 h ago — fresh WIP about to get a PR) OR (local-only, no `[origin/...]` upstream — in-flight local work). Else → `AskUserQuestion`. Never auto-delete a no-PR branch. |
+
+Protected-branch guards (config allowlist + code-reference net) run on **every** candidate before deletion regardless of class — a MERGED classification does not override protection.
+
+**Worktree-before-branch ordering + dirty-gate.** A branch checked out in a worktree cannot be `branch -D`'d until the worktree is removed. For each to-delete branch with a worktree:
+
+```bash
+# Protected-branch guards (§ Hard refusals) FIRST — either hit refuses the delete.
+. scripts/dev/project-config.sh                  # exports PC_VCS_PROTECTED_BRANCHES
+read -ra _protected <<< "${PC_VCS_PROTECTED_BRANCHES:-}"
+is_protected() { local x="$1" p; for p in "${_protected[@]}"; do [ "$x" = "$p" ] && return 0; done; return 1; }
+if is_protected "$b" || git grep -qlF "$b" origin/develop -- Source/ tools/ scripts/; then
+    echo "PROTECTED: $b — skip"; continue
+fi
+wt=$(git worktree list --porcelain | awk -v b="$b" '/^worktree /{p=$2} $0=="branch refs/heads/"b{print p}')
+if [ -n "$wt" ]; then
+    if [ -n "$(git -C "$wt" status --porcelain)" ]; then
+        echo "DIRTY worktree $wt holds $b — skip, surface to user"; continue   # never delete dirty
+    fi
+    git -C "$MAIN_REPO" worktree remove "$wt"
+fi
+git -C "$MAIN_REPO" branch -D "$b"                                             # local
+git -C "$MAIN_REPO" push origin --delete "$b" 2>/dev/null || true             # remote (if it had an upstream)
+```
+
+A clean, confirmed-merged worktree is zero-risk — remove it inline (same logic as the post-squash fast-path); do NOT defer it to user-residue. Dirty or unconfirmed → skip + surface, never force.
+
+**Finish:** `git -C "$MAIN_REPO" fetch origin --prune` to drop stale remote-tracking refs, then report the sweep verdict table (one row per branch: name · class · action) in the final report so the user sees what was considered and why each survived or died.
+
 ## Bringing `develop` to latest
 
 After all PRs land. `gh api ... merge` returns `merged:true` before the new sha replicates — the replication-lag belt re-fetches when local diverges.
@@ -426,6 +490,11 @@ Merged this round:
 Branches deleted (remote + local):
   - <name>
   ...
+
+Stale-branch sweep:
+  <name>  <MERGED|CLOSED|OPEN|NO-PR>  <deleted|kept: reason|PROTECTED|asked-user>
+  ...
+  (protected branches always shown as kept: PROTECTED so the user sees they were considered + spared)
 
 Backlog sweep: <N applied / 0>
 

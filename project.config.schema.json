@@ -78,7 +78,12 @@
       "properties": {
         "primary": { "type": "string" },
         "optional_layer": { "type": ["string", "null"] },
-        "p4_streams": { "type": "array", "items": { "type": "string" } }
+        "p4_streams": { "type": "array", "items": { "type": "string" } },
+        "protected_branches": {
+          "type": "array",
+          "description": "Branches the stale-branch sweep (git-janitor) must NEVER delete even with no open PR — load-bearing infra (e.g. a relay/asset-host branch referenced by committed code). Mechanism is portable; this list is the project-specific value.",
+          "items": { "type": "string" }
+        }
       }
     },
     "ci": {
