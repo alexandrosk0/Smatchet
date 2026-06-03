@@ -37,6 +37,7 @@ on:
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
       - 'agents/scripts/core/test-portable-purity.sh'
       - 'agents/scripts/core/test-plan-naming.sh'
+      - 'agents/scripts/core/test-markdown-links.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
       - 'agents/scripts/project/test-subsystem-docs.sh'
       - 'CONTEXT-MAP.md'
@@ -63,6 +64,7 @@ on:
       - 'agents/scripts/core/test-agent-contract.sh'
       - 'agents/scripts/core/test-plan-index.sh'
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
+      - 'agents/scripts/core/test-markdown-links.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
       - 'agents/scripts/project/test-subsystem-docs.sh'
       - 'CONTEXT-MAP.md'
@@ -127,6 +129,9 @@ jobs:
 
       - name: test-portable-purity — no NEW project literals in portable dirs
         run: bash agents/scripts/core/test-portable-purity.sh
+
+      - name: test-markdown-links — no dangling [label](href) targets
+        run: bash agents/scripts/core/test-markdown-links.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         run: bash agents/scripts/core/test-agent-discovery-fixture.sh
