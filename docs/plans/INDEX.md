@@ -62,6 +62,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`pillar-1-2-perf-review-system`](shipped/pillar-1-2-perf-review-system.md) | 2026-05-20 | Repeatable Pillar 1 + Pillar 2 performance review — Smatchet |
 | [`single-click-grid-edit-toggle`](shipped/single-click-grid-edit-toggle.md) | 2026-05-20 | Plan — single-click / double-click toggle for grid cell edit |
 | [`agentic-ripout-doc-cleanup-v2`](shipped/agentic-ripout-doc-cleanup-v2.md) | 2026-05-21 | Plan — Agentic ripout doc cleanup (v2 follow-up to `github-tracker-backend`) |
+| [`code-syntax-coloring-and-tooltips`](shipped/code-syntax-coloring-and-tooltips.md) | 2026-05-21 | Code syntax coloring (multi-language) + tooltips |
 | [`github-tracker-backend`](shipped/github-tracker-backend.md) | 2026-05-21 | Plan — Rip out C++ agentic code + add GitHub as third tracker |
 | [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | 2026-05-21 | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
 | [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | 2026-05-22 | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
@@ -77,6 +78,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
 | [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
 | [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
+| [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | 2026-05-28 | Plan — Gate enforcement hardening (agent → GitHub promotion) |
 | [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | 2026-05-28 | Plan - GitHub commit tracker rows |
 | [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | 2026-05-28 | Plan — High-Integrity C++ Enforcement (slim profile) |
 | [`mcp-lua-fresh-state-race`](shipped/mcp-lua-fresh-state-race.md) | 2026-05-28 | Plan — MCP Lua execution: fresh per-call `sol::state` (cross-thread race fix) |
@@ -97,6 +99,8 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`subagent-eval-harness`](shipped/subagent-eval-harness.md) | 2026-05-30 | Plan — Subagent eval harness (eval-driven development for the dev-agent fleet) |
 | [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
 | [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
+| [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | 2026-06-02 | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
+| [`internal-procedure-skills`](shipped/internal-procedure-skills.md) | — | Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc) |
 <!-- END auto-plan-index -->
 
 ### Notes

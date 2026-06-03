@@ -1,0 +1,97 @@
+// AiAssistantUiDetail — unit gate for the pure (ImGui-free) helpers extracted
+// from SmatchetAiAssistantUi.cpp during the function-size decomposition. These
+// helpers carry the layout-arithmetic + picker-resolution logic that used to be
+// inline in the over-cap draw functions; pinning them here keeps the
+// behaviour-preserving guarantee testable without an ImGui context.
+//
+// See Source/Core/include/Ui/SmatchetAiAssistantUi_detail.h for the helpers.
+
+#include <doctest/doctest.h>
+
+#include "Ui/SmatchetAiAssistantUi_detail.h"
+
+#include <string>
+#include <vector>
+
+using namespace smatchet::ai;
+
+TEST_CASE("AiPinStripVisibleRows: clamps to the cap, floors at zero") {
+    CHECK(AiPinStripVisibleRows(0, 4) == 0);
+    CHECK(AiPinStripVisibleRows(-3, 4) == 0);
+    CHECK(AiPinStripVisibleRows(1, 4) == 1);
+    CHECK(AiPinStripVisibleRows(4, 4) == 4);
+    CHECK(AiPinStripVisibleRows(50, 4) == 4);
+    CHECK(AiPinStripVisibleRows(3, 4) == 3);
+}
+
+TEST_CASE("AiPinStripReservedHeight: zero when nothing visible, else rows*frame + pad") {
+    CHECK(AiPinStripReservedHeight(0, 20.0f, 6.0f) == doctest::Approx(0.0f));
+    // 2 rows * 20 + 4 (internal pad) + 6 (item spacing) = 50.
+    CHECK(AiPinStripReservedHeight(2, 20.0f, 6.0f) == doctest::Approx(50.0f));
+    // 4 rows * 18 + 4 + 8 = 84.
+    CHECK(AiPinStripReservedHeight(4, 18.0f, 8.0f) == doctest::Approx(84.0f));
+}
+
+TEST_CASE("AiHistoryBodyHeight: subtracts reservations, floors at 80px") {
+    // 500 - 30 - 100 - 0 - 0 = 370.
+    CHECK(AiHistoryBodyHeight(500.0f, 30.0f, 100.0f, 0.0f, 0.0f) == doctest::Approx(370.0f));
+    // Over-subscribed: would be negative, clamps to 80.
+    CHECK(AiHistoryBodyHeight(100.0f, 50.0f, 60.0f, 20.0f, 10.0f) == doctest::Approx(80.0f));
+    // Exactly at the floor.
+    CHECK(AiHistoryBodyHeight(200.0f, 40.0f, 50.0f, 20.0f, 10.0f) == doctest::Approx(80.0f));
+}
+
+TEST_CASE("AiResolveProvider: maps cfg int to enum, clamps out-of-range to OpenAi") {
+    CHECK(AiResolveProvider(0) == AiProvider::OpenAi);
+    CHECK(AiResolveProvider(1) == AiProvider::Anthropic);
+    CHECK(AiResolveProvider(2) == AiProvider::OllamaOpenAiCompat);
+    CHECK(AiResolveProvider(3) == AiProvider::OllamaNative);
+    CHECK(AiResolveProvider(99) == AiProvider::OpenAi);
+    CHECK(AiResolveProvider(-1) == AiProvider::OpenAi);
+}
+
+TEST_CASE("AiResolveModelCombo: empty catalog -> free-form input") {
+    std::vector<std::string> empty;
+    const AiModelComboResolution r = AiResolveModelCombo(empty, "anything");
+    CHECK(r.useFreeformInput);
+    CHECK(r.comboIndex == 0);
+}
+
+TEST_CASE("AiResolveModelCombo: empty override -> default sentinel, combo path") {
+    std::vector<std::string> catalog = {"gpt-a", "gpt-b"};
+    const AiModelComboResolution r = AiResolveModelCombo(catalog, "");
+    CHECK_FALSE(r.useFreeformInput);
+    CHECK(r.comboIndex == 0);
+}
+
+TEST_CASE("AiResolveModelCombo: matching override -> 1-based catalog index") {
+    std::vector<std::string> catalog = {"gpt-a", "gpt-b", "gpt-c"};
+    CHECK(AiResolveModelCombo(catalog, "gpt-a").comboIndex == 1);
+    CHECK(AiResolveModelCombo(catalog, "gpt-b").comboIndex == 2);
+    CHECK(AiResolveModelCombo(catalog, "gpt-c").comboIndex == 3);
+    CHECK_FALSE(AiResolveModelCombo(catalog, "gpt-b").useFreeformInput);
+}
+
+TEST_CASE("AiResolveModelCombo: stale override not in catalog -> free-form fallback") {
+    std::vector<std::string> catalog = {"gpt-a", "gpt-b"};
+    const AiModelComboResolution r = AiResolveModelCombo(catalog, "stale-id-from-other-provider");
+    CHECK(r.useFreeformInput);
+    CHECK(r.comboIndex == 0);
+}
+
+TEST_CASE("AiEffortComboIndex: id -> index, unknown/empty -> default 0") {
+    CHECK(AiEffortComboIndex("") == 0);
+    CHECK(AiEffortComboIndex("low") == 1);
+    CHECK(AiEffortComboIndex("medium") == 2);
+    CHECK(AiEffortComboIndex("high") == 3);
+    CHECK(AiEffortComboIndex("bogus") == 0);
+}
+
+TEST_CASE("AiToastAlpha: full before fade window, linear ramp inside, clamped") {
+    CHECK(AiToastAlpha(1000, 250) == doctest::Approx(1.0f)); // before fade window
+    CHECK(AiToastAlpha(250, 250) == doctest::Approx(1.0f));  // at the boundary
+    CHECK(AiToastAlpha(125, 250) == doctest::Approx(0.5f));  // mid-ramp
+    CHECK(AiToastAlpha(0, 250) == doctest::Approx(0.0f));    // fully dismissed
+    CHECK(AiToastAlpha(-10, 250) == doctest::Approx(0.0f));  // past dismissal clamps
+    CHECK(AiToastAlpha(100, 0) == doctest::Approx(1.0f));    // zero fade window -> full
+}

@@ -39,6 +39,7 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 - Every new test file ships with `target_link_libraries(SmatchetTests PRIVATE doctest::doctest)` already in place — only edit `tests/CMakeLists.txt` to add the new test `.cpp` + any new `Source/Core/src/*.cpp` units to the source list.
 - **Slice-boundary builds + ctest only.** Per AGENTS.md § Build / ctest cadence, run `cmake --build --preset ninja-test-msvc --target SmatchetTests` + `ctest --output-on-failure` exactly once per slice — at the end, when every new test file + every `tests/CMakeLists.txt` edit is in place. Don't rebuild between adding test cases; doctest catches the same failure at the slice boundary at a fraction of the wall-clock cost. The `.claude/.tree-dirty` sentinel auto-clears on each `cmake --build …`.
 - **Worktree-absolute paths only when running in a worktree.** If the session's `Working directory` env shows a path under `.claude/worktrees/<id>/`, all `Edit` / `Write` absolute paths must start with that worktree prefix — NOT the main-repo prefix. Absolute paths to the main repo land changes on whatever branch main is currently on (often a sibling agent's branch), causing cross-branch contamination. Verify via `git rev-parse --show-toplevel` at the start of the session if uncertain.
+- **Capture expected values by RUNNING — never transcribe a golden from source.** A value read off the code is a guess; build + run the function (or the binary) and copy the actual output. For any output that flows through locale / timezone / clock / float formatting, assert **shape + invariants**, NOT an environment-dependent literal — a hardcoded `"2026-03-15"` golden renders `"2026-03-14"` under EST and fails `ctest` on any non-UTC machine (CI runners are UTC, so this class slips through CI and only fails locally). Likewise a duration formatter that emits `"0h 30m"`, not `"Spent 30m"` — confirm the real string. Run the **full** local `ctest` (not CI's filtered bucket-A subset) before declaring a test-bearing slice done.
 
 ## Workflow
 
@@ -48,6 +49,12 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 4. Build: `cmake --build --preset ninja-test-msvc --target SmatchetTests`.
 5. Run: `cd build/ninja-test-msvc && ctest --output-on-failure` (CTest preset is wired by build dir, not test preset).
 6. If a test fails — diagnose, then either fix the assertion (your understanding of the contract was wrong) or hand back to the matching subsystem specialist (the production code is wrong). Do not "fix" production code yourself — your job is the rig.
+
+### Workflow gotchas (recurring)
+
+- **Adapter TUs are production-only — never link them into test targets.** `AppControllerDepsAdapter.cpp` (and similar adapters that implement a `*Deps` interface against a live `AppController&`) drag unresolved `AppController::*` symbols into any test exe, because `AppController.cpp` is correctly excluded (ImGui-tainted). Tests must always use the `Fake*` fixtures under `tests/support/` (`FakeOfflineQueueDeps`, `FakeTicketSyncDeps`, …). Linking the adapter is a guaranteed link-error round-trip.
+- **Production targets auto-pick new `Source/Core/src/*.cpp` via GLOB — only the test target is explicit per-file.** `SmatchetStandalone` + `SmatchetCore_DX12` pick up a newly-added pure-helper TU automatically through the root `CMakeLists.txt` GLOB. `tests/CMakeLists.txt` is explicit per-file: a new pure helper needs BOTH its source `.cpp` AND its test `.cpp` listed there. Don't reflexively edit the root CMake for a new production TU.
+- **Parallel siblings touching `tests/CMakeLists.txt` — append at the END only; merge order is serial.** When N test-rig agents run in parallel and each adds a test + source line, appending to the same region union-conflicts every PR after the first. Append at the end of the relevant list; the orchestrator resolves the serial rebase.
 
 ## What NOT to test here
 

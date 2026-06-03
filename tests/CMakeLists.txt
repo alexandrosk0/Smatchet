@@ -47,6 +47,31 @@ add_executable(SmatchetTests
     # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
     Core/JqlProjectPillFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetJqlProjectPill_detail.cpp"
+    # Pure option-filter + catalog-dropdown predicates extracted from RenderNewIssueDraftRow. The
+    # _detail TU depends only on StringUtil (header-inline) + TrackerFieldSchema — no ImGui.
+    Core/NewIssueDraftFieldDecision.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetNewIssueDraftUi_detail.cpp"
+    # Pure date-format index<->option helpers lifted out of
+    # DrawLocalAndAppearancePreferencesTabs during its function-size decomposition.
+    # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
+    # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
+    Core/PreferencesDateFormatIndex.test.cpp
+    # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
+    # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
+    # (the largest function in the tree) to cut its branch count. The _detail TU is
+    # ImGui-free + AppController-free, so the test rig links just that one cpp.
+    Core/AnnotateRowDisplayPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AnnotateAnalysisUi_Window_detail.cpp"
+    # Pure audit-window filter/pagination helpers extracted from SmatchetUI::drawAuditWindow.
+    # The _detail TU depends only on nlohmann/json — no ImGui, no AppController.
+    Core/AuditWindowFilter.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetAudit_detail.cpp"
+    # Pure field-categorization / column-label helpers lifted out of
+    # SmatchetUI::drawViewsDashboardWindow during its function-size decomposition.
+    # SmatchetViewsDashboardUi_detail.h defines them all `inline` and pulls only
+    # plain struct headers (Views.h + TrackerFieldSchema.h) — no ImGui, no
+    # AppController — so the rig needs no extra .cpp link.
+    Core/ViewsFieldCategorization.test.cpp
     Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
@@ -125,6 +150,10 @@ add_executable(SmatchetTests
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
+    # Pure layout-arithmetic + picker-resolution helpers extracted from
+    # SmatchetAiAssistantUi.cpp during the function-size decomposition. Header-only
+    # (Source/Core/include/Ui/SmatchetAiAssistantUi_detail.h); no extra .cpp source.
+    Core/AiAssistantUiDetail.test.cpp
     # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
     # formatter for the hover action row. No ImGui dep; production TU is
     # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry
@@ -240,6 +269,11 @@ add_executable(SmatchetTests
     # pins every signature/bounds/offset/endianness path (PNG/GIF/WEBP/JPEG).
     Core/ParseImageDimensions.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImageDimensionsPure.cpp"
+    # funcsize decomposition of SmatchetDrawMcpServerPanel — header-only pure
+    # diagnostics-text builder (BuildMcpServerInfoText). No ImGui / AppController;
+    # takes TrackerConfig + a nullable McpServerStatus snapshot. ConfigManager.cpp
+    # is already linked for the TrackerConfig definition.
+    Core/McpServerInfoTextPure.test.cpp
     # Perf Opt 1 + Opt B — BuildPlan / HashContent / PreviewPlan API surface.
     # Pure-logic only (the ImGui-side render is bucket E). Links the same
     # MarkdownPreviewRender.cpp the production targets compile.
