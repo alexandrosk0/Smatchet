@@ -104,7 +104,12 @@ bool LaunchDetachedSelf() {
 } // namespace
 #endif // !SMATCHET_EMBEDDED_IN_UNREAL
 
-void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+namespace {
+
+// "Local data" tab body — owns its own tab-item begin/end pair (the end runs only when
+// the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
+// function-size decomposition; behaviour-identical.
+void DrawLocalDataTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
     if (ImGui::BeginTabItem("Local data")) {
         ImGui::TextWrapped(
             "Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "
@@ -227,6 +232,12 @@ void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, U
 
         ImGui::EndTabItem();
     }
+}
+
+// "Appearance" tab body — owns its own tab-item begin/end pair (the end runs only when
+// the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
+// function-size decomposition; behaviour-identical.
+void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
     if (ImGui::BeginTabItem("Appearance")) {
         ImGui::TextUnformatted("Application Typography");
         ImGui::Separator();
@@ -300,25 +311,10 @@ void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, U
         ImGui::Spacing();
 
         const char* dateFormats[] = {"Relative / Compact", "Always Relative", "Absolute ISO", "Absolute Friendly"};
-        int currentDateFormatIdx = 0;
-        if (d.cfg.DateFormatOption == "always_relative") {
-            currentDateFormatIdx = 1;
-        } else if (d.cfg.DateFormatOption == "absolute_iso") {
-            currentDateFormatIdx = 2;
-        } else if (d.cfg.DateFormatOption == "absolute_friendly") {
-            currentDateFormatIdx = 3;
-        }
+        int currentDateFormatIdx = SmatchetPreferencesUiDetail::DateFormatOptionToIndex(d.cfg.DateFormatOption);
 
         if (ImGui::Combo("Date Format Style", &currentDateFormatIdx, dateFormats, IM_ARRAYSIZE(dateFormats))) {
-            if (currentDateFormatIdx == 0) {
-                d.cfg.DateFormatOption = "compact";
-            } else if (currentDateFormatIdx == 1) {
-                d.cfg.DateFormatOption = "always_relative";
-            } else if (currentDateFormatIdx == 2) {
-                d.cfg.DateFormatOption = "absolute_iso";
-            } else if (currentDateFormatIdx == 3) {
-                d.cfg.DateFormatOption = "absolute_friendly";
-            }
+            d.cfg.DateFormatOption = SmatchetPreferencesUiDetail::DateFormatIndexToOption(currentDateFormatIdx);
             MarkPrefsDirty(d);
         }
         ImGui::SetItemTooltip("Select how date and datetime values are rendered in the grids and UI panels.");
@@ -367,4 +363,11 @@ void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, U
 
         ImGui::EndTabItem();
     }
+}
+
+} // namespace
+
+void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+    DrawLocalDataTab(ui, app, d);
+    DrawAppearanceTab(app, d);
 }
