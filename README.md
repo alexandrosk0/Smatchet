@@ -59,7 +59,7 @@ Smatchet's build system uses CMake and is designed to require **zero manual depe
 - Ninja build system
 - Git
 - One of:
-  - **MSVC** — Visual Studio 2022 (Community or Build Tools). Run from a VS Developer Command Prompt.
+  - **MSVC** — Visual Studio 2022 (Community or Build Tools) installed. No manual Developer Command Prompt needed when using `scripts/dev/build_and_run.ps1` (it auto-bootstraps the VS environment via `vswhere`→`vcvars64`); a Developer Command Prompt is only required if you invoke raw `cmake --preset ninja-iter-msvc` yourself.
   - **Clang/LLVM** — `winget install LLVM.LLVM` on Windows. Uses `clang-cl` for MSVC ABI compatibility.
 
 ### Supported Presets
