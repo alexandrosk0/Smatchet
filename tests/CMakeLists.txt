@@ -43,6 +43,12 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Pure field-categorization / column-label helpers lifted out of
+    # SmatchetUI::drawViewsDashboardWindow during its function-size decomposition.
+    # SmatchetViewsDashboardUi_detail.h defines them all `inline` and pulls only
+    # plain struct headers (Views.h + TrackerFieldSchema.h) — no ImGui, no
+    # AppController — so the rig needs no extra .cpp link.
+    Core/ViewsFieldCategorization.test.cpp
     Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
@@ -121,6 +127,10 @@ add_executable(SmatchetTests
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
+    # Pure layout-arithmetic + picker-resolution helpers extracted from
+    # SmatchetAiAssistantUi.cpp during the function-size decomposition. Header-only
+    # (Source/Core/include/Ui/SmatchetAiAssistantUi_detail.h); no extra .cpp source.
+    Core/AiAssistantUiDetail.test.cpp
     # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
     # formatter for the hover action row. No ImGui dep; production TU is
     # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry
