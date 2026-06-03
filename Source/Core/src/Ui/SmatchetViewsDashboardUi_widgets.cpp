@@ -1,4 +1,5 @@
 #include "SmatchetViewsDashboardUi_detail.h"
+#include "SmatchetJqlProjectPill_detail.h"
 
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -235,6 +236,67 @@ void TickDragDropAutoScroll() {
     }
 }
 
+namespace {
+// PR 4b project pill (Jira only): a clickable label under the JQL bar whose popup clamps the
+// active view to a single project from the recently-used catalog cache. Plane uses a distinct
+// structured-query UX, so the pill is suppressed there. Owns its style-color and popup pairs.
+void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
+    const std::string currentJql(d.viewJqlBuf);
+    const ITrackerBackend* backend = app.GetTrackerBackend();
+    const std::string scopeProj = backend ? backend->Connectivity().ExtractProjectFromQuery(currentJql) : std::string();
+    const bool single = !scopeProj.empty();
+    const char* pillLabel = nullptr;
+    std::string pillBuf;
+    if (single) {
+        // The loc fmt is "Project: %s"; one snprintf per frame is fine — this is header chrome,
+        // not per-row hot path.
+        const char* fmt = SmatchetLocalization::T("view.projectPill.single", "Project: %s");
+        char tmp[128];
+        std::snprintf(tmp, sizeof(tmp), fmt, scopeProj.c_str());
+        pillBuf = tmp;
+        pillLabel = pillBuf.c_str();
+    } else {
+        pillLabel = SmatchetLocalization::T("view.projectPill.multi", "Project: multi");
+    }
+    ImGui::PushStyleColor(ImGuiCol_Button,
+                          single ? ImVec4(0.18f, 0.40f, 0.66f, 0.65f) : ImVec4(0.50f, 0.42f, 0.18f, 0.65f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                          single ? ImVec4(0.24f, 0.50f, 0.78f, 0.85f) : ImVec4(0.62f, 0.52f, 0.22f, 0.85f));
+    if (ImGui::SmallButton(pillLabel)) {
+        ImGui::OpenPopup("##ProjectPillPopup");
+    }
+    ImGui::PopStyleColor(2);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T(
+                                    single ? "view.projectPill.tooltip.single" : "view.projectPill.tooltip.multi",
+                                    single ? "Active view is scoped to a single project. Click to switch project."
+                                           : "Active view spans multiple projects. Click to pick a single project."));
+    }
+    if (ImGui::BeginPopup("##ProjectPillPopup")) {
+        std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
+        int shown = 0;
+        for (const auto& e : cached) {
+            if (!SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, d.cfg.Domain)) {
+                continue;
+            }
+            ImGui::PushID(shown);
+            if (ImGui::Selectable(e.projectKey.c_str(), e.projectKey == scopeProj)) {
+                const std::string newJql = JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
+                CopyStringToBuffer(d.viewJqlBuf, newJql);
+                d.viewsDirty = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopID();
+            ++shown;
+        }
+        if (shown == 0) {
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("view.projectPill.empty", "(no cached projects)"));
+        }
+        ImGui::EndPopup();
+    }
+}
+} // namespace
+
 void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
     // Lightweight variant of DrawJqlQueryEditor — used when the surrounding tab
     // already provides the label / open-in-browser chrome. Reuses the same
@@ -308,67 +370,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
     // lets the user clamp the active view to a single project from the recently-used cache.
     // Plane: PR 4 Plane pill UX TBD — queries are structured JSON and warrant a distinct UX.
     if (d.cfg.TrackerType != "Plane") {
-        const std::string currentJql(d.viewJqlBuf);
-        const ITrackerBackend* backend = app.GetTrackerBackend();
-        const std::string scopeProj =
-            backend ? backend->Connectivity().ExtractProjectFromQuery(currentJql) : std::string();
-        const bool single = !scopeProj.empty();
-        const char* pillLabel = nullptr;
-        std::string pillBuf;
-        if (single) {
-            // The loc fmt is "Project: %s"; one snprintf per frame is fine — this is header chrome,
-            // not per-row hot path.
-            const char* fmt = SmatchetLocalization::T("view.projectPill.single", "Project: %s");
-            char tmp[128];
-            std::snprintf(tmp, sizeof(tmp), fmt, scopeProj.c_str());
-            pillBuf = tmp;
-            pillLabel = pillBuf.c_str();
-        } else {
-            pillLabel = SmatchetLocalization::T("view.projectPill.multi", "Project: multi");
-        }
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              single ? ImVec4(0.18f, 0.40f, 0.66f, 0.65f) : ImVec4(0.50f, 0.42f, 0.18f, 0.65f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                              single ? ImVec4(0.24f, 0.50f, 0.78f, 0.85f) : ImVec4(0.62f, 0.52f, 0.22f, 0.85f));
-        if (ImGui::SmallButton(pillLabel)) {
-            ImGui::OpenPopup("##ProjectPillPopup");
-        }
-        ImGui::PopStyleColor(2);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s",
-                              SmatchetLocalization::T(
-                                  single ? "view.projectPill.tooltip.single" : "view.projectPill.tooltip.multi",
-                                  single ? "Active view is scoped to a single project. Click to switch project."
-                                         : "Active view spans multiple projects. Click to pick a single project."));
-        }
-        if (ImGui::BeginPopup("##ProjectPillPopup")) {
-            std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
-            int shown = 0;
-            for (const auto& e : cached) {
-                if (e.projectKey.empty()) {
-                    continue;
-                }
-                if (!e.backend.empty() && e.backend != "Jira") {
-                    continue;
-                }
-                if (!e.endpoint.empty() && !d.cfg.Domain.empty() && e.endpoint != d.cfg.Domain) {
-                    continue;
-                }
-                ImGui::PushID(shown);
-                if (ImGui::Selectable(e.projectKey.c_str(), e.projectKey == scopeProj)) {
-                    const std::string newJql = JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
-                    CopyStringToBuffer(d.viewJqlBuf, newJql);
-                    d.viewsDirty = true;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::PopID();
-                ++shown;
-            }
-            if (shown == 0) {
-                ImGui::TextDisabled("%s", SmatchetLocalization::T("view.projectPill.empty", "(no cached projects)"));
-            }
-            ImGui::EndPopup();
-        }
+        DrawJqlProjectPill(app, d);
     }
 }
 

@@ -2,6 +2,16 @@
 
 This is the canonical entry-point doc for any agentic harness (Claude Code, Codex / OpenAI Agents, Cursor, Aider, generic). Everything an agent needs lives in this repo — no external dependencies on user-global or parent-dir config.
 
+## Operating principles
+
+How agents *operate* here — a skimmable map over the rules below, not new rules. Grep the principle, follow the link, skip the rest. (The 4 UX Pillars are quality *targets*; these 5 are the operating *model* — a distinct axis above them.) **Navigation only — no rule detail lives here; if a line accretes detail it has failed, move it to its linked section.**
+
+1. **Autonomous by default** — run the ship-loop end-to-end in one turn; pause only on the defined exceptions. (§ Autonomous ship-loop default)
+2. **Gate, don't trust** — every invariant is code-enforced (merge-gates, delta-lint, selftests), never a prose promise. (§ Merge gates, § Project rules § Tiered enforcement)
+3. **Delegate to specialists** — the orchestrator routes to `agents/`; semantic-search before text-search. (§ Delegation, § Semantic codebase search — use it first)
+4. **Plan before ship** — non-trivial work gets a plan-doc + `grill-with-docs` stress-test. (§ Process rules § Plan-doc family)
+5. **Self-tighten** — every delegated agent ends with `## Self-improvement`; friction becomes prompt patches. (§ Self-improvement loop)
+
 ## UX Pillars
 
 Four north-star quality invariants. Pillars 1-3 are **enforceable** (auto-fail PRs that violate them); Pillar 4 is **aspirational** today (backlogged until automated checks land).
@@ -143,7 +153,7 @@ Under Claude Code this maps to `mcp__vexp__run_pipeline` (semantic search) and `
 
 ## Agent file locations
 
-Canonical, single source of truth: `agents/<name>.md` at the repo root (per the [agents.md spec](https://agents.md/)). Shared scripts + skills live at `agents/_shared/`.
+Canonical, single source of truth: `agents/<name>.md` at the repo root (per the [agents.md spec](https://agents.md/)). Shared scripts + skills live at `agents/_shared/`. **Agent vs skill** — which form a new recurring procedure should take is decided by the rubric in [`docs/agent-rules/AGENT-VS-SKILL.md`](docs/agent-rules/AGENT-VS-SKILL.md) (skill when all-bounded-deterministic-inline; agent when any-exploration-loop-spawn-delegates; dual-publish to keep cross-harness discovery).
 
 Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored** — they're regenerated locally from the canonical tree by `bash agents/scripts/core/setup-harness.sh <name>`. Adapters use directory junctions / symlinks where possible so edits to `agents/*.md` are picked up by the harness immediately, no sync step.
 
@@ -159,6 +169,7 @@ Quick index of moved subsections — full content in `docs/agent-rules/delegatio
 
 - **Orchestrator delegation packet** — plan-lock pre-flight, shared inventory, invariant decisions, output budget, plan revision contract, subagent progress markers reminder, pure-helper TU-split recipe.
 - **Parallel dispatch** — when to run multiple subagents in one tool-use block.
+- **Context budget by task class** — ~80% utilization ceiling for large refactors → delegate before the last 20%; high tolerance for low-sensitivity edits.
 - **Session scratchpad protocol** — `.session-context.md` lifecycle + `## Session context append` shape.
 - **Subagent progress markers** — `.progress.log` via `bash agents/scripts/core/agent-progress.sh`.
 - **Tool-trace contract** — hook-derived; agents don't track manually.
