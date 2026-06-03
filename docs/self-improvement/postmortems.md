@@ -114,8 +114,10 @@ alone, merged tree violates.** Distinct from the "admin-merged past a red check"
 incidents above (#780, #784) — here every PR was genuinely green.
 
 ### Preventing gate
-Enable branch-protection **"Require branches to be up to date before merging"** on
-`develop` (+ record in `project.config.json` `branch_protection`): forces PR-B to
+**ENABLED 2026-06-03** — branch-protection **"Require branches to be up to date
+before merging"** turned on for `develop` (`project.config.json`
+`branch_protection.strict: true`, applied via `setup-branch-protection.sh`; GitHub
+confirms `required_status_checks.strict == true`). Forces PR-B to
 rebase onto the latest `develop` — re-running CI **with** any gate PR-A just added —
 before it can merge, so a concurrently-introduced violation is caught on PR-B's own
 run instead of the next innocent PR. Trade: every PR must be current before merge
