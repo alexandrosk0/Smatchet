@@ -27,6 +27,13 @@ struct CachedTicket;
 /// re-fetched per helper.
 struct ActiveProjectDrawCtx;
 
+/// Shared per-frame state for the section helpers that decompose
+/// SmatchetUI::drawViewsDashboardWindow. Defined at namespace scope in
+/// SmatchetViewsDashboardUi.cpp (the only TU that constructs it); forward-declared here so
+/// the private section-helper member signatures can name it. Holds references to the active
+/// view, store, and the action closures captured once at the top of the frame.
+struct ViewsDashboardDrawCtx;
+
 /// Per-frame cache for TrackerFieldCatalogIndex + TicketGridColumns, keyed by catalog revision and
 /// active view id. Built once per frame in SmatchetUI::Draw before drawMainMenuBar and
 /// drawActiveProjectWindow so neither rebuilds it independently.
@@ -157,6 +164,18 @@ class SmatchetUI {
     };
     PreferencesWindowState preferencesState_;
     void drawViewsDashboardWindow(AppController& app, UiDrawSession& d);
+    // Section helpers for drawViewsDashboardWindow (function-size decomposition). Each owns its
+    // own positional-ImGui Begin/End pairs in full — no pair is split across the orchestrator/
+    // helper boundary. The per-tab helpers each own their BeginTabItem/EndTabItem (EndTabItem
+    // runs only when BeginTabItem returned true, preserved verbatim). ViewsDashboardDrawCtx
+    // carries the active view, store, and the action closures captured once at frame top.
+    void drawViewsSidebar(ViewsDashboardDrawCtx& ctx);
+    void drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx);
+    void drawViewsFilterTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsSortTab(ViewsDashboardDrawCtx& ctx);
+    void drawViewsModals(ViewsDashboardDrawCtx& ctx);
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
     // the pre-existing SMATCHET_UI_PERF_SCOPE seams VERBATIM. Positional-ImGui Begin/End
