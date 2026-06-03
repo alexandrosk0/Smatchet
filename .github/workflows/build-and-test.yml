@@ -9,13 +9,18 @@ name: Build and test
 permissions:
   contents: read
 
-# sccache (GHA-native backend) — docs/plans/active/ci-build-time-reduction.md Phase 1.
-# CMakeLists.txt auto-wraps sccache off PATH (find_program NAMES ccache sccache);
-# this env routes its object cache at the GitHub Actions cache. Each MSVC build job
-# installs the sccache binary via mozilla-actions/sccache-action. Disable per-build
-# with SMATCHET_NO_CCACHE=1.
+# sccache (local-dir backend) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+# CMakeLists.txt auto-wraps sccache off PATH (find_program NAMES ccache sccache).
+# We deliberately use the LOCAL-DISK backend (SCCACHE_DIR) + actions/cache rather
+# than SCCACHE_GHA_ENABLED: the GHA-native backend makes sccache talk to the GH
+# cache *service* on every compile, and a service hiccup fails server startup =>
+# fatal build failure on a REQUIRED check (observed on the first attempt). Local
+# disk decouples build success from cache-service uptime — an outage just yields a
+# cold cache, never a broken build. Each MSVC build job installs the sccache binary
+# (mozilla-actions/sccache-action) + caches $SCCACHE_DIR. Disable with
+# SMATCHET_NO_CCACHE=1.
 env:
-  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_DIR: ${{ github.workspace }}\.sccache
 
 on:
   # NO paths-ignore: required status checks (Windows + MSVC, Windows + MSVC
@@ -121,7 +126,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup sccache (object cache)
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (msvc)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-
 
       - name: Cache FetchContent _deps (msvc)
         uses: actions/cache@v4
@@ -248,7 +261,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup sccache (object cache)
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (msvc-light)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-light-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-light-
 
       - name: Cache FetchContent _deps (msvc-light)
         uses: actions/cache@v4
@@ -357,7 +378,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup sccache (object cache)
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (ui-test)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-ui-test-
 
       - name: Cache FetchContent _deps (ui-test preset)
         uses: actions/cache@v4
@@ -427,7 +456,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup sccache (object cache)
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (msvc-asan)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-asan-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-asan-
 
       - name: Cache FetchContent _deps (msvc-asan)
         uses: actions/cache@v4

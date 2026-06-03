@@ -29,9 +29,10 @@ concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
-# sccache (GHA-native) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+# sccache (local-dir backend) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+# Local disk (not SCCACHE_GHA_ENABLED) so a GH-cache-service outage can't fail the build.
 env:
-  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_DIR: ${{ github.workspace }}\.sccache
 
 jobs:
   windows-coverage:
@@ -50,7 +51,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup sccache (object cache)
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (coverage)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-coverage-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-coverage-
 
       - name: Install OpenCppCoverage
         shell: powershell
