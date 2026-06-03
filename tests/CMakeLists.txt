@@ -236,6 +236,10 @@ add_executable(SmatchetTests
     # pins every signature/bounds/offset/endianness path (PNG/GIF/WEBP/JPEG).
     Core/ParseImageDimensions.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImageDimensionsPure.cpp"
+    # funcsize decomposition of drawAttachmentPreviewWindow — header-only pure
+    # layout/classification helpers (fit-math + card-label/status chains). No
+    # ImGui / file-I/O; mirrors the inline branches the monolith shipped.
+    Core/AttachmentPreviewLayoutPure.test.cpp
     # Perf Opt 1 + Opt B — BuildPlan / HashContent / PreviewPlan API surface.
     # Pure-logic only (the ImGui-side render is bucket E). Links the same
     # MarkdownPreviewRender.cpp the production targets compile.
