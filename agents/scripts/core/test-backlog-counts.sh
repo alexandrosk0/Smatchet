@@ -35,6 +35,7 @@ DIR="docs/self-improvement/categories"
 # label -> category file basename.
 declare -A FILES=(
     [bug]=bug
+    [debt]=debt
     [process]=process
     [tooling]=tooling
     [infra]=infra
@@ -46,7 +47,7 @@ declare -A FILES=(
 
 # --list: print live counts on demand (the replacement for the stored column).
 if [ "${1:-}" = "--list" ]; then
-    for label in bug process tooling infra test security external applied; do
+    for label in bug debt process tooling infra test security external applied; do
         f="$DIR/${FILES[$label]}.md"
         [ -f "$f" ] || { echo "missing category file: $f" >&2; exit 2; }
         printf '%-10s %s\n' "$label" "$(grep -c '^- 20' "$f" 2>/dev/null || echo 0)"
