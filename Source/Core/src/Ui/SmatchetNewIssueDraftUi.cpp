@@ -1,4 +1,5 @@
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetNewIssueDraftUi_detail.h"
 
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -150,12 +151,8 @@ bool TryAppendStagedFromAbsPath(IssueDraft& draft, const std::string& absUtf8) {
     return true;
 }
 
-} // namespace
-
-void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
-                            const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
-    const auto& catalog = app.GetAvailableFields();
-
+// Poll the async create future (if ready) and fold its result into the draft/banner state.
+void PollNewIssueCreateResult(AppController& app, UiDrawSession& d) {
     if (d.newIssueCreateInFlight && d.newIssueCreateFuture.valid() &&
         d.newIssueCreateFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         IssueCreateResult r = d.newIssueCreateFuture.get();
@@ -195,51 +192,47 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             }
         }
     }
+}
 
-    // Match one line of text + table cell Y padding.
-    const float kNewIssueRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
-    ImGui::TableNextRow(0, kNewIssueRowH);
-
-    if (!d.newIssueDraftActive) {
-        ImGui::TableSetColumnIndex(0);
-        if (ImGui::SmallButton("+ New issue")) {
-            if (lastVisibleTicket) {
-                const std::vector<std::string>& inheritIds =
-                    (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
-                // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
-                const ITrackerBackend* b = app.GetTrackerBackend();
-                const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-                    b ? &b->Connectivity() : nullptr, cfg.JqlQuery, lastVisibleTicket->id, std::string());
-                d.newIssueDraft =
-                    IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, app.GetAvailableFields(), resolvedProject,
-                                                        cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
-            } else {
-                d.newIssueDraft = app.BuildDraftFromLastTicket(cfg);
-            }
-            if (!d.newIssueDraft.ParentKey.empty()) {
-                d.newIssueDraft.FieldValues["parent"] = d.newIssueDraft.ParentKey;
-            }
-            d.newIssueDraftActive = true;
-            d.newIssueScrollDraftRowIntoViewPending = true;
-            d.newIssueFocusSummaryPending = true;
-            d.newIssueDraftEditBufs.clear();
-            d.newIssueMissingFieldIds.clear();
-            d.newIssueQueueFallbackVisible = false;
-            d.newIssueQueueFallbackError.clear();
-            d.gridEditError.clear();
-            d.gridEditSuccess.clear();
-            // PR 3: seed the project-change guard with the draft's initial project so the first
-            // render doesn't redundantly refetch a catalog AppController already loaded at startup.
-            d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
+// Inactive-row "+ New issue" cell: seeds a fresh draft from the last visible ticket.
+void DrawNewIssueInactiveCell(AppController& app, UiDrawSession& d, const TrackerConfig& cfg,
+                              const CachedTicket* lastVisibleTicket) {
+    ImGui::TableSetColumnIndex(0);
+    if (ImGui::SmallButton("+ New issue")) {
+        if (lastVisibleTicket) {
+            const std::vector<std::string>& inheritIds =
+                (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
+            // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
+            const ITrackerBackend* b = app.GetTrackerBackend();
+            const std::string resolvedProject = smatchet::ResolveProjectForDraft(
+                b ? &b->Connectivity() : nullptr, cfg.JqlQuery, lastVisibleTicket->id, std::string());
+            d.newIssueDraft =
+                IssueDraftHelpers::FromCachedTicket(*lastVisibleTicket, app.GetAvailableFields(), resolvedProject,
+                                                    cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
+        } else {
+            d.newIssueDraft = app.BuildDraftFromLastTicket(cfg);
         }
-        return;
+        if (!d.newIssueDraft.ParentKey.empty()) {
+            d.newIssueDraft.FieldValues["parent"] = d.newIssueDraft.ParentKey;
+        }
+        d.newIssueDraftActive = true;
+        d.newIssueScrollDraftRowIntoViewPending = true;
+        d.newIssueFocusSummaryPending = true;
+        d.newIssueDraftEditBufs.clear();
+        d.newIssueMissingFieldIds.clear();
+        d.newIssueQueueFallbackVisible = false;
+        d.newIssueQueueFallbackError.clear();
+        d.gridEditError.clear();
+        d.gridEditSuccess.clear();
+        // PR 3: seed the project-change guard with the draft's initial project so the first
+        // render doesn't redundantly refetch a catalog AppController already loaded at startup.
+        d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
     }
+}
 
-    // PR 3: if the user changed the draft's project mid-session (project combo at line ~385 below,
-    // or PR 4's picker once it lands), kick a per-project catalog refresh on a worker thread so the
-    // returned create-meta becomes per-project required-fields for the next submit attempt. The
-    // refresh writes through SetFieldCatalog → SaveFieldCatalogSnapshot, populating the new cache
-    // entry on the app-owned joined background-task pool — the UI thread cannot block on HTTP.
+// PR 3: when the draft's project changed mid-session, kick a per-project catalog refresh on the
+// joined background-task pool so the next submit sees per-project required-fields.
+void MaybeRefetchCatalogForProjectChange(AppController& app, UiDrawSession& d, const TrackerConfig& cfg) {
     if (!d.newIssueDraft.ProjectKey.empty() && d.newIssueDraft.ProjectKey != d.newIssueDraftLastFetchedProjectKey) {
         d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
         // PR 6: project is plumbed as an explicit per-call argument; legacy cfg.ProjectKey /
@@ -259,14 +252,10 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             }
         });
     }
+}
 
-    // Active draft: ID column gets Create/Cancel; other columns get per-field inputs.
-    const std::unordered_set<std::string> missing(d.newIssueMissingFieldIds.begin(), d.newIssueMissingFieldIds.end());
-
-    // Build the per-render set of required-field ids. Plane carries required-ness on the field
-    // catalog itself (TrackerField::IsRequired); Jira instead surfaces it on the active issue
-    // type's create-meta (RequiredFieldIds). Reading the cached vector is a memory-only lookup
-    // — no disk hit — so it's safe to recompute every frame.
+// Collect the required-field ids for the draft's active issue type (memory-only create-meta lookup).
+std::unordered_set<std::string> BuildDraftRequiredFieldIds(AppController& app, const UiDrawSession& d) {
     std::unordered_set<std::string> requiredIds;
     for (const auto& meta : app.GetTrackerIssueTypeCreateMeta()) {
         const bool projectMatch = meta.ProjectKey.empty() || d.newIssueDraft.ProjectKey.empty() ||
@@ -284,334 +273,386 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
             break;
         }
     }
+    return requiredIds;
+}
+
+// ID-column cell for the active draft row: Create / Queue-offline / Cancel / attachment controls
+// plus the staged-attachment chip strip. Mirrors the legacy inline block verbatim.
+void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
+    ImGui::PushID("newissue_draft_id");
+    ImGui::BeginGroup();
+    ImGui::TextDisabled("[new]");
+
+    const bool disabled = d.newIssueCreateInFlight;
+    const auto runAttachmentPicker = [&]() {
+        app.RequestOpenFilePaths(true, d.cfg.LastImportDirectory, [&d](const std::vector<std::string>& paths) {
+            for (const auto& path : paths) {
+                TryAppendStagedFromAbsPath(d.newIssueDraft, path);
+            }
+        });
+    };
+
+    const ImVec2 draftActionBtn(ImGui::GetContentRegionAvail().x, 0.0f);
+    if (disabled)
+        ImGui::BeginDisabled();
+    // PR 4b: submit requires an explicit project pick. Disable + tooltip when empty.
+    const bool projectMissing = d.newIssueDraft.ProjectKey.empty();
+    if (projectMissing) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Create", draftActionBtn)) {
+        TrySubmitNewIssueDraft(app, d);
+    }
+    if (projectMissing) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", SmatchetLocalization::T("draft.project.submit_disabled_tooltip", "Pick a project"));
+        }
+    }
+    const bool canOfferFallbackQueue = !disabled && d.newIssueQueueFallbackVisible;
+    if (canOfferFallbackQueue) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.82f, 0.35f, 1.0f));
+        ImGui::TextUnformatted("Create failed. Queue instead?");
+        ImGui::PopStyleColor();
+    }
+    if (canOfferFallbackQueue && ImGui::Button("Queue offline", draftActionBtn)) {
+        if (!QueueNewIssueDraftOffline(app, d, "Queued offline after create failure.")) {
+            d.gridEditSuccess.clear();
+            d.gridEditError = "Create failed (" + d.newIssueQueueFallbackError + ") and queue offline failed.";
+        }
+    }
+    if (ImGui::Button("Cancel", draftActionBtn)) {
+        d.newIssueDraftActive = false;
+        d.newIssueFocusSummaryPending = false;
+        d.newIssueDraft = IssueDraft{};
+        d.newIssueDraftEditBufs.clear();
+        d.newIssueMissingFieldIds.clear();
+        d.newIssueQueueFallbackVisible = false;
+        d.newIssueQueueFallbackError.clear();
+        d.gridEditError.clear();
+        d.gridEditSuccess.clear();
+    }
+    if (ImGui::Button("Add attachment...", draftActionBtn)) {
+        runAttachmentPicker();
+    }
+    if (!d.newIssueDraft.StagedAttachments.empty()) {
+        if (ImGui::Button("Clear all##clratt", draftActionBtn)) {
+            d.newIssueDraft.StagedAttachments.clear();
+        }
+    }
+    if (disabled)
+        ImGui::EndDisabled();
+
+    if (!d.newIssueDraft.StagedAttachments.empty()) {
+        if (disabled)
+            ImGui::BeginDisabled();
+        constexpr float kChipStripH = 54.0f;
+        ImGui::BeginChild("##newissueattstrip", ImVec2(0.0f, kChipStripH), true, ImGuiWindowFlags_HorizontalScrollbar);
+        for (size_t i = 0; i < d.newIssueDraft.StagedAttachments.size();) {
+            const auto& att = d.newIssueDraft.StagedAttachments[i];
+            ImGui::PushID(static_cast<int>(i));
+            std::string label = att.FileName;
+            if (label.size() > 36) {
+                std::string temp = label.substr(0, 16) + "..." + label.substr(label.size() - 16);
+                label = std::move(temp);
+            }
+            const std::string chip = label + " (" + FormatBytesUi(att.SizeBytes) + ")";
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(chip.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x##rma")) {
+                d.newIssueDraft.StagedAttachments.erase(d.newIssueDraft.StagedAttachments.begin() +
+                                                        static_cast<std::ptrdiff_t>(i));
+                ImGui::PopID();
+                continue;
+            }
+            ImGui::SameLine();
+            ImGui::Dummy(ImVec2(8.0f, 1.0f));
+            ImGui::SameLine();
+            ImGui::PopID();
+            ++i;
+        }
+        ImGui::EndChild();
+        if (disabled)
+            ImGui::EndDisabled();
+    }
+
+    ImGui::EndGroup();
+    if (d.newIssueScrollDraftRowIntoViewPending) {
+        // Anchor scroll to ID column (tall); end-of-row cursor is last column (short).
+        ImGui::SetScrollHereY(1.0f);
+        d.newIssueScrollDraftRowIntoViewPending = false;
+    }
+    if (ImGui::BeginPopupContextItem("newissue_draft_att_ctx")) {
+        if (ImGui::MenuItem("Add attachment...")) {
+            if (!d.newIssueCreateInFlight) {
+                runAttachmentPicker();
+            }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
+// Catalog-option dropdown for a draft field (issuetype + single-valued select/user fields):
+// preview resolution, in-combo search filter, and selection apply. Owns its BeginCombo/EndCombo.
+void DrawDraftOptionCombo(UiDrawSession& d, const TrackerField* field, const std::string& fieldId,
+                          const std::string& current) {
+    std::string preview = current;
+    if (fieldId == "project" && preview.empty())
+        preview = d.newIssueDraft.ProjectKey;
+    if (fieldId == "issuetype" && preview.empty())
+        preview = d.newIssueDraft.IssueTypeName;
+    if (field && !field->AllowedValueOptions.empty()) {
+        auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
+                                  [&](const auto& opt) { return opt.Id == current || opt.Value == current; });
+        if (optIt != field->AllowedValueOptions.end()) {
+            preview = optIt->Value;
+        }
+    }
+    const bool comboOpened = ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str());
+    if (comboOpened) {
+        const bool justOpened = (d.newIssueDraftComboSearchActiveField != fieldId);
+        if (justOpened) {
+            d.newIssueDraftComboSearchActiveField = fieldId;
+            d.newIssueDraftComboSearchBufs[fieldId].fill('\0');
+        }
+        auto& searchBuf = d.newIssueDraftComboSearchBufs[fieldId];
+
+        if (justOpened) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool submitOnEnter = ImGui::InputTextWithHint("##NewIssueComboSearch", "Filter options", searchBuf.data(),
+                                                            searchBuf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Separator();
+
+        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(std::string(searchBuf.data())));
+        const TrackerFieldOption* firstMatch = nullptr;
+        bool drewAny = false;
+
+        auto applySelection = [&](const TrackerFieldOption& opt) {
+            d.newIssueQueueFallbackVisible = false;
+            d.newIssueQueueFallbackError.clear();
+            if (fieldId == "issuetype") {
+                d.newIssueDraft.IssueTypeId = opt.Id;
+                d.newIssueDraft.IssueTypeName = opt.Value;
+                // Keep FieldValues in sync: combo preview/selection read `current` from here.
+                d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
+            } else if (fieldId == "project") {
+                d.newIssueDraft.ProjectKey = opt.Id.empty() ? opt.Value : opt.Id;
+                d.newIssueDraft.FieldValues[fieldId] = d.newIssueDraft.ProjectKey;
+            } else {
+                // Store option id (e.g. accountId for users) so create payload matches grid edits.
+                d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
+            }
+        };
+
+        if (field) {
+            for (const auto& opt : field->AllowedValueOptions) {
+                const std::string optId = opt.Id.empty() ? opt.Value : opt.Id;
+                if (!SmatchetNewIssueDraft::detail::OptionMatchesComboFilter(opt, filterLower)) {
+                    continue;
+                }
+                if (firstMatch == nullptr) {
+                    firstMatch = &opt;
+                }
+                drewAny = true;
+                const bool selected = (opt.Id == current || opt.Value == current);
+                ImGui::PushID(optId.c_str());
+                if (ImGui::Selectable(opt.Value.c_str(), selected)) {
+                    applySelection(opt);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::PopID();
+            }
+        }
+        if (!drewAny) {
+            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+        }
+        if (submitOnEnter && firstMatch != nullptr) {
+            applySelection(*firstMatch);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndCombo();
+    } else if (d.newIssueDraftComboSearchActiveField == fieldId) {
+        d.newIssueDraftComboSearchActiveField.clear();
+    }
+}
+
+// Free-text draft input: multiline Markdown editor for the description, otherwise a single-line
+// input. The summary input additionally auto-focuses on open and submits the draft on Enter.
+void DrawDraftTextFieldInput(AppController& app, UiDrawSession& d, const std::string& fieldId,
+                             const std::string& current) {
+    if (fieldId == "description") {
+        // Description uses a multiline editor so users can write rich content using
+        // Markdown. The create-payload layer (TrackerFieldPayload / PlaneClient) converts
+        // Markdown → ADF or → HTML on submit. Buffer sized to match the grid modal.
+        constexpr size_t kDescBuf = 64 * 1024;
+        auto& buf = EnsureDraftEditBuf(d, fieldId, current, kDescBuf);
+        const float descHeight = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
+        if (ImGui::InputTextMultiline("##input", buf.data(), buf.size(), ImVec2(-FLT_MIN, descHeight),
+                                      ImGuiInputTextFlags_AllowTabInput)) {
+            d.newIssueQueueFallbackVisible = false;
+            d.newIssueQueueFallbackError.clear();
+            d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
+        }
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::TextDisabled("Markdown: **bold**, *em*, # heading, - list, ```code```");
+        return;
+    }
+
+    auto& buf = EnsureDraftEditBuf(d, fieldId, current);
+    // Summary field gets two affordances tied to "+ New Issue" workflow:
+    //   1. Auto-focus on first frame after the draft row opens (newIssueFocusSummaryPending).
+    //   2. Enter submits the draft (EnterReturnsTrue) iff the same disable/project-pick
+    //      gates the Create button uses are clear AND the trimmed buffer is non-empty.
+    //      Mirrors the Create button at the Id-column branch above.
+    const bool isSummary = (fieldId == "summary");
+    if (isSummary && d.newIssueFocusSummaryPending) {
+        ImGui::SetKeyboardFocusHere();
+        d.newIssueFocusSummaryPending = false;
+    }
+    const ImGuiInputTextFlags textFlags = isSummary ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_None;
+    const bool submitted = ImGui::InputText("##input", buf.data(), buf.size(), textFlags);
+    if (submitted) {
+        d.newIssueQueueFallbackVisible = false;
+        d.newIssueQueueFallbackError.clear();
+        d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
+    }
+    if (submitted && isSummary && !d.newIssueCreateInFlight && !d.newIssueDraft.ProjectKey.empty()) {
+        const std::string trimmed = TrimCopy(std::string(buf.data()));
+        if (!trimmed.empty()) {
+            TrySubmitNewIssueDraft(app, d);
+        }
+    }
+}
+
+// One non-Id column cell of the active draft row: required/missing affordances, the project
+// picker, catalog-option dropdown, multiline description, or plain text input. Owns its
+// PushID/PopID and the per-cell FrameBg PushStyleColor/PopStyleColor pairing.
+void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::vector<TrackerField>& catalog,
+                              const TrackerConfig& cfg, const TicketGridColumn& column,
+                              const std::unordered_set<std::string>& missing,
+                              const std::unordered_set<std::string>& requiredIds) {
+    const std::string& fieldId = column.FieldId;
+    if (fieldId == "id" || (IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) && fieldId != "status")) {
+        ImGui::TextDisabled("-");
+        return;
+    }
+
+    auto catIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return f.Id == fieldId; });
+    const TrackerField* field = (catIt != catalog.end()) ? &(*catIt) : nullptr;
+
+    const bool isMissing = missing.count(fieldId) > 0 || (fieldId == "summary" && missing.count("summary") > 0) ||
+                           (fieldId == "parent" && missing.count("__parent__") > 0);
+    // Required-ness fans in from two sources: the field catalog's per-field IsRequired (set
+    // by Plane's `is_required`) and the active issue type's per-project RequiredFieldIds
+    // (Jira's create-meta). Either marks the field with the red-asterisk affordance.
+    const bool isRequired = (field && field->IsRequired) || requiredIds.count(fieldId) > 0;
+    if (isMissing) {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.55f, 0.15f, 0.15f, 0.45f));
+    }
+
+    ImGui::PushID(fieldId.c_str());
+
+    if (isRequired) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::TextUnformatted("*");
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", SmatchetLocalization::T("field.required_tooltip", "Required field"));
+        }
+        ImGui::SameLine(0.0f, 4.0f);
+    }
+
+    ImGui::SetNextItemWidth(-FLT_MIN);
+
+    const std::string& current = d.newIssueDraft.FieldValues[fieldId];
+
+    // PR 4b: Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
+    if (fieldId == "project") {
+        const std::string backendKind = (cfg.TrackerType == "Plane") ? std::string("Plane") : std::string("Jira");
+        const std::string endpoint =
+            (cfg.TrackerType == "Plane") ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug) : cfg.Domain;
+        std::string sel = d.newIssueDraft.ProjectKey;
+        if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState, app, backendKind, endpoint,
+                                        sel)) {
+            d.newIssueDraft.ProjectKey = sel;
+            d.newIssueDraft.FieldValues[fieldId] = sel;
+            d.newIssueQueueFallbackVisible = false;
+            d.newIssueQueueFallbackError.clear();
+        }
+        ImGui::PopID();
+        if (isMissing) {
+            ImGui::PopStyleColor();
+        }
+        return;
+    }
+
+    // IssueType / other catalog-option dropdowns come from catalog option sets when available.
+    if (SmatchetNewIssueDraft::detail::FieldUsesOptionDropdown(fieldId, field)) {
+        DrawDraftOptionCombo(d, field, fieldId, current);
+    } else {
+        DrawDraftTextFieldInput(app, d, fieldId, current);
+    }
+
+    // Validation hint: a required field that failed the last Create attempt earns an inline
+    // "(required)" line right under its input. The red FrameBg already flags the cell; this
+    // adds a textual cue so the cause is obvious without having to read the banner.
+    if (isRequired && isMissing) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.55f, 1.0f));
+        ImGui::TextUnformatted(SmatchetLocalization::T("field.required_inline_hint", "(required)"));
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::PopID();
+
+    if (isMissing) {
+        ImGui::PopStyleColor();
+    }
+}
+
+} // namespace
+
+void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
+                            const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
+    const auto& catalog = app.GetAvailableFields();
+
+    PollNewIssueCreateResult(app, d);
+
+    // Match one line of text + table cell Y padding.
+    const float kNewIssueRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+    ImGui::TableNextRow(0, kNewIssueRowH);
+
+    if (!d.newIssueDraftActive) {
+        DrawNewIssueInactiveCell(app, d, cfg, lastVisibleTicket);
+        return;
+    }
+
+    // PR 3: if the user changed the draft's project mid-session, kick a per-project catalog refresh
+    // on a worker thread so the returned create-meta becomes per-project required-fields for the next
+    // submit attempt — the UI thread cannot block on HTTP.
+    MaybeRefetchCatalogForProjectChange(app, d, cfg);
+
+    // Active draft: ID column gets Create/Cancel; other columns get per-field inputs.
+    const std::unordered_set<std::string> missing(d.newIssueMissingFieldIds.begin(), d.newIssueMissingFieldIds.end());
+
+    // Build the per-render set of required-field ids. Plane carries required-ness on the field
+    // catalog itself, while Jira surfaces it on the active issue type's create-meta. Reading the
+    // cached vector is a memory-only lookup with no disk hit, so it is safe to recompute every frame.
+    const std::unordered_set<std::string> requiredIds = BuildDraftRequiredFieldIds(app, d);
 
     for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
         const auto& column = columns[static_cast<size_t>(colIndex)];
         ImGui::TableSetColumnIndex(colIndex);
 
         if (column.ColumnKind == TicketGridColumn::Kind::Id) {
-            ImGui::PushID("newissue_draft_id");
-            ImGui::BeginGroup();
-            ImGui::TextDisabled("[new]");
-
-            const bool disabled = d.newIssueCreateInFlight;
-            const auto runAttachmentPicker = [&]() {
-                app.RequestOpenFilePaths(true, d.cfg.LastImportDirectory, [&d](const std::vector<std::string>& paths) {
-                    for (const auto& path : paths) {
-                        TryAppendStagedFromAbsPath(d.newIssueDraft, path);
-                    }
-                });
-            };
-
-            const ImVec2 draftActionBtn(ImGui::GetContentRegionAvail().x, 0.0f);
-            if (disabled)
-                ImGui::BeginDisabled();
-            // PR 4b: submit requires an explicit project pick. Disable + tooltip when empty.
-            const bool projectMissing = d.newIssueDraft.ProjectKey.empty();
-            if (projectMissing) {
-                ImGui::BeginDisabled();
-            }
-            if (ImGui::Button("Create", draftActionBtn)) {
-                TrySubmitNewIssueDraft(app, d);
-            }
-            if (projectMissing) {
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip(
-                        "%s", SmatchetLocalization::T("draft.project.submit_disabled_tooltip", "Pick a project"));
-                }
-            }
-            const bool canOfferFallbackQueue = !disabled && d.newIssueQueueFallbackVisible;
-            if (canOfferFallbackQueue) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.82f, 0.35f, 1.0f));
-                ImGui::TextUnformatted("Create failed. Queue instead?");
-                ImGui::PopStyleColor();
-            }
-            if (canOfferFallbackQueue && ImGui::Button("Queue offline", draftActionBtn)) {
-                if (!QueueNewIssueDraftOffline(app, d, "Queued offline after create failure.")) {
-                    d.gridEditSuccess.clear();
-                    d.gridEditError = "Create failed (" + d.newIssueQueueFallbackError + ") and queue offline failed.";
-                }
-            }
-            if (ImGui::Button("Cancel", draftActionBtn)) {
-                d.newIssueDraftActive = false;
-                d.newIssueFocusSummaryPending = false;
-                d.newIssueDraft = IssueDraft{};
-                d.newIssueDraftEditBufs.clear();
-                d.newIssueMissingFieldIds.clear();
-                d.newIssueQueueFallbackVisible = false;
-                d.newIssueQueueFallbackError.clear();
-                d.gridEditError.clear();
-                d.gridEditSuccess.clear();
-            }
-            if (ImGui::Button("Add attachment...", draftActionBtn)) {
-                runAttachmentPicker();
-            }
-            if (!d.newIssueDraft.StagedAttachments.empty()) {
-                if (ImGui::Button("Clear all##clratt", draftActionBtn)) {
-                    d.newIssueDraft.StagedAttachments.clear();
-                }
-            }
-            if (disabled)
-                ImGui::EndDisabled();
-
-            if (!d.newIssueDraft.StagedAttachments.empty()) {
-                if (disabled)
-                    ImGui::BeginDisabled();
-                constexpr float kChipStripH = 54.0f;
-                ImGui::BeginChild("##newissueattstrip", ImVec2(0.0f, kChipStripH), true,
-                                  ImGuiWindowFlags_HorizontalScrollbar);
-                for (size_t i = 0; i < d.newIssueDraft.StagedAttachments.size();) {
-                    const auto& att = d.newIssueDraft.StagedAttachments[i];
-                    ImGui::PushID(static_cast<int>(i));
-                    std::string label = att.FileName;
-                    if (label.size() > 36) {
-                        std::string temp = label.substr(0, 16) + "..." + label.substr(label.size() - 16);
-                        label = std::move(temp);
-                    }
-                    const std::string chip = label + " (" + FormatBytesUi(att.SizeBytes) + ")";
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextUnformatted(chip.c_str());
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("x##rma")) {
-                        d.newIssueDraft.StagedAttachments.erase(d.newIssueDraft.StagedAttachments.begin() +
-                                                                static_cast<std::ptrdiff_t>(i));
-                        ImGui::PopID();
-                        continue;
-                    }
-                    ImGui::SameLine();
-                    ImGui::Dummy(ImVec2(8.0f, 1.0f));
-                    ImGui::SameLine();
-                    ImGui::PopID();
-                    ++i;
-                }
-                ImGui::EndChild();
-                if (disabled)
-                    ImGui::EndDisabled();
-            }
-
-            ImGui::EndGroup();
-            if (d.newIssueScrollDraftRowIntoViewPending) {
-                // Anchor scroll to ID column (tall); end-of-row cursor is last column (short).
-                ImGui::SetScrollHereY(1.0f);
-                d.newIssueScrollDraftRowIntoViewPending = false;
-            }
-            if (ImGui::BeginPopupContextItem("newissue_draft_att_ctx")) {
-                if (ImGui::MenuItem("Add attachment...")) {
-                    if (!d.newIssueCreateInFlight) {
-                        runAttachmentPicker();
-                    }
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::PopID();
+            DrawDraftIdColumnCell(app, d);
             continue;
         }
 
-        const std::string& fieldId = column.FieldId;
-        if (fieldId == "id" || (IssueDraftHelpers::IsCreateSuppressedFieldId(fieldId) && fieldId != "status")) {
-            ImGui::TextDisabled("-");
-            continue;
-        }
-
-        auto catIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return f.Id == fieldId; });
-        const TrackerField* field = (catIt != catalog.end()) ? &(*catIt) : nullptr;
-
-        const bool isMissing = missing.count(fieldId) > 0 || (fieldId == "summary" && missing.count("summary") > 0) ||
-                               (fieldId == "parent" && missing.count("__parent__") > 0);
-        // Required-ness fans in from two sources: the field catalog's per-field IsRequired (set
-        // by Plane's `is_required`) and the active issue type's per-project RequiredFieldIds
-        // (Jira's create-meta). Either marks the field with the red-asterisk affordance.
-        const bool isRequired = (field && field->IsRequired) || requiredIds.count(fieldId) > 0;
-        if (isMissing) {
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.55f, 0.15f, 0.15f, 0.45f));
-        }
-
-        ImGui::PushID(fieldId.c_str());
-
-        if (isRequired) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-            ImGui::TextUnformatted("*");
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", SmatchetLocalization::T("field.required_tooltip", "Required field"));
-            }
-            ImGui::SameLine(0.0f, 4.0f);
-        }
-
-        ImGui::SetNextItemWidth(-FLT_MIN);
-
-        const std::string& current = d.newIssueDraft.FieldValues[fieldId];
-
-        // PR 4b: Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
-        if (fieldId == "project") {
-            const std::string backendKind = (cfg.TrackerType == "Plane") ? std::string("Plane") : std::string("Jira");
-            const std::string endpoint =
-                (cfg.TrackerType == "Plane") ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug) : cfg.Domain;
-            std::string sel = d.newIssueDraft.ProjectKey;
-            if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState, app, backendKind,
-                                            endpoint, sel)) {
-                d.newIssueDraft.ProjectKey = sel;
-                d.newIssueDraft.FieldValues[fieldId] = sel;
-                d.newIssueQueueFallbackVisible = false;
-                d.newIssueQueueFallbackError.clear();
-            }
-            ImGui::PopID();
-            if (isMissing) {
-                ImGui::PopStyleColor();
-            }
-            continue;
-        }
-
-        // IssueType / other catalog-option dropdowns come from catalog option sets when available.
-        if (fieldId == "issuetype" ||
-            (field && !field->IsArray && !field->AllowedValueOptions.empty() &&
-             (field->Family == TrackerFieldFamily::SelectSingle ||
-              field->Family == TrackerFieldFamily::StructuredSingle || field->Family == TrackerFieldFamily::IssueType ||
-              field->Family == TrackerFieldFamily::Status || field->Family == TrackerFieldFamily::Sprint ||
-              field->IsUserType))) {
-            std::string preview = current;
-            if (fieldId == "project" && preview.empty())
-                preview = d.newIssueDraft.ProjectKey;
-            if (fieldId == "issuetype" && preview.empty())
-                preview = d.newIssueDraft.IssueTypeName;
-            if (field && !field->AllowedValueOptions.empty()) {
-                auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
-                                          [&](const auto& opt) { return opt.Id == current || opt.Value == current; });
-                if (optIt != field->AllowedValueOptions.end()) {
-                    preview = optIt->Value;
-                }
-            }
-            const bool comboOpened = ImGui::BeginCombo("##combo", preview.empty() ? "(choose)" : preview.c_str());
-            if (comboOpened) {
-                const bool justOpened = (d.newIssueDraftComboSearchActiveField != fieldId);
-                if (justOpened) {
-                    d.newIssueDraftComboSearchActiveField = fieldId;
-                    d.newIssueDraftComboSearchBufs[fieldId].fill('\0');
-                }
-                auto& searchBuf = d.newIssueDraftComboSearchBufs[fieldId];
-
-                if (justOpened) {
-                    ImGui::SetKeyboardFocusHere();
-                }
-                ImGui::SetNextItemWidth(-FLT_MIN);
-                const bool submitOnEnter =
-                    ImGui::InputTextWithHint("##NewIssueComboSearch", "Filter options", searchBuf.data(),
-                                             searchBuf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::Separator();
-
-                const std::string filterLower = ToLowerAsciiCopy(TrimCopy(std::string(searchBuf.data())));
-                const TrackerFieldOption* firstMatch = nullptr;
-                bool drewAny = false;
-
-                auto applySelection = [&](const TrackerFieldOption& opt) {
-                    d.newIssueQueueFallbackVisible = false;
-                    d.newIssueQueueFallbackError.clear();
-                    if (fieldId == "issuetype") {
-                        d.newIssueDraft.IssueTypeId = opt.Id;
-                        d.newIssueDraft.IssueTypeName = opt.Value;
-                        // Keep FieldValues in sync: combo preview/selection read `current` from here.
-                        d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
-                    } else if (fieldId == "project") {
-                        d.newIssueDraft.ProjectKey = opt.Id.empty() ? opt.Value : opt.Id;
-                        d.newIssueDraft.FieldValues[fieldId] = d.newIssueDraft.ProjectKey;
-                    } else {
-                        // Store option id (e.g. accountId for users) so create payload matches grid edits.
-                        d.newIssueDraft.FieldValues[fieldId] = opt.Id.empty() ? opt.Value : opt.Id;
-                    }
-                };
-
-                if (field) {
-                    for (const auto& opt : field->AllowedValueOptions) {
-                        const std::string optId = opt.Id.empty() ? opt.Value : opt.Id;
-                        const bool matchesFilter =
-                            filterLower.empty() || ToLowerAsciiCopy(opt.Value).find(filterLower) != std::string::npos ||
-                            ToLowerAsciiCopy(opt.SecondaryValue).find(filterLower) != std::string::npos ||
-                            ToLowerAsciiCopy(optId).find(filterLower) != std::string::npos;
-                        if (!matchesFilter) {
-                            continue;
-                        }
-                        if (firstMatch == nullptr) {
-                            firstMatch = &opt;
-                        }
-                        drewAny = true;
-                        const bool selected = (opt.Id == current || opt.Value == current);
-                        ImGui::PushID(optId.c_str());
-                        if (ImGui::Selectable(opt.Value.c_str(), selected)) {
-                            applySelection(opt);
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::PopID();
-                    }
-                }
-                if (!drewAny) {
-                    ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
-                }
-                if (submitOnEnter && firstMatch != nullptr) {
-                    applySelection(*firstMatch);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndCombo();
-            } else if (d.newIssueDraftComboSearchActiveField == fieldId) {
-                d.newIssueDraftComboSearchActiveField.clear();
-            }
-        } else if (fieldId == "description") {
-            // Description uses a multiline editor so users can write rich content using
-            // Markdown. The create-payload layer (TrackerFieldPayload / PlaneClient) converts
-            // Markdown → ADF or → HTML on submit. Buffer sized to match the grid modal.
-            constexpr size_t kDescBuf = 64 * 1024;
-            auto& buf = EnsureDraftEditBuf(d, fieldId, current, kDescBuf);
-            const float descHeight = ImGui::GetTextLineHeightWithSpacing() * 7.0f;
-            if (ImGui::InputTextMultiline("##input", buf.data(), buf.size(), ImVec2(-FLT_MIN, descHeight),
-                                          ImGuiInputTextFlags_AllowTabInput)) {
-                d.newIssueQueueFallbackVisible = false;
-                d.newIssueQueueFallbackError.clear();
-                d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
-            }
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::TextDisabled("Markdown: **bold**, *em*, # heading, - list, ```code```");
-        } else {
-            auto& buf = EnsureDraftEditBuf(d, fieldId, current);
-            // Summary field gets two affordances tied to "+ New Issue" workflow:
-            //   1. Auto-focus on first frame after the draft row opens (newIssueFocusSummaryPending).
-            //   2. Enter submits the draft (EnterReturnsTrue) iff the same disable/project-pick
-            //      gates the Create button uses are clear AND the trimmed buffer is non-empty.
-            //      Mirrors the Create button at the Id-column branch above.
-            const bool isSummary = (fieldId == "summary");
-            if (isSummary && d.newIssueFocusSummaryPending) {
-                ImGui::SetKeyboardFocusHere();
-                d.newIssueFocusSummaryPending = false;
-            }
-            const ImGuiInputTextFlags textFlags =
-                isSummary ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_None;
-            const bool submitted = ImGui::InputText("##input", buf.data(), buf.size(), textFlags);
-            if (submitted) {
-                d.newIssueQueueFallbackVisible = false;
-                d.newIssueQueueFallbackError.clear();
-                d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
-            }
-            if (submitted && isSummary && !d.newIssueCreateInFlight && !d.newIssueDraft.ProjectKey.empty()) {
-                const std::string trimmed = TrimCopy(std::string(buf.data()));
-                if (!trimmed.empty()) {
-                    TrySubmitNewIssueDraft(app, d);
-                }
-            }
-        }
-
-        // Validation hint: a required field that failed the last Create attempt earns an inline
-        // "(required)" line right under its input. The red FrameBg already flags the cell; this
-        // adds a textual cue so the cause is obvious without having to read the banner.
-        if (isRequired && isMissing) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.55f, 1.0f));
-            ImGui::TextUnformatted(SmatchetLocalization::T("field.required_inline_hint", "(required)"));
-            ImGui::PopStyleColor();
-        }
-
-        ImGui::PopID();
-
-        if (isMissing) {
-            ImGui::PopStyleColor();
-        }
+        DrawDraftFieldColumnCell(app, d, catalog, cfg, column, missing, requiredIds);
     }
 
     if (d.newIssueScrollDraftRowIntoViewPending) {

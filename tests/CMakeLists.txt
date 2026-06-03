@@ -43,6 +43,27 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Pure chip-fade + right-cluster width helpers extracted from DrawGridHeaderToolbar. The
+    # _detail TU depends on nothing but <algorithm> — no ImGui, no AppController.
+    Core/GridHeaderToolbarLayout.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridHeaderUi_detail.cpp"
+    # Pure cached-project filter extracted from DrawJqlQueryEditorEmbedded's project pill. The
+    # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
+    Core/JqlProjectPillFilter.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetJqlProjectPill_detail.cpp"
+    # Pure log-line formatting / clipboard-join helpers extracted from SmatchetUI::drawLogWindow.
+    # The _detail TU depends only on Logger.h types (header-only enum + struct) — no ImGui.
+    Core/LogViewLines.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetLog_detail.cpp"
+    # Pure option-filter + catalog-dropdown predicates extracted from RenderNewIssueDraftRow. The
+    # _detail TU depends only on StringUtil (header-inline) + TrackerFieldSchema — no ImGui.
+    Core/NewIssueDraftFieldDecision.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetNewIssueDraftUi_detail.cpp"
+    # Pure date-format index<->option helpers lifted out of
+    # DrawLocalAndAppearancePreferencesTabs during its function-size decomposition.
+    # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
+    # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
+    Core/PreferencesDateFormatIndex.test.cpp
     # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
     # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
     # (the largest function in the tree) to cut its branch count. The _detail TU is
@@ -278,6 +299,7 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
+    Plugins/LuaConsole/LuaConsoleSelection.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4AnnotateParse.cpp"
@@ -369,6 +391,8 @@ if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
 endif()
 
 target_include_directories(SmatchetTests PRIVATE _helpers)
+target_include_directories(SmatchetTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/Source/Plugins/LuaConsole")
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
