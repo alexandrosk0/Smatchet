@@ -51,25 +51,14 @@ Slice 1a pattern doc (#630), and the function decompositions `drawActiveProjectW
 > before merging** (CI's shallow clone defeats `git merge-base` → stale branches false-flag a
 > sibling's now-decomposed function; see § Verification (actual) caveat + tooling.md P1).
 
-**Remaining Phase A — genuine-ROI non-UI (the flagship set, recipes in § Approach B):**
-- `ConfigManager::Load` (619 L/162 br) + `Save` (314 L/32 br), `Source/Core/src/Config/ConfigManager.cpp`
-  — **highest value, highest risk.** Field-registration table (`FieldDesc kFields[]`); kills the
-  config parallel-duplication bug class. Boot path → **silent config-corruption risk**: mandatory
-  per-field round-trip tests (write non-default for every field, assert read-back) + a defaults test +
-  the `app-cold-start` perf scenario. Do this one **serially, carefully, dedicated** — not fanned out.
-- `AppController::Initialize` (432 L/61 br) — split `InitConfig`/`InitBackends`/`InitCommands`/`InitPlugins`. Bootstrap → ASan run.
-- `main` (561 L/75 br, `Source/Standalone/main.cpp`) — extract `BootApplication`/`RunFrameLoop` (`ShutdownApplication` exists). Bootstrap → ASan.
-- `AiAssistantController::RunRequest` (340 L/44 br) — phase-split fetch ↔ stream-parse ↔ history-update; each bucket-A testable. HTTP/streaming → keep AI-driver bucket-E green.
-
-**Long tail surfaced by the 200-line cap** (NOT in the original 300-line sweep; all grandfathered):
-- Command registrars — same per-command-fn split as `RegisterAiCommands` (#634), mechanical/low-risk,
-  `command-system`: `RegisterDebugCommands` (315/23), `RegisterViewCommands` (295/32),
-  `RegisterPerfCommands` (245/15), `RegisterTicketMutationCommands` (243/24).
-- `AppController::SubmitFieldEdit` (257/43); `JiraClient::UpdateIssueFields` (243/61, `tracker-backend`).
-- Sync (`offline-sync`): `OfflineQueueService::TickOfflineFieldEdits` (290/71),
-  `TicketSyncService::TickStreamingApply` (276/43) — **perf-sensitive Tick paths; profile before/after.**
-- `SpawnAndRun` (249/32) + `RunCmdAttach` (219/43), `Source/Standalone/CliCommandRunner.cpp` — the
-  refresh banner called these "under threshold" at the old 300 cap; the 200 cap catches them.
+**Remaining Phase A — ALL SHIPPED (2026-06-03 correction).** The flagship non-UI set
+(`ConfigManager::Load`/`Save` #680, `AppController::Initialize` #676, `main` #678,
+`AiAssistantController::RunRequest` #677) **and** the 200-line-cap long tail (command registrars +
+`SubmitFieldEdit` + `UpdateIssueFields` + `TickOfflineFieldEdits`/`TickStreamingApply` #679 +
+`SpawnAndRun`/`RunCmdAttach`, #665–671) all landed — see § Implementation log for the per-PR detail.
+**No dedicated non-UI target remains over the 200/30 cap.** (This block previously listed those as
+remaining; that contradicted the 2026-06-01 UPDATE above and is now corrected — the only open work is
+Phase B below.)
 
 **Phase B — ImGui-draw monoliths: RIDE-ALONG ONLY (no dedicated PRs).** The ~15 UI draws still > 200 L
 (`SmatchetUI::Draw`, `drawMainMenuBar`, `DrawWhisperPreferencesTab`, `drawViewsDashboardWindow`,
