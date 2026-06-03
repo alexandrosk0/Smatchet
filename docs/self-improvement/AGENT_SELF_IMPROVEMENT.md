@@ -18,7 +18,13 @@ Applied entries are archived immediately to [`self-improvement/categories/applie
 
 ## Categories
 
-- **bug** — defect in shipped behaviour (production or test).
+- **bug** — **DEPRECATED** (ADR-0014). Product bugs (defects in shipped behaviour)
+  now live as **GitHub Issues**, not here — see [`docs/agent-rules/issue-triage.md`](../agent-rules/issue-triage.md).
+  `bug.md` stays readable but takes **no new entries**; a bug *in the agentic
+  harness/scripts* folds into `tooling`/`infra` instead.
+- **debt** — product **tech-debt**: internal maintainability with no user-observable
+  defect (god-object, duplication, coupling, missing abstraction, "should refactor").
+  A debt item that proves user-observable becomes a GitHub Issue (per issue-triage.md).
 - **process** — workflow friction; orchestrator-packet discipline; shortcuts an
   agent finds itself doing manually that should be encoded in its prompt;
   context an agent had to discover that should be pre-loaded.

@@ -69,6 +69,10 @@ Halt prompts on block / timeout / API-error / closed-externally / pagination ove
 
 Full per-outcome semantics + halt-prompt return-code table + env-knob list + REST contract: [`docs/agent-rules/merge-gates.md`](docs/agent-rules/merge-gates.md). Tests: `tests/bats/merge_gates.bats`.
 
+## Issue triage
+
+**GitHub Issues are canonical for product bugs** ([ADR-0014](docs/adr/0014-github-issues-canonical-for-product-bugs.md)); the internal `docs/self-improvement/categories/*` backlog is for the **agent system itself** (process/tooling/infra/test/security) **+ product tech-debt** (the `debt` category). The old `bug` category is **deprecated**. The bug-vs-debt rule (keyed on observable effect): user-observable defect or correctness/safety violation → **GitHub Issue**; internal maintainability with no observable defect → **`debt.md`**; ambiguous → leave in backlog + flag a human. On a confirmed product bug the orchestrator dedup-greps open Issues and (if none) `gh issue create`s a structured, labelled Issue instead of appending to `bug.md`. CR auto-Issues + stale/dup Issues are reconciled by `issue-sweep.sh` (closeout) + the `issue-janitor` (periodic) — auto-acting only on **bot**-authored strays, never auto-closing a **human** Issue. Full protocol + boundary table + decision tree + labels: [`docs/agent-rules/issue-triage.md`](docs/agent-rules/issue-triage.md).
+
 ## Project rules
 
 **Doc & agentic structure**: the normative taxonomy + the portable/project boundary live in [`docs/STRUCTURE.md`](docs/STRUCTURE.md); project-specific values (build presets, perf budgets, lint zones, env-prefix, …) live in [`project.config.json`](project.config.json). Portable dirs (`agents/core/`, `agents/_shared/`, `docs/agent-rules/`, `docs/harness/`) read values from the config — don't hardcode (guard: `test-portable-purity`).

@@ -1,8 +1,14 @@
-# Agent self-improvement — bug
+# Agent self-improvement — bug (DEPRECATED)
 
+> **DEPRECATED (ADR-0014, 2026-06-03).** Product bugs now live as **GitHub Issues**
+> — see [`../../agent-rules/issue-triage.md`](../../agent-rules/issue-triage.md). This
+> file is **frozen**: no new entries. Existing entries migrate to Issues (genuine
+> product bugs) or to [`debt.md`](debt.md) (tech-debt); a bug *in the agentic
+> harness/scripts* folds into `tooling`/`infra`. Kept readable until migration (G) completes.
+>
 > Format / categories / workflow / priority / triage: see
 > [`../AGENT_SELF_IMPROVEMENT.md`](../AGENT_SELF_IMPROVEMENT.md) (index + spec).
-> Sibling categories: bug · process · tooling · infra · test · security · external-blockers · applied.
+> Sibling categories: bug (deprecated) · debt · process · tooling · infra · test · security · external-blockers · applied.
 > Live entries only. `applied` entries archive immediately to `applied.md`.
 
 <!-- Latest first. Append new entries at the top. -->
