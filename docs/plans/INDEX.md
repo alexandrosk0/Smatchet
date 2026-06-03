@@ -97,6 +97,9 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`subagent-eval-harness`](shipped/subagent-eval-harness.md) | 2026-05-30 | Plan — Subagent eval harness (eval-driven development for the dev-agent fleet) |
 | [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
 | [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
+| [`code-syntax-coloring-and-tooltips`](shipped/code-syntax-coloring-and-tooltips.md) | — | Code syntax coloring (multi-language) + tooltips |
+| [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | — | Plan — Gate enforcement hardening (agent → GitHub promotion) |
+| [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | — | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
 <!-- END auto-plan-index -->
 
 ### Notes

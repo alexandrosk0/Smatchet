@@ -37,7 +37,7 @@ Four north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § 
 | 3 — Never crash | `debug-detective` runs ASan / UBSan on suspect investigations; RAII rule enforced by code-review | Build-only required (3 MSVC variants); sanitizer build NOT required | Promote sanitizer preset to a required CI job |
 | 4 — Accessibility | None (aspirational) | None | None |
 
-Cross-link: [`docs/plans/active/gate-enforcement-hardening.md`](plans/active/gate-enforcement-hardening.md) drives the agent-enforcement → GitHub-enforcement promotion sequence.
+Cross-link: [`docs/plans/shipped/gate-enforcement-hardening.md`](plans/shipped/gate-enforcement-hardening.md) drives the agent-enforcement → GitHub-enforcement promotion sequence.
 
 
 - **Frame budget** — **6.94 ms** per UI-thread frame, derived from `1000 / 144`. Steady-state mean per-frame work above the budget is a Pillar-1 violation; `perf-detective` regression-fails any commit that lifts the mean. Floor: no single frame > **16.67 ms** (60 Hz) in normal operation; outliers above the floor are tracked at p99 by `spike-hunter`.
