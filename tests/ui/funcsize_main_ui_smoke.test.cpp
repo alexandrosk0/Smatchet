@@ -1,5 +1,5 @@
 // funcsize_main_ui_smoke.test.cpp — Phase-0 GREEN batch 2 of the
-// full-function-size-compliance program (docs/plans/active/full-function-size-compliance.md).
+// full-function-size-compliance program (docs/plans/shipped/full-function-size-compliance.md).
 //
 // PURPOSE — STRUCTURAL coverage for four large draw functions slated for
 // decomposition in Phase 5. Each test boots the REAL app (via UiTestScenario)
