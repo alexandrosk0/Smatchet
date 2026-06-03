@@ -62,7 +62,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: …
 - **Bash-driver scenario / screenshot / sanitizer**: …
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target).
-- **Doc validation (blocks plan-doc PRs — keep this bullet)**: the `test-docs.sh` suite green — `test-portable-purity`, `test-plan-index`, `test-plan-ref-integrity`, `test-markdown-links`, `test-doc-anchors`. A red doc-validation job blocks merge even though non-required.
+- **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (it enumerates the doc-validation steps — anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint; defer to the script, don't hardcode the sub-step list here). A red doc-validation job blocks merge even though non-required.
 - **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model + sharpen terms before finalising; record the outcome. Required for every plan — do not delete.
 - **Manual residue**: if any verification step ends up manual, name the deferred-automation action plan + add a `docs/self-improvement/categories/tooling.md` entry. No silent residue.
 

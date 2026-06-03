@@ -47,10 +47,11 @@ they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
    `git commit -m "wip(plan): <slug>"`. This is **mandatory, not optional**:
    working-tree-only plan files are silently lost on the next checkout
    (plan-doc-safety). Do the commit BEFORE handing off to grill-with-docs.
-6. **Stress-test (the bullet is mandatory; the run is strongly advised).** The
-   Verification section carries the `grill-with-docs` bullet by default (step 3c) —
-   keep it, and hand off to `grill-with-docs` to challenge the plan against the
-   domain model + sharpen terminology before finalising.
+6. **Stress-test — required before finalising.** § Plan-doc family requires a
+   `grill-with-docs` pass before a plan is final — mandatory, not optional. Keep
+   the `grill-with-docs` Verification bullet (step 3c) and run `grill-with-docs`
+   to challenge the plan against the domain model + sharpen terminology before
+   finalising.
 7. **Post-ship is PR-only.** Note that § Implementation log / § Deviations /
    § Verification(actual) get filled after the work ships, via a PR (never a
    direct push to develop) — and the plan is `git mv`'d active → shipped once its
