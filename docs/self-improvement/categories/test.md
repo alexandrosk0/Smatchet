@@ -94,8 +94,8 @@
 - 2026-05-17 · code-review · [test] · P2 — `scripts/dev/test-screenshot-diff.sh:24` `SMATCHET_TEST_PORT=58733` hardcoded; two parallel runs collide
   Details: Hard-coded port prevents parallel invocations (CI matrix, simultaneous local runs).
   Concrete next action: use ephemeral port or `$((40000 + RANDOM % 20000))`. Surfaced by retrospective code-review sweep on PR #146.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-02 — verified the substantive fix already shipped: `test-screenshot-diff.sh:40` uses `${SMATCHET_TEST_PORT:-$((40000 + RANDOM % 20000))}`, so parallel runs no longer collide. This pass corrected the only residue — a stale header comment still claiming "default 58733")
+  Last-reviewed: 2026-06-02
 
 - 2026-05-17 · code-review · [test] · P3 — `Source/Plugins/Mcp/McpJsonRpcPure.cpp` anon-namespace helpers not exposed for Phase 5 dispatch tests
   Details: `BasenameForDisplay`, `TrimAsciiWhitespace`, `ToLowerAscii`, `AppendAllowlistedArgKvs` live in an anonymous namespace.
