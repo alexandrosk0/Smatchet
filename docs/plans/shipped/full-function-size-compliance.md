@@ -1,7 +1,7 @@
 # Plan — Full Function-Size Compliance (zero grandfathered monoliths)
 
 > **Slug**: `full-function-size-compliance`
-
+>
 > **Relationship to [`decompose-top-20-monoliths`](decompose-top-20-monoliths.md)**: that plan shipped the
 > Slice-0 gate + pattern doc + every *dedicated non-UI* decomposition, then deliberately froze the ImGui-draw
 > set as **perpetual ride-along** (it argued a UI-decomposition sweep is net-negative ROI). **This plan

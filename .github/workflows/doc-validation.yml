@@ -21,6 +21,7 @@ on:
   push:
     branches: [develop]
     paths:
+      - '**/*.md'
       - 'AGENTS.md'
       - 'agents/**'
       - 'docs/agent-rules/**'
@@ -48,6 +49,7 @@ on:
   pull_request:
     branches: [develop]
     paths:
+      - '**/*.md'
       - 'AGENTS.md'
       - 'agents/**'
       - 'docs/agent-rules/**'
@@ -117,6 +119,11 @@ jobs:
 
       - name: test-plan-naming — plan files are kebab-case
         run: bash agents/scripts/core/test-plan-naming.sh
+
+      - name: md_lint — markdown style (MD028 etc.)
+        run: |
+          python3 agents/scripts/core/md_lint.py --selftest
+          python3 agents/scripts/core/md_lint.py --all
 
       - name: test-portable-purity — no NEW project literals in portable dirs
         run: bash agents/scripts/core/test-portable-purity.sh

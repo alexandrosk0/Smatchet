@@ -2,7 +2,7 @@
 
 > **Status:** WIP plan, ready for a worker to execute. Phase 1 (rename) lands first as
 > its own PR; Phase 2 (prefs cleanup) rebases onto the new names as a follow-up PR.
-
+>
 > **Reviewer corrections (verified against `develop` @ `77b1740`, 2026-05-30).** Every line
 > anchor and exception in this plan was checked against the live tree. Phase-2 anchors are all
 > exact. Five fixes were applied inline; the substantive ones:
