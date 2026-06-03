@@ -25,7 +25,7 @@ The structural test-delta gate stays exactly as-is (already hard-blocking) — t
 
 ## Files to modify
 
-1. `scripts/dev/coverage.sh` (edit) — add `--excluded_sources "Source.Core.src.Ui"` + `"Source.Core.include.Ui"` to `OCC_FILTER_ARGS` (confirm OpenCppCoverage path-pattern match semantics at impl). Optional: a `--print-pct` flag echoing the measured number for the Slice-1 readout.
+1. `scripts/dev/coverage.sh` (edit) — add `--excluded_sources "Source.Core.src.Ui"` + `"Source.Core.include.Ui"` to `OCC_FILTER_ARGS` (confirm OpenCppCoverage path-pattern match semantics at impl). The Slice-1 readout reads the percentage from the script's existing report / `coverage/coverage.xml` — no new flag needed.
 2. `.github/workflows/coverage.yml` (edit) — `continue-on-error: false`; `coverage.sh --xml-only --threshold <chosen>`; header comment rewrite (advisory → blocking, name the flip PR).
 3. `project.config.json` (edit) — add `coverage-out-of-band` to `merge_gates.override_labels`; add a `coverage` block (`threshold: <chosen>`, `excluded: ["Source/Core/src/Ui", "Source/Core/include/Ui"]`) so the number is config-sourced, not hardcoded in two places.
 4. `docs/plans/shipped/test-suite-expansion-completion.md` (edit, PR-only per § Plan revision) — one-line § Implementation-log / § End-state append: "line-coverage threshold flipped advisory→blocking at `<N>%` on `<date>` via this plan."
@@ -62,7 +62,7 @@ N/A — no `Source/Core/` source compiled-change. Edits `coverage.sh` (`scripts/
 
 ## Verification
 
-- **Slice-1 readout**: `bash scripts/dev/coverage.sh --threshold 0 --print-pct` on a clean `build/ninja-test-msvc` prints the line % on the `Ui/`-excluded surface; confirm `Source/Core/src/Ui/*.cpp` lines are absent from `coverage/coverage.xml`.
+- **Slice-1 readout**: `bash scripts/dev/coverage.sh --threshold 0` on a clean `build/ninja-test-msvc` reports the line % on the `Ui/`-excluded surface (parse `coverage/coverage.xml`); confirm `Source/Core/src/Ui/*.cpp` lines are absent from the report.
 - **Flip behavior**: a synthetic PR dropping a covered strict-zone unit below the chosen threshold **red-bars** `coverage.yml` (now `continue-on-error: false`); applying `coverage-out-of-band` downgrades it to pass; the structural `coverage-gate.yml` verdict is unchanged either way.
 - **Shell lint**: `test-shell-lint.sh` on the edited `coverage.sh`.
 - **Config integrity**: `project.config.json` still validates against `project.config.schema.json` (new `coverage` block + label).

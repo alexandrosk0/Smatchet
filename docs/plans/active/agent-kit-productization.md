@@ -74,7 +74,7 @@ Grouped by phase (list > 10 entries).
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`)
 
-N/A — no `Source/Core/` code touched; no `.cpp`/`.h` anywhere. Not pure-docs: `is-pure-docs-diff.sh` allow-lists `agents/scripts/**` + `*.md` + `docs/**`, but `agents/VERSION`, `agents/manifest.json`, `project.config.json`, `scripts/dev/test-all.sh`, and `tests/bats/*.bats` are deny-listed, so it returns false (exit 1) and `test-all.sh` runs in full. With no compiled change, the build/ctest + perf gates are no-ops; verification reduces to shell-lint + bats + doc-validation.
+N/A — no Source/Core code touched; no C++ source anywhere. The diff is not pure-docs (is-pure-docs-diff.sh allow-lists agents/scripts, markdown, and docs, but agents/VERSION, agents/manifest.json, project.config.json, scripts/dev/test-all.sh and tests/bats are deny-listed), so test-all.sh runs in full. With no compiled change the build, ctest, and perf gates are no-ops; verification reduces to shell-lint plus bats plus doc-validation.
 
 ## Risks / non-goals
 
