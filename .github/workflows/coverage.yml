@@ -29,6 +29,10 @@ concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
+# sccache (GHA-native) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+env:
+  SCCACHE_GHA_ENABLED: "true"
+
 jobs:
   windows-coverage:
     name: Coverage (windows-2022 + OpenCppCoverage)
@@ -44,6 +48,9 @@ jobs:
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Install OpenCppCoverage
         shell: powershell
@@ -69,6 +76,10 @@ jobs:
       - name: Run ctest (sanity — must pass before coverage capture)
         working-directory: build/ninja-test-msvc
         run: ctest --output-on-failure
+
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
 
       - name: Capture coverage (advisory; --threshold 0)
         shell: bash

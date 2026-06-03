@@ -66,6 +66,38 @@ if(CMAKE_GENERATOR MATCHES "Ninja|Makefile" AND NOT DEFINED ENV{SMATCHET_NO_CCAC
     endif()
 endif()
 
+# CI-only: embed debug info in objects (/Z7) instead of a separate PDB (/Zi).
+# sccache CANNOT cache /Zi compilations (the PDB write is a side effect it can't
+# reproduce from cache), so on CI — where sccache is the whole point — we force
+# /Z7. Gated on $ENV{CI} (set automatically by GitHub Actions) and read at
+# CONFIGURE time: a generator expression cannot read env at build time, so an
+# `if()` is required. Deliberately NOT gated on compile-cache-present — harmless
+# if sccache is absent (just larger .obj). Local dev keeps the default /Zi
+# separate PDB. We sidestep CMAKE_MSVC_DEBUG_INFORMATION_FORMAT entirely so the
+# repo's `cmake_minimum_required(VERSION 3.24)` (policy CMP0141 is 3.25+, default
+# OLD here — the variable would be silently ignored) needs no bump.
+#
+# REPLACE /Zi in the per-config flag vars rather than add_compile_options(/Z7):
+# appending /Z7 alongside CMake's built-in /Zi makes cl emit D9025 ("overriding
+# '/Zi' with '/Z7'"), which scripts/dev/test-build-warnings.sh would fail on.
+# Single-config Ninja only consumes the active config's vars, but we rewrite both
+# RelWithDebInfo (iter/test/ui-test presets) and Debug (asan preset) for safety.
+# See docs/plans/active/ci-build-time-reduction.md § Q1.
+if(DEFINED ENV{CI} AND MSVC)
+    foreach(_z7_cfg RELWITHDEBINFO DEBUG)
+        foreach(_z7_lang C CXX)
+            if(CMAKE_${_z7_lang}_FLAGS_${_z7_cfg} MATCHES "/Zi")
+                string(REPLACE "/Zi" "/Z7"
+                       CMAKE_${_z7_lang}_FLAGS_${_z7_cfg}
+                       "${CMAKE_${_z7_lang}_FLAGS_${_z7_cfg}}")
+            else()
+                string(APPEND CMAKE_${_z7_lang}_FLAGS_${_z7_cfg} " /Z7")
+            endif()
+        endforeach()
+    endforeach()
+    message(STATUS "CI + MSVC: forcing /Z7 (embedded debug info) for sccache compatibility")
+endif()
+
 # lld — much faster than BFD ld for static-link-heavy targets, multi-threaded
 # by default. Detected by looking for `ld.lld` in the same directory as the
 # active compiler — i.e. a MinGW toolchain that bundles lld. We don't try
