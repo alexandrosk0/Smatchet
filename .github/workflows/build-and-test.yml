@@ -9,6 +9,19 @@ name: Build and test
 permissions:
   contents: read
 
+# sccache (local-dir backend) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+# CMakeLists.txt auto-wraps sccache off PATH (find_program NAMES ccache sccache).
+# We deliberately use the LOCAL-DISK backend (SCCACHE_DIR) + actions/cache rather
+# than SCCACHE_GHA_ENABLED: the GHA-native backend makes sccache talk to the GH
+# cache *service* on every compile, and a service hiccup fails server startup =>
+# fatal build failure on a REQUIRED check (observed on the first attempt). Local
+# disk decouples build success from cache-service uptime — an outage just yields a
+# cold cache, never a broken build. Each MSVC build job installs the sccache binary
+# (mozilla-actions/sccache-action) + caches $SCCACHE_DIR. Disable with
+# SMATCHET_NO_CCACHE=1.
+env:
+  SCCACHE_DIR: ${{ github.workspace }}\.sccache
+
 on:
   # NO paths-ignore: required status checks (Windows + MSVC, Windows + MSVC
   # light) must report on EVERY PR or branch protection wedges docs-only PRs
@@ -112,6 +125,17 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (msvc)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-
+
       - name: Cache FetchContent _deps (msvc)
         uses: actions/cache@v4
         with:
@@ -197,6 +221,10 @@ jobs:
           # the Windows CI runner has no bats (the wrapper would exit 2 / "bats missing").
           # CI enforces the gate itself (--diff above); the bats are the gate's unit tests.
 
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
       - name: Upload Smatchet.exe artefact (for bucket-C / bucket-E jobs)
         uses: actions/upload-artifact@v4
         with:
@@ -232,6 +260,17 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (msvc-light)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-light-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-light-
+
       - name: Cache FetchContent _deps (msvc-light)
         uses: actions/cache@v4
         with:
@@ -262,6 +301,10 @@ jobs:
       - name: Build SmatchetCore_DX12 (Unreal-embedded dual-target)
         run: cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
 
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
   bucket-c-screenshot-diff:
     name: Bucket-C screenshot diff (Mesa headless GL)
     needs: windows-msvc
@@ -282,21 +325,36 @@ jobs:
           name: smatchet-exe-${{ github.run_id }}
           path: build/ninja-iter-msvc/
 
+      # Cache the extracted Mesa opengl32.dll — bucket-C + bucket-E both pulled the
+      # ~30 MB mesa3d 7z from GitHub releases on every run. Key is pinned to the
+      # Mesa version (keep in lockstep with MESA_VERSION below); a hit skips the
+      # download entirely. docs/plans/active/ci-build-time-reduction.md Phase 2.
+      - name: Cache Mesa opengl32.dll
+        uses: actions/cache@v4
+        with:
+          path: mesa-cache
+          key: mesa-opengl32-24.2.5
+
       - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
         shell: bash
         env:
           MESA_VERSION: "24.2.5"
         run: |
           set -euo pipefail
-          mkdir -p mesa-tmp
-          cd mesa-tmp
-          curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
-          7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
-          if [ -f extracted/x64/opengl32.dll ]; then
-            cp extracted/x64/opengl32.dll ../build/ninja-iter-msvc/opengl32.dll
+          if [ ! -f mesa-cache/opengl32.dll ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            if [ -f extracted/x64/opengl32.dll ]; then
+              cp extracted/x64/opengl32.dll ../mesa-cache/opengl32.dll
+            fi
+            cd ..
+            rm -rf mesa-tmp
           fi
-          cd ..
-          rm -rf mesa-tmp
+          if [ -f mesa-cache/opengl32.dll ]; then
+            cp mesa-cache/opengl32.dll build/ninja-iter-msvc/opengl32.dll
+          fi
 
       - name: Run bucket-C screenshot diff
         continue-on-error: true
@@ -334,6 +392,17 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (ui-test)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-ui-test-
+
       - name: Cache FetchContent _deps (ui-test preset)
         uses: actions/cache@v4
         with:
@@ -349,21 +418,38 @@ jobs:
       - name: Build SmatchetStandalone (UI tests on)
         run: cmake --build --preset ninja-ui-test-msvc
 
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
+      # Cache the extracted Mesa opengl32.dll (see bucket-C for rationale). Same
+      # key as bucket-C so the two jobs share one cached dll across the repo.
+      - name: Cache Mesa opengl32.dll
+        uses: actions/cache@v4
+        with:
+          path: mesa-cache
+          key: mesa-opengl32-24.2.5
+
       - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
         shell: bash
         env:
           MESA_VERSION: "24.2.5"
         run: |
           set -euo pipefail
-          mkdir -p mesa-tmp
-          cd mesa-tmp
-          curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
-          7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
-          if [ -f extracted/x64/opengl32.dll ]; then
-            cp extracted/x64/opengl32.dll ../build/ninja-ui-test-msvc/opengl32.dll
+          if [ ! -f mesa-cache/opengl32.dll ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            if [ -f extracted/x64/opengl32.dll ]; then
+              cp extracted/x64/opengl32.dll ../mesa-cache/opengl32.dll
+            fi
+            cd ..
+            rm -rf mesa-tmp
           fi
-          cd ..
-          rm -rf mesa-tmp
+          if [ -f mesa-cache/opengl32.dll ]; then
+            cp mesa-cache/opengl32.dll build/ninja-ui-test-msvc/opengl32.dll
+          fi
 
       - name: Run bucket-E ImGui Test Engine scenario
         id: run-bucket-e
@@ -397,6 +483,17 @@ jobs:
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (msvc-asan)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-asan-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-asan-
+
       - name: Cache FetchContent _deps (msvc-asan)
         uses: actions/cache@v4
         with:
@@ -415,6 +512,10 @@ jobs:
       - name: Run ctest under ASAN
         working-directory: build/ninja-msvc-asan
         run: ctest --output-on-failure
+
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
 
       - name: Surface sanitizer report in job summary
         if: failure()

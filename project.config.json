@@ -57,17 +57,19 @@
       "Test-delta gate",
       "Windows + MSVC",
       "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
-      "Shell lint (shellcheck)"
+      "Shell lint (shellcheck)",
+      "Doc anchors + agent contract"
     ],
     "required_review_count": 0,
     "enforce_admins": false,
-    "strict": false
+    "strict": true
   },
   "ci": {
     "required_checks": [
       "Test-delta gate",
       "Windows + MSVC",
-      "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"
+      "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
+      "Doc anchors + agent contract"
     ],
     "path_filters": {
       "code_globs": ["Source/**"],
