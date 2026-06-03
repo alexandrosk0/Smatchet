@@ -50,4 +50,27 @@ class LuaConsolePlugin : public IPlugin {
     void DrawAutocompletePopup();
     static int TryParseLuaErrorLine(const std::string& err);
     static bool IsHooksFile(const std::string& rel);
+
+    /// Per-frame layout values shared across the OnDraw section helpers. Holds
+    /// references to the owning AppController plus the split-pane height constants
+    /// computed once at the top of the frame; never re-fetched per helper.
+    struct DrawCtx {
+        AppController& app;
+        bool onToolsTab;
+        float splitStackTotalH;
+        float kSplitGrabH;
+        float kMinLogH;
+        float kMinScriptH;
+        float kToolsLogH;
+    };
+
+    bool BeginLuaWindow(bool wantFocus);
+    void UpdateSplitLayout(DrawCtx& ctx);
+    void DrawScriptPane(DrawCtx& ctx);
+    void DrawScriptsTab(DrawCtx& ctx, const std::string& curName);
+    void DrawRunButtonRow(DrawCtx& ctx, const std::string& curName);
+    void DrawRegisteredActionsRow(DrawCtx& ctx);
+    void DrawEditorAndAutocomplete();
+    void DrawToolsTab(DrawCtx& ctx);
+    void DrawSplitterAndConsole(DrawCtx& ctx);
 };
