@@ -298,7 +298,12 @@ poll_merge_gates() {
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
         and any(.comments.nodes[]; .author.login == "coderabbitai" or .author.login == "coderabbitai[bot]"))] | length),
     ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-      | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state] | (.[0] // "ABSENT")),
+      | if (.__typename == "StatusContext" and .context == "CodeRabbit") then .state
+        elif (.__typename == "CheckRun"
+              and ((.name == "CodeRabbit") or (.name == "CR findings (0 actionable)"))
+              and (.conclusion != null))
+          then (if ((.conclusion) | IN("SUCCESS","NEUTRAL","SKIPPED")) then "SUCCESS" else .conclusion end)
+        else empty end] | (.[0] // "ABSENT")),
     ([$pr.reviewThreads.nodes[]? | .comments.nodes[]?
       | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]") and (.commit.oid // "") == $sha)] | length),
     (([$pr.comments.nodes[] | select(.author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase))] | length)
@@ -442,8 +447,13 @@ poll_merge_gates() {
         fi
         # -1 (filter/parse miss) fails closed at the `cr_open -eq 0` pass check.
         local cr_open="${fields[12]:--1}"
-        # CR StatusContext on the head rollup — some CR configs emit only a status
-        # (no review) when clean; SUCCESS is a positive signal. "ABSENT" if none.
+        # CR completion signal on the head rollup. CodeRabbit emits this as EITHER a
+        # StatusContext named "CodeRabbit" OR a CheckRun ("CodeRabbit" / "CR findings
+        # (0 actionable)"); the GraphQL projection (field 13) now normalizes both to
+        # SUCCESS when CR has finished cleanly — previously only the StatusContext was
+        # read, so a CheckRun-only signal computed ABSENT and a clean PR (reviewDecision
+        # NONE) needlessly burned the full CR_GRACE_POLLS window instead of fast-passing.
+        # SUCCESS is a positive signal; "ABSENT" if neither shape is present yet.
         local cr_status_state="${fields[13]}"
         # C4 prong 2: count of CR review-thread comments anchored to the current
         # head — positive evidence CR actively reviewed this commit (vs a bare

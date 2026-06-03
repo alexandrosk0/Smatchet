@@ -465,6 +465,28 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
+@test "CR completion via a CheckRun (not StatusContext) is recognized as status-SUCCESS" {
+    # Regression: CodeRabbit can signal completion as a CheckRun ("CodeRabbit" /
+    # "CR findings (0 actionable)") rather than a StatusContext. Field 13 must
+    # normalize that CheckRun's SUCCESS conclusion to crStatusState=SUCCESS so a
+    # clean PR (reviewDecision NONE) fast-passes the NONE branch instead of burning
+    # the whole CR_GRACE_POLLS window. Mirrors the StatusContext grace-expired test
+    # above but with the CheckRun shape (observed on PR #803).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"CheckRun","name":"CodeRabbit","conclusion":"SUCCESS","status":"COMPLETED","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NONE+status-SUCCESS"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
 # ---------- PR state early-exit ----------
 
 @test "PR state=CLOSED → return 4" {
