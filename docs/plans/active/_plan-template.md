@@ -68,7 +68,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 
 ## Out of scope (flagged, not designed)
 
-**Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Scope-reduction final-check grep: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
+**Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
 
 Bulleted. Sister-features the user might assume are included; name + one-line "follow-up plan" or "no-action" rationale.
 
