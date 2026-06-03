@@ -115,6 +115,10 @@ add_executable(SmatchetTests
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
+    # Pure layout-arithmetic + picker-resolution helpers extracted from
+    # SmatchetAiAssistantUi.cpp during the function-size decomposition. Header-only
+    # (Source/Core/include/Ui/SmatchetAiAssistantUi_detail.h); no extra .cpp source.
+    Core/AiAssistantUiDetail.test.cpp
     # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
     # formatter for the hover action row. No ImGui dep; production TU is
     # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry
