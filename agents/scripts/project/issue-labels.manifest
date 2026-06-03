@@ -9,7 +9,7 @@
 # (sync-issue-labels.sh --check-parity asserts it). Generic areas (ui, build) have
 # no 1:1 agent and live in the GENERIC_AREAS allowlist in that script.
 #
-# Plan: docs/plans/active/issue-triage-protocol.md § C. Protocol: docs/agent-rules/issue-triage.md.
+# Plan: docs/plans/shipped/issue-triage-protocol.md § C. Protocol: docs/agent-rules/issue-triage.md.
 
 # --- priority (the backlog P0–P3 scale) ---
 P0|b60205|Critical — data corruption / exploitable / crash-on-launch

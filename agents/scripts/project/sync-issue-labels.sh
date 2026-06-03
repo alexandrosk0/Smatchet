@@ -5,7 +5,7 @@
 # coderabbit-triage path→agent map.
 #
 # Issue-triage protocol (ADR-0014): docs/agent-rules/issue-triage.md § Labels.
-# Plan: docs/plans/active/issue-triage-protocol.md § C.
+# Plan: docs/plans/shipped/issue-triage-protocol.md § C.
 #
 # Usage:
 #   bash agents/scripts/project/sync-issue-labels.sh                # dry-run (default): print the plan

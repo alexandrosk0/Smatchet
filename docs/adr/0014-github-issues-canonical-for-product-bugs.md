@@ -19,4 +19,4 @@ This was prompted by issue #734: CodeRabbit auto-created a GitHub Issue from an 
 - **Orchestrator behaviour change**: on a confirmed pre-existing product bug during CR triage, the orchestrator now dedup-greps open Issues and (if none) creates a **structured** Issue (`gh issue create` with `bug` + priority `P0–P3` + `area:<subsystem>` labels), instead of appending to `bug.md`. CodeRabbit's stray auto-issues are embraced and reconciled by a sweep.
 - **New tooling**: an `issue-sweep.sh` + `issue-janitor` (closeout + periodic) keep Issues labelled/deduped/stale-swept — the role the backlog's triage cadence played.
 - **Reversal cost is real**: undoing this means migrating Issues back to markdown, restoring the `bug` category, and retraining the loop — hence this ADR.
-- Full protocol + migration + sweep design: `docs/plans/active/issue-triage-protocol.md` (and `docs/agent-rules/issue-triage.md` once shipped).
+- Full protocol + migration + sweep design: `docs/plans/shipped/issue-triage-protocol.md` (and `docs/agent-rules/issue-triage.md` once shipped).

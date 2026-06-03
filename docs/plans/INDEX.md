@@ -106,6 +106,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | 2026-06-02 | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
 | [`solo-merge-review-gate`](shipped/solo-merge-review-gate.md) | 2026-06-02 | Plan — Solo-workflow review gate (drop required approval, codify protection) |
 | [`dry-pillar-dup-gate`](shipped/dry-pillar-dup-gate.md) | 2026-06-03 | Plan — DRY Quality Pillar + duplication delta-gate |
+| [`issue-triage-protocol`](shipped/issue-triage-protocol.md) | — | Plan — GitHub Issue triage protocol (Issues-canonical for product bugs) |
 <!-- END auto-plan-index -->
 
 ### Notes

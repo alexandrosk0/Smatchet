@@ -110,10 +110,28 @@ Six locked decisions (grill-with-docs, 2026-06-03):
 - **Changing `log-a-bug-github`** product behaviour.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+Shipped in 5 PRs + a CI-gap fix + the live migration (2026-06-03):
+
+- **#811** — CI: added `test-markdown-links` to the required `Doc anchors + agent contract` job (a gap found shipping these docs — broken `[label](href)` could reach develop).
+- **Slice 1 (#809)** — `docs/agent-rules/issue-triage.md` (protocol: boundary table, bug-vs-debt rule, dedup-first create-flow, decision tree, bot-only auto-act) + `AGENT_SELF_IMPROVEMENT.md`/`test-backlog-counts.sh` (`bug` deprecated, `debt` added) + new `debt.md` + `bug.md` DEPRECATED header + AGENTS.md § Issue triage stub (A, B, H).
+- **Slice 1.5 (#810)** — § Fixing an Issue (user-initiated, `gh issue develop`, `area:` → specialist, `Fixes #<n>`) + the **auto-propose-never-auto-fix** guardrail (closeout `[issue-propose]` top-P0/P1).
+- **Slice 2 (#812)** — `issue-labels.manifest` + `sync-issue-labels.sh` (`--apply`/`--check-parity`, area↔triage-map parity) + 6 bats (C).
+- **Slice 3 (#814)** — `issue-sweep.sh` (verdicts + propose; bot-only `--apply`) + `migrate-bugs-to-issues.sh` (SAFETY-first bug-vs-debt classifier, dedup-first) + 10 bats (E, G).
+- **Slice 4 (#815)** — `issue-janitor` agent + weekly advisory `issue-janitor.yml` + `coderabbit-triage.md` (product-bug → dedup-first Issue) + `ship-loops.md` closeout sweep + `.coderabbit.yaml` reconcile policy (D, F, janitor).
+- **Migration (#829, live-applied)** — 15 labels created; **9 product bugs → Issues** (#734 relabeled canonical, #818, #820–#826); 4 tech-debt → `debt.md`; 6 ambiguous left in `bug.md`; 3 duplicate Issues closed.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Slice 1.5 added** (fix-elevation flow + auto-propose) — the original workstreams covered intake + triage but **not** how an Issue gets worked. Folded in on user request; design decision recorded: agents auto-file/triage/**propose**, the human elevates (never autonomous product-code fixes).
+- **CI gap closed mid-stream (#811)** — `test-markdown-links` was not in the required doc-validation job, so #809 shipped broken forward-ref links green. Added it as a required step.
+- **Live-migration script bugs, fixed in flight** — (a) gh.exe (native Windows) cannot open the `mktemp` `C:/…` body-file path → body passed as **base64 via stdin** (Python-decoded; coreutils `base64 -d` was flaky on msys); (b) the special-char dedup term (`bulkImportFutures.clear()`) failed to match #734 → stripped to an **alphanumeric token**. Both landed on #814. Re-runs before the fixes created **3 duplicate Issues** (#819/#827/#828), closed with backlinks.
+- **`bug.md` pruning done as a doc PR, not by the script** — `migrate-bugs-to-issues.sh --apply` is non-destructive (creates Issues only); the `bug.md`→`debt.md` move + prune shipped as #829 after a human-reviewed dry-run.
+- **Sweep `mirror-then-close` is relabel-only today** — `issue-sweep.sh` relabels bot strays + proposes; full dup-detection/close is the migration's dedup-first job (the #734 reconcile was done by hand). A follow-up could add cross-Issue dup detection to the sweep.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Scripts**: `sync-issue-labels.sh` (shellcheck + 6 bats + parity OK + live `--dry-run`), `issue-sweep.sh` + `migrate-bugs-to-issues.sh` (shellcheck + 10 bats; migration dry-run = **9 Issues / 4 debt / 6 ambiguous**, matching a hand-audit).
+- **Live application**: 15 labels created (`gh label list` confirmed); 9 Issues open (#734 + #818 + #820–#826), 3 dups closed; `bug.md` count **6**, `debt.md` count **4** (`test-backlog-counts` green).
+- **Gates**: `test-agent-contract` 25/0 (new `issue-janitor`), `test-agent-discovery`, full doc-validation suite (doc-anchors / markdown-links / plan-ref / portable-purity / md_lint), shell-lint — all green across the 5 PRs.
+- **Not run**: the manual CR-config E2E (does a fresh `@coderabbitai` reply still spawn a competing Issue) — deferred; the sweep's reconcile is the documented backstop regardless.

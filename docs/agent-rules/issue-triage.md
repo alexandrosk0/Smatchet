@@ -2,7 +2,7 @@
 
 > The agentic protocol for GitHub Issues + the boundary between Issues and the
 > internal self-improvement backlog. Decision: [`ADR-0014`](../adr/0014-github-issues-canonical-for-product-bugs.md)
-> (GitHub Issues are canonical for product bugs). Plan: [`docs/plans/active/issue-triage-protocol.md`](../plans/active/issue-triage-protocol.md).
+> (GitHub Issues are canonical for product bugs). Plan: [`docs/plans/shipped/issue-triage-protocol.md`](../plans/shipped/issue-triage-protocol.md).
 > AGENTS.md keeps a ≤3-line § Issue triage stub pointing here.
 
 ## Boundary — which tracker owns what
