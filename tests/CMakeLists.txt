@@ -89,6 +89,11 @@ add_executable(SmatchetTests
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp
+    # Pure helpers extracted from SmatchetToolbarUi::RenderEditor during the
+    # function-size decomposition (header-only inline in
+    # Source/Core/src/Ui/SmatchetToolbarUi_detail.h). Links the IconCatalog TU
+    # below for SmatchetToolbarIconGlyph; no extra source needed.
+    Core/ToolbarEditorPure.test.cpp
     Core/IconCatalog.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetIconCatalog.cpp"
     Core/SingleClickEditConfig.test.cpp
