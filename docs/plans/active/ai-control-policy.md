@@ -29,21 +29,22 @@ A short root `AI_POLICY.md` (Ghostty's governance-separated-from-instruction pla
 - **Escalate, don't assume (invariant in BOTH modes).** Before acting, the agent must be able to *autonomously validate* the action — a gate/test/spec confirms correctness, the scope is authorised, the cost is bounded. If it cannot, it **escalates** via `AskUserQuestion` with the blocker named; it never fills the gap with an assumption. This adds ship-loop pause-exception **(6) cannot-autonomously-validate / cost-unbounded**.
 - **Cost control.** Token/compute spend is a human-governed budget (gauged by `agents/_shared/token-tracking/`). The agent surfaces cost and escalates *before* an unbounded or expensive autonomous run — runaway spend without validation is forbidden.
 
-**Reconciliation (the careful part).** The charter must not contradict `AGENTS.md:28` / `ship-loops.md:116` ("MUST NOT pause"). Resolution: the MUST-NOT-pause rule applies **within the active mode's authorised scope**; the escalate-when-unvalidatable invariant is a *new pause trigger that fires in both modes*, not a weakening of autonomy in on-the-loop mode. The 2026-05-30 standing default is re-expressed as "on-the-loop mode selected"; prerelease selects in-the-loop. No rule is deleted — they are placed under the mode spectrum the charter defines.
+**Reconciliation (the careful part).** The charter must not contradict `AGENTS.md` § Autonomous ship-loop default / `ship-loops.md:116` ("MUST NOT pause"). Resolution: the MUST-NOT-pause rule applies **within the active mode's authorised scope**; the escalate-when-unvalidatable invariant is a *new pause trigger that fires in both modes*, not a weakening of autonomy in on-the-loop mode. The 2026-05-30 standing default is re-expressed as "on-the-loop mode selected"; prerelease selects in-the-loop. No rule is deleted — they are placed under the mode spectrum the charter defines.
 
 ## Files to modify
 
 1. `AI_POLICY.md` (new, repo root) — the charter per § Approach: Authority · Two loop modes (`SMATCHET_LOOP_MODE`, prerelease default in-the-loop) · Escalate-don't-assume invariant · Cost control · Auditability. Kept short (Ghostty's is ~40 lines); links into `AGENTS.md` for the operating mechanics.
-2. `AGENTS.md` (edit) — (a) top-of-file pointer to `AI_POLICY.md` as the governance layer above the operating contract (dovetails with the `agent-charter-altitude` § Operating principles preamble if that lands first); (b) add ship-loop pause-exception **(6) cannot-autonomously-validate / cost-unbounded — escalate** to the `:28` "Loop pauses ONLY for" list.
+2. `AGENTS.md` (edit) — (a) top-of-file pointer to `AI_POLICY.md` as the governance layer above the operating contract (dovetails with the `agent-charter-altitude` § Operating principles preamble if that lands first); (b) add ship-loop pause-exception **(6) cannot-autonomously-validate / cost-unbounded — escalate** to the "Loop pauses ONLY for" list (AGENTS.md § Autonomous ship-loop default).
 3. `docs/agent-rules/ship-loops.md` (edit) — frame the `:116` standing default as the **on-the-loop** mode definition; add the **in-the-loop** mode (plan-gated, pause-at-undocumented-decision) + the prerelease default; cross-link `AI_POLICY.md`. Add the (6) escalation exception text + the cost-budget escalation.
-4. `agents/scripts/core/clear-session-context.sh` (edit) — emit a `## === loop-mode: <on|in> ===` banner into `.session-context.md` at SessionStart from `SMATCHET_LOOP_MODE` (default `in` during prerelease), mirroring the existing `p4-mode ACTIVE` banner pattern (`AGENTS.md:32`). So the orchestrator sees the active mode every session.
+4. `agents/scripts/core/clear-session-context.sh` (edit) — emit a `## === loop-mode: <on|in> ===` banner into `.session-context.md` at SessionStart from `SMATCHET_LOOP_MODE` (default `in` during prerelease), mirroring the existing `p4-mode ACTIVE` banner pattern (`AGENTS.md` § Autonomous ship-loop default). So the orchestrator sees the active mode every session.
 5. `project.config.json` (edit) — add `loop_mode` defaults under a `governance` block (`default: in`, `policy: AI_POLICY.md`) so the mode + policy path are config-sourced.
+6. `project.config.schema.json` (edit — **required**, not optional). The schema root is `additionalProperties: false`, so a new top-level `governance` block in `project.config.json` **fails validation unless the schema defines it first**. Add a `governance` object to the schema's `properties` (e.g. `loop_mode` enum `["in","on"]` default `"in"`; `policy` string default `"AI_POLICY.md"`; `additionalProperties: false` on the sub-object to match the file's convention). This is the gate the § Verification "validates against its schema" check exercises — without it that check fails.
 
 ## Existing utilities reused
 
 - `docs/agent-rules/ship-loops.md:116` standing-default — becomes the on-the-loop mode definition; not rewritten, re-framed.
-- `AGENTS.md:28` ship-loop pause-exception list — extended by one (the escalation exception), same structure.
-- `SMATCHET_AGENT_VCS` / `SMATCHET_WATCH_ALL_PRS` env-var-opt-in pattern + the `clear-session-context.sh` SessionStart banner (the `p4-mode` banner, `AGENTS.md:32`) — the exact mechanism `SMATCHET_LOOP_MODE` copies.
+- `AGENTS.md` § Autonomous ship-loop default ship-loop pause-exception list — extended by one (the escalation exception), same structure.
+- `SMATCHET_AGENT_VCS` / `SMATCHET_WATCH_ALL_PRS` env-var-opt-in pattern + the `clear-session-context.sh` SessionStart banner (the `p4-mode` banner, `AGENTS.md` § Autonomous ship-loop default) — the exact mechanism `SMATCHET_LOOP_MODE` copies.
 - `agents/_shared/token-tracking/` — the cost gauge the cost-control clause references.
 - `AskUserQuestion` (the orchestrator's escalation channel) + `delegation.md:16` (escalate-on-lock-overlap precedent) — the escalation mechanism the invariant invokes.
 - The PR / commit / `## Self-improvement` / `postmortems.md` trail — the auditability the charter cites; nothing new built.
@@ -59,7 +60,7 @@ N/A — no Source/Core code, no C++. The diff is `*.md` + `project.config.json` 
 ## Risks / non-goals
 
 **Risks:**
-- **Contradiction with the action-biased standing default** (`ship-loops.md:116`, `AGENTS.md:28` MUST-NOT-pause). → resolved by the mode spectrum: MUST-NOT-pause holds *within the active mode's authorised scope*; the standing default IS on-the-loop mode; prerelease selects in-the-loop. No existing rule deleted — re-placed under the charter. This is the plan's central design point and the `grill-with-docs` stress-test focus.
+- **Contradiction with the action-biased standing default** (`ship-loops.md:116`, `AGENTS.md` § Autonomous ship-loop default MUST-NOT-pause). → resolved by the mode spectrum: MUST-NOT-pause holds *within the active mode's authorised scope*; the standing default IS on-the-loop mode; prerelease selects in-the-loop. No existing rule deleted — re-placed under the charter. This is the plan's central design point and the `grill-with-docs` stress-test focus.
 - **Over-restricting autonomy** (defeating the ship-loop's value). → escalate-don't-assume is scoped to the *un-validatable / cost-unbounded* case, not "pause on everything"; on-the-loop mode keeps full autonomy; reversible forks still resolve with a default + surface (the `:116` rule stays).
 - **Mode ambiguity** (which mode is active?). → `SMATCHET_LOOP_MODE` + the SessionStart banner make it explicit every session; absent a setting in prerelease, the documented default is in-the-loop.
 - **"Cannot validate" judgement drift** (agent rationalising an assumption as "validated"). → the charter ties validation to *concrete* signals — a gate/test/spec, authorised scope, bounded cost; absent one, it is by definition not autonomously validatable → escalate. The `gate-escape-postmortem` mechanism catches misjudgements after the fact.
@@ -75,7 +76,7 @@ N/A — no Source/Core code, no C++. The diff is `*.md` + `project.config.json` 
 - **Bucket A / E**: N/A — no code.
 - **Banner**: with `SMATCHET_LOOP_MODE` unset, `bash agents/scripts/core/clear-session-context.sh` writes `## === loop-mode: in ===` (prerelease default); with `SMATCHET_LOOP_MODE=on` it writes `on`.
 - **Reconciliation check**: `AGENTS.md` + `ship-loops.md` contain no surviving statement that contradicts the charter — grep for "MUST NOT" / "always autonomous" and confirm each is mode-scoped or exception-qualified.
-- **Escalation exception present**: `AGENTS.md:28` "Loop pauses ONLY for" list includes the new (6) cannot-validate/cost item.
+- **Escalation exception present**: `AGENTS.md` § Autonomous ship-loop default "Loop pauses ONLY for" list includes the new (6) cannot-validate/cost item.
 - **Doc integrity**: `test-markdown-links.sh` + `test-doc-anchors.sh` green — `AI_POLICY.md` ↔ `AGENTS.md` ↔ `ship-loops.md` cross-links resolve.
 - **Config**: `project.config.json` validates against its schema with the new `governance` block.
 - **Shell lint**: `test-shell-lint.sh` on the edited `clear-session-context.sh`.
