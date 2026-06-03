@@ -77,10 +77,15 @@ N/A — no Source/Core code. The diff is `*.md` + `agents/scripts/**` only — b
 - **The audit-suite adoption** (context-budget / skill-stocktake / agent-architecture-audit / rules-distill) — separate plan `harness-audit-suite`.
 
 ## Implementation log
-*(populated post-ship)*
+
+- Wave-1.2 of `agentic-harness-campaign`. `docs/agent-rules/AGENT-VS-SKILL.md` created — rubric lifted verbatim from `docs/plans/shipped/agents-skill-conversion.md` § Decision criteria (Skill-when-ALL / Agent-when-ANY + cross-harness dual-publish note + the `SKILL_ONLY_HELPERS` escape). `agents/_shared/skills/author-plan-doc/SKILL.md` created (frontmatter + 7-step workflow: derive slug → copy template → fill every section N/A-not-delete → mandatory Perf-gate when touching Source/Core → **commit-immediately** → grill hand-off → PR-only revisions). `agents/scripts/core/test-skill-vs-agent-parity.sh` registers `author-plan-doc` in `SKILL_ONLY_HELPERS`. `AGENTS.md` § Agent file locations gains the rubric pointer.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- `setup-harness.sh` auto-links the new skill via its `agents/_shared/skills/*/` loop — no setup change needed, as the plan predicted.
+- Bundled a pre-existing 3-line `docs/plans/INDEX.md` drift-fix (develop-side, unrelated) so this branch's `test-plan-index` gate passes.
+- Noted (not fixed): `test-skill-vs-agent-parity.sh` has 3 PRE-EXISTING fails (`adversarial-code-review`, `but-for-real`, `drain-memory` — skills with no twin, not in `SKILL_ONLY_HELPERS`); out of scope, and the guard is advisory (not in the CI `test-docs` suite). `author-plan-doc` correctly SKIPs.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- `author-plan-doc` → parity guard SKIP (intentionally skill-only). `test-portable-purity` PASS · `test-docs` 7/7 · `shellcheck` clean on the edited parity script. Pure-docs/agentic-shell — no build gate.

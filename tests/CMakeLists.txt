@@ -47,6 +47,23 @@ add_executable(SmatchetTests
     # _detail TU depends on nothing but <algorithm> — no ImGui, no AppController.
     Core/GridHeaderToolbarLayout.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridHeaderUi_detail.cpp"
+    # Pure cached-project filter extracted from DrawJqlQueryEditorEmbedded's project pill. The
+    # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
+    Core/JqlProjectPillFilter.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetJqlProjectPill_detail.cpp"
+    # Pure log-line formatting / clipboard-join helpers extracted from SmatchetUI::drawLogWindow.
+    # The _detail TU depends only on Logger.h types (header-only enum + struct) — no ImGui.
+    Core/LogViewLines.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetLog_detail.cpp"
+    # Pure option-filter + catalog-dropdown predicates extracted from RenderNewIssueDraftRow. The
+    # _detail TU depends only on StringUtil (header-inline) + TrackerFieldSchema — no ImGui.
+    Core/NewIssueDraftFieldDecision.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetNewIssueDraftUi_detail.cpp"
+    # Pure date-format index<->option helpers lifted out of
+    # DrawLocalAndAppearancePreferencesTabs during its function-size decomposition.
+    # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
+    # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
+    Core/PreferencesDateFormatIndex.test.cpp
     # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
     # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
     # (the largest function in the tree) to cut its branch count. The _detail TU is
