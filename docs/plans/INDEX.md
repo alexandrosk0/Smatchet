@@ -104,6 +104,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`internal-procedure-skills`](shipped/internal-procedure-skills.md) | 2026-06-02 | Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc) |
 | [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | 2026-06-02 | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
 | [`solo-merge-review-gate`](shipped/solo-merge-review-gate.md) | 2026-06-02 | Plan — Solo-workflow review gate (drop required approval, codify protection) |
+| [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | — | Plan — Gate-escape postmortem (incident → new gate) |
 <!-- END auto-plan-index -->
 
 ### Notes

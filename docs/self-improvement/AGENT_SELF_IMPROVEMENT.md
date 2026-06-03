@@ -98,6 +98,22 @@ Sweep when (a) opening any PR that touches `agents/`, (b) any single live
 category file exceeds ~20 open items, or (c) a P0 entry has aged ≥7 days
 without movement.
 
+## Gate-escape postmortems
+
+A **gate escape** — something that shipped to `develop` that a gate should have
+caught — gets a blameless postmortem in [`postmortems.md`](postmortems.md), not
+just a category entry. `agents/scripts/core/postmortem-owed.sh` (SessionStart
+nudge) detects escapes (a non-SUCCESS check on a merged head, an override label,
+a `Revert`, an overdue deviation); the [`gate-escape-postmortem`](../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+skill runs the RCA. The postmortem's **mandatory** `### Preventing gate` field —
+the concrete new gate/rule/test that catches the *class* — is filed back here as
+a **normal category entry** (existing format + priority + apply threshold). The
+postmortem is the incident finder; this loop is the applier; there is no second
+apply-system. A legitimate override closes with `### Preventing gate: none —
+override legitimate (reason)`. The post-merge-bug trigger is **manual** (the
+user/orchestrator names it); only check/label/revert/deviation escapes are
+auto-detected.
+
 ## Index
 
 | Category | Live count | File |

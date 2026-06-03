@@ -22,7 +22,13 @@ Each escape is evidence a gate failed, and — given the project's "gate, don't 
 
 A narrow, **trigger-only** mechanism — not a per-PR ceremony (that would tax the autonomous one-turn ship-loop for no gain). Three parts, each formed per `docs/agent-rules/AGENT-VS-SKILL.md`:
 
-**1. Detection — a script.** `agents/scripts/core/postmortem-owed.sh` inspects recent `develop` merges for the escape signals (override label on the merged PR via the `gh pr view --json labels` pattern `merge-gates.sh` already uses; `git log` for `Revert`; `deviation-overdue` hits). It emits a "postmortem owed: PR #N — <trigger>" line when an escape has no postmortem entry referencing it. Wired as a `SessionStart` nudge, mirroring `memory-drain-nudge.sh` (deterministic check → nudge, no investigation) — so it surfaces at the start of the next session, not mid-ship.
+**1. Detection — a script.** `agents/scripts/core/postmortem-owed.sh` inspects recent `develop` merges for the escape signals and emits a "postmortem owed: PR #N — <trigger>" line when an escape has no postmortem entry referencing it. Four triggers:
+- **non-SUCCESS check on the merged head** (the highest-signal trigger; added 2026-06-03 after the agentic-harness campaign proved it) — scan each merged PR's `statusCheckRollup` (`gh pr view --json statusCheckRollup`) for any check that was NOT `SUCCESS`/`SKIPPED`/`NEUTRAL` at merge time. This catches the most common escape: a **non-required** CI job (e.g. "Doc anchors + agent contract") that was RED yet merged because branch-protection only gates the required set. The campaign shipped a portable-purity leak, an INDEX drift, and a dangling ref to `develop` exactly this way — no override label, no revert, no overdue deviation, just a red non-required check. The override-label-only detector would have been blind to all three.
+- **override label** on the merged PR (via the `gh pr view --json labels` pattern `merge-gates.sh` already uses, against `project.config.json` `merge_gates.override_labels`) — an explicit "we shipped past a gate".
+- **`Revert` commit** on `develop` (`git log --grep`) — a post-merge undo.
+- **overdue `SMATCHET_DEVIATION`** — defers to the existing strict `deviation-overdue` lint (cross-reference, not re-implemented).
+
+Wired as a `SessionStart` nudge, mirroring `memory-drain-nudge.sh` (deterministic check → nudge, no investigation) — so it surfaces at the start of the next session, not mid-ship.
 
 **2. The postmortem — a skill.** `gate-escape-postmortem` (bounded: read the escaping PR/diff, do blameless RCA, name the preventing gate, file the entry) → skill per the rubric. It **escalates to `debug-detective`** only when the root cause needs deep C++ investigation (the one branch that fails the skill rubric). The skill writes one entry to a `docs/self-improvement/postmortems.md` ledger.
 
@@ -32,7 +38,7 @@ A narrow, **trigger-only** mechanism — not a per-PR ceremony (that would tax t
 
 ## Files to modify
 
-1. `agents/scripts/core/postmortem-owed.sh` (new) — detector + nudge. Scans the last N `develop` merges for override-labels / `Revert` commits / `deviation-overdue` hits; emits "postmortem owed" for any escape lacking a `postmortems.md` entry. Passes `test-shell-lint.sh` (5 rules). `--list` (plain) / `--nudge` (SessionStart-formatted) modes.
+1. `agents/scripts/core/postmortem-owed.sh` (new) — detector + nudge. Scans the last N `develop` merges for **non-SUCCESS checks on the merged head** (primary) / override-labels / `Revert` commits (+ cross-references `deviation-overdue`); emits "postmortem owed" for any escape lacking a `postmortems.md` entry. Passes `test-shell-lint.sh` (5 rules). `--list` (plain) / `--nudge` (SessionStart-formatted) modes.
 2. `.claude/settings.json` template under `docs/harness/claude-code/` (edit) — register `postmortem-owed.sh --nudge` as a `SessionStart` hook alongside the existing `memory-drain-nudge.sh` / `clear-session-context.sh`. (Generated into `.claude/` by `setup-harness.sh`; the tracked source is the harness template.)
 3. `agents/_shared/skills/gate-escape-postmortem/SKILL.md` (new) — triggers (`postmortem`, `gate escape`, `why did this ship`, `post-merge bug`, an override-used nudge); workflow (identify the escaped class → blameless RCA → **mandatory** `### Preventing gate` → file the category entry → append to `postmortems.md`); escalate-to-`debug-detective` clause for deep C++ RCA. Skill-only → add to `SKILL_ONLY_HELPERS`.
 4. `docs/self-improvement/postmortems.md` (new) — the append-only ledger. Entry shape: `## <date> · PR #N · <trigger>` → `### What escaped` (the gate that didn't catch it) · `### Root cause` (blameless) · `### Preventing gate` (mandatory; the new gate) · `### Filed as` (link to the spawned category entry).
@@ -76,7 +82,7 @@ N/A — no Source/Core code, no C++. The diff is `*.md` + scripts under `agents/
 ## Verification
 
 - **Bucket A / E**: N/A — no code.
-- **Detector**: `bash agents/scripts/core/postmortem-owed.sh --list` on a synthetic history flags (a) a merge carrying an override label and (b) a `Revert` commit, and stays silent on a clean docs-only merge; dedupes once a matching `postmortems.md` entry exists.
+- **Detector**: `bash agents/scripts/core/postmortem-owed.sh --list` flags (a) a merged PR with a non-SUCCESS check on its head, (b) a merge carrying an override label, and (c) a `Revert` commit, and stays silent on a clean merge whose checks were all green; dedupes once a matching `postmortems.md` entry exists.
 - **Forcing function**: a `postmortems.md` entry missing `### Preventing gate` is rejected (a `test-postmortem-format.sh` check, or the skill refuses to close) — verified by a fixture entry.
 - **Loop integration**: a sample postmortem's preventing-gate action lands as a well-formed `docs/self-improvement/categories/<cat>.md` entry (existing format).
 - **Parity + lint**: `test-skill-vs-agent-parity.sh` green (`gate-escape-postmortem` in `SKILL_ONLY_HELPERS`); `test-shell-lint.sh` on the detector.
@@ -93,10 +99,23 @@ N/A — no Source/Core code, no C++. The diff is `*.md` + scripts under `agents/
 - **CI-blocking postmortem enforcement** — deliberately advisory; revisit only if escapes go unaddressed.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `agents/scripts/core/postmortem-owed.sh` (new) — detector + nudge. **4 triggers**: non-SUCCESS check on the merged head (primary, added this revision), override label (config-sourced `PC_OVERRIDE_LABELS`), `Revert` commit, + `deviation-overdue` cross-ref. `--list` / `--nudge` modes; dedupes on `postmortems.md` "PR #N". Optimized to a **single batched `gh pr list --json statusCheckRollup`** call (~3 s, SessionStart-safe) instead of per-PR `gh pr view`.
+- `agents/_shared/skills/gate-escape-postmortem/SKILL.md` (new) — 6-step workflow (identify class → blameless RCA → mandatory `### Preventing gate` → file category entry → append ledger → PR-only), `debug-detective` escalation for deep C++ RCA. Skill-only.
+- `docs/self-improvement/postmortems.md` (new) — the append-only ledger + entry-shape header, **seeded** with this session's real doc-gate-escape postmortem (dogfooding; dedups #771/#774/#776/#778/#780).
+- `docs/harness/claude-code/settings.json.tmpl` — `postmortem-owed.sh --nudge` SessionStart hook (timeout 10000, after `memory-drain-nudge.sh`).
+- `agents/scripts/core/test-skill-vs-agent-parity.sh` — `gate-escape-postmortem` → `SKILL_ONLY_HELPERS`.
+- `AGENTS.md` § Self-improvement loop + `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` — gate-escape-postmortem path documented.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Added a 4th, primary detector trigger** — "non-SUCCESS check on the merged head" — after the double-check found the original override-label/revert/overdue triggers would have been **blind to this session's actual escapes** (3 doc-gate regressions + a CR-findings bypass merged with a RED non-required check, no override label). § Approach + § Files patched. The first live run confirmed it dominates (caught #774/#776/#780).
+- **`test-postmortem-format.sh` deferred** — the "entry cannot close without `### Preventing gate`" forcing function is enforced by the **skill workflow** (step 3, explicit) + the ledger-header contract, not a standalone CI check. A format-lint is a cheap follow-up if drift appears; filed as a residual rather than shipped now.
+- Detector reworked from per-PR `gh pr view` to one batched `gh pr list` call for SessionStart latency.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- Detector: `--list` on real history flags exactly the escapes (red-check #774/#776/#780, override-label PRs, reverts); dedupes the seeded entries (#771/#774/#776/#778/#780 no longer listed); silent triggers on a clean merge. ~3 s.
+- `test-shell-lint` (5-rule) PASS on the detector + parity script. `shellcheck` clean (only SC1091/SC2016 info — sourced-file + jq-literal false-positives).
+- `test-skill-vs-agent-parity` → `gate-escape-postmortem` SKIP (skill-only). `test-portable-purity` PASS. `test-docs` 7/7. `settings.json.tmpl` valid JSON.
+- Pure-docs/agentic-shell — no build/ctest gate.
