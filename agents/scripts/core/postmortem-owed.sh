@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # postmortem-owed.sh — detect gate escapes on recent `develop` merges and nudge
-# for a blameless postmortem (see docs/plans/active/gate-escape-postmortem.md +
+# for a blameless postmortem (see docs/plans/shipped/gate-escape-postmortem.md +
 # the gate-escape-postmortem skill). A gate escape = something shipped that a
 # gate should have caught; the "gate, don't trust" response is a NEW gate, filed
 # via the postmortem's mandatory `### Preventing gate` field.
@@ -49,7 +49,9 @@ fi
 # Already has a postmortem? (ledger references "PR #<n>")
 has_entry() {
     [ -f "$LEDGER" ] || return 1
-    grep -qE "PR #$1([^0-9]|$)" "$LEDGER"
+    # Match either a "PR #N" reference or a "commit <sha>" reference, so the
+    # commit-only revert path (which passes a sha) dedupes too.
+    grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER"
 }
 
 owed=()   # "PR #N — <trigger>"
