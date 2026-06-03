@@ -16,7 +16,7 @@ That v1 commit explicitly deferred three residual leaks to *this* follow-up plan
 
 **Intended outcome**: after this lands, the redacted screenshot leaks neither a visible on-screen flash, nor recoverable text length/structure, nor texture-baked text — while keeping the layout/icon/colour fidelity that motivated the font-redaction approach over mosaic.
 
-> Status: v1 is shipped; hardening is in-flight on branch `feat/bug-report-font-redaction-impl`. This doc back-fills the plan the v1 commit referenced and frames the remaining work.
+> Status (2026-06-03): v1 is shipped (#618); **hardening NOT started** — all three slices below are open. (An earlier draft of this line claimed an in-flight `feat/bug-report-font-redaction-impl` branch; no such branch exists local or remote, and `SmatchetImGuiFonts.cpp` is untouched since v1, so no hardening work has begun.) This doc back-fills the plan the v1 commit referenced and frames the remaining work.
 
 ## Approach
 
