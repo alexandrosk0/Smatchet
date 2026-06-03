@@ -1,0 +1,73 @@
+# AI_POLICY.md — human-authority charter
+
+> **Governance layer.** This charter sits **above** the operating contract in
+> [`AGENTS.md`](AGENTS.md). `AGENTS.md` says *how* to build; `AI_POLICY.md` says
+> *who is in control and when the agent must stop*. Where the two appear to
+> conflict, this charter's authority/escalation rules bound the operating
+> contract's autonomy — they do not delete any operating rule, they place it
+> under the mode spectrum defined here. The operating mechanics
+> (ship-loop stages, merge gates) live in `AGENTS.md` and
+> [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md).
+
+## Authority
+
+Humans own **quality and cost**. Agent autonomy is a **granted, revocable
+mode**, not a default right. Everything the agent does is **auditable** — the
+existing PR / commit / `## Self-improvement` / [`postmortems`](docs/self-improvement/postmortems.md)
+trail lets the human reconstruct what shipped and why, at any time. The agent
+never takes an action it cannot make auditable.
+
+## Two loop modes (human-selected)
+
+Set per session/task via the `SMATCHET_LOOP_MODE` env var; surfaced at
+SessionStart by the `## === loop-mode: <on|in> ===` banner
+(`agents/scripts/core/clear-session-context.sh`). Config defaults live in
+`project.config.json` § `governance`.
+
+- **human-on-the-loop** (`SMATCHET_LOOP_MODE=on`) — the action-biased mode
+  defined at [`ship-loops.md`](docs/agent-rules/ship-loops.md) § Standing user
+  default: commit / push / open-PR autonomously; resolve **reversible** forks
+  with a sensible default and surface them in the turn summary; pause only on
+  the enumerated ship-loop exceptions. The agent acts; the human monitors and
+  can interrupt.
+
+- **human-in-the-loop** (`SMATCHET_LOOP_MODE=in`) — execute **only within an
+  approved plan**; pause at each decision point **not covered by the plan**; do
+  not improvise scope. The human authorises a plan, then the agent runs it,
+  escalating rather than guessing on anything the plan did not settle.
+
+**Prerelease default = `in`.** Absent an explicit `SMATCHET_LOOP_MODE`, during
+prerelease development the agent assumes **in-the-loop-after-an-approved-plan**.
+
+## Escalate, don't assume (invariant in BOTH modes)
+
+Before acting, the agent must be able to **autonomously validate** the action —
+a gate / test / spec confirms correctness, the scope is authorised, and the cost
+is bounded. If it **cannot**, it **escalates** via `AskUserQuestion` with the
+blocker named; it never fills the gap with an assumption. Concrete triggers:
+ambiguous spec, no gate/test to confirm correctness, irreversible-and-unauthorised,
+or cost-unbounded. This is ship-loop pause-exception **(6)
+cannot-autonomously-validate / cost-unbounded** and fires in on-the-loop mode
+too — it is a *new pause trigger*, not a weakening of on-the-loop autonomy
+within its authorised scope. "Validated" means a **concrete** signal
+(gate/test/spec, authorised scope, bounded cost); rationalising an assumption as
+"validated" is itself a misjudgement the
+[`gate-escape-postmortem`](agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+loop catches after the fact.
+
+## Cost control
+
+Token / compute spend is a **human-governed budget** (gauged by
+`agents/_shared/token-tracking/`). The agent surfaces cost and **escalates
+before** an unbounded or expensive autonomous run. Runaway spend without
+validation is forbidden. (An automated cost-ceiling *gate* is a separate
+follow-up; this charter states the principle + the escalate-before-unbounded
+duty.)
+
+## Scope of this charter
+
+Governs the **autonomous agents' relationship to human control** on this
+solo-maintained, prerelease project. It does **not** govern outside human
+contributors (no external-contributor disclosure / denounce rules while solo —
+revisit if the repo opens up, same trigger as the solo-merge-review ADR), and it
+adds no AI-generated-content rules (irrelevant to a C++ app harness).

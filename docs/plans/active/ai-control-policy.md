@@ -91,10 +91,26 @@ N/A — no Source/Core code, no C++. The diff is `*.md` + `project.config.json` 
 - **The `agent-charter-altitude` § Operating principles preamble** — separate plan; this charter links to it but doesn't depend on it landing first (it adds its own top pointer if the preamble isn't there yet).
 
 ## Implementation log
-*(populated post-ship)*
+
+- **Plan prep (PR #808 → folded into this PR):** fixed stale `AGENTS.md:28`/`:32` line refs → drift-proof `§ Autonomous ship-loop default` section refs; added `project.config.schema.json` as required Files item 6 (root is `additionalProperties:false` → a new `governance` block fails validation without a schema def).
+- **Implementation (this PR):** all 6 files shipped.
+  1. `AI_POLICY.md` (new, root) — charter: Authority · Two loop modes (`SMATCHET_LOOP_MODE`, prerelease default `in`) · Escalate-don't-assume invariant · Cost control · Scope.
+  2. `AGENTS.md` — (a) top governance-layer pointer to `AI_POLICY.md`; (b) pause-exception **(6) cannot-autonomously-validate / cost-unbounded — escalate** appended to the "Loop pauses ONLY for" list + the in-the-loop plan-scope-pause note.
+  3. `docs/agent-rules/ship-loops.md` — new **§ Loop modes (governance)** framing the standing default as the on-the-loop definition, adding in-the-loop (plan-gated, prerelease default), exception (6), cost-budget escalation, and the "MUST-NOT-pause holds within the active mode's authorised scope" reconciliation.
+  4. `agents/scripts/core/clear-session-context.sh` — `## === loop-mode: <on|in> ===` SessionStart banner from `SMATCHET_LOOP_MODE` (default `in`; any non-`on` value normalises to `in`), mirroring the p4-mode banner.
+  5. `project.config.json` — `governance` block (`policy: AI_POLICY.md`, `loop_mode: in`).
+  6. `project.config.schema.json` — `governance` object property (loop_mode enum `["in","on"]`) so the config validates.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **No semantic deviation.** The plan-prep step (PR #808) was folded into this single feature PR rather than landing separately — same logical feature, and the plan-revision ships with the implementation per `AGENTS.md` § Process rules.
+- AGENTS.md top-pointer (Files 2a) noted "if the `agent-charter-altitude` § Operating principles preamble lands first" — that § exists today, so the pointer sits as a blockquote directly under the intro, above § Operating principles (no dependency taken).
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Banner**: `SMATCHET_LOOP_MODE` unset → `## === loop-mode: in ===`; `=on` → `on`; garbage/`in` → `in` (fail-safe to the conservative mode). Verified via the isolated branch logic.
+- **Schema**: `project.config.json` + `project.config.schema.json` both valid JSON; `governance` is a defined schema property and the config has no keys outside the schema → validates (root `additionalProperties:false` satisfied).
+- **Reconciliation**: the sole surviving `MUST NOT ... pause` (`AGENTS.md` § Autonomous ship-loop default) now terminates in exception **(6)** + the in-the-loop plan-scope-pause clause → mode-scoped / exception-qualified, no unconditional contradiction. `AI_POLICY.md` + `ship-loops.md § Loop modes` carry the "within the active mode's authorised scope" framing.
+- **Doc gates**: `md_lint` clean; `test-agent-contract` 25/0 (AGENTS.md structural gate intact after the top-pointer + exception-(6) edits).
+- **Shell lint**: `test-shell-lint.sh` green on the edited `clear-session-context.sh`.
+- **Build gate**: N/A — no C++.
