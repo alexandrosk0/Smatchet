@@ -1,6 +1,6 @@
 ---
 name: author-plan-doc
-description: Author a new plan-doc at docs/plans/active/<slug>.md from a one-line request — copy the template, set the slug to the basename, fill every section (N/A — <reason>, never delete), include the Perf-review-system-gates section when the diff would touch Source/Core/, then git add + wip(plan) commit immediately (working-tree-only plans are lost on checkout). Use when the user says "write a plan", "draft a plan", "new plan", "plan for X", or "plan this". The authoring counterpart to grill-with-docs (the stress-test). Read-write — creates + commits the plan file.
+description: Author a new plan-doc at docs/plans/active/<slug>.md from a one-line request — copy the template, set the slug to the basename, fill every section (N/A — <reason>, never delete), include the Perf-review-system-gates section when the diff would touch the project's perf-gated core source tree, then git add + wip(plan) commit immediately (working-tree-only plans are lost on checkout). Use when the user says "write a plan", "draft a plan", "new plan", "plan for X", or "plan this". The authoring counterpart to grill-with-docs (the stress-test). Read-write — creates + commits the plan file.
 version: 1
 ---
 
@@ -32,8 +32,9 @@ they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
    section that does not apply gets `N/A — <one-line reason>` — **never delete a
    section** (the empty section is the forcing function that catches a skipped
    concern).
-4. **Perf-gate section is mandatory** when the planned diff would touch
-   `Source/Core/` — assert the PR-fast / Pillar-2-scanner / dispatcher-drain /
+4. **Perf-gate section is mandatory** when the planned diff would touch the
+   project's perf-gated core source tree (the `project.config.json` `lint.zones`
+   / `perf` paths; the plan template marks which) — assert the PR-fast / Pillar-2-scanner / dispatcher-drain /
    bucket-E / marker-inventory state per `AGENTS.md` § Project rules. If the diff
    is pure-docs / agentic-shell / CI-config, say so and mark the gates N/A.
 5. **Commit immediately** — `git add docs/plans/active/<slug>.md` then
