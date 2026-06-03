@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetLog_detail.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -64,50 +65,55 @@ void DrawLogWindowPreferences(UiDrawSession& d) {
     }
 }
 
-void AppendLogEntryAsLines(std::vector<std::string>& out, const char* levelTag8, const std::string& message) {
-    constexpr const char* kPad = "        ";
-    size_t start = 0;
-    bool first = true;
-    for (;;) {
-        const size_t nl = message.find('\n', start);
-        const std::string part =
-            (nl == std::string::npos) ? message.substr(start) : message.substr(start, nl - start);
-        out.push_back(std::string(first ? levelTag8 : kPad) + part);
-        first = false;
-        if (nl == std::string::npos) {
-            break;
-        }
-        start = nl + 1;
-    }
-}
+using SmatchetLog::detail::FillLogViewLinesFromEntries;
+using SmatchetLog::detail::JoinLogLines;
 
-void FillLogViewLinesFromEntries(const std::vector<LogEntry>& entries, std::vector<std::string>& out) {
-    out.clear();
-    out.reserve(entries.size() * 2);
-    for (const auto& e : entries) {
-        const char* levelLabel;
-        switch (e.level) {
-        case LogLevel::Trace:
-            levelLabel = "[TRACE] ";
-            break;
-        case LogLevel::Debug:
-            levelLabel = "[DEBUG] ";
-            break;
-        case LogLevel::Info:
-            levelLabel = "[INFO ] ";
-            break;
-        case LogLevel::Warn:
-            levelLabel = "[WARN ] ";
-            break;
-        case LogLevel::Error:
-            levelLabel = "[ERROR] ";
-            break;
-        default:
-            levelLabel = "";
-            break;
-        }
-        AppendLogEntryAsLines(out, levelLabel, e.message);
+// Scrollable log body: the cached display lines, tail-following auto-scroll, and user
+// scroll-up release detection. Keeps the BeginChild/EndChild and PushTextWrapPos/PopTextWrapPos
+// pairs together inside this helper. Behaviour-identical to the original inline block.
+void DrawLogScrollRegion(UiDrawSession& d) {
+    ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    // Default ImGui wrapping makes row height != clipper item height → broken clipper and “empty” bands.
+    ImGui::PushTextWrapPos(FLT_MAX);
+
+    const int lineCount = static_cast<int>(d.logViewLines.size());
+    const int kMaxLogLinesDrawn = 8000;
+    const int skipLines = (lineCount > kMaxLogLinesDrawn) ? (lineCount - kMaxLogLinesDrawn) : 0;
+    if (skipLines > 0) {
+        ImGui::TextDisabled("(… %d older lines omitted …)", skipLines);
     }
+    if (lineCount <= 0) {
+        ImGui::TextDisabled("(empty)");
+    } else {
+        for (int row = skipLines; row < lineCount; ++row) {
+            const std::string& line = d.logViewLines[static_cast<size_t>(row)];
+            ImGui::TextUnformatted(line.c_str(), line.c_str() + line.size());
+        }
+    }
+
+    ImGui::PopTextWrapPos();
+
+    if (d.logScrollToTailPending && d.logAutoScroll) {
+        ImGui::SetScrollY(ImGui::GetScrollMaxY());
+        const float smax = ImGui::GetScrollMaxY();
+        const float sy = ImGui::GetScrollY();
+        if ((smax > 2.0f && sy >= smax - 6.0f) ||
+            static_cast<std::uint64_t>(ImGui::GetFrameCount()) >= d.logScrollTailGiveUpFrame) {
+            d.logScrollToTailPending = false;
+        }
+    }
+
+    const float smaxAfter = ImGui::GetScrollMaxY();
+    const float syAfter = ImGui::GetScrollY();
+    const bool nearBottom = smaxAfter <= 1.5f || syAfter >= smaxAfter - 36.0f;
+    if (d.logAutoScroll && nearBottom) {
+        d.logTailReleasedByUser = false;
+    } else if (d.logAutoScroll && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+               ImGui::GetIO().MouseWheel > 0.0f && syAfter < smaxAfter - 48.0f) {
+        d.logTailReleasedByUser = true;
+    }
+
+    ImGui::EndChild();
 }
 
 } // namespace
@@ -147,27 +153,12 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
     if (ImGui::Button(SmatchetLocalization::Label("log.copy_log", "Copy log", "LogWinCopy"))) {
         std::vector<std::string> clipLines;
         FillLogViewLinesFromEntries(logger.GetEntriesSnapshot(), clipLines);
-        std::string clip;
-        size_t n = 0;
-        for (const auto& s : clipLines) {
-            n += s.size() + 1;
-        }
-        if (!clipLines.empty() && n > 0) {
-            --n;
-        }
-        clip.reserve(n);
-        for (size_t i = 0; i < clipLines.size(); ++i) {
-            if (i > 0) {
-                clip.push_back('\n');
-            }
-            clip.append(clipLines[i]);
-        }
+        const std::string clip = JoinLogLines(clipLines);
         ImGui::SetClipboardText(clip.c_str());
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s",
-                          SmatchetLocalization::T("log.copy_log_tip",
-                                                  "Copy the full application log to the clipboard."));
+        ImGui::SetTooltip(
+            "%s", SmatchetLocalization::T("log.copy_log_tip", "Copy the full application log to the clipboard."));
     }
     ImGui::SameLine();
     if (ImGui::Checkbox("Auto-scroll", &d.logAutoScroll) && d.logAutoScroll) {
@@ -195,50 +186,6 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d) {
         d.logScrollToTailPending = false;
     }
 
-    ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-    // Default ImGui wrapping makes row height != clipper item height → broken clipper and “empty” bands.
-    ImGui::PushTextWrapPos(FLT_MAX);
-
-    const int lineCount = static_cast<int>(d.logViewLines.size());
-    constexpr int kMaxLogLinesDrawn = 8000;
-    const int skipLines = (lineCount > kMaxLogLinesDrawn) ? (lineCount - kMaxLogLinesDrawn) : 0;
-    if (skipLines > 0) {
-        ImGui::TextDisabled("(… %d older lines omitted …)", skipLines);
-    }
-    if (lineCount <= 0) {
-        ImGui::TextDisabled("(empty)");
-    } else {
-        for (int row = skipLines; row < lineCount; ++row) {
-            const std::string& line = d.logViewLines[static_cast<size_t>(row)];
-            ImGui::TextUnformatted(line.c_str(), line.c_str() + line.size());
-        }
-    }
-
-    ImGui::PopTextWrapPos();
-
-    if (d.logScrollToTailPending && d.logAutoScroll) {
-        ImGui::SetScrollY(ImGui::GetScrollMaxY());
-        const float smax = ImGui::GetScrollMaxY();
-        const float sy = ImGui::GetScrollY();
-        if ((smax > 2.0f && sy >= smax - 6.0f) ||
-            static_cast<std::uint64_t>(ImGui::GetFrameCount()) >= d.logScrollTailGiveUpFrame) {
-            d.logScrollToTailPending = false;
-        }
-    }
-
-    const float smaxAfter = ImGui::GetScrollMaxY();
-    const float syAfter = ImGui::GetScrollY();
-    const bool nearBottom = smaxAfter <= 1.5f || syAfter >= smaxAfter - 36.0f;
-    if (d.logAutoScroll && nearBottom) {
-        d.logTailReleasedByUser = false;
-    } else if (d.logAutoScroll && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
-               ImGui::GetIO().MouseWheel > 0.0f && syAfter < smaxAfter - 48.0f) {
-        d.logTailReleasedByUser = true;
-    }
-
-    ImGui::EndChild();
+    DrawLogScrollRegion(d);
     ImGui::End();
 }
-
-
-

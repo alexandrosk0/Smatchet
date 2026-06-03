@@ -43,6 +43,10 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Pure log-line formatting / clipboard-join helpers extracted from SmatchetUI::drawLogWindow.
+    # The _detail TU depends only on Logger.h types (header-only enum + struct) — no ImGui.
+    Core/LogViewLines.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetLog_detail.cpp"
     Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
