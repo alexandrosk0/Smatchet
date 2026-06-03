@@ -61,7 +61,7 @@
     ],
     "required_review_count": 0,
     "enforce_admins": false,
-    "strict": false
+    "strict": true
   },
   "ci": {
     "required_checks": [

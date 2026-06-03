@@ -118,3 +118,9 @@
   Concrete next action: per-unit TU split (lift pure helpers to a sibling `*Pure.cpp` + matching header with no ImGui/cpr includes), then add the doctest in a follow-up phase. Estimated cost ~1 h per unit (4 h total). Bonus: `IssueCreatePipeline::ApplyPostIssueSteps` decision logic also deferred — needs `ITrackerBackend` mock fixture (Phase 3 HTTP layer). Pick up after Phase 3 ships the HTTP / SQLite fixtures.
   Status: open
   Last-reviewed: 2026-05-17
+
+- 2026-06-03 · orchestrator · [infra] · P2 — Require-branches-up-to-date-before-merge (concurrent-PR gate gap)
+  Details: A lint gate added in PR-A does not retroactively check files added in a concurrently-open PR-B; after both merge, `develop` violates the gate but neither PR was ever red. Concrete instance: the md_lint gate landed in #789; an MD028 violation landed in #791 (branched before #789, so its doc-validation PR run used a pre-gate workflow and passed green); the merged tree was dirty and ambushed the next docs-touching PR (#796). Branch-protection's "Require branches to be up to date before merging" is OFF, so GitHub never re-ran #791 against #789's gate. Making doc-validation *required* (the 2026-06-03 infra-P2 above) does NOT close this — #791's run was genuinely green. Full RCA: docs/self-improvement/postmortems.md 2026-06-03 "concurrent-PR lint gap".
+  Concrete next action: DONE — maintainer approved + enabled 2026-06-03. `project.config.json` `branch_protection.strict: true`, applied via `setup-branch-protection.sh`; GitHub confirms `required_status_checks.strict == true`. Shipped with the postmortem in this PR. Residual watch: confirm the merge-watcher auto-updates an out-of-date registered PR before merge (else the 2nd of two concurrent PRs needs a manual branch update). Alternative not taken: GitHub merge queue (heavier).
+  Status: applied
+  Last-reviewed: 2026-06-03
