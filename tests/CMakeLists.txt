@@ -268,6 +268,7 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
+    Plugins/LuaConsole/LuaConsoleSelection.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4AnnotateParse.cpp"
@@ -359,6 +360,8 @@ if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
 endif()
 
 target_include_directories(SmatchetTests PRIVATE _helpers)
+target_include_directories(SmatchetTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/Source/Plugins/LuaConsole")
 target_compile_definitions(SmatchetTests PRIVATE
     "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
