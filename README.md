@@ -88,6 +88,18 @@ cmake --preset ninja-iter-msvc
 cmake --build --preset ninja-iter-msvc
 ```
 
+**One-command build + run (no Developer Prompt needed)** — `build_and_run.ps1` auto-bootstraps the
+Visual Studio compiler environment (locates `vcvars64.bat` via `vswhere`) for `*-msvc` presets, so it
+works from a normal PowerShell:
+
+```powershell
+scripts/dev/build_and_run.ps1 -Preset ninja-iter-msvc
+```
+
+> **MSYS2 is not required and not supported for building Smatchet.** The `ninja-iter-msys2` /
+> `*-msys2` presets are **retired** — use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl).
+> The repo-owned build scripts fail fast with that hint if a `*-msys2` preset is passed.
+
 **Clang/LLVM** — ensure `clang-cl` is on PATH:
 
 ```powershell

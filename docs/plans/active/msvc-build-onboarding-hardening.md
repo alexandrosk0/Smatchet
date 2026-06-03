@@ -77,10 +77,11 @@ Improve runtime feedback by printing the exact executable path and last-write ti
 ## Implementation log
 - Previous slices (5015147c): `scripts/dev/with-msvc-env.sh` bash wrapper + `build_standalone.ps1` MSYS2-guard landed.
 - This slice: `build_and_run.ps1` default preset → `ninja-iter-msvc`; `SmatchetImConfig.h` stale comment updated; `BUILD.md` MSYS2 section header updated with retirement notice; `run_standalone.ps1` exe path/timestamp/stale-sibling/PID output; `build_standalone.ps1` `*-msys2` preset now throws retirement error instead of activating MSYS2 env; `scripts/dev/test-build-wrapper.ps1` new lightweight test wrapper.
+- Docs slice (2026-06-03): closed the previously-deferred plan files 5 + 6. `README.md` build section gains the blessed one-command (`build_and_run.ps1 -Preset ninja-iter-msvc`, no Developer Prompt needed) + the MSYS2-retirement note. `AGENTS.md` § Build rule gains the "never propose MSYS2 for building" guard (the canonical `ninja-iter-msvc` command was already present). **Remaining: only the optional/conditional file 9** (`test-build-warnings.sh` first-error summary — gated on "if build logs remain noisy under MSVC", not observed; effectively droppable).
 
 ## Deviations from plan
 - `build_standalone.ps1` (plan file 1) already had the MSVC bootstrap from slice 1. This slice only added the retirement `throw` for `*-msys2` presets (replacing the `Use-Msys2Ucrt64Environment` call) — the overall function was not removed to preserve historical context in `Use-Msys2Ucrt64Environment` for the function body itself (it is now unreachable but documents what it did).
-- `README.md` and `AGENTS.md` updates (plan files 5, 6) not implemented in this slice — the plan marked them as "Files to modify" but the task description's open items did not include them. Deferred.
+- `README.md` and `AGENTS.md` updates (plan files 5, 6) were deferred from the first slice — **now shipped** in the 2026-06-03 docs slice (see Implementation log). Only the conditional file 9 (`test-build-warnings.sh` first-error summary) remains, and it is gated on a noisy-log condition not observed under MSVC, so it is effectively droppable — this plan is functionally complete.
 
 ## Verification (actual)
 - `scripts/dev/test-build-wrapper.ps1` run: 3/3 tests passed. Verified: (1) `ninja-iter-msys2` passed to `build_standalone.ps1` exits non-zero with "retired" + "ninja-iter-msvc" in output; (2) `run_standalone.ps1` prints `Exe :` path and `Time:` timestamp; (3) stale-sibling comparison table printed with `<<< selected` marker.
