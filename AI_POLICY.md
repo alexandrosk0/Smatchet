@@ -71,3 +71,14 @@ solo-maintained, prerelease project. It does **not** govern outside human
 contributors (no external-contributor disclosure / denounce rules while solo —
 revisit if the repo opens up, same trigger as the solo-merge-review ADR), and it
 adds no AI-generated-content rules (irrelevant to a C++ app harness).
+
+## Attribution
+
+The pattern of a root **`AI_POLICY.md` governance charter separated from the
+`AGENTS.md` instruction contract** is adapted from **[Ghostty](https://github.com/ghostty-org/ghostty)**
+(Mitchell Hashimoto et al., MIT-licensed) — the comparison that surfaced this
+governance gap. Ghostty's `AI_POLICY.md` governs *outside human contributors
+using AI*; Smatchet's charter is a distinct adaptation governing the
+*autonomous agents' relationship to human control* (loop modes, escalate-when-
+unvalidatable, cost), so the structure is borrowed but the content is original
+to this project.
