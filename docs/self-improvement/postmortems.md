@@ -56,14 +56,16 @@ infra-P2 "make doc-validation contexts required" (below) — that makes the gate
 `AGENTS.md` § Merge gates (the rule) + [`docs/self-improvement/categories/infra.md`](categories/infra.md)
 2026-06-03 "doc-validation gates are NON-required" (the structural fix).
 
-## 2026-06-03 · PR #771, #774, #776, #778 · red-check (non-required gate) + PR #780 · red-check (CR-findings)
+## 2026-06-03 · PR #771, #774, #776, #778 · red-check (non-required doc-validation gate)
+
+> #780's CR-findings escape is a distinct incident — see the "admin-merged past a
+> red check" entry above; this entry is the doc-validation-job class only.
 
 ### What escaped
 The whole `test-docs.sh` doc-validation suite (`test-portable-purity`,
 `test-plan-index`, `test-plan-ref-integrity`) runs only in the CI job **"Doc
 anchors + agent contract"**, which is **not** in the repo's required-status-check
-set. So PRs merged with that job RED. Separately, #780 was admin-merged past a
-red **CR-findings** check (also non-required).
+set. So PRs merged with that job RED.
 
 ### Root cause
 Branch protection gates only the four required contexts (`Test-delta gate`,
