@@ -557,38 +557,52 @@ static std::string UnifiedOfflineRowClipboardLine(const UnifiedOfflineRow& u) {
     return {};
 }
 
-} // namespace
+// Persistent selection set for the unified offline-queue table. Single-instance panel,
+// so a file-scope static is behaviour-identical to the former in-function static local.
+static std::unordered_set<std::string> g_selectedOfflineRowKeys;
 
-bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
-    const std::vector<PendingCreate> pendingCreates = app.GetPendingCreates();
-    const std::vector<DeadPendingCreate> deadCreates = app.GetDeadPendingCreates();
-    const std::vector<PendingFieldEditRecord> pendingEdits = app.GetPendingFieldEdits();
-    const std::vector<DeadPendingFieldEdit> deadEdits = app.GetDeadPendingFieldEdits();
+struct OfflineDrawCtx {
+    AppController& app;
+    UiDrawSession& d;
+    std::vector<UnifiedOfflineRow>& rows;
+    std::string hoveredKey;
+};
 
-    const size_t nPc = pendingCreates.size();
-    const size_t nDc = deadCreates.size();
-    const size_t nPf = pendingEdits.size();
-    const size_t nDf = deadEdits.size();
-    if (nPc + nDc + nPf + nDf == 0) {
-        return false;
-    }
+struct OfflineQueueData {
+    std::vector<PendingCreate> pendingCreates;
+    std::vector<DeadPendingCreate> deadCreates;
+    std::vector<PendingFieldEditRecord> pendingEdits;
+    std::vector<DeadPendingFieldEdit> deadEdits;
+    size_t total = 0;
+};
 
-    static std::unordered_set<std::string> selectedOfflineRowKeys;
-    std::vector<UnifiedOfflineRow> rows = BuildUnifiedOfflineRows(pendingCreates, deadCreates, pendingEdits, deadEdits);
+static OfflineQueueData FetchOfflineQueueData(AppController& app) {
+    OfflineQueueData data;
+    data.pendingCreates = app.GetPendingCreates();
+    data.deadCreates = app.GetDeadPendingCreates();
+    data.pendingEdits = app.GetPendingFieldEdits();
+    data.deadEdits = app.GetDeadPendingFieldEdits();
+    data.total =
+        data.pendingCreates.size() + data.deadCreates.size() + data.pendingEdits.size() + data.deadEdits.size();
+    return data;
+}
 
+static void PruneOfflineSelectionToLiveRows(const std::vector<UnifiedOfflineRow>& rows) {
     std::unordered_set<std::string> liveKeys;
     liveKeys.reserve(rows.size());
     for (const UnifiedOfflineRow& r : rows) {
         liveKeys.insert(r.key);
     }
-    for (auto it = selectedOfflineRowKeys.begin(); it != selectedOfflineRowKeys.end();) {
+    for (auto it = g_selectedOfflineRowKeys.begin(); it != g_selectedOfflineRowKeys.end();) {
         if (liveKeys.count(*it) == 0) {
-            it = selectedOfflineRowKeys.erase(it);
+            it = g_selectedOfflineRowKeys.erase(it);
         } else {
             ++it;
         }
     }
+}
 
+static void ExpireOfflinePanelStatus(UiDrawSession& d) {
     const auto now = std::chrono::steady_clock::now();
     if (d.offlineQueuePanelStatusHasClearDeadline && now >= d.offlineQueuePanelStatusClearAt) {
         d.offlineQueuePanelStatus.clear();
@@ -598,8 +612,52 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
         d.deadLetterPanelStatus.clear();
         d.deadLetterPanelStatusHasClearDeadline = false;
     }
+}
 
-    ImGui::PushID("unifiedOfflineQueues");
+// Deletes a single unified row from whichever backing table owns it; returns Deleted-count > 0.
+static bool DeleteOfflineRowFromDb(AppController& app, const UnifiedOfflineRow& r) {
+    switch (r.kind) {
+    case UnifiedOfflineKind::PendingCreate:
+        return app.DeletePendingCreates({r.dbId}).Deleted > 0;
+    case UnifiedOfflineKind::DeadCreate:
+        return app.DeleteDeadPendingCreates({r.dbId}).Deleted > 0;
+    case UnifiedOfflineKind::PendingFieldEdit:
+        return app.DeletePendingFieldEdits({r.dbId}).Deleted > 0;
+    case UnifiedOfflineKind::DeadFieldEdit:
+        return app.DeleteDeadPendingFieldEdits({r.dbId}).Deleted > 0;
+    }
+    return false;
+}
+
+// Returns true and copies to the clipboard when at least one row was serialized.
+static bool CopyOfflineSelectionToClipboard(OfflineDrawCtx& ctx, const std::string& fallbackKey) {
+    std::string out;
+    if (!g_selectedOfflineRowKeys.empty()) {
+        for (const UnifiedOfflineRow& r : ctx.rows) {
+            if (g_selectedOfflineRowKeys.count(r.key) == 0) {
+                continue;
+            }
+            if (!out.empty()) {
+                out.push_back('\n');
+            }
+            out += UnifiedOfflineRowClipboardLine(r);
+        }
+    } else if (!fallbackKey.empty()) {
+        auto rIt = std::find_if(ctx.rows.begin(), ctx.rows.end(),
+                                [&](const UnifiedOfflineRow& r) { return r.key == fallbackKey; });
+        if (rIt != ctx.rows.end()) {
+            out = UnifiedOfflineRowClipboardLine(*rIt);
+        }
+    }
+    if (out.empty()) {
+        return false;
+    }
+    ImGui::SetClipboardText(out.c_str());
+    return true;
+}
+
+static void DrawOfflineQueueHeader(OfflineDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
     ImGui::SeparatorText("Offline Queue");
 
     if (!d.offlineQueuePanelStatus.empty()) {
@@ -612,122 +670,396 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     ImGui::TextDisabled(
         "Queued rows replay when Tracker is reachable. Dead rows are archived after retries or validation failure. "
         "Retry applies only to failed issue creates. Discard removes rows locally only.");
+}
 
-    auto copySelectionToClipboard = [&](const std::string& fallbackKey) {
-        std::string out;
-        if (!selectedOfflineRowKeys.empty()) {
-            for (const UnifiedOfflineRow& r : rows) {
-                if (selectedOfflineRowKeys.count(r.key) == 0) {
-                    continue;
-                }
-                if (!out.empty()) {
-                    out.push_back('\n');
-                }
-                out += UnifiedOfflineRowClipboardLine(r);
-            }
-        } else if (!fallbackKey.empty()) {
-            auto rIt = std::find_if(rows.begin(), rows.end(), [&](const auto& r) { return r.key == fallbackKey; });
-            if (rIt != rows.end()) {
-                out = UnifiedOfflineRowClipboardLine(*rIt);
+static void OnDiscardSelected(OfflineDrawCtx& ctx) {
+    int disc = 0;
+    int fail = 0;
+    for (const std::string& key : g_selectedOfflineRowKeys) {
+        auto rIt =
+            std::find_if(ctx.rows.begin(), ctx.rows.end(), [&](const UnifiedOfflineRow& r) { return r.key == key; });
+        if (rIt != ctx.rows.end()) {
+            if (DeleteOfflineRowFromDb(ctx.app, *rIt)) {
+                ++disc;
+            } else {
+                ++fail;
             }
         }
-        if (out.empty()) {
-            return false;
-        }
-        ImGui::SetClipboardText(out.c_str());
-        return true;
-    };
+    }
+    g_selectedOfflineRowKeys.clear();
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "Discard offline edits: removed %d rows from DB (failed %d).", disc, fail);
+    ArmOfflineQueuePanelStatus(ctx.d, buf);
+}
 
+static void OnClearArchivedDead(OfflineDrawCtx& ctx) {
+    int del = 0;
+    int fail = 0;
+    for (const UnifiedOfflineRow& r : ctx.rows) {
+        if (r.kind == UnifiedOfflineKind::DeadCreate || r.kind == UnifiedOfflineKind::DeadFieldEdit) {
+            if (DeleteOfflineRowFromDb(ctx.app, r)) {
+                ++del;
+            } else {
+                ++fail;
+            }
+        }
+    }
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "Cleared archived dead rows: deleted %d rows (failed %d).", del, fail);
+    ArmDeadLetterPanelStatus(ctx.d, buf);
+}
+
+static void DrawOfflineQueueToolbar(OfflineDrawCtx& ctx) {
     if (ImGui::Button("Copy selected##unifiedoff")) {
-        copySelectionToClipboard(std::string());
+        CopyOfflineSelectionToClipboard(ctx, std::string());
     }
     ImGui::SameLine();
     if (ImGui::Button("Discard selected##unifiedoff")) {
-        int disc = 0;
-        int fail = 0;
-        for (const std::string& key : selectedOfflineRowKeys) {
-            auto rIt = std::find_if(rows.begin(), rows.end(), [&](const auto& r) { return r.key == key; });
-            if (rIt != rows.end()) {
-                const auto& r = *rIt;
-                if (r.kind == UnifiedOfflineKind::PendingCreate) {
-                    if (app.DeletePendingCreates({r.dbId}).Deleted > 0) {
-                        ++disc;
-                    } else {
-                        ++fail;
-                    }
-                } else if (r.kind == UnifiedOfflineKind::DeadCreate) {
-                    if (app.DeleteDeadPendingCreates({r.dbId}).Deleted > 0) {
-                        ++disc;
-                    } else {
-                        ++fail;
-                    }
-                } else if (r.kind == UnifiedOfflineKind::PendingFieldEdit) {
-                    if (app.DeletePendingFieldEdits({r.dbId}).Deleted > 0) {
-                        ++disc;
-                    } else {
-                        ++fail;
-                    }
-                } else if (r.kind == UnifiedOfflineKind::DeadFieldEdit) {
-                    if (app.DeleteDeadPendingFieldEdits({r.dbId}).Deleted > 0) {
-                        ++disc;
-                    } else {
-                        ++fail;
-                    }
-                }
-            }
-        }
-        selectedOfflineRowKeys.clear();
-        char buf[256];
-        std::snprintf(buf, sizeof(buf), "Discard offline edits: removed %d rows from DB (failed %d).", disc, fail);
-        ArmOfflineQueuePanelStatus(d, buf);
+        OnDiscardSelected(ctx);
     }
     ImGui::SameLine();
     if (ImGui::Button("Retry creates now##unifiedoff")) {
-        d.offlineQueuePanelStatus = "Triggering manual retry scan of pending Creates...";
-        d.offlineQueuePanelStatusHasClearDeadline = false;
-        app.TickOfflineCreates();
-        app.TickOfflineFieldEdits();
+        ctx.d.offlineQueuePanelStatus = "Triggering manual retry scan of pending Creates...";
+        ctx.d.offlineQueuePanelStatusHasClearDeadline = false;
+        ctx.app.TickOfflineCreates();
+        ctx.app.TickOfflineFieldEdits();
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear archived dead rows##unifiedoff")) {
-        int del = 0;
-        int fail = 0;
-        for (const auto& r : rows) {
-            if (r.kind == UnifiedOfflineKind::DeadCreate) {
-                if (app.DeleteDeadPendingCreates({r.dbId}).Deleted > 0) {
-                    ++del;
-                } else {
-                    ++fail;
+        OnClearArchivedDead(ctx);
+    }
+}
+
+enum OfflineCol {
+    Col_Select = 0,
+    Col_Action,
+    Col_State,
+    Col_Id,
+    Col_OriginalId,
+    Col_Issue,
+    Col_Field,
+    Col_Retries,
+    Col_LastError,
+    Col_ActivityTime,
+    Col_Payload,
+    Col_COUNT
+};
+
+static void DrawOfflineRowActionCell(const UnifiedOfflineRow& row) {
+    if (row.kind == UnifiedOfflineKind::PendingCreate) {
+        ImGui::TextDisabled("Queued create");
+    } else if (row.kind == UnifiedOfflineKind::DeadCreate) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+        ImGui::TextUnformatted("Dead create");
+        ImGui::PopStyleColor();
+        // PR 5 of docs/plans/shipped/remove-global-project-key.md: surface a small badge for
+        // rows the legacy-project sweep dead-lettered, so the user knows to restore
+        // and pick a project rather than mistaking it for a transport failure.
+        if (row.terminalReason == "legacy_missing_project") {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextUnformatted(SmatchetLocalization::T("offlineQueue.badge.missingProject", "missing project"));
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "%s", SmatchetLocalization::T("offlineQueue.badge.missingProject.tooltip",
+                                                  "This queued create was missing a project after the "
+                                                  "project-key migration. Restore and pick a project to retry."));
+            }
+        }
+    } else if (row.kind == UnifiedOfflineKind::PendingFieldEdit) {
+        if (row.hasMergeConflict) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
+            ImGui::TextUnformatted("Conflict — edit suspended");
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextDisabled("Queued edit");
+        }
+    } else if (row.kind == UnifiedOfflineKind::DeadFieldEdit) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+        ImGui::TextUnformatted("Dead edit");
+        ImGui::PopStyleColor();
+    }
+}
+
+// Builds the set of rows the row-context-menu acts on: the current selection if the
+// right-clicked row is part of it, otherwise just the right-clicked row.
+static std::vector<UnifiedOfflineRow> CollectOfflineContextPicks(const std::vector<UnifiedOfflineRow>& rows,
+                                                                 const UnifiedOfflineRow& row) {
+    std::vector<UnifiedOfflineRow> picks;
+    if (g_selectedOfflineRowKeys.count(row.key) > 0) {
+        std::copy_if(rows.begin(), rows.end(), std::back_inserter(picks),
+                     [](const UnifiedOfflineRow& r) { return g_selectedOfflineRowKeys.count(r.key) > 0; });
+    } else {
+        picks.push_back(row);
+    }
+    return picks;
+}
+
+static void OnContextCopyTsv(const std::vector<UnifiedOfflineRow>& picks) {
+    std::string out;
+    for (const auto& p : picks) {
+        if (!out.empty()) {
+            out.push_back('\n');
+        }
+        out += UnifiedOfflineRowClipboardLine(p);
+    }
+    if (!out.empty()) {
+        ImGui::SetClipboardText(out.c_str());
+    }
+}
+
+static void OnContextOpenDraft(UiDrawSession& d, const std::vector<UnifiedOfflineRow>& picks) {
+    const UnifiedOfflineRow* pick = nullptr;
+    for (const auto& p : picks) {
+        if (p.kind == UnifiedOfflineKind::PendingCreate || p.kind == UnifiedOfflineKind::DeadCreate) {
+            pick = &p;
+        }
+    }
+    if (pick) {
+        if (pick->kind == UnifiedOfflineKind::PendingCreate) {
+            OpenPendingCreateRowAsNewIssueDraft(d, UnifiedOfflineToPendingCreate(*pick));
+        } else {
+            OpenDeadLetterRowAsNewIssueDraft(d, UnifiedOfflineToDeadPendingCreate(*pick));
+        }
+    }
+}
+
+static void OnContextDiscard(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
+    int del = 0;
+    int failed = 0;
+    for (const auto& p : picks) {
+        if (DeleteOfflineRowFromDb(ctx.app, p)) {
+            ++del;
+        } else {
+            ++failed;
+        }
+        g_selectedOfflineRowKeys.erase(p.key);
+    }
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "Discard offline context: successfully deleted %d rows (failed %d).", del, failed);
+    ArmOfflineQueuePanelStatus(ctx.d, buf);
+}
+
+static void OnContextRestoreDeadCreates(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
+    int del = 0;
+    int failed = 0;
+    for (const auto& p : picks) {
+        if (p.kind != UnifiedOfflineKind::DeadCreate) {
+            continue;
+        }
+        std::string qerr;
+        IssueDraft draft;
+        if (IssueDraftHelpers::FromJson(p.payload, draft, qerr)) {
+            draft.ExistingIssueKey.clear();
+            draft.FieldValues.erase("issuekey");
+            draft.FieldValues.erase("key");
+            if (ctx.app.QueueCreateOffline(draft) > 0) {
+                (void)ctx.app.DeleteDeadPendingCreates({p.dbId});
+                ++del;
+            } else {
+                ++failed;
+            }
+        } else {
+            ++failed;
+        }
+        g_selectedOfflineRowKeys.erase(p.key);
+    }
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "Restored dead creates to offline queue: %d retrying, %d failed.", del, failed);
+    ArmOfflineQueuePanelStatus(ctx.d, buf);
+}
+
+static void OnContextRestoreDeadEdits(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
+    int del = 0;
+    int failed = 0;
+    for (const auto& p : picks) {
+        if (p.kind != UnifiedOfflineKind::DeadFieldEdit) {
+            continue;
+        }
+        std::string qerr;
+        if (ctx.app.QueueFieldEditOffline(p.issue, p.field, p.payload, qerr) > 0) {
+            (void)ctx.app.DeleteDeadPendingFieldEdits({p.dbId});
+            ++del;
+        } else {
+            ++failed;
+        }
+        g_selectedOfflineRowKeys.erase(p.key);
+    }
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "Restored dead edits to offline queue: %d retrying, %d failed.", del, failed);
+    ArmOfflineQueuePanelStatus(ctx.d, buf);
+}
+
+static void DrawOfflineRowContextMenu(OfflineDrawCtx& ctx, const UnifiedOfflineRow& row) {
+    UiDrawSession& d = ctx.d;
+    std::vector<UnifiedOfflineRow> picks = CollectOfflineContextPicks(ctx.rows, row);
+
+    if (ImGui::MenuItem("Copy fields to clipboard (TSV)")) {
+        OnContextCopyTsv(picks);
+    }
+
+    const bool hasCreates = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
+        return p.kind == UnifiedOfflineKind::PendingCreate || p.kind == UnifiedOfflineKind::DeadCreate;
+    });
+    if (hasCreates) {
+        std::string act = (picks.size() == 1) ? "Open draft Issue Editor..." : "Open latest draft...";
+        if (ImGui::MenuItem(act.c_str())) {
+            OnContextOpenDraft(d, picks);
+        }
+    }
+
+    // Conflict resolution — only for a single pending field edit with a conflict.
+    const bool singleConflict =
+        (picks.size() == 1 && picks[0].kind == UnifiedOfflineKind::PendingFieldEdit && picks[0].hasMergeConflict);
+    if (singleConflict && ImGui::MenuItem("Resolve merge conflict...")) {
+        d.conflictResolveDbId = picks[0].dbId;
+        d.conflictContextJson = picks[0].conflictContextJson;
+        d.showConflictResolveModal = true;
+    }
+
+    if (ImGui::MenuItem("Discard record(s) from DB")) {
+        OnContextDiscard(ctx, picks);
+    }
+
+    const bool hasDeadCreates = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
+        return p.kind == UnifiedOfflineKind::DeadCreate;
+    });
+    if (hasDeadCreates && ImGui::MenuItem("Move dead create(s) back to retry queue")) {
+        OnContextRestoreDeadCreates(ctx, picks);
+    }
+
+    const bool hasDeadEdits = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
+        return p.kind == UnifiedOfflineKind::DeadFieldEdit;
+    });
+    if (hasDeadEdits && ImGui::MenuItem("Move dead edit(s) back to retry queue")) {
+        OnContextRestoreDeadEdits(ctx, picks);
+    }
+}
+
+static void DrawOfflineRowStateCell(OfflineDrawCtx& ctx, const UnifiedOfflineRow& row) {
+    UiDrawSession& d = ctx.d;
+    ImGui::Selectable(row.state.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
+    if (ImGui::IsItemHovered()) {
+        ctx.hoveredKey = row.key;
+        if (ImGui::IsMouseDoubleClicked(0) && row.hasMergeConflict &&
+            row.kind == UnifiedOfflineKind::PendingFieldEdit) {
+            d.conflictResolveDbId = row.dbId;
+            d.conflictContextJson = row.conflictContextJson;
+            d.showConflictResolveModal = true;
+        }
+    }
+    const bool rightClicked = ImGui::BeginPopupContextItem("offRowCtx", ImGuiPopupFlags_MouseButtonRight);
+    if (rightClicked) {
+        ctx.hoveredKey = row.key;
+        DrawOfflineRowContextMenu(ctx, row);
+        ImGui::EndPopup();
+    }
+}
+
+static void DrawOfflineRowPayloadTooltip(const UnifiedOfflineRow& row) {
+    std::string md;
+    try {
+        const auto j = nlohmann::json::parse(row.payload);
+        if (j.is_object()) {
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                const auto& val = it.value();
+                if (val.is_object() && val.value("type", std::string()) == "doc") {
+                    md = MarkdownConvert::AdfToMarkdown(val);
+                    break;
                 }
-            } else if (r.kind == UnifiedOfflineKind::DeadFieldEdit) {
-                if (app.DeleteDeadPendingFieldEdits({r.dbId}).Deleted > 0) {
-                    ++del;
-                } else {
-                    ++fail;
+                if (val.is_string()) {
+                    bool fell = false;
+                    md = MarkdownConvert::HtmlSubsetToMarkdown(val.get<std::string>(), &fell);
+                    if (fell)
+                        md = val.get<std::string>();
+                    break;
                 }
             }
         }
-        char buf[256];
-        std::snprintf(buf, sizeof(buf), "Cleared archived dead rows: deleted %d rows (failed %d).", del, fail);
-        ArmDeadLetterPanelStatus(d, buf);
+    } catch (...) { // catch-all-ok: JSON parse on pending-queue metadata
+    }
+    if (md.empty())
+        md = BuildPayloadPreview(row.payload, 600);
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+    MarkdownPreviewRender::Options opts;
+    opts.mode = MarkdownPreviewRender::Mode::Tooltip;
+    opts.clickableLinks = false;
+    opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
+    MarkdownPreviewRender::Render(md, opts);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
+static void DrawOfflineQueueTableRow(OfflineDrawCtx& ctx, const UnifiedOfflineRow& row) {
+    std::unordered_set<std::string>& selectedOfflineRowKeys = g_selectedOfflineRowKeys;
+
+    if (ImGui::TableSetColumnIndex(Col_Select)) {
+        bool sel = selectedOfflineRowKeys.count(row.key) > 0;
+        if (ImGui::Checkbox("##check", &sel)) {
+            if (sel) {
+                selectedOfflineRowKeys.insert(row.key);
+            } else {
+                selectedOfflineRowKeys.erase(row.key);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ctx.hoveredKey = row.key;
+        }
     }
 
-    enum Col {
-        Col_Select = 0,
-        Col_Action,
-        Col_State,
-        Col_Id,
-        Col_OriginalId,
-        Col_Issue,
-        Col_Field,
-        Col_Retries,
-        Col_LastError,
-        Col_ActivityTime,
-        Col_Payload,
-        Col_COUNT
-    };
+    ImGui::TableSetColumnIndex(Col_Action);
+    DrawOfflineRowActionCell(row);
 
-    std::string hoveredOfflineKey;
+    ImGui::TableSetColumnIndex(Col_State);
+    DrawOfflineRowStateCell(ctx, row);
+
+    ImGui::TableSetColumnIndex(Col_Id);
+    ImGui::Text("%lld", static_cast<long long>(row.dbId));
+
+    ImGui::TableSetColumnIndex(Col_OriginalId);
+    if (row.originalId != 0) {
+        ImGui::Text("%lld", static_cast<long long>(row.originalId));
+    } else {
+        ImGui::TextUnformatted("-");
+    }
+    ImGui::TableSetColumnIndex(Col_Issue);
+    ImGui::TextUnformatted(row.issue.empty() ? "-" : row.issue.c_str());
+    ImGui::TableSetColumnIndex(Col_Field);
+    ImGui::TextUnformatted(row.field.empty() ? "-" : row.field.c_str());
+    ImGui::TableSetColumnIndex(Col_Retries);
+    ImGui::Text("%d", row.attempts);
+
+    ImGui::TableSetColumnIndex(Col_LastError);
+    {
+        const std::string errShow = UnifiedOfflineRowLastErrorDisplay(row);
+        const std::string errPreview = BuildPayloadPreview(errShow, 120);
+        ImGui::TextUnformatted(errPreview.empty() ? "-" : errPreview.c_str());
+        const std::string tip = UnifiedOfflineLastErrorTooltip(row);
+        if (!tip.empty() && ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", tip.c_str());
+        }
+    }
+
+    ImGui::TableSetColumnIndex(Col_ActivityTime);
+    {
+        const std::int64_t activityEpoch = row.archivedEpoch != 0 ? row.archivedEpoch : row.createdEpoch;
+        ImGui::TextUnformatted(FormatEpochLocal(activityEpoch).c_str());
+    }
+    ImGui::TableSetColumnIndex(Col_Payload);
+    {
+        const std::string payloadPreview = BuildPayloadPreview(row.payload, 140);
+        ImGui::TextUnformatted(payloadPreview.empty() ? "-" : payloadPreview.c_str());
+        if (!row.payload.empty() && ImGui::IsItemHovered()) {
+            DrawOfflineRowPayloadTooltip(row);
+        }
+    }
+}
+
+static void DrawOfflineQueueTable(OfflineDrawCtx& ctx) {
+    std::vector<UnifiedOfflineRow>& rows = ctx.rows;
+
     const float tblH = OfflineAuxTableOuterHeight(rows.size());
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_NoSavedSettings;
@@ -749,308 +1081,23 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
             const UnifiedOfflineRow& row = rows[ri];
             ImGui::PushID(static_cast<int>(ri));
             ImGui::TableNextRow();
-
-            if (ImGui::TableSetColumnIndex(Col_Select)) {
-                bool sel = selectedOfflineRowKeys.count(row.key) > 0;
-                if (ImGui::Checkbox("##check", &sel)) {
-                    if (sel) {
-                        selectedOfflineRowKeys.insert(row.key);
-                    } else {
-                        selectedOfflineRowKeys.erase(row.key);
-                    }
-                }
-                if (ImGui::IsItemHovered()) {
-                    hoveredOfflineKey = row.key;
-                }
-            }
-
-            ImGui::TableSetColumnIndex(Col_Action);
-            if (row.kind == UnifiedOfflineKind::PendingCreate) {
-                ImGui::TextDisabled("Queued create");
-            } else if (row.kind == UnifiedOfflineKind::DeadCreate) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-                ImGui::TextUnformatted("Dead create");
-                ImGui::PopStyleColor();
-                // PR 5 of docs/plans/shipped/remove-global-project-key.md: surface a small badge for
-                // rows the legacy-project sweep dead-lettered, so the user knows to restore
-                // and pick a project rather than mistaking it for a transport failure.
-                if (row.terminalReason == "legacy_missing_project") {
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-                    ImGui::TextUnformatted(
-                        SmatchetLocalization::T("offlineQueue.badge.missingProject", "missing project"));
-                    ImGui::PopStyleColor();
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", SmatchetLocalization::T(
-                                                    "offlineQueue.badge.missingProject.tooltip",
-                                                    "This queued create was missing a project after the "
-                                                    "project-key migration. Restore and pick a project to retry."));
-                    }
-                }
-            } else if (row.kind == UnifiedOfflineKind::PendingFieldEdit) {
-                if (row.hasMergeConflict) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
-                    ImGui::TextUnformatted("Conflict — edit suspended");
-                    ImGui::PopStyleColor();
-                } else {
-                    ImGui::TextDisabled("Queued edit");
-                }
-            } else if (row.kind == UnifiedOfflineKind::DeadFieldEdit) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-                ImGui::TextUnformatted("Dead edit");
-                ImGui::PopStyleColor();
-            }
-
-            ImGui::TableSetColumnIndex(Col_State);
-            {
-                ImGui::Selectable(row.state.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
-                if (ImGui::IsItemHovered()) {
-                    hoveredOfflineKey = row.key;
-                    if (ImGui::IsMouseDoubleClicked(0) && row.hasMergeConflict &&
-                        row.kind == UnifiedOfflineKind::PendingFieldEdit) {
-                        d.conflictResolveDbId = row.dbId;
-                        d.conflictContextJson = row.conflictContextJson;
-                        d.showConflictResolveModal = true;
-                    }
-                }
-                const bool rightClicked = ImGui::BeginPopupContextItem("offRowCtx", ImGuiPopupFlags_MouseButtonRight);
-                if (rightClicked) {
-                    hoveredOfflineKey = row.key;
-                    std::vector<UnifiedOfflineRow> picks;
-                    if (selectedOfflineRowKeys.count(row.key) > 0) {
-                        std::copy_if(rows.begin(), rows.end(), std::back_inserter(picks),
-                                     [](const auto& r) { return selectedOfflineRowKeys.count(r.key) > 0; });
-                    } else {
-                        picks.push_back(row);
-                    }
-
-                    if (ImGui::MenuItem("Copy fields to clipboard (TSV)")) {
-                        std::string out;
-                        for (const auto& p : picks) {
-                            if (!out.empty()) {
-                                out.push_back('\n');
-                            }
-                            out += UnifiedOfflineRowClipboardLine(p);
-                        }
-                        if (!out.empty()) {
-                            ImGui::SetClipboardText(out.c_str());
-                        }
-                    }
-
-                    const bool hasCreates = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
-                        return p.kind == UnifiedOfflineKind::PendingCreate || p.kind == UnifiedOfflineKind::DeadCreate;
-                    });
-                    if (hasCreates) {
-                        std::string act = (picks.size() == 1) ? "Open draft Issue Editor..." : "Open latest draft...";
-                        if (ImGui::MenuItem(act.c_str())) {
-                            const UnifiedOfflineRow* pick = nullptr;
-                            for (const auto& p : picks) {
-                                if (p.kind == UnifiedOfflineKind::PendingCreate ||
-                                    p.kind == UnifiedOfflineKind::DeadCreate) {
-                                    pick = &p;
-                                }
-                            }
-                            if (pick) {
-                                if (pick->kind == UnifiedOfflineKind::PendingCreate) {
-                                    OpenPendingCreateRowAsNewIssueDraft(d, UnifiedOfflineToPendingCreate(*pick));
-                                } else {
-                                    OpenDeadLetterRowAsNewIssueDraft(d, UnifiedOfflineToDeadPendingCreate(*pick));
-                                }
-                            }
-                        }
-                    }
-
-                    // Conflict resolution — only for a single pending field edit with a conflict.
-                    const bool singleConflict =
-                        (picks.size() == 1 && picks[0].kind == UnifiedOfflineKind::PendingFieldEdit &&
-                         picks[0].hasMergeConflict);
-                    if (singleConflict && ImGui::MenuItem("Resolve merge conflict...")) {
-                        d.conflictResolveDbId = picks[0].dbId;
-                        d.conflictContextJson = picks[0].conflictContextJson;
-                        d.showConflictResolveModal = true;
-                    }
-
-                    if (ImGui::MenuItem("Discard record(s) from DB")) {
-                        int del = 0;
-                        int failed = 0;
-                        for (const auto& p : picks) {
-                            if (p.kind == UnifiedOfflineKind::PendingCreate) {
-                                if (app.DeletePendingCreates({p.dbId}).Deleted > 0) {
-                                    ++del;
-                                } else {
-                                    ++failed;
-                                }
-                            } else if (p.kind == UnifiedOfflineKind::DeadCreate) {
-                                if (app.DeleteDeadPendingCreates({p.dbId}).Deleted > 0) {
-                                    ++del;
-                                } else {
-                                    ++failed;
-                                }
-                            } else if (p.kind == UnifiedOfflineKind::PendingFieldEdit) {
-                                if (app.DeletePendingFieldEdits({p.dbId}).Deleted > 0) {
-                                    ++del;
-                                } else {
-                                    ++failed;
-                                }
-                            } else if (p.kind == UnifiedOfflineKind::DeadFieldEdit) {
-                                if (app.DeleteDeadPendingFieldEdits({p.dbId}).Deleted > 0) {
-                                    ++del;
-                                } else {
-                                    ++failed;
-                                }
-                            }
-                            selectedOfflineRowKeys.erase(p.key);
-                        }
-                        char buf[256];
-                        std::snprintf(buf, sizeof(buf),
-                                      "Discard offline context: successfully deleted %d rows (failed %d).", del,
-                                      failed);
-                        ArmOfflineQueuePanelStatus(d, buf);
-                    }
-
-                    const bool hasDeadCreates = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
-                        return p.kind == UnifiedOfflineKind::DeadCreate;
-                    });
-                    if (hasDeadCreates && ImGui::MenuItem("Move dead create(s) back to retry queue")) {
-                        int del = 0;
-                        int failed = 0;
-                        for (const auto& p : picks) {
-                            if (p.kind != UnifiedOfflineKind::DeadCreate) {
-                                continue;
-                            }
-                            std::string qerr;
-                            IssueDraft draft;
-                            if (IssueDraftHelpers::FromJson(p.payload, draft, qerr)) {
-                                draft.ExistingIssueKey.clear();
-                                draft.FieldValues.erase("issuekey");
-                                draft.FieldValues.erase("key");
-                                if (app.QueueCreateOffline(draft) > 0) {
-                                    (void)app.DeleteDeadPendingCreates({p.dbId});
-                                    ++del;
-                                } else {
-                                    ++failed;
-                                }
-                            } else {
-                                ++failed;
-                            }
-                            selectedOfflineRowKeys.erase(p.key);
-                        }
-                        char buf[256];
-                        std::snprintf(buf, sizeof(buf),
-                                      "Restored dead creates to offline queue: %d retrying, %d failed.", del, failed);
-                        ArmOfflineQueuePanelStatus(d, buf);
-                    }
-
-                    const bool hasDeadEdits = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
-                        return p.kind == UnifiedOfflineKind::DeadFieldEdit;
-                    });
-                    if (hasDeadEdits && ImGui::MenuItem("Move dead edit(s) back to retry queue")) {
-                        int del = 0;
-                        int failed = 0;
-                        for (const auto& p : picks) {
-                            if (p.kind != UnifiedOfflineKind::DeadFieldEdit) {
-                                continue;
-                            }
-                            std::string qerr;
-                            if (app.QueueFieldEditOffline(p.issue, p.field, p.payload, qerr) > 0) {
-                                (void)app.DeleteDeadPendingFieldEdits({p.dbId});
-                                ++del;
-                            } else {
-                                ++failed;
-                            }
-                            selectedOfflineRowKeys.erase(p.key);
-                        }
-                        char buf[256];
-                        std::snprintf(buf, sizeof(buf), "Restored dead edits to offline queue: %d retrying, %d failed.",
-                                      del, failed);
-                        ArmOfflineQueuePanelStatus(d, buf);
-                    }
-                    ImGui::EndPopup();
-                }
-            }
-
-            ImGui::TableSetColumnIndex(Col_Id);
-            ImGui::Text("%lld", static_cast<long long>(row.dbId));
-
-            ImGui::TableSetColumnIndex(Col_OriginalId);
-            if (row.originalId != 0) {
-                ImGui::Text("%lld", static_cast<long long>(row.originalId));
-            } else {
-                ImGui::TextUnformatted("-");
-            }
-            ImGui::TableSetColumnIndex(Col_Issue);
-            ImGui::TextUnformatted(row.issue.empty() ? "-" : row.issue.c_str());
-            ImGui::TableSetColumnIndex(Col_Field);
-            ImGui::TextUnformatted(row.field.empty() ? "-" : row.field.c_str());
-            ImGui::TableSetColumnIndex(Col_Retries);
-            ImGui::Text("%d", row.attempts);
-
-            ImGui::TableSetColumnIndex(Col_LastError);
-            {
-                const std::string errShow = UnifiedOfflineRowLastErrorDisplay(row);
-                const std::string errPreview = BuildPayloadPreview(errShow, 120);
-                ImGui::TextUnformatted(errPreview.empty() ? "-" : errPreview.c_str());
-                const std::string tip = UnifiedOfflineLastErrorTooltip(row);
-                if (!tip.empty() && ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", tip.c_str());
-                }
-            }
-
-            ImGui::TableSetColumnIndex(Col_ActivityTime);
-            {
-                const std::int64_t activityEpoch = row.archivedEpoch != 0 ? row.archivedEpoch : row.createdEpoch;
-                ImGui::TextUnformatted(FormatEpochLocal(activityEpoch).c_str());
-            }
-            ImGui::TableSetColumnIndex(Col_Payload);
-            {
-                const std::string payloadPreview = BuildPayloadPreview(row.payload, 140);
-                ImGui::TextUnformatted(payloadPreview.empty() ? "-" : payloadPreview.c_str());
-                if (!row.payload.empty() && ImGui::IsItemHovered()) {
-                    std::string md;
-                    try {
-                        const auto j = nlohmann::json::parse(row.payload);
-                        if (j.is_object()) {
-                            for (auto it = j.begin(); it != j.end(); ++it) {
-                                const auto& val = it.value();
-                                if (val.is_object() && val.value("type", std::string()) == "doc") {
-                                    md = MarkdownConvert::AdfToMarkdown(val);
-                                    break;
-                                }
-                                if (val.is_string()) {
-                                    bool fell = false;
-                                    md = MarkdownConvert::HtmlSubsetToMarkdown(val.get<std::string>(), &fell);
-                                    if (fell)
-                                        md = val.get<std::string>();
-                                    break;
-                                }
-                            }
-                        }
-                    } catch (...) { // catch-all-ok: JSON parse on pending-queue metadata
-                    }
-                    if (md.empty())
-                        md = BuildPayloadPreview(row.payload, 600);
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                    MarkdownPreviewRender::Options opts;
-                    opts.mode = MarkdownPreviewRender::Mode::Tooltip;
-                    opts.clickableLinks = false;
-                    opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
-                    MarkdownPreviewRender::Render(md, opts);
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndTooltip();
-                }
-            }
+            DrawOfflineQueueTableRow(ctx, row);
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
+}
 
+static void HandleOfflineCopyShortcut(OfflineDrawCtx& ctx) {
     const bool copyShortcut = ImGuiEffectiveKeyCtrl() && ImGui::IsKeyPressed(ImGuiKey_C, false);
     if (copyShortcut && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
-        copySelectionToClipboard(hoveredOfflineKey);
+        CopyOfflineSelectionToClipboard(ctx, ctx.hoveredKey);
     }
+}
 
-    ImGui::PopID();
+static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
+    AppController& app = octx.app;
+    UiDrawSession& d = octx.d;
 
     // Merge-conflict resolution modal (PR-F)
     if (d.showConflictResolveModal) {
@@ -1162,6 +1209,30 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     } else if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {
         d.conflictResolveBuf.clear();
     }
+}
 
+} // namespace
+
+bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
+    const OfflineQueueData data = FetchOfflineQueueData(app);
+    if (data.total == 0) {
+        return false;
+    }
+
+    std::vector<UnifiedOfflineRow> rows =
+        BuildUnifiedOfflineRows(data.pendingCreates, data.deadCreates, data.pendingEdits, data.deadEdits);
+    PruneOfflineSelectionToLiveRows(rows);
+    ExpireOfflinePanelStatus(d);
+
+    OfflineDrawCtx ctx{app, d, rows, std::string()};
+
+    ImGui::PushID("unifiedOfflineQueues");
+    DrawOfflineQueueHeader(ctx);
+    DrawOfflineQueueToolbar(ctx);
+    DrawOfflineQueueTable(ctx);
+    HandleOfflineCopyShortcut(ctx);
+    ImGui::PopID();
+
+    DrawOfflineConflictModal(ctx);
     return true;
 }

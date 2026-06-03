@@ -99,7 +99,7 @@ CUT_BUCKETS = ("cut-blank", "cut-decorative")  # mechanically strippable (Wave 1
 def _git(args):
     """Run a git command, raising on non-zero exit (silent git failures would corrupt the
     baseline count or the regrowth diff into a false-clean result)."""
-    p = subprocess.run(["git"] + args, capture_output=True, text=True)
+    p = subprocess.run(["git"] + args, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0:
         raise RuntimeError("git %s failed (%d): %s" % (" ".join(args), p.returncode, p.stderr.strip()))
     return p.stdout
@@ -215,7 +215,7 @@ def _merge_base_or_ref(ref):
     HEAD *and* a depth-1 <ref> fetch (the CI default) leave it unresolved, so the caller's workflow
     must unshallow / fetch enough depth (tooling.md P1). Falls back to <ref>'s tip (with a stderr
     WARN) only if merge-base can't be found."""
-    p = subprocess.run(["git", "merge-base", ref, "HEAD"], capture_output=True, text=True)
+    p = subprocess.run(["git", "merge-base", ref, "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     mb = p.stdout.strip()
     if p.returncode == 0 and mb:
         return mb
@@ -311,7 +311,7 @@ def run_ratio_warn(ref, threshold=0.50):
                 head_text = fh.read()
         except OSError:
             continue
-        base_p = subprocess.run(["git", "show", "%s:%s" % (ref, f)], capture_output=True, text=True)
+        base_p = subprocess.run(["git", "show", "%s:%s" % (ref, f)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         base_text = base_p.stdout if base_p.returncode == 0 else ""  # new file → base ratio 0
         hr, br = _file_ratio(head_text), _file_ratio(base_text)
         if hr > br and hr > threshold:

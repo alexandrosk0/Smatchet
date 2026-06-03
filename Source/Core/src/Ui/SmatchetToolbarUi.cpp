@@ -18,6 +18,7 @@
 #include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
 #include "Logger.h"
+#include "SmatchetToolbarUi_detail.h"
 #include "Ui/SmatchetImGuiFonts.h"
 #include "Ui/SmatchetUiSession.h"
 #include "imgui.h"
@@ -265,53 +266,50 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
     }
 }
 
-void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
-    if (requestEditorOpen_) {
-        requestEditorOpen_ = false;
-        editBuf_ = cfg.Toolbar;
-
-        // Capture the active backend so Tracker scope edits the matching views bucket. The
-        // right-click "Edit..." path preselects a global button, so the editor always opens in
-        // Global scope; the user switches to Tracker scope explicitly.
-        editScope_ = EditScope::Global;
-        editHasTracker_ = false;
-        editTrackerType_.clear();
-        editTrackerKey_.clear();
-        trackerEditBuf_.clear();
-        const ITrackerBackend* be = app.GetTrackerBackend();
-        if (be) {
-            editTrackerType_ = be->Connectivity().GetTrackerType();
-            editTrackerKey_ = ConfigManager::NormalizeViewsBackendKey(editTrackerType_);
-            editHasTracker_ = true;
-            const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
-            const auto it = disk.Backends.find(editTrackerKey_);
-            if (it != disk.Backends.end()) {
-                trackerEditBuf_ = it->second.ToolbarAppend;
-            }
-        }
-
-        if (requestEditSelect_ >= 0 && requestEditSelect_ < static_cast<int>(editBuf_.Buttons.size())) {
-            selected_ = requestEditSelect_;
-        } else {
-            selected_ = editBuf_.Buttons.empty() ? -1 : 0;
-        }
-        requestEditSelect_ = -1;
-        cmdNames_.clear();
-        const std::vector<smatchet::cmd::Command> all = app.Commands().All();
-        cmdNames_.reserve(all.size());
-        for (const smatchet::cmd::Command& c : all) {
-            cmdNames_.push_back(c.Name);
-        }
-        cmdSearch_[0] = '\0';
-        ImGui::OpenPopup("Customize Toolbar##SmatchetToolbarEditor");
-    }
-
-    ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal("Customize Toolbar##SmatchetToolbarEditor", nullptr,
-                                ImGuiWindowFlags_NoSavedSettings)) {
+void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig& cfg) {
+    if (!requestEditorOpen_) {
         return;
     }
+    requestEditorOpen_ = false;
+    editBuf_ = cfg.Toolbar;
 
+    // Capture the active backend so Tracker scope edits the matching views bucket. The
+    // right-click "Edit..." path preselects a global button, so the editor always opens in
+    // Global scope; the user switches to Tracker scope explicitly.
+    editScope_ = EditScope::Global;
+    editHasTracker_ = false;
+    editTrackerType_.clear();
+    editTrackerKey_.clear();
+    trackerEditBuf_.clear();
+    const ITrackerBackend* be = app.GetTrackerBackend();
+    if (be) {
+        editTrackerType_ = be->Connectivity().GetTrackerType();
+        editTrackerKey_ = ConfigManager::NormalizeViewsBackendKey(editTrackerType_);
+        editHasTracker_ = true;
+        const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+        const auto it = disk.Backends.find(editTrackerKey_);
+        if (it != disk.Backends.end()) {
+            trackerEditBuf_ = it->second.ToolbarAppend;
+        }
+    }
+
+    if (requestEditSelect_ >= 0 && requestEditSelect_ < static_cast<int>(editBuf_.Buttons.size())) {
+        selected_ = requestEditSelect_;
+    } else {
+        selected_ = editBuf_.Buttons.empty() ? -1 : 0;
+    }
+    requestEditSelect_ = -1;
+    cmdNames_.clear();
+    const std::vector<smatchet::cmd::Command> all = app.Commands().All();
+    cmdNames_.reserve(all.size());
+    for (const smatchet::cmd::Command& c : all) {
+        cmdNames_.push_back(c.Name);
+    }
+    cmdSearch_[0] = '\0';
+    ImGui::OpenPopup("Customize Toolbar##SmatchetToolbarEditor");
+}
+
+SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
     const bool fa = SmatchetAreFaIconsLoaded();
 
     // Scope selector. Global scope edits the shared toolbar; Tracker scope edits the active
@@ -348,6 +346,11 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
         ImGui::TextDisabled("Global toolbar, shown for every tracker.");
     }
     ImGui::Separator();
+    return EditorCtx{buttons, trackerScope, fa};
+}
+
+void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
+    std::vector<ToolbarButton>& buttons = ctx.buttons;
 
     // Action row.
     if (ImGui::Button("Add command")) {
@@ -404,19 +407,15 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     }
 
     ImGui::Separator();
+}
 
-    // Left: button list (drag-drop reorder, confined to the active scope). Right: field editor.
+void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
+    std::vector<ToolbarButton>& buttons = ctx.buttons;
+
+    // Left: button list (drag-drop reorder, confined to the active scope).
     ImGui::BeginChild("##tblist", ImVec2(240.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     for (int i = 0; i < static_cast<int>(buttons.size()); ++i) {
-        ToolbarButton& b = buttons[i];
-        std::string rowLabel;
-        if (b.Kind == ToolbarButtonKind::Separator) {
-            rowLabel = "--- separator ---";
-        } else {
-            const std::string g = GlyphFor(b);
-            rowLabel = (fa && !g.empty()) ? (g + "  ") : std::string("[ ]  ");
-            rowLabel += b.Tooltip.empty() ? (b.CommandId.empty() ? std::string("(unset)") : b.CommandId) : b.Tooltip;
-        }
+        const std::string rowLabel = smatchet::toolbar_editor::EditorRowLabel(buttons[i], ctx.faLoaded);
         ImGui::PushID(i);
         if (ImGui::Selectable(rowLabel.c_str(), selected_ == i)) {
             selected_ = i;
@@ -432,7 +431,7 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
                 if (src >= 0 && src < static_cast<int>(buttons.size()) && src != i) {
                     ToolbarButton moved = buttons[src];
                     buttons.erase(buttons.begin() + src);
-                    int dst = (src < i) ? (i - 1) : i;
+                    const int dst = smatchet::toolbar_editor::DragDropDestIndex(src, i);
                     buttons.insert(buttons.begin() + dst, moved);
                     selected_ = dst;
                 }
@@ -442,8 +441,13 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
         ImGui::PopID();
     }
     ImGui::EndChild();
+}
 
-    ImGui::SameLine();
+void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
+    std::vector<ToolbarButton>& buttons = ctx.buttons;
+    const bool fa = ctx.faLoaded;
+
+    // Right: field editor for the selected button.
     ImGui::BeginChild("##tbedit", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     if (selected_ >= 0 && selected_ < static_cast<int>(buttons.size())) {
         ToolbarButton& b = buttons[selected_];
@@ -524,17 +528,19 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
         ImGui::TextDisabled("Select or add a button.");
     }
     ImGui::EndChild();
+}
 
+void SmatchetToolbarUi::DrawEditorFooter(EditorCtx& ctx, TrackerConfig& cfg) {
     // Footer. "Show toolbar" is a global-only setting (per-tracker visibility deferred), so in
     // Tracker scope a hint anchors the line instead.
-    if (trackerScope) {
+    if (ctx.trackerScope) {
         ImGui::TextDisabled("Visibility follows the global scope.");
     } else {
         ImGui::Checkbox("Show toolbar", &editBuf_.Visible);
     }
     ImGui::SameLine(ImGui::GetWindowWidth() - 200.0f);
     if (ImGui::Button("Save", ImVec2(90.0f, 0.0f))) {
-        if (trackerScope && editHasTracker_) {
+        if (ctx.trackerScope && editHasTracker_) {
             // Load-modify-save the views file so only this backend's append list changes,
             // preserving its Views/ActiveViewId and every other backend bucket.
             PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
@@ -551,5 +557,22 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
         ImGui::CloseCurrentPopup();
     }
+}
+
+void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
+    SyncEditorOpenRequest(app, cfg);
+
+    ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Customize Toolbar##SmatchetToolbarEditor", nullptr,
+                                ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+
+    EditorCtx ctx = DrawEditorScopeSelector();
+    DrawEditorActionRow(ctx);
+    DrawEditorButtonList(ctx);
+    ImGui::SameLine();
+    DrawEditorFieldEditor(ctx);
+    DrawEditorFooter(ctx, cfg);
     ImGui::EndPopup();
 }

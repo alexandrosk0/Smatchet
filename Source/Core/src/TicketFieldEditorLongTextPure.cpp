@@ -60,4 +60,29 @@ std::string ComputeLongTextSeed(LongTextRichKind kind, const std::string& rich, 
     }
 }
 
+RoundTripPreview ComputeRoundTripPreview(LongTextRichKind kind, const std::string& markdown) {
+    RoundTripPreview result;
+    try {
+        if (kind == LongTextRichKind::Html) {
+            const std::string html = MarkdownConvert::MarkdownToHtml(markdown);
+            bool fellBack = false;
+            result.Rendered = MarkdownConvert::HtmlSubsetToMarkdown(html, &fellBack);
+            result.Lossy = fellBack;
+        } else {
+            // Default to ADF for None / Adf — covers Jira description and generic ADF
+            // fields. New issues without a stored rich value still go through ADF.
+            const nlohmann::json adf = MarkdownConvert::MarkdownToAdf(markdown);
+            std::vector<std::string> dropped;
+            result.Rendered = MarkdownConvert::AdfToMarkdown(adf, &dropped);
+            result.Lossy = !dropped.empty();
+        }
+    } catch (...) {
+        // Converter blew up on the in-progress edit (rare; usually mid-token).
+        // Fall back to the raw buffer so the preview keeps updating.
+        result.Rendered = markdown;
+        result.Lossy = false;
+    }
+    return result;
+}
+
 } // namespace TicketFieldEditorLongTextPure
