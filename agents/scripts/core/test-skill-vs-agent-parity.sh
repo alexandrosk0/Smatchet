@@ -35,6 +35,7 @@ SKILL_ONLY_HELPERS=(
     grill-with-docs
     scratchpad-recall
     author-plan-doc
+    gate-escape-postmortem
 )
 
 is_skill_only() {
