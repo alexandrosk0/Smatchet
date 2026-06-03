@@ -101,10 +101,10 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
 | [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | 2026-06-02 | Plan — Agent charter altitude (operating-principle preamble + context budget) |
 | [`full-function-size-compliance`](shipped/full-function-size-compliance.md) | 2026-06-02 | Plan — Full Function-Size Compliance (zero grandfathered monoliths) |
+| [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | 2026-06-02 | Plan — Gate-escape postmortem (incident → new gate) |
 | [`internal-procedure-skills`](shipped/internal-procedure-skills.md) | 2026-06-02 | Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc) |
 | [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | 2026-06-02 | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
 | [`solo-merge-review-gate`](shipped/solo-merge-review-gate.md) | 2026-06-02 | Plan — Solo-workflow review gate (drop required approval, codify protection) |
-| [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | — | Plan — Gate-escape postmortem (incident → new gate) |
 <!-- END auto-plan-index -->
 
 ### Notes
