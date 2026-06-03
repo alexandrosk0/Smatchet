@@ -4,6 +4,17 @@
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
+> **STATUS: DEFERRED (pending recurrence) — 2026-06-03.** Judged over-scoped for the
+> current pain. The **frequent** conflict (the hand-maintained count line, touched
+> by every entry-adding PR) was killed cheaply instead — the stored count column
+> was removed from `AGENT_SELF_IMPROVEMENT.md` § Index; counts are on-demand via
+> `test-backlog-counts.sh --list`; the gate now guards against re-introducing it.
+> The conflict this plan targets — two concurrent adds to the *same category file*
+> — is **rarer** (P3, observed-only, ~5 min manual resolve) and does not justify a
+> 135-entry migration + a 121-file producer sweep yet. **Implement only if that
+> category-content conflict starts recurring often.** The § Approach below is the
+> ready-to-go design for that day.
+
 ## Context
 
 Concurrent agentic sessions merging into `develop` conflict on the shared

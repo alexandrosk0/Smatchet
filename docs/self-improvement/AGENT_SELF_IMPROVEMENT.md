@@ -116,15 +116,15 @@ auto-detected.
 
 ## Index
 
-| Category | Live count | File |
-|---|---|---|
-| bug         | 19  | [self-improvement/categories/bug.md](categories/bug.md) |
-| process     | 22  | [self-improvement/categories/process.md](categories/process.md) |
-| tooling     | 46  | [self-improvement/categories/tooling.md](categories/tooling.md) |
-| infra       | 18  | [self-improvement/categories/infra.md](categories/infra.md) |
-| test        | 18  | [self-improvement/categories/test.md](categories/test.md) |
-| security    | 11  | [self-improvement/categories/security.md](categories/security.md) |
-| external    | 1   | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |
-| applied (archive) | 181 | [self-improvement/categories/applied.md](categories/applied.md) |
+| Category | File |
+|---|---|
+| bug         | [self-improvement/categories/bug.md](categories/bug.md) |
+| process     | [self-improvement/categories/process.md](categories/process.md) |
+| tooling     | [self-improvement/categories/tooling.md](categories/tooling.md) |
+| infra       | [self-improvement/categories/infra.md](categories/infra.md) |
+| test        | [self-improvement/categories/test.md](categories/test.md) |
+| security    | [self-improvement/categories/security.md](categories/security.md) |
+| external    | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |
+| applied (archive) | [self-improvement/categories/applied.md](categories/applied.md) |
 
-> **Count maintenance**: each "Live count" is the number of `^- 20YY-MM-DD` entries in the linked file (`grep -c '^- 20' self-improvement/categories/<file>.md`). The applied-archive count is the same `grep -c '^- 20' self-improvement/categories/applied.md`. `agents/scripts/core/test-backlog-counts.sh` runs at the pre-push gate (`test-all.sh` discovery) and refuses if any row diverges from the actual file. Update the row in the same commit that adds / archives / removes an entry, or run `bash agents/scripts/core/test-backlog-counts.sh --fix` to rewrite the table from current file counts.
+> **Live counts are on-demand, not stored** — run `bash agents/scripts/core/test-backlog-counts.sh --list` for the current per-category counts (`grep -c '^- 20' <file>`). The count column was **removed 2026-06-03**: a hand-maintained count is edited by *every* entry-adding PR, so concurrent PRs conflicted on that single line on every add (the highest-frequency self-improvement merge conflict). Deriving it on demand removes the shared edit entirely. The gate (`test-backlog-counts.sh`, `test-all.sh` discovery) now **guards against re-introducing a stored numeric count column** rather than verifying one. The structural fix for the rarer *category-content* conflict (two adds to the same file) is the deferred [`self-improvement-one-entry-per-file`](../plans/active/self-improvement-one-entry-per-file.md) plan — only worth it if that conflict starts recurring often.
