@@ -3,7 +3,7 @@
 > **Slug**: `self-improvement-one-entry-per-file` (matches this file's basename without `.md`).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
-
+>
 > **STATUS: DEFERRED (pending recurrence) — 2026-06-03.** Judged over-scoped for the
 > current pain. The **frequent** conflict (the hand-maintained count line, touched
 > by every entry-adding PR) was killed cheaply instead — the stored count column
