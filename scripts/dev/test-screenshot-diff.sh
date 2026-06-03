@@ -16,7 +16,7 @@
 #
 # Env overrides:
 #   SMATCHET_EXE            path to Smatchet.exe (default build/ninja-iter-msvc/...)
-#   SMATCHET_TEST_PORT      MCP port for --spawn (default 58733; non-default forces fresh spawn)
+#   SMATCHET_TEST_PORT      MCP port for --spawn (default: ephemeral 40000-59999, so parallel runs don't collide; set explicitly to pin a fixed port)
 #   PYTHON                  python interpreter (default `python`)
 #   SCREENSHOT_TOLERANCE    per-channel L∞ tolerance (default 4)
 #   SCREENSHOT_DIFF_BIN     pre-built diff helper path; if unset the script g++-compiles one

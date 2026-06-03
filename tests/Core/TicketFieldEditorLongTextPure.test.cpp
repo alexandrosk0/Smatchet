@@ -7,7 +7,9 @@
 
 using TicketFieldEditorLongTextPure::ClassifyRichValue;
 using TicketFieldEditorLongTextPure::ComputeLongTextSeed;
+using TicketFieldEditorLongTextPure::ComputeRoundTripPreview;
 using TicketFieldEditorLongTextPure::LongTextRichKind;
+using TicketFieldEditorLongTextPure::RoundTripPreview;
 
 TEST_CASE("ClassifyRichValue: empty and whitespace") {
     CHECK(ClassifyRichValue("") == LongTextRichKind::None);
@@ -56,8 +58,8 @@ TEST_CASE("ComputeLongTextSeed: None returns stripped fallback") {
 TEST_CASE("ComputeLongTextSeed: Adf with malformed JSON falls back to stripped value") {
     std::vector<std::string> dropped;
     bool rawMode = true;
-    const std::string seed = ComputeLongTextSeed(LongTextRichKind::Adf, "{ not parseable", "fallback stripped",
-                                                 dropped, rawMode);
+    const std::string seed =
+        ComputeLongTextSeed(LongTextRichKind::Adf, "{ not parseable", "fallback stripped", dropped, rawMode);
     CHECK(seed == "fallback stripped");
     CHECK(rawMode == false);
 }
@@ -101,4 +103,28 @@ TEST_CASE("ComputeLongTextSeed: resets outRawMode to false on entry, except on H
     const std::string adf = R"({"type":"doc","version":1,"content":[]})";
     (void)ComputeLongTextSeed(LongTextRichKind::Adf, adf, "x", dropped, rawMode);
     CHECK(rawMode == false);
+}
+
+TEST_CASE("ComputeRoundTripPreview: plain markdown survives the ADF round-trip non-lossy") {
+    const RoundTripPreview rt = ComputeRoundTripPreview(LongTextRichKind::Adf, "Hello world");
+    CHECK(rt.Rendered.find("Hello world") != std::string::npos);
+    CHECK(rt.Lossy == false);
+}
+
+TEST_CASE("ComputeRoundTripPreview: None kind defaults to the ADF path") {
+    const RoundTripPreview rt = ComputeRoundTripPreview(LongTextRichKind::None, "# Heading");
+    CHECK(rt.Rendered.find("Heading") != std::string::npos);
+    CHECK(rt.Lossy == false);
+}
+
+TEST_CASE("ComputeRoundTripPreview: Html kind round-trips through the HTML subset converter") {
+    const RoundTripPreview rt = ComputeRoundTripPreview(LongTextRichKind::Html, "Plain paragraph text");
+    CHECK(rt.Rendered.find("Plain paragraph text") != std::string::npos);
+    // A plain paragraph is fully representable in the HTML subset → not lossy.
+    CHECK(rt.Lossy == false);
+}
+
+TEST_CASE("ComputeRoundTripPreview: empty markdown yields empty render, not lossy") {
+    const RoundTripPreview rt = ComputeRoundTripPreview(LongTextRichKind::Adf, "");
+    CHECK(rt.Lossy == false);
 }

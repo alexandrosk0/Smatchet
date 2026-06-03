@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Views.h"
+#include "TrackerFieldSchema.h"
 
 #include <algorithm>
 #include <cctype>
@@ -13,6 +14,82 @@ class AppController;
 struct UiDrawSession;
 
 namespace SmatchetViewsDashboardUiDetail {
+
+/// True for the six core tracker field ids that the Fields tab pins into its
+/// "Basic fields" group (everything else is a system or custom field). Pure —
+/// no ImGui / no session state — so it is bucket-A testable in isolation.
+inline bool IsBasicFieldId(const std::string& id) {
+    return id == "summary" || id == "assignee" || id == "priority" || id == "status" || id == "created" ||
+           id == "updated";
+}
+
+/// Friendly label for a column-order key. "id" renders as "ID"; a "field:<id>"
+/// key resolves against the catalog to "<Name> (<id>)", falling back to the bare
+/// id when the field is absent; any other key passes through unchanged. Pure.
+inline std::string PrettyColumnLabel(const std::string& key, const std::vector<TrackerField>& fields) {
+    if (key == "id") {
+        return "ID";
+    }
+    if (key.rfind("field:", 0) == 0) {
+        const std::string fieldId = key.substr(6);
+        auto it = std::find_if(fields.begin(), fields.end(), [&](const TrackerField& f) { return f.Id == fieldId; });
+        if (it != fields.end()) {
+            return it->Name + " (" + it->Id + ")";
+        }
+        return fieldId;
+    }
+    return key;
+}
+
+/// Stable ordering for two fields: by display Name, then by Id; a null pointer
+/// sorts last. Matches the comparator the Fields tab uses to order its system /
+/// custom groups. Pure.
+inline bool FieldSortLess(const TrackerField* lhs, const TrackerField* rhs) {
+    if (!lhs || !rhs) {
+        return lhs != nullptr;
+    }
+    if (lhs->Name != rhs->Name) {
+        return lhs->Name < rhs->Name;
+    }
+    return lhs->Id < rhs->Id;
+}
+
+/// Result of partitioning the available-field catalog for the Fields tab.
+/// `visible` keeps catalog order (search-filtered); the three group vectors are
+/// sorted via FieldSortLess for system / custom, while basic keeps catalog order.
+struct CategorizedFields {
+    std::vector<const TrackerField*> visible;
+    std::vector<const TrackerField*> system;
+    std::vector<const TrackerField*> custom;
+    std::vector<const TrackerField*> basic;
+};
+
+bool ContainsCaseInsensitive(const std::string& text, const std::string& needle);
+
+/// Partition `fields` into visible / system / custom / basic groups against the
+/// case-insensitive `searchNeedle` (matched on Id or Name). System and custom
+/// groups are sorted by FieldSortLess; visible + basic keep catalog order. Pure
+/// (no ImGui / no session state) — bucket-A testable.
+inline CategorizedFields CategorizeAvailableFields(const std::vector<TrackerField>& fields,
+                                                   const std::string& searchNeedle) {
+    CategorizedFields out;
+    for (const auto& field : fields) {
+        if (!ContainsCaseInsensitive(field.Id, searchNeedle) && !ContainsCaseInsensitive(field.Name, searchNeedle)) {
+            continue;
+        }
+        out.visible.push_back(&field);
+        if (field.IsCustom) {
+            out.custom.push_back(&field);
+        } else if (IsBasicFieldId(field.Id)) {
+            out.basic.push_back(&field);
+        } else {
+            out.system.push_back(&field);
+        }
+    }
+    std::sort(out.system.begin(), out.system.end(), FieldSortLess);
+    std::sort(out.custom.begin(), out.custom.end(), FieldSortLess);
+    return out;
+}
 
 inline std::string JoinCsvLocal(const std::vector<std::string>& values) {
     std::string out;
