@@ -351,21 +351,36 @@ jobs:
           name: smatchet-exe-${{ github.run_id }}
           path: build/ninja-iter-msvc/
 
+      # Cache the extracted Mesa opengl32.dll — bucket-C + bucket-E both pulled the
+      # ~30 MB mesa3d 7z from GitHub releases on every run. Key is pinned to the
+      # Mesa version (keep in lockstep with MESA_VERSION below); a hit skips the
+      # download entirely. docs/plans/active/ci-build-time-reduction.md Phase 2.
+      - name: Cache Mesa opengl32.dll
+        uses: actions/cache@v4
+        with:
+          path: mesa-cache
+          key: mesa-opengl32-24.2.5
+
       - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
         shell: bash
         env:
           MESA_VERSION: "24.2.5"
         run: |
           set -euo pipefail
-          mkdir -p mesa-tmp
-          cd mesa-tmp
-          curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
-          7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
-          if [ -f extracted/x64/opengl32.dll ]; then
-            cp extracted/x64/opengl32.dll ../build/ninja-iter-msvc/opengl32.dll
+          if [ ! -f mesa-cache/opengl32.dll ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            if [ -f extracted/x64/opengl32.dll ]; then
+              cp extracted/x64/opengl32.dll ../mesa-cache/opengl32.dll
+            fi
+            cd ..
+            rm -rf mesa-tmp
           fi
-          cd ..
-          rm -rf mesa-tmp
+          if [ -f mesa-cache/opengl32.dll ]; then
+            cp mesa-cache/opengl32.dll build/ninja-iter-msvc/opengl32.dll
+          fi
 
       - name: Run bucket-C screenshot diff
         continue-on-error: true
@@ -433,21 +448,34 @@ jobs:
         if: always()
         run: sccache --show-stats
 
+      # Cache the extracted Mesa opengl32.dll (see bucket-C for rationale). Same
+      # key as bucket-C so the two jobs share one cached dll across the repo.
+      - name: Cache Mesa opengl32.dll
+        uses: actions/cache@v4
+        with:
+          path: mesa-cache
+          key: mesa-opengl32-24.2.5
+
       - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
         shell: bash
         env:
           MESA_VERSION: "24.2.5"
         run: |
           set -euo pipefail
-          mkdir -p mesa-tmp
-          cd mesa-tmp
-          curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
-          7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
-          if [ -f extracted/x64/opengl32.dll ]; then
-            cp extracted/x64/opengl32.dll ../build/ninja-ui-test-msvc/opengl32.dll
+          if [ ! -f mesa-cache/opengl32.dll ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            if [ -f extracted/x64/opengl32.dll ]; then
+              cp extracted/x64/opengl32.dll ../mesa-cache/opengl32.dll
+            fi
+            cd ..
+            rm -rf mesa-tmp
           fi
-          cd ..
-          rm -rf mesa-tmp
+          if [ -f mesa-cache/opengl32.dll ]; then
+            cp mesa-cache/opengl32.dll build/ninja-ui-test-msvc/opengl32.dll
+          fi
 
       - name: Run bucket-E ImGui Test Engine scenario
         id: run-bucket-e
