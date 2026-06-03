@@ -398,13 +398,14 @@ case "${1:-}" in
     --diff=*)      MODE=diff;     ARG="${1#--diff=}" ;;
     --catalog)     MODE=catalog ;;
     --funcsize-baseline) MODE=funcsizebaseline ;;
+    --dup-baseline) MODE=dupbaseline ;;
     --scan-file)   MODE=scanfile; ARG="${2:-}" ;;
     --scan-file=*) MODE=scanfile; ARG="${1#--scan-file=}" ;;
     --full)        MODE=full ;;
     --scan-wide)   MODE=scanwide ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--scan-file[=]<f>|--full|--scan-wide|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -431,13 +432,16 @@ case "$MODE" in
     done
     # Delegate the tiered-cap + UI-classification in-sync assertion to the audit script's own
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
+    # Assert the duplication rule-id (DRY Engineering Pillar 5) is documented in AGENTS.md.
+    if ! grep -qF "duplication" AGENTS.md; then echo "SELFTEST FAIL: 'duplication' rule missing from AGENTS.md" >&2; miss=1; fi
     st_py="$(resolve_python || true)"
     if [ -n "$st_py" ]; then
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --selftest; then miss=1; fi
     else
-        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py --selftest" >&2
+        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py --selftest" >&2
     fi
-    [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment + function-size rules in sync" || exit 1
+    [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment + function-size + duplication rules in sync" || exit 1
     ;;
 
   full)
@@ -496,6 +500,17 @@ case "$MODE" in
     mkdir -p "$(dirname "$FUNCSIZE_BASELINE_FILE")"
     "$fs_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --baseline-md > "$FUNCSIZE_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $FUNCSIZE_BASELINE_FILE"
+    ;;
+
+  dupbaseline)
+    # Refresh the informational duplication grandfather snapshot (DRY pillar). Same contract as
+    # --funcsize-baseline: the gate is a live merge-base delta (dup_audit.py --diff), not this file.
+    dup_py="$(resolve_python || true)"
+    [ -n "$dup_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --dup-baseline" >&2; exit 2; }
+    DUP_BASELINE_FILE="docs/high-integrity/dup-baseline.md"
+    mkdir -p "$(dirname "$DUP_BASELINE_FILE")"
+    "$dup_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --baseline-md > "$DUP_BASELINE_FILE"
+    echo "[test-lint-rules] refreshed $DUP_BASELINE_FILE"
     ;;
 
   diff)
@@ -634,6 +649,17 @@ case "$MODE" in
 
     # --- soft comment-ratio warning (ADVISORY — never changes exit code) ---
     ratio_warn_for "$BASE" || true
+
+    # --- duplication WARN (DRY Engineering Pillar 5; ADVISORY — never changes exit code) ---
+    # dup_audit.py --diff is WARN-first (calibration phase per ADR-0015): it prints [dup] WARN
+    # lines to stderr for NEW cross-file copy-paste clones and ALWAYS exits 0. It graduates to a
+    # blocking rule only once the FP rate is < 10% over ~20 PRs (dry-pillar-dup-gate § Verification);
+    # until then it must NEVER touch $rc. An infra error (>=2) is surfaced but stays non-fatal here.
+    dup_aud="$REPO_ROOT/agents/scripts/core/dup_audit.py"
+    if [ -f "$dup_aud" ] && [ -n "$cr_py" ]; then
+        "$cr_py" "$dup_aud" --diff "$BASE" || \
+            echo "test-lint-rules: WARN: dup_audit.py --diff exited non-zero (advisory; not failing the gate)" >&2
+    fi
 
     exit "$rc"
     ;;
