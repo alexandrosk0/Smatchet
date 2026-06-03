@@ -63,7 +63,7 @@ npx wrangler deploy
 > config. **Never** put the GitHub PAT in that header — the whole point is that the
 > PAT stays on Cloudflare. Secrets are write-only; if you forget `RELAY_KEY`, just
 > `wrangler secret put RELAY_KEY` again with a new value.
-
+>
 > **The Worker bundles `wrangler.toml` `[vars]` at deploy time.** After editing
 > `REPO` / `ASSETS_REPO`, you **must** `npx wrangler deploy` again for the change to
 > take effect. Same for any `src/index.js` edit.

@@ -1,7 +1,7 @@
 # Plan — Decompose Top-20 Monolith Functions
 
 > **Slug**: `decompose-top-20-monoliths`
-
+>
 > **⟳ Refreshed (re-validated against current `develop`).** The original plan was written against the pre-consolidation layout (`Source_Core/`, `Target_Standalone/`, `Plugins/`) — all its file paths + line numbers are stale, one target was renamed + split (`BlameAnalysisUi`→`AnnotateAnalysisUi`), and 2 targets fell under threshold (`SpawnAndRun` 249 / `RunCmdAttach` 219). A fresh measurement sweep confirms the **premise holds and worsened**: 21 of the 23 named functions are still >300-line monoliths (several *grew*), and the tree now has **30 functions >300 lines, not 20**. The ROI, however, is **mixed** (see § ROI) — so this refresh **re-sequences**: the CI size-cap gate **leads** (without it the work erodes — proven: `SmatchetUI::Draw` 589→608, `drawMainMenuBar` 491→504 since the plan was written), the genuinely-valuable non-UI table refactors are Phase A, and the mechanical ImGui-draw decompositions drop to **opportunistic / ride-along** (no dedicated mechanical sweep).
 
 ## Context
@@ -40,7 +40,7 @@ Slice 1a pattern doc (#630), and the function decompositions `drawActiveProjectW
 > user feedback 2026-06-01) **SHIPPED** — `function_size_audit.py` line cap is now tiered by UI
 > classification (`is_ui_function()`), the soft-warning tier emits non-blocking `[func-size] WARN` lines,
 > and delta-gating grandfathers all current 120-200-line non-UI functions (see § Next ratchet → shipped).
-
+>
 > **Everything below is grandfathered behind the gate** (the delta gate only fails NEW or
 > just-crossed functions). Nothing here is blocking; each can land independently, in any order, as
 > its own PR. The full current oversized set is snapshotted in

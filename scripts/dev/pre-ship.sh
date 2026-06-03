@@ -96,9 +96,18 @@ else
 fi
 
 echo "pre-ship: running delta lint gate vs $base_ref"
-if bash agents/scripts/project/test-lint-rules.sh --diff "$base_ref"; then
-    echo "pre-ship: PASS — formatted + delta lint gate clean. Safe to push."
-    exit 0
+if ! bash agents/scripts/project/test-lint-rules.sh --diff "$base_ref"; then
+    echo "pre-ship: FAIL — fix the delta lint findings above before pushing." >&2
+    exit 1
 fi
-echo "pre-ship: FAIL — fix the delta lint findings above before pushing." >&2
-exit 1
+
+# Markdown style lint (MD028 etc.) — docs are not covered by the C++ delta gate,
+# so without this a markdown issue only surfaced as a post-push CodeRabbit finding.
+echo "pre-ship: running markdown lint (md_lint.py --all)"
+if ! python3 agents/scripts/core/md_lint.py --all; then
+    echo "pre-ship: FAIL — fix the markdown findings above before pushing." >&2
+    exit 1
+fi
+
+echo "pre-ship: PASS — formatted + delta lint gate + markdown lint clean. Safe to push."
+exit 0

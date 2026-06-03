@@ -1,7 +1,7 @@
 # AI Assistant — Right-Docked Side Panel + agents.md Harness
 
 > **Plan-doc relocation (mandatory first commit step)**: per `AGENTS.md` § Plan location, plans live at `docs/plans/active/<slug>.md`. After this file is approved, copy it to `docs/plans/shipped/ai-assistant-side-panel.md` and commit with `wip(plan): ai-assistant-side-panel` before any code work. The path under `~/.claude/plans/` is plan-mode scratch only.
-
+>
 > **Status (2026-05-16)**: Phase A shipped (narrowed scope) — see § Implementation log. Phase A' deferred behind `test-suite-expansion` umbrella release on `Source_Core/src/ConfigManager*.cpp` + `tests/**`. Phases B-E unscoped. Plan-lock entry: [`docs/plans/active/_plan-locks.md`](./_plan-locks.md) § `ai-assistant-side-panel · Phase A-narrowed · status: in-flight`.
 
 ## Context
