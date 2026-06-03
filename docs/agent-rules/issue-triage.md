@@ -69,7 +69,7 @@ Triage *tracks + labels* Issues; **fixing one is user-initiated and label-routed
 
 ## Labels
 
-Managed by [`agents/scripts/project/sync-issue-labels.sh`](../../agents/scripts/project/sync-issue-labels.sh) from a checked-in manifest (so the set is reproducible + the `area:*` labels stay in parity with the `coderabbit-triage` subsystem map):
+Managed by `agents/scripts/project/sync-issue-labels.sh` (added in Slice 2) from a checked-in manifest (so the set is reproducible + the `area:*` labels stay in parity with the `coderabbit-triage` subsystem map):
 
 - **`bug`** (exists) — every product bug Issue.
 - **`P0`–`P3`** — priority, the backlog scale.
@@ -84,4 +84,4 @@ Managed by [`agents/scripts/project/sync-issue-labels.sh`](../../agents/scripts/
 ## Triage cadence
 
 - **Closeout sweep** — `issue-sweep.sh --dry-run` runs in the ship-loop closeout: surfaces triage verdicts (`--apply` only on explicit authorisation) **and** emits the top-`P0`/`P1` `[issue-propose]` line (§ Fixing an Issue) — propose-only, never auto-fix, never pauses.
-- **Periodic janitor** — [`issue-janitor`](../../agents/core/issue-janitor.md) (agent + scheduled workflow, mirroring `p4-janitor` / `git-janitor`) keeps Issues labelled / deduped / stale-swept off the ship-loop.
+- **Periodic janitor** — `issue-janitor` (`agents/core/issue-janitor.md`, added in Slice 4 — agent + scheduled workflow, mirroring `p4-janitor` / `git-janitor`) keeps Issues labelled / deduped / stale-swept off the ship-loop.
