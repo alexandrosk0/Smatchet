@@ -8,9 +8,9 @@ version: 2
 
 The invocation shortcut for the most-repeated structured procedure in the
 project: authoring a template-conformant plan-doc. The rules it encodes live in
-[`docs/agent-rules/process-rules.md`](../../../docs/agent-rules/process-rules.md)
+[`docs/agent-rules/process-rules.md`](../../../../docs/agent-rules/process-rules.md)
 § Plan-doc family / Plan-doc safety / Plan template and
-[`docs/plans/active/_plan-template.md`](../../../docs/plans/active/_plan-template.md);
+[`docs/plans/active/_plan-template.md`](../../../../docs/plans/active/_plan-template.md);
 this skill drives them in one shot. It is the *authoring* counterpart to
 [`grill-with-docs`](../grill-with-docs/SKILL.md) (the *stress-test*) — together
 they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
