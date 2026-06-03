@@ -1,4 +1,5 @@
 #include "LuaConsolePlugin.h"
+#include "LuaConsolePlugin_detail.h"
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
@@ -356,25 +357,7 @@ void LuaConsolePlugin::OnEarlyInit(AppController& app) {
     }
 }
 
-void LuaConsolePlugin::OnDraw(AppController& app) {
-    // Auto-open + focus the Scripting window when the background automation worker signals
-    // a Lua error (set via scriptingWindowOpenRequested_ in AppController).
-    if (app.ConsumeScriptingWindowRequest()) {
-        g_ui.showLuaAutomationWindow = true;
-        g_ui.requestLuaAutomationFocus = true;
-    }
-
-    if (!g_ui.showLuaAutomationWindow) {
-        onScriptsTabLastFrame_ = false;
-        app.DrawLuaWindows();
-        return;
-    }
-
-    const bool wantFocus = g_ui.requestLuaAutomationFocus;
-    if (wantFocus) {
-        ImGui::SetNextWindowFocus();
-    }
-
+bool LuaConsolePlugin::BeginLuaWindow(bool wantFocus) {
     PrepareLuaWindowLayout(g_ui);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 12));
 
@@ -385,7 +368,7 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         if (wantFocus) {
             g_ui.requestLuaAutomationFocus = false;
         }
-        return;
+        return false;
     }
 
     if (wantFocus) {
@@ -399,19 +382,16 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
         pendingSelectScriptsTab_ = true;
         g_ui.requestScriptingEditorTabFocus = false;
     }
+    return true;
+}
 
-    constexpr float kSplitGrabH = 6.0f;
-    constexpr float kMinLogH = 72.0f;
-    constexpr float kMinScriptH = 80.0f;
-    constexpr float kToolsLogH = 56.0f;
-    const float splitStackTotalH = ImGui::GetContentRegionAvail().y;
-
-    const bool onToolsTab = (tabSel_ == 1);
-    if (onToolsTab) {
+void LuaConsolePlugin::UpdateSplitLayout(DrawCtx& ctx) {
+    if (ctx.onToolsTab) {
         if (!onToolsTabLastFrame_) {
             scriptPaneHeightBeforeToolsTab_ = luaAutomationScriptPaneUserPx_;
             if (luaAutomationScriptPaneUserPx_ <= 0.0f) {
-                luaAutomationScriptPaneUserPx_ = (std::max)(kMinScriptH, splitStackTotalH - kToolsLogH - kSplitGrabH);
+                luaAutomationScriptPaneUserPx_ =
+                    (std::max)(ctx.kMinScriptH, ctx.splitStackTotalH - ctx.kToolsLogH - ctx.kSplitGrabH);
             }
         }
         onToolsTabLastFrame_ = true;
@@ -420,16 +400,243 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
             luaAutomationScriptPaneUserPx_ = scriptPaneHeightBeforeToolsTab_;
         }
         onToolsTabLastFrame_ = false;
-        const float maxScriptHScripts = (std::max)(kMinScriptH, splitStackTotalH - kMinLogH - kSplitGrabH);
+        const float maxScriptHScripts =
+            (std::max)(ctx.kMinScriptH, ctx.splitStackTotalH - ctx.kMinLogH - ctx.kSplitGrabH);
         if (luaAutomationScriptPaneUserPx_ <= 0.f) {
             luaAutomationScriptPaneUserPx_ =
-                (std::min)(maxScriptHScripts, (std::max)(kMinScriptH, splitStackTotalH * 0.42f));
+                (std::min)(maxScriptHScripts, (std::max)(ctx.kMinScriptH, ctx.splitStackTotalH * 0.42f));
         }
     }
-    const float minLogH = onToolsTab ? kToolsLogH : kMinLogH;
-    const float maxScriptH = (std::max)(kMinScriptH, splitStackTotalH - minLogH - kSplitGrabH);
-    luaAutomationScriptPaneHeightPx_ = (std::min)(maxScriptH, (std::max)(kMinScriptH, luaAutomationScriptPaneUserPx_));
+    const float minLogH = ctx.onToolsTab ? ctx.kToolsLogH : ctx.kMinLogH;
+    const float maxScriptH = (std::max)(ctx.kMinScriptH, ctx.splitStackTotalH - minLogH - ctx.kSplitGrabH);
+    luaAutomationScriptPaneHeightPx_ =
+        (std::min)(maxScriptH, (std::max)(ctx.kMinScriptH, luaAutomationScriptPaneUserPx_));
+}
 
+void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName) {
+    AppController& app = ctx.app;
+    const bool isHooks = IsHooksFile(curName);
+    const bool isAutomation = (curName == "Automation.lua");
+    if (isHooks) {
+        ImGui::SameLine();
+        if (ImGui::Button("Run", ImVec2(70, 0))) {
+            std::string e;
+            if (SaveCurrentScript(app, e)) {
+                LOG_TRACE("LuaConsole: reloading SmatchetHooks.lua from disk");
+                ReloadSmatchetHooksSetupScript(app);
+                g_ui.gridEditSuccess = "Hooks reloaded";
+                ClearErrorMarkers();
+            } else {
+                g_ui.gridEditError = e;
+            }
+        }
+        return;
+    }
+    ImGui::SameLine();
+    if (isAutomation) {
+        if (ImGui::Button("Run on selected", ImVec2(150, 0))) {
+            std::string e;
+            if (SaveCurrentScript(app, e)) {
+                const auto snap = app.GetActiveTicketsSnapshot();
+                const auto& tickets = *snap;
+                std::vector<std::string> ticketIds;
+                ticketIds.reserve(tickets.size());
+                for (const auto& t : tickets) {
+                    ticketIds.push_back(t.id);
+                }
+                const std::vector<std::string> selectedIds = lua_console_detail::CollectSelectedTicketIds(
+                    g_ui.gridState.RectSel.Rows, g_ui.gridState.RectSel.Active, g_ui.gridState.RectSel.MinRow(),
+                    g_ui.gridState.RectSel.MaxRow(), g_ui.cachedSortedIndices, ticketIds);
+                LOG_TRACE("LuaConsole: Run %s on %zu selected issue(s)", curName.c_str(), selectedIds.size());
+                app.RunAutoScript(curName, selectedIds);
+                ClearErrorMarkers();
+            } else {
+                g_ui.gridEditError = e;
+            }
+        }
+        return;
+    }
+    ImGui::Checkbox("Background", &runInBackground_);
+    ImGui::SameLine();
+    if (ImGui::Button("Run", ImVec2(70, 0))) {
+        std::string e;
+        if (SaveCurrentScript(app, e)) {
+            if (runInBackground_) {
+                console_.AddLog("[RUN] Submitting " + curName + " for background execution...");
+                app.RunFlatScriptAsync(curName);
+                g_ui.gridEditSuccess = "Submitted background job for " + curName;
+                ClearErrorMarkers();
+            } else {
+                std::string err;
+                std::string summary;
+                console_.AddLog("[RUN] Executing " + curName + " on main thread...");
+                if (!app.ExecuteLuaConsoleSnippet(luaEditor_.GetText(), err, summary)) {
+                    console_.AddLog(std::string("[ERROR] ") + err);
+                    g_ui.gridEditError = "Lua: " + err;
+                    ApplyErrorMarkersFromMessage(err);
+                } else {
+                    g_ui.gridEditSuccess = curName + " run finished";
+                    ClearErrorMarkers();
+                    if (!summary.empty()) {
+                        console_.AddLog(std::string("[RETURN] ") + summary);
+                    } else {
+                        console_.AddLog("[RUN] Finished (no return value).");
+                    }
+                }
+            }
+        } else {
+            g_ui.gridEditError = e;
+        }
+    }
+}
+
+void LuaConsolePlugin::DrawRegisteredActionsRow(DrawCtx& ctx) {
+    // Live registered-action row — refreshed every frame from
+    // `GetLuaGlobalActionNames()`. Surfaces what user scripts have registered
+    // via `ui.register_global_action(...)` without forcing a tab switch to
+    // "Tools & Actions".
+    const auto liveNames = ctx.app.GetLuaGlobalActionNames();
+    if (liveNames.empty()) {
+        ImGui::TextDisabled("Registered actions: 0");
+    } else {
+        const std::string joined = lua_console_detail::JoinRegisteredActionNames(liveNames);
+        ImGui::TextDisabled("Registered actions (%zu):", liveNames.size());
+        ImGui::TextWrapped("  %s", joined.c_str());
+    }
+}
+
+void LuaConsolePlugin::DrawEditorAndAutocomplete() {
+    ImGui::Spacing();
+    const float editorH = (std::max)(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
+    // Refresh palette every frame so a SmatchetTheme switch (driven by
+    // SmatchetUI::Draw -> SmatchetTheme::ApplyStyle) propagates instantly.
+    // See SmatchetThemedTextEditorPalette.h for the per-frame-cost
+    // rationale (~84 bytes copy + 1 SetPalette per frame — negligible).
+    luaEditor_.SetPalette(SmatchetTheme::GetThemedLuaConsolePalette());
+    luaEditor_.Render("##lua_text_editor", ImVec2(-1.0f, editorH), false);
+
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Space)) {
+        ImGui::OpenPopup("lua_ac");
+    }
+    DrawAutocompletePopup();
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a :line: is present.");
+}
+
+void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) {
+    AppController& app = ctx.app;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("File");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
+    bool openUnsavedSwitchAfterCombo = false;
+    if (ImGui::BeginCombo("##script_pick", curName.c_str())) {
+        for (int i = 0; i < static_cast<int>(scriptList_.size()); ++i) {
+            const bool sel = (i == selectedScriptIndex_);
+            if (ImGui::Selectable(scriptList_[static_cast<size_t>(i)].c_str(), sel)) {
+                if (i != selectedScriptIndex_) {
+                    if (luaEditor_.GetText() != diskSnapshot_) {
+                        pendingScriptIndex_ = i;
+                        // OpenPopup from inside BeginCombo is unreliable (modal vs combo popup stack).
+                        // Defer until after EndCombo so BeginPopupModal runs same frame after OpenPopup.
+                        openUnsavedSwitchAfterCombo = true;
+                    } else {
+                        selectedScriptIndex_ = i;
+                        std::string e;
+                        (void)LoadSelectedScriptIntoEditor(app, e);
+                    }
+                }
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (openUnsavedSwitchAfterCombo) {
+        ImGui::OpenPopup("##lua_unsaved_switch");
+    }
+    if (ImGui::BeginPopupModal("##lua_unsaved_switch", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Save changes to the current script before switching?");
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
+            std::string e;
+            if (SaveCurrentScript(app, e)) {
+                selectedScriptIndex_ = pendingScriptIndex_;
+                (void)LoadSelectedScriptIntoEditor(app, e);
+            } else {
+                g_ui.gridEditError = e;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard", ImVec2(120, 0))) {
+            selectedScriptIndex_ = pendingScriptIndex_;
+            std::string e;
+            (void)LoadSelectedScriptIntoEditor(app, e);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Save", ImVec2(70, 0))) {
+        std::string e;
+        if (SaveCurrentScript(app, e)) {
+            g_ui.gridEditSuccess = "Saved " + curName;
+            g_ui.gridEditError.clear();
+        } else {
+            g_ui.gridEditError = e;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reload from disk", ImVec2(130, 0))) {
+        std::string e;
+        (void)LoadSelectedScriptIntoEditor(app, e);
+        g_ui.gridEditSuccess = "Reloaded " + curName;
+    }
+
+    DrawRunButtonRow(ctx, curName);
+    DrawRegisteredActionsRow(ctx);
+    DrawEditorAndAutocomplete();
+}
+
+void LuaConsolePlugin::DrawToolsTab(DrawCtx& ctx) {
+    AppController& app = ctx.app;
+    tabSel_ = 1;
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Quick Access Tools");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Registered via ui.register_global_action)");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const auto globalNames = app.GetLuaGlobalActionNames();
+    if (globalNames.empty()) {
+        ImGui::TextDisabled("No global actions registered.");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::TextWrapped("Global actions are defined in SmatchetHooks.lua using "
+                           "'ui.register_global_action(name, callback)'.");
+        ImGui::PopStyleColor();
+    } else {
+        for (const auto& name : globalNames) {
+            ImGui::PushID(name.c_str());
+            if (ImGui::Button(name.c_str(), ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, 32.0f))) {
+                app.ExecuteLuaGlobalAction(name);
+                g_ui.gridEditSuccess = "Queued: " + name;
+            }
+            if (ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x * 0.48f < ImGui::GetContentRegionMax().x) {
+                ImGui::SameLine();
+            }
+            ImGui::PopID();
+        }
+    }
+}
+
+void LuaConsolePlugin::DrawScriptPane(DrawCtx& ctx) {
+    AppController& app = ctx.app;
     ImGui::BeginChild("##lua_script_pane", ImVec2(-1.0f, luaAutomationScriptPaneHeightPx_), ImGuiChildFlags_None);
     if (ImGui::BeginTabBar("##lua_main_tabs", ImGuiTabBarFlags_None)) {
         ImGuiTabItemFlags scriptFlags = ImGuiTabItemFlags_None;
@@ -444,251 +651,24 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
 
             const std::string curName =
                 scriptList_.empty() ? std::string("(none)") : scriptList_[static_cast<size_t>(selectedScriptIndex_)];
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("File");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.55f);
-            bool openUnsavedSwitchAfterCombo = false;
-            if (ImGui::BeginCombo("##script_pick", curName.c_str())) {
-                for (int i = 0; i < static_cast<int>(scriptList_.size()); ++i) {
-                    const bool sel = (i == selectedScriptIndex_);
-                    if (ImGui::Selectable(scriptList_[static_cast<size_t>(i)].c_str(), sel)) {
-                        if (i != selectedScriptIndex_) {
-                            if (luaEditor_.GetText() != diskSnapshot_) {
-                                pendingScriptIndex_ = i;
-                                // OpenPopup from inside BeginCombo is unreliable (modal vs combo popup stack).
-                                // Defer until after EndCombo so BeginPopupModal runs same frame after OpenPopup.
-                                openUnsavedSwitchAfterCombo = true;
-                            } else {
-                                selectedScriptIndex_ = i;
-                                std::string e;
-                                (void)LoadSelectedScriptIntoEditor(app, e);
-                            }
-                        }
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            if (openUnsavedSwitchAfterCombo) {
-                ImGui::OpenPopup("##lua_unsaved_switch");
-            }
-            if (ImGui::BeginPopupModal("##lua_unsaved_switch", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::TextUnformatted("Save changes to the current script before switching?");
-                if (ImGui::Button("Save", ImVec2(120, 0))) {
-                    std::string e;
-                    if (SaveCurrentScript(app, e)) {
-                        selectedScriptIndex_ = pendingScriptIndex_;
-                        (void)LoadSelectedScriptIntoEditor(app, e);
-                    } else {
-                        g_ui.gridEditError = e;
-                    }
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Discard", ImVec2(120, 0))) {
-                    selectedScriptIndex_ = pendingScriptIndex_;
-                    std::string e;
-                    (void)LoadSelectedScriptIntoEditor(app, e);
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("Save", ImVec2(70, 0))) {
-                std::string e;
-                if (SaveCurrentScript(app, e)) {
-                    g_ui.gridEditSuccess = "Saved " + curName;
-                    g_ui.gridEditError.clear();
-                } else {
-                    g_ui.gridEditError = e;
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Reload from disk", ImVec2(130, 0))) {
-                std::string e;
-                (void)LoadSelectedScriptIntoEditor(app, e);
-                g_ui.gridEditSuccess = "Reloaded " + curName;
-            }
-
-            const bool isHooks = IsHooksFile(curName);
-            const bool isAutomation = (curName == "Automation.lua");
-            if (isHooks) {
-                ImGui::SameLine();
-                if (ImGui::Button("Run", ImVec2(70, 0))) {
-                    std::string e;
-                    if (SaveCurrentScript(app, e)) {
-                        LOG_TRACE("LuaConsole: reloading SmatchetHooks.lua from disk");
-                        ReloadSmatchetHooksSetupScript(app);
-                        g_ui.gridEditSuccess = "Hooks reloaded";
-                        ClearErrorMarkers();
-                    } else {
-                        g_ui.gridEditError = e;
-                    }
-                }
-            } else {
-                ImGui::SameLine();
-                if (isAutomation) {
-                    if (ImGui::Button("Run on selected", ImVec2(150, 0))) {
-                        std::string e;
-                        if (SaveCurrentScript(app, e)) {
-                            std::vector<std::string> selectedIds;
-                            const auto snap = app.GetActiveTicketsSnapshot();
-                            const auto& tickets = *snap;
-                            for (int r : g_ui.gridState.RectSel.Rows) {
-                                if (r >= 0 && static_cast<size_t>(r) < g_ui.cachedSortedIndices.size()) {
-                                    const size_t originalIdx = g_ui.cachedSortedIndices[static_cast<size_t>(r)];
-                                    if (originalIdx < tickets.size()) {
-                                        selectedIds.push_back(tickets[originalIdx].id);
-                                    }
-                                }
-                            }
-                            if (g_ui.gridState.RectSel.Active) {
-                                const int minR = g_ui.gridState.RectSel.MinRow();
-                                const int maxR = g_ui.gridState.RectSel.MaxRow();
-                                for (int r = minR; r <= maxR; ++r) {
-                                    if (r >= 0 && static_cast<size_t>(r) < g_ui.cachedSortedIndices.size()) {
-                                        const size_t originalIdx = g_ui.cachedSortedIndices[static_cast<size_t>(r)];
-                                        if (originalIdx < tickets.size()) {
-                                            selectedIds.push_back(tickets[originalIdx].id);
-                                        }
-                                    }
-                                }
-                            }
-                            std::sort(selectedIds.begin(), selectedIds.end());
-                            selectedIds.erase(std::unique(selectedIds.begin(), selectedIds.end()), selectedIds.end());
-                            LOG_TRACE("LuaConsole: Run %s on %zu selected issue(s)", curName.c_str(),
-                                      selectedIds.size());
-                            app.RunAutoScript(curName, selectedIds);
-                            ClearErrorMarkers();
-                        } else {
-                            g_ui.gridEditError = e;
-                        }
-                    }
-                } else {
-                    ImGui::SameLine();
-                    ImGui::Checkbox("Background", &runInBackground_);
-                    ImGui::SameLine();
-                    if (ImGui::Button("Run", ImVec2(70, 0))) {
-                        std::string e;
-                        if (SaveCurrentScript(app, e)) {
-                            if (runInBackground_) {
-                                console_.AddLog("[RUN] Submitting " + curName + " for background execution...");
-                                app.RunFlatScriptAsync(curName);
-                                g_ui.gridEditSuccess = "Submitted background job for " + curName;
-                                ClearErrorMarkers();
-                            } else {
-                                std::string err;
-                                std::string summary;
-                                console_.AddLog("[RUN] Executing " + curName + " on main thread...");
-                                if (!app.ExecuteLuaConsoleSnippet(luaEditor_.GetText(), err, summary)) {
-                                    console_.AddLog(std::string("[ERROR] ") + err);
-                                    g_ui.gridEditError = "Lua: " + err;
-                                    ApplyErrorMarkersFromMessage(err);
-                                } else {
-                                    g_ui.gridEditSuccess = curName + " run finished";
-                                    ClearErrorMarkers();
-                                    if (!summary.empty()) {
-                                        console_.AddLog(std::string("[RETURN] ") + summary);
-                                    } else {
-                                        console_.AddLog("[RUN] Finished (no return value).");
-                                    }
-                                }
-                            }
-                        } else {
-                            g_ui.gridEditError = e;
-                        }
-                    }
-                }
-            }
-
-            {
-                // Live registered-action row — refreshed every frame from
-                // `GetLuaGlobalActionNames()`. Surfaces what user scripts have registered
-                // via `ui.register_global_action(...)` without forcing a tab switch to
-                // "Tools & Actions".
-                const auto liveNames = app.GetLuaGlobalActionNames();
-                if (liveNames.empty()) {
-                    ImGui::TextDisabled("Registered actions: 0");
-                } else {
-                    std::string joined;
-                    for (size_t i = 0; i < liveNames.size(); ++i) {
-                        if (i)
-                            joined += ", ";
-                        joined += liveNames[i];
-                    }
-                    ImGui::TextDisabled("Registered actions (%zu):", liveNames.size());
-                    ImGui::TextWrapped("  %s", joined.c_str());
-                }
-            }
-
-            ImGui::Spacing();
-            const float editorH =
-                (std::max)(80.0f, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing());
-            // Refresh palette every frame so a SmatchetTheme switch (driven by
-            // SmatchetUI::Draw -> SmatchetTheme::ApplyStyle) propagates instantly.
-            // See SmatchetThemedTextEditorPalette.h for the per-frame-cost
-            // rationale (~84 bytes copy + 1 SetPalette per frame — negligible).
-            luaEditor_.SetPalette(SmatchetTheme::GetThemedLuaConsolePalette());
-            luaEditor_.Render("##lua_text_editor", ImVec2(-1.0f, editorH), false);
-
-            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-                ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Space)) {
-                ImGui::OpenPopup("lua_ac");
-            }
-            DrawAutocompletePopup();
-
-            ImGui::Spacing();
-            ImGui::TextDisabled(
-                "Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a :line: is present.");
-
+            DrawScriptsTab(ctx, curName);
             ImGui::EndTabItem();
         } else {
             onScriptsTabLastFrame_ = false;
         }
 
         if (ImGui::BeginTabItem("Tools & Actions")) {
-            tabSel_ = 1;
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Quick Access Tools");
-            ImGui::SameLine();
-            ImGui::TextDisabled("(Registered via ui.register_global_action)");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            const auto globalNames = app.GetLuaGlobalActionNames();
-            if (globalNames.empty()) {
-                ImGui::TextDisabled("No global actions registered.");
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-                ImGui::TextWrapped("Global actions are defined in SmatchetHooks.lua using "
-                                   "'ui.register_global_action(name, callback)'.");
-                ImGui::PopStyleColor();
-            } else {
-                for (const auto& name : globalNames) {
-                    ImGui::PushID(name.c_str());
-                    if (ImGui::Button(name.c_str(), ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, 32.0f))) {
-                        app.ExecuteLuaGlobalAction(name);
-                        g_ui.gridEditSuccess = "Queued: " + name;
-                    }
-                    if (ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x * 0.48f <
-                        ImGui::GetContentRegionMax().x) {
-                        ImGui::SameLine();
-                    }
-                    ImGui::PopID();
-                }
-            }
+            DrawToolsTab(ctx);
             ImGui::EndTabItem();
         }
 
         ImGui::EndTabBar();
     }
     ImGui::EndChild();
+}
 
-    ImGui::InvisibleButton("##lua_script_log_split", ImVec2(ImGui::GetContentRegionAvail().x, kSplitGrabH));
+void LuaConsolePlugin::DrawSplitterAndConsole(DrawCtx& ctx) {
+    ImGui::InvisibleButton("##lua_script_log_split", ImVec2(ImGui::GetContentRegionAvail().x, ctx.kSplitGrabH));
     const bool splitHot = ImGui::IsItemHovered();
     const bool splitActive = ImGui::IsItemActive();
     if (splitHot || splitActive) {
@@ -714,9 +694,10 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
     }
     if (splitActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         const float next = luaAutomationScriptPaneHeightPx_ + ImGui::GetIO().MouseDelta.y;
-        const float localMinLogH = onToolsTab ? kToolsLogH : kMinLogH;
-        const float localMaxScriptH = (std::max)(kMinScriptH, splitStackTotalH - localMinLogH - kSplitGrabH);
-        const float clamped = (std::min)(localMaxScriptH, (std::max)(kMinScriptH, next));
+        const float localMinLogH = ctx.onToolsTab ? ctx.kToolsLogH : ctx.kMinLogH;
+        const float localMaxScriptH =
+            (std::max)(ctx.kMinScriptH, ctx.splitStackTotalH - localMinLogH - ctx.kSplitGrabH);
+        const float clamped = (std::min)(localMaxScriptH, (std::max)(ctx.kMinScriptH, next));
         if (std::fabs(clamped - luaAutomationScriptPaneHeightPx_) > 0.5f) {
             luaAutomationScriptPaneUserPx_ = clamped;
             luaAutomationScriptPaneHeightPx_ = clamped;
@@ -731,6 +712,35 @@ void LuaConsolePlugin::OnDraw(AppController& app) {
     console_.DrawPanelContents(true, -1.0f, true, false);
     ImGui::EndChild();
     ImGui::PopStyleColor();
+}
+
+void LuaConsolePlugin::OnDraw(AppController& app) {
+    // Auto-open + focus the Scripting window when the background automation worker signals
+    // a Lua error (set via scriptingWindowOpenRequested_ in AppController).
+    if (app.ConsumeScriptingWindowRequest()) {
+        g_ui.showLuaAutomationWindow = true;
+        g_ui.requestLuaAutomationFocus = true;
+    }
+
+    if (!g_ui.showLuaAutomationWindow) {
+        onScriptsTabLastFrame_ = false;
+        app.DrawLuaWindows();
+        return;
+    }
+
+    const bool wantFocus = g_ui.requestLuaAutomationFocus;
+    if (wantFocus) {
+        ImGui::SetNextWindowFocus();
+    }
+
+    if (!BeginLuaWindow(wantFocus)) {
+        return;
+    }
+
+    DrawCtx ctx{app, (tabSel_ == 1), ImGui::GetContentRegionAvail().y, 6.0f, 72.0f, 80.0f, 56.0f};
+    UpdateSplitLayout(ctx);
+    DrawScriptPane(ctx);
+    DrawSplitterAndConsole(ctx);
 
     ImGui::End();
     ImGui::PopStyleVar();
