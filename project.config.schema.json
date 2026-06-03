@@ -86,6 +86,19 @@
         }
       }
     },
+    "branch_protection": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Desired GitHub branch-protection state for the default branch, codified so it can't drift. Applied by agents/scripts/core/setup-branch-protection.sh. See docs/adr/0013-solo-no-required-review.md for why required_review_count is 0.",
+      "required": ["branch", "required_contexts", "required_review_count"],
+      "properties": {
+        "branch": { "type": "string" },
+        "required_contexts": { "type": "array", "items": { "type": "string" } },
+        "required_review_count": { "type": "integer", "minimum": 0 },
+        "enforce_admins": { "type": "boolean" },
+        "strict": { "type": "boolean" }
+      }
+    },
     "ci": {
       "type": "object",
       "additionalProperties": false,

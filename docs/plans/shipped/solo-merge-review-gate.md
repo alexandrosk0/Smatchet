@@ -6,7 +6,9 @@
 
 ## Context
 
-`develop` branch protection requires **1 approving review** (`required_approving_review_count: 1`, `require_code_owner_reviews: false`, `enforce_admins: false`). On a solo repo this is a **deadlock**: GitHub forbids approving your own PR, so the sole maintainer (`alexandrosk0`) can never satisfy it — every PR sits in `mergeStateStatus: BLOCKED` even when CI + CodeRabbit are fully green (observed on #747: rollup `state: SUCCESS`, all four required contexts satisfied, blocked solely by the missing review).
+**Re-scoped 2026-06-02 (grill against live state):** the original "deadlock" premise is **stale**. Live `develop` protection already reports `required_pull_request_reviews: null` (0 required reviews) — the review requirement was dropped at some point via the GitHub UI, which is why PRs merge cleanly today. So the plan's *core change* (set the count to 0) is **already done in the live state**; what remains valid is the **codify-so-it-can't-drift** half (a reproducible script + a config block + an ADR). The historical premise is kept below for the rationale.
+
+*(Historical premise.)* `develop` branch protection had required **1 approving review** (`required_approving_review_count: 1`, `require_code_owner_reviews: false`, `enforce_admins: false`). On a solo repo that was a **deadlock**: GitHub forbids approving your own PR, so the sole maintainer (`alexandrosk0`) could never satisfy it — every PR sat in `mergeStateStatus: BLOCKED` even when CI + CodeRabbit were fully green (observed on #747).
 
 This requirement also **contradicts the repo's own merge model**. `agents/scripts/core/merge-gates.sh:460` treats `reviewDecision ∈ {APPROVED, NONE/null}` as a **pass** — the autonomous merge-watcher and the orchestrator ship-loop deliberately do **not** require a human approval; CodeRabbit (hard-blocking) + the required CI checks are the real gates. So GitHub branch protection is enforcing a gate the harness already decided it doesn't want, and the only ways past it today are admin-merge (manual, every PR) or a second identity (none exists).
 
@@ -81,10 +83,14 @@ N/A — no Source/Core code; no C++. Adds a shell script + project.config.json +
 - **Bot-approver identity** — an alternative to count=0 (a second identity approves); heavier, not pursued while solo.
 
 ## Implementation log
-*(populated post-ship)*
+
+- Wave-1.3 of `agentic-harness-campaign`. `agents/scripts/core/setup-branch-protection.sh` (new) — idempotent `gh api -X PUT …/branches/<branch>/protection`, body built from `project.config.json` § `branch_protection`, `--dry-run` prints the object. `project.config.json` + `project.config.schema.json` gain the `branch_protection` block (branch + 4 required contexts + `required_review_count: 0` + `enforce_admins:false` + `strict:false`). `docs/adr/0013-solo-no-required-review.md` (new) records the decision + revisit-on-external-contributors trigger. `docs/agent-rules/ci-required-check-pattern.md` cross-links the script + ADR.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Core change was already live** (grill finding): `develop` already had `required_pull_request_reviews: null` (0 reviews), so the count-flip was not needed — this PR only **codifies** the existing state. The live-apply is therefore an idempotent *confirmation*, not a fix. § Context rewritten to reflect this.
+- ADR number is 0013 (next free), not the plan's placeholder `NNNN`.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- `setup-branch-protection.sh --dry-run` emits the exact desired protection object (verified: 4 contexts, review_count 0, enforce_admins false, restrictions null). `shellcheck` clean. config + schema parse + round-trip OK. `test-docs` 7/7. **Residue (maintainer):** run `bash agents/scripts/core/setup-branch-protection.sh` once with a repo-admin token to confirm the live state matches the codified object (no-op if already aligned).
