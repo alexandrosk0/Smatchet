@@ -215,4 +215,36 @@ std::string BuildAnnotateQuickCommentTemplate(const std::string& issueKey, const
 // --- Preferences-form helper (AnnotateAnalysisUi_Preferences.cpp) ---
 void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUiThemeColors& theme);
 
+// --- DrawContent section helpers (AnnotateAnalysisUi_Window.cpp) ---
+// Per-frame context threaded through the section helpers that DrawContent
+// orchestrates. Holds references + the once-per-frame snapshots (rows, busy/prog
+// gates, theme) so each helper reads them without re-fetching. Each section's
+// Begin*/End* pairing stays wholly inside its owning helper — see
+// docs/guides/imgui-draw-pattern.md § Positional-ImGui hazards.
+struct AnnotateDrawCtx {
+    AppController& App;
+    bool* WantClose;
+    const std::string& SelectedJiraIssueKey;
+    const AnnotateUiThemeColors& Theme;
+    const std::vector<AnnotateRow>& RowsSnap;
+    size_t NRow;
+    bool Busy;
+    int Prog;
+};
+
+/// Title row + Ask AI / Export JSON / Export CSV / Close buttons. Returns true when
+/// the user clicked Close (DrawContent then returns early, as the monolith did).
+bool DrawAnnotateHeaderToolbar(AnnotateDrawCtx& ctx);
+/// Jira connectivity banner + last-status line, each followed by a separator.
+void DrawAnnotateBannerAndStatus(AnnotateDrawCtx& ctx);
+/// The "Callstack" tab body: frame-count + view toggle, before-CL/day controls,
+/// raw/multiline editor, and the 6-column callstack table.
+void DrawAnnotateCallstackTab(AnnotateDrawCtx& ctx);
+/// One "Entry N" tab body: the per-frame annotated-source table.
+void DrawAnnotateEntryTab(AnnotateDrawCtx& ctx, size_t ti);
+/// The "annotate_assign" assign/comment popup modal.
+void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx);
+/// The "Jira user profile" popup modal.
+void DrawAnnotateProfileModal(AnnotateDrawCtx& ctx);
+
 } // namespace AnnotateInternal
