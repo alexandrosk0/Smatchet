@@ -1,8 +1,8 @@
-# UX Pillars
+# Quality Pillars
 
-> Lifted from [`AGENTS.md`](../../AGENTS.md) § UX Pillars per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming Pillars 1-4 + their owning agents so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
+> Lifted from [`AGENTS.md`](../../AGENTS.md) § Quality Pillars per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the pillars + their owning agents (with **UX Pillars** + **Engineering Pillars** sub-anchors) so external `AGENTS.md § <subsection>` references — including legacy `§ UX Pillars` — continue to resolve. Renamed from `ux-pillars.md` when DRY was added as an Engineering Pillar (ADR-0015). Edit this file directly — no parallel copy in AGENTS.md.
 
-Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable** — agents auto-fail PRs that violate them. Pillar 4 is **aspirational** today — flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` (category `process`), not a merge block, until the supporting infrastructure lands.
+Five north-star quality invariants for Smatchet in two sub-groups. **UX Pillars** (1-4) are user-facing: 1-3 are **enforceable** (agents auto-fail PRs that violate them); 4 is **aspirational** today (flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` category `process`, not a merge block, until the supporting infrastructure lands). **Engineering Pillars** (5: DRY) govern code-maintainability and are enforced like UX 1-3.
 
 ## 1. Performance — sustain ≈ 144 Hz
 
@@ -59,6 +59,18 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 
 **Why aspirational, not enforceable**: there is no automated check for "is this widget keyboard-reachable" or "does this palette meet WCAG AA contrast" today. Adding such checks is its own work-stream; pillars 1-3 already block merges where they matter most.
 
+## 5. DRY — no new copy-paste (Engineering Pillar)
+
+**Pillar 5** (the first **Engineering Pillar**; [ADR-0015](../adr/0015-dry-quality-pillar-duplication-gate.md)): no NEW copy-paste duplication enters first-party C++. Unlike UX 1-4, this governs code *maintainability*, not user-facing behaviour — but it is enforced like UX 1-3, delta-gated against `origin/develop`.
+
+**Enforceable invariant (WARN-first, calibration phase):**
+- `dup_audit.py --diff` (token-shingle + rolling-hash clone detector; identifier + literal normalized, so copy-then-rename is caught; min ~70 tokens / ~8 lines) flags any NEW cross-file copy-paste clone vs the merge-base. All existing duplication is grandfathered (snapshot `docs/high-integrity/dup-baseline.md`).
+- **WARN-first today**: a `[dup] WARN` line on stderr (via `test-lint-rules.sh --diff`, the `dup-scan.yml` advisory CI job, and `pre-ship.sh`); it does **not** block a merge yet. Graduation to a hard block is gated on a measured false-positive rate **< 10% over ~20 PRs** (plan `docs/plans/active/dry-pillar-dup-gate.md` § Verification).
+
+**Double-edged-DRY guardrail (co-equal with the gate):** the gate flags **copy-paste only**, never structural similarity. An exemption is **cheap and preferred over abstracting across unrelated contexts** — `SMATCHET_DEVIATION(rule=duplication; reason=…; owner=…; revisit=…)` on/above the clone. A DRY-motivated refactor that introduces a shared helper **coupling two otherwise-independent subsystems is a code-review CRITICAL**, not an improvement. Standing exemptions: dual-target forward-decls, per-backend `*Client` boilerplate, generated code.
+
+**Tools**: `agents/scripts/core/dup_audit.py` (`--diff` / `--scan-file` / `--baseline-md` / `--selftest`); baseline regen via `bash agents/scripts/project/test-lint-rules.sh --dup-baseline`.
+
 ## Agent ownership
 
 | Pillar | Primary agent | Notes |
@@ -67,3 +79,4 @@ Four north-star quality invariants for Smatchet. Pillars 1-3 are **enforceable**
 | 2. UI never freezes | `code-review` (sync-on-UI sniff), `spike-hunter` (p99 enforcement), `debug-detective` (root-cause when a freeze ships) | UI-thread budget: any call reachable from `ImGui::*`-frame stack. |
 | 3. Never crash | `debug-detective` (diagnose), `code-review` (RAII / bounds / nullptr review), `build-doctor` (sanitizer build gate) | Crashes block merge unconditionally. |
 | 4. Accessibility | none today | Flag in backlog; reassess pillar hardening when keyboard-nav / zoom / contrast checks have automated test support. |
+| 5. DRY (Engineering) | `code-review` (reviewer-of-record + exemption sign-off) | `dup_audit.py` delta-gate is WARN-first; duplication triage + the coupling-CRITICAL guardrail are the reviewer's. |

@@ -47,7 +47,7 @@ The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt aft
    - A change with no test coverage but no visual-path touch — that's a Pillar-3 "needs test coverage" problem, route via the test backlog.
    - A change that touches the visual paths AND has bucket-C/E coverage — coverage is the gate; ship-loop continues. If the user disagrees with the golden after merge, the bucket-C golden is re-bootstrapped per [`docs/agent-rules/process-rules.md`](process-rules.md).
 
-   Pillar anchor: see [`docs/agent-rules/ux-pillars.md`](ux-pillars.md) § 4 § Visual-validation acceptance for the cross-link from the pillar side.
+   Pillar anchor: see [`docs/agent-rules/quality-pillars.md`](quality-pillars.md) § 4 § Visual-validation acceptance for the cross-link from the pillar side.
 
 ## PR batching — logical-feature granularity
 

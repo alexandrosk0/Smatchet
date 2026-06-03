@@ -122,6 +122,22 @@ There is **no DRY / duplication enforcement** today (verified: no jscpd/cpd/pmd/
   (it calls `test-lint-rules.sh --diff`). Verified: `test-lint-rules.sh --selftest` green (incl.
   `dup_audit.py --selftest`), `--dup-baseline` byte-stable, shell-lint gate green.
 
+- **Slice 3 — "Quality Pillars" rename (`docs/quality-pillars-rename`, stacked on Slice 2).** The
+  cosmetic framing rename, isolated from the wiring. `AGENTS.md` `## UX Pillars` → `## Quality
+  Pillars` (intro restructured into **UX Pillars** (1-4) + **Engineering Pillars** (5) sub-group
+  bullets — both bold-prefix anchors — + a Pillar 5 DRY table row + the `ux-pillars.md`→
+  `quality-pillars.md` link); `git mv docs/agent-rules/ux-pillars.md docs/agent-rules/quality-pillars.md`
+  + its title/intro updated + a new `## 5. DRY` section + ownership row; the two **real** link hrefs
+  updated (`AGENTS.md`, `ship-loops.md:50`); live inline-code path refs updated for accuracy
+  (`docs/CONTEXT.md` § heading, `process-rules.md`, the reference doc); the Operating-principles
+  preamble "4 UX Pillars" → "Quality Pillars". **Kept a `**UX Pillars**` bold sub-anchor** so the
+  ~7 legacy `§ UX Pillars` cross-references resolve by doc-anchors substring-match **without touching
+  81 files**. Left untouched (correct as-is): ADR-0015 (describes the decision), the plan-template
+  `## UX Pillar callouts` section (its cascade to every active plan is a separate `mechanic` sweep,
+  deferred), shipped/historical plan docs (excluded from the markdown-links gate). Verified:
+  `test-doc-anchors` green (every `§ UX Pillars` + `§ Quality Pillars` ref resolves), `test-markdown-links`
+  green, `md_lint` clean, `test-lint-rules.sh --selftest` green.
+
 ## Deviations from plan
 *(populated post-ship)*
 
