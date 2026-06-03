@@ -92,6 +92,22 @@ There is **no DRY / duplication enforcement** today (verified: no jscpd/cpd/pmd/
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit)*
 
+- **Slice 1 — scanner core (`feat/dup-audit-scanner`).** Shipped the detector + its tests + the
+  grandfather snapshot, WARN-first and self-contained (NOT yet wired into any blocking gate — that
+  is Slice 2). Files: `agents/scripts/core/dup_audit.py` (token-shingle + rolling-hash + winnowing
+  clone detector; reuses `comment_lib.code_tokens` for literal-aware tokenization, then normalizes
+  identifiers→`ID` + literals→`LIT` so copy-then-rename is caught; modes `--diff`/`--scan-file`/
+  `--list`/`--baseline-md`/`--selftest` mirroring `function_size_audit.py`; delta-grandfather by
+  normalized content-hash; `SMATCHET_DEVIATION(rule=duplication)` exemption checked across the clone
+  span); `tests/bats/dup_audit.bats` (9 cases: selftest, intra-file detect, generated-path exclude,
+  new-clone WARN, copy-then-rename caught, grandfathered silent, sub-threshold silent, deviation
+  suppresses) + `agents/scripts/core/test-dup-audit-bats.sh` (auto-run by `test-all.sh`);
+  `docs/high-integrity/dup-baseline.md` (snapshot: **449 cross-file clones** grandfathered, min 70
+  tokens). Verified: selftest + 9/9 bats + shellcheck clean + `--diff origin/develop` clean (slice
+  adds no C++). Observed (calibration note): the v1 baseline includes header include-guard/include
+  boilerplate clones at `*.h:1` — a known false-positive class to consider skipping during the
+  WARN→block calibration; harmless while grandfathered + WARN-first.
+
 ## Deviations from plan
 *(populated post-ship)*
 
