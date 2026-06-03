@@ -43,6 +43,10 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Pure chip-fade + right-cluster width helpers extracted from DrawGridHeaderToolbar. The
+    # _detail TU depends on nothing but <algorithm> — no ImGui, no AppController.
+    Core/GridHeaderToolbarLayout.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridHeaderUi_detail.cpp"
     # Pure cached-project filter extracted from DrawJqlQueryEditorEmbedded's project pill. The
     # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
     Core/JqlProjectPillFilter.test.cpp
