@@ -1,7 +1,7 @@
 ---
 name: author-plan-doc
-description: Author a new plan-doc at docs/plans/active/<slug>.md from a one-line request — copy the template, set the slug to the basename, fill every section (N/A — <reason>, never delete), include the Perf-review-system-gates section when the diff would touch the project's perf-gated core source tree, then git add + wip(plan) commit immediately (working-tree-only plans are lost on checkout). Use when the user says "write a plan", "draft a plan", "new plan", "plan for X", or "plan this". The authoring counterpart to grill-with-docs (the stress-test). Read-write — creates + commits the plan file.
-version: 1
+description: Author a new plan-doc at docs/plans/active/<slug>.md from a one-line request — copy the template, set the slug to the basename, fill every section (N/A — <reason>, never delete), include the Perf-review-system-gates section when the diff would touch the project's perf-gated core source tree, keep the three mandatory Verification/Out-of-scope items the template bakes in (doc-validation suite, grill-with-docs stress-test, deferral residue-sweep), then git add + wip(plan) commit immediately (working-tree-only plans are lost on checkout). Use when the user says "write a plan", "draft a plan", "new plan", "plan for X", or "plan this". The authoring counterpart to grill-with-docs (the stress-test). Read-write — creates + commits the plan file.
+version: 2
 ---
 
 # author-plan-doc
@@ -32,6 +32,12 @@ they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
    section that does not apply gets `N/A — <one-line reason>` — **never delete a
    section** (the empty section is the forcing function that catches a skipped
    concern).
+   - **Three Verification/Out-of-scope items the template bakes in are MANDATORY —
+     keep them in every plan** (they are the recurring plan-doc misses CodeRabbit
+     flags via learned repo rules): (a) the **doc-validation** bullet enumerating
+     the `test-docs.sh` suite; (b) the **`grill-with-docs` stress-test** bullet;
+     (c) the **deferral residue-sweep** note under Out-of-scope. Fill them with
+     the plan's specifics; never strip them.
 4. **Perf-gate section is mandatory** when the planned diff would touch the
    project's perf-gated core source tree (the `project.config.json` `lint.zones`
    / `perf` paths; the plan template marks which) — assert the PR-fast / Pillar-2-scanner / dispatcher-drain /
@@ -41,8 +47,10 @@ they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
    `git commit -m "wip(plan): <slug>"`. This is **mandatory, not optional**:
    working-tree-only plan files are silently lost on the next checkout
    (plan-doc-safety). Do the commit BEFORE handing off to grill-with-docs.
-6. **Recommend a stress-test.** Point the user at `grill-with-docs` to challenge
-   the plan against the domain model + sharpen terminology before finalising.
+6. **Stress-test (the bullet is mandatory; the run is strongly advised).** The
+   Verification section carries the `grill-with-docs` bullet by default (step 3c) —
+   keep it, and hand off to `grill-with-docs` to challenge the plan against the
+   domain model + sharpen terminology before finalising.
 7. **Post-ship is PR-only.** Note that § Implementation log / § Deviations /
    § Verification(actual) get filled after the work ships, via a PR (never a
    direct push to develop) — and the plan is `git mv`'d active → shipped once its
@@ -54,3 +62,6 @@ they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
 - Implementing the plan (that's the orchestrator + the subsystem agents).
 - Authoring a plan blank or skipping the immediate commit — both are failure modes
   this skill exists to prevent.
+- Stripping the three mandatory Verification / Out-of-scope items (doc-validation
+  suite, `grill-with-docs` stress-test, deferral residue-sweep) — they are baked
+  into the template on purpose and are the recurring plan-doc misses.
