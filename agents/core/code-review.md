@@ -79,6 +79,11 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 - No `using namespace` in headers
 - `LOG_TRACE` / `LOG_DEBUG` in non-trivial branches
 
+**DRY (Engineering Quality Pillar 5; ADR-0015)** — you are the reviewer-of-record for duplication findings + exemption sign-off. The `dup_audit.py --diff` gate is WARN-first (advisory, never blocks yet), so duplication review is **yours**, not the gate's:
+- A `[dup] WARN` on the diff is a finding to triage — confirm it is real copy-paste (the gate flags token-normalized clones, so it already excludes mere structural similarity) and decide: de-duplicate, or sign off an exemption.
+- **An exemption is cheap and is the DEFAULT for unrelated contexts.** Prefer `SMATCHET_DEVIATION(rule=duplication; reason=…; owner=…; revisit=…)` over forcing a shared helper. Standing-exempt classes: dual-target forward-decls, per-backend `*Client` boilerplate, generated code.
+- **Guardrail (co-equal with the gate) — a DRY-motivated refactor that introduces a shared helper coupling two otherwise-independent subsystems is a `## Critical` finding, not an improvement.** Over-abstraction + cross-subsystem coupling is the opposite failure of "small focused functions"; flag it as CRITICAL the same way you flag a missed invariant.
+
 **Subsystem invariants** — these live next to the code they govern, not here. For each touched `Source/Core/src/<sub>/` file, read that directory's `AGENTS.md` and apply its invariants (the leaf is the single source of truth — it overrides any summary). Leaves today + the registry of what each covers: root [`CONTEXT-MAP.md`](../../CONTEXT-MAP.md). Quick map:
 - `Tracker/` — backend no-leak into shared interfaces, HTTP via `TrackerHttpClient`, catalog→parser→payload field flow, write→offline-queue + audit wiring.
 - `Commands/` — `const CommandContext&` + structured error envelope; all front-ends dispatch through `CommandRegistry`.

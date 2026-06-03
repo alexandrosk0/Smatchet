@@ -108,8 +108,35 @@ There is **no DRY / duplication enforcement** today (verified: no jscpd/cpd/pmd/
   boilerplate clones at `*.h:1` — a known false-positive class to consider skipping during the
   WARN→block calibration; harmless while grandfathered + WARN-first.
 
+- **Slice 2 — wiring the gate live, WARN-first (`feat/dup-quality-pillar-wire`, stacked on Slice 1).**
+  Made the duplication gate **live as advisory** without the pillar rename (see § Deviations for the
+  reorder). Files: `.github/workflows/dup-scan.yml` (advisory CI job — runs `dup_audit.py --diff`,
+  always exits 0, NOT a required check); `agents/scripts/project/test-lint-rules.sh` (advisory
+  `dup_audit.py --diff` appended to `--diff` mode — never touches `$rc`; new `--dup-baseline` regen
+  mode; `--selftest` now asserts the `duplication` rule is in AGENTS.md + runs `dup_audit.py
+  --selftest`); `AGENTS.md` § Tiered enforcement (the `duplication` rule paragraph — delta-gated,
+  WARN-first, copy-paste-only, `SMATCHET_DEVIATION(rule=duplication)`, standing exemptions, the
+  coupling-CRITICAL guardrail); `agents/core/code-review.md` (reviewer-of-record DRY duties +
+  exemption sign-off + the coupling-CRITICAL guardrail); `docs/self-improvement/categories/process.md`
+  (the WARN→block graduation trigger backlog). `pre-ship.sh` inherits the advisory dup WARN for free
+  (it calls `test-lint-rules.sh --diff`). Verified: `test-lint-rules.sh --selftest` green (incl.
+  `dup_audit.py --selftest`), `--dup-baseline` byte-stable, shell-lint gate green.
+
 ## Deviations from plan
 *(populated post-ship)*
+
+- **Slice reorder — wiring (Slice 2) shipped before the "Quality Pillars" rename (now Slice 3).**
+  The plan's § Files-to-modify bundles the AGENTS.md `## UX Pillars`→`## Quality Pillars` rename +
+  `ux-pillars.md`→`quality-pillars.md` + cross-reference sweep with the gate wiring. A reference
+  inventory found **81 files** mentioning "UX Pillar"/"ux-pillars" (most are *shipped/historical*
+  plan docs + the plan-template `## UX Pillar callouts` section that cascades to every active plan),
+  so a blanket rename would blow the CodeRabbit file-ceiling and rewrite history. Reordered to land
+  the **enforcement value first** (Slice 2 = wiring, gate live as WARN) and isolate the cosmetic
+  framing rename into its own reviewable **Slice 3** — using the doc-anchors substring-match property
+  to keep a `**UX Pillars**` sub-group anchor so `§ UX Pillars` refs resolve without touching the 81
+  files (only the ~6 `ux-pillars.md` path links + the section heading change). The § Tiered-enforcement
+  `duplication` rule references "Engineering Quality Pillar 5" forward (ADR-0015), so the framing is
+  consistent even before the umbrella heading is renamed.
 
 ## Verification (actual)
 *(populated post-ship)*
