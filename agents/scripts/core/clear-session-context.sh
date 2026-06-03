@@ -136,4 +136,35 @@ P4EOF
     fi
 fi
 
+# --- Loop-mode banner: surface SMATCHET_LOOP_MODE at session start ----------
+# Per AI_POLICY.md § Two loop modes: the human selects human-on-the-loop
+# (action-biased, autonomous) or human-in-the-loop (execute only within an
+# approved plan; pause at undocumented decisions). Prerelease default is `in`.
+# Mirrors the p4-mode banner above so the orchestrator can't miss the active
+# mode at boot. Any value other than `on` normalises to `in` (fail-safe to the
+# more-conservative mode).
+if [ "${SMATCHET_LOOP_MODE:-}" = "on" ]; then
+    cat >> "$SCRATCHPAD" <<LOOPEOF
+
+## === loop-mode: on ===
+
+human-on-the-loop (action-biased). Commit / push / open-PR autonomously;
+resolve reversible forks with a default + surface them; pause only on the
+enumerated ship-loop exceptions (incl. (6) cannot-autonomously-validate /
+cost-unbounded — escalate). See \`AI_POLICY.md\` § Two loop modes.
+
+LOOPEOF
+else
+    cat >> "$SCRATCHPAD" <<LOOPEOF
+
+## === loop-mode: in ===
+
+human-in-the-loop (prerelease default). Execute ONLY within an approved plan;
+pause at each decision point the plan does not cover; do not improvise scope.
+Escalate (don't assume) on anything not autonomously validatable —
+ship-loop exception (6). See \`AI_POLICY.md\` § Two loop modes + § Escalate.
+
+LOOPEOF
+fi
+
 exit 0

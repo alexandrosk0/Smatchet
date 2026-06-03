@@ -124,5 +124,10 @@
       "p4-annotate",
       "command-system"
     ]
+  },
+  "governance": {
+    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode is the SessionStart default when SMATCHET_LOOP_MODE is unset; the env var overrides per session.",
+    "policy": "AI_POLICY.md",
+    "loop_mode": "in"
   }
 }

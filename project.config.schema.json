@@ -173,6 +173,16 @@
       "properties": {
         "enabled_project": { "type": "array", "items": { "type": "string" } }
       }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Human-authority charter (AI_POLICY.md) defaults.",
+      "properties": {
+        "_doc": { "type": "string" },
+        "policy": { "type": "string" },
+        "loop_mode": { "type": "string", "enum": ["in", "on"] }
+      }
     }
   }
 }
