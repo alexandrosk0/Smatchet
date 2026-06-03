@@ -43,6 +43,10 @@ add_executable(SmatchetTests
     # depends only on StringUtil (header-inline) + plain struct headers — no ImGui, no AppController.
     Core/ProjectPickerFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetProjectPicker_detail.cpp"
+    # Pure option-filter + catalog-dropdown predicates extracted from RenderNewIssueDraftRow. The
+    # _detail TU depends only on StringUtil (header-inline) + TrackerFieldSchema — no ImGui.
+    Core/NewIssueDraftFieldDecision.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetNewIssueDraftUi_detail.cpp"
     # Pure date-format index<->option helpers lifted out of
     # DrawLocalAndAppearancePreferencesTabs during its function-size decomposition.
     # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
