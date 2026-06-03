@@ -44,7 +44,11 @@ active→deferred `git mv`), and a **broken `AGENTS.md §` anchor ref** in
 final-check grep` — an inline mid-bullet bold the anchor-collector never registers
 as an anchor, compounded by `+` being a `TERMINATOR_CHARS` split point). Both
 `md_lint --all` + `test-doc-anchors` scan tree-wide, so the red surfaced on every
-subsequently-opened PR (caught on #793) until healed.
+subsequently-opened PR. The anchor half was healed independently by a parallel
+session in **#795** (merged 14:26, repointed to `§ Process rules § Scope-reduction
+edits`); the **MD028** half was still live on develop and is healed by #793 — two
+sessions hit the same escape, a side-effect of the third recurrence going unnoticed
+long enough for concurrent heals.
 
 ### Root cause
 **Identical to the filed gate hole** — "Doc anchors + agent contract" is still not
