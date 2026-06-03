@@ -33,6 +33,23 @@ class SmatchetToolbarUi {
     void RenderBar(AppController& app, TrackerConfig& cfg);
     void RenderButtonContextMenu(TrackerConfig& cfg, int src);
     void RenderEditor(AppController& app, TrackerConfig& cfg);
+
+    // Per-frame shared state for the Customize editor's section helpers, captured once after the
+    // scope radio buttons resolve which list (`buttons`) is being edited.
+    struct EditorCtx {
+        std::vector<ToolbarButton>& buttons;
+        bool trackerScope;
+        bool faLoaded;
+    };
+    // Section helpers for the editor draw body. Each keeps its own paired ImGui begin and end
+    // calls balanced internally; the editor orchestrator only sequences them in order. See the
+    // section-helper pattern in docs/guides/imgui-draw-pattern.md.
+    void SyncEditorOpenRequest(AppController& app, TrackerConfig& cfg);
+    EditorCtx DrawEditorScopeSelector();
+    void DrawEditorActionRow(EditorCtx& ctx);
+    void DrawEditorButtonList(EditorCtx& ctx);
+    void DrawEditorFieldEditor(EditorCtx& ctx);
+    void DrawEditorFooter(EditorCtx& ctx, TrackerConfig& cfg);
     void DispatchButton(AppController& app, TrackerConfig& cfg, const ToolbarButton& b);
     // Reload the active backend's appended buttons from disk into trackerAppendCache_, but only
     // when the active backend key changed (or the cache was invalidated) — keeps RenderBar off the

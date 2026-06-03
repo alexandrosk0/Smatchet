@@ -18,6 +18,7 @@
 #include "MarkdownPreviewRender.h"
 #include "TicketFieldEditorLongTextPure.h"
 #include "TicketFieldEditorDescriptionPure.h"
+#include "TicketFieldEditorOptionFilterPure.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -312,6 +313,145 @@ std::string EncodeCascadingSelection(const std::string& parentId, const std::str
     return parentId + "\x1f" + childId;
 }
 
+using TicketFieldEditorOptionFilterPure::OptionMatchesFilter;
+
+// Draws the inline field-value icon (status/priority sprite) centred-vertically inside the
+// [rectMin, rectMax] cell rect at frame height. Shared verbatim by the single-select preview
+// and combo paths, which previously inlined identical scale-and-blit blocks.
+void DrawInlineFieldIconOverlay(const SmatchetLoadedIconTexture& icon, const ImVec2& rectMin, const ImVec2& rectMax) {
+    if (icon.Texture == nullptr || icon.Width <= 0 || icon.Height <= 0) {
+        return;
+    }
+    const float maxEdge = ImGui::GetFrameHeight();
+    const float iw = static_cast<float>(icon.Width);
+    const float ih = static_cast<float>(icon.Height);
+    const float scale = maxEdge / (std::max)(iw, ih);
+    const float dw = iw * scale;
+    const float dh = ih * scale;
+    const float rowH = rectMax.y - rectMin.y;
+    const ImVec2 overlayP0(rectMin.x + 4.0f, rectMin.y + ((rowH - dh) * 0.5f));
+    const ImVec2 overlayP1(overlayP0.x + dw, overlayP0.y + dh);
+    ImGui::GetWindowDrawList()->AddImage(icon.Texture->GetTexRef(), overlayP0, overlayP1, ImVec2(0.0f, 0.0f),
+                                         ImVec2(1.0f, 1.0f));
+}
+
+// Shows the standard hover tooltip for a select-cell preview when its text is clipped by the
+// available cell width. Caller must invoke this immediately after the Selectable/combo so
+// IsItemHovered() refers to it. Shared by the single/multi/cascading editors.
+void DrawClippedPreviewTooltip(bool tooltipsEnabled, const char* previewCStr, float availWidth) {
+    if (!tooltipsEnabled || !ImGui::IsItemHovered()) {
+        return;
+    }
+    const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
+    const bool previewClipped = (availWidth > 0.0f && psz.x > availWidth + 1.0f);
+    if (!previewClipped) {
+        return;
+    }
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+    ImGui::TextUnformatted(previewCStr);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
+// Draws the active inline single-line text editor for a non-ADF text cell and commits / cancels
+// the edit. Extracted from RenderTextEditor's editing branch; behaviour byte-identical (duration
+// fields route through the suggestion widget, plain fields through InputText). Caller has already
+// verified state.IsEditingField(ticket.id, field.Id) for a non-ADF field.
+void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
+                          std::vector<PendingFieldEdit>& pendingEdits) {
+    const bool editJustStarted = state.EditJustStarted;
+    const bool isDuration = IsTimeDurationField(field.Id);
+    bool submitted = false;
+
+    if (isDuration) {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (editJustStarted) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        EditCbUser cbUser{&state};
+        submitted = DrawDurationFieldWithSuggestions(
+            "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer), ImGuiInputTextFlags_CallbackAlways,
+            InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser), nullptr, editJustStarted);
+    } else {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (editJustStarted) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        EditCbUser cbUser{&state};
+        submitted = ImGui::InputText("##textedit", state.EditBuffer, sizeof(state.EditBuffer),
+                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
+                                     InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        state.ClearEditing();
+    } else if (submitted || (!editJustStarted && ImGui::IsItemDeactivatedAfterEdit())) {
+        QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits);
+        state.ClearEditing();
+    } else if (editJustStarted) {
+        state.EditJustStarted = false;
+    }
+}
+
+// Draws the hover preview tooltip for a display-mode text cell. Description-like fields render
+// markdown (ADF rich value to markdown), callstack fields use the semantic tokenizer, and other
+// fields fall back to plain wrapped text. Lifted verbatim from the text editor's tooltip block.
+// The caller has already gated on tooltips-enabled plus clip / newline / description plus hover.
+void DrawTextCellTooltip(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
+                         const std::string& valueForDisplay, bool isDescriptionLike) {
+    const std::string* rawTip = IsTrackerDateOrDateTimeField(field.Id, &field) ? &currentValue : nullptr;
+    // Convert ADF rich value → markdown so paragraph breaks (\n\n) render as
+    // separate paragraphs. Plain text currentValue uses single \n (soft break in
+    // markdown) which would join paragraphs into one line.
+    std::string descMd;
+    if (isDescriptionLike) {
+        const std::string richVal = ticket.GetFieldRichValue(field.Id);
+        if (!richVal.empty()) {
+            try {
+                descMd = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
+            } catch (const std::exception& e) {
+                LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", field.Id.c_str(), e.what());
+            } catch (...) {
+                LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", field.Id.c_str());
+            }
+        }
+        if (descMd.empty()) {
+            descMd = currentValue;
+        }
+    }
+    const std::string& tipSource =
+        isDescriptionLike ? descMd : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
+    // Slice 7 of code-syntax-coloring-and-tooltips — when the field is
+    // the configured callstack field, colour the tooltip via the semantic callstack tokenizer
+    // (same as the cell + RenderClippedFieldText path). Without this branch the callstack
+    // tooltip fell through to plain TextUnformatted while the cell was coloured.
+    const bool isCallstack = IsCallstackFieldId(field.Id);
+    if (tipSource.empty()) {
+        return;
+    }
+    ImGui::BeginTooltip();
+    if (isDescriptionLike) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+        MarkdownPreviewRender::Options opts;
+        opts.mode = MarkdownPreviewRender::Mode::Tooltip;
+        opts.clickableLinks = false;
+        opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
+        MarkdownPreviewRender::Render(tipSource, opts);
+        ImGui::PopTextWrapPos();
+    } else if (isCallstack) {
+        // No wrap-pos: callstack source lines are per-line semantic tokens
+        // (Module!Class::Method() [File:Line]); word-wrapping them mid-line
+        // mangles the layout. Render each line full-width like the cell path.
+        DrawColoredCallstackText(tipSource.c_str());
+    } else {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+        ImGui::TextUnformatted(tipSource.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::EndTooltip();
+}
+
 void RenderTextEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                       const std::string& currentValue, SpreadsheetState& state,
                       std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, float availWidth,
@@ -339,38 +479,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
         }
         // fall through to the display branch
     } else if (state.IsEditingField(ticket.id, field.Id)) {
-        const bool editJustStarted = state.EditJustStarted;
-        const bool isDuration = IsTimeDurationField(field.Id);
-        bool submitted = false;
-
-        if (isDuration) {
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (editJustStarted) {
-                ImGui::SetKeyboardFocusHere();
-            }
-            EditCbUser cbUser{&state};
-            submitted = DrawDurationFieldWithSuggestions(
-                "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer), ImGuiInputTextFlags_CallbackAlways,
-                InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser), nullptr, editJustStarted);
-        } else {
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (editJustStarted) {
-                ImGui::SetKeyboardFocusHere();
-            }
-            EditCbUser cbUser{&state};
-            submitted = ImGui::InputText("##textedit", state.EditBuffer, sizeof(state.EditBuffer),
-                                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
-                                         InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
-        }
-
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            state.ClearEditing();
-        } else if (submitted || (!editJustStarted && ImGui::IsItemDeactivatedAfterEdit())) {
-            QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits);
-            state.ClearEditing();
-        } else if (editJustStarted) {
-            state.EditJustStarted = false;
-        }
+        RenderTextInlineEdit(ticket, field, state, pendingEdits);
         return;
     }
 
@@ -396,55 +505,68 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     // text fields keep the clip-gate so plain values don't tooltip noisily.
     const bool isDescriptionLike = IsDescriptionLikeFieldId(field.Id);
     if (tooltipsEnabled && (hasNewlineInValue || horizontallyClipped || isDescriptionLike) && ImGui::IsItemHovered()) {
-        const std::string* rawTip = IsTrackerDateOrDateTimeField(field.Id, &field) ? &currentValue : nullptr;
-        // Convert ADF rich value → markdown so paragraph breaks (\n\n) render as
-        // separate paragraphs. Plain text currentValue uses single \n (soft break in
-        // markdown) which would join paragraphs into one line.
-        std::string descMd;
-        if (isDescriptionLike) {
-            const std::string richVal = ticket.GetFieldRichValue(field.Id);
-            if (!richVal.empty()) {
-                try {
-                    descMd = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
-                } catch (const std::exception& e) {
-                    LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", field.Id.c_str(), e.what());
-                } catch (...) {
-                    LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", field.Id.c_str());
-                }
-            }
-            if (descMd.empty()) {
-                descMd = currentValue;
-            }
+        DrawTextCellTooltip(ticket, field, currentValue, valueForDisplay, isDescriptionLike);
+    }
+}
+
+// Draws the open single-select combo body: clear option, auto-focused filter input, and the
+// filtered option list with typeahead enter-commit. Lifted from the single-select editor, whose
+// caller owns the begin / end combo pair. Behaviour byte-identical to the inlined block.
+void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
+                                 SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
+                                 const std::string& editorKey) {
+    const bool justOpened = (state.SingleSelectActiveKey != editorKey);
+    if (justOpened) {
+        state.SingleSelectActiveKey = editorKey;
+        state.SingleSelectSearchBuf[0] = '\0';
+    }
+
+    const std::string currentId = ResolveOptionId(field, currentValue);
+    const bool selectedNone = currentId.empty();
+    if (ImGui::Selectable("<clear>", selectedNone)) {
+        QueueEdit(ticket.id, field, {}, pendingEdits);
+    }
+    ImGui::Separator();
+
+    // Quick-filter input — auto-focused on combo open so the user can start typing
+    // immediately. Enter on a single match commits that option and closes the combo.
+    if (justOpened) {
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    const bool submitOnEnter =
+        ImGui::InputTextWithHint("##SingleSelectSearch", "Filter options", state.SingleSelectSearchBuf,
+                                 sizeof(state.SingleSelectSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::Separator();
+
+    const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.SingleSelectSearchBuf));
+    const TrackerFieldOption* firstMatch = nullptr;
+    bool drewAny = false;
+    for (const auto& option : field.AllowedValueOptions) {
+        if (!OptionMatchesFilter(option, filterLower)) {
+            continue;
         }
-        const std::string& tipSource =
-            isDescriptionLike ? descMd : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
-        // Slice 7 of code-syntax-coloring-and-tooltips — when the field is
-        // the configured callstack field, colour the tooltip via the semantic callstack tokenizer
-        // (same as the cell + RenderClippedFieldText path). Without this branch the callstack
-        // tooltip fell through to plain TextUnformatted while the cell was coloured.
-        const bool isCallstack = IsCallstackFieldId(field.Id);
-        if (!tipSource.empty()) {
-            ImGui::BeginTooltip();
-            if (isDescriptionLike) {
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                MarkdownPreviewRender::Options opts;
-                opts.mode = MarkdownPreviewRender::Mode::Tooltip;
-                opts.clickableLinks = false;
-                opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
-                MarkdownPreviewRender::Render(tipSource, opts);
-                ImGui::PopTextWrapPos();
-            } else if (isCallstack) {
-                // No wrap-pos: callstack source lines are per-line semantic tokens
-                // (Module!Class::Method() [File:Line]); word-wrapping them mid-line
-                // mangles the layout. Render each line full-width like the cell path.
-                DrawColoredCallstackText(tipSource.c_str());
-            } else {
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                ImGui::TextUnformatted(tipSource.c_str());
-                ImGui::PopTextWrapPos();
-            }
-            ImGui::EndTooltip();
+        const std::string optionId = option.Id.empty() ? option.Value : option.Id;
+        if (firstMatch == nullptr) {
+            firstMatch = &option;
         }
+        drewAny = true;
+        const bool isSelected = (option.Id == currentId);
+        ImGui::PushID(optionId.c_str());
+        if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
+            QueueEdit(ticket.id, field, {option.Id}, pendingEdits);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopID();
+    }
+    if (!drewAny) {
+        ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+    }
+    // Pressing enter commits when the filter narrows to a single match. When several still match,
+    // the top one is committed as a least-surprise default that mirrors typeahead pickers.
+    if (submitOnEnter && firstMatch != nullptr) {
+        QueueEdit(ticket.id, field, {firstMatch->Id}, pendingEdits);
+        ImGui::CloseCurrentPopup();
     }
 }
 
@@ -499,33 +621,15 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         }
         const ImVec2 selMin = ImGui::GetItemRectMin();
         const ImVec2 selMax = ImGui::GetItemRectMax();
-        if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
-            const float maxEdge = ImGui::GetFrameHeight();
-            const float iw = static_cast<float>(overlayIcon.Width);
-            const float ih = static_cast<float>(overlayIcon.Height);
-            const float scale = maxEdge / (std::max)(iw, ih);
-            const float dw = iw * scale;
-            const float dh = ih * scale;
-            const float rowH = selMax.y - selMin.y;
-            const ImVec2 overlayP0(selMin.x + 4.0f, selMin.y + ((rowH - dh) * 0.5f));
-            const ImVec2 overlayP1(overlayP0.x + dw, overlayP0.y + dh);
-            ImGui::GetWindowDrawList()->AddImage(overlayIcon.Texture->GetTexRef(), overlayP0, overlayP1,
-                                                 ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+        if (haveOverlayIcon) {
+            DrawInlineFieldIconOverlay(overlayIcon, selMin, selMax);
         }
         if (tooltipsEnabled && ImGui::IsItemHovered()) {
             if (haveOverlayIcon && preview.empty()) {
                 preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
                 previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
             }
-            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
-            const bool previewClipped = (cellAvail > 0.0f && psz.x > cellAvail + 1.0f);
-            if (previewClipped) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                ImGui::TextUnformatted(previewCStr);
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
+            DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, cellAvail);
         }
         return;
     }
@@ -536,81 +640,12 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
-        const bool justOpened = (state.SingleSelectActiveKey != editorKey);
-        if (justOpened) {
-            state.SingleSelectActiveKey = editorKey;
-            state.SingleSelectSearchBuf[0] = '\0';
-        }
-
-        const std::string currentId = ResolveOptionId(field, currentValue);
-        const bool selectedNone = currentId.empty();
-        if (ImGui::Selectable("<clear>", selectedNone)) {
-            QueueEdit(ticket.id, field, {}, pendingEdits);
-        }
-        ImGui::Separator();
-
-        // Quick-filter input — auto-focused on combo open so the user can start typing
-        // immediately. Enter on a single match commits that option and closes the combo.
-        if (justOpened) {
-            ImGui::SetKeyboardFocusHere();
-        }
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        const bool submitOnEnter =
-            ImGui::InputTextWithHint("##SingleSelectSearch", "Filter options", state.SingleSelectSearchBuf,
-                                     sizeof(state.SingleSelectSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Separator();
-
-        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.SingleSelectSearchBuf));
-        const TrackerFieldOption* firstMatch = nullptr;
-        int matchCount = 0;
-        bool drewAny = false;
-        for (const auto& option : field.AllowedValueOptions) {
-            const std::string optionId = option.Id.empty() ? option.Value : option.Id;
-            const bool matchesFilter = filterLower.empty() ||
-                                       ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
-                                       ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
-                                       ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
-            if (!matchesFilter) {
-                continue;
-            }
-            if (firstMatch == nullptr) {
-                firstMatch = &option;
-            }
-            ++matchCount;
-            drewAny = true;
-            const bool isSelected = (option.Id == currentId);
-            ImGui::PushID(optionId.c_str());
-            if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
-                QueueEdit(ticket.id, field, {option.Id}, pendingEdits);
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::PopID();
-        }
-        if (!drewAny) {
-            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
-        }
-        // Enter commits when filter narrows to a single match; if multiple match, commit the
-        // top match (least-surprise: matches typeahead behaviour in most pickers).
-        if (submitOnEnter && firstMatch != nullptr) {
-            QueueEdit(ticket.id, field, {firstMatch->Id}, pendingEdits);
-            ImGui::CloseCurrentPopup();
-        }
-        (void)matchCount;
+        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey);
         ImGui::EndCombo();
     }
 
-    if (haveOverlayIcon && overlayIcon.Texture != nullptr && overlayIcon.Width > 0 && overlayIcon.Height > 0) {
-        const float maxEdge = ImGui::GetFrameHeight();
-        const float iw = static_cast<float>(overlayIcon.Width);
-        const float ih = static_cast<float>(overlayIcon.Height);
-        const float scale = maxEdge / (std::max)(iw, ih);
-        const float dw = iw * scale;
-        const float dh = ih * scale;
-        const float rowH = comboMax.y - comboMin.y;
-        const ImVec2 overlayP0(comboMin.x + 4.0f, comboMin.y + ((rowH - dh) * 0.5f));
-        const ImVec2 overlayP1(overlayP0.x + dw, overlayP0.y + dh);
-        ImGui::GetWindowDrawList()->AddImage(overlayIcon.Texture->GetTexRef(), overlayP0, overlayP1, ImVec2(0.0f, 0.0f),
-                                             ImVec2(1.0f, 1.0f));
+    if (haveOverlayIcon) {
+        DrawInlineFieldIconOverlay(overlayIcon, comboMin, comboMax);
     }
     // Tooltip only fires when the combo is actually hovered — defer the clip-test text measurement
     // (and resolve the preview lazily for the icon-overlay branch where preview was skipped).
@@ -619,14 +654,80 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
             preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
             previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
         }
-        const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
-        const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
-        if (previewClipped) {
+        DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, comboAvailBefore);
+    }
+}
+
+// Draws the open multi-select combo body: clear-all, search input, and the per-option checkbox
+// list (checked options are always shown even when filtered out). Extracted from
+// RenderMultiSelectEditor; caller owns BeginCombo/EndCombo and the effective-option resolution.
+// `selectedSet` is mutated as the user toggles checkboxes. Behaviour byte-identical.
+void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
+                                std::vector<PendingFieldEdit>& pendingEdits, const std::string& editorKey,
+                                const std::vector<TrackerFieldOption>* opts, bool componentsLoaded,
+                                std::unordered_set<std::string>& selectedSet) {
+    if (state.MultiSelectActiveKey != editorKey) {
+        state.MultiSelectActiveKey = editorKey;
+        state.MultiSelectSearchBuf[0] = '\0';
+    }
+
+    if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
+        QueueEdit(ticket.id, field, {}, pendingEdits);
+    }
+    ImGui::Separator();
+
+    const std::string searchHint = field.Id == "components" ? "Search components" : "Search options";
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), state.MultiSelectSearchBuf,
+                             sizeof(state.MultiSelectSearchBuf));
+    ImGui::Separator();
+
+    const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.MultiSelectSearchBuf));
+    bool drewAny = false;
+    for (const auto& option : *opts) {
+        const std::string optionId = option.Id.empty() ? option.Value : option.Id;
+        bool checked = (selectedSet.find(optionId) != selectedSet.end());
+        if (!checked && !OptionMatchesFilter(option, filterLower)) {
+            continue;
+        }
+        drewAny = true;
+        // Per-option PushID disambiguates checkboxes whose visible labels could collide
+        // (e.g. duplicate option.Value across customfields); pop matches at the end of body.
+        ImGui::PushID(optionId.c_str());
+        if (option.Disabled) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Checkbox(option.Value.c_str(), &checked)) {
+            if (checked) {
+                selectedSet.insert(optionId);
+            } else {
+                selectedSet.erase(optionId);
+            }
+            std::vector<std::string> updated(selectedSet.begin(), selectedSet.end());
+            std::sort(updated.begin(), updated.end());
+            QueueEdit(ticket.id, field, updated, pendingEdits);
+        }
+        if (option.Disabled) {
+            ImGui::EndDisabled();
+        }
+        if (!option.SecondaryValue.empty() && ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-            ImGui::TextUnformatted(previewCStr);
+            ImGui::TextUnformatted(option.SecondaryValue.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
+        }
+        ImGui::PopID();
+    }
+    if (!drewAny) {
+        if (field.Id == "components" && !componentsLoaded && filterLower.empty()) {
+            // Per-project options have not loaded yet. The lazy fetch was kicked above and the
+            // real options appear on a later frame once it lands. A successful fetch that
+            // returned zero components marks the project loaded, so a genuinely empty project
+            // shows the no-options text rather than spinning here forever.
+            ImGui::TextDisabled("Loading components\xE2\x80\xA6");
+        } else {
+            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
         }
     }
 }
@@ -688,104 +789,17 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
                 state.EditArmedJustOpened = true;
             }
         }
-        if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
-            const bool previewClipped = (cellAvail > 0.0f && psz.x > cellAvail + 1.0f);
-            if (previewClipped) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                ImGui::TextUnformatted(previewCStr);
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-        }
+        DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, cellAvail);
         return;
     }
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        if (state.MultiSelectActiveKey != editorKey) {
-            state.MultiSelectActiveKey = editorKey;
-            state.MultiSelectSearchBuf[0] = '\0';
-        }
-
-        if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
-            QueueEdit(ticket.id, field, {}, pendingEdits);
-        }
-        ImGui::Separator();
-
-        const std::string searchHint = field.Id == "components" ? "Search components" : "Search options";
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##MultiSelectSearch", searchHint.c_str(), state.MultiSelectSearchBuf,
-                                 sizeof(state.MultiSelectSearchBuf));
-        ImGui::Separator();
-
-        const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.MultiSelectSearchBuf));
-        bool drewAny = false;
-        for (const auto& option : *opts) {
-            const std::string optionId = option.Id.empty() ? option.Value : option.Id;
-            bool checked = (selectedSet.find(optionId) != selectedSet.end());
-            const bool matchesFilter = filterLower.empty() ||
-                                       ToLowerAsciiCopy(option.Value).find(filterLower) != std::string::npos ||
-                                       ToLowerAsciiCopy(option.SecondaryValue).find(filterLower) != std::string::npos ||
-                                       ToLowerAsciiCopy(optionId).find(filterLower) != std::string::npos;
-            if (!checked && !matchesFilter) {
-                continue;
-            }
-            drewAny = true;
-            // Per-option PushID disambiguates checkboxes whose visible labels could collide
-            // (e.g. duplicate option.Value across customfields); pop matches at the end of body.
-            ImGui::PushID(optionId.c_str());
-            if (option.Disabled) {
-                ImGui::BeginDisabled();
-            }
-            if (ImGui::Checkbox(option.Value.c_str(), &checked)) {
-                if (checked) {
-                    selectedSet.insert(optionId);
-                } else {
-                    selectedSet.erase(optionId);
-                }
-                std::vector<std::string> updated(selectedSet.begin(), selectedSet.end());
-                std::sort(updated.begin(), updated.end());
-                QueueEdit(ticket.id, field, updated, pendingEdits);
-            }
-            if (option.Disabled) {
-                ImGui::EndDisabled();
-            }
-            if (!option.SecondaryValue.empty() && ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                ImGui::TextUnformatted(option.SecondaryValue.c_str());
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            ImGui::PopID();
-        }
-        if (!drewAny) {
-            if (field.Id == "components" && !componentsLoaded && filterLower.empty()) {
-                // Per-project options have not loaded yet. The lazy fetch was kicked above and the
-                // real options appear on a later frame once it lands. A successful fetch that
-                // returned zero components marks the project loaded, so a genuinely empty project
-                // shows the no-options text rather than spinning here forever.
-                ImGui::TextDisabled("Loading components\xE2\x80\xA6");
-            } else {
-                ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
-            }
-        }
+        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, componentsLoaded, selectedSet);
         ImGui::EndCombo();
     }
-    if (tooltipsEnabled && ImGui::IsItemHovered()) {
-        const ImVec2 psz = ImGui::CalcTextSize(preview.c_str());
-        const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
-        if (previewClipped) {
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-            ImGui::TextUnformatted(preview.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
-        }
-    }
+    DrawClippedPreviewTooltip(tooltipsEnabled, preview.c_str(), comboAvailBefore);
 }
 
 void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
@@ -819,17 +833,7 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
                 state.EditArmedJustOpened = true;
             }
         }
-        if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            const ImVec2 psz = ImGui::CalcTextSize(previewCStr);
-            const bool previewClipped = (cellAvail > 0.0f && psz.x > cellAvail + 1.0f);
-            if (previewClipped) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                ImGui::TextUnformatted(previewCStr);
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-        }
+        DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, cellAvail);
         return;
     }
     // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
@@ -866,17 +870,239 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
         }
         ImGui::EndCombo();
     }
+    DrawClippedPreviewTooltip(tooltipsEnabled, preview.c_str(), comboAvailBefore);
+}
+
+// Draws the "Log work" / time-spent button for the SpecialTimeSpent column and, on click, primes
+// the worklog dialog state. Extracted from RenderFieldCell's switch case; behaviour byte-identical.
+void RenderTimeSpentButton(const CachedTicket& ticket, const std::string& currentValue, float availWidth,
+                           bool tooltipsEnabled) {
+    std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
+    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0)); // invisible background when normal
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+
+    if (ImGui::Button(buttonText.c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
+        s_ActiveWorklogState.IssueId = ticket.id;
+        s_ActiveWorklogState.TimeSpent[0] = '\0';
+        s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
+        s_ActiveWorklogState.TotalTimeSpent = ticket.GetFieldValue("timespent");
+        s_ActiveWorklogState.TotalTimeRemaining = ticket.GetFieldValue("timeestimate");
+        std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(),
+                     sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+        s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
+
+        s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
+
+        s_ActiveWorklogState.WorkDescription[0] = '\0';
+        s_ActiveWorklogState.ErrorMsg.clear();
+        s_ActiveWorklogState.Initialized = true;
+        s_ActiveWorklogState.JustOpened = true;
+        s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
+    }
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
+
     if (tooltipsEnabled && ImGui::IsItemHovered()) {
-        const ImVec2 psz = ImGui::CalcTextSize(preview.c_str());
-        const bool previewClipped = (comboAvailBefore > 0.0f && psz.x > comboAvailBefore + 1.0f);
-        if (previewClipped) {
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-            ImGui::TextUnformatted(preview.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
+        ImGui::BeginTooltip();
+        if (currentValue.empty()) {
+            ImGui::TextUnformatted("No work logged yet. Click to log work.");
+        } else {
+            ImGui::Text("Total Time Spent: %s\nClick to log work / edit estimates.", currentValue.c_str());
+        }
+        ImGui::EndTooltip();
+    }
+}
+
+// Computes the progress-bar logged/remaining seconds for the worklog dialog. Pure arithmetic on
+// the parsed durations — extracted so the modal draw body stays layout-focused. Mirrors the
+// auto-deduction (spent reduces remaining) unless the user manually edited the remaining field.
+void ComputeWorklogProgressSeconds(long long& outDisplaySpentSec, long long& outDisplayRemSec) {
+    const long long spentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeSpent);
+    const long long remSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
+    const long long newSpentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+
+    outDisplaySpentSec = spentSec + newSpentSec;
+    outDisplayRemSec = remSec;
+    if (newSpentSec > 0 && !s_ActiveWorklogState.TimeRemainingManuallyEdited) {
+        outDisplayRemSec = (std::max)(0LL, remSec - newSpentSec);
+    } else if (s_ActiveWorklogState.TimeRemainingManuallyEdited) {
+        outDisplayRemSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeRemaining);
+    }
+}
+
+// Validates the worklog inputs and, on success, submits via AppController and dismisses the popup.
+// Sets s_ActiveWorklogState.ErrorMsg on any validation/submit failure. Extracted from the modal's
+// Save button handler; behaviour byte-identical.
+void HandleWorklogSave(AppController& app) {
+    s_ActiveWorklogState.ErrorMsg.clear();
+    long long sVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+    if (sVal <= 0) {
+        s_ActiveWorklogState.ErrorMsg = "Invalid Time spent format. Please use e.g. 2h 30m.";
+        return;
+    }
+    ParsedJiraDateTime dummyDt;
+    if (!TryParseJiraDateTime(s_ActiveWorklogState.DateStarted, dummyDt)) {
+        s_ActiveWorklogState.ErrorMsg = "Invalid Date started format.";
+        return;
+    }
+    std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
+    std::string outErr;
+    if (app.SubmitWorklog(s_ActiveWorklogState.IssueId, s_ActiveWorklogState.TimeSpent,
+                          s_ActiveWorklogState.TimeRemaining, adjEst, s_ActiveWorklogState.WorkDescription,
+                          s_ActiveWorklogState.DateStarted, outErr)) {
+        ImGui::CloseCurrentPopup();
+        s_ActiveWorklogState.Initialized = false;
+    } else {
+        s_ActiveWorklogState.ErrorMsg = "Failed: " + outErr;
+    }
+}
+
+// Draws the time-tracking modal popup (logged/remaining bar, duration inputs, date picker, work
+// description with templates, Save/Cancel). Owns its OpenPopup→BeginPopupModal lifecycle keyed on
+// s_ActiveWorklogState. Extracted from the tail of RenderFieldCell; behaviour byte-identical.
+void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
+    if (!(s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == ticket.id)) {
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(450.0f, 0.0f), ImGuiCond_Always);
+    if (s_ActiveWorklogState.JustOpened) {
+        ImGui::OpenPopup("TimeTrackingPopup");
+        s_ActiveWorklogState.JustOpened = false;
+    }
+
+    if (!ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        s_ActiveWorklogState.Initialized = false;
+        return;
+    }
+
+    ImGui::Text("Time tracking: %s", ticket.id.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Logged & Remaining progress bar
+    long long displaySpentSec = 0;
+    long long displayRemSec = 0;
+    ComputeWorklogProgressSeconds(displaySpentSec, displayRemSec);
+
+    long long totalSec = displaySpentSec + displayRemSec;
+    float fraction = 0.0f;
+    if (totalSec > 0) {
+        fraction = (float)displaySpentSec / (float)totalSec;
+    }
+
+    std::string loggedLabel = FormatWorkDurationFromSeconds(displaySpentSec);
+    if (loggedLabel.empty())
+        loggedLabel = "0m";
+    loggedLabel += " logged";
+
+    std::string remainingLabel = FormatWorkDurationFromSeconds(displayRemSec);
+    if (remainingLabel.empty())
+        remainingLabel = "0m";
+    remainingLabel += " remaining";
+
+    ImGui::TextUnformatted(loggedLabel.c_str());
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(remainingLabel.c_str()).x);
+    ImGui::TextUnformatted(remainingLabel.c_str());
+
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.12f, 0.45f, 0.88f, 1.00f)); // Jira blue
+    ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 14.0f), "");
+    ImGui::PopStyleColor();
+
+    if (!s_ActiveWorklogState.OriginalEstimate.empty()) {
+        ImGui::TextDisabled("The original estimate for this work item was %s.",
+                            s_ActiveWorklogState.OriginalEstimate.c_str());
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Inputs
+    ImGui::Text("Time spent *");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent,
+                                         sizeof(s_ActiveWorklogState.TimeSpent), 0, nullptr, nullptr, nullptr, false)) {
+        if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
+            long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+            long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
+            if (spentVal > 0) {
+                long long newRem = (std::max)(0LL, remVal - spentVal);
+                std::string formattedRem = FormatWorkDurationFromSeconds(newRem);
+                std::strncpy(s_ActiveWorklogState.TimeRemaining, formattedRem.c_str(),
+                             sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+                s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
+            } else {
+                std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(),
+                             sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+                s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
+            }
         }
     }
+    ImGui::TextDisabled("Use the format: 2w 4d 6h 45m (w=weeks, d=days, h=hours, m=minutes)");
+
+    ImGui::Spacing();
+    ImGui::Text("Time remaining");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining,
+                                         sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr,
+                                         &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
+        // value changed!
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Date started *");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted", s_ActiveWorklogState.DateStarted, true);
+
+    ImGui::Spacing();
+    ImGui::Text("Work description");
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90.0f);
+    if (ImGui::Button("Templates ▼", ImVec2(90.0f, 0.0f))) {
+        ImGui::OpenPopup("comment_templates_popup");
+    }
+    if (ImGui::BeginPopup("comment_templates_popup")) {
+        std::vector<std::string> templates = LoadCommentTemplates();
+        if (templates.empty()) {
+            ImGui::TextDisabled("No templates configured in Preferences.");
+        } else {
+            for (const auto& item : templates) {
+                if (ImGui::Selectable(item.c_str())) {
+                    std::strncpy(s_ActiveWorklogState.WorkDescription, item.c_str(),
+                                 sizeof(s_ActiveWorklogState.WorkDescription) - 1);
+                    s_ActiveWorklogState.WorkDescription[sizeof(s_ActiveWorklogState.WorkDescription) - 1] = '\0';
+                }
+            }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription,
+                              sizeof(s_ActiveWorklogState.WorkDescription),
+                              ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
+
+    if (!s_ActiveWorklogState.ErrorMsg.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", s_ActiveWorklogState.ErrorMsg.c_str());
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Buttons
+    if (ImGui::Button("Save", ImVec2(80, 0))) {
+        HandleWorklogSave(app);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+        ImGui::CloseCurrentPopup();
+        s_ActiveWorklogState.Initialized = false;
+    }
+
+    ImGui::EndPopup();
 }
 
 } // namespace
@@ -908,6 +1134,125 @@ struct CellIdScope {
     CellIdScope(const CellIdScope&) = delete;
     CellIdScope& operator=(const CellIdScope&) = delete;
 };
+
+// Dispatches the "special" column render plans (attachments, watchers, votes, worklog, progress,
+// issue-restriction) to their grid-field-display renderers. Returns true when the cell was drawn.
+// A false result means the plan's guard did not match, so the caller falls through to its original
+// break path — the worklog modal tail — byte-identical to the inlined switch cases. The time-spent
+// plan is intentionally NOT routed here, since it always draws and then falls through to the modal.
+bool TryRenderSpecialColumnPlan(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
+                                const TrackerField* field, const std::string& currentValue, float availWidth,
+                                bool tooltipsEnabled, TrackerGridFieldAsyncState& trackerGridAsync) {
+    switch (column.Plan) {
+    case TicketGridColumn::RenderPlan::SpecialAttachment:
+        if (field == nullptr || IsAttachmentFieldId(field->Id)) {
+            TrackerGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
+            return true;
+        }
+        return false;
+    case TicketGridColumn::RenderPlan::SpecialWatchers:
+        if (field == nullptr || TrackerGridFieldDisplay::IsWatchersColumnId(field->Id)) {
+            TrackerGridFieldDisplay::RenderWatchersField(app, ticket.id, currentValue, availWidth, tooltipsEnabled,
+                                                         trackerGridAsync);
+            return true;
+        }
+        return false;
+    case TicketGridColumn::RenderPlan::SpecialVotes:
+        if (field == nullptr || TrackerGridFieldDisplay::IsVotesColumnId(field->Id)) {
+            TrackerGridFieldDisplay::RenderVotesField(app, ticket.id, currentValue, availWidth, tooltipsEnabled,
+                                                      trackerGridAsync);
+            return true;
+        }
+        return false;
+    case TicketGridColumn::RenderPlan::SpecialWorklog:
+        if (field == nullptr || TrackerGridFieldDisplay::IsWorklogColumnId(field->Id)) {
+            TrackerGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
+            return true;
+        }
+        return false;
+    case TicketGridColumn::RenderPlan::SpecialProgress:
+        return TrackerGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth);
+    case TicketGridColumn::RenderPlan::SpecialIssueRestriction:
+        return TrackerGridFieldDisplay::TryRenderIssueRestrictionField(currentValue, availWidth, tooltipsEnabled);
+    default:
+        return false;
+    }
+}
+
+// Renders a read-only / display-mode cell value (the fall-through for every non-editable column
+// plan, and the editable plans when allowEdits is false). Date-like columns format via the date
+// helper; components cells resolve names against the row's own project options; description-like
+// fields get a lazy markdown hover tooltip. Extracted verbatim from RenderFieldCell's
+// renderPlainText lambda; behaviour byte-identical.
+void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
+                         const TrackerField* field, const std::string& currentValue, float availWidth,
+                         bool tooltipsEnabled, const std::string& dateFormatOption, int thresholdDays, bool disabled) {
+    std::string display;
+    if (column.IsDateLike) {
+        display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
+    } else {
+        // Components cells on cross-project views resolve their display name against this row's
+        // own project options (same per-project pattern as RenderMultiSelectEditor). The global
+        // components field has empty/wrong AllowedValueOptions cross-project, so without this the
+        // collapsed cell rendered the raw numeric component id instead of its name.
+        const TrackerField* displayField = field;
+        TrackerField effectiveField;
+        if (field != nullptr && column.FieldId == "components") {
+            const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+            std::vector<TrackerFieldOption> perProject = app.GetComponentOptionsForProject(projectKey);
+            // Always scope to this row's project and never fall back to the global cross-project
+            // union. When not yet loaded, kick a lazy fetch and use the empty per-project set so
+            // selected-id names resolve on a later frame once the fetch lands (raw id shows
+            // briefly). Gate on the loaded flag rather than an empty vector so a successful zero-
+            // component fetch does not relaunch a worker every frame.
+            if (!app.IsProjectComponentsLoaded(projectKey)) {
+                app.EnsureProjectComponentsLoaded(projectKey);
+            }
+            effectiveField = *field;
+            effectiveField.AllowedValueOptions = std::move(perProject);
+            displayField = &effectiveField;
+        }
+        display = app.ResolveDisplayValue(column.FieldId, displayField, currentValue);
+    }
+    if (disabled && display.empty()) {
+        display = "-";
+    }
+    const bool isDescriptionField = IsDescriptionLikeFieldId(column.FieldId);
+    if (isDescriptionField) {
+        // Lazy: parse ADF → markdown only on actual hover, not per-cell per-frame.
+        RenderClippedFieldText(display, availWidth, false, disabled, nullptr, false, &column.FieldId);
+        if (tooltipsEnabled && ImGui::IsItemHovered()) {
+            const std::string richVal = ticket.GetFieldRichValue(column.FieldId);
+            std::string md;
+            if (!richVal.empty()) {
+                try {
+                    md = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
+                } catch (const std::exception& e) {
+                    LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", column.FieldId.c_str(), e.what());
+                } catch (...) {
+                    LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", column.FieldId.c_str());
+                }
+            }
+            if (md.empty()) {
+                md = currentValue;
+            }
+            if (!md.empty()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
+                MarkdownPreviewRender::Options opts;
+                opts.mode = MarkdownPreviewRender::Mode::Tooltip;
+                opts.clickableLinks = false;
+                opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
+                MarkdownPreviewRender::Render(md, opts);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+    } else {
+        const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
+        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, false, &column.FieldId);
+    }
+}
 } // namespace
 
 void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
@@ -936,152 +1281,19 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     }
 
     auto renderPlainText = [&](bool disabled) {
-        std::string display;
-        if (column.IsDateLike) {
-            display =
-                DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
-        } else {
-            // Components cells on cross-project views resolve their display name against this row's
-            // own project options (same per-project pattern as RenderMultiSelectEditor). The global
-            // components field has empty/wrong AllowedValueOptions cross-project, so without this the
-            // collapsed cell rendered the raw numeric component id instead of its name.
-            const TrackerField* displayField = field;
-            TrackerField effectiveField;
-            if (field != nullptr && column.FieldId == "components") {
-                const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-                std::vector<TrackerFieldOption> perProject = app.GetComponentOptionsForProject(projectKey);
-                // Always scope to this row's project and never fall back to the global cross-project
-                // union. When not yet loaded, kick a lazy fetch and use the empty per-project set so
-                // selected-id names resolve on a later frame once the fetch lands (raw id shows
-                // briefly). Gate on the loaded flag rather than an empty vector so a successful zero-
-                // component fetch does not relaunch a worker every frame.
-                if (!app.IsProjectComponentsLoaded(projectKey)) {
-                    app.EnsureProjectComponentsLoaded(projectKey);
-                }
-                effectiveField = *field;
-                effectiveField.AllowedValueOptions = std::move(perProject);
-                displayField = &effectiveField;
-            }
-            display = app.ResolveDisplayValue(column.FieldId, displayField, currentValue);
-        }
-        if (disabled && display.empty()) {
-            display = "-";
-        }
-        const bool isDescriptionField = IsDescriptionLikeFieldId(column.FieldId);
-        if (isDescriptionField) {
-            // Lazy: parse ADF → markdown only on actual hover, not per-cell per-frame.
-            RenderClippedFieldText(display, availWidth, false, disabled, nullptr, false, &column.FieldId);
-            if (tooltipsEnabled && ImGui::IsItemHovered()) {
-                const std::string richVal = ticket.GetFieldRichValue(column.FieldId);
-                std::string md;
-                if (!richVal.empty()) {
-                    try {
-                        md = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
-                    } catch (const std::exception& e) {
-                        LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", column.FieldId.c_str(), e.what());
-                    } catch (...) {
-                        LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", column.FieldId.c_str());
-                    }
-                }
-                if (md.empty()) {
-                    md = currentValue;
-                }
-                if (!md.empty()) {
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                    MarkdownPreviewRender::Options opts;
-                    opts.mode = MarkdownPreviewRender::Mode::Tooltip;
-                    opts.clickableLinks = false;
-                    opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
-                    MarkdownPreviewRender::Render(md, opts);
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndTooltip();
-                }
-            }
-        } else {
-            const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
-            RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, false, &column.FieldId);
-        }
+        RenderPlainTextCell(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, dateFormatOption,
+                            thresholdDays, disabled);
     };
 
-    switch (column.Plan) {
-    case TicketGridColumn::RenderPlan::SpecialAttachment:
-        if (field == nullptr || IsAttachmentFieldId(field->Id)) {
-            TrackerGridFieldDisplay::RenderAttachmentsField(app, currentValue, availWidth, tooltipsEnabled);
-            return;
-        }
-        break;
-    case TicketGridColumn::RenderPlan::SpecialWatchers:
-        if (field == nullptr || TrackerGridFieldDisplay::IsWatchersColumnId(field->Id)) {
-            TrackerGridFieldDisplay::RenderWatchersField(app, ticket.id, currentValue, availWidth, tooltipsEnabled,
-                                                         trackerGridAsync);
-            return;
-        }
-        break;
-    case TicketGridColumn::RenderPlan::SpecialVotes:
-        if (field == nullptr || TrackerGridFieldDisplay::IsVotesColumnId(field->Id)) {
-            TrackerGridFieldDisplay::RenderVotesField(app, ticket.id, currentValue, availWidth, tooltipsEnabled,
-                                                      trackerGridAsync);
-            return;
-        }
-        break;
-    case TicketGridColumn::RenderPlan::SpecialWorklog:
-        if (field == nullptr || TrackerGridFieldDisplay::IsWorklogColumnId(field->Id)) {
-            TrackerGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
-            return;
-        }
-        break;
-    case TicketGridColumn::RenderPlan::SpecialProgress:
-        if (TrackerGridFieldDisplay::TryRenderProgressJsonField(currentValue, availWidth)) {
-            return;
-        }
-        break;
-    case TicketGridColumn::RenderPlan::SpecialIssueRestriction:
-        if (TrackerGridFieldDisplay::TryRenderIssueRestrictionField(currentValue, availWidth, tooltipsEnabled)) {
-            return;
-        }
-        break;
-    case TicketGridColumn::RenderPlan::SpecialTimeSpent: {
-        std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
-        // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
-
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0)); // invisible background when normal
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
-        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
-
-        if (ImGui::Button(buttonText.c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
-            s_ActiveWorklogState.IssueId = ticket.id;
-            s_ActiveWorklogState.TimeSpent[0] = '\0';
-            s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
-            s_ActiveWorklogState.TotalTimeSpent = ticket.GetFieldValue("timespent");
-            s_ActiveWorklogState.TotalTimeRemaining = ticket.GetFieldValue("timeestimate");
-            std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(),
-                         sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
-            s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
-
-            s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
-
-            s_ActiveWorklogState.WorkDescription[0] = '\0';
-            s_ActiveWorklogState.ErrorMsg.clear();
-            s_ActiveWorklogState.Initialized = true;
-            s_ActiveWorklogState.JustOpened = true;
-            s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
-        }
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(3);
-
-        if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            if (currentValue.empty()) {
-                ImGui::TextUnformatted("No work logged yet. Click to log work.");
-            } else {
-                ImGui::Text("Total Time Spent: %s\nClick to log work / edit estimates.", currentValue.c_str());
-            }
-            ImGui::EndTooltip();
-        }
-        break;
+    if (TryRenderSpecialColumnPlan(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled,
+                                   trackerGridAsync)) {
+        return;
     }
+
+    switch (column.Plan) {
+    case TicketGridColumn::RenderPlan::SpecialTimeSpent:
+        RenderTimeSpentButton(ticket, currentValue, availWidth, tooltipsEnabled);
+        break;
     case TicketGridColumn::RenderPlan::PlainText:
         renderPlainText(column.CatalogReadOnly);
         return;
@@ -1143,173 +1355,5 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         return;
     }
 
-    if (s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == ticket.id) {
-        ImGui::SetNextWindowSize(ImVec2(450.0f, 0.0f), ImGuiCond_Always);
-        if (s_ActiveWorklogState.JustOpened) {
-            ImGui::OpenPopup("TimeTrackingPopup");
-            s_ActiveWorklogState.JustOpened = false;
-        }
-
-        if (ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Time tracking: %s", ticket.id.c_str());
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Logged & Remaining progress bar
-            long long spentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeSpent);
-            long long remSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
-            long long newSpentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
-
-            long long displaySpentSec = spentSec + newSpentSec;
-            long long displayRemSec = remSec;
-            if (newSpentSec > 0 && !s_ActiveWorklogState.TimeRemainingManuallyEdited) {
-                displayRemSec = (std::max)(0LL, remSec - newSpentSec);
-            } else if (s_ActiveWorklogState.TimeRemainingManuallyEdited) {
-                displayRemSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeRemaining);
-            }
-
-            long long totalSec = displaySpentSec + displayRemSec;
-            float fraction = 0.0f;
-            if (totalSec > 0) {
-                fraction = (float)displaySpentSec / (float)totalSec;
-            }
-
-            std::string loggedLabel = FormatWorkDurationFromSeconds(displaySpentSec);
-            if (loggedLabel.empty())
-                loggedLabel = "0m";
-            loggedLabel += " logged";
-
-            std::string remainingLabel = FormatWorkDurationFromSeconds(displayRemSec);
-            if (remainingLabel.empty())
-                remainingLabel = "0m";
-            remainingLabel += " remaining";
-
-            ImGui::TextUnformatted(loggedLabel.c_str());
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(remainingLabel.c_str()).x);
-            ImGui::TextUnformatted(remainingLabel.c_str());
-
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.12f, 0.45f, 0.88f, 1.00f)); // Jira blue
-            ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 14.0f), "");
-            ImGui::PopStyleColor();
-
-            if (!s_ActiveWorklogState.OriginalEstimate.empty()) {
-                ImGui::TextDisabled("The original estimate for this work item was %s.",
-                                    s_ActiveWorklogState.OriginalEstimate.c_str());
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Inputs
-            ImGui::Text("Time spent *");
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent,
-                                                 sizeof(s_ActiveWorklogState.TimeSpent), 0, nullptr, nullptr, nullptr,
-                                                 false)) {
-                if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
-                    long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
-                    long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
-                    if (spentVal > 0) {
-                        long long newRem = (std::max)(0LL, remVal - spentVal);
-                        std::string formattedRem = FormatWorkDurationFromSeconds(newRem);
-                        std::strncpy(s_ActiveWorklogState.TimeRemaining, formattedRem.c_str(),
-                                     sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
-                        s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
-                    } else {
-                        std::strncpy(s_ActiveWorklogState.TimeRemaining,
-                                     s_ActiveWorklogState.TotalTimeRemaining.c_str(),
-                                     sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
-                        s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
-                    }
-                }
-            }
-            ImGui::TextDisabled("Use the format: 2w 4d 6h 45m (w=weeks, d=days, h=hours, m=minutes)");
-
-            ImGui::Spacing();
-            ImGui::Text("Time remaining");
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining,
-                                                 sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr,
-                                                 &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
-                // value changed!
-            }
-
-            ImGui::Spacing();
-            ImGui::Text("Date started *");
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted",
-                                                                s_ActiveWorklogState.DateStarted, true);
-
-            ImGui::Spacing();
-            ImGui::Text("Work description");
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90.0f);
-            if (ImGui::Button("Templates ▼", ImVec2(90.0f, 0.0f))) {
-                ImGui::OpenPopup("comment_templates_popup");
-            }
-            if (ImGui::BeginPopup("comment_templates_popup")) {
-                std::vector<std::string> templates = LoadCommentTemplates();
-                if (templates.empty()) {
-                    ImGui::TextDisabled("No templates configured in Preferences.");
-                } else {
-                    for (const auto& item : templates) {
-                        if (ImGui::Selectable(item.c_str())) {
-                            std::strncpy(s_ActiveWorklogState.WorkDescription, item.c_str(),
-                                         sizeof(s_ActiveWorklogState.WorkDescription) - 1);
-                            s_ActiveWorklogState.WorkDescription[sizeof(s_ActiveWorklogState.WorkDescription) - 1] =
-                                '\0';
-                        }
-                    }
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription,
-                                      sizeof(s_ActiveWorklogState.WorkDescription),
-                                      ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
-
-            if (!s_ActiveWorklogState.ErrorMsg.empty()) {
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", s_ActiveWorklogState.ErrorMsg.c_str());
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Buttons
-            if (ImGui::Button("Save", ImVec2(80, 0))) {
-                s_ActiveWorklogState.ErrorMsg.clear();
-                long long sVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
-                if (sVal <= 0) {
-                    s_ActiveWorklogState.ErrorMsg = "Invalid Time spent format. Please use e.g. 2h 30m.";
-                } else {
-                    ParsedJiraDateTime dummyDt;
-                    if (!TryParseJiraDateTime(s_ActiveWorklogState.DateStarted, dummyDt)) {
-                        s_ActiveWorklogState.ErrorMsg = "Invalid Date started format.";
-                    } else {
-                        std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
-                        std::string outErr;
-                        if (app.SubmitWorklog(s_ActiveWorklogState.IssueId, s_ActiveWorklogState.TimeSpent,
-                                              s_ActiveWorklogState.TimeRemaining, adjEst,
-                                              s_ActiveWorklogState.WorkDescription, s_ActiveWorklogState.DateStarted,
-                                              outErr)) {
-                            ImGui::CloseCurrentPopup();
-                            s_ActiveWorklogState.Initialized = false;
-                        } else {
-                            s_ActiveWorklogState.ErrorMsg = "Failed: " + outErr;
-                        }
-                    }
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-                ImGui::CloseCurrentPopup();
-                s_ActiveWorklogState.Initialized = false;
-            }
-
-            ImGui::EndPopup();
-        } else {
-            s_ActiveWorklogState.Initialized = false;
-        }
-    }
+    RenderTimeTrackingModal(app, ticket);
 }

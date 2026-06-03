@@ -382,7 +382,12 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
         smatchet_fetch_status("Downloading Lua 5.3.6 source...")
         file(MAKE_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
         set(_lua_tar "${FETCHCONTENT_BASE_DIR}/lua-5.3.6.tar.gz")
-        file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}")
+        # Pin the upstream tarball hash — lua.org publishes no checksum companion,
+        # so this is a TOFU pin (sha256 of the canonical lua-5.3.6.tar.gz) that
+        # blocks a silently-tampered mirror / MITM from compiling unverified C
+        # source into both targets. Every other dependency is an immutable git ref.
+        file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}"
+            EXPECTED_HASH SHA256=fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60)
         execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${_lua_tar}" WORKING_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
         file(RENAME "${FETCHCONTENT_BASE_DIR}/lua-5.3.6" "${LUA_SRC_DIR}")
         unset(_lua_tar)

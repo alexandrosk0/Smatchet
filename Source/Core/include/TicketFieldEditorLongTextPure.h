@@ -47,6 +47,22 @@ LongTextRichKind ClassifyRichValue(const std::string& rich);
 std::string ComputeLongTextSeed(LongTextRichKind kind, const std::string& rich, const std::string& strippedFallback,
                                 std::vector<std::string>& outDroppedAdfNodeTypes, bool& outRawMode);
 
+/// Result of the modal's preview round-trip: the re-rendered Markdown plus whether the
+/// round-trip dropped constructs (HTML-subset fallback, or non-empty ADF dropped-nodes list).
+struct RoundTripPreview {
+    std::string Rendered;
+    bool Lossy = false;
+};
+
+/// Round-trips the in-progress Markdown buffer through the same converter the modal runs on save
+/// (Markdown to ADF / HTML and back) so conversion loss surfaces in the preview before save. Pure
+/// function with no UI access, safe to unit-test. The Html kind goes Markdown-to-HTML then through
+/// the HTML-subset converter, mirroring its subset-fallback flag into Lossy. The None and Adf kinds
+/// go Markdown-to-ADF and back, marking Lossy when ADF reports dropped nodes. Any converter
+/// exception falls back to the raw Markdown with Lossy false, matching the modal's in-progress-edit
+/// guard where mid-token input occasionally trips the converter.
+RoundTripPreview ComputeRoundTripPreview(LongTextRichKind kind, const std::string& markdown);
+
 } // namespace TicketFieldEditorLongTextPure
 
 #endif

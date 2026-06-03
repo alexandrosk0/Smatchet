@@ -2,6 +2,8 @@
 
 #if defined(SMATCHET_WITH_AI)
 
+#include "Ui/SmatchetAiAssistantUi_detail.h"
+
 #include "AiAssistantController.h"
 #include "AiAssistantInputSeedDecision.h"
 #include "AiAssistantSendButton.h"
@@ -217,9 +219,8 @@ const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::st
     entry.plan = MarkdownPreviewRender::MakePlan();
     MarkdownPreviewRender::BuildPlan(content, *entry.plan);
     while (!s_planCacheInsertionOrder.empty() &&
-           smatchet::CacheOverCap(s_planCacheInsertionOrder.size() + 1,
-                                  s_planCacheBytes + content.size(), kMaxCachedPlans,
-                                  kMaxPlanCacheBytes)) {
+           smatchet::CacheOverCap(s_planCacheInsertionOrder.size() + 1, s_planCacheBytes + content.size(),
+                                  kMaxCachedPlans, kMaxPlanCacheBytes)) {
         const std::uint64_t evictKey = s_planCacheInsertionOrder.front();
         s_planCacheInsertionOrder.erase(s_planCacheInsertionOrder.begin());
         const auto victim = s_planCache.find(evictKey);
@@ -383,6 +384,263 @@ void DrawPinStripIfAny(UiDrawSession& d) {
     ImGui::PopStyleColor();
 }
 
+// Per-frame shared state for the history scroll-child + its turn renderer.
+// Captured once at the top of DrawHistoryArea so each turn helper reads
+// snapshots rather than re-fetching theme / clock / selection context.
+struct AiHistoryDrawCtx {
+    UiDrawSession& d;
+    const SmatchetThemeAiColors& palette;
+    SelectableText::Context& selCtx;
+    MarkdownPreviewRender::Options& renderOpts;
+    std::vector<float>& messageYCache;
+    bool faLoaded;
+    std::int64_t nowMs;
+};
+
+// Always-reserved per-turn action row (Copy / Pin / right-aligned timestamp).
+// Alpha-gated so the slot height is constant whether or not the row is visible.
+// `bodyHovered` / `bodyFocused` feed the next-frame show-on-hover latch.
+// Extracted verbatim from RenderHistoryTurn to keep both helpers under the
+// branch cap.
+void RenderTurnActionRow(AiHistoryDrawCtx& ctx, int messageIndex, AiMessage* msgPtr, float actionRowSlotH,
+                         bool bodyHovered, bool bodyFocused) {
+    UiDrawSession& d = ctx.d;
+    const SmatchetThemeAiColors& aiPalette = ctx.palette;
+    const bool faLoaded = ctx.faLoaded;
+    const std::int64_t nowMs = ctx.nowMs;
+
+    const bool wasActive = s_turnActiveLastFrame.count(static_cast<std::size_t>(messageIndex)) != 0u &&
+                           s_turnActiveLastFrame[static_cast<std::size_t>(messageIndex)];
+    const bool showRow = msgPtr->Pinned || wasActive;
+    const ImVec2 actionRowStart = ImGui::GetCursorScreenPos();
+
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, showRow ? 1.0f : 0.0f);
+
+    // Copy button.
+    const char* copyLabel = faLoaded ? ICON_FA_COPY : "Copy";
+    char copyId[64];
+    std::snprintf(copyId, sizeof(copyId), "%s##AiCopy%d", copyLabel, messageIndex);
+    bool copyHovered = false;
+    bool copyFocused = false;
+    if (ImGui::SmallButton(copyId)) {
+        if (showRow) {
+            // Guard the click on alpha=0 — invisible buttons still
+            // receive clicks in ImGui, but actions should only fire
+            // when the row is visible. Cheap defence vs accidental
+            // off-screen clipboard writes.
+            ImGui::SetClipboardText(msgPtr->Content.c_str());
+            d.assistantCopyToastUntilMs = nowMs + 1500;
+            d.assistantCopyToastLabel = "Copied";
+        }
+    }
+    copyHovered = ImGui::IsItemHovered();
+    copyFocused = ImGui::IsItemFocused();
+
+    ImGui::SameLine();
+
+    // Pin / Unpin button.
+    const char* pinIcon =
+        msgPtr->Pinned ? (faLoaded ? ICON_FA_THUMBTACK_SLASH : "Unpin") : (faLoaded ? ICON_FA_THUMBTACK : "Pin");
+    char pinId[64];
+    std::snprintf(pinId, sizeof(pinId), "%s##AiPin%d", pinIcon, messageIndex);
+    bool pinHovered = false;
+    bool pinFocused = false;
+    if (ImGui::SmallButton(pinId)) {
+        if (showRow) {
+            TogglePinAndPersist(d, static_cast<std::size_t>(messageIndex), !msgPtr->Pinned);
+        }
+    }
+    pinHovered = ImGui::IsItemHovered();
+    pinFocused = ImGui::IsItemFocused();
+
+    // Right-aligned relative timestamp + absolute-time tooltip.
+    // Canonical ImGui right-align: SameLine to anchor on the Pin button's
+    // row, then SetCursorPosX to (current + remaining - textW - padding).
+    // `GetCursorPosX() + GetContentRegionAvail().x` always equals the
+    // window content's right-edge X regardless of how the cursor got
+    // there (auto-advanced or via SameLine), so the math survives both
+    // paths. The earlier `SameLine(0.0f, hugeSpacing)` approach
+    // computed availW from the wrong baseline and clipped the timestamp
+    // off-screen to the right.
+    if (msgPtr->CreatedAtUnixMs > 0) {
+        ImGui::SameLine();
+        const std::string rel = smatchet::ai::FormatRelativeTime(nowMs, msgPtr->CreatedAtUnixMs);
+        const float relW = ImGui::CalcTextSize(rel.c_str()).x;
+        const float curX = ImGui::GetCursorPosX();
+        const float availFromHere = ImGui::GetContentRegionAvail().x;
+        const float targetX = curX + availFromHere - relW - ImGui::GetStyle().ItemSpacing.x;
+        if (targetX > curX) {
+            ImGui::SetCursorPosX(targetX);
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(aiPalette.AiActionRowIcon[0], aiPalette.AiActionRowIcon[1],
+                                                    aiPalette.AiActionRowIcon[2], aiPalette.AiActionRowIcon[3]));
+        ImGui::TextUnformatted(rel.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && showRow) {
+            const std::string abs = smatchet::ai::FormatAbsoluteTime(msgPtr->CreatedAtUnixMs);
+            ImGui::SetTooltip("%s", abs.c_str());
+        }
+    }
+
+    ImGui::PopStyleVar();
+
+    // Snap cursor to the bottom of the reserved slot so the next turn
+    // starts at a predictable Y (the row's natural cursor advance may
+    // be slightly less than actionRowSlotH because SmallButton is
+    // shorter than a full frame).
+    const float currentY = ImGui::GetCursorScreenPos().y;
+    const float targetY = actionRowStart.y + actionRowSlotH;
+    if (targetY > currentY) {
+        ImGui::Dummy(ImVec2(0.0f, targetY - currentY));
+    }
+
+    s_turnActiveLastFrame[static_cast<std::size_t>(messageIndex)] =
+        bodyHovered || bodyFocused || copyHovered || copyFocused || pinHovered || pinFocused;
+}
+
+// Render one chat turn into the history scroll-child. messageIndex is the
+// position in assistantHistory (or -1 for the in-flight streaming tail, which
+// has no persistence row). `body` is mutable on persistent rows so the
+// pin-toggle can flip Pinned. Extracted verbatim from the former renderTurn
+// lambda in DrawHistoryArea — behaviour is byte-identical.
+void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* roleLabel, const ImVec4& roleColor,
+                       AiMessage* msgPtr, const std::string& body, bool cacheable) {
+    SMATCHET_UI_PERF_SCOPE("ai_chat.history.render_turn");
+    const SmatchetThemeAiColors& aiPalette = ctx.palette;
+    const ImVec2 turnStartScreen = ImGui::GetCursorScreenPos();
+    const float turnStartCursorY = ImGui::GetCursorPosY(); // window-relative for Y-cache
+    const bool isUser = msgPtr ? (msgPtr->Role == "user") : false;
+
+    // Capture this turn's window-relative Y for the scroll-to-pinned latch.
+    // Persistent messages only (streaming tail has no stable Y until finalised).
+    if (messageIndex >= 0 && static_cast<std::size_t>(messageIndex) < ctx.messageYCache.size()) {
+        ctx.messageYCache[messageIndex] = turnStartCursorY;
+    }
+
+    // Off-screen culling: only for cacheable (finalised) turns with a
+    // known height. Streaming tail + unmeasured turns always render
+    // fully so the height cache populates on first sight.
+    std::uint64_t bodyKey = 0;
+    const float actionRowSlotH = ImGui::GetFrameHeightWithSpacing() * 0.9f;
+    if (cacheable) {
+        bodyKey = MarkdownPreviewRender::HashContent(body);
+        const auto hit = s_messageHeightCache.find(bodyKey);
+        if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
+            const float labelH = ImGui::GetTextLineHeightWithSpacing();
+            // Include the always-reserved action-row slot so the culling
+            // height matches the realised layout (otherwise a culled turn
+            // skips by labelH+body while a rendered turn advances by
+            // labelH+body+actionRow, drifting the scroll position).
+            const float totalH = labelH + hit->second + actionRowSlotH;
+            if (!ImGui::IsRectVisible(ImVec2(1.0f, totalH))) {
+                ImGui::Dummy(ImVec2(0.0f, totalH));
+                return;
+            }
+        }
+    }
+
+    // For user messages: pre-draw the bubble bg via ImDrawList before the
+    // text renders. Uses the message-height cache populated on the FIRST
+    // render — first frame after a fresh user message has cache miss → no
+    // bubble bg that frame (acceptable single-frame visual delay since the
+    // message just appeared).
+    if (cacheable && isUser) {
+        const auto hit = s_messageHeightCache.find(bodyKey);
+        if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
+            const float labelH = ImGui::GetTextLineHeightWithSpacing();
+            const float bubbleH = labelH + hit->second;
+            const float bubbleW = ImGui::GetContentRegionAvail().x;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImU32 bubbleColor =
+                ImGui::ColorConvertFloat4ToU32(ImVec4(aiPalette.AiUserBubbleBg[0], aiPalette.AiUserBubbleBg[1],
+                                                      aiPalette.AiUserBubbleBg[2], aiPalette.AiUserBubbleBg[3]));
+            dl->AddRectFilled(turnStartScreen, ImVec2(turnStartScreen.x + bubbleW, turnStartScreen.y + bubbleH),
+                              bubbleColor, ImGui::GetStyle().FrameRounding);
+        }
+    }
+
+    ImGui::BeginGroup();
+    const ImVec2 labelPos = ImGui::GetCursorScreenPos();
+    const float labelLineH = ImGui::GetTextLineHeight();
+    ImGui::PushStyleColor(ImGuiCol_Text, roleColor);
+    ImGui::TextUnformatted(roleLabel);
+    ImGui::PopStyleColor();
+    ImFont* labelFont = ImGui::GetFont();
+    const float labelWidth = ImGui::CalcTextSize(roleLabel).x;
+    SelectableText::RegisterSegment(ctx.selCtx, roleLabel, roleLabel + std::strlen(roleLabel), labelPos, labelLineH,
+                                    labelFont, labelWidth, nullptr);
+    SelectableText::EndBlock(ctx.selCtx);
+    if (cacheable) {
+        const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body);
+        MarkdownPreviewRender::RenderPlan(plan, ctx.renderOpts);
+    } else {
+        MarkdownPreviewRender::Render(body, ctx.renderOpts);
+    }
+    SelectableText::EndBlock(ctx.selCtx);
+    ImGui::EndGroup();
+
+    // Capture the realised height for future culling. Only for cacheable
+    // turns (streaming tail's height changes per frame).
+    if (cacheable) {
+        const ImVec2 turnEndScreen = ImGui::GetCursorScreenPos();
+        const float labelH = ImGui::GetTextLineHeightWithSpacing();
+        const float realisedHeight = (turnEndScreen.y - turnStartScreen.y) - labelH;
+        if (realisedHeight > 0.0f) {
+            s_messageHeightCache[bodyKey] = realisedHeight;
+        }
+    }
+
+    // Body hover/focus capture for the action-row alpha gate. Read AFTER
+    // EndGroup so the IsItem* queries test the combined turn-group rect.
+    // `ImGuiHoveredFlags_ChildWindows` is NOT valid for `IsItemHovered`
+    // (it's a `IsWindowHovered` flag) — ImGui asserts "Invalid flags for
+    // IsItemHovered()!" if we pass it. The group itself is the rect we
+    // want to test; no flag needed.
+    const bool bodyHovered = ImGui::IsItemHovered();
+    const bool bodyFocused = ImGui::IsItemFocused();
+
+    // -------- Always-reserved action row --------
+    // Layout-invariant on hover/focus: the slot's height is reserved
+    // unconditionally, so the message below doesn't shift when the row
+    // appears. Alpha-gate (instead of conditional render) keeps the
+    // buttons in tab order so Pillar 4 keyboard nav works regardless of
+    // whether the user is mousing or tabbing.
+    if (msgPtr != nullptr && messageIndex >= 0) {
+        RenderTurnActionRow(ctx, messageIndex, msgPtr, actionRowSlotH, bodyHovered, bodyFocused);
+    }
+}
+
+// Consume the scroll-to-pinned-bookmark latch. Resizes + resets the per-message
+// Y-cache on a history-size change, then jumps the scroll-child to the target
+// message's last-known Y when available. Extracted verbatim from DrawHistoryArea.
+void ApplyScrollToPinnedLatch(UiDrawSession& d, std::vector<float>& messageYCache) {
+    if (messageYCache.size() != d.assistantHistory.size()) {
+        messageYCache.assign(d.assistantHistory.size(), -1.0f);
+    }
+
+    // Scroll-to-pinned latch — consumed once a frame at top of DrawHistoryArea.
+    // The latch is set by either (a) a click on a pin-strip row, (b) the future
+    // bookmark / command-palette jump from another path. If the Y-cache slot
+    // is still sentinel `-1.0f` (message has never rendered — e.g. off-screen
+    // above the cull window), leave the latch set; next frames populate the
+    // cache as the message comes into view, and we re-attempt the scroll then.
+    if (d.assistantScrollToMessageIndex >= 0) {
+        const std::size_t targetIdx = static_cast<std::size_t>(d.assistantScrollToMessageIndex);
+        if (targetIdx >= messageYCache.size()) {
+            // Stale latch — index points past the current history (clear-chat
+            // raced the click). Discard.
+            d.assistantScrollToMessageIndex = -1;
+        } else if (messageYCache[targetIdx] >= 0.0f) {
+            ImGui::SetScrollY(messageYCache[targetIdx] - 4.0f);
+            d.assistantScrollToMessageIndex = -1;
+            // Releasing auto-scroll-to-tail pin since the user explicitly
+            // navigated mid-history — pinning back to bottom on the next
+            // frame would fight the bookmark jump.
+            d.assistantAutoScrollAtTail = false;
+        }
+    }
+}
+
 void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     SMATCHET_UI_PERF_SCOPE("ai_chat.history.draw");
     (void)app;
@@ -398,12 +656,10 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     const auto pinnedCount = std::count_if(d.assistantHistory.begin(), d.assistantHistory.end(),
                                            [](const AiMessage& m) { return m.Pinned; });
     constexpr int kMaxVisiblePinRows = 4;
-    const float pinStripH =
-        pinnedCount > 0 ? ImGui::GetFrameHeightWithSpacing() *
-                                  static_cast<float>((std::min)(static_cast<int>(pinnedCount), kMaxVisiblePinRows)) +
-                              4.0f + ImGui::GetStyle().ItemSpacing.y
-                        : 0.0f;
-    const float bodyH = (std::max)(80.0f, availY - headerH - inputH - errorStripH - pinStripH);
+    const int pinVisibleRows = smatchet::ai::AiPinStripVisibleRows(static_cast<long>(pinnedCount), kMaxVisiblePinRows);
+    const float pinStripH = smatchet::ai::AiPinStripReservedHeight(pinVisibleRows, ImGui::GetFrameHeightWithSpacing(),
+                                                                   ImGui::GetStyle().ItemSpacing.y);
+    const float bodyH = smatchet::ai::AiHistoryBodyHeight(availY, headerH, inputH, errorStripH, pinStripH);
 
     DrawPinStripIfAny(d);
 
@@ -415,36 +671,12 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
 
     // Phase 6 of ai-chat-claude-desktop-parity. Per-message Y-position cache
     // keyed by `messageIndex` (NOT content hash — review issue #3 fix). Used
-    // by the scroll-to-pinned-bookmark latch below to jump the scroll-child
-    // to the message's last-known window-relative Y. Reset on history size
-    // change (push_back grows; clear-chat / hydrate clears). Static is fine
-    // because exactly one AI chat panel exists in the app at a time.
+    // by the scroll-to-pinned-bookmark latch to jump the scroll-child to the
+    // message's last-known window-relative Y. Reset on history size change
+    // (push_back grows; clear-chat / hydrate clears). Static is fine because
+    // exactly one AI chat panel exists in the app at a time.
     static std::vector<float> s_messageYCache;
-    if (s_messageYCache.size() != d.assistantHistory.size()) {
-        s_messageYCache.assign(d.assistantHistory.size(), -1.0f);
-    }
-
-    // Scroll-to-pinned latch — consumed once a frame at top of DrawHistoryArea.
-    // The latch is set by either (a) a click on a pin-strip row, (b) the future
-    // bookmark / command-palette jump from another path. If the Y-cache slot
-    // is still sentinel `-1.0f` (message has never rendered — e.g. off-screen
-    // above the cull window), leave the latch set; next frames populate the
-    // cache as the message comes into view, and we re-attempt the scroll then.
-    if (d.assistantScrollToMessageIndex >= 0) {
-        const std::size_t targetIdx = static_cast<std::size_t>(d.assistantScrollToMessageIndex);
-        if (targetIdx >= s_messageYCache.size()) {
-            // Stale latch — index points past the current history (clear-chat
-            // raced the click). Discard.
-            d.assistantScrollToMessageIndex = -1;
-        } else if (s_messageYCache[targetIdx] >= 0.0f) {
-            ImGui::SetScrollY(s_messageYCache[targetIdx] - 4.0f);
-            d.assistantScrollToMessageIndex = -1;
-            // Releasing auto-scroll-to-tail pin since the user explicitly
-            // navigated mid-history — pinning back to bottom on the next
-            // frame would fight the bookmark jump.
-            d.assistantAutoScrollAtTail = false;
-        }
-    }
+    ApplyScrollToPinnedLatch(d, s_messageYCache);
 
     auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
 
@@ -453,7 +685,7 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     renderOpts.clickableLinks = true;
     renderOpts.existingSelCtx = &selCtx;
 
-    // s_messageHeightCache + s_turnActiveLastFrame are now file-scope (above) so the clear-history
+    // s_messageHeightCache + s_turnActiveLastFrame are file-scope (above) so the clear-history
     // action can drop them; the off-screen-cull height cache (Opt #4) and the show-on-hover alpha
     // gate read them exactly as before. Invalidate the height cache when the layout basis changes
     // (font size or wrap width) — cached heights are pixel layouts that go stale otherwise, which
@@ -466,204 +698,8 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     }
 
     const SmatchetThemeAiColors& aiPalette = SmatchetTheme::GetActiveAiColors();
-    const bool faLoaded = SmatchetAreFaIconsLoaded();
-    const std::int64_t nowMs = smatchet::ai::NowUnixMs();
-
-    // Render one chat turn. messageIndex is the position in assistantHistory
-    // (or -1 for the in-flight streaming tail, which has no persistence row).
-    // `body` is mutable on persistent rows so the pin-toggle can flip Pinned.
-    auto renderTurn = [&](int messageIndex, const char* roleLabel, const ImVec4& roleColor, AiMessage* msgPtr,
-                          const std::string& body, bool cacheable) {
-        SMATCHET_UI_PERF_SCOPE("ai_chat.history.render_turn");
-        const ImVec2 turnStartScreen = ImGui::GetCursorScreenPos();
-        const float turnStartCursorY = ImGui::GetCursorPosY(); // window-relative for Y-cache
-        const bool isUser = msgPtr ? (msgPtr->Role == "user") : false;
-
-        // Capture this turn's window-relative Y for the scroll-to-pinned latch.
-        // Persistent messages only (streaming tail has no stable Y until finalised).
-        if (messageIndex >= 0 && static_cast<std::size_t>(messageIndex) < s_messageYCache.size()) {
-            s_messageYCache[messageIndex] = turnStartCursorY;
-        }
-
-        // Off-screen culling: only for cacheable (finalised) turns with a
-        // known height. Streaming tail + unmeasured turns always render
-        // fully so the height cache populates on first sight.
-        std::uint64_t bodyKey = 0;
-        const float actionRowSlotH = ImGui::GetFrameHeightWithSpacing() * 0.9f;
-        if (cacheable) {
-            bodyKey = MarkdownPreviewRender::HashContent(body);
-            const auto hit = s_messageHeightCache.find(bodyKey);
-            if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
-                const float labelH = ImGui::GetTextLineHeightWithSpacing();
-                // Include the always-reserved action-row slot so the culling
-                // height matches the realised layout (otherwise a culled turn
-                // skips by labelH+body while a rendered turn advances by
-                // labelH+body+actionRow, drifting the scroll position).
-                const float totalH = labelH + hit->second + actionRowSlotH;
-                if (!ImGui::IsRectVisible(ImVec2(1.0f, totalH))) {
-                    ImGui::Dummy(ImVec2(0.0f, totalH));
-                    return;
-                }
-            }
-        }
-
-        // For user messages: pre-draw the bubble bg via ImDrawList before the
-        // text renders. Uses the message-height cache populated on the FIRST
-        // render — first frame after a fresh user message has cache miss → no
-        // bubble bg that frame (acceptable single-frame visual delay since the
-        // message just appeared).
-        if (cacheable && isUser) {
-            const auto hit = s_messageHeightCache.find(bodyKey);
-            if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
-                const float labelH = ImGui::GetTextLineHeightWithSpacing();
-                const float bubbleH = labelH + hit->second;
-                const float bubbleW = ImGui::GetContentRegionAvail().x;
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                const ImU32 bubbleColor =
-                    ImGui::ColorConvertFloat4ToU32(ImVec4(aiPalette.AiUserBubbleBg[0], aiPalette.AiUserBubbleBg[1],
-                                                          aiPalette.AiUserBubbleBg[2], aiPalette.AiUserBubbleBg[3]));
-                dl->AddRectFilled(turnStartScreen, ImVec2(turnStartScreen.x + bubbleW, turnStartScreen.y + bubbleH),
-                                  bubbleColor, ImGui::GetStyle().FrameRounding);
-            }
-        }
-
-        ImGui::BeginGroup();
-        const ImVec2 labelPos = ImGui::GetCursorScreenPos();
-        const float labelLineH = ImGui::GetTextLineHeight();
-        ImGui::PushStyleColor(ImGuiCol_Text, roleColor);
-        ImGui::TextUnformatted(roleLabel);
-        ImGui::PopStyleColor();
-        ImFont* labelFont = ImGui::GetFont();
-        const float labelWidth = ImGui::CalcTextSize(roleLabel).x;
-        SelectableText::RegisterSegment(selCtx, roleLabel, roleLabel + std::strlen(roleLabel), labelPos, labelLineH,
-                                        labelFont, labelWidth, nullptr);
-        SelectableText::EndBlock(selCtx);
-        if (cacheable) {
-            const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body);
-            MarkdownPreviewRender::RenderPlan(plan, renderOpts);
-        } else {
-            MarkdownPreviewRender::Render(body, renderOpts);
-        }
-        SelectableText::EndBlock(selCtx);
-        ImGui::EndGroup();
-
-        // Capture the realised height for future culling. Only for cacheable
-        // turns (streaming tail's height changes per frame).
-        if (cacheable) {
-            const ImVec2 turnEndScreen = ImGui::GetCursorScreenPos();
-            const float labelH = ImGui::GetTextLineHeightWithSpacing();
-            const float realisedHeight = (turnEndScreen.y - turnStartScreen.y) - labelH;
-            if (realisedHeight > 0.0f) {
-                s_messageHeightCache[bodyKey] = realisedHeight;
-            }
-        }
-
-        // Body hover/focus capture for the action-row alpha gate. Read AFTER
-        // EndGroup so the IsItem* queries test the combined turn-group rect.
-        // `ImGuiHoveredFlags_ChildWindows` is NOT valid for `IsItemHovered`
-        // (it's a `IsWindowHovered` flag) — ImGui asserts "Invalid flags for
-        // IsItemHovered()!" if we pass it. The group itself is the rect we
-        // want to test; no flag needed.
-        const bool bodyHovered = ImGui::IsItemHovered();
-        const bool bodyFocused = ImGui::IsItemFocused();
-
-        // -------- Always-reserved action row --------
-        // Layout-invariant on hover/focus: the slot's height is reserved
-        // unconditionally, so the message below doesn't shift when the row
-        // appears. Alpha-gate (instead of conditional render) keeps the
-        // buttons in tab order so Pillar 4 keyboard nav works regardless of
-        // whether the user is mousing or tabbing.
-        if (msgPtr != nullptr && messageIndex >= 0) {
-            const bool wasActive = s_turnActiveLastFrame.count(static_cast<std::size_t>(messageIndex)) != 0u &&
-                                   s_turnActiveLastFrame[static_cast<std::size_t>(messageIndex)];
-            const bool showRow = msgPtr->Pinned || wasActive;
-            const ImVec2 actionRowStart = ImGui::GetCursorScreenPos();
-
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, showRow ? 1.0f : 0.0f);
-
-            // Copy button.
-            const char* copyLabel = faLoaded ? ICON_FA_COPY : "Copy";
-            char copyId[64];
-            std::snprintf(copyId, sizeof(copyId), "%s##AiCopy%d", copyLabel, messageIndex);
-            bool copyHovered = false;
-            bool copyFocused = false;
-            if (ImGui::SmallButton(copyId)) {
-                if (showRow) {
-                    // Guard the click on alpha=0 — invisible buttons still
-                    // receive clicks in ImGui, but actions should only fire
-                    // when the row is visible. Cheap defence vs accidental
-                    // off-screen clipboard writes.
-                    ImGui::SetClipboardText(msgPtr->Content.c_str());
-                    d.assistantCopyToastUntilMs = nowMs + 1500;
-                    d.assistantCopyToastLabel = "Copied";
-                }
-            }
-            copyHovered = ImGui::IsItemHovered();
-            copyFocused = ImGui::IsItemFocused();
-
-            ImGui::SameLine();
-
-            // Pin / Unpin button.
-            const char* pinIcon = msgPtr->Pinned ? (faLoaded ? ICON_FA_THUMBTACK_SLASH : "Unpin")
-                                                 : (faLoaded ? ICON_FA_THUMBTACK : "Pin");
-            char pinId[64];
-            std::snprintf(pinId, sizeof(pinId), "%s##AiPin%d", pinIcon, messageIndex);
-            bool pinHovered = false;
-            bool pinFocused = false;
-            if (ImGui::SmallButton(pinId)) {
-                if (showRow) {
-                    TogglePinAndPersist(d, static_cast<std::size_t>(messageIndex), !msgPtr->Pinned);
-                }
-            }
-            pinHovered = ImGui::IsItemHovered();
-            pinFocused = ImGui::IsItemFocused();
-
-            // Right-aligned relative timestamp + absolute-time tooltip.
-            // Canonical ImGui right-align: SameLine to anchor on the Pin button's
-            // row, then SetCursorPosX to (current + remaining - textW - padding).
-            // `GetCursorPosX() + GetContentRegionAvail().x` always equals the
-            // window content's right-edge X regardless of how the cursor got
-            // there (auto-advanced or via SameLine), so the math survives both
-            // paths. The earlier `SameLine(0.0f, hugeSpacing)` approach
-            // computed availW from the wrong baseline and clipped the timestamp
-            // off-screen to the right.
-            if (msgPtr->CreatedAtUnixMs > 0) {
-                ImGui::SameLine();
-                const std::string rel = smatchet::ai::FormatRelativeTime(nowMs, msgPtr->CreatedAtUnixMs);
-                const float relW = ImGui::CalcTextSize(rel.c_str()).x;
-                const float curX = ImGui::GetCursorPosX();
-                const float availFromHere = ImGui::GetContentRegionAvail().x;
-                const float targetX = curX + availFromHere - relW - ImGui::GetStyle().ItemSpacing.x;
-                if (targetX > curX) {
-                    ImGui::SetCursorPosX(targetX);
-                }
-                ImGui::PushStyleColor(ImGuiCol_Text,
-                                      ImVec4(aiPalette.AiActionRowIcon[0], aiPalette.AiActionRowIcon[1],
-                                             aiPalette.AiActionRowIcon[2], aiPalette.AiActionRowIcon[3]));
-                ImGui::TextUnformatted(rel.c_str());
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && showRow) {
-                    const std::string abs = smatchet::ai::FormatAbsoluteTime(msgPtr->CreatedAtUnixMs);
-                    ImGui::SetTooltip("%s", abs.c_str());
-                }
-            }
-
-            ImGui::PopStyleVar();
-
-            // Snap cursor to the bottom of the reserved slot so the next turn
-            // starts at a predictable Y (the row's natural cursor advance may
-            // be slightly less than actionRowSlotH because SmallButton is
-            // shorter than a full frame).
-            const float currentY = ImGui::GetCursorScreenPos().y;
-            const float targetY = actionRowStart.y + actionRowSlotH;
-            if (targetY > currentY) {
-                ImGui::Dummy(ImVec2(0.0f, targetY - currentY));
-            }
-
-            s_turnActiveLastFrame[static_cast<std::size_t>(messageIndex)] =
-                bodyHovered || bodyFocused || copyHovered || copyFocused || pinHovered || pinFocused;
-        }
-    };
+    AiHistoryDrawCtx ctx{
+        d, aiPalette, selCtx, renderOpts, s_messageYCache, SmatchetAreFaIconsLoaded(), smatchet::ai::NowUnixMs()};
 
     const ImVec4 userColor(aiPalette.AiUserRoleLabel[0], aiPalette.AiUserRoleLabel[1], aiPalette.AiUserRoleLabel[2],
                            aiPalette.AiUserRoleLabel[3]);
@@ -672,15 +708,16 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
         AiMessage& m = d.assistantHistory[i];
         const bool isUser = (m.Role == "user");
-        renderTurn(static_cast<int>(i), isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, &m, m.Content,
-                   /*cacheable=*/true);
+        RenderHistoryTurn(ctx, static_cast<int>(i), isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, &m,
+                          m.Content, /*cacheable=*/true);
         ImGui::Spacing();
     }
     if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
         // Streaming tail mutates per frame — bypass cache. No messageIndex
         // (msgPtr nullptr) → no Y-cache write, no action row (the tail isn't
         // finalised and has no persistence row to pin).
-        renderTurn(-1, "Assistant (streaming...):", asstColor, nullptr, d.assistantStreamBuf, /*cacheable=*/false);
+        RenderHistoryTurn(ctx, -1, "Assistant (streaming...):", asstColor, nullptr, d.assistantStreamBuf,
+                          /*cacheable=*/false);
     }
 
     SelectableText::End(selCtx);
@@ -758,9 +795,10 @@ std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSes
     return AiContextBuilder::BuildAll(inputs);
 }
 
-// Returns true when the user submitted (Enter pressed without Ctrl). Sends are dispatched here so
-// the keyboard path matches the Send button click; the input buffer is cleared + focus restored.
-bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
+// Direction-aware seed of the process-static char buffer from the model-side
+// `assistantInputBuf`, running before InputTextMultiline draws. Extracted from
+// DrawInputAndButtons; behaviour byte-identical. See AiAssistantInputSeedDecision.h.
+void SeedInputBufferFromModel(UiDrawSession& d) {
     // Char buffer for InputTextMultiline lives at namespace scope so the
     // panel-open / panel-close path can drive dictation register / unregister
     // without exposing a getter. Mirroring through a std::string per-frame
@@ -790,9 +828,12 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
         std::memcpy(s_inputCharBuf.data(), d.assistantInputBuf.data(), copy);
         s_inputCharBuf[copy] = '\0';
     }
+}
 
-    const float inputH = ImGui::GetTextLineHeight() * kInputRowsTall;
-
+// Drain the dictation router's pending-reload item id and ask ImGui to re-read
+// the externally-spliced char buffer on the next InputText call. Extracted from
+// DrawInputAndButtons; behaviour byte-identical.
+void ProcessPendingDictationReload() {
     // Splice-reload bridge for Whisper dictation. The router calls
     // `InsertIntoFocusedInputText` from the MainThreadDispatcher drain at the
     // top of the frame; when the splice target is the AI Assistant chat input
@@ -819,6 +860,101 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
             state->ReloadUserBufAndMoveToEnd();
         }
     }
+}
+
+// Dispatch a chat turn — snapshot the input + context, call Submit, and on a
+// successful ack append the user message to history + arm autoscroll. Extracted
+// verbatim from the former dispatchSend lambda in DrawInputAndButtons.
+void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                    AiAssistantController* ctrl) {
+    // NOTE — the previous implementation flipped `assistantInFlight = true`
+    // here unconditionally, BEFORE calling `ctrl->Submit(...)`. When Submit
+    // short-circuited (no live client / queue shuttingDown), the flag
+    // stayed true and the Send button stuck disabled for the rest of the
+    // session — even after the user fixed their LLM setup in Preferences.
+    // The fix: Submit now returns bool; we mutate UI state only after a
+    // successful ack. On failure we surface a recoverable error strip and
+    // leave the input buffer intact so the user can retry.
+    if (ctrl == nullptr) {
+        // Belt-and-braces — the sendDisabled predicate above already
+        // gates this, but a future caller of `DispatchAiSend` might skip
+        // the gate. Keep the early-out so the function is safe in
+        // isolation.
+        d.assistantLastError = "AI assistant unavailable — try again after restarting Smatchet.";
+        return;
+    }
+    const uint64_t turnGen = ++d.assistantTurnGen;
+    const std::string snapshotInput = d.assistantInputBuf;
+    std::vector<AiContextBlock> context = BuildSendContext(app, d, activeView);
+    // Phase C: build the 5-block auto-context snapshot on the UI thread (where
+    // all the source state lives) and pass it through Submit. The controller
+    // then concatenates these + the agents.md prefix on the worker before
+    // calling IAiClient::SendStreaming. Disabled blocks contribute empty bodies
+    // — the controller skips empty-body entries when emitting tag wrappers.
+    const bool accepted =
+        ctrl->Submit(turnGen, snapshotInput, std::move(context), d.assistantPerTurnModel, d.assistantPerTurnEffort);
+    if (!accepted) {
+        // Submit rejected the turn (no live client or controller shutting
+        // down). Roll back the turn-gen bump so a subsequent successful
+        // Submit lands on a monotonically-fresh value, and surface a
+        // user-facing recovery hint via assistantLastError. The input
+        // buffer is left intact (the input mirror at the top of this
+        // function keeps the typed text alive) so the user can retry
+        // after fixing their provider configuration in Preferences.
+        --d.assistantTurnGen;
+        d.assistantLastError =
+            "No active AI provider — open Preferences and pick a configured provider, then press Send again.";
+        return;
+    }
+    d.assistantInFlight = true;
+    d.assistantStreamBuf.clear();
+    d.assistantLastError.clear();
+    AiMessage userMsg;
+    userMsg.Role = "user";
+    userMsg.Content = d.assistantInputBuf;
+    userMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
+    // Phase 3 of ai-chat-claude-desktop-parity. Take an Append snapshot BEFORE
+    // moving the message into the history vector — the worker copy survives
+    // independently of the UI state. Grow `assistantHistoryRowIds` in lock-step
+    // with `assistantHistory`; the worker's on-append callback backfills the
+    // sentinel `-1` slot with the SQLite row id when the INSERT completes.
+    AiMessage persistCopy = userMsg;
+    const std::size_t newIdx = d.assistantHistory.size();
+    d.assistantHistory.push_back(std::move(userMsg));
+    d.assistantHistoryRowIds.push_back(-1);
+    if (d.assistantHistoryHydrated) {
+        smatchet::ai::chat_persist::Op appendOp;
+        appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
+        appendOp.message = std::move(persistCopy);
+        appendOp.messageIndex = newIdx;
+        smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
+        // Coalescing Trim — successive Appends collapse into a single Trim in the
+        // worker queue via the chat_persist Enqueue Trim-collapse path, so the cost
+        // here is one O(N) erase on the worker side, not a SQLite DELETE per send.
+        smatchet::ai::chat_persist::Op trimOp;
+        trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
+        trimOp.trimCap =
+            static_cast<std::size_t>(d.cfg.AssistantHistoryMaxRows > 0 ? d.cfg.AssistantHistoryMaxRows : 500);
+        smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
+    }
+    d.assistantInputBuf.clear();
+    std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
+    // NOTE — the `ctrl->Submit(...)` call was hoisted to the top of
+    // `DispatchAiSend` (above) so the success/failure ack gates the
+    // `assistantInFlight = true` flip + the history Append. Reaching this
+    // point implies Submit returned true; nothing left to do other than
+    // arm autoscroll.
+    d.assistantAutoScrollAtTail = true;
+}
+
+// Returns true when the user submitted (Enter pressed without Ctrl). Sends are dispatched here so
+// the keyboard path matches the Send button click; the input buffer is cleared + focus restored.
+bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
+    SeedInputBufferFromModel(d);
+
+    const float inputH = ImGui::GetTextLineHeight() * kInputRowsTall;
+
+    ProcessPendingDictationReload();
 
     // Pillar 4 (aspirational keyboard-nav): Enter sends, Ctrl+Enter inserts newline.
     // ImGuiInputTextFlags_CtrlEnterForNewLine inverts the default multiline Enter
@@ -839,9 +975,9 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // down by a panel toggle, or the historical pre-fix bug where Submit
     // dropped a call without clearing the flag), force-clear here so the
     // user gets the Send button back on the next frame. The companion fix
-    // in `dispatchSend` below only flips the flag on a successful Submit
-    // ack — this branch handles legacy stuck state + future-proofs against
-    // any unrelated path that leaves the flag dangling.
+    // in `DispatchAiSend` only flips the flag on a successful Submit ack —
+    // this branch handles legacy stuck state + future-proofs against any
+    // unrelated path that leaves the flag dangling.
     if (d.assistantInFlight && ctrl == nullptr) {
         LOG_WARN("AiAssistantUi: clearing stuck assistantInFlight (controller is gone).");
         d.assistantInFlight = false;
@@ -850,86 +986,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     const bool sendDisabled =
         smatchet::ai::DecideSendDisabled(d.assistantInFlight, d.assistantInputBuf.empty(), ctrl != nullptr);
 
-    auto dispatchSend = [&]() {
-        // NOTE — the previous implementation flipped `assistantInFlight = true`
-        // here unconditionally, BEFORE calling `ctrl->Submit(...)`. When Submit
-        // short-circuited (no live client / queue shuttingDown), the flag
-        // stayed true and the Send button stuck disabled for the rest of the
-        // session — even after the user fixed their LLM setup in Preferences.
-        // The fix: Submit now returns bool; we mutate UI state only after a
-        // successful ack. On failure we surface a recoverable error strip and
-        // leave the input buffer intact so the user can retry.
-        if (ctrl == nullptr) {
-            // Belt-and-braces — the sendDisabled predicate above already
-            // gates this, but a future caller of `dispatchSend` might skip
-            // the gate. Keep the early-out so the lambda is safe in
-            // isolation.
-            d.assistantLastError = "AI assistant unavailable — try again after restarting Smatchet.";
-            return;
-        }
-        const uint64_t turnGen = ++d.assistantTurnGen;
-        const std::string snapshotInput = d.assistantInputBuf;
-        std::vector<AiContextBlock> context = BuildSendContext(app, d, activeView);
-        // Phase C: build the 5-block auto-context snapshot on the UI thread (where
-        // all the source state lives) and pass it through Submit. The controller
-        // then concatenates these + the agents.md prefix on the worker before
-        // calling IAiClient::SendStreaming. Disabled blocks contribute empty bodies
-        // — the controller skips empty-body entries when emitting tag wrappers.
-        const bool accepted =
-            ctrl->Submit(turnGen, snapshotInput, std::move(context), d.assistantPerTurnModel, d.assistantPerTurnEffort);
-        if (!accepted) {
-            // Submit rejected the turn (no live client or controller shutting
-            // down). Roll back the turn-gen bump so a subsequent successful
-            // Submit lands on a monotonically-fresh value, and surface a
-            // user-facing recovery hint via assistantLastError. The input
-            // buffer is left intact (the input mirror at the top of this
-            // function keeps the typed text alive) so the user can retry
-            // after fixing their provider configuration in Preferences.
-            --d.assistantTurnGen;
-            d.assistantLastError =
-                "No active AI provider — open Preferences and pick a configured provider, then press Send again.";
-            return;
-        }
-        d.assistantInFlight = true;
-        d.assistantStreamBuf.clear();
-        d.assistantLastError.clear();
-        AiMessage userMsg;
-        userMsg.Role = "user";
-        userMsg.Content = d.assistantInputBuf;
-        userMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
-        // Phase 3 of ai-chat-claude-desktop-parity. Take an Append snapshot BEFORE
-        // moving the message into the history vector — the worker copy survives
-        // independently of the UI state. Grow `assistantHistoryRowIds` in lock-step
-        // with `assistantHistory`; the worker's on-append callback backfills the
-        // sentinel `-1` slot with the SQLite row id when the INSERT completes.
-        AiMessage persistCopy = userMsg;
-        const std::size_t newIdx = d.assistantHistory.size();
-        d.assistantHistory.push_back(std::move(userMsg));
-        d.assistantHistoryRowIds.push_back(-1);
-        if (d.assistantHistoryHydrated) {
-            smatchet::ai::chat_persist::Op appendOp;
-            appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
-            appendOp.message = std::move(persistCopy);
-            appendOp.messageIndex = newIdx;
-            smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
-            // Coalescing Trim — successive Appends collapse into a single Trim in the
-            // worker queue (see chat_persist::Enqueue Trim-collapse path), so the cost
-            // here is one O(N) erase on the worker side, not a SQLite DELETE per send.
-            smatchet::ai::chat_persist::Op trimOp;
-            trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
-            trimOp.trimCap =
-                static_cast<std::size_t>(d.cfg.AssistantHistoryMaxRows > 0 ? d.cfg.AssistantHistoryMaxRows : 500);
-            smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
-        }
-        d.assistantInputBuf.clear();
-        std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
-        // NOTE — the `ctrl->Submit(...)` call was hoisted to the top of
-        // `dispatchSend` (above) so the success/failure ack gates the
-        // `assistantInFlight = true` flip + the history Append. Reaching this
-        // point implies Submit returned true; nothing left to do other than
-        // arm autoscroll.
-        d.assistantAutoScrollAtTail = true;
-    };
+    auto dispatchSend = [&]() { DispatchAiSend(app, d, activeView, ctrl); };
 
     bool submittedByKey = false;
     if (enterSubmitted && !sendDisabled) {
@@ -979,86 +1036,9 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     return submittedByKey;
 }
 
-} // namespace
-
-void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
-    HydrateFromConfigOnce(app, d);
-    if (!d.assistantPanelOpen) {
-        // Drop the chat-input registration with the dictation router so the
-        // panel-closed state never receives transcribed text. The wrapper-level
-        // hook would unregister on blur anyway, but the panel-level explicit
-        // call is the belt to the wrapper's suspenders.
-        g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
-        // Persist a closed state at most once per close event (idempotent if already false).
-        PersistOpenStateImmediate(d);
-        return;
-    }
-    // Register the chat-input buffer with the dictation router for the
-    // duration of the panel being open. Re-registering each frame is cheap
-    // (router treats the buf pointer as an idempotent key). Phase F — uses
-    // the AI-Assistant flavour so the post-insertion auto-send-on-punctuation
-    // check can identify this splice target. The callback is registered once
-    // (idempotent flag); it simply flips a static atomic that the next panel
-    // draw observes — keeps the work on the UI thread without re-entering
-    // ImGui state from the dispatcher drain context.
-    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
-    if (!s_autoSendCallbackRegistered) {
-        s_autoSendCallbackRegistered = true;
-        g_dictationRouter.SetAiAssistantSendCallback(
-            []() { s_pendingAutoSend.store(true, std::memory_order_release); });
-    }
-
-    // Pillar 2 (UI never freezes): dock-integrated window — ImGui's dock manager
-    // owns layout, sizing, and the resize/swap chrome. The panel attaches to the
-    // primary side bar (left) by default and migrates to the secondary side bar
-    // (right) when the user toggles the swap button. A pending-side request fires
-    // SetNextWindowDockID with ImGuiCond_Always so the move actually takes effect;
-    // otherwise FirstUseEver lets the user's saved imgui.ini state win.
-    const ImGuiID primaryDockId = SmatchetDockNodeIds::kPrimarySideBar;
-    const ImGuiID secondaryDockId = SmatchetDockNodeIds::kSecondarySideBar;
-    const ImGuiID targetDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
-    static bool s_assistantNeedsReDock = false;
-    if (d.assistantPendingSideSwap || s_assistantNeedsReDock) {
-        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
-        d.assistantPendingSideSwap = false;
-        s_assistantNeedsReDock = false;
-    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
-    }
-
-    if (d.requestAssistantFocus) {
-        ImGui::SetNextWindowFocus();
-    }
-
-    // The panel is now a dockable, resizable window — drop the floating-only flags
-    // (NoDocking / NoSavedSettings / NoTitleBar / NoMove / NoResize). NoCollapse is
-    // kept because dock-tab collapse fights the open/close persistence contract.
-    const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoCollapse;
-
-    if (!ImGui::Begin("Smatchet Assistant", &d.assistantPanelOpen, kFlags)) {
-        ImGui::End();
-        if (d.requestAssistantFocus) {
-            d.requestAssistantFocus = false;
-        }
-        // Panel hidden (collapsed / docked-tab inactive). Intentionally do
-        // NOT unregister the dictation buffer here — local-model
-        // transcription can take multiple seconds, during which the user
-        // may have flipped to another dock tab. Unregistering here would
-        // leave the post-back with no target and silently drop the
-        // transcribed text. The buffer stays alive (static storage); the
-        // registration is dropped only when the panel actually closes
-        // (`!d.assistantPanelOpen`) at the top of this function.
-        PersistOpenStateImmediate(d);
-        return;
-    }
-    if (d.requestAssistantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestAssistantFocus = false;
-    }
-    if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        s_assistantNeedsReDock = true;
-    }
-
+// Header row 1: provider label + swap-side toggle + clear-chat button (with its
+// confirm modal). Extracted verbatim from SmatchetDrawAiAssistantPanel.
+void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
     // Header strip: provider + swap-side toggle.
     {
         AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
@@ -1133,99 +1113,178 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
             ImGui::EndPopup();
         }
     }
+}
 
-    // --- Per-turn Model + Effort overrides (chat-window header row 2). ---
-    // Empty `assistantPerTurnModel` / `assistantPerTurnEffort` mean "use the
-    // Preferences default for the active provider". The Combos write directly
-    // into the session strings; the next Send picks them up via Submit.
-    {
-        // Cast cfg int → AiProvider enum; clamp out-of-range to OpenAi (same
-        // pattern as AiPrefsValidator::ClampProvider — kept local since that
-        // helper lives in an anonymous namespace).
-        AiProvider activeProvider = AiProvider::OpenAi;
-        switch (d.cfg.AiProviderKind) {
-        case 1:
-            activeProvider = AiProvider::Anthropic;
-            break;
-        case 2:
-            activeProvider = AiProvider::OllamaOpenAiCompat;
-            break;
-        case 3:
-            activeProvider = AiProvider::OllamaNative;
-            break;
-        case 0:
-        default:
-            activeProvider = AiProvider::OpenAi;
-            break;
+// Header row 2: per-turn model + reasoning-effort overrides. Empty
+// `assistantPerTurnModel` / `assistantPerTurnEffort` mean "use the Preferences
+// default for the active provider". Extracted verbatim from
+// SmatchetDrawAiAssistantPanel; provider/model/effort resolution now flows
+// through the pure helpers in SmatchetAiAssistantUi_detail.h.
+void DrawPerTurnModelEffortRow(UiDrawSession& d) {
+    const AiProvider activeProvider = smatchet::ai::AiResolveProvider(d.cfg.AiProviderKind);
+    const std::vector<smatchet::ai::ModelOption> catalog = smatchet::ai::KnownModels(activeProvider);
+    // Display list is the default sentinel followed by each catalog model.
+    // Picking the sentinel clears the per-turn override.
+    std::vector<std::string> displayStrings;
+    displayStrings.reserve(catalog.size() + 1);
+    displayStrings.push_back(std::string("<default model>"));
+    std::transform(catalog.begin(), catalog.end(), std::back_inserter(displayStrings),
+                   [](const smatchet::ai::ModelOption& m) { return m.DisplayName; });
+    std::vector<const char*> displayPtrs;
+    displayPtrs.reserve(displayStrings.size());
+    std::transform(displayStrings.begin(), displayStrings.end(), std::back_inserter(displayPtrs),
+                   [](const std::string& s) { return s.c_str(); });
+
+    // When the saved per-turn override doesn't match any entry in the active
+    // provider's catalog (e.g. user switched providers leaving a stale id, or
+    // typed a custom name from another build), fall back to free-form input
+    // so the UI accurately reflects what the next Send will actually use —
+    // showing `<default model>` while a hidden non-catalog override is still
+    // active is a major UX trap (CodeRabbit comment 3255682299).
+    std::vector<std::string> catalogIds;
+    catalogIds.reserve(catalog.size());
+    std::transform(catalog.begin(), catalog.end(), std::back_inserter(catalogIds),
+                   [](const smatchet::ai::ModelOption& m) { return m.Id; });
+    const smatchet::ai::AiModelComboResolution modelRes =
+        smatchet::ai::AiResolveModelCombo(catalogIds, d.assistantPerTurnModel);
+    int comboIdx = modelRes.comboIndex;
+
+    ImGui::SetNextItemWidth(ImGui::GetTextLineHeight() * 12.0f);
+    if (modelRes.useFreeformInput) {
+        // Provider has no published catalog (Ollama variants). Free-form
+        // InputText sized to look like the Combo above.
+        char modelBuf[256] = {};
+        std::snprintf(modelBuf, sizeof(modelBuf), "%s", d.assistantPerTurnModel.c_str());
+        if (ImGui::InputTextWithHint("##AiTurnModel", "<default model>", modelBuf, sizeof(modelBuf))) {
+            d.assistantPerTurnModel = modelBuf;
         }
-        const std::vector<smatchet::ai::ModelOption> catalog = smatchet::ai::KnownModels(activeProvider);
-        // Display list = [<default> sentinel, model 1, model 2, ...]. Picking the
-        // sentinel clears the per-turn override.
-        std::vector<std::string> displayStrings;
-        displayStrings.reserve(catalog.size() + 1);
-        displayStrings.push_back(std::string("<default model>"));
-        std::transform(catalog.begin(), catalog.end(), std::back_inserter(displayStrings),
-                       [](const smatchet::ai::ModelOption& m) { return m.DisplayName; });
-        std::vector<const char*> displayPtrs;
-        displayPtrs.reserve(displayStrings.size());
-        std::transform(displayStrings.begin(), displayStrings.end(), std::back_inserter(displayPtrs),
-                       [](const std::string& s) { return s.c_str(); });
-        int comboIdx = 0;
-        // When the saved per-turn override doesn't match any entry in the active
-        // provider's catalog (e.g. user switched providers leaving a stale id, or
-        // typed a custom name from another build), fall back to free-form input
-        // so the UI accurately reflects what the next Send will actually use —
-        // showing `<default model>` while a hidden non-catalog override is still
-        // active is a major UX trap (CodeRabbit comment 3255682299).
-        bool useFreeformModelInput = catalog.empty();
-        if (!d.assistantPerTurnModel.empty() && !catalog.empty()) {
-            auto it = std::find_if(catalog.begin(), catalog.end(),
-                                   [&](const smatchet::ai::ModelOption& m) { return m.Id == d.assistantPerTurnModel; });
-            if (it != catalog.end()) {
-                comboIdx = 1 + static_cast<int>(std::distance(catalog.begin(), it));
+        ImGui::SetItemTooltip("Per-turn model override. Leave blank to use the Preferences-saved value for this "
+                              "provider.");
+    } else {
+        if (ImGui::Combo("##AiTurnModel", &comboIdx, displayPtrs.data(), static_cast<int>(displayPtrs.size()))) {
+            if (comboIdx == 0) {
+                d.assistantPerTurnModel.clear();
             } else {
-                useFreeformModelInput = true;
+                d.assistantPerTurnModel = catalog.at(static_cast<std::size_t>(comboIdx - 1)).Id;
             }
         }
-        ImGui::SetNextItemWidth(ImGui::GetTextLineHeight() * 12.0f);
-        if (useFreeformModelInput) {
-            // Provider has no published catalog (Ollama variants). Free-form
-            // InputText sized to look like the Combo above.
-            char modelBuf[256] = {};
-            std::snprintf(modelBuf, sizeof(modelBuf), "%s", d.assistantPerTurnModel.c_str());
-            if (ImGui::InputTextWithHint("##AiTurnModel", "<default model>", modelBuf, sizeof(modelBuf))) {
-                d.assistantPerTurnModel = modelBuf;
-            }
-            ImGui::SetItemTooltip("Per-turn model override. Leave blank to use the Preferences-saved value for this "
-                                  "provider.");
-        } else {
-            if (ImGui::Combo("##AiTurnModel", &comboIdx, displayPtrs.data(), static_cast<int>(displayPtrs.size()))) {
-                if (comboIdx == 0) {
-                    d.assistantPerTurnModel.clear();
-                } else {
-                    d.assistantPerTurnModel = catalog.at(static_cast<std::size_t>(comboIdx - 1)).Id;
-                }
-            }
-            ImGui::SetItemTooltip("Per-turn model override. Pick <default model> to inherit the Preferences value.");
-        }
-        ImGui::SameLine();
-        // Reasoning-effort Combo. Same 4-value enum as cfg.AiReasoningEffort.
-        const char* kEffortLabels[] = {"<default effort>", "Low", "Medium", "High"};
-        const char* kEffortIds[] = {"", "low", "medium", "high"};
-        int effortIdx = 0;
-        for (int i = 1; i < 4; ++i) {
-            if (d.assistantPerTurnEffort == kEffortIds[i]) {
-                effortIdx = i;
-                break;
-            }
-        }
-        ImGui::SetNextItemWidth(ImGui::GetTextLineHeight() * 10.0f);
-        if (ImGui::Combo("##AiTurnEffort", &effortIdx, kEffortLabels, 4)) {
-            d.assistantPerTurnEffort = kEffortIds[effortIdx];
-        }
-        ImGui::SetItemTooltip("Per-turn reasoning effort. Applied as the OpenAI `reasoning_effort` parameter; "
-                              "providers that don't understand the param ignore it.");
+        ImGui::SetItemTooltip("Per-turn model override. Pick <default model> to inherit the Preferences value.");
     }
+    ImGui::SameLine();
+    // Reasoning-effort Combo. Same 4-value enum as cfg.AiReasoningEffort.
+    const char* kEffortLabels[] = {"<default effort>", "Low", "Medium", "High"};
+    const char* kEffortIds[] = {"", "low", "medium", "high"};
+    int effortIdx = smatchet::ai::AiEffortComboIndex(d.assistantPerTurnEffort);
+    ImGui::SetNextItemWidth(ImGui::GetTextLineHeight() * 10.0f);
+    if (ImGui::Combo("##AiTurnEffort", &effortIdx, kEffortLabels, 4)) {
+        d.assistantPerTurnEffort = kEffortIds[effortIdx];
+    }
+    ImGui::SetItemTooltip("Per-turn reasoning effort. Applied as the OpenAI `reasoning_effort` parameter; "
+                          "providers that don't understand the param ignore it.");
+}
+
+// Phase 7 of ai-chat-claude-desktop-parity. Copy-toast strip — ghosted 1-line
+// confirmation set by the per-message Copy button, auto-dismissing on time-out.
+// When not visible the slot is a plain Dummy of `toastRowH` so the input row
+// above doesn't shift. Extracted verbatim from SmatchetDrawAiAssistantPanel.
+void DrawCopyToastStrip(UiDrawSession& d, float toastRowH) {
+    const std::int64_t nowMs = smatchet::ai::NowUnixMs();
+    if (nowMs < d.assistantCopyToastUntilMs && !d.assistantCopyToastLabel.empty()) {
+        // Fade out over the last 250 ms so the dismissal is less abrupt.
+        const std::int64_t remainingMs = d.assistantCopyToastUntilMs - nowMs;
+        constexpr std::int64_t kFadeOutMs = 250;
+        const float alpha =
+            smatchet::ai::AiToastAlpha(static_cast<long long>(remainingMs), static_cast<long long>(kFadeOutMs));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.75f, 0.65f, alpha));
+        ImGui::TextUnformatted(d.assistantCopyToastLabel.c_str());
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::Dummy(ImVec2(0.0f, toastRowH));
+    }
+}
+
+} // namespace
+
+void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
+    HydrateFromConfigOnce(app, d);
+    if (!d.assistantPanelOpen) {
+        // Drop the chat-input registration with the dictation router so the
+        // panel-closed state never receives transcribed text. The wrapper-level
+        // hook would unregister on blur anyway, but the panel-level explicit
+        // call is the belt to the wrapper's suspenders.
+        g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
+        // Persist a closed state at most once per close event (idempotent if already false).
+        PersistOpenStateImmediate(d);
+        return;
+    }
+    // Register the chat-input buffer with the dictation router for the
+    // duration of the panel being open. Re-registering each frame is cheap
+    // (router treats the buf pointer as an idempotent key). Phase F — uses
+    // the AI-Assistant flavour so the post-insertion auto-send-on-punctuation
+    // check can identify this splice target. The callback is registered once
+    // (idempotent flag); it simply flips a static atomic that the next panel
+    // draw observes — keeps the work on the UI thread without re-entering
+    // ImGui state from the dispatcher drain context.
+    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
+    if (!s_autoSendCallbackRegistered) {
+        s_autoSendCallbackRegistered = true;
+        g_dictationRouter.SetAiAssistantSendCallback(
+            []() { s_pendingAutoSend.store(true, std::memory_order_release); });
+    }
+
+    // Pillar 2 (UI never freezes): dock-integrated window — ImGui's dock manager
+    // owns layout, sizing, and the resize/swap chrome. The panel attaches to the
+    // primary side bar (left) by default and migrates to the secondary side bar
+    // (right) when the user toggles the swap button. A pending-side request fires
+    // SetNextWindowDockID with ImGuiCond_Always so the move actually takes effect,
+    // otherwise FirstUseEver lets the user's saved imgui.ini state win.
+    const ImGuiID primaryDockId = SmatchetDockNodeIds::kPrimarySideBar;
+    const ImGuiID secondaryDockId = SmatchetDockNodeIds::kSecondarySideBar;
+    const ImGuiID targetDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
+    static bool s_assistantNeedsReDock = false;
+    if (d.assistantPendingSideSwap || s_assistantNeedsReDock) {
+        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
+        d.assistantPendingSideSwap = false;
+        s_assistantNeedsReDock = false;
+    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
+    }
+
+    if (d.requestAssistantFocus) {
+        ImGui::SetNextWindowFocus();
+    }
+
+    // The panel is now a dockable, resizable window — drop the floating-only flags
+    // (NoDocking / NoSavedSettings / NoTitleBar / NoMove / NoResize). NoCollapse is
+    // kept because dock-tab collapse fights the open/close persistence contract.
+    const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoCollapse;
+
+    if (!ImGui::Begin("Smatchet Assistant", &d.assistantPanelOpen, kFlags)) {
+        ImGui::End();
+        if (d.requestAssistantFocus) {
+            d.requestAssistantFocus = false;
+        }
+        // Panel is hidden — collapsed, or its docked tab is inactive. Intentionally do
+        // NOT unregister the dictation buffer here — local-model
+        // transcription can take multiple seconds, during which the user
+        // may have flipped to another dock tab. Unregistering here would
+        // leave the post-back with no target and silently drop the
+        // transcribed text. The buffer stays alive (static storage); the
+        // registration is dropped only when the panel actually closes
+        // (`!d.assistantPanelOpen`) at the top of this function.
+        PersistOpenStateImmediate(d);
+        return;
+    }
+    if (d.requestAssistantFocus) {
+        ImGui::SetWindowFocus();
+        d.requestAssistantFocus = false;
+    }
+    if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        s_assistantNeedsReDock = true;
+    }
+
+    DrawAssistantHeaderRow(app, d);
+    DrawPerTurnModelEffortRow(d);
     ImGui::Separator();
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -1241,26 +1300,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
     DrawContextBlockCheckboxes(d);
     DrawInputAndButtons(app, d, activeView);
 
-    // Phase 7 of ai-chat-claude-desktop-parity. Copy-toast strip — ghosted
-    // 1-line confirmation set by the per-message Copy button (assigns
-    // d.assistantCopyToastUntilMs = now + 1500). Auto-dismisses on time-out;
-    // when not visible the slot is a plain Dummy of the same height so the
-    // input row above doesn't shift.
-    {
-        const std::int64_t nowMs = smatchet::ai::NowUnixMs();
-        if (nowMs < d.assistantCopyToastUntilMs && !d.assistantCopyToastLabel.empty()) {
-            // Fade out over the last 250 ms so the dismissal is less abrupt.
-            const std::int64_t remainingMs = d.assistantCopyToastUntilMs - nowMs;
-            constexpr std::int64_t kFadeOutMs = 250;
-            const float alpha =
-                (remainingMs >= kFadeOutMs) ? 1.0f : (static_cast<float>(remainingMs) / static_cast<float>(kFadeOutMs));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.75f, 0.65f, alpha));
-            ImGui::TextUnformatted(d.assistantCopyToastLabel.c_str());
-            ImGui::PopStyleColor();
-        } else {
-            ImGui::Dummy(ImVec2(0.0f, toastRowH));
-        }
-    }
+    DrawCopyToastStrip(d, toastRowH);
 
     ImGui::End();
 

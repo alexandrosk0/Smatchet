@@ -47,6 +47,16 @@ add_executable(SmatchetTests
     # The _detail TU depends only on Logger.h types (header-only enum + struct) — no ImGui.
     Core/LogViewLines.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetLog_detail.cpp"
+    # Pure audit-window filter/pagination helpers extracted from SmatchetUI::drawAuditWindow.
+    # The _detail TU depends only on nlohmann/json — no ImGui, no AppController.
+    Core/AuditWindowFilter.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetAudit_detail.cpp"
+    # Pure field-categorization / column-label helpers lifted out of
+    # SmatchetUI::drawViewsDashboardWindow during its function-size decomposition.
+    # SmatchetViewsDashboardUi_detail.h defines them all `inline` and pulls only
+    # plain struct headers (Views.h + TrackerFieldSchema.h) — no ImGui, no
+    # AppController — so the rig needs no extra .cpp link.
+    Core/ViewsFieldCategorization.test.cpp
     Core/SmatchetThemeSyntaxColors.test.cpp
     # AI chat Claude-Desktop-parity Phase 5 — AI chat-panel palette per theme.
     # Mirrors SmatchetThemeSyntaxColors.test.cpp; same SmatchetTheme.cpp link.
@@ -84,6 +94,7 @@ add_executable(SmatchetTests
     Core/TrackerLabelsPure.test.cpp
     Core/TrackerDateTimePure.test.cpp
     Core/TicketFieldEditorLongTextPure.test.cpp
+    Core/TicketFieldEditorOptionFilterPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
@@ -93,6 +104,11 @@ add_executable(SmatchetTests
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp
+    # Pure helpers extracted from SmatchetToolbarUi::RenderEditor during the
+    # function-size decomposition (header-only inline in
+    # Source/Core/src/Ui/SmatchetToolbarUi_detail.h). Links the IconCatalog TU
+    # below for SmatchetToolbarIconGlyph; no extra source needed.
+    Core/ToolbarEditorPure.test.cpp
     Core/IconCatalog.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetIconCatalog.cpp"
     Core/SingleClickEditConfig.test.cpp
@@ -119,6 +135,10 @@ add_executable(SmatchetTests
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
+    # Pure layout-arithmetic + picker-resolution helpers extracted from
+    # SmatchetAiAssistantUi.cpp during the function-size decomposition. Header-only
+    # (Source/Core/include/Ui/SmatchetAiAssistantUi_detail.h); no extra .cpp source.
+    Core/AiAssistantUiDetail.test.cpp
     # AI chat Claude-Desktop-parity Phase 1 — pure relative/absolute time
     # formatter for the hover action row. No ImGui dep; production TU is
     # auto-globbed into CORE_SOURCES by the root CMakeLists, this entry
@@ -234,6 +254,11 @@ add_executable(SmatchetTests
     # pins every signature/bounds/offset/endianness path (PNG/GIF/WEBP/JPEG).
     Core/ParseImageDimensions.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImageDimensionsPure.cpp"
+    # funcsize decomposition of SmatchetDrawMcpServerPanel — header-only pure
+    # diagnostics-text builder (BuildMcpServerInfoText). No ImGui / AppController;
+    # takes TrackerConfig + a nullable McpServerStatus snapshot. ConfigManager.cpp
+    # is already linked for the TrackerConfig definition.
+    Core/McpServerInfoTextPure.test.cpp
     # Perf Opt 1 + Opt B — BuildPlan / HashContent / PreviewPlan API surface.
     # Pure-logic only (the ImGui-side render is bucket E). Links the same
     # MarkdownPreviewRender.cpp the production targets compile.
