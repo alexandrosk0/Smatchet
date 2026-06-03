@@ -81,10 +81,13 @@ N/A — pure-docs. Only `AGENTS.md` + `docs/agent-rules/delegation.md` change; b
 - **Per-line-cap automation** on the preamble — not worth a gate for one section; reviewer holds the line.
 
 ## Implementation log
-*(populated post-ship)*
+
+- Wave-1 slice of `agentic-harness-campaign`. `AGENTS.md` § Operating principles (12-line, 5 linked one-liners + navigation-only guard note) added above § UX Pillars; `docs/agent-rules/delegation.md` § Context budget by task class (~80% utilization ceiling, delegate-before-last-20%, low-sensitivity tolerance, token-tracking gauge) added after § Why split; AGENTS.md § Delegation moved-subsection index gained the § Context budget pointer.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- None material. Preamble landed at 12 lines (plan cap ≤15); context-budget rule at ~6 lines (cap ≤8) — both inside budget.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- `test-portable-purity` PASS · `test-agent-contract` 25/25 · `test-docs` 7/7 (doc-anchors + markdown-links resolve the 5 preamble cross-links + the new stub). Pure-docs — no build/ctest gate.

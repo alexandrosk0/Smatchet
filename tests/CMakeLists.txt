@@ -47,6 +47,10 @@ add_executable(SmatchetTests
     # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
     Core/JqlProjectPillFilter.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetJqlProjectPill_detail.cpp"
+    # Pure log-line formatting / clipboard-join helpers extracted from SmatchetUI::drawLogWindow.
+    # The _detail TU depends only on Logger.h types (header-only enum + struct) — no ImGui.
+    Core/LogViewLines.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetLog_detail.cpp"
     # Pure option-filter + catalog-dropdown predicates extracted from RenderNewIssueDraftRow. The
     # _detail TU depends only on StringUtil (header-inline) + TrackerFieldSchema — no ImGui.
     Core/NewIssueDraftFieldDecision.test.cpp
