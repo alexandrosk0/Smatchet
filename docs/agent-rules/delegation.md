@@ -345,6 +345,10 @@ Optional. Agents that **directly call** another agent (helper-driven workflows l
 
 Each delegated agent gets a fresh context window — `tracker-backend` work doesn't load CMake helpers, `build-doctor` doesn't load `Source/Core/` headers, `perf-detective` doesn't load MCP schemas. That context isolation is the real token win, bigger than per-model price differences.
 
+## Context budget by task class
+
+Delegation (the fresh-context lever above) is also how the orchestrator stays within its own context budget. For large multi-file / cross-subsystem work, keep the orchestrator's own context under **~80% utilization** — spawn a fresh-context sub-agent for a sub-scope *before* entering the last 20%, where instruction-following degrades and large edits start dropping detail. Low-sensitivity work (single-file edits, docs, mechanical renames) tolerates higher utilization — a near-full context still applies a one-line pattern correctly. The gauge is `agents/_shared/token-tracking/` (per-agent token accounting); the lever is delegation. This is utilization guidance, distinct from the isolation *token-win* above — that's about cost, this is about quality-under-fill.
+
 ## Complexity rationale
 
 `high` is reserved for one-shot-or-lose decisions (design, build root cause, perf root cause, security review). `medium` covers careful reading-and-flagging where mistakes are recoverable (`code-review`). Subsystem specialists run `low` because the invariants are stated up-front in their prompts — they apply patterns, they don't derive them. `mechanic` is `low` because pattern application doesn't benefit from deeper thinking and the diff is verifiable at a glance.
