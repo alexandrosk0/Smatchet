@@ -1,5 +1,5 @@
 // funcsize_preferences_tabs.test.cpp — Phase-0 GREEN batch of the
-// full-function-size-compliance program (docs/plans/active/full-function-size-compliance.md).
+// full-function-size-compliance program (docs/plans/shipped/full-function-size-compliance.md).
 //
 // PURPOSE — STRUCTURAL coverage for the four large Preferences *tab* draw
 // functions slated for decomposition in Phase 5:
