@@ -97,6 +97,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`subagent-eval-harness`](shipped/subagent-eval-harness.md) | 2026-05-30 | Plan — Subagent eval harness (eval-driven development for the dev-agent fleet) |
 | [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
 | [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
+| [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | — | Plan — Agent charter altitude (operating-principle preamble + context budget) |
 <!-- END auto-plan-index -->
 
 ### Notes
