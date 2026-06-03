@@ -106,10 +106,14 @@ N/A — no Source/Core code. The diff is `.github/workflows/*.yml` + `CMakePrese
 - **Phase 2**: bucket-E + perf-pr-fast show no `cmake --build` of the app (download + run only); the uploaded ui-test exe is consumed; Mesa step is a cache hit.
 - **Correctness preserved**: bucket-C/E + sanitizer + coverage + perf all still pass on a known-good and fail on a seeded regression (no gate weakened, only relocated/sped).
 - **Workflow lint**: `test-workflow-yaml.sh` green on every edited workflow.
+- **Doc validation (blocks this plan PR)**: the `test-docs.sh` suite green — `test-portable-purity`, `test-plan-index`, `test-plan-ref-integrity`, `test-markdown-links`, `test-doc-anchors` (a red doc-validation job blocks merge even though non-required).
+- **Plan stress-test**: run `grill-with-docs` on this plan before finalising (AGENTS.md § Plan-doc family) and record the outcome.
 - **Build gate**: N/A — no compile in this diff.
 - **Manual residue**: the Phase-3 PR-vs-post-merge choices are maintainer decisions, recorded in the `ci` config block — not silent.
 
 ## Out of scope (flagged, not designed)
+
+**Deferral residue-sweep** (AGENTS.md § Scope-reduction final-check grep): before this plan finalises, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred below, and revise or delete them.
 
 - **Larger / self-hosted Windows runners** — a parallelism lever; cost trade, separate decision.
 - **Unifying the 5 per-preset FetchContent caches into one shared dep cache** — sccache covers dep *object* compilation; revisit only if dep *fetch* time dominates after Phase 1.
