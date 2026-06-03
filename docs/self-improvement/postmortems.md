@@ -62,12 +62,15 @@ a pattern: a prose rule cannot hold a discipline that a one-click/poller merge p
 keeps defeating — only the required-check flip removes the path.
 
 ### Preventing gate
-**No new gate — the existing one is overdue.** The fix is the already-filed
-infra entry "make the doc-validation contexts required" (add **"Doc anchors +
-agent contract"** to branch-protection `required_status_checks` + the
-`project.config.json` mirror). The third recurrence escalates that entry
-**P2 → P1** (load-bearing · silent failure · ships breakage to `develop`). No
-second system; this postmortem is the escalation evidence, not a new action.
+**No new gate — applied the existing overdue one.** The fix was the already-filed
+infra entry "make the doc-validation contexts required": **"Doc anchors + agent
+contract"** added to `project.config.json` `branch_protection.required_contexts`
++ `ci.required_checks` and pushed live via `setup-branch-protection.sh`
+(develop required set 4 → 5). **APPLIED 2026-06-03** — GitHub now blocks any
+merge with that job RED, removing the merge path that defeated the prose rule
+three times. The third recurrence escalated the entry **P2 → P1**; applying it
+closes the structural hole. No second system; this postmortem is the escalation
+evidence that finally drove the fix.
 
 ### Filed as
 [`docs/self-improvement/categories/infra.md`](categories/infra.md) 2026-06-03
