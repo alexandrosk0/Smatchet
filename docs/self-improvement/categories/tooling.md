@@ -241,8 +241,8 @@
 - 2026-05-16 · orchestrator · [tooling] · P3 — `Source/Core/*.cpp` GLOB picks up new TUs for production targets — only test target needs explicit per-file entry
   Details: Wave A2 agents wrote new pure-helper TUs (`TrackerLabelsPure.cpp`, `TrackerDateTimePure.cpp`, `TrackerFieldPayloadPure.cpp`, `TrackerFieldCatalogPure.cpp`). Production builds (Standalone + DX12) picked them up automatically via the existing `Source/Core/src/*.cpp` GLOB in the root `CMakeLists.txt`. The test target (`tests/CMakeLists.txt`) is **explicit per-file** — needs a per-source `.cpp` entry **and** a per-test `.cpp` entry. Mental-model save: agents otherwise reflexively touch both files.
   Concrete next action: add a one-line note to `agents/core/test-rig.md` § Workflow: "Production targets auto-pick new `Source/Core/src/*.cpp` via GLOB — only `tests/CMakeLists.txt` needs explicit per-file source list updates."
-  Status: parked
-  Last-reviewed: 2026-05-18
+  Status: applied (2026-06-02 — `agents/core/test-rig.md` § Workflow gotchas, "Production targets auto-pick new Source/Core/src/*.cpp via GLOB" bullet)
+  Last-reviewed: 2026-06-02
 
 - 2026-05-15 · test-author · [tooling] · P3 — `MarkdownPreviewLangTag` covered (bucket A); rendered-output coverage deferred
   Details: Added `tests/Core/MarkdownPreviewLangTag.test.cpp` (5 cases / 40 assertions) over the inlined `MarkdownPreviewRender::IsCppLikeLangTag` classifier — covers the C/C++ canonical spellings, case-insensitivity, non-cpp languages (python/js/rust/…), substring rejection (cppreference/ccache/cxxabi must not match), and whitespace-only / empty tags. This proves the decision predicate; what still needs automation is "given a markdown document containing a ` ```cpp ` fence, the leave-block handler actually iterates `codeBuffer` line-by-line through `DrawColoredCppLine`."

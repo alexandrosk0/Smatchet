@@ -49,6 +49,12 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 5. Run: `cd build/ninja-test-msvc && ctest --output-on-failure` (CTest preset is wired by build dir, not test preset).
 6. If a test fails — diagnose, then either fix the assertion (your understanding of the contract was wrong) or hand back to the matching subsystem specialist (the production code is wrong). Do not "fix" production code yourself — your job is the rig.
 
+### Workflow gotchas (recurring)
+
+- **Adapter TUs are production-only — never link them into test targets.** `AppControllerDepsAdapter.cpp` (and similar adapters that implement a `*Deps` interface against a live `AppController&`) drag unresolved `AppController::*` symbols into any test exe, because `AppController.cpp` is correctly excluded (ImGui-tainted). Tests must always use the `Fake*` fixtures under `tests/support/` (`FakeOfflineQueueDeps`, `FakeTicketSyncDeps`, …). Linking the adapter is a guaranteed link-error round-trip.
+- **Production targets auto-pick new `Source/Core/src/*.cpp` via GLOB — only the test target is explicit per-file.** `SmatchetStandalone` + `SmatchetCore_DX12` pick up a newly-added pure-helper TU automatically through the root `CMakeLists.txt` GLOB. `tests/CMakeLists.txt` is explicit per-file: a new pure helper needs BOTH its source `.cpp` AND its test `.cpp` listed there. Don't reflexively edit the root CMake for a new production TU.
+- **Parallel siblings touching `tests/CMakeLists.txt` — append at the END only; merge order is serial.** When N test-rig agents run in parallel and each adds a test + source line, appending to the same region union-conflicts every PR after the first. Append at the end of the relevant list; the orchestrator resolves the serial rebase.
+
 ## What NOT to test here
 
 - UI rendering, dock layout, ImGui state — bucket E (`docs/plans/shipped/imgui-test-engine-bucket-e.md`), not this rig.

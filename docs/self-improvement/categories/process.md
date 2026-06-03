@@ -52,8 +52,8 @@
 - 2026-05-17 · lua-binder · [process] · P3 — Plan packet "stub parity" framing misleading when receivers are already always-on
   Details: Phase E packet explicitly listed `Source/Core/src/AppController_LuaStubs.cpp` as a MOD path with "mirror stub implementations of the same 3 glue functions" claim. But the Lua surface in question (`ai.*`) calls `AppController::AddAiContext` / `ClearAiContext` / `PromptAi` which are **always-on** members (declared without `SMATCHET_WITH_LUA_AUTOMATION` gate, shipped Phase B specifically so Phase E Lua glue is stable across LUA=ON/OFF + AI=ON/OFF). No stub mirror was needed; the agent added a docstring to LuaStubs.cpp to honour the packet's write-set claim but no functional code change.
   Concrete next action: distinguish two cases in orchestrator delegation packets that touch the LuaBindings ↔ LuaStubs pair — (a) glue calls a Lua-only method on AppController → stub mirror required + `LuaStubsCompile.test.cpp` sentinel update; (b) glue calls an always-on AppController method → **no** stub action; parity invariant already satisfied by the always-on declaration. ~5 min phrasing change to `agents/project/lua-binder.md` § Hard invariants as a checklist bullet.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-02 — `agents/project/lua-binder.md` § Hard invariants, "Parity applies to the glue function" sub-bullet under Bindings ↔ stubs parity)
+  Last-reviewed: 2026-06-02
 
 - 2026-05-17 · code-review · [process] · P3 — PR #140 `Source/Core/include/AiTypes.h:35,60` `Temperature = -1.0f` and `MaxTokens = 0` sentinels for "unset"
   Details: Future reader could set `0.0f` thinking it's a neutral value and not realise it's the sentinel for "unset".
@@ -76,8 +76,8 @@
 - 2026-05-16 · test-rig · [process] · P3 — `AppControllerDepsAdapter.cpp` is a link-trap for tests
   Details: PR D introduced `Source/Core/src/AppControllerDepsAdapter.cpp` as the production-side implementation of `IOfflineQueueDeps` + `ITicketSyncDeps` against a live `AppController&`. Adding it to a test target's source list drags unresolved `AppController::*` symbols (since `AppController.cpp` is correctly excluded — ImGui-tainted). Tests should always use `FakeOfflineQueueDeps` / `FakeTicketSyncDeps`; the adapter belongs only in the production exe. PR E lost a link-error round-trip before the agent figured this out.
   Concrete next action: add a one-paragraph note to `agents/core/test-rig.md` § Workflow: "Adapter TUs (`AppControllerDepsAdapter.cpp` and similar) are production-only — never link them into test targets. Always use Fake* fixtures under `tests/support/`." Estimated cost 5 min doc edit.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-02 — `agents/core/test-rig.md` § Workflow gotchas, "Adapter TUs are production-only" bullet)
+  Last-reviewed: 2026-06-02
 
 - 2026-05-16 · test-rig + orchestrator · [process] · P3 — Mutation-sanity recipe in test-rig packets needs taxonomy: prod-mutation vs test-mutation
   Details: callstack-adversarial-subcases run (PR #112) hit the auto-mode classifier denying two mutation-sanity recipe steps: (a) production-side substring-prefix relaxation in `ApplyPathRemaps` (legit denial — production was strictly out-of-scope per the packet), (b) test-side fixture mutation that would have removed a load-bearing invariant from a high-risk case (also legit). The current `test-rig` packet language ("one production-side mutation per high-risk case, demonstrably fails the new test, reverted before commit") assumes both options open. In practice, when production code is `Out of scope — refuse if asked`, every prod-side mutation is denied by the classifier. Agent has to argue-from-assertion-shape for 1/4 of the cases and document deferred-with-rationale.
@@ -100,8 +100,8 @@
 - 2026-05-16 · test-rig · [process] · P3 — Parallel-write-fan-in to `tests/CMakeLists.txt` needs sequential-merge stance documented
   Details: 4 parallel Wave A2 test-rig agents (tracker-labels / datetime / payload / field-catalog) each appended their new test + source `.cpp` to the same lines of `tests/CMakeLists.txt`. Each PR after the first needed manual rebase resolving union-merge — orchestrator absorbed this cost (~5 min per PR). Already documented in `docs/plans/shipped/test-suite-expansion-completion.md` § Deviations from plan; not in agent-level docs.
   Concrete next action: promote to `agents/core/test-rig.md` § Parallel-with-N-other-agents note — explicit rule "when N siblings touch `tests/CMakeLists.txt`, append at the END only; merge order is serial; orchestrator handles rebase". Saves explanation in every parallel-batch packet. Estimated cost 10 min doc edit.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-02 — `agents/core/test-rig.md` § Workflow gotchas, "Parallel siblings touching tests/CMakeLists.txt" bullet)
+  Last-reviewed: 2026-06-02
 
 - 2026-05-14 · architect · [process] · P3 · DEFERRED — `TodoWrite` reminder noise during read-only tasks
   Details: System injected three `TodoWrite` reminders into a read-only validation run. Read-only agents (architect, code-review, security-review, perf-measure) rarely benefit from a todo list; the reminder hook could be muted for them based on the agent banner or `tools:` frontmatter (no `Write`/`Edit`).
