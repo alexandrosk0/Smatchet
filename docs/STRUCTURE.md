@@ -31,6 +31,7 @@ The single seam for project values is **`project.config.json`** (schema-validate
 | `docs/self-improvement/` | framework portable / entries project | `AGENT_SELF_IMPROVEMENT.md` + `categories/` | `test-backlog-counts` |
 | `docs/plans/active/` | project | working plans (+ `_plan-template.md`, `_plan-locks*`) | `test-plan-naming` |
 | `docs/plans/shipped/` | project | shipped plans (**never renamed** — see below) | `test-plan-index`, `test-plan-ref-integrity` |
+| `docs/plans/deferred/` | project | parked-indefinitely plans (captured design, build only on a named recurrence; `STATUS: DEFERRED` banner) | `test-plan-naming`, `test-plan-ref-integrity` |
 | `docs/plans/INDEX.md` | project | auto-generated shipped-plan index | `test-plan-index` |
 | `docs/guides/` | mixed (per-file `tier:`) | how-to docs (offline-builds, perf-workflow, caveman, agent-token-tracking) | `test-portable-purity` |
 | `docs/reference/` | project | dated snapshots / archived refs | — |

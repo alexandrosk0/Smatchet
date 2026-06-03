@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-plan-ref-integrity.sh — every docs/plans/{active,shipped}/<slug>.md path
+# test-plan-ref-integrity.sh — every docs/plans/{active,shipped,deferred}/<slug>.md path
 # referenced anywhere in the tree must resolve to an existing file.
 #
 # This is the guard that proves the Phase-D rename (docs/design -> docs/plans)
@@ -22,9 +22,9 @@ cd "$(git rev-parse --show-toplevel)"
 #   stale structure refs: README.md, _plan-locks.md (real file is _plan-locks.generated.md)
 ALLOW_RE='/(example|foo|bar|baz|agentic-coding-handoff|agentic-flow-implementation|agentic-triage-flow|visual-regression-bootstrap|README|_plan-locks)\.md$'
 
-# Collect every referenced docs/plans/(active|shipped)/<slug>.md across tracked
+# Collect every referenced docs/plans/(active|shipped|deferred)/<slug>.md across tracked
 # files, then assert each exists.
-mapfile -t refs < <(git grep -hoE 'docs/plans/(active|shipped)/[A-Za-z0-9._-]+\.md' \
+mapfile -t refs < <(git grep -hoE 'docs/plans/(active|shipped|deferred)/[A-Za-z0-9._-]+\.md' \
                       -- ':!.understand-anything/' 2>/dev/null | sort -u)
 
 missing=()
