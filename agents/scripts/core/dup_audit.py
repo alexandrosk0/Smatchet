@@ -114,23 +114,17 @@ def normalize_token(tok):
 def _tokens_with_lines(text):
     """Literal-aware C++ tokens with their 1-based line numbers: [(token, line), ...].
 
-    Position-tracking variant of comment_lib.code_tokens (which drops positions). The TOKEN rules
-    are identical — delegate the canonical token list to code_tokens for correctness, then walk the
-    source once to attach a line number to each by re-locating tokens left-to-right. (code_tokens
-    skips whitespace + comments, so the search cursor only ever advances past inter-token noise.)"""
-    toks = cl.code_tokens(text)
+    Uses comment_lib.code_tokens_with_offsets, which returns each token's REAL start offset in the
+    source, so line numbers are exact. (The earlier `text.find(tok, cursor)` approach could re-match
+    a token's text inside an intervening comment and shift the reported line — fixed here by
+    consuming the tokenizer's own offsets instead of re-searching the raw text.)"""
     out = []
-    cursor = 0
+    prev_off = 0
     line = 1
-    # Precompute newline-prefix counts so line lookup is O(1) per token via a running advance.
-    for tok in toks:
-        idx = text.find(tok, cursor)
-        if idx < 0:
-            # Should not happen (token came from this text); fall back to current cursor/line.
-            idx = cursor
-        line += text.count("\n", cursor, idx)
+    for tok, off in cl.code_tokens_with_offsets(text):
+        line += text.count("\n", prev_off, off)
         out.append((tok, line))
-        cursor = idx + len(tok)
+        prev_off = off
     return out
 
 

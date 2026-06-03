@@ -301,13 +301,23 @@ def code_tokens(text):
     string/char/raw-string literals are captured whole; every other non-space char is its own
     token; comments are skipped (and thus separate adjacent identifier runs).
     """
+    return [tok for tok, _off in code_tokens_with_offsets(text)]
+
+
+def code_tokens_with_offsets(text):
+    """Same token stream as code_tokens(), but each element is `(token, start_offset)` where
+    start_offset is the token's 0-based index in `text`. Callers that need a per-token line number
+    must use these real offsets — re-locating a token with `text.find()` is unsafe, because the
+    token text can recur inside an earlier skipped comment and shift the computed position.
+    code_tokens() delegates here so the two never diverge."""
     toks = []
     cur = []
+    cur_start = -1
     i, n = 0, len(text)
 
     def flush():
         if cur:
-            toks.append("".join(cur))
+            toks.append(("".join(cur), cur_start))
             del cur[:]
 
     while i < n:
@@ -335,7 +345,7 @@ def code_tokens(text):
             delim = ")" + text[i + 1:j] + '"'
             end = text.find(delim, j)
             end = (end + len(delim)) if end != -1 else n
-            toks.append(text[i:end])
+            toks.append((text[i:end], i))
             i = end
             continue
         if c == '"' or c == "'":
@@ -344,15 +354,17 @@ def code_tokens(text):
             j = i + 1
             while j < n and text[j] != q:
                 j += 2 if text[j] == "\\" else 1
-            toks.append(text[i:min(j + 1, n)])
+            toks.append((text[i:min(j + 1, n)], i))
             i = j + 1
             continue
         if c.isalnum() or c == "_":
+            if not cur:
+                cur_start = i
             cur.append(c)
             i += 1
             continue
         flush()
-        toks.append(c)
+        toks.append((c, i))
         i += 1
     flush()
     return toks
