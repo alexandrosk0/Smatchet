@@ -37,8 +37,8 @@
 - 2026-06-01 · build-doctor · [tooling] · P2 — `cl.exe` is not on PATH in agent worktree shells; every MSVC build in a subagent re-discovers vcvars from first principles
   Details: Subagents doing dual-target builds in `.claude/worktrees/<id>/` (the default for decomposition/build work) must import VS vcvars64.bat before `cmake --build` — `cl.exe` isn't on the bash PATH. Multiple agents this session (build-doctor, the Initialize/main/ConfigManager decomposers) each rediscovered the temp-`.ps1` + `-File` vcvars-import dance independently, costing tool-uses + tokens per agent.
   Concrete next action: add `scripts/dev/with-msvc.ps1` (vswhere → newest vcvars64.bat → exec the passed args in that env) and reference it from `agents/core/build-doctor.md` + the dual-target build note in AGENTS.md, so subagents call one wrapper instead of reinventing it. ~30 min.
-  Status: open
-  Last-reviewed: 2026-06-01
+  Status: applied (2026-06-02 — `scripts/dev/with-msvc.ps1` shipped + locally verified resolving `cl.exe` / `VCToolsVersion=14.38.33130`; referenced from `agents/core/build-doctor.md` § symptoms + AGENTS.md § Dual-target. Toolset-pinned via `build.msvc_toolset_pin` to avoid STL1001)
+  Last-reviewed: 2026-06-02
 
 - 2026-05-31 · mcp-toolsmith · [tooling] · P3 — `comment-commented-out-code` classifier flags relocated/re-indented comments whose text starts with `ident()` as commented-out code
   Details: During Slice 3 (`McpPlugin::OnStart` extraction) a pure-mechanical refactor that *moved* an unchanged comment block (lines beginning `OnStop()`, `svr.stop()`) into a helper tripped `comment-commented-out-code` in the delta gate — the classifier's `CODE_LIKE_RE` matches a leading `Identifier(...)` call shape, and a relocated comment line is an "added" line vs the base, so untouched prose reads as new commented-out code. Forces a reword on comments the refactor never authored.
