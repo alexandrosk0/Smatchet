@@ -1,9 +1,9 @@
 # Plan — GitHub Issue triage protocol (Issues-canonical for product bugs)
 
 > **Slug**: `issue-triage-protocol` (matches this file's basename without `.md`).
-
+>
 > **Usage**: defines the **missing** agentic protocol for GitHub Issues and the boundary between GitHub Issues and the internal self-improvement backlog. Decided via `grill-with-docs` (2026-06-03); core decision recorded in **[ADR-0014](../../adr/0014-github-issues-canonical-for-product-bugs.md)**.
-
+>
 > **Mandatory rules cross-link**: `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template. **Docs + config + shell only — no `Source/` diff** → perf-gate section is `N/A`.
 
 ## Context
