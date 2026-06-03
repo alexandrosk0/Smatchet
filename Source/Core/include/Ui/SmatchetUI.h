@@ -27,6 +27,13 @@ struct CachedTicket;
 /// re-fetched per helper.
 struct ActiveProjectDrawCtx;
 
+/// Shared per-frame state for the section helpers that decompose
+/// SmatchetUI::drawMainMenuBar. Defined at file scope in SmatchetUI_MainMenu.cpp (the only
+/// TU that constructs it); forward-declared here so the private per-menu helper signatures
+/// can name it. Holds the active-tickets snapshot, catalog index, column set, and derived
+/// selection flags captured once at the top of the menu-bar frame.
+struct MainMenuDrawCtx;
+
 /// Per-frame cache for TrackerFieldCatalogIndex + TicketGridColumns, keyed by catalog revision and
 /// active view id. Built once per frame in SmatchetUI::Draw before drawMainMenuBar and
 /// drawActiveProjectWindow so neither rebuilds it independently.
@@ -126,6 +133,24 @@ class SmatchetUI {
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);
+    // Per-menu section helpers for drawMainMenuBar (function-size-compliance, monoliths
+    // campaign). Each top-level helper owns its own BeginMenu/EndMenu pair identically to the
+    // pre-decomposition body (BeginMenu returns bool; EndMenu is called only inside the
+    // taken branch). The orchestrator retains the BeginMainMenuBar/EndMainMenuBar frame and
+    // the trackerLocked BeginDisabled/EndDisabled groupings that bracket several menus.
+    void selectAllGridRows(MainMenuDrawCtx& ctx);
+    void drawMenuBarFileMenu(MainMenuDrawCtx& ctx);
+    void drawMenuBarEditMenu(MainMenuDrawCtx& ctx);
+    void drawMenuBarSelectionMenu(MainMenuDrawCtx& ctx);
+    void drawMenuBarViewMenu(MainMenuDrawCtx& ctx);
+    void drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx);
+    void drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx);
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    void drawMenuBarRunMenu(MainMenuDrawCtx& ctx);
+#endif
+    void drawMenuBarToolsMenu(MainMenuDrawCtx& ctx);
+    void drawMenuBarHelpMenu(MainMenuDrawCtx& ctx);
+    void drawMenuBarInlinePalette(MainMenuDrawCtx& ctx);
 #if defined(SMATCHET_WITH_AI)
     /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
     /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside
