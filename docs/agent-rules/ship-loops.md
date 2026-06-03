@@ -21,6 +21,7 @@ All clarifications that the orchestrator anticipates needing are batched **once 
 3. **After `GATES_PASSED`**: squash-merge immediately (when authorised). DO NOT ask "should I merge now?"
 4. **After merge conflicts on rebase**: resolve conflicts autonomously (prefer the semantically correct version), force-push the rebased branch, and resume polling. DO NOT ask which side to keep unless both sides are substantive and ambiguous.
 5. **After squash-merge succeeds**: proceed to git-janitor cleanup and backlog entry. DO NOT ask "anything else?"
+6. **Closeout issue-sweep** (advisory, non-blocking): run `bash agents/scripts/core/issue-sweep.sh` (dry-run) — surfaces open-Issue triage verdicts + the top-`P0`/`P1` `[issue-propose]` line (`docs/agent-rules/issue-triage.md` § Fixing an Issue). It **proposes** the next bug; it does **not** auto-fix and does **not** pause the loop. Deeper / periodic triage is the `issue-janitor` (off-loop).
 
 The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt after the initial clarification batch.
 

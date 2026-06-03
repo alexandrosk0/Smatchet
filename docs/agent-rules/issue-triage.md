@@ -84,4 +84,4 @@ Managed by [`agents/scripts/project/sync-issue-labels.sh`](../../agents/scripts/
 ## Triage cadence
 
 - **Closeout sweep** — `issue-sweep.sh --dry-run` runs in the ship-loop closeout: surfaces triage verdicts (`--apply` only on explicit authorisation) **and** emits the top-`P0`/`P1` `[issue-propose]` line (§ Fixing an Issue) — propose-only, never auto-fix, never pauses.
-- **Periodic janitor** — `issue-janitor` (`agents/core/issue-janitor.md`, added in Slice 4 — agent + scheduled workflow, mirroring `p4-janitor` / `git-janitor`) keeps Issues labelled / deduped / stale-swept off the ship-loop.
+- **Periodic janitor** — [`issue-janitor`](../../agents/core/issue-janitor.md) (agent + scheduled `issue-janitor.yml` workflow, mirroring `p4-janitor` / `git-janitor`) keeps Issues labelled / deduped / stale-swept off the ship-loop.

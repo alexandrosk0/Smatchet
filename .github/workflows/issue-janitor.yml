@@ -1,0 +1,49 @@
+name: Issue janitor (advisory)
+
+# Periodic GitHub Issue triage (issue-triage protocol, ADR-0014). Runs
+# issue-sweep.sh --dry-run over open Issues and prints verdicts + the
+# [issue-propose] top-P0/P1 line to the job log. ADVISORY: it does NOT mutate
+# Issues (no --apply) — relabel/close stay a human-or-issue-janitor-agent
+# decision (never auto-close a human Issue from a cron). Weekly + manual.
+
+on:
+  schedule:
+    - cron: '17 9 * * 1'   # Mondays 09:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  issues: read
+  contents: read
+
+concurrency:
+  group: issue-janitor
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    name: Issue sweep (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: issue-sweep --dry-run (verdicts + [issue-propose])
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "Issue janitor — advisory sweep (dry-run; no mutations)."
+          bash agents/scripts/core/issue-sweep.sh 2>&1 | tee /tmp/sweep.out
+          if grep -q '\[issue-propose\]' /tmp/sweep.out; then
+            line="$(grep '\[issue-propose\]' /tmp/sweep.out | head -1)"
+            echo "::notice::$line"
+          fi
+          exit 0
