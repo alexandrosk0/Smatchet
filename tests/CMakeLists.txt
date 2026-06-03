@@ -277,6 +277,10 @@ add_executable(SmatchetTests
     # pins every signature/bounds/offset/endianness path (PNG/GIF/WEBP/JPEG).
     Core/ParseImageDimensions.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImageDimensionsPure.cpp"
+    # funcsize decomposition of drawAttachmentPreviewWindow — header-only pure
+    # layout/classification helpers (fit-math + card-label/status chains). No
+    # ImGui / file-I/O; mirrors the inline branches the monolith shipped.
+    Core/AttachmentPreviewLayoutPure.test.cpp
     # funcsize decomposition of SmatchetDrawMcpServerPanel — header-only pure
     # diagnostics-text builder (BuildMcpServerInfoText). No ImGui / AppController;
     # takes TrackerConfig + a nullable McpServerStatus snapshot. ConfigManager.cpp

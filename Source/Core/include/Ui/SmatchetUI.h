@@ -27,6 +27,13 @@ struct CachedTicket;
 /// re-fetched per helper.
 struct ActiveProjectDrawCtx;
 
+/// Whether the current renderer backend can upload bitmap thumbnails, plus a
+/// human-readable reason (shown when it can't). Computed once per frame in
+/// SmatchetUI::drawAttachmentPreviewWindow and threaded through the section helpers.
+struct AttachmentThumbnailSupport {
+    bool CanRenderBitmapThumbnails = false;
+    std::string Reason;
+};
 /// Shared per-frame state for the section helpers that decompose
 /// SmatchetUI::drawMainMenuBar. Defined at file scope in SmatchetUI_MainMenu.cpp (the only
 /// TU that constructs it); forward-declared here so the private per-menu helper signatures
@@ -272,6 +279,15 @@ class SmatchetUI {
     };
     ActiveProjectWindowState activeProjectState_;
     void drawAttachmentPreviewWindow(AppController& app, UiDrawSession& d);
+    /// Per-frame references shared across the attachment-preview section helpers.
+    /// Snapshots (thumbnailSupport) are captured once in drawAttachmentPreviewWindow.
+    struct AttachmentPreviewDrawCtx {
+        AppController& app;
+        UiDrawSession& d;
+        const AttachmentThumbnailSupport& thumbnailSupport;
+    };
+    void drawAttachmentListPane(AttachmentPreviewDrawCtx& ctx);
+    void drawAttachmentDetailsPane(AttachmentPreviewDrawCtx& ctx);
     static void drawAuditWindow(AppController& app, UiDrawSession& d);
     static void drawLogWindow(UiDrawSession& d);
     static void drawBulkImportWindow(AppController& app, UiDrawSession& d);

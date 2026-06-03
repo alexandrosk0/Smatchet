@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "Logger.h"
 #include "MemoryTelemetry.h"
+#include "AttachmentPreviewLayoutPure.h"
 #include "ImageDimensionsPure.h"
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetLocalization.h"
@@ -80,11 +81,6 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
     result.Error = parsed.Error;
     return result;
 }
-
-struct AttachmentThumbnailSupport {
-    bool CanRenderBitmapThumbnails = false;
-    std::string Reason;
-};
 
 static AttachmentThumbnailSupport GetAttachmentThumbnailSupport() {
     AttachmentThumbnailSupport support;
@@ -440,13 +436,8 @@ static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
     }
 
     const float maxEdge = 320.0f;
-    float drawWidth = static_cast<float>(entry.ImageWidth > 0 ? entry.ImageWidth : 1);
-    float drawHeight = static_cast<float>(entry.ImageHeight > 0 ? entry.ImageHeight : 1);
-    const float scale = (std::min)(maxEdge / drawWidth, maxEdge / drawHeight);
-    if (scale > 0.0f) {
-        drawWidth *= (std::min)(scale, 1.0f);
-        drawHeight *= (std::min)(scale, 1.0f);
-    }
+    const smatchet::attach::ImageDrawSize drawSize =
+        smatchet::attach::ComputeImageDrawSize(entry.ImageWidth, entry.ImageHeight, maxEdge, maxEdge, true);
 
     ImGui::BeginTooltip();
     ImGui::TextUnformatted(entry.Filename.c_str());
@@ -454,7 +445,7 @@ static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
         ImGui::TextDisabled("%dx%d", entry.ImageWidth, entry.ImageHeight);
     }
     ImGui::Separator();
-    ImGui::Image(entry.ThumbnailTextureData->GetTexRef(), ImVec2(drawWidth, drawHeight));
+    ImGui::Image(entry.ThumbnailTextureData->GetTexRef(), ImVec2(drawSize.Width, drawSize.Height));
     ImGui::EndTooltip();
 }
 
@@ -521,55 +512,40 @@ static void MaybeKickThumbnailDecode(AppController& app, AttachmentWindowEntry& 
 }
 #endif
 
-} // namespace
-
-void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& d) {
-    AttachmentCollectionRequest nextCollection;
-    bool hasCollection = false;
-    std::deque<AttachmentPreviewUpdate> previewUpdates;
-    const AttachmentThumbnailSupport thumbnailSupport = GetAttachmentThumbnailSupport();
-#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
-    // Reclaim textures whose renderer backend has finished the WantDestroy round-trip.
-    TickAttachmentPendingTextureDestroys();
-#endif
-    {
-        std::lock_guard<std::mutex> lock(d.attachmentPreviewMutex);
-        if (!d.attachmentCollectionQueue.empty()) {
-            nextCollection = d.attachmentCollectionQueue.back();
-            d.attachmentCollectionQueue.clear();
-            hasCollection = true;
+// Rebuild the window entry list from a freshly-collected attachment request and kick the
+// eager priority preview fetches. Non-ImGui state mutation only — extracted verbatim from
+// drawAttachmentPreviewWindow's collection-drain phase.
+static void IngestAttachmentCollection(AppController& app, UiDrawSession& d,
+                                       const AttachmentCollectionRequest& nextCollection,
+                                       const AttachmentThumbnailSupport& thumbnailSupport) {
+    ReleaseAttachmentWindowEntries(d.attachmentWindowEntries);
+    d.attachmentWindowEntries.reserve(nextCollection.Attachments.size());
+    int imageCount = 0;
+    for (const auto& attachment : nextCollection.Attachments) {
+        AttachmentWindowEntry entry;
+        entry.Filename = attachment.Filename.empty() ? std::string("Attachment") : attachment.Filename;
+        entry.Url = attachment.Url;
+        entry.MimeType = attachment.MimeType;
+        if (IsSupportedImageMime(entry.MimeType)) {
+            ++imageCount;
         }
-        if (!d.attachmentPreviewUpdateQueue.empty()) {
-            previewUpdates.swap(d.attachmentPreviewUpdateQueue);
-        }
+        d.attachmentWindowEntries.push_back(std::move(entry));
     }
-
-    if (hasCollection) {
-        ReleaseAttachmentWindowEntries(d.attachmentWindowEntries);
-        d.attachmentWindowEntries.reserve(nextCollection.Attachments.size());
-        int imageCount = 0;
-        for (const auto& attachment : nextCollection.Attachments) {
-            AttachmentWindowEntry entry;
-            entry.Filename = attachment.Filename.empty() ? std::string("Attachment") : attachment.Filename;
-            entry.Url = attachment.Url;
-            entry.MimeType = attachment.MimeType;
-            if (IsSupportedImageMime(entry.MimeType)) {
-                ++imageCount;
-            }
-            d.attachmentWindowEntries.push_back(std::move(entry));
-        }
-        d.attachmentWindowSelectedIndex = 0;
-        d.attachmentPreviewWindowOpen = true;
-        if (imageCount > 0) {
-            const int eagerRequests = QueuePriorityAttachmentPreviewRequests(app, d.attachmentWindowEntries,
-                                                                             d.attachmentWindowSelectedIndex, 6);
-            LOG_INFO("SmatchetUI: opened attachment gallery total=%d images=%d eager=%d bitmap=%s detail=%s",
-                     static_cast<int>(d.attachmentWindowEntries.size()), imageCount, eagerRequests,
-                     thumbnailSupport.CanRenderBitmapThumbnails ? "enabled" : "disabled",
-                     thumbnailSupport.Reason.c_str());
-        }
+    d.attachmentWindowSelectedIndex = 0;
+    d.attachmentPreviewWindowOpen = true;
+    if (imageCount > 0) {
+        const int eagerRequests =
+            QueuePriorityAttachmentPreviewRequests(app, d.attachmentWindowEntries, d.attachmentWindowSelectedIndex, 6);
+        LOG_INFO("SmatchetUI: opened attachment gallery total=%d images=%d eager=%d bitmap=%s detail=%s",
+                 static_cast<int>(d.attachmentWindowEntries.size()), imageCount, eagerRequests,
+                 thumbnailSupport.CanRenderBitmapThumbnails ? "enabled" : "disabled", thumbnailSupport.Reason.c_str());
     }
+}
 
+// Apply a drained batch of download-completion updates to the matching window entries
+// (parsing image dimensions on the UI thread for the matched entry). Non-ImGui state
+// mutation only — extracted verbatim from drawAttachmentPreviewWindow's update-drain phase.
+static void ApplyAttachmentPreviewUpdates(UiDrawSession& d, const std::deque<AttachmentPreviewUpdate>& previewUpdates) {
     for (const AttachmentPreviewUpdate& nextPreviewUpdate : previewUpdates) {
         int targetIndex = -1;
         for (int i = 0; i < static_cast<int>(d.attachmentWindowEntries.size()); ++i) {
@@ -607,6 +583,36 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
             d.attachmentPreviewWindowOpen = true;
         }
     }
+}
+
+} // namespace
+
+void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& d) {
+    AttachmentCollectionRequest nextCollection;
+    bool hasCollection = false;
+    std::deque<AttachmentPreviewUpdate> previewUpdates;
+    const AttachmentThumbnailSupport thumbnailSupport = GetAttachmentThumbnailSupport();
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+    // Reclaim textures whose renderer backend has finished the WantDestroy round-trip.
+    TickAttachmentPendingTextureDestroys();
+#endif
+    {
+        std::lock_guard<std::mutex> lock(d.attachmentPreviewMutex);
+        if (!d.attachmentCollectionQueue.empty()) {
+            nextCollection = d.attachmentCollectionQueue.back();
+            d.attachmentCollectionQueue.clear();
+            hasCollection = true;
+        }
+        if (!d.attachmentPreviewUpdateQueue.empty()) {
+            previewUpdates.swap(d.attachmentPreviewUpdateQueue);
+        }
+    }
+
+    if (hasCollection) {
+        IngestAttachmentCollection(app, d, nextCollection, thumbnailSupport);
+    }
+
+    ApplyAttachmentPreviewUpdates(d, previewUpdates);
 
     if (!d.attachmentPreviewWindowOpen) {
         return;
@@ -646,158 +652,187 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
         }
 #endif
         ImGui::Separator();
-        ImGui::BeginChild("AttachmentListPane", ImVec2(390, 0), true);
-        const float cardWidth = 120.0f;
-        const float cardHeight = 160.0f;
-        const float tileSize = 96.0f;
-        const float itemSpacing = ImGui::GetStyle().ItemSpacing.x;
-        const float availableWidth = ImGui::GetContentRegionAvail().x;
-        const int columnCount =
-            (std::max)(1, static_cast<int>((availableWidth + itemSpacing) / (cardWidth + itemSpacing)));
-        if (ImGui::BeginTable("AttachmentGrid", columnCount, ImGuiTableFlags_SizingFixedFit)) {
-            for (int i = 0; i < static_cast<int>(d.attachmentWindowEntries.size()); ++i) {
-                AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(i)];
-#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
-                // S5: per-frame decode kick — retries a rate-limited skip, dedup'd via the
-                // entry's ThumbnailDecodeInFlight flag.
-                if (thumbnailSupport.CanRenderBitmapThumbnails) {
-                    MaybeKickThumbnailDecode(app, entry);
-                }
-#endif
-                const bool selected = (i == d.attachmentWindowSelectedIndex);
-                ImGui::TableNextColumn();
-                ImGui::PushID(i);
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, selected ? ImVec4(0.16f, 0.24f, 0.33f, 0.95f)
-                                                                 : ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
-                ImGui::BeginChild("AttachmentCard", ImVec2(cardWidth, cardHeight), true,
-                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-                bool clicked = false;
-#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
-                if (AttachmentHasBitmapThumbnail(entry)) {
-                    const ImVec2 thumbDraw = FitImageInsideSquare(entry.ImageWidth, entry.ImageHeight, tileSize);
-                    const float padX = (std::max)(0.0f, (cardWidth - thumbDraw.x) * 0.5f);
-                    const float padTop = (std::max)(0.0f, (tileSize - thumbDraw.y) * 0.5f);
-                    const float padBottom = (std::max)(0.0f, tileSize - padTop - thumbDraw.y);
-                    ImGui::SetCursorPosX(padX);
-                    ImGui::Dummy(ImVec2(0.0f, padTop));
-                    clicked =
-                        ImGui::ImageButton("##attachment_thumb", entry.ThumbnailTextureData->GetTexRef(), thumbDraw);
-                    ImGui::Dummy(ImVec2(0.0f, padBottom));
-                    if (ImGui::IsItemHovered()) {
-                        DrawAttachmentThumbnailTooltip(entry);
-                    }
-                } else
-#endif
-                {
-                    const float centeredX = (std::max)(0.0f, (cardWidth - tileSize) * 0.5f);
-                    ImGui::SetCursorPosX(centeredX);
-                    if (!entry.PreviewError.empty()) {
-                        clicked = ImGui::Button("Preview error", ImVec2(tileSize, tileSize));
-                    } else if (IsSupportedImageMime(entry.MimeType) && entry.PreviewRequestIssued &&
-                               entry.LocalPath.empty()) {
-                        clicked = ImGui::Button("Loading...", ImVec2(tileSize, tileSize));
-                    } else if (IsSupportedImageMime(entry.MimeType) && !thumbnailSupport.CanRenderBitmapThumbnails) {
-                        clicked = ImGui::Button("Metadata", ImVec2(tileSize, tileSize));
-                    } else if (IsSupportedImageMime(entry.MimeType)) {
-                        clicked = ImGui::Button("Image", ImVec2(tileSize, tileSize));
-                    } else {
-                        clicked = ImGui::Button("File", ImVec2(tileSize, tileSize));
-                    }
-                }
-                if (clicked) {
-                    d.attachmentWindowSelectedIndex = i;
-                }
-
-                ImGui::Dummy(ImVec2(0.0f, 4.0f));
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cardWidth - 10.0f);
-                ImGui::TextUnformatted(entry.Filename.c_str());
-                ImGui::PopTextWrapPos();
-                if (!entry.PreviewError.empty()) {
-                    ImGui::TextDisabled("preview failed");
-                } else if (IsSupportedImageMime(entry.MimeType)) {
-                    if (entry.ImageWidth > 0 && entry.ImageHeight > 0) {
-                        ImGui::TextDisabled("%dx%d", entry.ImageWidth, entry.ImageHeight);
-                    } else if (entry.PreviewRequestIssued) {
-                        ImGui::TextDisabled("loading");
-                    } else if (!thumbnailSupport.CanRenderBitmapThumbnails) {
-                        ImGui::TextDisabled("metadata");
-                    } else {
-                        ImGui::TextDisabled("image");
-                    }
-                } else {
-                    ImGui::TextDisabled("file");
-                }
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-                if (selected) {
-                    ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    drawList->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(90, 170, 255, 255),
-                                      6.0f, 0, 2.0f);
-                }
-                ImGui::PopID();
-            }
-            ImGui::EndTable();
-        }
-        ImGui::EndChild();
+        AttachmentPreviewDrawCtx ctx{app, d, thumbnailSupport};
+        drawAttachmentListPane(ctx);
         ImGui::SameLine();
-        AttachmentWindowEntry& selectedEntry =
-            d.attachmentWindowEntries[static_cast<size_t>(d.attachmentWindowSelectedIndex)];
-        ImGui::BeginChild("AttachmentDetailsPane", ImVec2(0, 0), false);
-        ImGui::TextUnformatted(selectedEntry.Filename.c_str());
-        ImGui::Separator();
-        ImGui::Text("Mime: %s", selectedEntry.MimeType.empty() ? "(unknown)" : selectedEntry.MimeType.c_str());
-        if (!selectedEntry.LocalPath.empty()) {
-            ImGui::TextWrapped("Local file: %s", selectedEntry.LocalPath.c_str());
-        } else {
-            ImGui::TextDisabled("Local file: not downloaded yet");
-        }
-        if (!selectedEntry.PreviewError.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", selectedEntry.PreviewError.c_str());
-            ImGui::PopStyleColor();
-        } else if (IsSupportedImageMime(selectedEntry.MimeType) && selectedEntry.ImageWidth > 0 &&
-                   selectedEntry.ImageHeight > 0) {
-            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "Image preview metadata: %dx%d",
-                               selectedEntry.ImageWidth, selectedEntry.ImageHeight);
-        } else if (IsSupportedImageMime(selectedEntry.MimeType) && selectedEntry.PreviewRequestIssued) {
-            ImGui::TextDisabled("Loading preview...");
-        }
-        if (IsSupportedImageMime(selectedEntry.MimeType) && !thumbnailSupport.CanRenderBitmapThumbnails) {
-            ImGui::TextDisabled("%s", thumbnailSupport.Reason.c_str());
-        }
-#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
-        if (AttachmentHasBitmapThumbnail(selectedEntry)) {
-            const float maxWidth = ImGui::GetContentRegionAvail().x;
-            const float maxHeight = 220.0f;
-            float drawWidth = static_cast<float>(selectedEntry.ImageWidth > 0 ? selectedEntry.ImageWidth : 1);
-            float drawHeight = static_cast<float>(selectedEntry.ImageHeight > 0 ? selectedEntry.ImageHeight : 1);
-            const float scale = (std::min)(maxWidth / drawWidth, maxHeight / drawHeight);
-            if (scale > 0.0f) {
-                drawWidth *= (std::min)(scale, 1.0f);
-                drawHeight *= (std::min)(scale, 1.0f);
-            }
-            ImGui::Image(selectedEntry.ThumbnailTextureData->GetTexRef(), ImVec2(drawWidth, drawHeight));
-        }
-#endif
-        if (ImGui::Button("Open selected")) {
-            app.OpenAttachmentInSystemViewer(selectedEntry.Url, selectedEntry.Filename, selectedEntry.MimeType);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Open URL externally")) {
-            app.OpenUrl(selectedEntry.Url);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Close")) {
-            d.attachmentPreviewWindowOpen = false;
-        }
-        ImGui::EndChild();
+        drawAttachmentDetailsPane(ctx);
     }
     ImGui::End();
     if (!d.attachmentPreviewWindowOpen) {
         ReleaseAttachmentWindowEntries(d.attachmentWindowEntries);
         d.attachmentWindowSelectedIndex = 0;
     }
+}
+
+void SmatchetUI::drawAttachmentListPane(AttachmentPreviewDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const AttachmentThumbnailSupport& thumbnailSupport = ctx.thumbnailSupport;
+
+    ImGui::BeginChild("AttachmentListPane", ImVec2(390, 0), true);
+    const float cardWidth = 120.0f;
+    const float cardHeight = 160.0f;
+    const float tileSize = 96.0f;
+    const float itemSpacing = ImGui::GetStyle().ItemSpacing.x;
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const int columnCount = (std::max)(1, static_cast<int>((availableWidth + itemSpacing) / (cardWidth + itemSpacing)));
+    if (ImGui::BeginTable("AttachmentGrid", columnCount, ImGuiTableFlags_SizingFixedFit)) {
+        for (int i = 0; i < static_cast<int>(d.attachmentWindowEntries.size()); ++i) {
+            AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(i)];
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+            // S5: per-frame decode kick — retries a rate-limited skip, dedup'd via the
+            // entry's ThumbnailDecodeInFlight flag.
+            if (thumbnailSupport.CanRenderBitmapThumbnails) {
+                MaybeKickThumbnailDecode(app, entry);
+            }
+#endif
+            const bool selected = (i == d.attachmentWindowSelectedIndex);
+            ImGui::TableNextColumn();
+            ImGui::PushID(i);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, selected ? ImVec4(0.16f, 0.24f, 0.33f, 0.95f)
+                                                             : ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+            ImGui::BeginChild("AttachmentCard", ImVec2(cardWidth, cardHeight), true,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+            bool clicked = false;
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+            if (AttachmentHasBitmapThumbnail(entry)) {
+                const ImVec2 thumbDraw = FitImageInsideSquare(entry.ImageWidth, entry.ImageHeight, tileSize);
+                const float padX = (std::max)(0.0f, (cardWidth - thumbDraw.x) * 0.5f);
+                const float padTop = (std::max)(0.0f, (tileSize - thumbDraw.y) * 0.5f);
+                const float padBottom = (std::max)(0.0f, tileSize - padTop - thumbDraw.y);
+                ImGui::SetCursorPosX(padX);
+                ImGui::Dummy(ImVec2(0.0f, padTop));
+                clicked = ImGui::ImageButton("##attachment_thumb", entry.ThumbnailTextureData->GetTexRef(), thumbDraw);
+                ImGui::Dummy(ImVec2(0.0f, padBottom));
+                if (ImGui::IsItemHovered()) {
+                    DrawAttachmentThumbnailTooltip(entry);
+                }
+            } else
+#endif
+            {
+                const float centeredX = (std::max)(0.0f, (cardWidth - tileSize) * 0.5f);
+                ImGui::SetCursorPosX(centeredX);
+                const smatchet::attach::CardLabel label = smatchet::attach::ClassifyAttachmentCardLabel(
+                    !entry.PreviewError.empty(), IsSupportedImageMime(entry.MimeType), entry.PreviewRequestIssued,
+                    entry.LocalPath.empty(), thumbnailSupport.CanRenderBitmapThumbnails);
+                const char* labelText = "File";
+                switch (label) {
+                case smatchet::attach::CardLabel::PreviewError:
+                    labelText = "Preview error";
+                    break;
+                case smatchet::attach::CardLabel::Loading:
+                    labelText = "Loading...";
+                    break;
+                case smatchet::attach::CardLabel::Metadata:
+                    labelText = "Metadata";
+                    break;
+                case smatchet::attach::CardLabel::Image:
+                    labelText = "Image";
+                    break;
+                case smatchet::attach::CardLabel::File:
+                    labelText = "File";
+                    break;
+                }
+                clicked = ImGui::Button(labelText, ImVec2(tileSize, tileSize));
+            }
+            if (clicked) {
+                d.attachmentWindowSelectedIndex = i;
+            }
+
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cardWidth - 10.0f);
+            ImGui::TextUnformatted(entry.Filename.c_str());
+            ImGui::PopTextWrapPos();
+            const smatchet::attach::CardStatus status = smatchet::attach::ClassifyAttachmentCardStatus(
+                !entry.PreviewError.empty(), IsSupportedImageMime(entry.MimeType),
+                entry.ImageWidth > 0 && entry.ImageHeight > 0, entry.PreviewRequestIssued,
+                thumbnailSupport.CanRenderBitmapThumbnails);
+            switch (status) {
+            case smatchet::attach::CardStatus::PreviewFailed:
+                ImGui::TextDisabled("preview failed");
+                break;
+            case smatchet::attach::CardStatus::Dimensions:
+                ImGui::TextDisabled("%dx%d", entry.ImageWidth, entry.ImageHeight);
+                break;
+            case smatchet::attach::CardStatus::Loading:
+                ImGui::TextDisabled("loading");
+                break;
+            case smatchet::attach::CardStatus::Metadata:
+                ImGui::TextDisabled("metadata");
+                break;
+            case smatchet::attach::CardStatus::Image:
+                ImGui::TextDisabled("image");
+                break;
+            case smatchet::attach::CardStatus::File:
+                ImGui::TextDisabled("file");
+                break;
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+            if (selected) {
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                drawList->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(90, 170, 255, 255), 6.0f,
+                                  0, 2.0f);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+}
+
+void SmatchetUI::drawAttachmentDetailsPane(AttachmentPreviewDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const AttachmentThumbnailSupport& thumbnailSupport = ctx.thumbnailSupport;
+
+    AttachmentWindowEntry& selectedEntry =
+        d.attachmentWindowEntries[static_cast<size_t>(d.attachmentWindowSelectedIndex)];
+    ImGui::BeginChild("AttachmentDetailsPane", ImVec2(0, 0), false);
+    ImGui::TextUnformatted(selectedEntry.Filename.c_str());
+    ImGui::Separator();
+    ImGui::Text("Mime: %s", selectedEntry.MimeType.empty() ? "(unknown)" : selectedEntry.MimeType.c_str());
+    if (!selectedEntry.LocalPath.empty()) {
+        ImGui::TextWrapped("Local file: %s", selectedEntry.LocalPath.c_str());
+    } else {
+        ImGui::TextDisabled("Local file: not downloaded yet");
+    }
+    if (!selectedEntry.PreviewError.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+        ImGui::TextWrapped("%s", selectedEntry.PreviewError.c_str());
+        ImGui::PopStyleColor();
+    } else if (IsSupportedImageMime(selectedEntry.MimeType) && selectedEntry.ImageWidth > 0 &&
+               selectedEntry.ImageHeight > 0) {
+        ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "Image preview metadata: %dx%d", selectedEntry.ImageWidth,
+                           selectedEntry.ImageHeight);
+    } else if (IsSupportedImageMime(selectedEntry.MimeType) && selectedEntry.PreviewRequestIssued) {
+        ImGui::TextDisabled("Loading preview...");
+    }
+    if (IsSupportedImageMime(selectedEntry.MimeType) && !thumbnailSupport.CanRenderBitmapThumbnails) {
+        ImGui::TextDisabled("%s", thumbnailSupport.Reason.c_str());
+    }
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+    if (AttachmentHasBitmapThumbnail(selectedEntry)) {
+        const float maxWidth = ImGui::GetContentRegionAvail().x;
+        const float maxHeight = 220.0f;
+        const smatchet::attach::ImageDrawSize drawSize = smatchet::attach::ComputeImageDrawSize(
+            selectedEntry.ImageWidth, selectedEntry.ImageHeight, maxWidth, maxHeight, true);
+        ImGui::Image(selectedEntry.ThumbnailTextureData->GetTexRef(), ImVec2(drawSize.Width, drawSize.Height));
+    }
+#endif
+    if (ImGui::Button("Open selected")) {
+        app.OpenAttachmentInSystemViewer(selectedEntry.Url, selectedEntry.Filename, selectedEntry.MimeType);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Open URL externally")) {
+        app.OpenUrl(selectedEntry.Url);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close")) {
+        d.attachmentPreviewWindowOpen = false;
+    }
+    ImGui::EndChild();
 }
