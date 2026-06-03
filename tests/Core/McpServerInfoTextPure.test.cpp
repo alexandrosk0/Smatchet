@@ -9,6 +9,10 @@
 
 #include <string>
 
+// McpServerInfoTextPure.h is #if defined(SMATCHET_WITH_MCP)-gated (matches its only
+// caller), so these cases only build in full configs; in light builds the TU is empty.
+#if defined(SMATCHET_WITH_MCP)
+
 using smatchet::mcp_ui::BuildMcpServerInfoText;
 
 namespace {
@@ -126,3 +130,5 @@ TEST_CASE("BuildMcpServerInfoText plugin present but server down note") {
     const std::string info = BuildMcpServerInfoText(cfg, &st);
     CHECK(Contains(info, "MCP plugin is present but the HTTP server is not running."));
 }
+
+#endif // SMATCHET_WITH_MCP

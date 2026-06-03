@@ -6,6 +6,11 @@
 // nullable runtime-status snapshot and returns the formatted multiline string. Behaviour
 // is byte-for-byte identical to the inline builder the monolith shipped, so the bucket-A
 // test pins every config/runtime branch and endpoint line.
+//
+// Gated on SMATCHET_WITH_MCP to match SmatchetMcpServerUi.cpp (the only caller), which is
+// fully #if defined(SMATCHET_WITH_MCP)-gated — keeps all MCP code out of light builds.
+
+#if defined(SMATCHET_WITH_MCP)
 
 #include "ConfigManager.h"
 #include "McpServerStatus.h"
@@ -108,3 +113,5 @@ inline std::string BuildMcpServerInfoText(const TrackerConfig& cfgOnDisk, const 
 
 } // namespace mcp_ui
 } // namespace smatchet
+
+#endif // SMATCHET_WITH_MCP
