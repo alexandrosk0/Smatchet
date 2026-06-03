@@ -8,7 +8,7 @@
 
 Smatchet has a **documented skill-vs-agent rubric** — but it lives in a *shipped plan* (`docs/plans/shipped/agents-skill-conversion.md` § Decision criteria), not a live rule, and that plan explicitly said *"Codify in `docs/agent-rules/AGENT-VS-SKILL.md` (out of scope here)."* The file was never created. So every future skill/agent decision re-derives the criteria ad hoc.
 
-Separately, the repo **under-uses skills for recurring orchestrator-inline procedures**. The most-repeated structured procedure in the project — authoring a plan-doc (`docs/plans/active/<slug>.md`) — has no skill. It lives as prose across `_plan-template.md` + `AGENTS.md` § Process rules + `docs/agent-rules/process-rules.md` (Plan-doc family / Plan-doc safety / Plan template). It passes the rubric cleanly (deterministic, bounded, no investigation loop, direct action) yet is hand-executed every time. `grill-with-docs` covers the *stress-test* of a plan, not its *authoring* — they are complementary.
+Separately, the repo **under-uses skills for recurring orchestrator-inline procedures**. The most-repeated structured procedure in the project — authoring a plan-doc (`docs/plans/active/<slug>.md`) — has no skill. It lives as prose across `docs/plans/active/_plan-template.md` + `AGENTS.md` § Process rules + `docs/agent-rules/process-rules.md` (Plan-doc family / Plan-doc safety / Plan template). It passes the rubric cleanly (deterministic, bounded, no investigation loop, direct action) yet is hand-executed every time. `grill-with-docs` covers the *stress-test* of a plan, not its *authoring* — they are complementary.
 
 **Intended outcome — one sentence:** after this lands, `docs/agent-rules/AGENT-VS-SKILL.md` is the live home of the skill-vs-agent rubric, and `author-plan-doc` is a skill that produces a template-conformant, immediately-committed plan from a one-line request.
 
@@ -63,7 +63,7 @@ N/A — no Source/Core code. The diff is `*.md` + `agents/scripts/**` only — b
 - **Bucket A / E**: N/A — no code.
 - **Parity guard**: `bash agents/scripts/core/test-skill-vs-agent-parity.sh` green — `author-plan-doc` recognised as skill-only (in `SKILL_ONLY_HELPERS`), no orphan failure.
 - **Auto-link**: `bash agents/scripts/core/setup-harness.sh claude-code` links `.claude/skills/author-plan-doc` via the existing loop; no hand-wiring.
-- **Skill dry-run**: invoke `author-plan-doc` on a throwaway request → produces a `docs/plans/active/<slug>.md` that passes `test-plan-naming.sh` + `test-plan-ref-integrity.sh` and contains every required section (N/A-filled where N/A).
+- **Skill dry-run**: on a throwaway branch (`git checkout -b tmp/skill-test`), invoke `author-plan-doc` → it produces **and commits** a `docs/plans/active/<slug>.md` (exercising the commit-immediately step) that passes `test-plan-naming.sh` + `test-plan-ref-integrity.sh` and contains every required section (N/A-filled where N/A); then `git checkout develop && git branch -D tmp/skill-test` so the main line is untouched — the dry-run never pollutes `develop`.
 - **Doc integrity**: `test-markdown-links.sh` + `test-doc-anchors.sh` green — the `AGENTS.md → AGENT-VS-SKILL.md` pointer resolves.
 - **Pure-docs**: `is-pure-docs-diff.sh` returns true → build/ctest skipped.
 - **Build gate**: N/A — pure-docs.
