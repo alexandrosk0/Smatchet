@@ -87,3 +87,44 @@ refs (git grep across all tracked files, not just `*.md`) on `git mv`.
 ### Filed as
 [`docs/self-improvement/categories/infra.md`](categories/infra.md) — 2026-06-03
 infra P2 "doc-validation gates are NON-required" (shipped in PR #780).
+
+## 2026-06-03 · PR #791 (escape) / #796 (surfaced) · gate-escape (concurrent-PR lint gap)
+
+### What escaped
+`docs/plans/deferred/self-improvement-one-entry-per-file.md:6` shipped to `develop`
+with an **MD028** markdown violation (bare blank line inside a blockquote) — a rule
+the `md_lint.py --all` gate (doc-validation.yml) enforces. No single PR ever went
+red on it; it ambushed the next unrelated docs-touching PR (#796, CI build-time
+reduction), where `md_lint --all` ran against the merged tree and failed the "Doc
+anchors + agent contract" job. Fixed inline on #796 (one `>` continuation line).
+
+### Root cause
+A **concurrent-PR gate gap**, not an admin-merge-past-red. The md_lint gate landed
+in **#789** (`6987b7d5`). The violating file landed in **#791** (`d8e7c421`), which
+had branched *before* #789 merged — so #791's "Doc anchors + agent contract" PR run
+executed a `doc-validation.yml` that did **not** yet contain the md_lint step and
+reported **pass** (run 26888295853, 16s). GitHub did **not** re-run #791 against
+#789's newly-merged gate before merging #791 (branch-protection's "Require branches
+to be up to date before merging" is **off**). After both merged, `develop` carried
+the gate *and* the violation, but no PR was ever red. The post-merge `push`
+doc-validation on #791's merge commit (it matches `**/*.md`) would have gone red on
+`develop` — a red post-merge run blocks nothing and went unnoticed. General class:
+**Gate added in PR-A + violation added in concurrently-open PR-B → neither PR red
+alone, merged tree violates.** Distinct from the "admin-merged past a red check"
+incidents above (#780, #784) — here every PR was genuinely green.
+
+### Preventing gate
+Enable branch-protection **"Require branches to be up to date before merging"** on
+`develop` (+ record in `project.config.json` `branch_protection`): forces PR-B to
+rebase onto the latest `develop` — re-running CI **with** any gate PR-A just added —
+before it can merge, so a concurrently-introduced violation is caught on PR-B's own
+run instead of the next innocent PR. Trade: every PR must be current before merge
+(more rebases; the merge-watcher already polls, so it can drive the update). The
+lighter, already-shipped half-measure — making doc-validation **required** (the
+2026-06-03 infra-P2 entry) — does NOT close this class: #791's run was *green*
+(stale workflow), so a required-context check still passes. Up-to-date-before-merge
+(or a GitHub merge queue, which re-tests the merge result) is the structural fix.
+
+### Filed as
+[`docs/self-improvement/categories/infra.md`](categories/infra.md) — 2026-06-03
+infra "require-branches-up-to-date (concurrent-PR gate gap)".
