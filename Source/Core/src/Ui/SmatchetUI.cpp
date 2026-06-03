@@ -260,40 +260,67 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
 
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
-    if (!g_ui.cfgInitialized) {
-        g_ui.cfg = ConfigManager::Load();
-        g_ui.cfg.UiLanguage = SmatchetLocalization::NormalizeLanguageCode(g_ui.cfg.UiLanguage);
-        SmatchetLocalization::SetLanguage(g_ui.cfg.UiLanguage);
-        g_ui.showPreferences = g_ui.cfg.ShowPreferencesWindow;
-        g_ui.showViewsDashboard = g_ui.cfg.ShowViewsDashboardWindow;
-        g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
-        g_ui.showLogWindow = g_ui.cfg.ShowLogWindow;
+    drawInitConfigOnce(app, d);
+    drawApplyAppearanceSettings(d);
+    drawPerFrameTicksAndHandlers(app, d);
+    UiPerfMonitor::Instance().BeginFrame();
+    SmatchetImageTextureCache::TickPendingDestroys();
+    drawPreWindowOverlays(app, d);
+
+    SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
+    drawViewStateAndConnectivity(app, d);
+    drawChromeAndModeToggles(app, d);
+    handleViewKeyboardShortcuts(d);
+    DrainAppUpdateCheck(d);
+    drawSecondaryWindows(app, d);
+    drawDockDebugOverlay(d);
+    drawEndOfFramePersistence(d);
+}
+
+// One-time config load + layout-schema migration. Latches `cfgInitialized`; subsequent
+// frames early-out.
+void SmatchetUI::drawInitConfigOnce(AppController& app, UiDrawSession& d) {
+    (void)app;
+    (void)d; // body operates on the g_ui singleton directly (d aliases g_ui)
+    if (g_ui.cfgInitialized) {
+        return;
+    }
+    g_ui.cfg = ConfigManager::Load();
+    g_ui.cfg.UiLanguage = SmatchetLocalization::NormalizeLanguageCode(g_ui.cfg.UiLanguage);
+    SmatchetLocalization::SetLanguage(g_ui.cfg.UiLanguage);
+    g_ui.showPreferences = g_ui.cfg.ShowPreferencesWindow;
+    g_ui.showViewsDashboard = g_ui.cfg.ShowViewsDashboardWindow;
+    g_ui.showPerformance = g_ui.cfg.ShowPerformanceWindow;
+    g_ui.showLogWindow = g_ui.cfg.ShowLogWindow;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        g_ui.showLuaAutomationWindow = g_ui.cfg.ShowLuaAutomationWindow;
+    g_ui.showLuaAutomationWindow = g_ui.cfg.ShowLuaAutomationWindow;
 #endif
 #if defined(SMATCHET_WITH_MCP)
-        g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
+    g_ui.showMcpServerWindow = g_ui.cfg.ShowMcpServerWindow;
 #endif
-        // Commit-last layout migration: reset dock layout first, then bump version and
-        // persist. If killed between the two steps the next launch re-migrates safely.
-        // ConfigManager::Save uses AtomicWriteTextFile (write-tmp + MoveFileEx rename)
-        // internally via WriteConfigJson — already atomic.
-        if (g_ui.cfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
-            LOG_INFO("SmatchetUI: LayoutSchemaVersion %d < %d — resetting layout to VS shell default.",
-                     g_ui.cfg.LayoutSchemaVersion, ConfigManager::kCurrentLayoutSchemaVersion);
-            resetWindowLayoutToDefault(g_ui);
-            g_ui.cfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
-            ConfigManager::Save(g_ui.cfg);
-        }
-
-        g_ui.cfgInitialized = true;
-        ApplyLoggingSettingsFromConfig(g_ui.cfg);
-
-        if (!g_ui.cfg.SelectedFontName.empty() && g_ui.cfg.SelectedFontName != "Segoe UI") {
-            SmatchetRequestFontReload(g_ui.cfg.SelectedFontName, 16.0f);
-        }
+    // Commit-last layout migration: reset dock layout first, then bump version and
+    // persist. If killed between the two steps the next launch re-migrates safely.
+    // ConfigManager::Save uses AtomicWriteTextFile (write-tmp + MoveFileEx rename)
+    // internally via WriteConfigJson — already atomic.
+    if (g_ui.cfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
+        LOG_INFO("SmatchetUI: LayoutSchemaVersion %d < %d — resetting layout to VS shell default.",
+                 g_ui.cfg.LayoutSchemaVersion, ConfigManager::kCurrentLayoutSchemaVersion);
+        resetWindowLayoutToDefault(g_ui);
+        g_ui.cfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
+        ConfigManager::Save(g_ui.cfg);
     }
 
+    g_ui.cfgInitialized = true;
+    ApplyLoggingSettingsFromConfig(g_ui.cfg);
+
+    if (!g_ui.cfg.SelectedFontName.empty() && g_ui.cfg.SelectedFontName != "Segoe UI") {
+        SmatchetRequestFontReload(g_ui.cfg.SelectedFontName, 16.0f);
+    }
+}
+
+// Per-frame zoom / density / theme re-application. All three are idempotent and only
+// touch ImGui style when the corresponding cfg value drifts from the last applied value.
+void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
     ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
 
@@ -316,7 +343,11 @@ void SmatchetUI::Draw(AppController& app) {
         lastAppliedTheme_ = d.cfg.Theme;
         smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
     }
+}
 
+// Per-frame background work: startup banners, update-check kickoff, panel-status expiry,
+// offline-queue ticks, and one-time attachment / open-file handler registration.
+void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession& d) {
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
@@ -388,9 +419,11 @@ void SmatchetUI::Draw(AppController& app) {
         g_openFilePathsHandlerInstalled = true;
     }
 #endif
-    UiPerfMonitor::Instance().BeginFrame();
-    SmatchetImageTextureCache::TickPendingDestroys();
+}
 
+// Pre-window overlays that must run before any sub-window draw so they intercept key
+// events first: the command palette, the bug-report hotkey + modal, and the scenario tick.
+void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // Unified Command System: palette (Ctrl+Shift+P) — must run before any
     // sub-window draws so it can intercept key events first.
     // Skip while the first-launch tracker gate is active so the palette can't bypass it.
@@ -433,8 +466,12 @@ void SmatchetUI::Draw(AppController& app) {
         d.scenarioScrollActive = scenScrollActive;
         d.scenarioScrollTarget = scenScrollTarget;
     }
+}
 
-    SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
+// ViewState load + backend-key change reset, view-command registration, connectivity
+// monitor tick, first-launch unlock latch, stale-banner clears, dispatcher drain,
+// catalog/initial-sync, and the per-frame catalog+column cache rebuild.
+void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession& d) {
     {
         SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
         ViewState.EnsureLoaded(g_ui.cfg);
@@ -512,6 +549,12 @@ void SmatchetUI::Draw(AppController& app) {
                                        : std::vector<TicketGridColumn>();
         }
     }
+}
+
+// Menu bar, toolbar, Whisper banner/overlay, dock-debug toggle, status bar, and the
+// fullscreen / Zen-mode chrome toggles. Zen key-chord + esc-esc state hoisted to
+// drawBodyState_ (was function-local statics).
+void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) {
     if (!d.cfg.ZenMode) {
         SMATCHET_UI_PERF_SCOPE("drawMainMenuBar");
         drawMainMenuBar(app, d);
@@ -558,134 +601,140 @@ void SmatchetUI::Draw(AppController& app) {
     }
 #endif
 
-    // Zen Mode: Ctrl+M then Z chord (1 s timeout). Esc Esc to exit.
+    // Zen Mode: Ctrl+M then Z chord (1 s timeout). Esc Esc to exit. Chord state lives in
+    // drawBodyState_ (hoisted from the former function-local `static KeyChord s_zenChord`).
     {
-        struct KeyChord {
-            bool prefixArmed = false;
-            float timeoutSec = 0.0f;
-
-            bool Tick(bool prefixKey, bool completionKey, float dt) {
-                static const float kTimeout = 1.0f;
-                if (prefixKey) {
-                    prefixArmed = true;
-                    timeoutSec = 0.0f;
-                }
-                if (prefixArmed) {
-                    timeoutSec += dt;
-                    if (timeoutSec > kTimeout) {
-                        prefixArmed = false;
-                    }
-                    if (::ImGui::GetIO().WantTextInput) {
-                        prefixArmed = false;
-                    }
-                    if (completionKey && prefixArmed) {
-                        prefixArmed = false;
-                        return true;
-                    }
-                }
-                return false;
-            }
-        };
-        static KeyChord s_zenChord;
-
+        static const float kZenChordTimeout = 1.0f;
         const ImGuiIO& zcIo = ::ImGui::GetIO();
         const bool ctrlM = zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt && ::ImGui::IsKeyPressed(ImGuiKey_M, false);
         const bool keyZ = !zcIo.KeyCtrl && !zcIo.KeyShift && !zcIo.KeyAlt && ::ImGui::IsKeyPressed(ImGuiKey_Z, false);
-        if (s_zenChord.Tick(ctrlM, keyZ, zcIo.DeltaTime)) {
+        bool zenChordFired = false;
+        if (ctrlM) {
+            drawBodyState_.zenChordPrefixArmed = true;
+            drawBodyState_.zenChordTimeoutSec = 0.0f;
+        }
+        if (drawBodyState_.zenChordPrefixArmed) {
+            drawBodyState_.zenChordTimeoutSec += zcIo.DeltaTime;
+            if (drawBodyState_.zenChordTimeoutSec > kZenChordTimeout) {
+                drawBodyState_.zenChordPrefixArmed = false;
+            }
+            if (zcIo.WantTextInput) {
+                drawBodyState_.zenChordPrefixArmed = false;
+            }
+            if (keyZ && drawBodyState_.zenChordPrefixArmed) {
+                drawBodyState_.zenChordPrefixArmed = false;
+                zenChordFired = true;
+            }
+        }
+        if (zenChordFired) {
             d.cfg.ZenMode = !d.cfg.ZenMode;
         }
     }
-    // Esc Esc to exit Zen Mode.
+    // Esc Esc to exit Zen Mode. Counter / timer hoisted to drawBodyState_.
     if (d.cfg.ZenMode) {
-        static int s_escCount = 0;
-        static float s_escTimer = 0.0f;
-        s_escTimer += ::ImGui::GetIO().DeltaTime;
-        if (s_escTimer > 0.5f) {
-            s_escCount = 0;
-            s_escTimer = 0.0f;
+        drawBodyState_.zenEscTimer += ::ImGui::GetIO().DeltaTime;
+        if (drawBodyState_.zenEscTimer > 0.5f) {
+            drawBodyState_.zenEscCount = 0;
+            drawBodyState_.zenEscTimer = 0.0f;
         }
         if (::ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-            ++s_escCount;
-            s_escTimer = 0.0f;
-            if (s_escCount >= 2) {
+            ++drawBodyState_.zenEscCount;
+            drawBodyState_.zenEscTimer = 0.0f;
+            if (drawBodyState_.zenEscCount >= 2) {
                 d.cfg.ZenMode = false;
-                s_escCount = 0;
+                drawBodyState_.zenEscCount = 0;
             }
         }
     }
+}
 
-    // Keyboard shortcuts for panel visibility toggles (Ctrl+B / Ctrl+J).
+// Keyboard shortcuts for panel-visibility toggles + always-reveal view-menu shortcuts.
+// Pure key-dispatch; no positional-ImGui pair. Split into two sub-helpers to stay under
+// the branch cap.
+void SmatchetUI::handleViewKeyboardShortcuts(UiDrawSession& d) {
+    handlePanelVisibilityShortcuts(d);
+    handleViewRevealShortcuts(d);
+}
+
+// Panel-visibility toggles (Ctrl+B primary side bar / Ctrl+Alt+B secondary side bar /
+// Ctrl+J bottom panel). Each persists immediately.
+void SmatchetUI::handlePanelVisibilityShortcuts(UiDrawSession& d) {
     // ImGui::Shortcut available in docking branch; fall back to GetIO check if absent.
-    {
-        const ImGuiIO& io = ::ImGui::GetIO();
-        const bool ctrlDown = io.KeyCtrl;
-        const bool altDown = io.KeyAlt;
-        const bool shiftDown = io.KeyShift;
-        if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-            SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
-            ConfigManager::Save(d.cfg);
-        }
-        if (ctrlDown && altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-            SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
-            ConfigManager::Save(d.cfg);
-        }
-        if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_J, false)) {
-            SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
-            ConfigManager::Save(d.cfg);
-        }
+    const ImGuiIO& io = ::ImGui::GetIO();
+    const bool ctrlDown = io.KeyCtrl;
+    const bool altDown = io.KeyAlt;
+    if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+        SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
+        ConfigManager::Save(d.cfg);
+    }
+    if (ctrlDown && altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+        SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
+        ConfigManager::Save(d.cfg);
+    }
+    if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+        SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+        ConfigManager::Save(d.cfg);
+    }
+}
+
+// View-menu global always-reveal shortcuts (Ctrl+Shift+{A,F,D,I,X,K,L} / Ctrl+,). Setting
+// show* = true + raising the focus latch every press lets the consumer's wantFocus-driven
+// SetNextWindowFocus-before-Begin activate the docked tab.
+void SmatchetUI::handleViewRevealShortcuts(UiDrawSession& d) {
+    const ImGuiIO& io = ::ImGui::GetIO();
+    const bool ctrlDown = io.KeyCtrl;
+    const bool altDown = io.KeyAlt;
+    const bool shiftDown = io.KeyShift;
+    const bool ctrlShiftOnly = ctrlDown && shiftDown && !altDown;
 #if defined(SMATCHET_WITH_AI)
-        // Ctrl+Shift+A always-reveals the Smatchet Assistant side panel. Persistence runs
-        // through the panel-draw path (PersistOpenStateImmediate). Always-reveal-on-shortcut
-        // contract (AGENTS.md): re-pressing while open must focus, not close. Closing happens
-        // via the X button only.
-        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_A, false)) {
-            d.assistantPanelOpen = true;
-            d.requestAssistantFocus = true;
-        }
+    // Ctrl+Shift+A always-reveals the Smatchet Assistant side panel. Persistence runs
+    // through the panel-draw path (PersistOpenStateImmediate). Always-reveal-on-shortcut
+    // contract (AGENTS.md): re-pressing while open must focus, not close. Closing happens
+    // via the X button only.
+    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+        d.assistantPanelOpen = true;
+        d.requestAssistantFocus = true;
+    }
 #endif
-        // View-menu global shortcuts — all always-reveal. Setting show* = true and raising the
-        // focus latch every press lets the consumer's wantFocus-driven SetNextWindowFocus
-        // before Begin activate the docked tab (the only path that does); the post-Begin
-        // SetWindowFocus is belt-and-braces for floating-window state.
-        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-            d.showPerformance = true;
-            d.requestPerformanceFocus = true;
-        }
-        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_D, false)) {
-            d.showPlanDocViewer = true;
-            d.requestPlanDocViewerFocus = true;
-        }
-        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_I, false)) {
-            d.showBulkImport = true;
-            d.requestBulkImportFocus = true;
-        }
-        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_X, false)) {
-            d.showBulkExport = true;
-            d.requestBulkExportFocus = true;
-        }
-        // Ctrl+, (no shift, no alt) — canonical IDE Preferences shortcut.
-        if (ctrlDown && !shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_Comma, false)) {
-            d.showPreferences = true;
-            d.requestPreferencesFocus = true;
-        }
+    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+        d.showPerformance = true;
+        d.requestPerformanceFocus = true;
+    }
+    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+        d.showPlanDocViewer = true;
+        d.requestPlanDocViewerFocus = true;
+    }
+    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_I, false)) {
+        d.showBulkImport = true;
+        d.requestBulkImportFocus = true;
+    }
+    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+        d.showBulkExport = true;
+        d.requestBulkExportFocus = true;
+    }
+    // Ctrl+, (no shift, no alt) — canonical IDE Preferences shortcut.
+    if (ctrlDown && !shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_Comma, false)) {
+        d.showPreferences = true;
+        d.requestPreferencesFocus = true;
+    }
 #if defined(SMATCHET_WITH_MCP)
-        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_K, false)) {
-            d.showMcpServerWindow = true;
-            d.requestMcpServerFocus = true;
-        }
+    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_K, false)) {
+        d.showMcpServerWindow = true;
+        d.requestMcpServerFocus = true;
+    }
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        if (ctrlDown && shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_L, false)) {
-            d.showLuaAutomationWindow = true;
-            d.requestLuaAutomationFocus = true;
-            d.requestScriptingEditorTabFocus = true;
-        }
-#endif
-#if !defined(SMATCHET_WITH_AI)
-        (void)shiftDown;
-#endif
+    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+        d.showLuaAutomationWindow = true;
+        d.requestLuaAutomationFocus = true;
+        d.requestScriptingEditorTabFocus = true;
     }
-    DrainAppUpdateCheck(d);
+#endif
+}
+
+// All secondary windows + the legacy startup banner, drawn after the menu bar / toolbar.
+// Each pre-existing SMATCHET_UI_PERF_SCOPE seam is reused verbatim.
+void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
     if (!d.offlineLegacyStartupBannerText.empty()) {
         SMATCHET_UI_PERF_SCOPE("drawLegacyStartupBanner");
         ImGui::Separator();
@@ -787,58 +836,66 @@ void SmatchetUI::Draw(AppController& app) {
     if (g_ui.showPerformance) {
         g_perfUi.DrawFpsOverlay();
     }
-    // Dock-node debug overlay — toggled by Ctrl+Alt+D.
-    if (d.showDockDebug) {
-        const ImGuiWindowFlags kDbgFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
-                                           ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
-        ::ImGui::Begin("##DockDebug", nullptr, kDbgFlags);
-        ::ImGui::TextDisabled("Dock Node Debug (Ctrl+Alt+D to hide)");
-        ::ImGui::Separator();
-        static const ImGuiID kNodes[] = {
-            SmatchetDockNodeIds::kPrimarySideBar,
-            SmatchetDockNodeIds::kBottomPanel,
-            SmatchetDockNodeIds::kSecondarySideBar,
-        };
-        static const char* const kNames[] = {
-            "PrimarySideBar(0x4)",
-            "BottomPanel(0xA)",
-            "SecondarySideBar(0x10)",
-        };
+}
+
+// Dock-node debug overlay — toggled by Ctrl+Alt+D. Owns its own ::ImGui::Begin/End pair.
+// LOG_DEBUG throttle counter hoisted to drawBodyState_.
+void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
+    if (!d.showDockDebug) {
+        return;
+    }
+    const ImGuiWindowFlags kDbgFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
+                                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
+    ::ImGui::Begin("##DockDebug", nullptr, kDbgFlags);
+    ::ImGui::TextDisabled("Dock Node Debug (Ctrl+Alt+D to hide)");
+    ::ImGui::Separator();
+    static const ImGuiID kNodes[] = {
+        SmatchetDockNodeIds::kPrimarySideBar,
+        SmatchetDockNodeIds::kBottomPanel,
+        SmatchetDockNodeIds::kSecondarySideBar,
+    };
+    static const char* const kNames[] = {
+        "PrimarySideBar(0x4)",
+        "BottomPanel(0xA)",
+        "SecondarySideBar(0x10)",
+    };
+    for (int i = 0; i < 3; ++i) {
+        ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
+        if (!node) {
+            ::ImGui::TextDisabled("%s: NOT FOUND", kNames[i]);
+            continue;
+        }
+        ::ImGui::Text("%s: size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d", kNames[i], node->Size.x, node->Size.y,
+                      static_cast<int>(node->LocalFlags), node->Windows.Size, static_cast<int>(node->IsEmpty()));
+    }
+    ::ImGui::Separator();
+    ::ImGui::Text("ShowPrimary=%d ShowPanel=%d ShowSecondary=%d", d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel,
+                  d.cfg.ShowSecondarySideBar);
+    ::ImGui::End();
+
+    // Per-frame LOG_DEBUG throttled to every 120 frames.
+    ++drawBodyState_.dockDebugLogFrame;
+    if (drawBodyState_.dockDebugLogFrame >= 120) {
+        drawBodyState_.dockDebugLogFrame = 0;
         for (int i = 0; i < 3; ++i) {
             ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
             if (!node) {
-                ::ImGui::TextDisabled("%s: NOT FOUND", kNames[i]);
-                continue;
-            }
-            ::ImGui::Text("%s: size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d", kNames[i], node->Size.x, node->Size.y,
-                          static_cast<int>(node->LocalFlags), node->Windows.Size, static_cast<int>(node->IsEmpty()));
-        }
-        ::ImGui::Separator();
-        ::ImGui::Text("ShowPrimary=%d ShowPanel=%d ShowSecondary=%d", d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel,
-                      d.cfg.ShowSecondarySideBar);
-        ::ImGui::End();
-
-        // Per-frame LOG_DEBUG throttled to every 120 frames.
-        {
-            static int s_dbgLogFrame = 0;
-            ++s_dbgLogFrame;
-            if (s_dbgLogFrame >= 120) {
-                s_dbgLogFrame = 0;
-                for (int i = 0; i < 3; ++i) {
-                    ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(kNodes[i]);
-                    if (!node) {
-                        LOG_DEBUG("DockDebug: %s NOT FOUND", kNames[i]);
-                    } else {
-                        LOG_DEBUG("DockDebug: %s size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d", kNames[i], node->Size.x,
-                                  node->Size.y, static_cast<int>(node->LocalFlags), node->Windows.Size,
-                                  static_cast<int>(node->IsEmpty()));
-                    }
-                }
-                LOG_DEBUG("DockDebug: ShowPrimary=%d ShowPanel=%d ShowSecondary=%d", d.cfg.ShowPrimarySideBar,
-                          d.cfg.ShowPanel, d.cfg.ShowSecondarySideBar);
+                LOG_DEBUG("DockDebug: %s NOT FOUND", kNames[i]);
+            } else {
+                LOG_DEBUG("DockDebug: %s size=(%.0f,%.0f) flags=0x%X tabs=%d empty=%d", kNames[i], node->Size.x,
+                          node->Size.y, static_cast<int>(node->LocalFlags), node->Windows.Size,
+                          static_cast<int>(node->IsEmpty()));
             }
         }
+        LOG_DEBUG("DockDebug: ShowPrimary=%d ShowPanel=%d ShowSecondary=%d", d.cfg.ShowPrimarySideBar, d.cfg.ShowPanel,
+                  d.cfg.ShowSecondarySideBar);
     }
+}
+
+// End-of-frame coalesced persistence: debounced ViewState save, window-open prefs,
+// forced layout-defaults ini flush, and the debounced prefs ConfigManager::Save.
+void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
+    (void)d;
     // Skip the debounced auto-save while a view edit is pending an explicit Save —
     // widths / sort specs mutated under the unsaved-layout strip must not bleed
     // through to disk until the user commits.
