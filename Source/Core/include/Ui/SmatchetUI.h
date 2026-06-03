@@ -126,6 +126,40 @@ class SmatchetUI {
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);
+
+    // Section helpers for SmatchetUI::Draw (function-size-compliance, monoliths campaign).
+    // No positional-ImGui scope pair is split across a helper boundary; each helper either
+    // opens and closes its own scope internally or runs entirely outside any scope.
+    // Pre-existing perf-scope seams are reused verbatim, so no new perf markers appear.
+    void drawInitConfigOnce(AppController& app, UiDrawSession& d);
+    void drawApplyAppearanceSettings(UiDrawSession& d);
+    void drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession& d);
+    void drawPreWindowOverlays(AppController& app, UiDrawSession& d);
+    void drawViewStateAndConnectivity(AppController& app, UiDrawSession& d);
+    void drawChromeAndModeToggles(AppController& app, UiDrawSession& d);
+    void handleViewKeyboardShortcuts(UiDrawSession& d);
+    void handlePanelVisibilityShortcuts(UiDrawSession& d);
+    void handleViewRevealShortcuts(UiDrawSession& d);
+    void drawSecondaryWindows(AppController& app, UiDrawSession& d);
+    void drawDockDebugOverlay(UiDrawSession& d);
+    void drawEndOfFramePersistence(UiDrawSession& d);
+
+    /// Hoisted Draw-body function-local `static`s. Behaviour-identical for this single
+    /// SmatchetUI instance; promoting to members removes the statics so the section
+    /// helpers stay reentrant-safe (no cross-window leakage). The Zen-mode key-chord
+    /// detector and the dock-debug throttle counters lived as `static` locals in the
+    /// pre-decomposition Draw body.
+    struct DrawBodyState {
+        // Zen Mode: Ctrl+M then Z chord (1 s timeout).
+        bool zenChordPrefixArmed = false;
+        float zenChordTimeoutSec = 0.0f;
+        // Esc Esc to exit Zen Mode.
+        int zenEscCount = 0;
+        float zenEscTimer = 0.0f;
+        // Dock-debug overlay LOG_DEBUG throttle (every 120 frames).
+        int dockDebugLogFrame = 0;
+    };
+    DrawBodyState drawBodyState_;
 #if defined(SMATCHET_WITH_AI)
     /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
     /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside
