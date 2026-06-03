@@ -51,6 +51,18 @@
     "p4_streams": [],
     "protected_branches": ["bug-report-assets"]
   },
+  "branch_protection": {
+    "branch": "develop",
+    "required_contexts": [
+      "Test-delta gate",
+      "Windows + MSVC",
+      "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
+      "Shell lint (shellcheck)"
+    ],
+    "required_review_count": 0,
+    "enforce_admins": false,
+    "strict": false
+  },
   "ci": {
     "required_checks": [
       "Test-delta gate",

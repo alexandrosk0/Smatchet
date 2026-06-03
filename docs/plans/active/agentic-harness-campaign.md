@@ -49,7 +49,7 @@ solo-merge-review-gate ── independent (re-scoped: codify-only)
 
 This meta-plan authors no product files. Its only artifact is this tracker; the work lands in each child plan's write set. Per-wave, the child plans' § Files to modify govern.
 
-- `docs/plans/active/solo-merge-review-gate.md` (edit, in the Wave-1 #3 PR) — rewrite § Context per correction 1.
+- `docs/plans/shipped/solo-merge-review-gate.md` (edit, in the Wave-1 #3 PR) — rewrite § Context per correction 1.
 - `docs/plans/active/agentic-harness-campaign.md` (this file) — § Implementation log updated as each wave ships.
 
 ## UX Pillar callouts

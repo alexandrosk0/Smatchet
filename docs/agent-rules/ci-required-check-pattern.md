@@ -2,6 +2,8 @@
 
 Plan: [`docs/plans/shipped/gate-enforcement-hardening.md`](../plans/shipped/gate-enforcement-hardening.md) § Slice 0.
 
+> The set of **required status checks** on `develop` is codified + applied by [`agents/scripts/core/setup-branch-protection.sh`](../../agents/scripts/core/setup-branch-protection.sh) (sourced from `project.config.json` § `branch_protection`). The separate decision to require **0 approving reviews** lives in [`docs/adr/0013-solo-no-required-review.md`](../adr/0013-solo-no-required-review.md).
+
 ## The deadlock
 
 A **required** status check must report on **every** PR or the PR is wedged
