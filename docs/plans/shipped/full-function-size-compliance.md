@@ -324,10 +324,41 @@ Per `AGENTS.md` § Verification automation — zero manual steps where possible.
 - **`*_DX12` / Unreal plugin targets, ThirdParty** — outside the audit's SWEEP_ROOTS.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+**Outcome: zero functions over the hard caps on `develop`** — started at 84 oversized, ended at 0 (`function_size_audit.py --list` empty, exit 0). ~45 PRs, each behaviour-preserving with byte-identical positional-ImGui balance + dual-target build.
+
+Plan + early phases:
+- `#692` · plan committed (`a97c0bee` re-commit of the plan branch)
+
+Phase 1 — Bucket-A pure-logic (Tracker parsers/mappers/query, date/grid):
+- `#696` A3-A5 · 4 pure mappers/builders · `#699` A7-A8 · CompactDateFormat + grid sort/render-plan · `#700` A9-A10 · HotkeyParse/CodeColorView/ParseImageDimensions
+
+Phase 2-3 — Bucket-B core/AI/sync/lua/standalone:
+- `#704` B2-B3 AppController Init/FieldCatalog · `#705` B4 Lua · `#706` B8-B9 AI · `#708` B10 sync · `#709` B5 RunWindows/RunPosix · `#710` B6-B7 boot/CLI
+
+Phase 4 — Bucket-C/D plugins + markdown/syntax:
+- `#712` C1 MCP routes · `#713` C2-C3 Whisper · `#737` MarkdownPreviewRender · `#739` CppSyntaxHighlight lexers
+
+Phase 5 — Bucket-E windows (the large UI draws):
+- `#727` E1 drawPreferencesWindow · `#729` E2 DrawWhisperPreferencesTab (781L) · `#730` E3 DrawAssistantPreferencesTab · `#732` E4 DrawTemplatePreferencesTabs · `#733` E5 drawBulkImportWindow · `#736` SelectableTextRun · `#738` autocomplete callback · `#741` ProjectPicker · `#742` ToolbarUi::RenderEditor · `#744` TicketFieldEditor cells · `#745` RenderLongTextModal · `#748` BugReport · `#749` SmatchetUI::Draw (608L) · `#750` drawAuditWindow · `#751` AiAssistantUi · `#752` drawMainMenuBar (504L) · `#753` drawLogWindow · `#757` drawAttachmentPreviewWindow · `#758` drawViewsDashboardWindow (778L) · `#760` DrawGridHeaderToolbar · `#761` **AnnotateAnalysisUi::DrawContent (945L — largest in tree)** · `#762` DrawLocalAndAppearancePreferencesTabs · `#763` SmatchetDrawMcpServerPanel · `#764` DrawUnifiedOfflineQueuesPanel · `#766` RenderNewIssueDraftRow · `#767` DrawJqlQueryEditorEmbedded · `#769` DrawCalendarPicker · `#772` LuaConsolePlugin::OnDraw
+
+Supporting infra/tooling shipped by this program (not in original scope):
+- `#746` `scripts/dev/pre-ship.sh` — clang-format→delta-lint-gate wrapper · `#768` fix `comment_audit.py` UTF-8 decode (Windows cp1252 crash that silently failed the lint gate closed) · `#773` self-improvement backlog (grandfather-blind `--diff`, comment-noise false-positives, serial-conflict union strategy)
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+1. **Bucket-E coverage was NOT a universal up-front prerequisite (significant).** The plan asserted "no window ships a decomposition without prior Phase-0 coverage." In practice, bucket-E interaction coverage was established only for the **prefs tabs** (`funcsize_preferences_tabs.test.cpp`) and **main-UI** (`funcsize_main_ui_smoke.test.cpp`) windows. The **data-dependent ("yellow") windows** — grid header, views dashboard, offline queue, new-issue draft, attachment preview, annotate analysis, field editors — shipped under the `tests-out-of-band` label relying on **positional-ImGui balance (byte-identical) + ASan + CodeRabbit**, not a bucket-E render test, because they require a live ticket/grid/p4 fixture the headless engine can't cheaply stand up. The deterministic Jira fixture (`JiraFakeTrackerFixture`, fixed in `#728`) unblocked some, but full per-window bucket-E coverage for these was deferred. **Backlogged** in `docs/self-improvement/categories/test.md`. Behaviour-preservation rests on the balance invariant + verbatim-move discipline, which is sound for pure relocations but is weaker on per-control interaction than a true render test.
+2. **Bucket-C `approve-golden` user step (D5/D6) never occurred.** MarkdownPreviewRender (`#737`) and CppSyntaxHighlight (`#739`) shipped via balance + bucket-A pure-lexer tests + CR, not the planned screenshot-golden user verdict. The decompositions were pure helper-extraction with no rendered-output change, so no golden regeneration was needed — but the plan's "only sanctioned user-touch" was therefore not exercised.
+3. **Final convergence required a union merge driver + admin-merge.** Every decomposition PR appends to `tests/CMakeLists.txt`, and `SmatchetUI::`-method splits add members to `SmatchetUI.h` → pairwise conflicts → strictly serial landing. Compounded by a concurrent unrelated workstream churning `develop`, the last PRs livelocked; resolved with a local `merge=union` driver on the two shared files + `--admin` merges of the already-CI-verified tail. Captured as process/P2 in `#773`; the fix (commit a union `.gitattributes` / GLOB test registration) is backlogged.
+4. **~12 pre-existing bugs surfaced via CR triage and backlogged, not fixed** — every CodeRabbit finding was verified byte-identical-to-develop; pre-existing ones (bulk-import UI-thread block, attachment tooltip-over-spacer, C++14 number-lexer gap, WASAPI UB, PII-in-logs, field-catalog race, …) were rejected-for-the-refactor and backlogged to `bug.md`. No behaviour change was made to "fix" a finding inside a behaviour-preserving PR.
+5. **One orphan caught late.** `LuaConsolePlugin::OnDraw` (381L) was missed in its wave and only surfaced by the end-of-program `--list` check; decomposed in `#772`.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Acceptance gate — `function_size_audit.py --list` on `develop`: EMPTY (0 functions over cap), exit 0.** This is the authoritative absolute check, not the grandfather-blind `--diff` (the `--diff`-blindness was itself discovered mid-program and backlogged — a partially-reduced function passes `--diff` silently, so `--list`/`--scan-file` is the real proof). **PASSED.**
+- **Dual-target build of post-merge `develop`** — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` → **PASSED** (both the standalone GL exe and the Unreal DX12 lib linked clean, confirming the `SmatchetUI.h` union merges from #752/#757 compile in both worlds).
+- **Per-PR (every PR):** dual-target build green; positional-ImGui balance grep byte-identical to base; `test-lint-rules.sh --diff origin/develop` clean (the targeted function dropped out of the oversized set, nothing new crossed). **PASSED.**
+- **Bucket-A (pure-logic doctest):** added for every extracted pure helper (lexers, geometry, token-boundary, date-format, filter/classify, audit/log helpers, …) with goldens captured from real runs. **PASSED.**
+- **Bucket-E (ImGui Test Engine):** prefs-tabs + main-UI windows covered and green in CI; data-dependent windows **NOT-RUN** (deferred per Deviation 1, `tests-out-of-band`).
+- **Bucket-C (`approve-golden`):** **NOT-RUN** (Deviation 2 — no rendered-output change, no golden regenerated).
+- **ASan/UBSan + sanitizer CI:** green on the bucket-B/whisper/sync paths per their PRs. **PASSED.**

@@ -102,6 +102,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | 2026-06-02 | Plan — Agent charter altitude (operating-principle preamble + context budget) |
 | [`internal-procedure-skills`](shipped/internal-procedure-skills.md) | 2026-06-02 | Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc) |
 | [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | 2026-06-02 | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
+| [`full-function-size-compliance`](shipped/full-function-size-compliance.md) | — | Plan — Full Function-Size Compliance (zero grandfathered monoliths) |
 <!-- END auto-plan-index -->
 
 ### Notes
