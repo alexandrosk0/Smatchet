@@ -24,9 +24,9 @@ Four lock-related terms appear across `docs/plans/shipped/git-ref-plan-locks.md`
 
 The four roles do not overlap: a `plan-lock` is the object; `lock-slug` is its identifier; `lock-claim` is the action that brings one into being; `holds-lock` is the predicate that names its current owner. Cross-link: full operational rules live in [`docs/plans/shipped/git-ref-plan-locks.md`](plans/shipped/git-ref-plan-locks.md) § Terminology.
 
-## UX Pillars
+## Quality Pillars
 
-Four north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § UX Pillars. Pillars 1-3 are **agent-enforced** (orchestrator + code-review agent + `merge-gates.sh` + per-pillar specialist agents); GitHub-side enforcement of each pillar is partial today (see § Enforcement matrix below). Pillar 4 is aspirational.
+Five north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § Quality Pillars, in two sub-groups: **UX Pillars** (1-4, user-facing) + **Engineering Pillars** (5: DRY, code-maintainability). UX 1-3 + Engineering 5 are **agent-enforced** (orchestrator + code-review agent + `merge-gates.sh` + per-pillar specialist agents; DRY is WARN-first today per ADR-0015); GitHub-side enforcement of each pillar is partial today (see § Enforcement matrix below). Pillar 4 (Accessibility) is aspirational.
 
 ### Enforcement matrix (current state)
 

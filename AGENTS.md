@@ -4,7 +4,7 @@ This is the canonical entry-point doc for any agentic harness (Claude Code, Code
 
 ## Operating principles
 
-How agents *operate* here — a skimmable map over the rules below, not new rules. Grep the principle, follow the link, skip the rest. (The 4 UX Pillars are quality *targets*; these 5 are the operating *model* — a distinct axis above them.) **Navigation only — no rule detail lives here; if a line accretes detail it has failed, move it to its linked section.**
+How agents *operate* here — a skimmable map over the rules below, not new rules. Grep the principle, follow the link, skip the rest. (The Quality Pillars are quality *targets*; these 5 principles are the operating *model* — a distinct axis above them.) **Navigation only — no rule detail lives here; if a line accretes detail it has failed, move it to its linked section.**
 
 1. **Autonomous by default** — run the ship-loop end-to-end in one turn; pause only on the defined exceptions. (§ Autonomous ship-loop default)
 2. **Gate, don't trust** — every invariant is code-enforced (merge-gates, delta-lint, selftests), never a prose promise. (§ Merge gates, § Project rules § Tiered enforcement)
@@ -12,20 +12,24 @@ How agents *operate* here — a skimmable map over the rules below, not new rule
 4. **Plan before ship** — non-trivial work gets a plan-doc + `grill-with-docs` stress-test. (§ Process rules § Plan-doc family)
 5. **Self-tighten** — every delegated agent ends with `## Self-improvement`; friction becomes prompt patches. (§ Self-improvement loop)
 
-## UX Pillars
+## Quality Pillars
 
-Four north-star quality invariants. Pillars 1-3 are **enforceable** (auto-fail PRs that violate them); Pillar 4 is **aspirational** today (backlogged until automated checks land).
+Five north-star quality invariants in two sub-groups:
 
-| # | Pillar | Hard invariant | Primary owner |
-|---|---|---|---|
-| 1 | Performance | Steady-state UI work ≤ **6.94 ms** (144 Hz); p99 ≤ 16.67 ms (60 Hz floor) | `perf-detective` (sustained), `spike-hunter` (p99) |
-| 2 | UI never freezes | No UI-thread block > 100 ms without visible cue; sync I/O on UI thread = code-review CRITICAL | `code-review`, `spike-hunter` |
-| 3 | Never crash | Sanitizer build clean; RAII + bounds-checked + no silent UB; graceful degradation in ship builds | `debug-detective`, `code-review`, `build-doctor` |
-| 4 | Accessibility | Keyboard nav, font scaling, WCAG AA contrast — flagged in backlog (no auto-fail yet) | none today (backlogged) |
+- **UX Pillars** (1-4) — user-facing. Pillars 1-3 are **enforceable** (auto-fail PRs that violate them); Pillar 4 is **aspirational** today (backlogged until automated checks land).
+- **Engineering Pillars** (5) — code-maintainability, enforced like UX 1-3. Today: **DRY** (Pillar 5; WARN-first calibration phase per [ADR-0015](docs/adr/0015-dry-quality-pillar-duplication-gate.md)).
+
+| # | Group | Pillar | Hard invariant | Primary owner |
+|---|---|---|---|---|
+| 1 | UX | Performance | Steady-state UI work ≤ **6.94 ms** (144 Hz); p99 ≤ 16.67 ms (60 Hz floor) | `perf-detective` (sustained), `spike-hunter` (p99) |
+| 2 | UX | UI never freezes | No UI-thread block > 100 ms without visible cue; sync I/O on UI thread = code-review CRITICAL | `code-review`, `spike-hunter` |
+| 3 | UX | Never crash | Sanitizer build clean; RAII + bounds-checked + no silent UB; graceful degradation in ship builds | `debug-detective`, `code-review`, `build-doctor` |
+| 4 | UX | Accessibility | Keyboard nav, font scaling, WCAG AA contrast — flagged in backlog (no auto-fail yet) | none today (backlogged) |
+| 5 | Engineering | DRY | No NEW copy-paste clone vs `origin/develop` (delta-gated `dup_audit.py`; **WARN-first**, calibration phase per ADR-0015) — copy-paste only (not structural similarity); exemptions cheap; a DRY refactor coupling independent subsystems = CRITICAL | `code-review` (reviewer-of-record + exemption sign-off) |
 
 Visual-validation exception (Pillar 4 § Visual-validation acceptance): when no bucket-C/E coverage exists for a visual change, the orchestrator pauses the ship-loop and treats the user as the verifier — see [`docs/agent-rules/ship-loops.md`](docs/agent-rules/ship-loops.md) § Visual-validation exception.
 
-Full enforceable-invariant text + visual-cue contract + per-pillar tooling + agent-ownership detail: [`docs/agent-rules/ux-pillars.md`](docs/agent-rules/ux-pillars.md).
+Full enforceable-invariant text + visual-cue contract + per-pillar tooling + agent-ownership detail: [`docs/agent-rules/quality-pillars.md`](docs/agent-rules/quality-pillars.md).
 
 ## Autonomous ship-loop default
 

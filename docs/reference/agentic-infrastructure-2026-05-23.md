@@ -599,7 +599,7 @@ backlog items already triaged for the next sweep.
 
 - `AGENTS.md` (repo root)
 - `.claude/CLAUDE.md` (loaded into session)
-- `docs/agent-rules/{delegation,ship-loops,merge-gates,process-rules,ux-pillars,golden-image-approval}.md`
+- `docs/agent-rules/{delegation,ship-loops,merge-gates,process-rules,quality-pillars,golden-image-approval}.md`
 - `docs/perforce/{AGENT_FLOWS,SETUP,RUNBOOK}.md`
 - `docs/harness/SETUP.md`
 - `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`
