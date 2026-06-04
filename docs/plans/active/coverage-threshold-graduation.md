@@ -76,10 +76,17 @@ N/A — no `Source/Core/` source compiled-change. Edits `coverage.sh` (`scripts/
 - **Mutation testing** / branch-coverage floor — beyond the line-coverage end-state target.
 
 ## Implementation log
-*(populated post-ship)*
+
+- **Slice 1 (PR #832) — measure-true prep.** Added `Source.Core.src.Ui` + `Source.Core.include.Ui` to `coverage.sh --excluded_sources`, and added `scripts/dev/coverage.sh` to `coverage.yml`'s trigger paths (a coverage-script change wasn't re-running the gate). Harmless, correct prep.
+- **Slices 2 + 4 (flip) — BLOCKED, not shipped.** The measure-before-flip readout exposed a **fake apparatus**: OpenCppCoverage emits an **empty** report (`lines-valid="0"`, empty `<packages/>`) — `[coverage] line coverage: 100%` is vacuous (100% of **zero** lines). Confirmed pre-existing (pre-`/Z7`/#796 run `26864632142` is also 0-line), so the entire Phase-9 advisory soak measured nothing and the "two green weeks" precondition was meaningless. Flipping `--threshold 70` + `continue-on-error: false` against a 0-line surface would ship a **non-functional blocking gate**. **Filed [#833](https://github.com/alexandrosk0/Smatchet/issues/833) (P1)** for the empty-report root cause; the flip is gated on that fix.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Flip deferred behind a discovered blocker (#833).** The plan assumed "the full apparatus landed" (Phase 9). The mandatory Slice-1 measure step proved that false — OCC captures 0 lines. Per the plan's own cardinal rule (never flip blind) + `AI_POLICY.md` escalate-when-unvalidatable, Slices 2+4 are **not** shipped; only Slice-1 prep landed. Once #833 makes OCC report real lines, the flip (choose-from-data + `continue-on-error: false` + config block + `coverage-out-of-band` label) is trivial — this plan stays `active/` until then.
+- `gh label create coverage-out-of-band` (Slice-4 manual residue) **not** done — deferred with the flip (no point until the gate is real).
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Slice-1 readout (the key finding):** corrected-surface coverage report is **empty** — `coverage.xml` (run `26925159870`) = `lines-covered="0" lines-valid="0"`, `<packages/>` empty. Same on the pre-`/Z7` baseline run `26864632142`. The apparatus, not the threshold, is the problem → #833.
+- `test-workflow-yaml.sh` green on the edited `coverage.yml` (15/0).
+- Flip behaviour / shell-lint-on-flip / config-block validation — **N/A** (flip not shipped; deferred to the post-#833 PR).
