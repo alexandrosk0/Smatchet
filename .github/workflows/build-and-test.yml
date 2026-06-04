@@ -165,9 +165,7 @@ jobs:
       - name: Cache FetchContent _deps (msvc)
         uses: actions/cache@v4
         with:
-          path: |
-            build/ninja-test-msvc/_deps
-            build/ninja-iter-msvc/_deps
+          path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
@@ -300,8 +298,7 @@ jobs:
       - name: Cache FetchContent _deps (msvc-light)
         uses: actions/cache@v4
         with:
-          path: |
-            build/ninja-iter-msvc/_deps
+          path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-light-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
@@ -432,8 +429,7 @@ jobs:
       - name: Cache FetchContent _deps (ui-test preset)
         uses: actions/cache@v4
         with:
-          path: |
-            build/ninja-ui-test-msvc/_deps
+          path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
@@ -531,8 +527,7 @@ jobs:
       - name: Cache FetchContent _deps (msvc-asan)
         uses: actions/cache@v4
         with:
-          path: |
-            build/ninja-msvc-asan/_deps
+          path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
