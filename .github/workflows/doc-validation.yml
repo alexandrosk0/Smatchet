@@ -80,6 +80,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Auto-sync the shipped-plan INDEX on PR branches so authors never hand-run
+  # `test-plan-index.sh --fix`. Concurrent-archive drift fix (postmortems.md
+  # infra-P2): when one PR archives a plan, every other open plan PR's INDEX
+  # goes stale; instead of a manual regen, CI regenerates from the branch's own
+  # shipped/ set and commits back to the PR branch (unprotected → bot can push;
+  # develop is protected so the textbook merge-time self-heal is blocked). The
+  # blocking `test-plan-index` check (in the job below) then passes on the
+  # re-triggered run. Idempotent: a re-trigger finds the INDEX already in sync,
+  # commits nothing → no loop. Skips forks (no push access to a fork branch).
+  autosync-plan-index:
+    name: Auto-sync plan INDEX (PR branch)
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout PR head branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Regenerate INDEX + commit if drifted
+        run: |
+          bash agents/scripts/core/test-plan-index.sh --fix
+          if git diff --quiet -- docs/plans/INDEX.md; then
+            echo "plan INDEX already in sync — nothing to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/plans/INDEX.md
+          git commit -m "chore(plan): auto-sync shipped-plan INDEX"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+
   doc-anchors-and-agent-contract:
     name: Doc anchors + agent contract
     runs-on: ubuntu-latest
