@@ -9,10 +9,6 @@
 
 #if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
 #if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <windows.h>
 #elif defined(__linux__)
 #include <unistd.h>

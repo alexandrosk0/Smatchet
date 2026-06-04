@@ -985,6 +985,12 @@ function(smatchet_configure_opengl_core_impl_target _target)
         # WIC (windowscodecs/ole32) is used to decode attachment bitmaps into RGBA32 for ImGui's
         # backend-agnostic texture API (ImTextureData) when previewing image attachments.
         target_link_libraries("${_target}" PRIVATE shell32 windowscodecs ole32)
+        # NOMINMAX/WIN32_LEAN_AND_MEAN live in SmatchetPch.h when PCH is on; publish presets
+        # set SMATCHET_USE_PCH=OFF, so command-line defines precede every include (same as DX12).
+        target_compile_definitions("${_target}" PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    if(MSVC)
+        target_compile_definitions("${_target}" PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
 endfunction()
 
