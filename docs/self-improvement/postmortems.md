@@ -27,6 +27,42 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-04 · PR #844 · override label (`tests-out-of-band`)
+
+> Flagged by `postmortem-owed.sh` because #844 merged carrying a `tests-out-of-band`
+> override. Recorded for completeness; the override was **legitimate** — no new gate
+> owed. Blameless: the gate worked, the escape hatch was used as designed.
+
+### What escaped
+The **Test-delta gate** (`FAIL: Source/Core/ changes without test deltas`) was
+dismissed on #844 by the `tests-out-of-band` label. #844 shipped `Source/Core`
+changes with no accompanying test delta.
+
+### Root cause
+#844's `Source/Core` diff was entirely a **build-define relocation** — moving
+`NOMINMAX` / `WIN32_LEAN_AND_MEAN` out of two `.cpp` files into
+`target_compile_definitions` (for the PCH-off publish path) plus dead-include /
+dead-variable cleanup — all confined to `Source/Core/src/Ui/`, the **light** lint
+zone. Ui is **excluded from the coverage surface** (`project.config.json`
+`coverage.excluded`) and is exercised by **bucket-C/E screenshot tests**, not ctest
+unit tests. A compile-define move + dead-code removal has **no executable-logic
+surface a unit test could assert**, so the Test-delta gate's demand cannot be
+satisfied in kind — the override label is the gate's intended escape hatch for
+exactly this case, and the merge carried a justification comment naming the zone.
+No breakage shipped (develop's post-merge build-and-test was green).
+
+### Preventing gate
+**None — override legitimate** (Ui-zone compile-define + dead-code change; the
+`light` zone is coverage-excluded and bucket-C/E-tested, so no unit-test delta is
+meaningful). A *possible* future tightening — auto-exempt diffs confined to the
+`light`/`Ui/` zone that add or remove no executable statements, so the label isn't
+needed — is **deferred**: a reliable "no logic changed" classifier is non-trivial
+(real Ui logic changes must still demand tests), and the manual label + zone-citing
+justification is the correct lightweight control today. Recorded, not gated.
+
+### Filed as
+No new category entry (no gate owed). This ledger entry is the record.
+
 ## 2026-06-03 · PR #792 · red-check (non-required doc-validation gate) — THIRD recurrence, gate still unapplied
 
 > Same class as the two entries below (#780/#784 and #771/#774/#776/#778). Logged
