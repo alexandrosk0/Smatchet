@@ -695,17 +695,47 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/Ui/Sm
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/Ui/SmatchetImGuiHostC_Diagnostics.cpp")
 # ImGuiColorTextEdit — vendored third-party TU promoted from Source/Plugins/LuaConsole/ThirdParty
 # so Source/Core (AI chat panel) can consume it. The glob above only matches
-# Source/Core/src/*.cpp; the ThirdParty TU needs an explicit append. Both Standalone and
-# DX12 targets inherit it via CORE_SOURCES.
+# Source/Core/src/*.cpp; the ThirdParty TU needs an explicit path.
+#
+# It is built in a dedicated per-world OBJECT library (NOT appended to CORE_SOURCES)
+# rather than compiled directly into SmatchetStandalone / SmatchetCore_DX12. Reason:
+# those targets carry /W4 (MSVC) via smatchet_apply_strict_warnings() at *target* scope,
+# and a per-source /W0 override on the TU then produced two /W flags on one command line
+# (MSVC: "D9025: overriding '/W4' with '/W0'", and the suppression leaked C4189 anyway).
+# The OBJECT libraries below are never passed through smatchet_apply_strict_warnings(),
+# so each compiles with a single warning flag — no collision, no D9025.
+#
+# Two libraries (one per world) are required because TextEditor.cpp #includes imgui.h and
+# must inherit the *matching* ImGui compile-time config: ImGuiLib for Standalone,
+# ImGuiLib_DX12 for the Unreal/DX12 world (see the ImGui config block above — the wchar /
+# supplementary-plane config and IMGUI_USE_WCHAR32 handling differ between worlds, and a
+# single shared object lib would ABI-mismatch one of them). The libraries are wired into
+# the respective targets by smatchet_configure_{opengl,dx12}_core_impl_target() below.
 set(_SMATCHET_IMGUI_TEXTEDIT_CPP
         "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
-list(APPEND CORE_SOURCES "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
-# Vendored third-party — suppress strict warnings so the smatchet_apply_strict_warnings
-# flags on Core / Standalone / DX12 targets don't flag upstream TextEditor.cpp.
 if(MSVC)
-    set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
+    set(_SMATCHET_TEXTEDIT_WARN_FLAG /W0)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
+    set(_SMATCHET_TEXTEDIT_WARN_FLAG -w)
+else()
+    set(_SMATCHET_TEXTEDIT_WARN_FLAG)
+endif()
+
+# Standalone (OpenGL/GLFW) world — inherits ImGuiLib's PUBLIC include dirs + IMGUI config.
+add_library(SmatchetTextEdit OBJECT "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+target_link_libraries(SmatchetTextEdit PRIVATE ImGuiLib)
+if(_SMATCHET_TEXTEDIT_WARN_FLAG)
+    target_compile_options(SmatchetTextEdit PRIVATE ${_SMATCHET_TEXTEDIT_WARN_FLAG})
+endif()
+
+# Unreal/DX12 world — inherits ImGuiLib_DX12's distinct ImGui config. EXCLUDE_FROM_ALL so a
+# default Standalone build doesn't compile it (mirrors SmatchetCore_DX12 / ImGuiLib_DX12).
+if(WIN32)
+    add_library(SmatchetTextEdit_DX12 OBJECT EXCLUDE_FROM_ALL "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+    target_link_libraries(SmatchetTextEdit_DX12 PRIVATE ImGuiLib_DX12)
+    if(_SMATCHET_TEXTEDIT_WARN_FLAG)
+        target_compile_options(SmatchetTextEdit_DX12 PRIVATE ${_SMATCHET_TEXTEDIT_WARN_FLAG})
+    endif()
 endif()
 # GLOB snapshots at configure time; pick up new TUs if the cache predates them (no duplicate paths).
 set(_SMATCHET_CPP_SYNTAX "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxHighlight.cpp")
@@ -939,6 +969,9 @@ endfunction()
 function(smatchet_configure_opengl_core_impl_target _target)
     smatchet_configure_core_impl_target("${_target}")
     target_link_libraries("${_target}" PRIVATE ImGuiLib glfw)
+    # Vendored ImGuiColorTextEdit TU — built in its own OBJECT lib (no /W4) to avoid the
+    # MSVC D9025 /W4-vs-/W0 collision. Linking an OBJECT library pulls in its objects.
+    target_link_libraries("${_target}" PRIVATE SmatchetTextEdit)
     if(SMATCHET_WITH_MCP)
         target_link_libraries("${_target}" PUBLIC SmatchetCoreMcpShim)
     endif()
@@ -957,6 +990,8 @@ endfunction()
 
 function(smatchet_configure_dx12_core_impl_target _target)
     smatchet_configure_core_impl_target("${_target}")
+    # Vendored ImGuiColorTextEdit TU — DX12-world OBJECT lib (no /W4; matching ImGui config).
+    target_link_libraries("${_target}" PRIVATE SmatchetTextEdit_DX12)
     target_link_libraries("${_target}" PRIVATE
             ImGuiLib_DX12
             d3d12
