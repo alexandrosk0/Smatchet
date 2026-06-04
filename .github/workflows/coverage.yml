@@ -19,6 +19,7 @@ on:
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
       - '.github/workflows/coverage.yml'
+      - 'scripts/dev/coverage.sh'
       # Markdown is never compiled — exclude the per-subsystem leaf docs now
       # living under Source/Core/src/<ctx>/*.md (and any other .md) so a
       # docs-only change doesn't spin up a coverage build. Negation must follow
