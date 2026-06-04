@@ -78,7 +78,13 @@
   },
   "merge_gates": {
     "cr_bot_logins": ["coderabbitai[bot]", "coderabbitai"],
-    "override_labels": ["tests-out-of-band", "perf-out-of-band", "cr-out-of-band"]
+    "override_labels": ["tests-out-of-band", "perf-out-of-band", "cr-out-of-band", "coverage-out-of-band"]
+  },
+  "coverage": {
+    "_doc": "Numeric line-coverage gate (coverage.yml). threshold = blocking floor; excluded = paths carved out of the measured surface (UI is bucket-E/screenshot-tested, not ctest-testable). Graduated advisory->blocking 2026-06-04; first real measurement 67%, floor set at 65 with a raise-to-70 ramp (categories/test.md). See docs/plans/shipped/coverage-threshold-graduation.md.",
+    "threshold": 65,
+    "ramp_target": 70,
+    "excluded": ["Source/Core/src/Ui", "Source/Core/include/Ui"]
   },
   "visual_validation": {
     "trigger_globs": ["**/SmatchetTheme.cpp", "**/Smatchet*Ui*.cpp", "**/Locales/*.json"]

@@ -1,13 +1,18 @@
-name: Coverage (advisory)
+name: Coverage
 
-# Captures OpenCppCoverage line + branch coverage on every PR touching
-# Source/Core/ or tests/. Uploads coverage.xml as a workflow artifact and runs
-# in ADVISORY mode (no threshold, continue-on-error) for the first two weeks
-# after Phase 9 lands — pattern mirrors the Phase 7 screenshot-diff soak.
+# Captures OpenCppCoverage line coverage on every PR touching Source/Core/ or
+# tests/. Uploads coverage.xml as a workflow artifact.
 #
-# Flip continue-on-error → false and pass --threshold 70 to coverage.sh once
-# two consecutive weeks of clean runs have built confidence. See
-# docs/plans/active/applied/test-suite-expansion-completion.md § Phase 9 + § End-state targets.
+# BLOCKING (graduated 2026-06-04 via docs/plans/shipped/coverage-threshold-graduation.md):
+# continue-on-error: false + --threshold 65. The number is the data-chosen
+# FLOOR — the first real measurement on the Ui-excluded Source/Core surface was
+# 67% (after issue #833 fixed OCC's substring-not-regex --sources bug that had
+# made the gate measure 0 lines), so the gate graduates at a stable floor below
+# current with a raise-to-70 ramp tracked in docs/self-improvement/categories/test.md.
+# Threshold + excluded paths are config-sourced (project.config.json § coverage).
+# Below-threshold PRs escape with the `coverage-out-of-band` label (parallel to
+# tests-out-of-band). The structural coverage-delta gate (coverage-gate.yml) is
+# independent and already hard-blocking.
 
 on:
   pull_request:
@@ -40,7 +45,7 @@ jobs:
     name: Coverage (windows-2022 + OpenCppCoverage)
     runs-on: windows-2022
     timeout-minutes: 40
-    continue-on-error: true  # advisory soak until 2026-05-30; flip to false after
+    continue-on-error: false  # BLOCKING — graduated 2026-06-04 (coverage-threshold-graduation)
 
     steps:
       - name: Checkout
@@ -91,9 +96,9 @@ jobs:
         if: always()
         run: sccache --show-stats
 
-      - name: Capture coverage (advisory; --threshold 0)
+      - name: Capture coverage (blocking; --threshold 65)
         shell: bash
-        run: bash scripts/dev/coverage.sh --xml-only --threshold 0
+        run: bash scripts/dev/coverage.sh --xml-only --threshold 65
 
       - name: Upload coverage.xml artifact
         if: always()
