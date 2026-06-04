@@ -312,7 +312,12 @@ poll_merge_gates() {
     ($pr.reviewDecision // "NONE"),
     ($pr.mergeStateStatus // "UNKNOWN"),
     ($cr | tostring),
-    ($crskip | tostring)
+    ($crskip | tostring),
+    (if ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+          | select((.__typename == "StatusContext" and .context == "CodeRabbit")
+                or (.__typename == "CheckRun"
+                    and ((.name == "CodeRabbit") or (.name == "CR findings (0 actionable)"))))] | length) > 0
+     then 1 else 0 end)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
@@ -355,11 +360,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 20 ]; then
-            # Exactly 20 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 21 ]; then
+            # Exactly 21 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 20); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 21); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -459,6 +464,12 @@ poll_merge_gates() {
         # head — positive evidence CR actively reviewed this commit (vs a bare
         # placeholder StatusContext). The NONE branch uses it to gate the pass.
         local cr_thread_comments_on_head="${fields[14]:--1}"
+        # 1 when a CodeRabbit context (StatusContext OR CheckRun, ANY state incl.
+        # in-progress) is present on the head — i.e. CR is already engaged (reviewing
+        # or done). Suppresses the redundant NONE early-nudge: CR auto-reviews every
+        # new head, so poking `@coderabbitai review` while it is already reviewing is
+        # noise (the "multiple pokes" symptom on auto-commit head churn).
+        local cr_context_present="${fields[20]:-0}"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -624,8 +635,15 @@ poll_merge_gates() {
                 # shape where nudging is futile — re-triggering review on a PR that
                 # exceeds CR's file limit just makes CR skip again and spams the
                 # thread. The nudge stays for genuine NONE (CR still thinking).
+                # Also suppressed when CR is already engaged on this head
+                # (cr_context_present): CR auto-reviews every new head, so nudging
+                # while it is mid-review is a redundant poke — the nudge is for a
+                # genuinely silent CR, not one already working. Without this, an
+                # auto-commit that moves the head (e.g. a bot INDEX-autosync) drew a
+                # second `@coderabbitai review` on top of CR's own auto-review.
                 if [ "$cr_pass" = false ] && [ "$cr_installed" = true ] && \
-                   [ "$cr_size_skip_block" != true ] && [ "$STALE_REREVIEW_POLLS" -gt 0 ]; then
+                   [ "$cr_size_skip_block" != true ] && [ "$cr_context_present" != 1 ] && \
+                   [ "$STALE_REREVIEW_POLLS" -gt 0 ]; then
                     nudge_coderabbit "$head_sha" "CR=NONE on HEAD ${head_sha:0:8} (no review yet, within grace)"
                 fi
                 ;;
