@@ -100,6 +100,7 @@ N/A — no Source/Core code, no C++. The diff is `*.md` + `project.config.json` 
   4. `agents/scripts/core/clear-session-context.sh` — `## === loop-mode: <on|in> ===` SessionStart banner from `SMATCHET_LOOP_MODE` (default `in`; any non-`on` value normalises to `in`), mirroring the p4-mode banner.
   5. `project.config.json` — `governance` block (`policy: AI_POLICY.md`, `loop_mode: in`).
   6. `project.config.schema.json` — `governance` object property (loop_mode enum `["in","on"]`) so the config validates.
+- **Recovery + attribution (PR #813):** PR #808's watcher squash-merged only the plan-prep commit before the feature commit landed (the #681 register-before-final-push trap, recurred), orphaning the implementation on the re-created branch. Recovered the orphaned commit, re-based onto develop, and re-shipped the full feature as #813. Added an `## Attribution` section to `AI_POLICY.md` crediting **Ghostty** (`ghostty-org/ghostty`, MIT) as prior art for the charter-separated-from-instruction pattern (structure borrowed, content original).
 
 ## Deviations from plan
 
