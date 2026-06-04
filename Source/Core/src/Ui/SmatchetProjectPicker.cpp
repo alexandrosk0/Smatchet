@@ -3,7 +3,6 @@
 #include "AppController.h"
 #include "FieldCatalogCache.h"
 #include "ITrackerBackend.h"
-#include "ITrackerConnectivity.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetProjectPicker_detail.h"
@@ -26,10 +25,8 @@ bool Draw(const char* idScope, State& state, AppController& app, const std::stri
     ImGui::PushID(idScope);
     bool changed = false;
     // Strong handle to the active backend (kept as a local arity to preserve the function key).
-    // The OFF-THREAD fetch captures this shared_ptr so it survives a live tracker swap (ADR 0012);
-    // `client` is a raw view for the synchronous null-check / identity use only.
+    // The OFF-THREAD fetch captures this shared_ptr so it survives a live tracker swap (ADR 0012).
     std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
-    ITrackerConnectivity* client = backend ? &backend->Connectivity() : nullptr;
 
     const char* placeholder = SmatchetLocalization::T("draft.project.placeholder", "(pick one)");
     const std::string preview = selectedKey.empty() ? std::string(placeholder) : selectedKey;
