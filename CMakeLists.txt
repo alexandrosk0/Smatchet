@@ -181,8 +181,11 @@ set(SMATCHET_UNREAL_THIRDPARTY_DIR
 option(SMATCHET_ENABLE_STRICT_WARNINGS
     "Apply /W4 or -Wall -Wextra -Wunused-* to Smatchet libraries and standalone (not ImGui/GLFW)"
     ON)
+# Default OFF for external/raw-cmake/Unreal consumers; force-ON via the
+# _smatchet-msvc-base / _smatchet-clang-base presets so every first-party dev +
+# CI build (and the light job) treats first-party warnings as errors.
 option(SMATCHET_WARNINGS_AS_ERRORS
-    "Treat the above warnings as errors (useful for CI)"
+    "Treat the above warnings as errors (force-ON via base presets; default OFF for external/Unreal consumers)"
     OFF)
 
 option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)

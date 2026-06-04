@@ -1549,10 +1549,6 @@ struct HtmlMdCtx {
     }
 };
 
-bool HtmlIsInlineMark(const std::string& t) {
-    return t == "strong" || t == "b" || t == "em" || t == "i" || t == "s" || t == "del" || t == "u" || t == "code";
-}
-
 std::string HtmlInlineOpenMd(const std::string& t) {
     if (t == "strong" || t == "b")
         return "**";

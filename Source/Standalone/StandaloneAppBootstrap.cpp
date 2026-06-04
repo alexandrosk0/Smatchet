@@ -340,6 +340,8 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
                 (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
             ctx.pluginHost->Register(std::make_unique<McpPlugin>(mcpPort));
         }
+#else
+        (void)forceMcp; // MCP compiled out — forceMcp has no consumer in this build.
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         ctx.pluginHost->Register(std::make_unique<LuaConsolePlugin>());
