@@ -110,6 +110,17 @@ jobs:
           python-version: '3.11'
       - name: Regenerate INDEX + commit if drifted
         run: |
+          # Scope: only act on PRs that actually touch docs/plans/ — a non-plan
+          # PR doesn't change shipped/, so its INDEX is correct after the
+          # (strict-mode-mandatory) rebase and needs no auto-commit. Skipping
+          # them avoids a surprise bot commit + an extra CodeRabbit review cycle
+          # on unrelated PRs (and spurious git-history date-column diffs).
+          base="${{ github.event.pull_request.base.ref }}"
+          git fetch --no-tags origin "$base" 2>/dev/null || true
+          if ! git diff --name-only "origin/$base...HEAD" | grep -q '^docs/plans/'; then
+            echo "PR does not touch docs/plans/ — INDEX autosync skipped."
+            exit 0
+          fi
           bash agents/scripts/core/test-plan-index.sh --fix
           if git diff --quiet -- docs/plans/INDEX.md; then
             echo "plan INDEX already in sync — nothing to commit."
