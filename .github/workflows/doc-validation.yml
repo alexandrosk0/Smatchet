@@ -40,6 +40,7 @@ on:
       - 'agents/scripts/core/test-markdown-links.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
       - 'agents/scripts/project/test-subsystem-docs.sh'
+      - 'agents/scripts/core/agent_size_audit.py'
       - 'CONTEXT-MAP.md'
       - 'Source/Core/src/**/AGENTS.md'
       - 'Source/Core/src/**/CONTEXT.md'
@@ -67,6 +68,7 @@ on:
       - 'agents/scripts/core/test-markdown-links.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
       - 'agents/scripts/project/test-subsystem-docs.sh'
+      - 'agents/scripts/core/agent_size_audit.py'
       - 'CONTEXT-MAP.md'
       - 'Source/Core/src/**/AGENTS.md'
       - 'Source/Core/src/**/CONTEXT.md'
@@ -203,3 +205,6 @@ jobs:
 
       - name: test-subsystem-docs — leaf-doc registry parity + README staleness
         run: bash agents/scripts/project/test-subsystem-docs.sh --diff origin/develop
+
+      - name: agent-size gate — agent prompt / AGENTS.md line budget (delta vs develop)
+        run: python3 agents/scripts/core/agent_size_audit.py --diff origin/develop

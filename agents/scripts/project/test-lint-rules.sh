@@ -23,6 +23,8 @@
 #                          (repo-wide, delta-gated; tiered; function_size_audit.py)
 #   function-too-branchy   function decision count > 30 (repo-wide, delta-gated, all functions)
 #   (advisory)             [func-size] WARN on > 100 lines / > 20 branches — never blocks
+#   agent-too-long         agent prompt > 250 lines / AGENTS.md > 150 (delta-gated; agent_size_audit.py)
+#   (advisory)             [agent-size] WARN — soft tiers + the docs/agent-rules + skills sinks (~400)
 #
 # Modes:
 #   (no args) / --diff [<ref>]   delta gate: fail only on (rule,basename,hash)
@@ -159,6 +161,10 @@ COMMENT_RULES=(comment-commented-out-code comment-decorative-banner comment-blan
 # decompose-top-20-monoliths Slice 0 — repo-wide function-size rule-ids (delta-gated; classified by
 # function_size_audit.py --diff). KEEP IN SYNC with AGENTS.md § Tiered enforcement.
 FUNCSIZE_RULES=(function-too-long function-too-branchy)
+
+# reduce-agent-prompt-bloat Slice 0 — agent-prompt / AGENTS.md size rule-id (delta-gated; classified
+# by agent_size_audit.py --diff). KEEP IN SYNC with AGENTS.md § Project rules § Prompt/contract size.
+AGENTSIZE_RULES=(agent-too-long)
 
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
@@ -398,6 +404,7 @@ case "${1:-}" in
     --diff=*)      MODE=diff;     ARG="${1#--diff=}" ;;
     --catalog)     MODE=catalog ;;
     --funcsize-baseline) MODE=funcsizebaseline ;;
+    --agentsize-baseline) MODE=agentsizebaseline ;;
     --dup-baseline) MODE=dupbaseline ;;
     --scan-file)   MODE=scanfile; ARG="${2:-}" ;;
     --scan-file=*) MODE=scanfile; ARG="${1#--scan-file=}" ;;
@@ -405,7 +412,7 @@ case "${1:-}" in
     --scan-wide)   MODE=scanwide ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -430,6 +437,10 @@ case "$MODE" in
     for r in "${FUNCSIZE_RULES[@]}"; do
         if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: function-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
+    # Assert the agent-prompt-size rule-id is documented in AGENTS.md (delta-gated list).
+    for r in "${AGENTSIZE_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: agent-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
     # Delegate the tiered-cap + UI-classification in-sync assertion to the audit script's own
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
     # Assert the duplication rule-id (DRY Engineering Pillar 5) is documented in AGENTS.md.
@@ -438,8 +449,9 @@ case "$MODE" in
     if [ -n "$st_py" ]; then
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/agent_size_audit.py" --selftest; then miss=1; fi
     else
-        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py --selftest" >&2
+        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py / agent_size_audit.py --selftest" >&2
     fi
     [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment + function-size + duplication rules in sync" || exit 1
     ;;
@@ -500,6 +512,18 @@ case "$MODE" in
     mkdir -p "$(dirname "$FUNCSIZE_BASELINE_FILE")"
     "$fs_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --baseline-md > "$FUNCSIZE_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $FUNCSIZE_BASELINE_FILE"
+    ;;
+
+  agentsizebaseline)
+    # Refresh the informational agent-prompt/AGENTS.md size grandfather snapshot. Same contract as
+    # --funcsize-baseline: the gate is a live merge-base delta (agent_size_audit.py --diff), not this
+    # file. reduce-agent-prompt-bloat Slice 0.
+    as_py="$(resolve_python || true)"
+    [ -n "$as_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --agentsize-baseline" >&2; exit 2; }
+    AGENTSIZE_BASELINE_FILE="docs/high-integrity/agent-size-baseline.md"
+    mkdir -p "$(dirname "$AGENTSIZE_BASELINE_FILE")"
+    "$as_py" "$REPO_ROOT/agents/scripts/core/agent_size_audit.py" --baseline-md > "$AGENTSIZE_BASELINE_FILE"
+    echo "[test-lint-rules] refreshed $AGENTSIZE_BASELINE_FILE"
     ;;
 
   dupbaseline)
@@ -659,6 +683,40 @@ case "$MODE" in
     if [ -f "$dup_aud" ] && [ -n "$cr_py" ]; then
         "$cr_py" "$dup_aud" --diff "$BASE" || \
             echo "test-lint-rules: WARN: dup_audit.py --diff exited non-zero (advisory; not failing the gate)" >&2
+    fi
+
+    # --- agent-prompt / AGENTS.md size rule (delta-gated; reduce-agent-prompt-bloat Slice 0) ---
+    # New agent prompts (agents/core, agents/project) over 250 lines — or AGENTS.md over 150, or an
+    # existing one that JUST crossed its cap — fail. agent_size_audit.py keys by (rule, path) and
+    # diffs HEAD vs the merge-base of $BASE, so the current whales (debug-detective, git-janitor,
+    # test-author, AGENTS.md) are grandfathered (a grandfathered file shrinking — or even growing —
+    # stays grandfathered; only a NEW over-cap file or an under->over crossing fires). The sink
+    # classes (docs/agent-rules, agents/_shared/skills) are soft-warn-only and never enter $rc. Fail
+    # CLOSED on infra error, identical contract to the function-size gate (0 clean / 1 violations /
+    # >=2 infra). A line reading SMATCHET_DEVIATION(rule=agent-too-long; ...) anywhere in the file
+    # suppresses it. Advisory [agent-size] WARN lines go to STDERR (never enter $as_out / exit code).
+    # NB: this gate ALSO runs as its own required-check step in doc-validation.yml, which (unlike the
+    # Windows build job that hosts this script) fires on docs-only PRs — the exact agent-regrowth
+    # vector. Keeping it here too covers code PRs + local test-all.sh. $cr_py is the validated interp.
+    as_aud="$REPO_ROOT/agents/scripts/core/agent_size_audit.py"
+    if [ ! -f "$as_aud" ]; then
+        echo "test-lint-rules: ERROR: missing $as_aud; cannot enforce agent-size gate" >&2
+        exit 2
+    fi
+    if as_out="$("$cr_py" "$as_aud" --diff "$BASE")"; then as_rc=0; else as_rc=$?; fi
+    if [ "$as_rc" -ge 2 ]; then
+        echo "test-lint-rules: ERROR: agent_size_audit.py --diff failed (exit $as_rc) for base '$BASE'" >&2
+        exit 2
+    fi
+    if [ -n "$as_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: new over-budget agent prompts / AGENTS.md vs $BASE (cap 250 lines prompt / 150 lines AGENTS.md):"
+        printf '%s\n' "$as_out" | sed 's/^/  /'
+        echo "  Extract procedure-bodies to a skill (see docs/agent-rules/AGENT-VS-SKILL.md), or add"
+        echo "  SMATCHET_DEVIATION(rule=agent-too-long; reason=...; owner=...; revisit=...) in the file."
+    else
+        echo "[test-lint-rules] PASS — no new over-budget agent prompts / AGENTS.md vs $BASE"
     fi
 
     exit "$rc"

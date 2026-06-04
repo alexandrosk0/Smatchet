@@ -69,6 +69,7 @@
       "Test-delta gate",
       "Windows + MSVC",
       "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
+      "Shell lint (shellcheck)",
       "Doc anchors + agent contract"
     ],
     "path_filters": {
@@ -120,6 +121,7 @@
     { "name": "commands", "agents": ["command-system"] }
   ],
   "agents": {
+    "_doc": "size_*: line budgets for agent_size_audit.py (reduce-agent-prompt-bloat Slice 0). size_budget/warn = agent-prompt class (agents/core, agents/project); contract_* = AGENTS.md; sink_warn = soft-warn-only sinks (docs/agent-rules, agents/_shared/skills). Hard caps BLOCK (delta-gated + grandfathered); sinks never block. KEEP IN SYNC with the agent_size_audit.py constants (its --selftest asserts equality).",
     "enabled_project": [
       "tracker-backend",
       "grid-engine",
@@ -129,7 +131,12 @@
       "unreal-bridge",
       "p4-annotate",
       "command-system"
-    ]
+    ],
+    "size_budget_lines": 250,
+    "size_warn_lines": 150,
+    "contract_budget_lines": 150,
+    "contract_warn_lines": 120,
+    "sink_warn_lines": 400
   },
   "governance": {
     "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode is the SessionStart default when SMATCHET_LOOP_MODE is unset; the env var overrides per session.",
