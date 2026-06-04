@@ -854,6 +854,28 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
 }
 
+@test "CR=NONE but a CodeRabbit context already present on head -> no redundant nudge" {
+    # CR is mid-review (a CodeRabbit CheckRun exists, conclusion null) but hasn't
+    # posted a review yet → state is NONE+pending. The early-nudge must NOT fire:
+    # poking @coderabbitai review while CR is already reviewing is the "multiple
+    # pokes" noise (e.g. a bot auto-commit moves the head, CR auto-reviews it, and
+    # the poller used to re-poke on top). cr_context_present (field 21) gates it.
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"ci/standalone","state":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"skipped-job","conclusion":"SKIPPED","status":"COMPLETED","isRequired":true},{"__typename":"CheckRun","name":"neutral-job","conclusion":"NEUTRAL","status":"COMPLETED","isRequired":true},{"__typename":"CheckRun","name":"stale-job","conclusion":"STALE","status":"COMPLETED","isRequired":true},{"__typename":"CheckRun","name":"CodeRabbit","conclusion":null,"status":"IN_PROGRESS","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [ ! -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
+    rm -f "$f" "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
 @test "CR=NONE nudge: gh pr comment failure leaves guard unset → retries each poll" {
     # When `gh pr comment` exits non-zero, nudge_coderabbit must NOT mark the
     # head as posted (guard stays unset), so a later poll on the same head
