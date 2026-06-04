@@ -152,6 +152,13 @@ OCC_FILTER_ARGS=(
     --excluded_sources "Source.Plugins.Mcp.imgui"
     --excluded_sources "ImGui"
     --excluded_sources "imgui"
+    # coverage-threshold-graduation Slice 1: the end-state spec measures
+    # Source/Core/src/ EXCLUDING UI draw code (bucket-E/screenshot-tested, not
+    # ctest-testable). Exclude Smatchet's own Ui/ trees so the numeric gate
+    # tracks the testable surface. Dotted form = OCC path-regex (matches
+    # `Source\Core\src\Ui\` / `Source\Core\include\Ui\`).
+    --excluded_sources "Source.Core.src.Ui"
+    --excluded_sources "Source.Core.include.Ui"
 )
 
 # Capture each target into its own binary intermediate, then merge both via a
