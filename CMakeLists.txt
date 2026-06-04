@@ -181,8 +181,11 @@ set(SMATCHET_UNREAL_THIRDPARTY_DIR
 option(SMATCHET_ENABLE_STRICT_WARNINGS
     "Apply /W4 or -Wall -Wextra -Wunused-* to Smatchet libraries and standalone (not ImGui/GLFW)"
     ON)
+# Default OFF for external/raw-cmake/Unreal consumers; force-ON via the
+# _smatchet-msvc-base / _smatchet-clang-base presets so every first-party dev +
+# CI build (and the light job) treats first-party warnings as errors.
 option(SMATCHET_WARNINGS_AS_ERRORS
-    "Treat the above warnings as errors (useful for CI)"
+    "Treat the above warnings as errors (force-ON via base presets; default OFF for external/Unreal consumers)"
     OFF)
 
 option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lua console plugin" ON)
@@ -237,7 +240,15 @@ function(smatchet_apply_strict_warnings _target)
         return()
     endif()
     if(MSVC)
-        target_compile_options("${_target}" PRIVATE /W4)
+        # /wd5321: this codebase is UTF-8-first (/utf-8 is forced globally) and
+        # deliberately embeds raw UTF-8 (em-dash, bullets, …) in narrow string
+        # literals in the localization tables (SmatchetLocalization.cpp). C5321
+        # ("nonstandard extension: encoding '\xNN' as a multi-byte utf-8
+        # character") was added in MSVC 14.40+ and its "use \u for cross-platform
+        # compatibility" advice is moot under /utf-8 — forcing \u escapes on every
+        # translated string would gut readability. Suppress only this one benign
+        # extension warning; every real warning class stays /WX-fatal.
+        target_compile_options("${_target}" PRIVATE /W4 /wd5321)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # Omit -Wunused-parameter: callback-heavy UI code (ImGui, etc.) is very noisy.
         target_compile_options(

@@ -1353,6 +1353,11 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         RenderTextEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth,
                          singleClickToEdit);
         return;
+    default:
+        // The remaining special-column plans get dispatched earlier by
+        // TryRenderSpecialColumnPlan and never reach this switch. Falling through
+        // to the time-tracking modal preserves the prior unhandled-case behaviour.
+        break;
     }
 
     RenderTimeTrackingModal(app, ticket);

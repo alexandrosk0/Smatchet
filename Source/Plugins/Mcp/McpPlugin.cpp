@@ -431,8 +431,13 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
         std::string paramsStr = arguments.dump();
         LOG_TRACE("MCP: REST POST /mcp/tools/call remote=%s tool=%s args_len=%zu body_len=%zu", req.remote_addr.c_str(),
                   name.c_str(), paramsStr.size(), req.body.size());
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        // error / result are populated and consumed only by the Lua tool paths
+        // (run_lua / isLuaMcpTool → EmitToolsCallResult). The registry and no-Lua
+        // paths build their own envelopes, so these are unused when Lua is off.
         std::string error;
         std::string result;
+#endif
         // Unified Command System: try registry first. Always returns HTTP 200
         // with a canonical envelope {ok, command, data|error} in content[0].text —
         // even for structured errors (confirm-required, not-found, etc.). This lets
@@ -519,7 +524,12 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
             return;
         }
 #endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        // Only the Lua paths (run_lua / isLuaMcpTool) fall through to here with a
+        // populated `result`; every non-Lua path above returns its own envelope
+        // first, so this call is unreachable when Lua is compiled out (C4702 /WX).
         EmitToolsCallResult(res, name, remote, arguments, error, result);
+#endif
     } catch (const std::exception& e) {
         LOG_TRACE("MCP: REST tools/call parse_exception %s", e.what());
         res.status = 400;

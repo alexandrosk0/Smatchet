@@ -549,11 +549,6 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
 #endif
 }
 
-/// Back-compat overload — callers that don't care about the log path.
-bool LaunchEphemeralInstance(const std::string& exePath, int port) {
-    return LaunchEphemeralInstance(exePath, port, nullptr);
-}
-
 /// Poll until the MCP endpoint at host:port becomes reachable or timeoutMs elapses.
 bool WaitForMcpReady(const std::string& host, int port, int timeoutMs) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);

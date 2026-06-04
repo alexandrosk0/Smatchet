@@ -38,8 +38,10 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
 #if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable : 4996) // stb uses sprintf — third-party, cross-platform pragma suppression
+// Third-party stb header — silence ALL MSVC warnings for the impl block (4996
+// sprintf, 4505 unused-static under reduced-feature/Debug configs, …) so
+// first-party /WX stays strict without whack-a-mole per warning code.
+#pragma warning(push, 0)
 #endif
 #include <stb/stb_image_write.h>
 #if defined(_MSC_VER)
@@ -340,6 +342,8 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
                 (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : SmatchetDefaults::Mcp::kDefaultPort;
             ctx.pluginHost->Register(std::make_unique<McpPlugin>(mcpPort));
         }
+#else
+        (void)forceMcp; // MCP compiled out — forceMcp has no consumer in this build.
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         ctx.pluginHost->Register(std::make_unique<LuaConsolePlugin>());

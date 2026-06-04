@@ -26,7 +26,9 @@ namespace SubprocessCapture {
 namespace {
 
 constexpr int kKillExitCode = 124;
-constexpr int kCancelExitCode = 130; // 128 + SIGINT — conventional cancel exit on POSIX.
+#ifndef _WIN32
+constexpr int kCancelExitCode = 130; // 128 + SIGINT — conventional cancel exit on POSIX (unused on Windows).
+#endif
 
 void AppendCapped(std::string& dst, const char* src, size_t count, size_t cap, bool& capped) {
     if (capped || count == 0) {

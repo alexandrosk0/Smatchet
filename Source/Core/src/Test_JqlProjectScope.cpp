@@ -37,10 +37,13 @@ bool RunJqlProjectScopeSelfTest_Unused() {
 struct ForceInstantiate {
     bool (*p)() = &RunJqlProjectScopeSelfTest_Unused;
 };
-#if defined(_MSC_VER)
-static ForceInstantiate s_forceInstantiate{};
-#else
+// clang-cl defines _MSC_VER but still honours [[gnu::used]] and emits
+// -Wunused-variable for the bare static; key on the attribute's availability
+// (Clang/GCC) rather than on the MSVC macro.
+#if defined(__clang__) || defined(__GNUC__)
 [[gnu::used]] static ForceInstantiate s_forceInstantiate{};
+#else
+static ForceInstantiate s_forceInstantiate{};
 #endif
 
 } // namespace

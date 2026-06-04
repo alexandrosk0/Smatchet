@@ -14,6 +14,7 @@
             "cacheVariables": {
                 "SMATCHET_WITH_LUA_AUTOMATION": "ON",
                 "SMATCHET_WITH_MCP": "ON",
+                "SMATCHET_WARNINGS_AS_ERRORS": "ON",
                 "CMAKE_C_COMPILER": "cl.exe",
                 "CMAKE_CXX_COMPILER": "cl.exe",
                 "CMAKE_LINKER": "link.exe",
@@ -28,6 +29,7 @@
             "cacheVariables": {
                 "SMATCHET_WITH_LUA_AUTOMATION": "ON",
                 "SMATCHET_WITH_MCP": "ON",
+                "SMATCHET_WARNINGS_AS_ERRORS": "ON",
                 "CMAKE_C_COMPILER": "clang-cl",
                 "CMAKE_CXX_COMPILER": "clang-cl"
             }
