@@ -519,7 +519,12 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
             return;
         }
 #endif
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        // Only the Lua paths (run_lua / isLuaMcpTool) fall through to here with a
+        // populated `result`; every non-Lua path above returns its own envelope
+        // first, so this call is unreachable when Lua is compiled out (C4702 /WX).
         EmitToolsCallResult(res, name, remote, arguments, error, result);
+#endif
     } catch (const std::exception& e) {
         LOG_TRACE("MCP: REST tools/call parse_exception %s", e.what());
         res.status = 400;
