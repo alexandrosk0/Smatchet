@@ -141,7 +141,16 @@ rm -f "$BIN_TESTS" "$BIN_LUA" "$XML_OUT"
 # OpenCppCoverage uses --source to include / exclude paths. We restrict to
 # Source/Core/ (excluding UI / ImGui-heavy bits is the threshold flip's job
 # downstream; this script captures everything Source/Core for now).
-SOURCE_INCLUDE="Source.Core"
+# OpenCppCoverage --sources / --modules / --excluded_sources match by
+# **substring "contains"** (NOT regex), with `*` as the only wildcard (matches
+# any chars incl. path separators). A literal `.` therefore matches ONLY a
+# literal dot — so the previous dotted patterns (`Source.Core`,
+# `Source.Plugins.Mcp.imgui`, `Source.Core.src.Ui`) never matched the
+# backslash Windows paths (`...\Source\Core\src\...`) and silently selected
+# ZERO files → empty 0-line coverage report (issue #833). Use `*` between path
+# segments so the pattern is separator-agnostic. Plain substrings already
+# present in the path (`_deps`, `tests`, `ImGui`, `imgui`) are left as-is.
+SOURCE_INCLUDE="Source*Core"
 MODULE_INCLUDE="Smatchet"  # matches both SmatchetTests.exe and SmatchetLuaTests.exe
 
 OCC_FILTER_ARGS=(
@@ -149,9 +158,15 @@ OCC_FILTER_ARGS=(
     --modules "$MODULE_INCLUDE"
     --excluded_sources "_deps"
     --excluded_sources "tests"
-    --excluded_sources "Source.Plugins.Mcp.imgui"
+    --excluded_sources "Source*Plugins*Mcp*imgui"
     --excluded_sources "ImGui"
     --excluded_sources "imgui"
+    # coverage-threshold-graduation Slice 1: the end-state spec measures
+    # Source/Core/src/ EXCLUDING UI draw code (bucket-E/screenshot-tested, not
+    # ctest-testable). `*` form matches `Source\Core\src\Ui\` /
+    # `Source\Core\include\Ui\` regardless of separator.
+    --excluded_sources "Source*Core*src*Ui"
+    --excluded_sources "Source*Core*include*Ui"
 )
 
 # Capture each target into its own binary intermediate, then merge both via a

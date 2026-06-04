@@ -125,6 +125,17 @@
         "override_labels": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Numeric line-coverage gate config (coverage.yml). See coverage-threshold-graduation.",
+      "properties": {
+        "_doc": { "type": "string" },
+        "threshold": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "ramp_target": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "excluded": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "visual_validation": {
       "type": "object",
       "additionalProperties": false,

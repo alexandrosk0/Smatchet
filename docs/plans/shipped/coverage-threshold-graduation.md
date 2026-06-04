@@ -76,10 +76,20 @@ N/A — no `Source/Core/` source compiled-change. Edits `coverage.sh` (`scripts/
 - **Mutation testing** / branch-coverage floor — beyond the line-coverage end-state target.
 
 ## Implementation log
-*(populated post-ship)*
+
+- **Slice 1 (PR #832) — measure-true prep.** Added `Source.Core.src.Ui` + `Source.Core.include.Ui` to `coverage.sh --excluded_sources`, and added `scripts/dev/coverage.sh` to `coverage.yml`'s trigger paths (a coverage-script change wasn't re-running the gate). Harmless, correct prep.
+- **Blocker found + fixed (#833, PR #834).** The Slice-1 readout exposed a **fake apparatus**: OCC emitted an **empty** 0-line report because `--sources`/`--excluded_sources` match by **substring**, not regex — the dotted patterns (`Source.Core`, …) never matched the backslash Windows paths → zero files selected. Confirmed pre-existing (pre-`/Z7`/#796 run `26864632142` also 0-line). Fixed by switching to `*`-wildcard patterns (`Source*Core`, `Source*Core*src*Ui`, …). First **real** measurement on the Ui-excluded surface: **67% (8759/13007 lines)**.
+- **Slices 2 + 4 (flip) — SHIPPED (PR #834).** Threshold chosen from data: 67% < 70 → graduate at a **stable floor of 65** (~2pt headroom vs per-run noise) + raise-to-70 ramp backlog (`categories/test.md`). `coverage.yml`: `continue-on-error: false` + `--threshold 65` + header rewrite advisory→blocking. `project.config.json`: `coverage` block (`threshold: 65`, `ramp_target: 70`, `excluded: [Source/Core/src/Ui, Source/Core/include/Ui]`) + schema def + `coverage-out-of-band` override label. `gh label create coverage-out-of-band` done. Parent `test-suite-expansion-completion.md` § Implementation-log appended.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Plan uncovered a fake apparatus before flipping (the measure-first rule paid off).** The plan assumed "the full apparatus landed" (Phase 9); the mandatory Slice-1 measure step proved that false (OCC matched 0 files). Per the cardinal rule (never flip blind) + `AI_POLICY.md` escalate-when-unvalidatable, the flip was **held** across PR #832 (Slice-1 prep + blocker note) until #833/#834 fixed the rig — then shipped in #834 with the real number. The flip rode in the **same PR** as the rig fix (#834) rather than a separate follow-up, since the fix produces the number the flip consumes — cohesive.
+- **Threshold = 65, not the 70 target.** Real coverage is 67% < 70, so per the plan's `<70` branch the gate graduates at a floor (65) + a raise-to-70 ramp backlog, rather than red-barring `develop` at 70 on day one.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Pre-fix (the key finding):** corrected-surface report was **empty** — `coverage.xml` (run `26925159870`) `lines-valid="0"`, same on pre-`/Z7` baseline `26864632142` → root cause #833 (substring-not-regex).
+- **Post-fix measurement (PR #834, run `26926420231`):** `coverage.xml` = `lines-covered="8759" lines-valid="13007"`, **line-rate 0.6734 (67%)** on the Ui-excluded `Source/Core` surface. Real lines now captured — fix confirmed.
+- **Threshold choice:** 67% < 70 → `--threshold 65` (floor + headroom). #834's own `coverage.yml` run is now blocking at 65 and passes (67 ≥ 65).
+- **Config:** `project.config.json` validates against schema with the new `coverage` block (manual jsonschema check PASS, no extra keys). `coverage-out-of-band` added to `override_labels` + repo label created.
+- `test-workflow-yaml.sh` green on `coverage.yml` (15/0). No C++ compile in the diff.
