@@ -47,6 +47,12 @@ concurrency:
   group: cr-finding-gate-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
 
+env:
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
+  # actions/checkout, actions/cache, ilammy/msvc-dev-cmd, upload-artifact —
+  # incl. third-party actions with no Node 24 release yet.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   cr-gate:
     name: CR finding gate

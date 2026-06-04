@@ -54,6 +54,7 @@ concurrency:
 # build. /Z7 (CI gate in CMakeLists.txt) is perf-neutral — debug-info location
 # only, no codegen change (plan Q3).
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_DIR: ${{ github.workspace }}\.sccache
 
 permissions:
