@@ -240,7 +240,15 @@ function(smatchet_apply_strict_warnings _target)
         return()
     endif()
     if(MSVC)
-        target_compile_options("${_target}" PRIVATE /W4)
+        # /wd5321: this codebase is UTF-8-first (/utf-8 is forced globally) and
+        # deliberately embeds raw UTF-8 (em-dash, bullets, …) in narrow string
+        # literals in the localization tables (SmatchetLocalization.cpp). C5321
+        # ("nonstandard extension: encoding '\xNN' as a multi-byte utf-8
+        # character") was added in MSVC 14.40+ and its "use \u for cross-platform
+        # compatibility" advice is moot under /utf-8 — forcing \u escapes on every
+        # translated string would gut readability. Suppress only this one benign
+        # extension warning; every real warning class stays /WX-fatal.
+        target_compile_options("${_target}" PRIVATE /W4 /wd5321)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # Omit -Wunused-parameter: callback-heavy UI code (ImGui, etc.) is very noisy.
         target_compile_options(
