@@ -20,6 +20,7 @@ permissions:
 # (mozilla-actions/sccache-action) + caches $SCCACHE_DIR. Disable with
 # SMATCHET_NO_CCACHE=1.
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_DIR: ${{ github.workspace }}\.sccache
 
 on:
