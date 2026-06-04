@@ -100,6 +100,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
 | [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
 | [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | 2026-06-02 | Plan — Agent charter altitude (operating-principle preamble + context budget) |
+| [`coverage-threshold-graduation`](shipped/coverage-threshold-graduation.md) | 2026-06-02 | Plan — Coverage threshold graduation (advisory → blocking) |
 | [`full-function-size-compliance`](shipped/full-function-size-compliance.md) | 2026-06-02 | Plan — Full Function-Size Compliance (zero grandfathered monoliths) |
 | [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | 2026-06-02 | Plan — Gate-escape postmortem (incident → new gate) |
 | [`internal-procedure-skills`](shipped/internal-procedure-skills.md) | 2026-06-02 | Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc) |
@@ -107,7 +108,6 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`solo-merge-review-gate`](shipped/solo-merge-review-gate.md) | 2026-06-02 | Plan — Solo-workflow review gate (drop required approval, codify protection) |
 | [`dry-pillar-dup-gate`](shipped/dry-pillar-dup-gate.md) | 2026-06-03 | Plan — DRY Quality Pillar + duplication delta-gate |
 | [`issue-triage-protocol`](shipped/issue-triage-protocol.md) | 2026-06-03 | Plan — GitHub Issue triage protocol (Issues-canonical for product bugs) |
-| [`coverage-threshold-graduation`](shipped/coverage-threshold-graduation.md) | — | Plan — Coverage threshold graduation (advisory → blocking) |
 <!-- END auto-plan-index -->
 
 ### Notes
