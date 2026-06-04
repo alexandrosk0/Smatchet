@@ -39,6 +39,7 @@ SKILL_ONLY_HELPERS=(
     adversarial-code-review
     but-for-real
     drain-memory
+    debug-instrument
 )
 
 is_skill_only() {
