@@ -1,4 +1,4 @@
-# Plan — Reduce agent-prompt bloat (extract procedure-bodies to skills + size gate)
+# Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate)
 
 > **Slug**: `reduce-agent-prompt-bloat` (matches this file's basename without `.md`).
 >
@@ -27,13 +27,20 @@ Per [`docs/agent-rules/AGENT-VS-SKILL.md`](../../agent-rules/AGENT-VS-SKILL.md),
 
 **Prior art (extend, don't duplicate):** [`docs/plans/shipped/agents-skill-conversion.md`](../shipped/agents-skill-conversion.md) converted **two whole** low-complexity agents (`perf-instrument`, `perf-measure`) to dual-published skills and established (a) the cross-harness constraint — Codex/Cursor read `agents/*.md` directly, have no skill concept — and (b) the `setup-harness.sh` loop-over-skills refactor. **This plan is a different lane:** it does not convert *whole* heavy agents (they have real reasoning loops → they stay agents); it extracts the *deterministic procedure-bodies out of* heavy agents into skills, and adds the **missing size gate** so the bloat can't regrow.
 
-**Intended outcome — one sentence:** after this lands, heavy agents are **readable** — shrunk to their reasoning/routing core with procedure-bodies relocated to skills — and a delta-gated **agent-size budget** keeps them that way (the "gate, don't trust" guardrail the agent tree currently lacks).
+**Intended outcome — one sentence:** after this lands, heavy agents **and `AGENTS.md` itself** are **readable** — agents shrunk to their reasoning/routing core (procedure-bodies relocated to skills), `AGENTS.md` shrunk to its self-declared *navigation-only* role (rule-detail relocated to `docs/agent-rules/*`) — and a delta-gated **size budget over `agents/**/*.md` + `AGENTS.md` + `docs/agent-rules/*.md`** keeps them that way (the "gate, don't trust" guardrail none of these every-session-or-per-delegation docs currently have).
+
+**`AGENTS.md` is also in scope (added on review).** It is **255 lines** and loads **every session** (higher-frequency than any per-delegation agent), yet its own § Operating principles declares *"Navigation only — no rule detail lives here; if a line accretes detail it has failed, move it to its linked section."* The biggest violator is **§ Project rules (59 L, 23% of the file)** — dense build/lang/lint/tiered-enforcement/deviation detail that belongs in a linked `docs/agent-rules/*` doc with a stub left behind (the exact pattern that already took `AGENTS.md` ~549 → 255 by extracting `delegation.md` / `ship-loops.md` / `merge-gates.md` / `process-rules.md`). De-bloating `AGENTS.md` = enforcing its own stated rule.
 
 ## Approach
 
 **Gate-leads, like `decompose-top-20-monoliths`** — without the size gate the extraction decays under prompt-editing pressure (same erosion that plan proved for C++). Four slices.
 
 **Slice 0 — agent-size gate (the keystone; ships first).** Add `agents/scripts/core/agent_size_audit.py` (sibling of `function_size_audit.py`): a **delta + grandfather** gate. The cap governs **new agents** and **growth of an existing agent past its baseline** — existing over-budget agents are snapshotted into `docs/high-integrity/agent-size-baseline.md` and **never fail regardless of size** (so the whales can be shrunk later without the gate fighting it; only *regrowth* past the snapshot fails). **Budget (locked, maintainer decision from the measured distribution — 11 agents ≤109 L, then a cliff to 133/141/214/268/534/733): hard cap 250 lines, soft-warn at 150** (mirrors the function-size 120-hard / 100-soft tiered shape). Lines, not bytes — line count is what reviewers reason about and what the function-size gate uses; a byte budget would penalise legitimately wide tables. Config-sourced (`project.config.json` § `agents.size_budget_lines` + `size_warn_lines`). Wire into `test-lint-rules.sh` + `test-all.sh` + CI; `SMATCHET_DEVIATION(rule=agent-too-long; …)` escape for a legitimately-large agent; `--selftest` asserts the budget matches this section. *Pure-logic Python; no `Source/` change → fast CI.* **The budget is NOT a Slice-1 dependency** — it is set here, now, from data already in hand.
+
+**Gate scope = three file classes, three budgets** (the gate scans all three, delta+grandfather each):
+- **`agents/**/*.md` (agent prompts):** hard 250 / soft 150 (above).
+- **`AGENTS.md` (the every-session contract):** hard **200** / soft 150 — forces the navigation-only trim (255 grandfathered; Slice 5 brings it under).
+- **`docs/agent-rules/*.md` (the extraction *sinks*):** **soft-warn only (≈400), no hard fail** — these are where AGENTS.md / agent detail *lands*, so a hard cap here would fight the extraction. The warn flags a rule-doc that itself grew monstrous (then split it), without blocking the relocation it's meant to receive.
 
 **Slice 1 — classify + extraction map (no edits, just the readout).** For each over-baseline agent, tag every section per the rubric: **STAYS** (reasoning / multi-round loop / routing / refusal rules / report shape) vs **EXTRACT** (deterministic procedure + verbatim shell/code recipe), and flag each EXTRACT section **hot-path** (reached every invocation → stays inline, moving it just adds indirection) vs **conditional** (reached only sometimes → safe to extract). Record the per-agent before→after line estimate + destination skill. This **informs extraction targets**, not the gate budget (which is already locked in Slice 0).
 
@@ -47,6 +54,8 @@ Per [`docs/agent-rules/AGENT-VS-SKILL.md`](../../agent-rules/AGENT-VS-SKILL.md),
 
 **Slice 4 — ride-along: `test-author` (268) + `coderabbit-triage` (214).** Same treatment **only if** a feature already opens the file or they exceed budget after Slices 0-3 calibration — not a dedicated sweep (the `decompose-monoliths` Phase-B lesson: mechanical sweeps churn + regress; the gate prevents regrowth so ride-along suffices).
 
+**Slice 5 — de-bloat `AGENTS.md` to navigation-only (255 → ~190).** Apply the *same reasoning/recipe seam*, re-expressed for a contract doc: **navigation summary STAYS, rule-detail EXTRACTS.** Primary target **§ Project rules (59 L)** — lift the dense detail blocks (build/lang/layout/logging/exceptions/quality/file-size/imgui-pattern/lint zones/tiered-enforcement/deviation grammar/perf-workflow/golden-image) into a linked `docs/agent-rules/project-rules.md` (the existing `process-rules.md` / `merge-gates.md` precedent), leaving a **stub** in `AGENTS.md`: a one-line-per-rule summary + the pointer. Sweep the other detail-heavy sections (§ Harness adapter 25 L table, § Merge gates 18 L) only if still over budget after § Project rules lands. **Same anti-scatter guarantee** (explicit named pointer per extracted topic) and a **pilot-review gate**: this is the load-bearing contract every harness reads, so the maintainer reviews the trimmed `AGENTS.md` for "does it still navigate to everything" before merge (cross-harness: Codex/Cursor follow the same pointers). Doc-validation's `test-doc-anchors` + `test-markdown-links` + `test-plan-ref-integrity` already gate that no `AGENTS.md §`-anchor or link breaks in the move — so the extraction is mechanically safe-guarded.
+
 ## Cross-harness (the careful part — the design's central risk)
 
 Skills are **Claude-Code-on-demand**; Codex/Cursor read `agents/*.md` **literally** and have **no skill concept** (`setup-harness.sh` § `setup_codex`). So extraction must not blind them. Mechanism decision (locked):
@@ -59,18 +68,20 @@ Net: the Claude-context tax (the real cost — paid every invocation) drops; Cod
 
 ## Files to modify
 
-1. `agents/scripts/core/agent_size_audit.py` (new) — delta-gated line/byte budget over `agents/**/*.md`; `--diff origin/develop`, `--selftest`, `SMATCHET_DEVIATION(rule=agent-too-long)` escape.
-2. `docs/high-integrity/agent-size-baseline.md` (new) — grandfather snapshot of current over-budget agents.
+1. `agents/scripts/core/agent_size_audit.py` (new) — delta-gated line budget over the **three classes** (`agents/**/*.md` hard 250, `AGENTS.md` hard 200, `docs/agent-rules/*.md` soft-warn-only ≈400); `--diff origin/develop`, `--selftest`, `SMATCHET_DEVIATION(rule=agent-too-long)` escape.
+2. `docs/high-integrity/agent-size-baseline.md` (new) — grandfather snapshot of current over-budget files (the agent whales + `AGENTS.md` at 255).
 3. `agents/scripts/project/test-lint-rules.sh` (edit) + `scripts/dev/test-all.sh` + the CI doc/lint job (edit) — run the new gate.
-4. `project.config.json` + `project.config.schema.json` (edit) — `agents.size_budget_lines` (+ soft-warn) config + schema def (root is `additionalProperties:false`; the `agents` block already exists — add the field there + to its schema).
+4. `project.config.json` + `project.config.schema.json` (edit) — a `governance`-sibling or `agents` sub-block carrying the three per-class budgets (`size_budget_lines`, `size_warn_lines`, the `AGENTS.md` + rule-doc caps) + schema def (root `additionalProperties:false`).
 5. `docs/agent-rules/AGENT-VS-SKILL.md` (edit) — add the "**extract procedure-bodies, not just whole agents**" guidance + the reasoning/recipe seam + the summary+pointer cross-harness pattern. (This is the durable *why*-record — no ADR; the decision is reversible (re-inline + drop the gate) and the rubric is its natural home.)
-5b. `AGENTS.md` § Project rules (edit) — one-liner for the new gate, parallel to the function-size entry: "**Agent prompt size**: `agents/**/*.md` stay under **250 lines** (soft-warn 150); delta-gated by `agent_size_audit.py` vs `origin/develop`, existing over-cap agents grandfathered (`docs/high-integrity/agent-size-baseline.md`), `SMATCHET_DEVIATION(rule=agent-too-long)` escape. Extract deterministic procedure-bodies to skills per `docs/agent-rules/AGENT-VS-SKILL.md`." So the gate is discoverable, not script-only.
+5b. `AGENTS.md` § Project rules (edit) — one-liner for the new gate: "**Prompt/contract size**: `agents/**/*.md` ≤ **250 L**, `AGENTS.md` ≤ **200 L** (navigation-only), `docs/agent-rules/*.md` soft-warn ≈400; delta-gated by `agent_size_audit.py` vs `origin/develop`, existing over-cap files grandfathered (`docs/high-integrity/agent-size-baseline.md`), `SMATCHET_DEVIATION(rule=agent-too-long)` escape. Extract agent procedure-bodies to skills + `AGENTS.md` rule-detail to `docs/agent-rules/*` per `docs/agent-rules/AGENT-VS-SKILL.md`." So the gate is discoverable, not script-only.
    - **Extractions are full skills, not plain reference docs** (decided): the bodies are *invocable deterministic procedures* (the agent runs the instrument/cleanup step) — the rubric's skill definition, with `perf-instrument` as the exact precedent. A plain `_shared/snippets/` doc would invent a parallel un-guarded category; rejected.
 6. `agents/core/debug-detective.md` (edit, Slice 2) — slim to reasoning core + pointer.
 7. `agents/_shared/skills/debug-instrument/SKILL.md` (new, Slice 2) — the extracted instrument/log/cleanup recipe.
 8. `agents/core/git-janitor.md` (edit, Slice 3) + `agents/_shared/skills/git-cleanup-procedures/SKILL.md` (new).
 9. `agents/scripts/core/test-skill-vs-agent-parity.sh` (edit) — register the new skill-only helpers in `SKILL_ONLY_HELPERS`.
 10. `agents/scripts/core/setup-harness.sh` — confirm the skills auto-link loop (landed by the prior conversion plan) picks the new skills up; no change expected, verify.
+11. `AGENTS.md` (edit, Slice 5) — lift § Project rules' detail blocks to a new rule-doc; leave one-line summaries + pointers. Target 255 → ~190. (Plus the gate one-liner from item 5b.)
+12. `docs/agent-rules/project-rules.md` (new, Slice 5) — the extraction sink for § Project rules detail (build/lang/lint/tiered-enforcement/deviation/perf/golden), structured like the existing `process-rules.md` / `merge-gates.md`.
 
 ## Existing utilities reused
 
@@ -95,11 +106,14 @@ N/A — no `Source/Core/` code, no C++. Diff is `agents/**/*.md` + a Python gate
 - **Over-extraction guts the reasoning** (the agent stops being able to *think*, only *follow*). → extract **only** deterministic procedure + verbatim recipe per the rubric; the hypothesis loop / evidence choice / refusals / report shape **stay**. Slice 1's classification is reviewed before any edit; the pilot (Slice 2) is inspected for "does the slimmed agent still drive the loop" before Slice 3.
 - **Gate too strict → red-bars agent edits** (the coverage-flip-blind lesson). → budget chosen **from Slice-1 data**, delta-gated + grandfathered (existing whales don't fail; only NEW growth does), generous soft-warn tier below the hard cap, `SMATCHET_DEVIATION` escape.
 - **Skill-invocation overhead** — moot for the **maintainability** goal (a smaller agent file is the win regardless of when the skill loads); it would only matter if we were chasing a runtime-context number, which we are not. Slice 1 still tags hot-path vs conditional, but for a different reason: a **hot-path** procedure (reached every invocation, e.g. a rule the agent must always apply) stays inline because relocating a rule the agent always needs *hurts* readability (now you read two files for the always-case); only **conditional / standalone-recipe** sections (the long shell blocks the agent invokes occasionally) extract cleanly.
+- **`AGENTS.md` extraction breaks an anchor / cross-ref** (it's the load-bearing contract; dozens of `AGENTS.md § <section>` refs + links point into it). → doc-validation already hard-gates this: `test-doc-anchors` (every `AGENTS.md §` resolves), `test-markdown-links` (no dangling link), `test-plan-ref-integrity`, `test-agent-contract` (required headings) — all **required** post the doc-validation-required fix. So a broken anchor/ref/heading in the move fails CI before merge; the Slice-5 extraction is mechanically safe-guarded, not trust-based. Keep the extracted section's **heading text stable** (or update all referrers in the same PR per the § Scope-reduction grep).
 
 **Non-goals:**
 - **Converting whole heavy agents to skills** — they have genuine reasoning loops; that's the prior plan's (closed) lane. This plan extracts *bodies*, keeps the agents.
 - **Deleting any agent file** — cross-harness discovery depends on them; summary+pointer, never delete.
 - **Touching the 11 already-lean agents** (≤ 109 L) — under any sane budget; the gate just keeps them there.
+- **Shrinking the `docs/agent-rules/*` rule-docs** — they are the extraction **sinks** (AGENTS.md detail lands there), not shrink targets; gated soft-warn-only so they can absorb content. A rule-doc that itself becomes a monster gets split later, not now.
+- **Rewriting any rule's *content*** — Slice 5 is byte-relocation of § Project rules detail into a linked doc + a stub; the rules themselves are unchanged (same behaviour-preserving discipline as the agent extraction).
 - **A per-harness skill adapter for Codex/Cursor** — the real cross-harness fix; separate follow-up, flagged.
 - **Rewriting agent reasoning / behaviour** — extraction is byte-relocation + a pointer, behaviour-preserving (the `decompose-monoliths` discipline).
 
@@ -112,7 +126,8 @@ N/A — no `Source/Core/` code, no C++. Diff is `agents/**/*.md` + a Python gate
 - **Behaviour-preserved (pilot)**: run a known debug task through the slimmed `debug-detective` + `debug-instrument` skill; confirm the loop still drives (instrument → build → run → read → hand-off).
 - **Parity guard**: `test-skill-vs-agent-parity.sh` green with the new `SKILL_ONLY_HELPERS` registrations.
 - **Cross-harness resolve**: `setup-harness.sh claude-code` + `codex` both still discover the slimmed agents + the new skills; the agent file still reads as self-contained (summary + pointer present).
-- **Doc/config integrity**: `md_lint`, `test-agent-contract`, `project.config.json` validates against schema with the new `agents.size_budget_lines`.
+- **`AGENTS.md` trim (Slice 5)**: before→after line count recorded (target 255 → ~190, under the 200 cap); `test-doc-anchors` + `test-markdown-links` + `test-agent-contract` + `test-plan-ref-integrity` all green (no `AGENTS.md §`-anchor / link / heading / plan-ref broken by the extraction); maintainer pilot-reviews the trimmed `AGENTS.md` for "still navigates to everything."
+- **Doc/config integrity**: `md_lint`, `test-agent-contract`, `project.config.json` validates against schema with the new size-budget block.
 - **Build gate**: N/A — no compile.
 - **Plan stress-test**: run `grill-with-docs` on this plan before finalising (AGENTS.md § Plan-doc family) and record the outcome.
 
