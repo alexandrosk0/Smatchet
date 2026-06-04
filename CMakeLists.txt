@@ -418,11 +418,53 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
         # so this is a TOFU pin (sha256 of the canonical lua-5.3.6.tar.gz) that
         # blocks a silently-tampered mirror / MITM from compiling unverified C
         # source into both targets. Every other dependency is an immutable git ref.
-        file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}"
-            EXPECTED_HASH SHA256=fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60)
+        #
+        # Lua is the ONE dependency fetched over plain HTTP (lua.org publishes no
+        # git ref), so a lua.org outage red-walls the whole build (observed: curl
+        # error 28 "Timeout was reached" took develop red for hours). Fetch from a
+        # github-hosted mirror we control first (byte-identical canonical tarball,
+        # see origin/bug-report-assets:deps/), fall back to lua.org. Each URL is
+        # retried, and the bytes are hash-verified AFTER download (not via
+        # file(DOWNLOAD EXPECTED_HASH), which hard-errors and would block fallback)
+        # so a tampered/wrong mirror is discarded and the next source is tried.
+        set(_lua_sha256 "fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60")
+        set(_lua_urls
+            "https://raw.githubusercontent.com/alexandrosk0/Smatchet/bug-report-assets/deps/lua-5.3.6.tar.gz"
+            "https://www.lua.org/ftp/lua-5.3.6.tar.gz")
+        set(_lua_ok FALSE)
+        foreach(_url IN LISTS _lua_urls)
+            foreach(_attempt RANGE 1 3)
+                file(DOWNLOAD "${_url}" "${_lua_tar}"
+                    TIMEOUT 120 INACTIVITY_TIMEOUT 30 STATUS _dl_status)
+                list(GET _dl_status 0 _dl_code)
+                if(_dl_code EQUAL 0)
+                    file(SHA256 "${_lua_tar}" _lua_got)
+                    if(_lua_got STREQUAL _lua_sha256)
+                        set(_lua_ok TRUE)
+                        break()
+                    endif()
+                    message(WARNING "Lua tarball from ${_url} hash mismatch "
+                        "(got ${_lua_got}); discarding and trying next source.")
+                else()
+                    list(GET _dl_status 1 _dl_msg)
+                    message(STATUS "Lua download failed (${_url}, attempt ${_attempt}): ${_dl_msg}")
+                endif()
+                file(REMOVE "${_lua_tar}")
+            endforeach()
+            if(_lua_ok)
+                break()
+            endif()
+        endforeach()
+        if(NOT _lua_ok)
+            message(FATAL_ERROR "Failed to download Lua 5.3.6 from all mirrors "
+                "(${_lua_urls}). Last status: ${_dl_status}")
+        endif()
         execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${_lua_tar}" WORKING_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
         file(RENAME "${FETCHCONTENT_BASE_DIR}/lua-5.3.6" "${LUA_SRC_DIR}")
         unset(_lua_tar)
+        unset(_lua_urls)
+        unset(_lua_sha256)
+        unset(_lua_ok)
     endif()
 
     file(GLOB LUA_SOURCES "${LUA_SRC_DIR}/src/*.c")
@@ -653,17 +695,47 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/Ui/Sm
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/Ui/SmatchetImGuiHostC_Diagnostics.cpp")
 # ImGuiColorTextEdit — vendored third-party TU promoted from Source/Plugins/LuaConsole/ThirdParty
 # so Source/Core (AI chat panel) can consume it. The glob above only matches
-# Source/Core/src/*.cpp; the ThirdParty TU needs an explicit append. Both Standalone and
-# DX12 targets inherit it via CORE_SOURCES.
+# Source/Core/src/*.cpp; the ThirdParty TU needs an explicit path.
+#
+# It is built in a dedicated per-world OBJECT library (NOT appended to CORE_SOURCES)
+# rather than compiled directly into SmatchetStandalone / SmatchetCore_DX12. Reason:
+# those targets carry /W4 (MSVC) via smatchet_apply_strict_warnings() at *target* scope,
+# and a per-source /W0 override on the TU then produced two /W flags on one command line
+# (MSVC: "D9025: overriding '/W4' with '/W0'", and the suppression leaked C4189 anyway).
+# The OBJECT libraries below are never passed through smatchet_apply_strict_warnings(),
+# so each compiles with a single warning flag — no collision, no D9025.
+#
+# Two libraries (one per world) are required because TextEditor.cpp #includes imgui.h and
+# must inherit the *matching* ImGui compile-time config: ImGuiLib for Standalone,
+# ImGuiLib_DX12 for the Unreal/DX12 world (see the ImGui config block above — the wchar /
+# supplementary-plane config and IMGUI_USE_WCHAR32 handling differ between worlds, and a
+# single shared object lib would ABI-mismatch one of them). The libraries are wired into
+# the respective targets by smatchet_configure_{opengl,dx12}_core_impl_target() below.
 set(_SMATCHET_IMGUI_TEXTEDIT_CPP
         "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit/TextEditor.cpp")
-list(APPEND CORE_SOURCES "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
-# Vendored third-party — suppress strict warnings so the smatchet_apply_strict_warnings
-# flags on Core / Standalone / DX12 targets don't flag upstream TextEditor.cpp.
 if(MSVC)
-    set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS /W0)
+    set(_SMATCHET_TEXTEDIT_WARN_FLAG /W0)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_source_files_properties("${_SMATCHET_IMGUI_TEXTEDIT_CPP}" PROPERTIES COMPILE_OPTIONS -w)
+    set(_SMATCHET_TEXTEDIT_WARN_FLAG -w)
+else()
+    set(_SMATCHET_TEXTEDIT_WARN_FLAG)
+endif()
+
+# Standalone (OpenGL/GLFW) world — inherits ImGuiLib's PUBLIC include dirs + IMGUI config.
+add_library(SmatchetTextEdit OBJECT "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+target_link_libraries(SmatchetTextEdit PRIVATE ImGuiLib)
+if(_SMATCHET_TEXTEDIT_WARN_FLAG)
+    target_compile_options(SmatchetTextEdit PRIVATE ${_SMATCHET_TEXTEDIT_WARN_FLAG})
+endif()
+
+# Unreal/DX12 world — inherits ImGuiLib_DX12's distinct ImGui config. EXCLUDE_FROM_ALL so a
+# default Standalone build doesn't compile it (mirrors SmatchetCore_DX12 / ImGuiLib_DX12).
+if(WIN32)
+    add_library(SmatchetTextEdit_DX12 OBJECT EXCLUDE_FROM_ALL "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
+    target_link_libraries(SmatchetTextEdit_DX12 PRIVATE ImGuiLib_DX12)
+    if(_SMATCHET_TEXTEDIT_WARN_FLAG)
+        target_compile_options(SmatchetTextEdit_DX12 PRIVATE ${_SMATCHET_TEXTEDIT_WARN_FLAG})
+    endif()
 endif()
 # GLOB snapshots at configure time; pick up new TUs if the cache predates them (no duplicate paths).
 set(_SMATCHET_CPP_SYNTAX "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxHighlight.cpp")
@@ -897,6 +969,9 @@ endfunction()
 function(smatchet_configure_opengl_core_impl_target _target)
     smatchet_configure_core_impl_target("${_target}")
     target_link_libraries("${_target}" PRIVATE ImGuiLib glfw)
+    # Vendored ImGuiColorTextEdit TU — built in its own OBJECT lib (no /W4) to avoid the
+    # MSVC D9025 /W4-vs-/W0 collision. Linking an OBJECT library pulls in its objects.
+    target_link_libraries("${_target}" PRIVATE SmatchetTextEdit)
     if(SMATCHET_WITH_MCP)
         target_link_libraries("${_target}" PUBLIC SmatchetCoreMcpShim)
     endif()
@@ -915,6 +990,8 @@ endfunction()
 
 function(smatchet_configure_dx12_core_impl_target _target)
     smatchet_configure_core_impl_target("${_target}")
+    # Vendored ImGuiColorTextEdit TU — DX12-world OBJECT lib (no /W4; matching ImGui config).
+    target_link_libraries("${_target}" PRIVATE SmatchetTextEdit_DX12)
     target_link_libraries("${_target}" PRIVATE
             ImGuiLib_DX12
             d3d12
