@@ -418,11 +418,53 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
         # so this is a TOFU pin (sha256 of the canonical lua-5.3.6.tar.gz) that
         # blocks a silently-tampered mirror / MITM from compiling unverified C
         # source into both targets. Every other dependency is an immutable git ref.
-        file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}"
-            EXPECTED_HASH SHA256=fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60)
+        #
+        # Lua is the ONE dependency fetched over plain HTTP (lua.org publishes no
+        # git ref), so a lua.org outage red-walls the whole build (observed: curl
+        # error 28 "Timeout was reached" took develop red for hours). Fetch from a
+        # github-hosted mirror we control first (byte-identical canonical tarball,
+        # see origin/bug-report-assets:deps/), fall back to lua.org. Each URL is
+        # retried, and the bytes are hash-verified AFTER download (not via
+        # file(DOWNLOAD EXPECTED_HASH), which hard-errors and would block fallback)
+        # so a tampered/wrong mirror is discarded and the next source is tried.
+        set(_lua_sha256 "fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60")
+        set(_lua_urls
+            "https://raw.githubusercontent.com/alexandrosk0/Smatchet/bug-report-assets/deps/lua-5.3.6.tar.gz"
+            "https://www.lua.org/ftp/lua-5.3.6.tar.gz")
+        set(_lua_ok FALSE)
+        foreach(_url IN LISTS _lua_urls)
+            foreach(_attempt RANGE 1 3)
+                file(DOWNLOAD "${_url}" "${_lua_tar}"
+                    TIMEOUT 120 INACTIVITY_TIMEOUT 30 STATUS _dl_status)
+                list(GET _dl_status 0 _dl_code)
+                if(_dl_code EQUAL 0)
+                    file(SHA256 "${_lua_tar}" _lua_got)
+                    if(_lua_got STREQUAL _lua_sha256)
+                        set(_lua_ok TRUE)
+                        break()
+                    endif()
+                    message(WARNING "Lua tarball from ${_url} hash mismatch "
+                        "(got ${_lua_got}); discarding and trying next source.")
+                else()
+                    list(GET _dl_status 1 _dl_msg)
+                    message(STATUS "Lua download failed (${_url}, attempt ${_attempt}): ${_dl_msg}")
+                endif()
+                file(REMOVE "${_lua_tar}")
+            endforeach()
+            if(_lua_ok)
+                break()
+            endif()
+        endforeach()
+        if(NOT _lua_ok)
+            message(FATAL_ERROR "Failed to download Lua 5.3.6 from all mirrors "
+                "(${_lua_urls}). Last status: ${_dl_status}")
+        endif()
         execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${_lua_tar}" WORKING_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
         file(RENAME "${FETCHCONTENT_BASE_DIR}/lua-5.3.6" "${LUA_SRC_DIR}")
         unset(_lua_tar)
+        unset(_lua_urls)
+        unset(_lua_sha256)
+        unset(_lua_ok)
     endif()
 
     file(GLOB LUA_SOURCES "${LUA_SRC_DIR}/src/*.c")
