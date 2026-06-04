@@ -27,6 +27,42 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-04 · PR #844 · override label (`tests-out-of-band`)
+
+> Flagged by `postmortem-owed.sh` because #844 merged carrying a `tests-out-of-band`
+> override. Recorded for completeness; the override was **legitimate** — no new gate
+> owed. Blameless: the gate worked, the escape hatch was used as designed.
+
+### What escaped
+The **Test-delta gate** (`FAIL: Source/Core/ changes without test deltas`) was
+dismissed on #844 by the `tests-out-of-band` label. #844 shipped `Source/Core`
+changes with no accompanying test delta.
+
+### Root cause
+#844's `Source/Core` diff was entirely a **build-define relocation** — moving
+`NOMINMAX` / `WIN32_LEAN_AND_MEAN` out of two `.cpp` files into
+`target_compile_definitions` (for the PCH-off publish path) plus dead-include /
+dead-variable cleanup — all confined to `Source/Core/src/Ui/`, the **light** lint
+zone. Ui is **excluded from the coverage surface** (`project.config.json`
+`coverage.excluded`) and is exercised by **bucket-C/E screenshot tests**, not ctest
+unit tests. A compile-define move + dead-code removal has **no executable-logic
+surface a unit test could assert**, so the Test-delta gate's demand cannot be
+satisfied in kind — the override label is the gate's intended escape hatch for
+exactly this case, and the merge carried a justification comment naming the zone.
+No breakage shipped (develop's post-merge build-and-test was green).
+
+### Preventing gate
+**None — override legitimate** (Ui-zone compile-define + dead-code change; the
+`light` zone is coverage-excluded and bucket-C/E-tested, so no unit-test delta is
+meaningful). A *possible* future tightening — auto-exempt diffs confined to the
+`light`/`Ui/` zone that add or remove no executable statements, so the label isn't
+needed — is **deferred**: a reliable "no logic changed" classifier is non-trivial
+(real Ui logic changes must still demand tests), and the manual label + zone-citing
+justification is the correct lightweight control today. Recorded, not gated.
+
+### Filed as
+No new category entry (no gate owed). This ledger entry is the record.
+
 ## 2026-06-03 · PR #792 · red-check (non-required doc-validation gate) — THIRD recurrence, gate still unapplied
 
 > Same class as the two entries below (#780/#784 and #771/#774/#776/#778). Logged
@@ -180,3 +216,40 @@ lighter, already-shipped half-measure — making doc-validation **required** (th
 ### Filed as
 [`docs/self-improvement/categories/infra.md`](categories/infra.md) — 2026-06-03
 infra "require-branches-up-to-date (concurrent-PR gate gap)".
+
+## 2026-05-23 · commit 831d0342 (revert of c78ad386) · direct-push to develop, self-reverted
+
+> Backfilled 2026-06-04 while sweeping stale `postmortem-owed.sh` hits. Recorded for
+> completeness; the escape was a **deliberate, self-corrected** admin direct-push — no
+> new gate owed for the revert itself. The sweep *did* surface a real tooling bug (the
+> detector's false positives) — that fix is this entry's preventing gate.
+
+### What escaped
+`c78ad386` ("feat(p4-gated-ship-loop): split `p4-task-stream-to-pr.sh` into 3 modes +
+AGENTS/ADR/AGENT_FLOWS rules") reached `develop` at 10:09 with **no PR, no `(#N)`, no
+CI / CodeRabbit / merge-gate run** — a direct push — and was reverted 15 minutes later
+by `831d0342` at 10:24. Both commits bypassed the entire PR ship-line.
+
+### Root cause
+A direct admin push to `develop` bypasses PR review, CI, CodeRabbit, and the
+merge-gate poller entirely. This is *possible* because `enforce_admins=false`
+(`project.config.json` `branch_protection`), a deliberate solo-repo tradeoff per
+[ADR-0013](../adr/0013-solo-no-required-review.md) so the maintainer can break a
+stale-`BLOCKED` state. Here it was used for a quick in-progress commit during the
+p4-gated-ship-loop work that was immediately judged wrong and backed out; the script
+split later re-landed properly through the normal ship-line (PR #609, scripts reorg).
+No defect persisted on `develop` beyond the 15-minute window.
+
+### Preventing gate
+**For the revert: none — direct-push deliberate and self-corrected** (the revert *is*
+the correction; `enforce_admins=false` is an intentional ADR-0013 tradeoff, not a hole
+to close). **The actionable gate from this sweep is a `postmortem-owed.sh` fix**: the
+detector used `git log --grep='^Revert'`, whose multiline `^` matched commit *bodies*,
+so feature/docs PRs with revert *prose* ("Reverts the index row …" #512; "Reverted
+the read-only widget …" #199) were flagged as phantom reverts owing postmortems. Fixed
+to gate on the **subject** (`Revert "…"`) so only genuine revert commits trigger —
+shipped in this PR. That stops the false-escape nudges that obscured this real one.
+
+### Filed as
+This entry + the `postmortem-owed.sh` subject-match fix in this PR (no category entry —
+the revert owes no gate; the detector fix is the change).
