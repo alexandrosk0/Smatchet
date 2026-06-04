@@ -216,3 +216,40 @@ lighter, already-shipped half-measure — making doc-validation **required** (th
 ### Filed as
 [`docs/self-improvement/categories/infra.md`](categories/infra.md) — 2026-06-03
 infra "require-branches-up-to-date (concurrent-PR gate gap)".
+
+## 2026-05-23 · commit 831d0342 (revert of c78ad386) · direct-push to develop, self-reverted
+
+> Backfilled 2026-06-04 while sweeping stale `postmortem-owed.sh` hits. Recorded for
+> completeness; the escape was a **deliberate, self-corrected** admin direct-push — no
+> new gate owed for the revert itself. The sweep *did* surface a real tooling bug (the
+> detector's false positives) — that fix is this entry's preventing gate.
+
+### What escaped
+`c78ad386` ("feat(p4-gated-ship-loop): split `p4-task-stream-to-pr.sh` into 3 modes +
+AGENTS/ADR/AGENT_FLOWS rules") reached `develop` at 10:09 with **no PR, no `(#N)`, no
+CI / CodeRabbit / merge-gate run** — a direct push — and was reverted 15 minutes later
+by `831d0342` at 10:24. Both commits bypassed the entire PR ship-line.
+
+### Root cause
+A direct admin push to `develop` bypasses PR review, CI, CodeRabbit, and the
+merge-gate poller entirely. This is *possible* because `enforce_admins=false`
+(`project.config.json` `branch_protection`), a deliberate solo-repo tradeoff per
+[ADR-0013](../adr/0013-solo-no-required-review.md) so the maintainer can break a
+stale-`BLOCKED` state. Here it was used for a quick in-progress commit during the
+p4-gated-ship-loop work that was immediately judged wrong and backed out; the script
+split later re-landed properly through the normal ship-line (PR #609, scripts reorg).
+No defect persisted on `develop` beyond the 15-minute window.
+
+### Preventing gate
+**For the revert: none — direct-push deliberate and self-corrected** (the revert *is*
+the correction; `enforce_admins=false` is an intentional ADR-0013 tradeoff, not a hole
+to close). **The actionable gate from this sweep is a `postmortem-owed.sh` fix**: the
+detector used `git log --grep='^Revert'`, whose multiline `^` matched commit *bodies*,
+so feature/docs PRs with revert *prose* ("Reverts the index row …" #512; "Reverted
+the read-only widget …" #199) were flagged as phantom reverts owing postmortems. Fixed
+to gate on the **subject** (`Revert "…"`) so only genuine revert commits trigger —
+shipped in this PR. That stops the false-escape nudges that obscured this real one.
+
+### Filed as
+This entry + the `postmortem-owed.sh` subject-match fix in this PR (no category entry —
+the revert owes no gate; the detector fix is the change).

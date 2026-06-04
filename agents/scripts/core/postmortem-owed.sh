@@ -88,6 +88,17 @@ done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$SCAN_
 while IFS= read -r line; do
     [ -z "$line" ] && continue
     sha="${line%% *}"
+    subject="${line#* }"
+    # `git log --grep='^Revert'` matches the pattern against EVERY line of the
+    # message (multiline `^`), so a commit whose *body* merely says "Reverts the
+    # index row …" / "Reverted the read-only widget …" is a false positive (seen:
+    # #512, #199 — feature/docs PRs with revert prose). A genuine revert commit
+    # has a SUBJECT of the form `Revert "<original subject>"` (git revert default).
+    # Gate on the subject so prose mentions don't manufacture phantom postmortems.
+    case "$subject" in
+        Revert\ \"*) : ;;
+        *) continue ;;
+    esac
     # Try to map to a PR number in the commit subject ("(#N)"); else use sha.
     prnum="$(printf '%s' "$line" | grep -oE '#[0-9]+' | head -1 | tr -d '#' || true)"
     if [ -n "$prnum" ]; then
