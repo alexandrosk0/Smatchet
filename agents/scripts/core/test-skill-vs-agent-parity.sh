@@ -36,6 +36,9 @@ SKILL_ONLY_HELPERS=(
     scratchpad-recall
     author-plan-doc
     gate-escape-postmortem
+    adversarial-code-review
+    but-for-real
+    drain-memory
 )
 
 is_skill_only() {

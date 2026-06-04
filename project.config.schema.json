@@ -181,8 +181,15 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["enabled_project"],
+      "description": "Project agent registry + agent-prompt size budgets (agent_size_audit.py). The size_*/contract_*/sink_warn caps are delta-gated line budgets over the agentic docs; see reduce-agent-prompt-bloat Slice 0.",
       "properties": {
-        "enabled_project": { "type": "array", "items": { "type": "string" } }
+        "_doc": { "type": "string" },
+        "enabled_project": { "type": "array", "items": { "type": "string" } },
+        "size_budget_lines": { "type": "integer", "minimum": 1, "description": "Hard cap (BLOCKS) for the agent-prompt class (agents/core, agents/project)." },
+        "size_warn_lines": { "type": "integer", "minimum": 1, "description": "Soft-warn line count for the agent-prompt class (advisory)." },
+        "contract_budget_lines": { "type": "integer", "minimum": 1, "description": "Hard cap (BLOCKS) for AGENTS.md (the every-session contract)." },
+        "contract_warn_lines": { "type": "integer", "minimum": 1, "description": "Soft-warn line count for AGENTS.md (advisory)." },
+        "sink_warn_lines": { "type": "integer", "minimum": 1, "description": "Soft-warn-only line count for the sink classes (docs/agent-rules, agents/_shared/skills); never blocks." }
       }
     },
     "governance": {
