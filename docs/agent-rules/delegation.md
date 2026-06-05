@@ -137,7 +137,7 @@ Agents fall into six classes by report shape. **Required section minimum** (exte
 | **Investigator** (read-only diagnosis) | `perf-detective`, `spike-hunter`, `code-review`, `security-review` | `## Hypotheses` (or `## Findings` for review agents) → `## Evidence` → `## Cause` (or severity-bucketed list) → `## Handoff` (target agent + allowed write set) |
 | **Design** (read-only planning) | `architect` | `## Goal` → `## Affected components` → `## Interface contracts` → `## Risks` → `## Implementation handoff` (target agent + allowed write set per slice) |
 | **Diagnostic read-edit** (instrumented diagnosis) | `debug-detective` | `## Hypotheses` → `## Evidence` → `## Cause` → `## Files changed (temp-debug)` → `## Cleanup verified` → `## Handoff` (target agent + allowed write set). Write set restricted to temporary instrumentation that must be stripped before the report. |
-| **Implementer** (read-edit subsystem) | `tracker-backend`, `grid-engine`, `offline-sync`, `command-system`, `lua-binder`, `mcp-toolsmith`, `p4-annotate`, `unreal-bridge`, `mechanic` | `## Files changed` → `## Smoke-test result` → `## Manual residue` (must say "none" if none) |
+| **Implementer** (read-edit subsystem) | `tracker-backend`, `grid-engine`, `offline-sync`, `command-system`, `lua-binder`, `mcp-toolsmith`, `p4-annotate`, `unreal-bridge`, `mechanic`, `ui-host` | `## Files changed` → `## Smoke-test result` → `## Manual residue` (must say "none" if none) |
 | **Helper** (terminal helper) | `perf-instrument`, `perf-measure` | `## Spec executed` → `## Result` (numbers / inserted-or-stripped count) |
 | **Maintenance** (workflow) | `build-doctor`, `test-author`, `git-janitor`, `p4-janitor` | `## Pre-flight` → `## Mutations applied` → `## Regression gate` → `## Residue requiring user action` |
 
@@ -164,6 +164,7 @@ Orchestrator-side routing table — consulted **before** falling back to the heu
 | coderabbit, code rabbit, rabbit feedback, PR bot comments, triage PR feedback, address review comments, watcher CR-blocked | `coderabbit-triage` (also invoked by `smatchet-merge-watcher` on CR `COMMENTED + N>0` per `docs/plans/shipped/smatchet-merge-watcher.md` Phase 3) |
 | stress-test plan, grill, interrogate | `grill-with-docs` (skill, not agent) |
 | test, ctest, doctest, unit-test, SmatchetTests | `test-rig` |
+| theme, style, dockspace, docking, font, bootstrap, imgui-host | `ui-host` |
 
 Each per-agent `triggers:` frontmatter list mirrors its row plus agent-specific synonyms.
 
@@ -306,6 +307,7 @@ Every agent carries a `version: <N>` integer in frontmatter. **Bump on**: capabi
 |---|---|---|
 | `tracker-backend` | low · read-edit | `ITrackerBackend`, `JiraClient`, `PlaneClient`, field catalog / value parser / payload, `TrackerHttpClient`, `IssueCreatePipeline`. Adding fields, fixing parsing, JQL / Plane queries, HTTP retries, audit-trail wiring. |
 | `grid-engine` | low · read-edit | Spreadsheet / ticket grid — `TicketGridModel`, `SpreadsheetState`, `SmatchetActiveProjectGridUi`, all `SmatchetGrid*`, `SmatchetViewsDashboardUi*`, `SmatchetFieldRender`, `TrackerGridFieldDisplay`. Columns, cell editors, sorting, drag-reorder, header UX, in-place edit flow. |
+| `ui-host` | low · read-edit | ImGui host / theme / dockspace layer below the panels — `SmatchetImGuiHost`, `SmatchetTheme.*` + `SmatchetThemeIds.h`, the dockspace scaffold + `SmatchetDockNodeIds.h` schema + dock-layout migration, `io.IniFilename` ordering, font atlas, `main.cpp` `BootSetupImGui` bootstrap. Theme palettes, dockspace node layout, ini schema-version migration, host lifecycle. Owns the visual-validation-exception pause. NOT grid content (`grid-engine`), NOT DX12 backend/packaging (`unreal-bridge`). |
 | `offline-sync` | low · read-edit | SQLite cache, offline-queue replay, audit trail — `LocalCacheManager`, `OfflineQueueService`, `SmatchetOfflineQueueUi`, `TicketSyncService`, `BackendAuditTrail`, `FieldEditAuditSource`. Schema additions, replay, dead-letter, conflict resolution. |
 | `command-system` | low · read-edit | Adding / modifying commands in the unified registry (CLI + Palette + MCP + Lua + Scenarios). Touches `Source/Core/{include,src}/Commands/`. |
 | `lua-binder` | low · read-edit | sol2 bindings — `AppController_LuaBindings.cpp` ↔ `AppController_LuaStubs.cpp` sync, sandbox / timeout protection, `LuaAutomationHost`, `Source/Plugins/LuaConsole`, hot-path cost trade-offs. |

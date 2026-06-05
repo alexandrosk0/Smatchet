@@ -203,6 +203,11 @@ setup_claude_code() {
 
   copy_template "docs/harness/claude-code/CLAUDE.md.tmpl"     ".claude/CLAUDE.md"
   copy_template "docs/harness/claude-code/settings.json.tmpl" ".claude/settings.json"
+  # Heal an already-provisioned (user-modified) settings.json that copy_template
+  # skipped: additively bring in any NEW template hooks (e.g. postmortem-owed
+  # --nudge) without clobbering the user's permissions/customisations.
+  bash agents/scripts/core/sync-settings-hooks.sh \
+    "docs/harness/claude-code/settings.json.tmpl" ".claude/settings.json" || true
   copy_template "docs/harness/claude-code/hooks/lint-cpp.sh"         ".claude/hooks/lint-cpp.sh"
   copy_template "docs/harness/claude-code/hooks/lint-cpp-common.sh"  ".claude/hooks/lint-cpp-common.sh"
   copy_template "docs/harness/claude-code/hooks/lint-cpp-drain.sh"   ".claude/hooks/lint-cpp-drain.sh"

@@ -126,6 +126,68 @@ else
     nope "delegation.md missing skill-alias note"
 fi
 
+# -------------------------------------------------------------------- Test 7
+note "Test 7 — sync-settings-hooks.sh heals missing template hooks (additive, non-destructive)"
+T7_SYNC="agents/scripts/core/sync-settings-hooks.sh"
+T7_TMPL="docs/harness/claude-code/settings.json.tmpl"
+if ! command -v jq >/dev/null 2>&1; then
+    ok "Test 7 skipped — jq not installed (sync degrades to a WARN by design)"
+elif [[ ! -f "$T7_SYNC" || ! -f "$T7_TMPL" ]]; then
+    nope "Test 7 — $T7_SYNC or $T7_TMPL missing"
+else
+    T7_DIR="$(mktemp -d)"
+    T7_DEP="$T7_DIR/settings.json"
+    # Deployed: permissions sentinel + a user-added custom SessionStart hook +
+    # only the bootstrap hook + only lint-cpp-drain under Stop (the proven gap).
+    cat > "$T7_DEP" <<'JSON'
+{
+  "permissions": { "defaultMode": "plan", "allow": ["Bash(ls:*)"] },
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/clear-session-context.sh\"", "timeout": 3000 },
+        { "type": "command", "command": "echo t7-user-hook", "timeout": 1000 }
+      ]}
+    ],
+    "Stop": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-cpp-drain.sh\"", "timeout": 120000 }
+      ]}
+    ]
+  }
+}
+JSON
+    bash "$T7_SYNC" "$T7_TMPL" "$T7_DEP" >/dev/null 2>&1 || true
+    T7_BEFORE="$(cat "$T7_DEP")"
+    bash "$T7_SYNC" "$T7_TMPL" "$T7_DEP" >/dev/null 2>&1 || true   # 2nd run = idempotent?
+    T7_AFTER="$(cat "$T7_DEP")"
+
+    if python3 - "$T7_DEP" "$T7_TMPL" <<'PY'
+import json, sys
+dep = json.load(open(sys.argv[1])); tmpl = json.load(open(sys.argv[2]))
+assert dep.get("permissions") == {"defaultMode": "plan", "allow": ["Bash(ls:*)"]}, "permissions clobbered"
+def cmds(o):
+    return {(ev, g.get("matcher", ""), h["command"])
+            for ev, groups in o["hooks"].items() for g in groups for h in g["hooks"]}
+missing = cmds(tmpl) - cmds(dep)
+assert not missing, f"template hooks not healed: {missing}"
+ss = [h["command"] for g in dep["hooks"]["SessionStart"] for h in g["hooks"]]
+assert "echo t7-user-hook" in ss, "user hook lost"
+assert len([g for g in dep["hooks"]["Stop"] if g.get("matcher", "") == ""]) == 1, "duplicate Stop matcher group"
+PY
+    then
+        ok "sync heals missing hooks (permissions preserved, user hook kept, no Stop dup)"
+    else
+        nope "sync-settings-hooks.sh merge incorrect"
+    fi
+    if [[ "$T7_BEFORE" == "$T7_AFTER" ]]; then
+        ok "sync is idempotent (2nd run no-op)"
+    else
+        nope "sync not idempotent — 2nd run changed the file"
+    fi
+    rm -rf "$T7_DIR"
+fi
+
 # -------------------------------------------------------------------- Report
 echo
 # test-all.sh aggregator parses the literal "Passed: N  Failed: M" line.

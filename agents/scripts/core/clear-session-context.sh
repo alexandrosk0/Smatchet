@@ -92,6 +92,20 @@ if [ -d "$HOOKS_SRC" ] && [ -d "$HOOKS_DST" ]; then
     done
 fi
 
+# --- Sync deployed settings.json hooks from the template -------------------
+# Same staleness gap as the hook-script loop above, but for settings.json: a
+# git pull can add a NEW governance hook to the template that an already-
+# provisioned (user-modified) .claude/settings.json never receives — because
+# setup-harness.sh's copy_template refuses to overwrite a user-modified file.
+# Additively heal the missing hooks here (never touches permissions / existing
+# hooks / order). Silent when already in sync. See sync-settings-hooks.sh.
+SETTINGS_TMPL="$PROJECT_DIR/docs/harness/claude-code/settings.json.tmpl"
+SETTINGS_DST="$PROJECT_DIR/.claude/settings.json"
+if [ -f "$SETTINGS_TMPL" ] && [ -f "$SETTINGS_DST" ]; then
+    bash "$PROJECT_DIR/agents/scripts/core/sync-settings-hooks.sh" \
+        "$SETTINGS_TMPL" "$SETTINGS_DST" >/dev/null || true
+fi
+
 # --- P4-mode banner: surface SMATCHET_AGENT_VCS=p4 at session start --------
 # Per AGENTS.md § Autonomous ship-loop default § P4-gated variant: when the
 # user opts into p4-mode via the env var, the orchestrator MUST follow the
