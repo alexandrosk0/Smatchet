@@ -153,3 +153,9 @@
   Status: open
   Last-reviewed: 2026-06-04
 
+- 2026-06-05 · orchestrator · [process] · P2 — extraction plans estimate GROSS line-count targets; the real floor is the reasoning/always content, not a fraction
+  Details: `reduce-agent-prompt-bloat` set three line-count targets that all missed low because they were guessed as a fraction of the original size rather than from the mechanical-vs-reasoning split. Slice 2 targeted debug-detective 733→~300, landed 418 (the verbatim recipe was only ~180-220 L; the rest is real decision logic + two report templates). Slice 5 targeted AGENTS.md 257→~120, landed 154 even after an aggressive second trim — the always-set (router map + Pillars table + the selftest-coupled contract-card + every-edit invariants + per-section gist) is itself ~150. Both required a mid-flight maintainer re-decision (Slice 1 finding; "trim more"). The pattern: a doc/agent extraction's floor is the **irreducible reasoning/always content**, which has to be measured, not assumed-away.
+  Concrete next action: in `docs/plans/active/_plan-template.md` (or the `author-plan-doc` skill / `grill-with-docs`), add an extraction-sizing step — before setting a line-count target, classify the source into EXTRACT (verbatim recipe / on-demand detail) vs STAYS (reasoning / always / selftest-coupled tokens) and set the target = STAYS + a small pointer overhead, not a round fraction. Cross-ref the shipped plan's § Deviations #7 + #12 as the worked example.
+  Status: open
+  Last-reviewed: 2026-06-05
+
