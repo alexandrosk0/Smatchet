@@ -119,10 +119,26 @@ Tests:
 - **HTTP-layer version guard (If-Match/etag)** — separate plan if pursued.
 
 ## Implementation log
-*(populated post-ship)*
+
+Shipped as **PR #854** (single feature PR, merged 2026-06-05) by `offline-sync`. Four workstreams landed as planned: capture+persist (additive `original_value` column + dead-table twin, threaded `OriginalValue` end-to-end), detect+replay (`OfflineFieldConflictPolicy.h` + scalar dispatch + decision-(c) fetch-fail routing), resolve UI (`DrawOfflineConflictModal` branches on `kind`, scalar + unverified panes), and tests (bucket-A policy table + 8 runtime `FakeOfflineQueueDeps` cases). The corrected `kind` (text|scalar|unverified) vs existing `richKind` (adf|html) contract from the triple-check (#853) held — new rich conflicts write `kind:"text"` alongside the untouched `richKind`.
+
+A CodeRabbit triage round (8 findings, 6 substantive) landed before merge — see § Deviations for the design-affecting ones.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+1. **Single re-fetch hoisted** — the plan kept the re-fetch inside `ResolveFieldEditThreeWayMerge`; implementation extracted `EvaluateFieldEditConflict` so rich + scalar share **one** fetch and the decision-(c) routing lives in one place. Same observable contract, no second fetch.
+2. **Presence flag instead of empty-string sentinel** (CR Major) — the plan keyed scalar detection on `!OriginalValue.empty()`, which conflates a genuinely *blank* captured base with a legacy no-base row (silent overwrite for blank-field edits). Fixed with an additive `has_original_value` column + `HasOriginalValue` flag + a presence-aware `ServerMovedFromCapturedBase(hasBase, …)` entry point; the emptiness-keyed `ServerMovedFromBase` stays for callers without a flag. Rich-side `OriginalRichValue.empty()` left as **pre-existing residue** (parallel `has_original_rich_value` deferred — non-trivial, not this PR's contract).
+3. **Non-destructive malformed-context pane** (CR Critical) — plan said "safe empty render"; CR required it be non-*actionable* too. Implemented `ConflictModalCtx::Valid` + `DrawConflictPaneUnknown` (read-only, Close + hard Discard only) so a corrupt row can't be "resolved" to empty content.
+4. **No fabricated fallback payload** (CR Critical) — the resolve path's load/find-failure branch originally wrote a `__resolved__`-sentinel-keyed payload (lost the real field key → misapply on replay); changed to log-and-skip.
+5. **Audit begin/result pair** (CR Major) — the new conflict-suspend paths emit the full `FieldEditAuditSource`-attributed begin/result pair per the Sync leaf-`AGENTS.md` invariant (the plan's § Existing utilities only said "record the decision").
+6. **Server-side clear is now a conflict** (CR Major) — `theirsRich == ""` (concurrent delete) enters the merge instead of silently overwriting.
+7. `ReplayOneFieldEdit` ended at 107 lines — soft func-size WARN (non-blocking, under the 120 hard cap); left readable.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Bucket A**: new `tests/Core/OfflineFieldConflictPolicy.test.cpp` (presence + emptiness classifier tables) + 8 new `OfflineQueueServiceRuntime.test.cpp` runtime cases (scalar conflict suspends, permanent/transient fetch-fail → unverified, blank-captured-base IS conflict-checked, no-fabrication on missing row, resolve clears both bases, discard hard-deletes + audit entry). `ninja-test-msvc` → **ctest 100% passed / 0 failed** (initial 1256/0; re-verified after the CR round).
+- **Dual-target build**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` → **PASS** (/WX warning-clean) on both the initial impl and the CR-fix head. Light config (WHISPER/AI/MCP off) → PASS.
+- **Pre-ship delta gate** (`scripts/dev/pre-ship.sh`) → PASS (advisory WARNs only). One follow-up comment-noise fix (blank `//` / `///` separators in `OfflineFieldConflictPolicy.h`) was caught by the CI delta gate post-push and healed.
+- **Bucket E**: deferred — no offline-queue ImGui-Test fixture exists; logged in `docs/self-improvement/categories/tooling.md` (§ Parked) with the deferred-automation plan. Service-level safety (no fabrication, non-actionable malformed) is bucket-A-covered.
+- **Sanitizer (ASAN)** + Bucket-C/E + Perf PR-fast → all green at merge.
+- **Manual residue**: live in-app smoke (network-off → edit → network-on → confirm replay/ask) not run interactively; the async loop is covered by the bucket-A runtime harness. Rich-side empty-base presence-awareness is the one carried-forward residue (deviation 2).
