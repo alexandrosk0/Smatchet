@@ -1095,29 +1095,222 @@ static void HandleOfflineCopyShortcut(OfflineDrawCtx& ctx) {
     }
 }
 
-static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
+// Parsed view of conflict_context_json. `Kind` (text|scalar|unverified, ADR-0016) selects the
+// modal branch; absent kind defaults to "text" (legacy rich rows). Malformed JSON yields a safe
+// empty struct so the modal renders an empty, dismissable state instead of crashing (Pillar 3).
+struct ConflictModalCtx {
+    std::string Kind = "text";
+    std::string Mine;
+    std::string Theirs;
+    std::string Base;
+    std::string RichKind = "adf";
+};
+
+static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
+    ConflictModalCtx out;
+    try {
+        auto ctx = nlohmann::json::parse(json, nullptr, false);
+        if (ctx.is_object()) {
+            out.Kind = ctx.value("kind", std::string("text"));
+            out.Mine = ctx.value("mine", std::string());
+            out.Theirs = ctx.value("theirs", std::string());
+            out.Base = ctx.value("base", std::string());
+            out.RichKind = ctx.value("richKind", std::string("adf"));
+        }
+    } catch (...) { // catch-all-ok: malformed conflict context → safe empty render
+    }
+    return out;
+}
+
+// Clears modal state + closes the popup after a resolution / discard action.
+static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
+    d.conflictResolveBuf.clear();
+    d.conflictContextJson.clear();
+    d.conflictResolveDbId = 0;
+    ImGui::CloseCurrentPopup();
+    if (statusMsg) {
+        ArmOfflineQueuePanelStatus(d, statusMsg);
+    }
+}
+
+// Rich-text 3-way merge pane (legacy `kind:"text"`) — unchanged behaviour. Uses the orthogonal
+// `richKind` (adf|html) for reconversion at resolve.
+static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
 
-    // Merge-conflict resolution modal (PR-F)
-    if (d.showConflictResolveModal) {
+    const ImVec2 vp = ImGui::GetMainViewport()->Size;
+    const float halfW = vp.x * 0.28f;
+    const float paneH = vp.y * 0.22f;
+    const float resolvedH = vp.y * 0.22f;
 
+    ImGui::TextDisabled("Offline edit conflict — both you and the server changed this field concurrently.");
+    ImGui::Spacing();
+
+    ImGui::BeginGroup();
+    ImGui::Text("Your edit (mine)");
+    ImGui::InputTextMultiline("##CRMine", const_cast<char*>(cc.Mine.c_str()), cc.Mine.size() + 1, ImVec2(halfW, paneH),
+                              ImGuiInputTextFlags_ReadOnly);
+    ImGui::EndGroup();
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::Text("Server version (theirs)");
+    ImGui::InputTextMultiline("##CRTheirs", const_cast<char*>(cc.Theirs.c_str()), cc.Theirs.size() + 1,
+                              ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
+    ImGui::EndGroup();
+
+    ImGui::Spacing();
+    ImGui::Text("Resolved (edit to remove conflict markers):");
+    if (d.conflictResolveBuf.empty()) {
+        d.conflictResolveBuf.assign(64 * 1024, '\0');
+    }
+    ImGui::InputTextMultiline("##CRResolved", d.conflictResolveBuf.data(), d.conflictResolveBuf.size(),
+                              ImVec2(-FLT_MIN, resolvedH), ImGuiInputTextFlags_AllowTabInput);
+
+    const bool hasConflictMarkers = std::string(d.conflictResolveBuf.data()).find("<<<<<<<") != std::string::npos;
+    if (hasConflictMarkers) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
+        ImGui::TextUnformatted("Resolve all <<<<<<< markers before saving.");
+        ImGui::PopStyleColor();
+    }
+    ImGui::Spacing();
+
+    auto doResolve = [&](const std::string& resolvedMd) {
+        app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, cc.RichKind, "text");
+        FinishConflictModal(d, "Conflict resolved — edit re-queued for replay.");
+    };
+
+    if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
+        doResolve(cc.Mine);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
+        doResolve(cc.Theirs);
+    }
+    ImGui::SameLine();
+    const bool saveEnabled = !hasConflictMarkers;
+    if (!saveEnabled)
+        ImGui::BeginDisabled();
+    if (ImGui::Button("Save resolved", ImVec2(130, 0))) {
+        doResolve(std::string(d.conflictResolveBuf.data()));
+    }
+    if (!saveEnabled)
+        ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+        d.conflictResolveBuf.clear();
+        ImGui::CloseCurrentPopup();
+    }
+}
+
+// Scalar conflict pane (`kind:"scalar"`): mine vs theirs + an editable value. Use Mine / Use
+// Theirs / Save edited. Writes the chosen value verbatim (no Markdown reconversion).
+static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
+    AppController& app = octx.app;
+    UiDrawSession& d = octx.d;
+
+    const ImVec2 vp = ImGui::GetMainViewport()->Size;
+    const float halfW = vp.x * 0.28f;
+
+    ImGui::TextDisabled("Offline edit conflict — the server value changed since you edited this field.");
+    ImGui::Spacing();
+
+    ImGui::BeginGroup();
+    ImGui::Text("Your value (mine)");
+    ImGui::InputText("##SCMine", const_cast<char*>(cc.Mine.c_str()), cc.Mine.size() + 1, ImGuiInputTextFlags_ReadOnly);
+    ImGui::EndGroup();
+    ImGui::SameLine(0.0f, halfW * 0.05f);
+    ImGui::BeginGroup();
+    ImGui::Text("Server value (theirs)");
+    ImGui::InputText("##SCTheirs", const_cast<char*>(cc.Theirs.c_str()), cc.Theirs.size() + 1,
+                     ImGuiInputTextFlags_ReadOnly);
+    ImGui::EndGroup();
+
+    ImGui::Spacing();
+    ImGui::Text("Resolved value (edit, or pick a side below):");
+    if (d.conflictResolveBuf.empty()) {
+        d.conflictResolveBuf.assign(8 * 1024, '\0');
+    }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputText("##SCResolved", d.conflictResolveBuf.data(), d.conflictResolveBuf.size());
+    ImGui::Spacing();
+
+    auto doResolve = [&](const std::string& chosen) {
+        app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
+        FinishConflictModal(d, "Conflict resolved — edit re-queued for replay.");
+    };
+
+    if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
+        doResolve(cc.Mine);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
+        doResolve(cc.Theirs);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save value", ImVec2(130, 0))) {
+        doResolve(std::string(d.conflictResolveBuf.data()));
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+        d.conflictResolveBuf.clear();
+        ImGui::CloseCurrentPopup();
+    }
+}
+
+// Unverified pane for the `unverified` kind, where the server value could not be read. The
+// Force Mine button replays the queued edit as-is; the Discard button hard-deletes the queue
+// row and writes an audit entry.
+static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
+    AppController& app = octx.app;
+    UiDrawSession& d = octx.d;
+
+    ImGui::TextDisabled("The server value for this field couldn't be read, so we can't tell whether it changed.");
+    ImGui::Spacing();
+    ImGui::Text("Your value (mine)");
+    ImGui::InputText("##UVMine", const_cast<char*>(cc.Mine.c_str()), cc.Mine.size() + 1, ImGuiInputTextFlags_ReadOnly);
+    ImGui::Spacing();
+
+    if (ImGui::Button("Force Mine", ImVec2(130, 0))) {
+        // Replay the queued payload verbatim (no value change) and clear the conflict.
+        app.ResolveFieldEditConflict(d.conflictResolveDbId, cc.Mine, std::string(), "unverified");
+        FinishConflictModal(d, "Forcing your edit — re-queued for replay.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {
+        // Hard-delete the queue row; DeletePendingFieldEdits writes the audit entry (ADR-0016 —
+        // dead-letter stays failures-only; the audit log carries discard traceability).
+        app.DeletePendingFieldEdits({d.conflictResolveDbId});
+        FinishConflictModal(d, "Edit discarded.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+        d.conflictResolveBuf.clear();
+        ImGui::CloseCurrentPopup();
+    }
+}
+
+static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
+    UiDrawSession& d = octx.d;
+
+    // Merge-conflict resolution modal (PR-F / ADR-0016)
+    if (d.showConflictResolveModal) {
         // Open + size the popup once per trigger.
         ImGui::OpenPopup("ResolveMergeConflict");
         d.showConflictResolveModal = false;
 
-        // Seed the resolved buffer from the conflict context on open.
-        {
-            std::string mineMd, theirsMd;
-            try {
-                auto ctx = nlohmann::json::parse(d.conflictContextJson, nullptr, false);
-                if (ctx.is_object()) {
-                    mineMd = ctx.value("mine", std::string());
-                    theirsMd = ctx.value("theirs", std::string());
-                }
-            } catch (...) { // catch-all-ok: JSON parse on conflict context
-            }
-            const std::string seed = "<<<<<<< mine\n" + mineMd + "\n=======\n" + theirsMd + "\n>>>>>>> theirs";
+        // Seed the resolved buffer from the conflict context on open. Rich `text` seeds the
+        // conflict-marker template; scalar seeds the editable value with "mine".
+        const ConflictModalCtx seedCtx = ParseConflictModalCtx(d.conflictContextJson);
+        if (seedCtx.Kind == "scalar") {
+            d.conflictResolveBuf.assign(8 * 1024, '\0');
+            const size_t n = (std::min)(seedCtx.Mine.size(), static_cast<size_t>(8 * 1024 - 1));
+            std::memcpy(d.conflictResolveBuf.data(), seedCtx.Mine.data(), n);
+        } else if (seedCtx.Kind == "unverified") {
+            d.conflictResolveBuf.clear();
+        } else {
+            const std::string seed =
+                "<<<<<<< mine\n" + seedCtx.Mine + "\n=======\n" + seedCtx.Theirs + "\n>>>>>>> theirs";
             d.conflictResolveBuf.assign(64 * 1024, '\0');
             const size_t n = (std::min)(seed.size(), static_cast<size_t>(64 * 1024 - 1));
             std::memcpy(d.conflictResolveBuf.data(), seed.data(), n);
@@ -1126,85 +1319,14 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
 
     if (ImGui::BeginPopupModal("ResolveMergeConflict", nullptr,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
-        // Parse context to show per-side panes.
-        std::string mineMd, theirsMd, richKind;
-        try {
-            auto ctx = nlohmann::json::parse(d.conflictContextJson, nullptr, false);
-            if (ctx.is_object()) {
-                mineMd = ctx.value("mine", std::string());
-                theirsMd = ctx.value("theirs", std::string());
-                richKind = ctx.value("richKind", std::string("adf"));
-            }
-        } catch (...) { // catch-all-ok: JSON parse on conflict context
+        const ConflictModalCtx cc = ParseConflictModalCtx(d.conflictContextJson);
+        if (cc.Kind == "scalar") {
+            DrawConflictPaneScalar(octx, cc);
+        } else if (cc.Kind == "unverified") {
+            DrawConflictPaneUnverified(octx, cc);
+        } else {
+            DrawConflictPaneText(octx, cc);
         }
-
-        const ImVec2 vp = ImGui::GetMainViewport()->Size;
-        const float halfW = vp.x * 0.28f;
-        const float paneH = vp.y * 0.22f;
-        const float resolvedH = vp.y * 0.22f;
-
-        ImGui::TextDisabled("Offline edit conflict — both you and the server changed this field concurrently.");
-        ImGui::Spacing();
-
-        ImGui::BeginGroup();
-        ImGui::Text("Your edit (mine)");
-        ImGui::InputTextMultiline("##CRMine", const_cast<char*>(mineMd.c_str()), mineMd.size() + 1,
-                                  ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
-        ImGui::EndGroup();
-        ImGui::SameLine();
-        ImGui::BeginGroup();
-        ImGui::Text("Server version (theirs)");
-        ImGui::InputTextMultiline("##CRTheirs", const_cast<char*>(theirsMd.c_str()), theirsMd.size() + 1,
-                                  ImVec2(halfW, paneH), ImGuiInputTextFlags_ReadOnly);
-        ImGui::EndGroup();
-
-        ImGui::Spacing();
-        ImGui::Text("Resolved (edit to remove conflict markers):");
-        if (d.conflictResolveBuf.empty()) {
-            d.conflictResolveBuf.assign(64 * 1024, '\0');
-        }
-        ImGui::InputTextMultiline("##CRResolved", d.conflictResolveBuf.data(), d.conflictResolveBuf.size(),
-                                  ImVec2(-FLT_MIN, resolvedH), ImGuiInputTextFlags_AllowTabInput);
-
-        const bool hasConflictMarkers = std::string(d.conflictResolveBuf.data()).find("<<<<<<<") != std::string::npos;
-        if (hasConflictMarkers) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.1f, 1.0f));
-            ImGui::TextUnformatted("Resolve all <<<<<<< markers before saving.");
-            ImGui::PopStyleColor();
-        }
-        ImGui::Spacing();
-
-        auto doResolve = [&](const std::string& resolvedMd) {
-            app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, richKind);
-            d.conflictResolveBuf.clear();
-            d.conflictContextJson.clear();
-            d.conflictResolveDbId = 0;
-            ImGui::CloseCurrentPopup();
-            ArmOfflineQueuePanelStatus(d, "Conflict resolved — edit re-queued for replay.");
-        };
-
-        if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
-            doResolve(mineMd);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
-            doResolve(theirsMd);
-        }
-        ImGui::SameLine();
-        const bool saveEnabled = !hasConflictMarkers;
-        if (!saveEnabled)
-            ImGui::BeginDisabled();
-        if (ImGui::Button("Save resolved", ImVec2(130, 0))) {
-            doResolve(std::string(d.conflictResolveBuf.data()));
-        }
-        if (!saveEnabled)
-            ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-            d.conflictResolveBuf.clear();
-            ImGui::CloseCurrentPopup();
-        }
-
         ImGui::EndPopup();
     } else if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {
         d.conflictResolveBuf.clear();
