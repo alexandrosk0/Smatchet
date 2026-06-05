@@ -23,6 +23,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/postmortem-owed.sh\" --nudge",
             "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/followup-due-nudge.sh\" --nudge",
+            "timeout": 10000
           }
         ]
       }

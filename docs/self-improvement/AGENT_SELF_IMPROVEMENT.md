@@ -14,6 +14,21 @@ tooling gaps. Live entries split by category; this file is the index + spec.
   Last-reviewed: <YYYY-MM-DD>   # default = creation date; bump on each sweep
 ```
 
+**Optional `Triggered-follow-up:` line** — for a follow-up GATED ON A FUTURE CONDITION ("re-measure after ~10 PRs", "after a date", "once a plan ships"). Add ONE line to the entry (after `Concrete next action:`); [`followup-due-nudge.sh`](../../agents/scripts/core/followup-due-nudge.sh) surfaces it at SessionStart when the condition is met. Lifecycle: [`process-rules.md`](../agent-rules/process-rules.md) § Triggered follow-ups.
+
+```text
+  Triggered-follow-up: when=<kind>:<spec>; action=<one-line>; baseline=<optional metric prose>; fired=never
+```
+
+Fields in that order (`;` + space between fields). Four `when=` kinds (`;`-delimited `key=val` inside the spec — **no space** after `;`, which is how the parser tells the within-spec separator from the between-field separator):
+
+- `pr-count:base=develop;since=<YYYY-MM-DD>;n=<N>` — N squash-merged PRs to base since a date.
+- `date:<YYYY-MM-DD>` — calendar deadline reached.
+- `plan-shipped:<slug>` — `docs/plans/shipped/<slug>.md` exists.
+- `file-age:<path>;days=<N>` — `<path>` last touched (git) ≥ N days ago.
+
+Author with `fired=never`; when the orchestrator acts it stamps `fired=<date>` via PR (the nudge is **read-only** — a due-but-unaddressed entry re-nudges every session until stamped, like `postmortem-owed`). Entries with no `Triggered-follow-up:` line are invisible to the nudge — fully backward-compatible.
+
 Applied entries are archived immediately to [`self-improvement/categories/applied.md`](categories/applied.md).
 
 ## Categories

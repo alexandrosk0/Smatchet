@@ -7,9 +7,17 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-05 · orchestrator · [process] · P2 — `agent-size-reduction` is unblocked (its #868 gate merged) but tracked only as an `active/` plan stub — the exact "trigger dies in a plan" loss the triggered-follow-up field fixes
+  Details: `docs/plans/active/agent-size-reduction.md` (stub, #870) shrinks `debug-detective` (419) / `test-author` (268) / `coderabbit-triage` (215) under the 250 `agent-too-long` cap via skill extraction. It was deferred from `agent-audit-remediation` "until after PR #868 merges" — and #868 IS merged, so the work is unblocked NOW, yet nothing surfaces that. Dogfoods `triggered-followup-tracking` Decision 4 (triggers live on backlog entries, not plan-docs).
+  Concrete next action: pick up `docs/plans/active/agent-size-reduction.md` — extract debug-detective §8/§9 into `debug-instrument`, carve a `test-authoring` skill out of test-author, de-dup coderabbit-triage; get all three under 250 and retire their `agent-size-baseline.md` entries.
+  Triggered-follow-up: when=pr-count:base=develop;since=2026-06-05;n=1; action=start docs/plans/active/agent-size-reduction.md (gate #868 merged — unblocked); baseline=3 agents over the 250 cap (419/268/215 lines), zero headroom; fired=never
+  Status: open
+  Last-reviewed: 2026-06-05
+
 - 2026-06-05 · orchestrator · [process] · P3 — effectiveness measurement for `reduce-coderabbit-review-spend` is documented in the plan but NOT actionably tracked (will be forgotten once the plan archives to `shipped/`)
   Details: Both slices of `docs/plans/active/reduce-coderabbit-review-spend.md` shipped (#858 pre-first-push gate, #859 NONE-nudge-off-by-default). The plan's § Verification says "re-measure after ~10 PRs" against the baseline **3.2 heads/PR + 1.3 nudges/PR** (success = heads/PR trending < 2, nudges/PR → 0), but a `re-measure later` note buried in a soon-to-be-archived plan has no trigger and no owner — the measurement is the only thing that proves the two levers actually reduced CR spend, and nothing surfaces it. This entry is the trigger.
   Concrete next action: after **≥10 PRs** have merged to `develop` past 2026-06-05 (i.e. roughly the next closeout where the open-PR history shows 10+ merges since), re-run the last-10-PRs CR-audit — `gh pr list --state merged --limit 10` then per-PR head-SHA count (`gh api .../commits`) + `@coderabbitai review` nudge count (`gh api .../issues/<pr>/comments`) — and compare to baseline 3.2 / 1.3. If NOT trending to < 2 heads/PR and → 0 nudges/PR, revisit: is the pre-first-push gate being skipped (re-pushes still high)? did the NONE-nudge default get overridden? Record the result in the plan's § Verification (actual) and either close this entry (levers worked) or open a follow-up. ~30 min.
+  Triggered-follow-up: when=pr-count:base=develop;since=2026-06-05;n=10; action=re-run the last-10-PRs CodeRabbit audit (heads/PR + nudges/PR) vs the reduce-CR baseline; baseline=3.2 heads/PR + 1.3 nudges/PR (success: heads/PR < 2, nudges/PR to 0); fired=never
   Status: open
   Last-reviewed: 2026-06-05
 

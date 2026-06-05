@@ -125,8 +125,9 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 9. **Post-merge backlog sweep** — apply any `docs/self-improvement/` entry now meeting the threshold; one small PR each, flip to `applied.md`.
 10. **Verification-automation handoff check** — flag any manual-verification language in the merged plan's `## Verification` for a `test-author` follow-up.
 10.5. **Orphan-scenario sweep** (end-of-session only, advisory; default `keep`) — recipe in skill § Orphan-scenario sweep.
+10.6. **Triggered-follow-up check** — `bash agents/scripts/core/followup-due-nudge.sh --list` so a now-due deferred follow-up (per `docs/agent-rules/process-rules.md` § Triggered follow-ups) surfaces at closeout, not only at SessionStart.
 
-Steps 1-2, 4-10.5 are mechanical (skill); step 3's rc-handling is the kept reasoning above.
+Steps 1-2, 4-10.6 are mechanical (skill); step 3's rc-handling is the kept reasoning above.
 
 ## Mutations applied
 
