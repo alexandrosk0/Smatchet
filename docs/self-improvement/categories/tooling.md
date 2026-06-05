@@ -7,6 +7,13 @@
 
 ## Triage log
 
+- 2026-06-05 · orchestrator · [tooling] · P3 — `merge-snapshot-ledger` (lossless gate-snapshot) deferred to its own plan + ADR; date-forced revisit so it isn't forgotten
+  Details: `docs/plans/active/merge-snapshot-ledger.md` (stub, #870) is C2-part-1 of `agent-audit-remediation`: a committed merge-time gate-verdict ledger written by the 3 merge actors so `postmortem-owed.sh` reads lossless truth instead of live `statusCheckRollup` (provably lossy — re-runs overwrite RED contexts; override labels stripped post-merge). The mechanical ordering half shipped in #868; this lossless half needs an ADR + a 3-writer contract, so it is deferred + unscheduled.
+  Concrete next action: write `docs/adr/NNNN-merge-time-snapshot-ledger.md` + ship the ledger per the plan stub.
+  Triggered-follow-up: when=date:2026-07-15; action=write the ADR + ship docs/plans/active/merge-snapshot-ledger.md (lossless merge-time gate-snapshot ledger); baseline=postmortem-owed.sh reads live statusCheckRollup (lossy on re-run + label-strip); fired=never
+  Status: deferred
+  Last-reviewed: 2026-06-05
+
 - 2026-06-02 · orchestrator · [tooling] · P2 — `function_size_audit.py --diff` is grandfather-blind: a partially-reduced-but-still-over-cap function passes silently (CI green ≠ target resolved)
   Details: The function-size delta gate keys on `(rule, basename, qualified-name, arity)` and only fails on a NEW key vs the merge-base. So a function that a refactor REDUCES but leaves over the hard cap keeps the same key → `--diff` exits 0 and CI's delta gate passes, even though the function is still oversized. Observed during the `full-function-size-compliance` program: `RenderNewIssueDraftRow` passed `--diff` at 249L/78br mid-decomposition (still over the 200L/30br caps); a `grid-engine` agent caught it only by also running `--scan-file`. This means a decomposition agent (or the orchestrator) that "verifies done" with `--diff` alone can ship a partial reduction, and per-PR CI (which uses `--diff`) won't catch it — the oversized function silently becomes the new grandfathered baseline.
   Concrete next action: (1) every decomposition / refactor subagent prompt + the decompose playbook (`docs/guides/imgui-draw-pattern.md` § Verification) MUST require `python3 agents/scripts/core/function_size_audit.py --scan-file <file>` confirming the target is ABSENT from the absolute violation list — not just `--diff` exit 0. (2) The orchestrator's end-of-program verification must run the repo-wide `--list` on develop and assert it is EMPTY, rather than trusting per-PR CI green. (3) Consider a CI mode that fails if `--scan-file` on any touched file regresses, closing the grandfather-blind window. ~1h.

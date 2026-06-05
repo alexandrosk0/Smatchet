@@ -150,6 +150,18 @@ The harness maintains a `.claude/.tree-dirty` sentinel file written by `.claude/
 
 The deferred lint pipeline (`.claude/hooks/lint-cpp.sh` PostToolUse → `.claude/hooks/lint-cpp-drain.sh` Stop) follows the same principle for `cppcheck` / `clang-tidy` / dual-target syntax: heavy passes drain once at end-of-turn against the dedup'd set of edited files, not after each Edit/Write. `clang-format -i` still runs inline. Escape hatches: `SMATCHET_LINT_INLINE=1` reverts to per-edit, `bash agents/scripts/core/lint-flush.sh` drains explicitly mid-turn. The trivial-visual-only envelope above is a special case of this rule.
 
+## Triggered follow-ups
+
+Some backlog entries are **deferred follow-ups gated on a future condition** ("re-measure after ~10 PRs", "after ~20 PRs flip the gate", "once plan X ships"). Rather than relying on manual triage to remember the condition, an entry in `docs/self-improvement/categories/*.md` can carry an optional, grep-parseable `Triggered-follow-up:` line; [`followup-due-nudge.sh`](../../agents/scripts/core/followup-due-nudge.sh) (a SessionStart nudge + a `git-janitor` closeout step) fires it automatically when the condition is met. Grammar + the four `when=` kinds (`pr-count` / `date` / `plan-shipped` / `file-age`): [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) § Format.
+
+**Lifecycle:**
+
+1. **Author** the entry with `… fired=never` (the unfired sentinel). Triggers live ONLY on backlog entries, never in plan-docs — a trigger authored in `docs/plans/active/<slug>.md` dies when the plan archives to `shipped/` (the exact loss that motivated this).
+2. **Fires** — when the `when=` condition becomes true, the nudge surfaces the entry's `action` + `baseline`, priority-sorted (P0→P3). The nudge is **read-only** (never edits a tracked file), so a due-but-unaddressed entry re-nudges every session until acted on — same "keeps nagging until resolved" semantics as `postmortem-owed`.
+3. **Act + stamp** — when the orchestrator does the follow-up it stamps `fired=<date>` on the entry **via the normal PR flow** (not the script), suppressing further nudges. Then close the entry or spawn a successor.
+
+Degrades safely: `gh`-unavailable / ambiguous → SKIP (never a false fire, never a hard fail); a malformed `when=` emits a WARN. Spec: [`docs/plans/active/triggered-followup-tracking.md`](../plans/active/triggered-followup-tracking.md).
+
 ## Where new rules go
 
 Authored fresh per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md) D7 — the meta-rule that drives where future rules land so the AGENTS.md ↔ `docs/agent-rules/` split doesn't drift.

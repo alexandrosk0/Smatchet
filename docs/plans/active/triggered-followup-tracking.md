@@ -14,6 +14,8 @@ Originating request: user, this session (the #866 follow-up is the worked exampl
 
 ## Approach
 
+> **Reconsidered 2026-06-05 (after PRs #868–#871 landed this session).** Four revisions, none flipping the design: Slice 3 settings-wiring **simplified** (the live-drift premise was pre-healed by #869's `sync-settings-hooks.sh` self-heal + the C3-A repair — a `.tmpl`-only edit now auto-propagates); the pr-count query **hardened** with an explicit `--limit` (the planned `--jq length` silently capped at 30); the "~2 live entries" census **corrected** (4 backlog-resident + 2 newly-committed stubs); migration scope grown **1 → 3 archetypes**. The text below is the *original* plan; § Deviations records what actually shipped.
+
 Reuse the existing **SessionStart conditional-nudge** pattern wholesale; build no parallel system, no JSON registry (only ~2 live entries warrant a trigger today — the registry is deferred until 5+ concurrent triggered entries exist). Four slices on one branch → one PR.
 
 1. **The field + the doc/process (the core ask)** — add an optional, grep-parseable `Triggered-follow-up:` line to the self-improvement entry format in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` § Format, plus a short § in `docs/agent-rules/process-rules.md` (the catch-all sink — **NOT** `AGENTS.md`, which is 154/150 lines, over the grandfathered cap) defining the lifecycle. One `when=` spec per entry. **Grammar**: `<kind>:<key>=<val>;<key>=<val>` — semicolon-delimited, keys order-independent, all listed keys required; the `--selftest` asserts this contract. Four kinds:
@@ -105,10 +107,25 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **`Triggered-follow-up:` on plan-docs** (so "re-measure after 10 PRs" lives in `docs/plans/active/<slug>.md § Verification` where authored) — DECIDED (grill): **backlog-entries-only**. A trigger authored in a plan dies when the plan archives (the exact loss #866 names); the durable carrier is the backlog entry. The nudge scans only `docs/self-improvement/categories/*`. No-action.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- Slice 1 — `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` § Format gains the optional `Triggered-follow-up:` line spec (4 `when=` kinds, `fired=never` sentinel, field order); `docs/agent-rules/process-rules.md` gains § Triggered follow-ups (the author → fire → act+stamp lifecycle).
+- Slice 2 — `agents/scripts/core/followup-due-nudge.sh` (new): read-only scanner, 4 evaluators (pr-count / date / plan-shipped / file-age), `--list`/`--nudge`/`--selftest`, `fired=` suppression, priority-sorted block. **17/17 `--selftest`.**
+- Slice 3 — `docs/harness/claude-code/settings.json.tmpl` SessionStart hook (auto-propagates via `sync-settings-hooks.sh`, verified live); migrated **3 archetypes** (process.md #866 pr-count; new process.md `agent-size-reduction` pr-count-due-now; new tooling.md `merge-snapshot-ledger` date); `agents/core/git-janitor.md` closeout step 10.6.
+- Slice 4 — `tests/bats/followup_due_nudge.bats` (12 tests, stubbed `gh`) + `agents/scripts/core/test-followup-due-nudge-bats.sh` wrapper.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+Per the **reconsideration** (2026-06-05) of this plan against the 4 PRs that merged *after* it was authored (#867):
+
+- **Slice 3 simplified** — the plan's "live `.claude/settings.json` is stale (`agents/scripts/dev/` dead paths, `postmortem-owed` absent); regenerate via `setup-harness.sh` to heal" premise was overtaken by **#869's `sync-settings-hooks.sh`** (additive SessionStart self-heal) + this session's C3-A repair. The new hook is added to the `.tmpl` only and auto-propagates (verified: `followup-due-nudge` count 0→1 in the live file). The Out-of-scope "file a tooling.md P2 to fix drifted settings" item is **dropped (moot)**.
+- **pr-count `--limit` bug fixed** — the planned `gh pr list --search 'merged:>=<date>' --jq length` silently caps at the default `--limit 30` (under-fires once >30 PRs land — the exact "silent never-fires" failure this tool exists to kill, the same class #868 fixed in `postmortem-owed`). Added explicit `--limit "${FOLLOWUP_FETCH_N:-200}"`. The mergedAt re-sort #868 also added is deliberately NOT cloned (a count needs no ordering). Offline `(#N)`-grep fallback kept (re-verified).
+- **Archetype migration scope 1 → 3** — migrated the #866 pr-count archetype PLUS two backlog entries carrying the trigger-shaped intent that this session deferred as `active/` plan STUBS (the exact Decision-4 anti-pattern): `agent-size-reduction` (pr-count, **DUE-now** — its #868 gate merged — giving a real end-to-end FIRE proof instead of only stubbed fixtures) and `merge-snapshot-ledger` (date). Dogfoods Decision 4.
+- **Registry-deferral rationale re-based** — the "~2 live entries → defer registry until 5+" census was a real undercount (verified: 4 backlog-resident trigger-shaped entries + 2 newly-committed stubs). Registry kept deferred, but re-justified on *no-cross-entry-state-needed* rather than the now-wrong numeric trip-wire.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- `followup-due-nudge.sh --selftest` → **17/17** (4 grammars parse, malformed→MALFORMED, field extraction, `_kv`).
+- `test-followup-due-nudge-bats.sh` → **12/12** (all 4 trigger kinds incl. stubbed-`gh` pr-count, `fired=` suppression, malformed→WARN+no-fire, backward-compat invisible, priority sort, offline `(#N)` grep shape).
+- End-to-end against REAL migrated entries: nudge correctly FIREs `agent-size-reduction` (P2, due-now) + #866 re-measure (P3, ≥10 PRs merged since 2026-06-05); `merge-snapshot-ledger` (future date) stays silent. Priority-sorted with action + baseline + source.
+- Wiring: `sync-settings-hooks.sh` propagated the new hook into the live `.claude/settings.json` (count 0→1); `settings.json.tmpl` valid JSON; `git-janitor.md` step 10.6 present.
+- Gates: `test-docs.sh` 9/9; `test-lint-bash.sh` PASS (EXIT 0); `shellcheck` clean except 1 info-level `SC2295` (pattern-expansion, proven-safe for the literal keys). Pure-docs/agentic-shell — no build/ctest.
