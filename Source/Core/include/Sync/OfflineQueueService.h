@@ -53,6 +53,7 @@ namespace TextMerge {
 struct MergeResult;
 }
 struct TrackerField;
+struct CachedTicket;
 struct PendingCreate;
 struct DeadPendingCreate;
 struct PendingFieldEditRecord;
@@ -92,16 +93,24 @@ class OfflineQueueService {
     AppController::PendingQueueDeleteSummary DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
 
     /// Persist a tracker field payload for later replay when connectivity returns.
+    /// `originalRichValue` is the rich (ADF/HTML) base for the 3-way merge; `originalValue` is
+    /// the scalar display base for the 2-way `ServerMovedFromBase` compare (ADR-0016). Both
+    /// default empty; a row with neither base keeps last-write-wins.
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                        const std::string& fieldsPayloadJson, std::string& outError,
-                                       const std::string& originalRichValue);
+                                       const std::string& originalRichValue,
+                                       const std::string& originalValue = std::string());
 
     std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
 
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
-    /// The edit will be retried on the next TickOfflineFieldEdits pass.
-    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown, const std::string& richKind);
+    /// The edit will be retried on the next TickOfflineFieldEdits pass. `kind` (text|scalar|
+    /// unverified, ADR-0016) selects how `resolvedValue` is applied: `text` reconverts
+    /// Markdown→ADF/HTML via `richKind`; `scalar`/`unverified` write the value into the payload
+    /// key verbatim (no conversion).
+    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
+                                  const std::string& kind = std::string("text"));
 
     AppController::PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
 
@@ -165,12 +174,40 @@ class OfflineQueueService {
     bool RunFieldEditCacheMutation(const char* action, std::int64_t id, const std::function<void()>& fn,
                                    FieldEditReplayTally& tally);
 
-    /// 3-way merge gate: if the row carries an original rich value, fetch the current server
-    /// document and merge before replay. Mutates `fieldsPayload` in place on a clean merge.
-    /// Returns true when a conflict was recorded and the row must be skipped this pass.
-    bool ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
-                                       LocalCacheManager* cache, ITrackerIssueReader* reader,
-                                       FieldEditReplayTally& tally);
+    /// Outcome of the pre-replay conflict gate (ADR-0016). `Proceed` = no divergence (or no base
+    /// captured) → replay the queued payload as usual. `Suspend` = a conflict (rich merge, scalar
+    /// divergence, or unverifiable re-fetch) was recorded and the row must be skipped this pass.
+    /// `RetryTransient` = a transient re-fetch failure for a based row that has not yet hit the
+    /// attempt cap → bump attempts and try again next tick (never a silent replay).
+    enum class FieldEditConflictOutcome { Proceed, Suspend, RetryTransient };
+
+    /// Pre-replay conflict gate. Dispatches rich (3-way text merge) vs scalar (2-way display
+    /// compare) based on which base the row captured, performing the single server re-fetch and
+    /// applying the decision-(c) fetch-failure routing uniformly for both kinds.
+    FieldEditConflictOutcome EvaluateFieldEditConflict(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
+                                                       LocalCacheManager* cache, ITrackerIssueReader* reader,
+                                                       FieldEditReplayTally& tally);
+
+    /// Record a `kind:"unverified"` conflict (server value couldn't be read) and suspend the row.
+    /// Context: `{kind:"unverified", mine, fieldId}`. Always returns Suspend.
+    FieldEditConflictOutcome RecordUnverifiedFieldEditConflict(const PendingFieldEditRecord& row,
+                                                               const nlohmann::json& fieldsPayload,
+                                                               LocalCacheManager* cache, FieldEditReplayTally& tally);
+
+    /// Scalar 2-way conflict gate: compare the captured display base against the re-fetched
+    /// display value via `ServerMovedFromBase`. On divergence records a `kind:"scalar"` conflict
+    /// and returns Suspend; otherwise Proceed.
+    FieldEditConflictOutcome ResolveFieldEditScalarConflict(const PendingFieldEditRecord& row,
+                                                            const nlohmann::json& fieldsPayload,
+                                                            const CachedTicket& fresh, LocalCacheManager* cache,
+                                                            FieldEditReplayTally& tally);
+
+    /// 3-way merge gate: merge the captured rich base against the re-fetched server document.
+    /// Mutates `fieldsPayload` in place on a clean merge. Returns Suspend when a conflict was
+    /// recorded, Proceed otherwise.
+    FieldEditConflictOutcome ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row,
+                                                           nlohmann::json& fieldsPayload, const CachedTicket& fresh,
+                                                           LocalCacheManager* cache, FieldEditReplayTally& tally);
 
     /// Apply a computed 3-way merge result: on a clean merge, rewrite `fieldsPayload[payloadKey]`
     /// to the merged ADF/HTML; on conflict, record the conflict context to the cache and return
