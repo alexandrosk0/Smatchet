@@ -118,7 +118,7 @@ New artifacts shipped this round: `scripts/dev/test-<feature>.sh`, scenario clas
 
 Result of the new harness running locally:
 
-```
+```text
 bash scripts/dev/test-<feature>.sh   →  Passed: N  Failed: 0
 bash scripts/dev/test-all.sh         →  Passed: <total>  Failed: 0
 ```

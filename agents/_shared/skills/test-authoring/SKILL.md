@@ -165,7 +165,7 @@ Pick (2) for most cases — fewer moving parts. Add `AppController::Scenario*` h
 
 ## Report format
 
-```
+```text
 Audited <plan path> § Verification — N items.
 
 Classification:

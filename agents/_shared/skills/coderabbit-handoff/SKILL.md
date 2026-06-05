@@ -26,7 +26,7 @@ The report shape `coderabbit-triage` emits. The agent owns *what each finding is
 
 ## Output format
 
-```
+```text
 ## Triage table
 | # | file:line | severity | applies? | target | reason / rule |
 |---|-----------|----------|----------|--------|---------------|
