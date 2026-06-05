@@ -95,10 +95,20 @@ N/A — no `Source/Core/` change; both slices are agent-prompt/docs (Slice 1) an
 - **A pre-push git hook** that runs the Slice-1 gate automatically — stronger than a prompt rule, but a local-hook install/opt-in concern; follow-up if the process rule proves leaky.
 
 ## Implementation log
-*(populated post-ship)*
+
+- Plan shipped as **#857** (merged 2026-06-05).
+- **Slice 1** (pre-first-push gate) — **#858** (merged): `[pre-first-push gate]` added to the `ship-loops.md` default sequence + the Implementer output contract in `delegation.md`.
+- **Slice 2** (decouple NONE early-nudge) — **#859** (open, held — see § Verification (actual)): `MERGE_GATES_NONE_NUDGE_POLLS` (default 0) + `none_streak` counter in `merge-gates.sh`, `merge-gates.md` env-knob doc, 11 bats cases (7 opted-in, 1 repurposed, 3 new).
 
 ## Deviations from plan
-*(populated post-ship)*
+
+1. Slices shipped as **two separate PRs** (#858, #859) as planned — but #859 remains open/held on a verification gap (below), so the feature is **partially landed**.
+2. **Gate escape mid-implementation** — a one-line docs link fix was direct-pushed to `develop` (`a678741f`) due to branch-state drift (orchestrator left on `develop` by a poller-start `git checkout`). Benign + locally-verified content, no breakage, but the gate was bypassed. Blameless postmortem + preventing-gate filed as **#861** (a `pre-push` develop-guard hook). Not in the original plan; recorded for completeness.
+3. **Strict-mode update-branch tax materialized** — the § Risks non-goal ("`strict:true` forces an update-branch = new head = another CR auto-review per develop-advance") was hit concretely: #858 needed several update-branch cycles as sibling PRs merged ahead of it. Reinforces that lever as a real (deferred) cost.
+4. Two CI failures on #858 (`test-portable-purity` leak from hardcoded build literals in a portable dir; a pre-existing `test-markdown-links` dangling link surfaced by touching `delegation.md`) — both **locally-knowable**, i.e. exactly the finding classes Slice 1's gate targets. Validated the plan's premise in-session.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Slice 1 (#858)** — pure-docs; doc-validation suite green after the two fixes in deviation 4. `md_lint` clean.
+- **Slice 2 (#859)** — `bash -n` + `shellcheck` clean; the **default-off** behavior test and the **`GATE_CARRY` `none_head`** test passed locally (`bats` EXIT 0). **The full `tests/bats/merge_gates.bats` suite could NOT complete locally** — this machine's msys process table thrashed mid-session (a known-good pre-existing test also hung), an environment limitation, not a logic fault. **A clean `bash agents/scripts/core/test-merge-gates.sh` on a healthy environment is OWED before #859 merges** (bats is the local pre-push gate — NOT run in CI, so CI green does not cover it). #859 is held on this basis rather than force-merging unverified test code (which Slice 1's own gate forbids). The logic is a direct mirror of the proven `stale_streak` carry path.
+- **Effectiveness measurement** (the plan's success metric) — baseline 3.2 heads/PR + 1.3 nudges/PR; re-measure over the next ~10 PRs once both slices are live.
