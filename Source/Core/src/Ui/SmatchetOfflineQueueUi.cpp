@@ -1096,14 +1096,18 @@ static void HandleOfflineCopyShortcut(OfflineDrawCtx& ctx) {
 }
 
 // Parsed view of conflict_context_json. `Kind` (text|scalar|unverified, ADR-0016) selects the
-// modal branch; absent kind defaults to "text" (legacy rich rows). Malformed JSON yields a safe
-// empty struct so the modal renders an empty, dismissable state instead of crashing (Pillar 3).
+// modal branch; absent kind defaults to "text" for legacy rich rows. `Valid` is true ONLY when the
+// JSON parsed as an object AND the resolved kind is one of the three known kinds — malformed JSON
+// or an unknown kind yields Valid=false so the modal renders a NON-actionable read-only state
+// with no Use Mine/Theirs/Force/Save buttons, never a resolvable text pane that could clobber the
+// row with empty content. Pillar 3 graceful degradation rather than a destructive resolve.
 struct ConflictModalCtx {
     std::string Kind = "text";
     std::string Mine;
     std::string Theirs;
     std::string Base;
     std::string RichKind = "adf";
+    bool Valid = false;
 };
 
 static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
@@ -1116,8 +1120,9 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
             out.Theirs = ctx.value("theirs", std::string());
             out.Base = ctx.value("base", std::string());
             out.RichKind = ctx.value("richKind", std::string("adf"));
+            out.Valid = (out.Kind == "text" || out.Kind == "scalar" || out.Kind == "unverified");
         }
-    } catch (...) { // catch-all-ok: malformed conflict context → safe empty render
+    } catch (...) { // catch-all-ok: malformed conflict context → Valid stays false (safe read-only render)
     }
     return out;
 }
@@ -1290,6 +1295,31 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
     }
 }
 
+// Non-actionable pane for a malformed / unknown conflict_context_json (Valid==false). Renders a
+// read-only explanation and offers ONLY Close + a hard Discard — never Use Mine/Theirs/Force/Save,
+// which on a corrupt context could resolve the row to empty content and clobber the user's edit.
+static void DrawConflictPaneUnknown(OfflineDrawCtx& octx) {
+    UiDrawSession& d = octx.d;
+    AppController& app = octx.app;
+
+    ImGui::TextDisabled("This offline edit's conflict details could not be read (corrupt or stale data).");
+    ImGui::Spacing();
+    ImGui::TextWrapped("To avoid overwriting either version with empty content, this conflict can't be resolved "
+                       "automatically. Close to leave the edit queued, or discard it to drop the queued change.");
+    ImGui::Spacing();
+
+    if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {
+        // Hard-delete the queue row; DeletePendingFieldEdits writes the audit entry (ADR-0016).
+        app.DeletePendingFieldEdits({d.conflictResolveDbId});
+        FinishConflictModal(d, "Edit discarded.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close", ImVec2(80, 0))) {
+        d.conflictResolveBuf.clear();
+        ImGui::CloseCurrentPopup();
+    }
+}
+
 static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
     UiDrawSession& d = octx.d;
 
@@ -1302,7 +1332,10 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         // Seed the resolved buffer from the conflict context on open. Rich `text` seeds the
         // conflict-marker template; scalar seeds the editable value with "mine".
         const ConflictModalCtx seedCtx = ParseConflictModalCtx(d.conflictContextJson);
-        if (seedCtx.Kind == "scalar") {
+        if (!seedCtx.Valid) {
+            // Malformed / unknown kind → non-actionable pane; no editable buffer to seed.
+            d.conflictResolveBuf.clear();
+        } else if (seedCtx.Kind == "scalar") {
             d.conflictResolveBuf.assign(8 * 1024, '\0');
             const size_t n = (std::min)(seedCtx.Mine.size(), static_cast<size_t>(8 * 1024 - 1));
             std::memcpy(d.conflictResolveBuf.data(), seedCtx.Mine.data(), n);
@@ -1320,7 +1353,9 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
     if (ImGui::BeginPopupModal("ResolveMergeConflict", nullptr,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
         const ConflictModalCtx cc = ParseConflictModalCtx(d.conflictContextJson);
-        if (cc.Kind == "scalar") {
+        if (!cc.Valid) {
+            DrawConflictPaneUnknown(octx);
+        } else if (cc.Kind == "scalar") {
             DrawConflictPaneScalar(octx, cc);
         } else if (cc.Kind == "unverified") {
             DrawConflictPaneUnverified(octx, cc);
