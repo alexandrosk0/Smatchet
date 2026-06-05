@@ -62,9 +62,6 @@ agents/core/git-janitor.md	SMATCHET
 agents/core/git-janitor.md	SmatchetCore_DX12
 agents/core/git-janitor.md	SmatchetStandalone
 agents/core/git-janitor.md	Source/Core
-agents/core/git-janitor.md	Source/Standalone
-agents/core/git-janitor.md	Source/UnrealPlugins
-agents/core/git-janitor.md	ninja-iter-msvc
 agents/core/mechanic.md	Smatchet
 agents/core/mechanic.md	Source/Core
 agents/core/mechanic.md	Source/Standalone

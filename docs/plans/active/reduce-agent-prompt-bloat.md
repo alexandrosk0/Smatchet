@@ -50,7 +50,7 @@ Per [`docs/agent-rules/AGENT-VS-SKILL.md`](../../agent-rules/AGENT-VS-SKILL.md),
 
 **Pilot-review gate (locked): STOP after Slice 2 for human review.** Before Slices 3-4 proceed, the maintainer reads the slimmed `debug-detective` and confirms it still reads as a **complete, self-explanatory thinker** (the split didn't gut comprehension). A failed review re-cuts the seam; a passed review unlocks the rollout. This is the visual-validation-style pause the maintainability goal demands — line count alone can't prove readability.
 
-**Slice 3 — `git-janitor` (534 L).** Extract the deterministic VCS procedures (path resolution, standard cleanup loop, stale-branch sweep, bring-`develop`-to-latest, poll-until-stable) into a **`git-cleanup-procedures`** skill; the agent keeps the hard refusals + merge-gate orchestration reasoning + the FF-clean exception + a pointer. Target: 534 → ~250 L.
+**Slice 3 — `git-janitor` (534 L).** Extract the deterministic VCS procedures (path resolution, standard cleanup loop, stale-branch sweep, bring-`develop`-to-latest, poll-until-stable) into a **`git-cleanup-procedures`** skill; the agent keeps the hard refusals + merge-gate orchestration reasoning + the FF-clean exception + a pointer. Target: 534 → ~250 L; **actual 165 L** (under the 250 hard cap entirely — the mechanical content was a larger share than debug-detective's).
 
 **Slice 4 — ride-along: `test-author` (268) + `coderabbit-triage` (214).** Same treatment **only if** a feature already opens the file or they exceed budget after Slices 0-3 calibration — not a dedicated sweep (the `decompose-monoliths` Phase-B lesson: mechanical sweeps churn + regress; the gate prevents regrowth so ride-along suffices).
 
@@ -174,12 +174,19 @@ N/A — no `Source/Core/` code, no C++. Diff is `agents/**/*.md` + a Python gate
 
 **Slice 1 — classification readout — DONE.** Full STAYS/EXTRACT map of `debug-detective.md` produced (recorded in this PR's description + below). **Material finding:** the genuinely *mechanical* (verbatim copy-paste-run) content is ≈180–220 L, not the ~430 the "~300" target implied — everything else is real decision logic (phases 0–3, the §7.5 pause-gate, crash/race workflows, handoff, promote-logs, hard rules, and the two report templates ~85 L). So a clean reasoning/recipe extraction lands debug-detective at ~430–520, NOT ~300. Maintainer chose **extract mechanics + both report templates → ~430**.
 
-**Slice 2 — debug-detective pilot — SHIPPED to PR (awaiting human readability review).**
+**Slice 2 — debug-detective pilot — SHIPPED as PR #851 (squash-merged 2026-06-04).**
 - `agents/_shared/skills/debug-instrument/SKILL.md` (new, skill-only, 296 L) — the extracted mechanics: §4 NDJSON `[temp-debug]` instrument recipe (roll-helper `sed`, include/call code, `LOG_*` fallback, marker rules, useful-values list), §5 build + exe-staleness commands, §6 unified-CLI run reference + command table, §7 `jq` log-reading + fallback, §8 sanitizer setup + DLL gotcha, §12 four-step cleanup commands, **and both report-shape templates** (mid-loop + final). Registered in `SKILL_ONLY_HELPERS`; auto-linked by `setup-harness.sh` (verified).
 - `agents/core/debug-detective.md` — slimmed **733 → 418 L** (−43%). Keeps all judgment (scope, search order, phases 0/0.5/0–3, §7.5 pause-gate, §9 race, §10 iterate, §11 handoff, §11.5 promote-logs, crash *reasoning*, Hard Rules, Self-improvement) + a named summary+pointer per extracted block. `version` 5→6, banner v5→v6, `delegates-to:` gains `debug-instrument`.
 - The §7.5 wait-for-feedback pause-loop, the reproducer-first contract, and the ship-loop override are **kept inline verbatim** — they are the agent's load-bearing reasoning, never extracted.
+- **Pilot-review gate: PASSED** (maintainer "go", 2026-06-04) — unlocks Slices 3-4. Late portable-purity fix needed (the new skill's project literals; § Deviations #9).
 
-**Slices 3–5 — NOT STARTED.** Gated on the Slice-2 human readability-review PASS (re-cut the seam on FAIL). Slice 5 has its own pilot-review-before-merge gate.
+**Slice 3 — `git-janitor` — SHIPPED (this PR).**
+- `agents/_shared/skills/git-cleanup-procedures/SKILL.md` (new, skill-only, 345 L) — the extracted deterministic VCS shell: path resolution, the 6-step pre-flight + Step-0 cross-checks, the poll-until-stable helper, per-PR squash-merge + branch-delete mechanics, the protected-branch-guard bash, the FF-clean execution bash, diverged-branch recovery, the stale-branch sweep, bringing develop to latest, the orphan-scenario sweep, the regression-gate build commands, and the final-report template. Registered in `SKILL_ONLY_HELPERS`.
+- `agents/core/git-janitor.md` — slimmed **534 → 165 L** (−69%; now under the 250 hard cap entirely, soft-warn only at 165 > 150). Keeps the judgment: all 8 hard refusals (rules), the FF-clean **decision** (preconditions + pure-docs sub-exception + why-narrow), the **merge-gate orchestration rc-handling** (step 3 case block kept verbatim — the orchestration reasoning), the cleanup-loop order, and the 4 mandatory Maintenance report headings (`## Pre-flight` / `## Mutations applied` / `## Regression gate` / `## Residue requiring user action`). `version` 5→6, banner v5→v6, `delegates-to:` gains `git-cleanup-procedures`.
+
+**Slice 4 — ride-along (`test-author` 268 / `coderabbit-triage` 214) — SKIPPED (per plan).** Not a dedicated sweep: `coderabbit-triage` (214) is already under the 250 hard cap (soft-warn only); `test-author` (268) is over but grandfathered — neither blocks, and the plan defers these to ride-along "when a feature already opens the file." Left for a future touch.
+
+**Slice 5 — `AGENTS.md` split — NOT STARTED.** Has its own pilot-review-before-merge gate. The recommended next step.
 
 ## Deviations from plan
 
@@ -194,6 +201,11 @@ N/A — no `Source/Core/` code, no C++. Diff is `agents/**/*.md` + a Python gate
 
 7. **Slice-2 target revised 733 → ~300 → ~430** (Slice 1 finding, maintainer-confirmed). The ~300 estimate over-counted what is mechanically extractable (~180–220 L). Landed at **418 L** by extracting mechanics **+ both report-shape templates** (the maintainer's chosen aggressiveness tier). Still over the 250 hard cap → stays grandfathered; the gate confirms no new violation (the file shrank within its grandfathered key).
 8. **`test-agent-contract.sh` check 3 extended to search the skill** (the extraction forced it). The 6 required Diagnostic report-shape headings (`## Hypotheses` / `## Evidence` / `## Cause` / `## Files changed (temp-debug)` / `## Cleanup` / `## Handoff`) moved into `debug-instrument/SKILL.md` with the templates; the gate now passes a heading found in the agent **OR** its delegated skill. The invariant ("the diagnostic report shape is declared in a discoverable place the agent points to") is preserved — this is a gate evolving *with* the refactor, shipped same-PR.
+
+**Slice 3 deviations:**
+
+9. **Each new skill needs a `portable-purity` baseline refresh** (surfaced on #851's CI, then pre-empted in Slice 3). A skill extracted from an agent is intentionally Smatchet-specific (Smatchet.exe, ninja presets, `Source/Core`, `SmatchetCore_DX12`) — same established pattern as `perf-instrument`/`perf-measure`/`perf-gatekeeper`, already baselined. Fix: `bash agents/scripts/core/test-portable-purity.sh --refresh` after creating the skill. **Process lesson (added to the local pre-ship habit):** run `test-portable-purity` after adding ANY file under a portable dir, not just the C++/doc gates. #851 needed a follow-up commit for this; Slice 3 ran it pre-push.
+10. **`git-janitor` landed at 165 L, well under the ~250 target** (and under the 250 hard cap entirely — soft-warn only). The merge-gate rc-handling (kept verbatim as the orchestration reasoning) is the single largest kept block; everything mechanical relocated cleanly. One doc-anchor break fixed in-branch: a paraphrased `AGENTS.md § Trivial-visual envelope` reference didn't match the real anchor `Trivial-visual-only change envelope` (the anchor-resolver name-matches exactly) — corrected to the exact section name.
 
 **Owed (not yet done — for the future implementer):** `scripts/dev/test-docs.sh` local mirror is stale vs `doc-validation.yml` (omits `test-markdown-links` + `md_lint`) — a Slice-5 author pre-validating locally won't catch a dangling link / MD028. Add those two to its `STEPS`, or note the gap in Slice 5's local-verification step. (M6; deferred — not in Slice 0's path.)
 
@@ -215,6 +227,14 @@ N/A — no `Source/Core/` code, no C++. Diff is `agents/**/*.md` + a Python gate
 - `test-doc-anchors`, `md_lint --all`, `test-markdown-links` (the new skill + agent links resolve; the `SmatchetAgentDebug.h.tmpl` path the skill points to exists) → all PASS.
 - `setup-harness.sh claude-code` auto-links `.claude/skills/debug-instrument → agents/_shared/skills/debug-instrument` (no script edit needed — verified).
 - **Behaviour-preserved:** the §7.5 wait-for-feedback pause-loop, reproducer-first contract, ship-loop override, hypothesis/metric discipline, and Hard Rules are kept inline verbatim; only the verbatim mechanics + report templates moved. The agent still drives the loop and points to the skill for every recipe.
-- **Pending — the plan's mandatory pilot-review gate (manual, blocking):** the maintainer reads the slimmed `debug-detective.md` and confirms it reads as a complete self-explanatory thinker. PASS unlocks Slices 3–4; FAIL re-cuts the seam.
+- **Pilot-review gate: PASSED** (maintainer "go", 2026-06-04). Late portable-purity fix on #851 for the new skill's literals (§ Deviations #9), then squash-merged.
 
-**Slices 3–5:** not started — gated on the Slice-2 readability PASS.
+**Slice 3 (all green locally):**
+- **Line count: `git-janitor.md` 534 → 165** (−69%; under the 250 hard cap entirely — `[agent-size] WARN` soft-tier only at 165 > 150). `git-cleanup-procedures/SKILL.md` 345 L (under the 400 sink soft-warn).
+- `agent_size_audit.py --diff origin/develop` → exit 0 (git-janitor dropped from 534 to 165 — no longer a violation at all; gate clean).
+- `test-skill-vs-agent-parity.sh` → `Passed: 3  Failed: 0` with `git-cleanup-procedures` registered.
+- `test-agent-contract.sh` → `Passed: 25  Failed: 0` (the 4 Maintenance headings — `## Pre-flight` / `## Mutations applied` / `## Regression gate` / `## Residue requiring user action` — all retained).
+- `test-portable-purity` refreshed (+ the skill's literals) → PASS. `test-doc-anchors` → PASS after fixing one paraphrased anchor (§ Deviations #10). `md_lint --all`, `test-markdown-links` → PASS.
+- **Behaviour-preserved:** all 8 hard refusals, the FF-clean decision (preconditions + pure-docs sub-exception + why-narrow), and the merge-gate rc-handling case block are kept inline verbatim; only the deterministic VCS shell + final-report template moved to the skill.
+
+**Slice 4:** skipped per plan (ride-along only; `test-author` 268 grandfathered, `coderabbit-triage` 214 under cap). **Slice 5:** not started — has its own pilot-review gate.
