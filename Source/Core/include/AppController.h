@@ -402,7 +402,11 @@ class AppController
      */
     std::string ResolveFieldIconAssetPath(const std::string& pathOrUrl) const;
 
-    void RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds);
+    // processAll=true runs the script across every loaded ticket (ignores selectedIds).
+    // With an empty selectedIds and processAll=false the job refuses to run (Issue #824):
+    // no silent mass-modify, no silent no-op.
+    void RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds,
+                       bool processAll = false);
     void RunFlatScriptAsync(const std::string& scriptPath);
 
     std::string GetAutomationScriptContent();
@@ -1269,6 +1273,10 @@ class AppController
         std::string scriptPathOrActionName;
         std::vector<std::string> selectedIds;
         std::string targetIssueId;
+        // Explicit opt-in to run across ALL loaded tickets when selectedIds is empty.
+        // Default false: empty selection + !processAll is a refusal (no silent mass-modify,
+        // no silent no-op). See RunAutomationAutoScript and Issue #824.
+        bool processAll = false;
     };
     mutable std::mutex automationJobMutex_;
     std::condition_variable automationJobCv_;
