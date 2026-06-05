@@ -40,6 +40,7 @@ SKILL_ONLY_HELPERS=(
     but-for-real
     drain-memory
     debug-instrument
+    git-cleanup-procedures
 )
 
 is_skill_only() {
