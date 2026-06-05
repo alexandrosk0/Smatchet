@@ -1,0 +1,296 @@
+---
+name: debug-instrument
+description: The deterministic mechanics of a Smatchet debug investigation — the NDJSON [temp-debug] instrumentation recipe, build + exe-staleness commands, the unified-CLI run reference, log/evidence reading (jq), sanitizer setup, cleanup, and the two report-shape templates. Invoked by debug-detective (which keeps the judgment: hypotheses, metric choice, the wait-for-feedback loop, hand-off). Use when instrumenting, reading a debug log, cleaning up [temp-debug] markers, or formatting a debug report.
+triggers:
+  - debug-instrument
+  - temp-debug
+  - ndjson-debug
+  - debug-cleanup
+  - debug-report
+  - instrument
+version: 1
+---
+
+<!-- Skill-only helper (no agent twin; registered in SKILL_ONLY_HELPERS). This is the
+     EXTRACTED mechanics body of agents/core/debug-detective.md — the deterministic
+     copy-paste-run recipes + report scaffolds. The agent keeps the reasoning and points
+     here per section. reduce-agent-prompt-bloat Slice 2. Cross-harness: Codex/Cursor read
+     the agent's summary + this path; Claude Code loads this skill on demand. -->
+
+# debug-instrument (skill)
+
+The mechanics `debug-detective` runs. The agent owns *what to do and why* (scope, hypotheses, the metric, the §7.5 pause-gate, hand-off); this skill owns *how* — the verbatim shell, the NDJSON helper, the report templates. Every temporary edit carries the literal token `[temp-debug]` so one text-search finds the full delta at cleanup.
+
+## Instrument — the NDJSON debug-log helper
+
+The canonical instrumentation tool. Writes one JSON object per call to a uniquely-named log (`debug-<hex>.log`), independent of `Logger::SetFileSinkPath`, schema `{sessionId, location, hypothesisId, message, data, timestamp}`. Per-investigation: fresh 6-hex ID at session start; helper + log are gitignored and removed at cleanup.
+
+### Roll a session ID and write the helper
+
+Pick one random 6-hex per investigation, e.g. `61b011`. Reuse across every helper + log file this session. Do **not** reuse a previous hex even when revisiting the same bug — that conflates logs from different runs.
+
+Write the helper to `tests/_debug/SmatchetAgentDebug.h` (gitignored) by copying [`agents/_shared/templates/SmatchetAgentDebug.h.tmpl`](../../templates/SmatchetAgentDebug.h.tmpl) and replacing every `__SMATCHET_AGENT_DEBUG_ID__` placeholder with the rolled hex.
+
+```bash
+mkdir -p tests/_debug
+sed 's/__SMATCHET_AGENT_DEBUG_ID__/<hex>/g' \
+    agents/_shared/templates/SmatchetAgentDebug.h.tmpl \
+    > tests/_debug/SmatchetAgentDebug.h
+```
+
+Public API the template exposes:
+
+- `SmatchetAgentNdjsonLog(location, hypothesisId, message, dataInt)` — one NDJSON line per call.
+- `SmatchetAgentDebugLogPath()` — repo-root drop (walks ≤ 12 parents for `.git`).
+- `SmatchetAgentDebugTempLogPath()` — TEMP/`%TEMP%` fallback.
+
+Schema per line: `{"sessionId":"<hex>","location":"...","hypothesisId":"h1|h2|...","message":"...","data":{"i":<long long>},"timestamp":<ms>}`.
+
+Notes on the helper:
+
+- `static` functions → per-TU copies, no link conflicts; the same header may be `#include`d from multiple TUs in the same investigation without ODR violations.
+- Dual-target safe (no GLFW / OpenGL / DX12). Compiles into both `SmatchetStandalone` and `SmatchetCore_DX12`.
+- `ghc::filesystem` matches the project FetchContent dep (AGENTS.md § Available libs).
+- Schema carries one `dataInt` per call. If a hypothesis needs string / multi-int data, extend the helper inline (still gitignored, still removed at cleanup) — do not let format drift in the call site instead.
+
+### Add the include + call sites
+
+In each TU you instrument, add the include with a `// [temp-debug]` marker, then call `SmatchetAgentNdjsonLog(...)` at the smallest set of sites that **distinguish the listed hypotheses from each other**.
+
+```cpp
+#include "../../tests/_debug/SmatchetAgentDebug.h"  // [temp-debug]
+
+// ... later, at the suspect call site:
+SmatchetAgentNdjsonLog(
+    __FUNCTION__,                       // location
+    "h1",                               // hypothesisId — one of the listed hypotheses
+    "selection out of range",           // message — short, fixed text per call site
+    static_cast<long long>(rowIndex));  // data.i — the value that distinguishes hypotheses
+// [temp-debug]
+```
+
+Use a distinct `hypothesisId` (`"h1"`, `"h2"`, …) per listed hypothesis. The same call site can emit multiple breadcrumbs with different `hypothesisId`s when one site distinguishes two hypotheses by different values.
+
+**Cross-boundary instrumentation** — the bug is almost always at the interface between two pieces of code that disagree about a contract: UI thread vs worker, command-dispatch vs handler, parser vs payload-builder, save vs load. **Instrument both sides of the boundary**, not just one. Each side calls the helper with a different `location` (or `hypothesisId`) so the NDJSON log lets you correlate them.
+
+### Fallback to `LOG_DEBUG` / `LOG_TRACE`
+
+Use the project Logger only when the NDJSON helper cannot be used — e.g. deep inside a header where pulling the helper include would be intrusive, or a code path that runs before `ghc::filesystem` is safe (very early bootstrap). Same `[temp-debug]` prefix rules:
+
+- `LOG_TRACE("[temp-debug] %s ...")` inside tight loops, per-frame paths, per-cell paths.
+- `LOG_DEBUG("[temp-debug] %s ...")` for occasional events.
+- Never use `LOG_INFO`, `LOG_WARN`, or `LOG_ERROR` for temporary breadcrumbs.
+
+### Rules (apply to both helper and fallback)
+
+- Every temporary edit — helper include, helper call, `LOG_*` line, diagnostic toggle, sentinel value, repro scaffolding, anything that must not ship — carries the literal token `[temp-debug]` somewhere on its line. For log messages, prefix the format string; for non-log edits, add a trailing comment `// [temp-debug]`. One cleanup target catches every variant: the regex `\[temp-debug\]` (use the harness's text-search tool, not raw `grep -R`).
+- Avoid instrumentation in headers, especially under `Source/Core/include/`.
+- Do not add sleeps to "prove" races.
+- Do not change behaviour unless explicitly doing a temporary diagnostic toggle, and revert it before completion.
+- Keep one instrumentation round small, then build immediately.
+
+Useful values to log (passed via `dataInt` for the helper or interpolated into the format string for the fallback):
+
+- Object identity: stable ID first, pointer only if needed.
+- Thread identity hash: `static_cast<long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()))`. No `MainThreadDispatcher::IsMainThread()` helper exists; compare the logged thread-id hash against the UI-thread id captured at startup, or bracket the suspect call with a known-on-UI-thread breadcrumb posted via `MainThreadDispatcher::PostToMainThread`.
+- Old and new values; container sizes and indices; ownership/lifetime transitions; return values and error codes; command/scenario names; file paths and normalized keys.
+
+## Build + exe-staleness
+
+Build after each instrumentation round:
+
+```bash
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+```
+
+If the touched code affects `Source/Core/`, also build:
+
+```bash
+cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
+```
+
+If the build fails because of instrumentation, fix the instrumentation only — do not drift into product fixes. After a successful build, verify freshness and report the absolute exe path, size, and mtime so the user does not test a stale binary:
+
+```bash
+ls -la <absolute-path-to-Smatchet.exe>
+```
+
+## Run — unified CLI reference
+
+Auto-repro path (preferred): run the deterministic reproducer yourself, capture stderr + the NDJSON log.
+
+```bash
+Smatchet.exe cmd scenario.run --name=<repro> --frames=300 --yes 2> debug.log
+Smatchet.exe cmd tickets.get --id=<id>             2> debug.log
+ctest --preset ninja-test-msvc -R <UnitName>                 # for pure-logic repros
+```
+
+Discovery:
+
+```bash
+Smatchet.exe cmd commands.list --category=<cat>
+Smatchet.exe cmd commands.help --name=<cmd>
+Smatchet.exe cmd commands.search --query=<q>
+```
+
+| Command | Purpose |
+|---|---|
+| `debug.log` | Emit a known breadcrumb into the runtime log. |
+| `debug.mcp_status` | Check MCP reachability and last activity. |
+| `debug.thread_dump` | Inspect thread state. |
+| `debug.dock.dump` | Dump ImGui dock nodes. |
+| `debug.dock.reset` | Recovery only; not a diagnosis by itself. |
+| `debug.window.resize` | Reproduce layout regressions. |
+| `debug.window.screenshot` | Capture viewport evidence. |
+| `debug.lua_eval` | Probe runtime state without rebuilding. |
+| `scenario.list` | Discover deterministic scenarios. |
+| `scenario.run --name=<n> --frames=<N> --yes` | Run a deterministic scenario. |
+| `scenario.cancel` | Stop active automation. |
+| `tickets.list_active` | Inspect active ticket state. |
+| `tickets.get --id=<id>` | Inspect a specific ticket. |
+| `sync.tracker_status` | Inspect sync-layer state. |
+| `app.version` | Confirm build hash/version. |
+
+Prerequisite: a running Smatchet instance with `mcp_enabled: true`.
+
+## Read evidence — NDJSON log
+
+**Primary path — the helper log.** Deterministic path keyed off the rolled hex; try the repo-root drop first, then the TEMP fallback:
+
+```bash
+ls -la "$(git rev-parse --show-toplevel)/debug-<hex>.log"   # repo root (helper walks up to .git)
+ls -la "$TEMP/Smatchet-debug-<hex>.log"                      # Windows TEMP fallback
+ls -la "$(pwd)/debug-<hex>.log"  ||  ls -la "/tmp/Smatchet-debug-<hex>.log"   # POSIX
+```
+
+Parse NDJSON (one JSON object per line):
+
+```bash
+jq -c 'select(.hypothesisId == "h1")' debug-<hex>.log            # all rows for one hypothesis
+jq -c 'select(.location == "ApplySort")' debug-<hex>.log         # all rows from one call site
+jq -c '{ts: .timestamp, loc: .location, h: .hypothesisId, i: .data.i, msg: .message}' debug-<hex>.log
+```
+
+If `jq` isn't on PATH, fall back to text-search: `grep -n '"hypothesisId":"h1"' debug-<hex>.log`.
+
+**Fallback path — `LOG_DEBUG` / `LOG_TRACE`.** Smatchet file logging is opt-in via `Logger::SetFileSinkPath`. Check the conventional drop dir, then stderr capture:
+
+```bash
+ls "$LOCALAPPDATA/Smatchet"/*.log
+Smatchet.exe 2> debug.log          # if file sink not active, relaunch with stderr captured
+grep -n "\[temp-debug\]" debug.log
+```
+
+## Crash — sanitizer setup
+
+Pick **one** sanitizer per investigation (they cannot coexist at link/runtime). Configure + build:
+
+```bash
+cmake --preset ninja-msvc-asan
+cmake --build --preset ninja-msvc-asan --target SmatchetStandalone
+```
+
+Presets: ASan+UBSan `ninja-msvc-asan` (GCC; ASan implies LSan); TSan `ninja-debug-msvc-tsan` (GCC; MinGW partial → hand to `build-doctor`); MSan `ninja-debug-msvc-msan` (Clang-only; needs `clang`/`clang++` on PATH). Sanitizer runtime DLLs (`libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll`) must be on `PATH` at launch — "DLL not found" on a sanitized exe is the runtime, not the build. If MSan errors `requires Clang`, `winget install LLVM.LLVM`. Wiring lives in `cmake/Sanitizers.cmake`; preset failures / new sanitizer requests go to `build-doctor`.
+
+## Cleanup — four mandatory steps
+
+Do all four before reporting done.
+
+```bash
+# 12a. Strip [temp-debug] markers (expect zero hits) — use the harness text-search tool
+rg -n "\[temp-debug\]" Source/Core/ Source/Plugins/ Source/Standalone/
+
+# 12b. Delete the per-investigation helper
+rm -f tests/_debug/SmatchetAgentDebug.h
+rmdir tests/_debug 2>/dev/null || true
+
+# 12c. Delete the NDJSON log (use the rolled hex)
+rm -f "$(git rev-parse --show-toplevel)/debug-<hex>.log"
+rm -f "$TEMP/Smatchet-debug-<hex>.log"
+rm -f "/tmp/Smatchet-debug-<hex>.log"
+
+# 12d. Rebuild clean (+ SmatchetCore_DX12 if Source/Core/ was touched)
+cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+```
+
+Remove every temporary marker, diagnostic toggle, temporary repro artifact, and temporary behaviour change unless explicitly approved to keep it. Gitignore patterns (`debug-*.log`, `Smatchet-debug-*.log`, `tests/_debug/`) are a safety net, not a substitute — delete explicitly. Report cleanup status (zero `[temp-debug]` hits + helper deleted + log deleted) and final build status.
+
+## Report shapes
+
+Two shapes — pick by gate state. **Mid-loop reports** (at every § 7.5 pause) use the short shape; **final report** (after cleanup, handoff-ready) uses the long shape.
+
+### Mid-loop report (at each § 7.5 pause)
+
+```markdown
+## Cycle <N>
+Repro path: auto | ask-user
+Build / exe: <absolute path + mtime>
+
+## Hypotheses (ranked by distinguishing-evidence cost)
+1. <cause #1>  — status: confirmed | rejected | open
+2. <cause #2>  — status: ...
+3. <cause #3>  — status: ...
+
+## Evidence Delta (this round only)
+<new log lines / sanitizer output / stack frames / metric reads>
+
+## Next Step Proposal
+propose-fix | next-round | re-frame | blocked
+<one-paragraph rationale; for next-round include the call sites + metric to add>
+
+## AWAITING USER FEEDBACK
+<exact question or yes/no the agent expects back, e.g. "did the patched exe still freeze on drag-reorder?">
+
+## Outcome: halted
+```
+
+### Final report (after cleanup, handoff-ready)
+
+```markdown
+## Hypotheses (final)
+1. <cause #1>  — confirmed | rejected
+2. <cause #2>  — rejected
+3. <cause #3>  — rejected
+(strike-through rejected lines)
+
+## Reproducer
+<exact steps, CLI command, scenario, crash artifact, or evidence source>
+
+## Metric (observable, before / after)
+Before fix: <observed value or sequence>
+After fix:  <observed value or sequence>
+
+## Evidence Collected
+<stack trace, structured NDJSON / `[temp-debug]` log lines, sanitizer output, command output, screenshots, etc.>
+
+## Files changed (temp-debug)
+(Instrumentation files touched this round; every `[temp-debug]` marker stripped before this report.)
+<files touched and temporary breadcrumbs added; note BOTH sides of any thread / subsystem / save-load boundary>
+
+## Findings
+<for each hypothesis: confirmed / rejected / replaced; cite evidence>
+
+## Cause
+<concrete explanation with file:line where possible>
+
+## Promoted Logs (kept permanent — handed to subsystem owner)
+- <file>:<line> · LOG_DEBUG | LOG_INFO · "<message>" · rationale
+(≤ 3 entries; or the literal line "Nothing worth promoting.")
+
+## Handoff (proposed fix)
+Target agent: <subsystem-specialist>
+Allowed write set: <files>
+Decision pre-resolved: <interface deltas, invariant collisions, ownership/threading contract>
+Verification: <build + scenario/repro to rerun + the metric to re-check>
+
+## Cleanup
+`[temp-debug]` text-search across `Source/Core/`, `Source/Plugins/`, `Source/Standalone/`: 0 hits
+Helper deleted: tests/_debug/SmatchetAgentDebug.h → absent
+NDJSON log deleted: debug-<hex>.log → absent
+Final build: <targets> → <status>
+Fresh exe: <absolute path + mtime>
+
+## Outcome: applied
+```
+
+`## Outcome:` values — `halted` (mid-loop pause; awaiting feedback), `applied` (closed, cause pinned, cleanup done, handoff ready), `partial` (≥ 1 hypothesis confirmed but more rounds needed and user approved a concurrent subsystem specialist), `failed` (three rounds no progress + user aborted re-frame), `aborted` (user aborted before cause pinned).

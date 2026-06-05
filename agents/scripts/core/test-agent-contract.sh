@@ -73,16 +73,22 @@ for a in "${MAINTENANCE[@]}"; do
 done
 
 # -------------------------------------------------------------------------
-# 3. Diagnostic read-edit (debug-detective) — 6 required headings.
+# 3. Diagnostic read-edit (debug-detective) — 6 required report-shape headings.
+# The report-shape templates were extracted to the debug-instrument skill
+# (reduce-agent-prompt-bloat Slice 2), so the headings may live in the agent
+# OR in its delegated skill. The invariant is "the diagnostic report shape is
+# declared in a discoverable place the agent points to" — satisfied by either.
 # -------------------------------------------------------------------------
 echo
-echo "[3/13] Diagnostic read-edit required headings (debug-detective)"
+echo "[3/13] Diagnostic read-edit required headings (debug-detective + debug-instrument skill)"
 DD_REQUIRED=("## Hypotheses" "## Evidence" "## Cause" "## Files changed (temp-debug)" "## Cleanup" "## Handoff")
+DD_AGENT="$(agent_path debug-detective)"
+DD_SKILL="agents/_shared/skills/debug-instrument/SKILL.md"
 miss=0
 for h in "${DD_REQUIRED[@]}"; do
-  if ! grep -qF "$h" "$(agent_path debug-detective)"; then
+  if ! grep -qF "$h" "$DD_AGENT" && ! { [[ -f "$DD_SKILL" ]] && grep -qF "$h" "$DD_SKILL"; }; then
     miss=$((miss+1))
-    echo "    missing: $h"
+    echo "    missing (agent + debug-instrument skill): $h"
   fi
 done
 if [[ $miss -eq 0 ]]; then check_pass "debug-detective 6/6"; else check_fail "debug-detective missing $miss/6 Diagnostic headings"; fi
