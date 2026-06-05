@@ -76,6 +76,11 @@ struct PendingFieldEditRecord {
     /// OfflineFieldConflictPolicy::ServerMovedFromBase. Empty for rich fields and for edits
     /// queued before this column existed (legacy rows keep last-write-wins). See ADR-0016.
     std::string OriginalValue;
+    /// True when a scalar base was CAPTURED at queue time — independent of whether that base was
+    /// blank. Conflict detection keys on this PRESENCE flag (not OriginalValue.empty()) so a
+    /// genuinely blank-but-captured base is still conflict-checked. False for rich fields and for
+    /// legacy rows queued before this column existed (those keep last-write-wins). See ADR-0016.
+    bool HasOriginalValue = false;
     /// True when the offline-replay conflict gate (rich 3-way merge OR scalar 2-way compare OR
     /// an unverifiable re-fetch) suspended this row. The record stays in the queue and is not
     /// retried until the user resolves via the conflict UI.

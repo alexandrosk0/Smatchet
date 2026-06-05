@@ -310,6 +310,7 @@ void QueueEdit(const std::string& issueId, const TrackerField& field, const std:
     // QueueEdit choke point so every scalar grid/cell editor path records a base uniformly.
     // Rich (long-text modal) edits set OriginalRichValue instead and never reach here.
     edit.OriginalValue = originalValue;
+    edit.HasOriginalValue = true; // a scalar base WAS captured here, even if it's blank (ADR-0016).
     pendingEdits.push_back(std::move(edit));
 }
 

@@ -62,4 +62,17 @@ inline bool ServerMovedFromBase(const std::string& base, const std::string& thei
     return baseTrimmed != TrimWhitespace(theirs);
 }
 
+/// Presence-aware scalar move detection (ADR-0016). When `hasBase` is true the base was CAPTURED
+/// — even a blank base is a real reference, so a server value that differs from it (including
+/// blank→non-blank) is a move worth asking about. When `hasBase` is false there is no reference
+/// (legacy / no-base rows) and detection is suppressed (last-write-wins residue). This is the
+/// correct entry point for the offline replay gate, which knows presence via `HasOriginalValue`;
+/// the emptiness-keyed `ServerMovedFromBase` above stays for callers without a presence flag.
+inline bool ServerMovedFromCapturedBase(bool hasBase, const std::string& base, const std::string& theirs) {
+    if (!hasBase) {
+        return false;
+    }
+    return TrimWhitespace(base) != TrimWhitespace(theirs);
+}
+
 } // namespace OfflineFieldConflictPolicy
