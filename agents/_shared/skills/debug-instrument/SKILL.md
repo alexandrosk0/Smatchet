@@ -183,6 +183,8 @@ grep -n "\[temp-debug\]" debug.log
 
 ## Crash — sanitizer setup
 
+For crashes, prioritize stack evidence before logs. Collect: faulting thread; top application frames; exception code / signal; assertion message; faulting address if available; and whether the crashing pointer/value was null, freed, or out of range.
+
 Pick **one** sanitizer per investigation (they cannot coexist at link/runtime). Configure + build:
 
 ```bash
@@ -294,3 +296,132 @@ Fresh exe: <absolute path + mtime>
 ```
 
 `## Outcome:` values — `halted` (mid-loop pause; awaiting feedback), `applied` (closed, cause pinned, cleanup done, handoff ready), `partial` (≥ 1 hypothesis confirmed but more rounds needed and user approved a concurrent subsystem specialist), `failed` (three rounds no progress + user aborted re-frame), `aborted` (user aborted before cause pinned).
+
+## Scenario reuse + add
+
+The agent owns *whether* to reuse / parametrize / fork / add (the reproducer-first contract judgment); this section is the *how* — the bug-class definition, the search recipe, and the scenario-add file mechanics.
+
+**Bug-class** = the smallest grouping that shares:
+
+- an **injection point** — which `ITrackerBackend` (GitHub / Plane / Jira / fake), which `IAiClient` (real / `StubAiClient`), which UI panel / command, which subsystem boundary, AND
+- a **render path** — which scenario's `OnFinish` rows[] would have caught the regression (i.e., which `rows[]` emission shape matches the observable failure).
+
+Search recipe (semantic search first, text-search second per AGENTS.md § Semantic codebase search):
+
+```bash
+ls Source/Core/src/Commands/Scenarios/
+grep -l "<suspect-symbol-or-panel>" Source/Core/src/Commands/Scenarios/*.cpp
+```
+
+**If an existing scenario matches**, **parametrize** it (CLI arg / fixture variant / new sub-case in its `OnTick`) rather than fork a near-duplicate. Record the parametrization shape in the § Self-improvement `missing-scenario` entry.
+
+**Forking allowed only** when the existing scenario's render path is *genuinely orthogonal* — e.g. same UI panel but the bug emits to a separate `rows[]` column that the existing scenario does not assert on. Document the orthogonality rationale in the report.
+
+A deterministic reproducer means one of:
+- a CLI command (`Smatchet.exe cmd <name> ...`),
+- a `scenario.run --name=<x>` invocation,
+- a Lua snippet,
+- a failing-doctest name (`ctest -R <Unit>`),
+- or a registered bucket-E ImGui-Test-Engine action.
+
+**Scenario-add mechanics** (per slice 5 — `SmatchetScenarioRegistry` refactor):
+
+- One new `.cpp` under `Source/Core/src/Commands/Scenarios/<NewScenarioName>Scenario.cpp` implementing the `IScenario` interface, with an `OnFinish` rows[] emission shape matching the observable failure (phase 0 dimension b).
+- One new line in `Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp`'s registration table — **no `AppController.cpp` edit** (the registry refactor consolidated that).
+- The scenario-add lands on the **same branch as the fix**, not a precursor PR.
+- Crash logs, minidumps, stack traces, assertion text, and sanitizer reports remain valid *evidence* — they still feed phase 0 dimension (b) — but they are not, by themselves, a reproducer. The agent still wires a scenario that triggers them deterministically.
+
+If the bug is intermittent, the new scenario must define a repeat loop and an expected failure signal (assertion / log line / `rows[]` value) so the loop is deterministic-by-construction.
+
+Good-enough reproducer examples:
+
+```bash
+Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
+Smatchet.exe cmd tickets.get --id=<id>
+Smatchet.exe 2> debug.log
+```
+
+For crashes, first collect:
+
+- Exact exception/assertion text.
+- Top stack frames.
+- Build config and executable path.
+- Whether symbols are present.
+- Whether the same repro fails in Debug, RelWithDebInfo, or Release.
+
+## Hypothesis + metric examples
+
+The agent owns the hypothesis/metric *rules* (≥ 2 falsifiable causes ranked by distinguishing-evidence cost; a metric recorded before instrumenting and re-checked after the fix). These are the worked examples.
+
+Good hypothesis list:
+
+> 1. `TicketGridModel::ApplySort` invalidates row indices before `TicketSelection::Restore` reads them.
+> 2. `OnFieldEditCommit` runs on a worker thread while UI iterates the same `rows_` vector.
+> 3. `kCurrentLayoutSchemaVersion` mismatch silently resets selection during config load.
+
+Bad hypothesis list:
+
+> It is probably a race.
+
+Metric examples (observable value the bug produces vs what the fix should produce):
+
+- Bug → `selectedRowIndex = 2` after sort; fixed → `selectedRowIndex` follows the moved ticket.
+- Bug → second sync replays `pending_creates` count = 3; fixed → count = 0.
+- Bug → log shows `Draw` reading `rows_.size() == 0` then `5` in same frame; fixed → size stable across frame.
+
+## Evidence-source catalogue
+
+Prefer existing evidence before adding logs:
+
+- Stack trace.
+- Assertions.
+- Existing logs.
+- Command output.
+- State dump commands.
+- Sanitizer reports.
+- Debugger watch/backtrace.
+- Existing tests.
+
+Only instrument when existing evidence cannot distinguish the hypotheses from each other.
+
+## Race / ordering checklist
+
+For suspected races:
+
+- Identify shared state.
+- Identify all writers.
+- Identify expected owning thread.
+- Identify synchronization contract.
+- Log thread identity and sequence numbers.
+- Prefer deterministic scheduling evidence over timing guesses.
+- Do not add sleeps as proof.
+- Use TSan if supported.
+
+A race hypothesis must name the specific read, write, and missing ordering/synchronization edge.
+
+## Handoff
+
+Include in the handoff packet:
+
+- Target agent.
+- Concrete cause (file:line where possible).
+- Files likely involved.
+- Allowed write set.
+- Interface decisions already resolved.
+- Invariants that must be preserved.
+- Exact repro to rerun.
+- The metric to re-check on the fixed build.
+- Build targets to verify.
+- Any temporary instrumentation already removed.
+
+## Promote logs — mechanics
+
+The agent owns the promotion *criteria* (boundary line, state-transition/error-edge, helped-this-and-a-future-investigation, ≤ one cache line, hard cap ≤ 3). These are the mechanics:
+
+1. Pick the level — `LOG_DEBUG` for development-time breadcrumbs, `LOG_INFO` for shipped operational state-transitions, never `LOG_TRACE` (tight loops only — promote only if you have already proven the cost is negligible at 144 Hz).
+2. Strip the `[temp-debug]` marker from the line; the line becomes part of the permanent codebase.
+3. Replace any NDJSON-helper call with the project `LOG_*` macros — `tests/_debug/SmatchetAgentDebug.h` is deleted at § 12b, so its calls cannot survive.
+4. Rewrite the message into the project logger style (`LOG_DEBUG("module: did X with id=%d", id)`); drop the `__FUNCTION__` boilerplate (logger adds source location already).
+5. The promoted line is part of the subsystem-specialist handoff, not a free agent edit — list each promoted line in the handoff packet with file:line so the specialist agrees before commit.
+
+If zero lines meet the criteria, say so explicitly in the report. "Nothing worth promoting" is a valid and common outcome.

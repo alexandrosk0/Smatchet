@@ -41,12 +41,12 @@ harness-hints:
   claude-code:
     model: sonnet
     effort: medium
-version: 2
+version: 3
 ---
 
 Ingest CodeRabbit (or any GitHub PR-bot) feedback on a pull request, classify each finding, reject invariant-violating suggestions, and emit routed handoff packets. Read-only — never edits product code, never posts to the PR.
 
-**Banner** — open with: `🤖 AGENT: coderabbit-triage · sonnet/medium · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — coderabbit-triage · sonnet/medium · read-only · v2`.
+**Banner** — open with: `🤖 AGENT: coderabbit-triage · sonnet/medium · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — coderabbit-triage · sonnet/medium · read-only · v3`.
 
 ## Process
 
@@ -142,37 +142,7 @@ When a finding is a **confirmed pre-existing product bug** (a real defect in shi
 
 ## Output format
 
-```
-## Triage table
-| # | file:line | severity | applies? | target | reason / rule |
-|---|-----------|----------|----------|--------|---------------|
-| 1 | Source/Core/src/Foo.cpp:123 | High | yes | tracker-backend | Catalog→parser bypass; route fix |
-| 2 | Source/Core/include/Bar.h:42 | Medium | no (override #1) | — | Suggestion used `std::optional`; C++14 hard |
-| 3 | Source/Plugins/Mcp/McpServer.cpp:88 | Low | superseded | — | Code rewritten in commit abc1234 |
-...
-
-## Findings
-
-### #1 — High · `Source/Core/src/Foo.cpp:123` → tracker-backend
-**CodeRabbit body (verbatim, trimmed):**
-> <quoted summary, ≤ 4 lines>
-
-**Validation:** confirmed live — `Foo::Save` still calls `cpr::Post` directly at line 127 instead of through `TrackerHttpClient`.
-
-**Handoff packet** (paste into orchestrator → `tracker-backend` prompt):
-- **Scope**: replace direct `cpr::Post` in `Foo::Save` with `TrackerHttpClient::Post` posted to the existing worker thread; wire result back via `MainThreadDispatcher`.
-- **Allowed write set**: `Source/Core/src/Foo.cpp`, `Source/Core/include/Foo.h`.
-- **Out of scope**: any other tracker file. Do NOT touch the shared `ITracker*.h` interface headers.
-- **Invariant pre-decisions**: HTTP-through-TrackerHttpClient (override rule #7 — confirmed live, not rejected); UI-thread non-blocking (pillar 2).
-- **Verification**: existing tests in `tests/Core/TrackerHttpClientPure.test.cpp` cover the call shape — no new test required. Manual: none.
-- **Reply to bot** (orchestrator may post once fix lands): `Addressed in <sha>; routed through TrackerHttpClient as suggested.`
-
-### #2 — Medium · `Source/Core/include/Bar.h:42` → REJECTED (override #1)
-**CodeRabbit body:** suggests `std::optional<Bar>` for the return type.
-**Reason:** C++14 hard (AGENTS.md § Project rules). The current `Bar*` + nullable contract is correct.
-**Reply to bot** (orchestrator may post): `Not applicable — this repo is C++14-hard; `std::optional` is banned. The nullable-pointer return is intentional.`
-
-...
+The deterministic report shape — the `## Triage table` example rows + the two worked `### #N` Findings/handoff-packet examples (VALID + REJECTED) + reply-to-bot lines — lives in the [`coderabbit-handoff`](../_shared/skills/coderabbit-handoff/SKILL.md) skill. Emit a `## Triage table`, then one `## Findings` block per finding, then the three real headings below.
 
 ## Outcome: applied | partial | aborted
 
@@ -183,7 +153,6 @@ When a finding is a **confirmed pre-existing product bug** (a real defect in shi
 - <recurring CodeRabbit class that should land as a `path_instructions` entry in `.coderabbit.yaml`>
 - <override rule the triage agent had to invent — promote to the table>
 - Empty is fine.
-```
 
 ## Watcher-invocation mode
 
