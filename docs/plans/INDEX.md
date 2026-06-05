@@ -110,7 +110,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`dry-pillar-dup-gate`](shipped/dry-pillar-dup-gate.md) | 2026-06-03 | Plan — DRY Quality Pillar + duplication delta-gate |
 | [`issue-triage-protocol`](shipped/issue-triage-protocol.md) | 2026-06-03 | Plan — GitHub Issue triage protocol (Issues-canonical for product bugs) |
 | [`reduce-agent-prompt-bloat`](shipped/reduce-agent-prompt-bloat.md) | 2026-06-04 | Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate) |
-| [`agent-size-reduction`](shipped/agent-size-reduction.md) | — | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
+| [`agent-size-reduction`](shipped/agent-size-reduction.md) | 2026-06-05 | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
 <!-- END auto-plan-index -->
 
 ### Notes
