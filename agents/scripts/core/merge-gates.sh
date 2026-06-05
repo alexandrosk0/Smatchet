@@ -41,6 +41,20 @@
 #   MERGE_GATES_QUERY_FILE       — override GraphQL document path
 #   MERGE_GATES_FLIP_READY       — when "true", flip PR ready-for-review at
 #                                  poll start (authorized-merge callers only)
+#   MERGE_GATES_REQUIRED_CONTEXTS — override the branch-protection required-context
+#                                  set (newline- or comma-separated names). When
+#                                  set (even to ""), bypasses the project.config.json
+#                                  read. Empty → the required-absent detector is
+#                                  inert. Used by tests to inject a fixture-matching
+#                                  set; operationally rarely needed.
+#   MERGE_GATES_CONFIG_FILE      — override path to project.config.json for the
+#                                  required-context read (default: repo-root config).
+#   MERGE_GATES_IGNORE_MERGESTATE — when "true", skip the mergeStateStatus guard so
+#                                  GATES_PASSED is NOT refused on BLOCKED/BEHIND.
+#                                  Default unset/false → enforce the block. Set true
+#                                  for the documented admin-merge escape (AGENTS.md
+#                                  § Merge gates: a positively-confirmed STALE-BLOCKED
+#                                  PR where everything is actually green).
 #   MERGE_GATES_CR_GRACE_POLLS   — CR review grace window (default 10 polls)
 #   MERGE_GATES_CR_INSTALLED     — override CR-installed auto-detection
 #   MERGE_GATES_STALE_REREVIEW_POLLS — consecutive STALE polls on same HEAD
@@ -213,6 +227,50 @@ poll_merge_gates() {
     local query_body
     query_body=$(<"$QUERY_FILE")
 
+    # ----------------------------------------------------------------------
+    # Required-context ground-truth — branch_protection.required_contexts from
+    # project.config.json (the authoritative set GitHub branch protection
+    # enforces). The poll cross-checks this against the head rollup so that a
+    # required check which NEVER RAN on the head (absent from the rollup — e.g.
+    # a GITHUB_TOKEN bot push that GitHub's recursion-guard prevents from
+    # re-triggering CI) is NOT scored a vacuous `CI: 0/0 pass`. Such an absent
+    # required context blocks (like a pending check) instead of waving through.
+    #
+    # Read UTF-8-safe: standalone `jq` (the only reader here that decodes the
+    # config's UTF-8 em-dash in "Windows + MSVC (Smatchet light — …)" correctly
+    # — python's default open() would mojibake it under cp1252 on Windows).
+    # `jq` is a soft dep for THIS read only; if it (or the config) is missing
+    # the set is empty and the detector is inert (fail-safe: never wedge a merge
+    # because the config couldn't be read — the isRequired-based ci_fail/ci_pend
+    # plus the mergeStateStatus guard below remain the backstops).
+    #
+    # MERGE_GATES_REQUIRED_CONTEXTS (newline/comma-separated) overrides the file
+    # read entirely when set — even to "" (empty → inert). Tests inject a
+    # fixture-matching set this way; production leaves it unset and reads config.
+    local req_ctx_raw=""
+    if [ -n "${MERGE_GATES_REQUIRED_CONTEXTS+x}" ]; then
+        # Set (possibly empty) — honour the override, skip the file read.
+        req_ctx_raw="${MERGE_GATES_REQUIRED_CONTEXTS//,/$'\n'}"
+    else
+        local config_file="${MERGE_GATES_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}"
+        if [ -f "$config_file" ] && command -v jq >/dev/null 2>&1; then
+            req_ctx_raw=$(jq -r '.branch_protection.required_contexts[]? // empty' "$config_file" 2>/dev/null) || req_ctx_raw=""
+        elif [ ! -f "$config_file" ]; then
+            echo "WARN: required-context config not found ($config_file); required-absent detector inert this run." >&2
+        elif ! command -v jq >/dev/null 2>&1; then
+            echo "WARN: jq not found; required-absent detector inert this run (config UTF-8-safe read needs jq)." >&2
+        fi
+    fi
+    # Build a JSON-array literal of the required-context names to splice into the
+    # gh --jq filter (same pattern as __ORCH_USER__). Built with jq so names with
+    # spaces ("Windows + MSVC") and the em-dash are encoded safely; empty input
+    # yields []. If jq is unavailable the detector is already inert above, but
+    # guard the encode too so the filter always gets valid JSON.
+    local req_ctx_json='[]'
+    if [ -n "$req_ctx_raw" ] && command -v jq >/dev/null 2>&1; then
+        req_ctx_json=$(printf '%s\n' "$req_ctx_raw" | jq -R . | jq -sc 'map(select(length > 0))') || req_ctx_json='[]'
+    fi
+
     # STALE-recovery state — count consecutive STALE polls for the same HEAD.
     # Reset whenever HEAD advances. After STALE_REREVIEW_POLLS, post one
     # `@coderabbitai review` comment to nudge CR into re-reviewing (idempotent
@@ -261,7 +319,13 @@ poll_merge_gates() {
     # 9 dgNames · 10 crState · 11 crFirstLine · 12 crOpen · 13 crStatusState ·
     # 14 crThreadCommentsOnHead · 15 userComments · 16 reviewDecision ·
     # 17 mergeStateStatus · 18 crOob (cr-out-of-band label) ·
-    # 19 crSizeSkipped (CR posted a "review skipped — too many files" comment).
+    # 19 crSizeSkipped (CR posted a "review skipped — too many files" comment) ·
+    # 20 crContextPresent · 21 reqAbsentNames (", "-joined config-required
+    # contexts absent from the head rollup) · 22 reqAbsentCount (their count).
+    # reqAbsentCount is LAST because it is always a non-empty number — a trailing
+    # EMPTY field (reqAbsentNames is "" in the common case) would be stripped by
+    # the `data=$(gh …)` command substitution (trailing-newline collapse),
+    # deflating the 23-field count and tripping the fail-closed assertion.
     local GATE_FILTER
     GATE_FILTER='
 .data.repository.pullRequest as $pr
@@ -275,6 +339,9 @@ poll_merge_gates() {
                    else ["StatusContext", (.context // "")] end)})
    | group_by(._k) | map(sort_by(.startedAt // "") | .[-1]) | map(del(._k))) as $ctx
 | ([$ctx[] | select(.isRequired == true)]) as $req
+| (__REQUIRED_CONTEXTS__) as $reqNames
+| ([$ctx[] | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)]) as $ctxNames
+| ([$reqNames[] | select(. as $n | ($ctxNames | any(. == $n)) | not)]) as $reqAbsent
 | ([$req[] | select(
       (.__typename == "CheckRun" and .status == "COMPLETED" and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))) or
       (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR"))))]) as $failing
@@ -337,10 +404,17 @@ poll_merge_gates() {
           | select((.__typename == "StatusContext" and .context == "CodeRabbit")
                 or (.__typename == "CheckRun"
                     and ((.name == "CodeRabbit") or (.name == "CR findings (0 actionable)"))))] | length) > 0
-     then 1 else 0 end)
+     then 1 else 0 end),
+    ($reqAbsent | join(", ")),
+    ($reqAbsent | length)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
+    # Splice the required-context JSON array (built UTF-8-safe above) as a jq
+    # literal. Unlike ORCH_USER (a bare login spliced into a string compare),
+    # this is a full JSON array value — valid jq on its own (e.g. `[]` or
+    # `["Test-delta gate","Windows + MSVC"]`).
+    GATE_FILTER="${GATE_FILTER//__REQUIRED_CONTEXTS__/$req_ctx_json}"
 
     local p
     for ((p=0; p<MAX_POLLS; p++)); do
@@ -371,7 +445,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 20 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 23 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -380,11 +454,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 21 ]; then
-            # Exactly 21 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 23 ]; then
+            # Exactly 23 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 21); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 23); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -490,6 +564,23 @@ poll_merge_gates() {
         # new head, so poking `@coderabbitai review` while it is already reviewing is
         # noise (the "multiple pokes" symptom on auto-commit head churn).
         local cr_context_present="${fields[20]:-0}"
+
+        # Required-context ground-truth cross-check (P1 fix —
+        # docs/self-improvement/categories/tooling.md:328). Count + names of the
+        # branch_protection.required_contexts that are ABSENT from the head
+        # rollup entirely (never ran — e.g. a GITHUB_TOKEN bot push GitHub's
+        # recursion-guard kept from re-triggering CI). The isRequired-based
+        # ci_fail/ci_pend can't see these (an absent context has no rollup node
+        # to carry isRequired=true), so a required check that never ran would
+        # otherwise score a vacuous `CI: 0/0 pass`. An absent required context
+        # is NOT a pass — it blocks like a pending check. Present-but-failing is
+        # already caught by ci_fail (the context IS in the rollup), so this only
+        # counts truly-absent names → no double-count. -1 (filter/parse miss)
+        # fails closed at the `req_absent -eq 0` pass check below. Count is the
+        # LAST field (index 22) — always numeric, never the empty trailing field
+        # that command substitution would strip; names (index 21) precede it.
+        local req_absent_names="${fields[21]}"
+        local req_absent="${fields[22]:--1}"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -696,9 +787,19 @@ poll_merge_gates() {
             none_head=""
         fi
 
-        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
+        # Required-context ground-truth: surface any branch-protection-required
+        # context that never ran on the head (absent from the rollup). Printed
+        # like ci_fail/ci_pend so the operator sees exactly which required check
+        # is missing a run — the false-pass signal that scored CI: 0/0 on #856.
+        if [ "$req_absent" -gt 0 ]; then
+            echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI)." >&2
+        elif [ "$req_absent" -lt 0 ]; then
+            echo "WARN: required-context check returned ${req_absent} (filter/parse miss); failing closed on the required-absent gate this poll." >&2
+        fi
+
+        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded, %d req-missing) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
             $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend - ci_warn_downgraded)) "$ci_total" \
-            "$ci_fail" "$ci_pend" "$ci_warn_downgraded" \
+            "$ci_fail" "$ci_pend" "$ci_warn_downgraded" "$req_absent" \
             "$cr_state_print" "$cr_open" "$user" "$review_decision"
 
         # H1: APPROVED CR review passes unconditionally per AGENTS.md § Merge
@@ -734,19 +835,47 @@ poll_merge_gates() {
             cr_open_blocks=false
         fi
 
+        # mergeStateStatus guard (secondary P1 fix). GitHub's own mergeability
+        # verdict. BLOCKED = a required check is failing/missing or a required
+        # review is absent; BEHIND = the head is behind base under strict
+        # branch protection. Either means GitHub itself would reject the merge,
+        # so GATES_PASSED MUST refuse — this catches the absent-required-check
+        # false-pass even when the config-name cross-check above is inert (e.g.
+        # jq/config unavailable). UNSTABLE is explicitly NOT blocked: non-required
+        # checks pending/failing is normal and we merge on UNSTABLE routinely.
+        # MERGE_GATES_IGNORE_MERGESTATE=true skips this guard for the documented
+        # admin-merge escape (a positively-confirmed STALE-BLOCKED PR that is
+        # actually all-green — AGENTS.md § Merge gates).
+        local gh_merge_state="${fields[17]:-UNKNOWN}"
+        local mergestate_blocks=false
+        if [ "${MERGE_GATES_IGNORE_MERGESTATE:-}" != "true" ]; then
+            case "$gh_merge_state" in
+                BLOCKED|BEHIND) mergestate_blocks=true ;;
+            esac
+        fi
+
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \
+           [ "$req_absent" -eq 0 ] && [ "$mergestate_blocks" = false ] && \
            [ "$cr_pass" = true ] && [ "$cr_open_blocks" = false ] && \
            [ "$user" -eq 0 ] && [ "$review_pass" = true ]; then
             # Diagnostic: surface GitHub's mergeStateStatus alongside our pass
             # decision so the operator can correlate when GH says BLOCKED while
             # our gates pass (typically branch-protection summary-only / stale
-            # GH mergeability cache — REST squash-merge still works).
-            local gh_merge_state="${fields[17]:-UNKNOWN}"
+            # GH mergeability cache — REST squash-merge still works). Note: with
+            # the guard above, a non-overridden BLOCKED/BEHIND never reaches here
+            # — so this INFO now only fires for the overridden case or other
+            # non-CLEAN/UNSTABLE states (e.g. UNKNOWN handled separately).
             if [ "$gh_merge_state" != "CLEAN" ] && [ "$gh_merge_state" != "UNSTABLE" ] && [ "$gh_merge_state" != "UNKNOWN" ]; then
-                echo "INFO: merge-gates pass; GitHub mergeStateStatus=$gh_merge_state may be stale or branch-protection summary-only. REST squash-merge contract still applies." >&2
+                echo "INFO: merge-gates pass; GitHub mergeStateStatus=$gh_merge_state may be stale or branch-protection summary-only (MERGE_GATES_IGNORE_MERGESTATE override active). REST squash-merge contract still applies." >&2
             fi
             echo "GATES_PASSED"
             return 0
+        fi
+
+        # When the ONLY thing blocking is mergeStateStatus, name it explicitly —
+        # otherwise the operator sees an all-green Poll line with no obvious cause.
+        if [ "$mergestate_blocks" = true ]; then
+            echo "BLOCK: GitHub mergeStateStatus=$gh_merge_state (set MERGE_GATES_IGNORE_MERGESTATE=true only for a positively-confirmed STALE-BLOCKED PR that is actually all-green — AGENTS.md § Merge gates)." >&2
         fi
 
         local elapsed=$(( $(date +%s) - start ))

@@ -22,6 +22,15 @@ setup() {
     export MERGE_GATES_MAX_POLLS=1
     export MERGE_GATES_TIMEOUT_SECONDS=3600
 
+    # Required-context cross-check default: EMPTY (detector inert). The existing
+    # fixtures use synthetic context names (build / ci/standalone / …) that do
+    # NOT match the live project.config.json required_contexts, so without this
+    # override every legacy pass test would newly block on `required-missing`.
+    # Setting the override to "" (set-but-empty) bypasses the config read and
+    # keeps the required-absent detector inert for legacy tests. The new
+    # required-absent tests opt into a fixture-matching set explicitly.
+    export MERGE_GATES_REQUIRED_CONTEXTS=""
+
     # Stub gh on PATH
     STUB_BIN_DIR="$(mktemp -d)"
     export STUB_BIN_DIR
@@ -135,6 +144,7 @@ teardown() {
     unset MERGE_GATES_STUB_COMMENT_COUNTER MERGE_GATES_STUB_COMMENT_EXIT
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS MERGE_GATES_STALE_REREVIEW_POLLS
     unset MERGE_GATES_NONE_NUDGE_POLLS MERGE_GATES_PRIOR_NONE_STREAK MERGE_GATES_PRIOR_NONE_HEAD
+    unset MERGE_GATES_REQUIRED_CONTEXTS MERGE_GATES_CONFIG_FILE MERGE_GATES_IGNORE_MERGESTATE
 }
 
 # ---------- helpers ----------
@@ -1130,7 +1140,10 @@ set_fixture() {
     # No coderabbitai skip comment → cr_size_skipped=false → the early-nudge
     # fires exactly once and the gate blocks NONE+pending within grace, exactly
     # as #554 intended. Proves the size-skip guard is inert on genuine NONE.
+    # NONE early-nudge is OFF by default since Slice 2 (#859); opt in with
+    # NONE_NUDGE_POLLS=1 so this regression actually exercises the nudge path.
     export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
@@ -1173,6 +1186,209 @@ set_fixture() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"CodeRabbit: NONE"* ]]
     [[ "$output" != *"size-skip"* ]]
+}
+
+# ---------- Required-context ground-truth cross-check (P1: required-absent → block) ----------
+# docs/self-improvement/categories/tooling.md:328 — a branch-protection-required
+# check that NEVER RAN on the head is absent from the rollup, so the isRequired-
+# based ci_fail/ci_pend logic sees 0 required checks and scores a vacuous
+# `CI: 0/0 pass` → GATES_PASSED, even though GitHub reports mergeStateStatus=BLOCKED
+# (the #856 near-miss). The fix cross-checks branch_protection.required_contexts
+# against the head rollup: a required name absent entirely blocks like a pending
+# check. MERGE_GATES_REQUIRED_CONTEXTS injects the expected set per-test.
+
+@test "required context ABSENT from head rollup → block (NOT 0/0 GATES_PASSED) [P1]" {
+    # The pass fixture's rollup has names build / ci/standalone (+ skipped/neutral/
+    # stale). Declare a required context "Doc anchors + agent contract" that is NOT
+    # in the rollup → it never ran on the head → must block. Pre-fix: the poller
+    # ignored config entirely and passed (0 required by isRequired? no — fixture
+    # marks build/ci required, but the missing config name had no node to count).
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"required-missing: Doc anchors + agent contract"* ]]
+    [[ "$output" == *"1 req-missing"* ]]
+}
+
+@test "required context PRESENT + passing (SKIPPED) → still passes (skipped-present != absent) [P1]" {
+    # A docs-only PR where a required Windows-build check is SKIPPED (path-filtered)
+    # must still pass: SKIPPED is a passing terminal state AND the context is
+    # PRESENT in the rollup (not absent). The fixture's "skipped-job" (SKIPPED,
+    # required) stands in for the path-filtered required check. Declaring it as a
+    # required context must NOT block — only TRULY-ABSENT names block.
+    export MERGE_GATES_REQUIRED_CONTEXTS="skipped-job"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"0 req-missing"* ]]
+    [[ "$output" != *"required-missing"* ]]
+}
+
+@test "all required-config contexts present + passing → passes (multi-name set) [P1]" {
+    # Both declared required names exist in the rollup in passing states
+    # (build=SUCCESS CheckRun, ci/standalone=SUCCESS StatusContext) → no absent →
+    # pass. Proves the cross-check is satisfied by present+passing contexts.
+    export MERGE_GATES_REQUIRED_CONTEXTS="build,ci/standalone"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"0 req-missing"* ]]
+}
+
+@test "required-config name present-but-FAILING is caught by ci_fail, not double-counted as absent [P1]" {
+    # ci_fail fixture: required CheckRun "build" is FAILURE (present, failing).
+    # Declaring "build" as a required context must NOT inflate req-missing — the
+    # context IS present, just failing, so ci_fail owns the block. req-missing=0.
+    export MERGE_GATES_REQUIRED_CONTEXTS="build"
+    set_fixture "$FIXTURES_DIR/merge_gates_ci_fail.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    [[ "$output" == *"0 req-missing"* ]]
+    [[ "$output" != *"required-missing"* ]]
+}
+
+@test "config name with UTF-8 em-dash present in rollup → no false absent (UTF-8-safe match) [P1]" {
+    # The real config name "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"
+    # carries a UTF-8 em-dash. Add a matching SUCCESS context to the rollup and
+    # declare it required — the em-dash must round-trip through the JSON-array
+    # splice + jq match so it is NOT flagged absent. (Guards the cp1252 mojibake
+    # trap the task called out.)
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"Windows + MSVC (Smatchet light — AI/Whisper/MCP off)","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true}]')"
+    export MERGE_GATES_REQUIRED_CONTEXTS="Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"0 req-missing"* ]]
+    rm -f "$f"
+}
+
+@test "MERGE_GATES_REQUIRED_CONTEXTS empty → detector inert (legacy fixtures unaffected) [P1]" {
+    # The setup() default ("") keeps the detector inert so the 98 legacy
+    # synthetic-name fixtures don't newly block. Explicit re-assertion.
+    export MERGE_GATES_REQUIRED_CONTEXTS=""
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"0 req-missing"* ]]
+}
+
+@test "required-context read falls back to project.config.json when override unset [P1]" {
+    # Unset the override so the poller reads branch_protection.required_contexts
+    # from a config file (MERGE_GATES_CONFIG_FILE points at a crafted minimal
+    # config). Declare a required name NOT in the pass fixture's rollup → block.
+    # Proves the file-read path (the production default) works UTF-8-safe via jq.
+    local cfg
+    cfg="$(mktemp)"
+    cat > "$cfg" <<'CFG'
+{
+  "branch_protection": {
+    "required_contexts": ["Doc anchors + agent contract", "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"]
+  }
+}
+CFG
+    unset MERGE_GATES_REQUIRED_CONTEXTS
+    export MERGE_GATES_CONFIG_FILE="$cfg"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"required-missing: Doc anchors + agent contract"* ]]
+    [[ "$output" == *"Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"* ]]
+    rm -f "$cfg"
+}
+
+# ---------- mergeStateStatus guard (P1 secondary: refuse GATES_PASSED on BLOCKED/BEHIND) ----------
+
+@test "mergeStateStatus=BLOCKED → block even when all gates green [P1]" {
+    # All gates green (pass fixture) but GitHub reports BLOCKED → must NOT pass.
+    # This is the direct backstop for the absent-required false-pass when the
+    # config cross-check is inert (the setup() default leaves it inert here).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"mergeStateStatus=BLOCKED"* ]]
+    rm -f "$f"
+}
+
+@test "mergeStateStatus=BLOCKED + MERGE_GATES_IGNORE_MERGESTATE=true → passes (admin-merge escape) [P1]" {
+    # The documented admin-merge escape for a positively-confirmed STALE-BLOCKED
+    # PR that is actually all-green (AGENTS.md § Merge gates). Override flips the
+    # mergeStateStatus guard off so the all-green gates pass.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    export MERGE_GATES_IGNORE_MERGESTATE=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_IGNORE_MERGESTATE
+}
+
+@test "mergeStateStatus=BEHIND → block (strict branch protection, head behind base) [P1]" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BEHIND"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"mergeStateStatus=BEHIND"* ]]
+    rm -f "$f"
+}
+
+@test "mergeStateStatus=UNSTABLE → STILL passes when all required green (we merge on UNSTABLE) [P1 regression]" {
+    # CRITICAL regression guard: UNSTABLE (non-required checks pending/failing) is
+    # NOT in {BLOCKED,BEHIND} and must NOT be caught. #874/#876 merged on UNSTABLE.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"UNSTABLE"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "mergeStateStatus=CLEAN → passes (the normal all-green case) [P1 regression]" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"CLEAN"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "mergeStateStatus=BLOCKED caused solely by required-absent → both signals block, named [P1]" {
+    # Combined real-world #856 shape: a required context absent from the head AND
+    # GitHub reports BLOCKED. Both detectors fire; the poller names the missing
+    # required context and refuses to pass.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"required-missing: Doc anchors + agent contract"* ]]
+    rm -f "$f"
 }
 
 # ---------- gh_pr_ready_idempotent ----------
