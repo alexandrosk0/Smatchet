@@ -52,7 +52,7 @@ Verified at grill time (no synonym dir exists): `agents/_shared/` holds only `sk
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
 
-`N/A — pure docs + agentic-shell (`docs/agent-rules/*`, `agents/_shared/workflows/*.js`, `AGENTS.md`, `setup-harness.sh`); no `Source/Core/` / perf-gated path touched.` All five gates (PR-fast CI, Pillar-2 scanner, dispatcher drain, bucket-E, marker inventory) N/A for the same reason.
+N/A — pure docs + agentic-shell (`docs/agent-rules/*`, `agents/_shared/workflows/*.js`, `AGENTS.md`, `setup-harness.sh`); no `Source/Core/` or perf-gated path touched. All five gates (PR-fast CI, Pillar-2 scanner, dispatcher drain, bucket-E, marker inventory) are N/A for the same reason.
 
 ## Risks / non-goals
 
