@@ -70,7 +70,7 @@ Rules:
 - **Subagents do not Read or Edit `.session-context.md` themselves.** The orchestrator reads it once per turn and passes relevant context inline to each subagent's prompt. This avoids races when subagents run in parallel and avoids duplicating the vexp `run_pipeline`-first rule.
 - **Subagents emit `## Session context append`** in their report when there are session-durable facts worth surfacing — repro state, file:line evidence, decisions locked, open questions. Hook captures + appends; agent never writes the file.
 - **Append-only.** Hook never edits prior entries.
-- **Cross-session archive.** The SessionStart hook moves any non-trivial prior scratchpad to `.session-context.archive/` before truncating. Archives are gitignored, never auto-pruned (cheap on disk), and surfaced on demand by the `scratchpad-recall` skill — see [`agents/_shared/skills/scratchpad-recall/SKILL.md`](agents/_shared/skills/scratchpad-recall/SKILL.md). Use it when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question.
+- **Cross-session archive.** The SessionStart hook moves any non-trivial prior scratchpad to `.session-context.archive/` before truncating. Archives are gitignored, never auto-pruned (cheap on disk), and surfaced on demand by the `scratchpad-recall` skill — see [`agents/_shared/skills/scratchpad-recall/SKILL.md`](../../agents/_shared/skills/scratchpad-recall/SKILL.md). Use it when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question.
 
 Section shape:
 
