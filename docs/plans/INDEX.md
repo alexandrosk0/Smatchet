@@ -109,7 +109,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`ai-control-policy`](shipped/ai-control-policy.md) | 2026-06-03 | Plan — AI control policy (human authority, loop modes, escalate-don't-assume) |
 | [`dry-pillar-dup-gate`](shipped/dry-pillar-dup-gate.md) | 2026-06-03 | Plan — DRY Quality Pillar + duplication delta-gate |
 | [`issue-triage-protocol`](shipped/issue-triage-protocol.md) | 2026-06-03 | Plan — GitHub Issue triage protocol (Issues-canonical for product bugs) |
-| [`reduce-agent-prompt-bloat`](shipped/reduce-agent-prompt-bloat.md) | — | Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate) |
+| [`reduce-agent-prompt-bloat`](shipped/reduce-agent-prompt-bloat.md) | 2026-06-04 | Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate) |
 <!-- END auto-plan-index -->
 
 ### Notes
