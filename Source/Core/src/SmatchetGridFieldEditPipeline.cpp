@@ -32,8 +32,9 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
 
     if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
         std::string qerr;
-        const std::int64_t qid = app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson,
-                                                           qerr, edit.OriginalRichValue, edit.OriginalValue);
+        const std::int64_t qid =
+            app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson, qerr,
+                                      edit.OriginalRichValue, edit.OriginalValue, edit.HasOriginalValue);
         if (qid <= 0) {
             SmatchetToastManager::Instance().Push(
                 "Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr, ToastType::Error);

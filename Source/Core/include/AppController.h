@@ -780,7 +780,7 @@ class AppController
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                        const std::string& fieldsPayloadJson, std::string& outError,
                                        const std::string& originalRichValue = std::string(),
-                                       const std::string& originalValue = std::string());
+                                       const std::string& originalValue = std::string(), bool hasOriginalValue = false);
 
     /** Replay queued offline field edits (rate-limited; called from UI tick). */
     void TickOfflineFieldEdits();
@@ -789,9 +789,11 @@ class AppController
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass. `kind` (text|scalar|
-    /// unverified, per ADR-0016) selects how `resolvedValue` is written: `text` reconverts
-    /// Markdown→ADF/HTML via `richKind`; `scalar`/`unverified` write the chosen value into the
-    /// payload key verbatim (no conversion).
+    /// unverified, per ADR-0016) selects how the resolution is applied: `text` reconverts
+    /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` writes
+    /// `resolvedValue` into the payload key verbatim (no conversion); `unverified` ("Force Mine")
+    /// ignores `resolvedValue`, replays the existing queued payload unchanged, and only clears
+    /// the conflict state + bases.
     void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 

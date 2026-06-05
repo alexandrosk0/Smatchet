@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
+#include "FieldEditAuditSource.h"
 #include "IOfflineQueueDeps.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
@@ -420,7 +421,7 @@ OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendi
 std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                                         const std::string& fieldsPayloadJson, std::string& outError,
                                                         const std::string& originalRichValue,
-                                                        const std::string& originalValue) {
+                                                        const std::string& originalValue, bool hasOriginalValue) {
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -437,8 +438,8 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         return 0;
     }
     try {
-        const std::int64_t id = deps_.Cache()->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson,
-                                                                       originalRichValue, originalValue);
+        const std::int64_t id = deps_.Cache()->EnqueuePendingFieldEdit(
+            issueKey, fieldId, fieldsPayloadJson, originalRichValue, originalValue, hasOriginalValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
                  issueKey.c_str(), fieldId.c_str());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
@@ -496,17 +497,6 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
     const bool isRichText = (kind != "scalar" && kind != "unverified");
     const bool isUnverified = (kind == "unverified");
     try {
-        std::string fallbackPayloadJson;
-        if (isRichText) {
-            if (richKind == "adf") {
-                const nlohmann::json adfDoc = MarkdownConvert::MarkdownToAdf(resolvedValue);
-                fallbackPayloadJson = nlohmann::json{{std::string("__resolved__"), adfDoc}}.dump();
-            } else {
-                fallbackPayloadJson = MarkdownConvert::MarkdownToHtml(resolvedValue);
-            }
-        } else {
-            fallbackPayloadJson = nlohmann::json{{std::string("__resolved__"), resolvedValue}}.dump();
-        }
         try {
             auto existing = deps_.Cache()->LoadPendingFieldEdits();
             const auto rowIt =
@@ -545,9 +535,14 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                 deps_.Cache()->ResolveFieldEditConflict(id, newPayload.dump());
                 return;
             }
-        } catch (...) { // catch-all-ok: load/find failure → fall back to the wrapped payload below
+        } catch (...) { // catch-all-ok: load/find failure → log-and-skip below (never fabricate a payload)
         }
-        deps_.Cache()->ResolveFieldEditConflict(id, fallbackPayloadJson);
+        // Row not found (or load threw): there is no real field key to write under, so a fabricated
+        // payload would lose the field key and misapply / dead-letter on the next replay. Leave the
+        // row untouched — it stays conflict-suspended and the user can retry resolution. (ADR-0016.)
+        LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld — pending row not loadable; skipping (no "
+                 "fabricated payload)",
+                 static_cast<long long>(id));
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::ResolveFieldEditConflict id=%lld err=%s", static_cast<long long>(id),
                   ex.what());
@@ -730,8 +725,10 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
                                                FieldEditReplayTally& tally) {
     // Decide which base this row captured: rich (3-way text merge) vs scalar (2-way display
     // compare). A row with neither base keeps last-write-wins (documented residue, ADR-0016).
+    // Scalar presence keys on the HasOriginalValue flag (NOT emptiness) so a genuinely BLANK
+    // captured base is still conflict-checked instead of mistaken for a legacy no-base row.
     const bool hasRichBase = !row.OriginalRichValue.empty();
-    const bool hasScalarBase = !row.OriginalValue.empty();
+    const bool hasScalarBase = row.HasOriginalValue;
     if ((!hasRichBase && !hasScalarBase) || !fieldsPayload.is_object()) {
         return FieldEditConflictOutcome::Proceed;
     }
@@ -802,13 +799,16 @@ OfflineQueueService::RecordUnverifiedFieldEditConflict(const PendingFieldEditRec
     ctx["kind"] = "unverified";
     ctx["mine"] = mine;
     ctx["fieldId"] = row.FieldId;
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("offline-field-conflict");
+    const nlohmann::json auditData{
+        {"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}, {"kind", "unverified"}};
+    BackendAuditTrail::AppendBegin("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                   auditOp, auditData);
     RunFieldEditCacheMutation(
         "mark_field_edit_conflict_unverified", row.Id, [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); },
         tally);
-    BackendAuditTrail::AppendResult(
-        "offline_field_edit_conflict", "offline_field_replay", row.IssueKey, std::to_string(row.Id), true,
-        std::string(),
-        nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}, {"kind", "unverified"}});
+    BackendAuditTrail::AppendResult("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                    auditOp, true, std::string(), auditData);
     return FieldEditConflictOutcome::Suspend;
 }
 
@@ -818,7 +818,8 @@ OfflineQueueService::ResolveFieldEditScalarConflict(const PendingFieldEditRecord
                                                     LocalCacheManager* cache, FieldEditReplayTally& tally) {
     const std::string& fid = row.FieldId;
     const std::string theirs = fresh.GetFieldValue(fid);
-    if (!OfflineFieldConflictPolicy::ServerMovedFromBase(row.OriginalValue, theirs)) {
+    // Presence-aware: a captured BLANK base is a real reference, so blank→non-blank is a move.
+    if (!OfflineFieldConflictPolicy::ServerMovedFromCapturedBase(row.HasOriginalValue, row.OriginalValue, theirs)) {
         return FieldEditConflictOutcome::Proceed; // server unchanged → replay the queued value.
     }
     // The locally-applied display value is the user's intent ("mine"); the queued payload is
@@ -845,11 +846,14 @@ OfflineQueueService::ResolveFieldEditScalarConflict(const PendingFieldEditRecord
     ctx["mine"] = mine;
     ctx["theirs"] = theirs;
     ctx["fieldId"] = fid;
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("offline-field-conflict");
+    const nlohmann::json auditData{{"pending_field_edit_id", row.Id}, {"field_id", fid}, {"kind", "scalar"}};
+    BackendAuditTrail::AppendBegin("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                   auditOp, auditData);
     RunFieldEditCacheMutation(
         "mark_field_edit_conflict_scalar", row.Id, [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); }, tally);
-    BackendAuditTrail::AppendResult(
-        "offline_field_edit_conflict", "offline_field_replay", row.IssueKey, std::to_string(row.Id), true,
-        std::string(), nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", fid}, {"kind", "scalar"}});
+    BackendAuditTrail::AppendResult("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                    auditOp, true, std::string(), auditData);
     return FieldEditConflictOutcome::Suspend;
 }
 
@@ -870,7 +874,11 @@ OfflineQueueService::ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord&
 
     const bool isAdf = OfflineFieldEditMergeDetail::DetectRichKindIsAdf(row.OriginalRichValue);
     const std::string theirsRich = fresh.GetFieldRichValue(fid);
-    if (theirsRich.empty() || theirsRich == row.OriginalRichValue) {
+    // Only an UNCHANGED server (theirs == base) skips the merge. An empty `theirsRich` that differs
+    // from a non-empty base is a concurrent server clear/delete — a real change worth asking about
+    // (ADR-0016: a clear IS a change), so it falls through to the 3-way merge below. When base is
+    // also empty, theirs==base catches the no-op case here.
+    if (theirsRich == row.OriginalRichValue) {
         return FieldEditConflictOutcome::Proceed; // server unchanged → replay the queued value.
     }
 
@@ -905,11 +913,14 @@ bool OfflineQueueService::ApplyOrRecordMergeResult(const PendingFieldEditRecord&
     // `kind:"text"` selects the rich modal branch; `richKind` (orthogonal) drives reconversion.
     const nlohmann::json ctx = {{"kind", "text"},     {"base", baseMd},         {"mine", mineMd},
                                 {"theirs", theirsMd}, {"fieldId", row.FieldId}, {"richKind", isAdf ? "adf" : "html"}};
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("offline-field-conflict");
+    const nlohmann::json auditData{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}, {"kind", "text"}};
+    BackendAuditTrail::AppendBegin("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                   auditOp, auditData);
     RunFieldEditCacheMutation(
         "mark_field_edit_conflict", row.Id, [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); }, tally);
-    BackendAuditTrail::AppendResult(
-        "offline_field_edit_conflict", "offline_field_replay", row.IssueKey, std::to_string(row.Id), true,
-        std::string(), nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}, {"kind", "text"}});
+    BackendAuditTrail::AppendResult("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                    auditOp, true, std::string(), auditData);
     return true;
 }
 

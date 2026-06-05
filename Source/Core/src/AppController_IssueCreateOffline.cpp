@@ -199,13 +199,13 @@ AppController::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds)
 std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                                   const std::string& fieldsPayloadJson, std::string& outError,
                                                   const std::string& originalRichValue,
-                                                  const std::string& originalValue) {
+                                                  const std::string& originalValue, bool hasOriginalValue) {
     if (!offlineQueue_) {
         outError = "Offline queue not initialized.";
         return 0;
     }
     return offlineQueue_->QueueFieldEditOffline(issueKey, fieldId, fieldsPayloadJson, outError, originalRichValue,
-                                                originalValue);
+                                                originalValue, hasOriginalValue);
 }
 
 std::vector<PendingFieldEditRecord> AppController::GetPendingFieldEdits() const {

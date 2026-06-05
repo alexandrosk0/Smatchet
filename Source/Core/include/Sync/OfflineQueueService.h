@@ -95,20 +95,24 @@ class OfflineQueueService {
     /// Persist a tracker field payload for later replay when connectivity returns.
     /// `originalRichValue` is the rich (ADF/HTML) base for the 3-way merge; `originalValue` is
     /// the scalar display base for the 2-way `ServerMovedFromBase` compare (ADR-0016). Both
-    /// default empty; a row with neither base keeps last-write-wins.
+    /// default empty; a row with neither base keeps last-write-wins. `hasOriginalValue` records
+    /// whether the scalar base was CAPTURED (presence) independent of its emptiness, so a blank
+    /// captured base is still conflict-checked rather than mistaken for a legacy no-base row.
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                        const std::string& fieldsPayloadJson, std::string& outError,
                                        const std::string& originalRichValue,
-                                       const std::string& originalValue = std::string());
+                                       const std::string& originalValue = std::string(), bool hasOriginalValue = false);
 
     std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
 
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass. `kind` (text|scalar|
-    /// unverified, ADR-0016) selects how `resolvedValue` is applied: `text` reconverts
-    /// Markdown→ADF/HTML via `richKind`; `scalar`/`unverified` write the value into the payload
-    /// key verbatim (no conversion).
+    /// unverified, ADR-0016) selects how the resolution is applied: `text` reconverts
+    /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` writes
+    /// `resolvedValue` into the payload key verbatim (no conversion); `unverified` ("Force Mine")
+    /// ignores `resolvedValue`, replays the existing queued payload unchanged, and only clears
+    /// the conflict state + bases.
     void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 
