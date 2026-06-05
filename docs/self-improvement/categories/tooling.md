@@ -8,10 +8,9 @@
 ## Triage log
 
 - 2026-06-05 · orchestrator · [tooling] · P3 — `merge-snapshot-ledger` (lossless gate-snapshot) deferred to its own plan + ADR; date-forced revisit so it isn't forgotten
-  Details: `docs/plans/active/merge-snapshot-ledger.md` (stub, #870) is C2-part-1 of `agent-audit-remediation`: a committed merge-time gate-verdict ledger written by the 3 merge actors so `postmortem-owed.sh` reads lossless truth instead of live `statusCheckRollup` (provably lossy — re-runs overwrite RED contexts; override labels stripped post-merge). The mechanical ordering half shipped in #868; this lossless half needs an ADR + a 3-writer contract, so it is deferred + unscheduled.
-  Concrete next action: write `docs/adr/NNNN-merge-time-snapshot-ledger.md` + ship the ledger per the plan stub.
-  Triggered-follow-up: when=date:2026-07-15; action=write the ADR + ship docs/plans/active/merge-snapshot-ledger.md (lossless merge-time gate-snapshot ledger); baseline=postmortem-owed.sh reads live statusCheckRollup (lossy on re-run + label-strip); fired=never
-  Status: deferred
+  Details: `docs/plans/shipped/merge-snapshot-ledger.md` (was a stub, #870) is C2-part-1 of `agent-audit-remediation`: a committed merge-time gate-verdict ledger written by the 3 merge actors so `postmortem-owed.sh` reads lossless truth instead of live `statusCheckRollup` (provably lossy — re-runs overwrite RED contexts; override labels stripped post-merge). The mechanical ordering half shipped in #868; this lossless half needed an ADR + a 3-writer contract.
+  Concrete next action: SHIPPED — `docs/adr/0017-merge-time-snapshot-ledger.md` + `merge-snapshot-append.sh` + the `handle_pass()` / `postmortem-owed.sh` / `ship-loops.md` wiring landed per the plan (now under `docs/plans/shipped/`).
+  Status: applied (2026-06-05) — to be archived to `applied.md` on next triage drain.
   Last-reviewed: 2026-06-05
 
 - 2026-06-02 · orchestrator · [tooling] · P2 — `function_size_audit.py --diff` is grandfather-blind: a partially-reduced-but-still-over-cap function passes silently (CI green ≠ target resolved)

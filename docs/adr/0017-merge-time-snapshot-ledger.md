@@ -1,0 +1,32 @@
+# Merge-time gate-verdict snapshot ledger: lossless gate-escape detection, written by every merge actor at the decision instant
+
+**Status:** accepted (2026-06-05)
+
+The gate-escape detector `postmortem-owed.sh` (the SessionStart "postmortem owed" nudge) finds red-check escapes on already-merged `develop` PRs by reading **live `statusCheckRollup`** via `gh pr list`. That read is **provably lossy**, so an escape that was real at merge time can silently vanish before the detector ever runs:
+
+- GitHub **overwrites rollup contexts by name on re-run.** A required-by-name check (e.g. "Doc anchors + agent contract") that was RED at the merge instant but was re-run green later leaves **no RED entry** in `statusCheckRollup` — the rollup keeps only the latest run per context name (the same name-dedup `merge-gates.sh:273-336` relies on). There is nothing left to filter by `completedAt`, because the lost run no longer exists in the rollup at all.
+- Override labels are **stripped post-merge by policy** (`merge-gates.sh` — an override label "MUST NOT stay on the PR post-merge"). A live `gh pr view --json labels` at the next SessionStart sees them already gone, so the override-escape trigger is blind to any merge older than the label-strip.
+
+The detector's own design doc (`gate-escape-postmortem.md`) already promises the trigger reads the verdict "at merge time." The live query cannot honour that promise. The **only lossless capture of merge-decision truth is a snapshot written at the decision instant by the merge actor** — before the rollup can be overwritten and before the label is stripped.
+
+**Decision:** every `develop` merge writes a one-line gate-verdict snapshot — `{pr, mergeCommit, headSha, mergedAt, gates, redChecks[], overrideLabels[], mergeActor, schema}` — to a **committed append-only JSONL ledger** at `docs/self-improvement/merge-snapshots.jsonl`, via a single shared idempotent helper (`merge-snapshot-append.sh`, keyed on `pr`+`mergeCommit`). The three merge actors cooperate as writers: the `merge-watcher` daemon (`handle_pass()`), the in-session orchestrator merge, and `git-janitor`. `postmortem-owed.sh` reads the ledger **first** (keyed by `pr`+`mergeCommit`); the live `statusCheckRollup`/labels query is kept as a **documented degraded fallback** for un-instrumented / pre-ledger merges, so the detector never goes blind.
+
+This is a hard-to-reverse choice — a committed file format plus a three-writer cooperation contract — and trades a single-reader/lossy design for a distributed-writer/lossless one. That trade-off, and the storage-location choice, warrant this ADR.
+
+## Considered options
+
+- **Keep the live `statusCheckRollup` read, add a `completedAt <= mergedAt` filter** — *Rejected*. There is nothing to filter. The rollup is name-deduped to the latest run per context, so a re-run green **replaces** the merge-time RED run rather than adding a second dated row; the RED run is simply absent. A timestamp filter can only narrow rows that still exist.
+- **Write the snapshot to the machine-local watcher registry** (`%LOCALAPPDATA%\…\active.json`) — *Rejected*. That registry is machine-local and its per-PR entry is **deleted on merge** (`maybe_remove_from_registry`). `postmortem-owed.sh` is a **repo-rooted** SessionStart hook that must run on any clone — a machine-local artifact is invisible to it on every other checkout, and it is gone for the merged PR anyway.
+- **A CI artifact** (upload the gate verdict from the merge job) — *Rejected*. CI artifacts expire (retention windows), are not present in a fresh clone, and require an extra API round-trip to enumerate per SessionStart — exactly the latency the detector's batched single-call design avoids. A committed file is in the working tree the hook already runs in.
+- **Lossy-but-single-writer** (status quo: only the live query, no ledger) — *Rejected* for the losslessness reasons above; this is the gap the decision closes.
+- **A CI-blocking "snapshot required" gate** — *Rejected / out of scope*. The snapshot feeds an **advisory** nudge; blocking a merge on a successful snapshot write re-introduces ceremony into the autonomous one-turn ship-loop for no detection gain. A missed write degrades to the live fallback, not a blocked merge.
+
+## Consequences
+
+- **Distributed-write contract.** Losslessness is only as good as writer coverage: a merge actor that forgets to append leaves a ledger hole. Mitigated two ways — (1) the live `statusCheckRollup` fallback is retained, so a hole costs *losslessness for that one PR*, never blindness; (2) all three actors are named and wired (watcher `handle_pass()`, orchestrator + `git-janitor` per `ship-loops.md`) behind one shared helper so they stay consistent.
+- **Closing the watcher scope gap.** `handle_pass()` had neither the override-labels nor the gated head SHA in scope at the write-site. The watcher now does one extra `gh pr view --json labels,headRefOid` at merge time (filtered against `project.config.json` `merge_gates.override_labels`). The merge path is post-gate / pre-cascade and not latency-critical, so the extra call is acceptable.
+- **`redChecks` is empty on every current writer path.** All three actors merge only on `GATES_PASSED` (no red check at the decision instant), so `redChecks` is `[]` today. The field exists so a future override-merge path (a deliberate red-check bypass) records what it bypassed without a schema change.
+- **Best-effort, never fatal.** A ledger-write failure is logged and the merge proceeds — the snapshot is detection telemetry, not a merge precondition. The watcher wraps the append in try/except; the helper is idempotent so a merge-path retry never double-writes.
+- **Append-only growth.** One compact line per merge (≈ a few hundred bytes); the file grows unbounded. Accepted — pruning / rotation is a deferred follow-up if size ever matters. Single-line compact JSON keeps `>>` appends line-atomic so parallel merges don't interleave.
+- **Schema is versioned** (`schema:1`). A future field (e.g. a `coverage-out-of-band` capture, or a non-empty-`redChecks` override path) bumps the version; readers tolerate unknown actors/labels by construction (csv→array, label set is config-sourced).
+- Full design + verification buckets: `docs/plans/shipped/merge-snapshot-ledger.md`. The detector design it lifts the promise from: `docs/plans/shipped/gate-escape-postmortem.md`.
