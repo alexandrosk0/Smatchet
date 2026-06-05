@@ -27,6 +27,37 @@ namespace smatchet {
 namespace ai {
 namespace pure {
 
+/// XML-attribute-escape a context-block name before it is interpolated into the
+/// `<smatchet_context block="...">` wrapper. A `"`/`&`/`<`/`>` in a Lua-supplied or
+/// future dynamic block name would otherwise corrupt the wrapper or inject markup
+/// (#826). `&` is replaced first so the entity-introducing ampersands emitted for the
+/// other cases are not themselves re-escaped. `inline` for the same
+/// link-without-the-controller-TU reason as `ComposeSystemPrompt`.
+inline std::string EscapeXmlAttr(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (std::string::const_iterator it = value.begin(); it != value.end(); ++it) {
+        const char c = *it;
+        switch (c) {
+        case '&':
+            out.append("&amp;");
+            break;
+        case '"':
+            out.append("&quot;");
+            break;
+        case '<':
+            out.append("&lt;");
+            break;
+        case '>':
+            out.append("&gt;");
+            break;
+        default:
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
 /// Compose the AI system prompt from a (possibly empty) merged agents.md blob and the
 /// already-resolved context blocks. Pure (no I/O, no AppController coupling) so it is
 /// bucket-A unit-testable. Mirrors the worker-thread assembly in
@@ -61,7 +92,7 @@ inline std::string ComposeSystemPrompt(const std::string& agentsMd,
             contextSection.push_back('\n');
         }
         contextSection.append("<smatchet_context block=\"");
-        contextSection.append(block.Name);
+        contextSection.append(EscapeXmlAttr(block.Name));
         contextSection.append("\">\n");
         contextSection.append(block.Body);
         if (block.Body.back() != '\n') {

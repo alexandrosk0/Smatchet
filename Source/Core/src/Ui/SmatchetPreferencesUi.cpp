@@ -127,6 +127,25 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
     return result;
 }
 
+// Masks a user email for logging (PII): keeps only the first local-part char
+// plus the domain (which is enough for diagnosis), e.g. "alice@acme.com" ->
+// "a***@acme.com". An empty or malformed (no usable '@') value is fully
+// redacted so no personal data reaches the log. Issue #820.
+std::string MaskEmailForLog(const std::string& email) {
+    if (email.empty()) {
+        return "(none)";
+    }
+    const size_t at = email.find('@');
+    if (at == std::string::npos || at == 0 || at + 1 >= email.size()) {
+        return "(redacted)";
+    }
+    std::string out;
+    out.push_back(email[0]);
+    out += "***";
+    out += email.substr(at); // "@domain"
+    return out;
+}
+
 } // namespace
 
 void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
@@ -422,7 +441,11 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     d.cfg.Email = d.emailBuf;
     d.cfg.ApiToken = d.tokenBuf;
     // PR 6: ProjectKey / PlaneProjectId writebacks removed — project is per-operation.
-    d.cfg.TrackerType = d.trackerTypeBuf;
+    // Canonicalize so a hand-edited lowercase "plane"/"github" buffer value
+    // persists as the canonical PascalCase form the rest of the code (and the
+    // exact-match TrackerType == "Plane"/"GitHub" branches below) expect. The
+    // same normalizer is applied to TrackerType a few lines down. Issue #820.
+    d.cfg.TrackerType = ConfigManager::NormalizeViewsBackendKey(std::string(d.trackerTypeBuf));
     d.cfg.PlaneUrl = d.planeUrlBuf;
     d.cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
     d.cfg.PlaneApiKey = d.planeApiKeyBuf;
@@ -497,7 +520,8 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
                  d.cfg.GitHubBaseUrl.c_str(), d.cfg.GitHubOwner.c_str(), d.cfg.GitHubRepo.c_str(),
                  d.cfg.GitHubPat.size());
     } else {
-        LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
+        LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(),
+                 MaskEmailForLog(d.cfg.Email).c_str());
     }
     d.triggerCatalogRefetch = true;
     const std::string oldBackend = d.lastViewsBackendKey;

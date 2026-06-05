@@ -250,9 +250,12 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
 void AppController::HandleFieldCatalogError(const std::string& error, const std::string& catalogCacheKey,
                                             bool catalogPlane) {
     if (!IsTrackerTransportErrorText(error)) {
-        AvailableFields.clear();
-        AvailableComponents.clear();
-        AvailableIssueTypeMeta.clear();
+        {
+            std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+            AvailableFields.clear();
+            AvailableComponents.clear();
+            AvailableIssueTypeMeta.clear();
+        }
         fieldCatalogEverLoaded_ = false;
         LastTrackerFieldCatalogWarning.clear();
         LastTrackerFieldCatalogError = error;
@@ -261,7 +264,12 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
         return;
     }
 
-    if (!AvailableFields.empty()) {
+    bool catalogHasFields;
+    {
+        std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+        catalogHasFields = !AvailableFields.empty();
+    }
+    if (catalogHasFields) {
         LastTrackerFieldCatalogError.clear();
         const std::string nextWarning = std::string("Offline: using cached ") + (catalogPlane ? "Plane" : "Jira") +
                                         " field catalog. Last fetch failed: " + error;
@@ -279,19 +287,24 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
     std::string snapErr;
     if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents, snapIssueTypeMeta,
                                                        snapErr)) {
-        AvailableFields = std::move(snapFields);
-        AvailableComponents = std::move(snapComponents);
-        AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+        {
+            std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+            AvailableFields = std::move(snapFields);
+            AvailableComponents = std::move(snapComponents);
+            AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+            if (!catalogPlane) {
+                for (auto& field : AvailableFields) {
+                    if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
+                        field.ReadOnly = true;
+                    }
+                }
+            }
+        }
         fieldCatalogEverLoaded_ = true;
         LastTrackerFieldCatalogError.clear();
         LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
                                          " field catalog from local snapshot. Last fetch failed: " + error;
         if (!catalogPlane) {
-            for (auto& field : AvailableFields) {
-                if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
-                    field.ReadOnly = true;
-                }
-            }
             EnsureCatalogHistoryField();
         }
         TrackerFieldCatalogRevision.fetch_add(1);
@@ -309,9 +322,12 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
         return;
     }
 
-    AvailableFields.clear();
-    AvailableComponents.clear();
-    AvailableIssueTypeMeta.clear();
+    {
+        std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+        AvailableFields.clear();
+        AvailableComponents.clear();
+        AvailableIssueTypeMeta.clear();
+    }
     fieldCatalogEverLoaded_ = false;
     LastTrackerFieldCatalogWarning.clear();
     LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
