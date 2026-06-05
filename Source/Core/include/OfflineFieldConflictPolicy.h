@@ -4,7 +4,6 @@
 // includes (no SQLite, no cpr, no ImGui, no nlohmann) so the doctest rig under
 // tests/ can exercise the decision without dragging the full LocalCacheManager /
 // SQLite / cpr cascade. Sibling of OfflineQueueReplayPolicy.h.
-//
 // Scope (ADR-0016): scalar conflict detection is 2-way on DISPLAY values — `base`
 // (the persisted pre-edit display string) vs `theirs` (the re-fetched display
 // string). The queued payload ("mine") is in backend format (account / transition
@@ -51,7 +50,6 @@ inline std::string TrimWhitespace(const std::string& s) {
 /// pre-edit display value the user looked at (`base`), after a whitespace trim on
 /// both sides — i.e. the server moved since the user made the edit, so an offline
 /// replay would silently overwrite a concurrent change and we must ask first.
-///
 /// An empty `base` (no reference captured — legacy rows, fields introduced before
 /// capture) returns false: we can't ask about a divergence we have no reference
 /// for. Documented residue (ADR-0016), not a silent overwrite of a *detected*
