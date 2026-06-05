@@ -47,7 +47,7 @@ Modes mirror function_size_audit.py:
 Exit contract (so test-lint-rules.sh / CI can fail CLOSED): 0 = clean, 1 = violations found
 (printed to stdout), >=2 = infra error (git / IO).
 
-See docs/plans/active/reduce-agent-prompt-bloat.md § Slice 0.
+See docs/plans/shipped/reduce-agent-prompt-bloat.md § Slice 0.
 """
 
 import argparse

@@ -75,7 +75,9 @@ class LocalCacheManager {
 
     std::int64_t EnqueuePendingFieldEdit(const std::string& issueKey, const std::string& fieldId,
                                          const std::string& fieldsPayloadJson,
-                                         const std::string& originalRichValue = std::string());
+                                         const std::string& originalRichValue = std::string(),
+                                         const std::string& originalValue = std::string(),
+                                         bool hasOriginalValue = false);
     std::vector<PendingFieldEditRecord> LoadPendingFieldEdits();
     void UpdatePendingFieldEdit(std::int64_t id, int attempts, const std::string& lastError);
     void DeletePendingFieldEdit(std::int64_t id);

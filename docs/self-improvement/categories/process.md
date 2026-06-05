@@ -147,3 +147,9 @@
   Status: deferred
   Last-reviewed: 2026-05-17
 
+- 2026-06-04 · orchestrator · [process] · P2 — "edited a doc, re-ran only a SUBSET of doc gates" recurred 3× in one plan
+  Details: during `reduce-agent-prompt-bloat`, three push-time CI failures all traced to the same habit — after a `.md` edit I ran some doc gates locally but not the full `doc-validation.yml` set, so a gate I skipped went red on push: portable-purity ×2 (new portable docs not baselined — also the git-ls-files-only `--refresh` gotcha, AGENT-VS-SKILL.md § Extraction checklist) and doc-anchors ×1 (a paraphrased `AGENTS.md § <name>` reference, including one inside a deviation note describing the very bug). Each cost a follow-up commit + CI round-trip.
+  Concrete next action: wire a `scripts/dev/pre-ship.sh --docs` mode (or a standalone `scripts/dev/pre-ship-docs.sh`) that runs the EXACT `doc-validation.yml` step set locally — `test-doc-anchors`, `test-agent-contract`, `test-plan-index`, `test-plan-ref-integrity`, `test-plan-naming`, `test-portable-purity`, `test-markdown-links`, `md_lint --all`, `test-subsystem-docs --diff`, `test-agent-discovery-fixture` — so "ran the docs gate" means the whole gate, not a subset. Pairs with the sibling `test.md` entry (test-docs.sh is the stale local mirror to fold in). Until then: the discipline is "run the full doc-validation suite after ANY `.md` edit, never a hand-picked subset."
+  Status: open
+  Last-reviewed: 2026-06-04
+

@@ -124,3 +124,9 @@
   Concrete next action: route to `test-author`. Reshape `tests/support/FakeP4Runner.h` so spawn-fail vs completed-non-zero-exit are distinguishable in the fixture schema (e.g. add explicit `simulate: spawn_fail` boolean OR rewrite the timeout fixture to use a non-(-1) non-zero exit code like 124 + tighten the timeout test to assert stderr-contains-"timed out"). Touch only `tests/support/FakeP4Runner.h`, `tests/fixtures/p4/annotate_happy.json`, `tests/Core/P4BlameAnnotateE2E.test.cpp`. C++14 hard; no std::optional / std::variant. CR thread at https://github.com/alexandrosk0/Smatchet/pull/443#discussion_r3294396615 has the full triage notes.
   Status: open
   Last-reviewed: 2026-05-24
+
+- 2026-06-04 · orchestrator · [test] · P3 — `scripts/dev/test-docs.sh` local mirror is stale vs `doc-validation.yml`
+  Details: surfaced during `reduce-agent-prompt-bloat` Slice 5. `test-docs.sh` (header claims "Steps mirror doc-validation.yml 1:1") OMITS `test-markdown-links` AND `md_lint` from its STEPS — both run in `doc-validation.yml`. A doc author pre-validating locally with `test-docs.sh` won't catch a dangling Markdown link (broken `href` target) or an `md_lint` (MD028) issue; those surface only on push.
+  Concrete next action: add `test-markdown-links` (diff-scoped) + `md_lint.py --all` to `scripts/dev/test-docs.sh` STEPS so the local mirror matches CI — or wire a `scripts/dev/pre-ship.sh --docs` mode that runs the whole `doc-validation.yml` step set in one command (see the sibling process entry). Touch only `scripts/dev/test-docs.sh` (+ optionally `scripts/dev/pre-ship.sh`).
+  Status: open
+  Last-reviewed: 2026-06-04

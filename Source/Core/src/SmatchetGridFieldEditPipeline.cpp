@@ -32,8 +32,9 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
 
     if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
         std::string qerr;
-        const std::int64_t qid = app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson,
-                                                           qerr, edit.OriginalRichValue);
+        const std::int64_t qid =
+            app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson, qerr,
+                                      edit.OriginalRichValue, edit.OriginalValue, edit.HasOriginalValue);
         if (qid <= 0) {
             SmatchetToastManager::Instance().Push(
                 "Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr, ToastType::Error);
@@ -102,9 +103,8 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
 // Captures own value copies of all fields needed; AppController& is the
 // only reference and remains valid for the lifetime of the app (workers
 // are joined before destruction via JoinBackgroundTasks).
-void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit,
-                     std::string originalEstimateSnapshot, std::string remainingEstimateSnapshot,
-                     std::string issueTypeKeyForNetwork) {
+void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit, std::string originalEstimateSnapshot,
+                     std::string remainingEstimateSnapshot, std::string issueTypeKeyForNetwork) {
     FieldEditCommitResult result;
     result.CommitKind = FieldEditCommitResult::Kind::Failed;
 
@@ -121,8 +121,8 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit
             std::string payloadJson;
             std::string prepErr;
             if (app.TryPrepareOfflineFieldEdit(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
-                                               remainingEstimateSnapshot, issueTypeKeyForNetwork, prepared,
-                                               payloadJson, prepErr)) {
+                                               remainingEstimateSnapshot, issueTypeKeyForNetwork, prepared, payloadJson,
+                                               prepErr)) {
                 result.ApplyResult = std::move(prepared);
                 result.QueuedFieldsPayloadJson = std::move(payloadJson);
                 result.CommitKind = FieldEditCommitResult::Kind::QueuedOffline;
@@ -136,17 +136,14 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit
 
     // Hand the result back to the UI thread. The dispatcher's bounded queue
     // and BeginShutdown-aware Post are safe even if the app is mid-teardown.
-    app.mainThreadDispatcher.PostToMainThread([&app, &d, edit, result]() mutable {
-        ApplyCommitResultOnUiThread(app, d, edit, std::move(result));
-    });
+    app.mainThreadDispatcher.PostToMainThread(
+        [&app, &d, edit, result]() mutable { ApplyCommitResultOnUiThread(app, d, edit, std::move(result)); });
 }
 
 } // namespace
 
-void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
-                           const std::vector<CachedTicket>& tickets,
-                           const std::vector<PendingFieldEdit>& pendingEdits,
-                           bool readOnlyMode) {
+void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
+                           const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode) {
     SMATCHET_UI_PERF_SCOPE("grid.cell_commit_pump");
 
     {
@@ -183,9 +180,8 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
         std::string originalEstimateSnapshot;
         std::string remainingEstimateSnapshot;
         std::string issueTypeKeyForNetwork;
-        const auto snapshotIt =
-            std::find_if(tickets.begin(), tickets.end(),
-                         [&](const CachedTicket& ticket) { return ticket.id == edit.IssueId; });
+        const auto snapshotIt = std::find_if(tickets.begin(), tickets.end(),
+                                             [&](const CachedTicket& ticket) { return ticket.id == edit.IssueId; });
         if (snapshotIt != tickets.end()) {
             originalEstimateSnapshot = snapshotIt->GetFieldValue("timeoriginalestimate");
             remainingEstimateSnapshot = snapshotIt->GetFieldValue("timeestimate");
@@ -214,11 +210,11 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
         // Worker runs SubmitFieldEditNetworkOnly (HTTP) and posts the result
         // back to the UI thread. Lifetime: AppController owns the worker
         // thread; JoinBackgroundTasks is called before destruction.
-        app.LaunchBackgroundTask([&app, &d, edit, originalEstimateSnapshot, remainingEstimateSnapshot,
-                                  issueTypeKeyForNetwork]() mutable {
-            RunCommitWorker(app, d, std::move(edit), std::move(originalEstimateSnapshot),
-                            std::move(remainingEstimateSnapshot), std::move(issueTypeKeyForNetwork));
-        });
+        app.LaunchBackgroundTask(
+            [&app, &d, edit, originalEstimateSnapshot, remainingEstimateSnapshot, issueTypeKeyForNetwork]() mutable {
+                RunCommitWorker(app, d, std::move(edit), std::move(originalEstimateSnapshot),
+                                std::move(remainingEstimateSnapshot), std::move(issueTypeKeyForNetwork));
+            });
     }
 
     // Decrement frame counters on success chips so they fade after their
