@@ -91,14 +91,32 @@ env:
 
 jobs:
   # Auto-sync the shipped-plan INDEX on PR branches so authors never hand-run
-  # `test-plan-index.sh --fix`. Concurrent-archive drift fix (postmortems.md
+  # `test-plan-index.sh --fix`. Concurrent-archive drift (postmortems.md
   # infra-P2): when one PR archives a plan, every other open plan PR's INDEX
-  # goes stale; instead of a manual regen, CI regenerates from the branch's own
-  # shipped/ set and commits back to the PR branch (unprotected → bot can push;
-  # develop is protected so the textbook merge-time self-heal is blocked). The
-  # blocking `test-plan-index` check (in the job below) then passes on the
-  # re-triggered run. Idempotent: a re-trigger finds the INDEX already in sync,
-  # commits nothing → no loop. Skips forks (no push access to a fork branch).
+  # goes stale; this job regenerates from the branch's own shipped/ set.
+  #
+  # CRITICAL re-trigger constraint: GitHub deliberately does NOT fire workflows
+  # for commits pushed with the default GITHUB_TOKEN (its infinite-loop
+  # safeguard). So a bot auto-commit pushed under GITHUB_TOKEN becomes the new
+  # PR head but NO required check (Doc anchors+agent contract, Shell lint,
+  # Test-delta, build) re-runs on it — the rollup freezes showing the PRE-sync
+  # `test-plan-index` FAILURE and the PR is blocked until a human re-pushes.
+  # (The earlier "idempotent re-trigger → no loop" comment was wrong: it assumed
+  # the bot push re-triggers CI; it does not.)
+  #
+  # Two paths, neither leaving a silent stale failure:
+  #   * PAT configured (secrets.PLAN_INDEX_PAT non-empty): checkout uses the PAT,
+  #     so the auto-commit is PAT-authored → DOES re-trigger all checks → the
+  #     re-run goes green. Convenience preserved.
+  #   * No PAT (default today): do NOT push a bot commit. Print the drift diff +
+  #     remedy and exit 1, so the PR shows a CORRECT failure on the CURRENT head
+  #     (not a stale one on an un-checked bot head). The author re-pushes as
+  #     themselves → CI re-triggers cleanly.
+  #
+  # To enable the auto-fix path: add a repo secret PLAN_INDEX_PAT = a
+  # fine-grained PAT scoped to this repo with `Contents: Read and write`
+  # (sufficient to push to an unprotected PR branch). No other scope needed.
+  # Skips forks (no push access to a fork branch).
   autosync-plan-index:
     name: Auto-sync plan INDEX (PR branch)
     if: >-
@@ -114,6 +132,13 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+          # Use the fine-grained PAT when configured so a later auto-commit is
+          # PAT-authored (re-triggers CI). Empty secret → fall back to the
+          # default GITHUB_TOKEN: we can still READ the branch; the run step
+          # below will NOT push under it (see PAT_CONFIGURED gate) to avoid the
+          # GITHUB_TOKEN silent-stale-failure.
+          token: ${{ secrets.PLAN_INDEX_PAT || github.token }}
+          persist-credentials: true
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -127,6 +152,9 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # Secrets can't be read in a step `if:`; route presence through env.
+          # Non-empty only when the owner has added the PLAN_INDEX_PAT secret.
+          PAT_CONFIGURED: ${{ secrets.PLAN_INDEX_PAT != '' }}
         run: |
           # Scope: only act on PRs that actually touch docs/plans/ — a non-plan
           # PR doesn't change shipped/, so its INDEX is correct after the
@@ -143,11 +171,34 @@ jobs:
             echo "plan INDEX already in sync — nothing to commit."
             exit 0
           fi
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/plans/INDEX.md
-          git commit -m "chore(plan): auto-sync shipped-plan INDEX"
-          git push origin "HEAD:$HEAD_REF"
+
+          # INDEX drifted and was regenerated in the working tree.
+          if [ "$PAT_CONFIGURED" = "true" ]; then
+            # PAT path: the checkout above used PLAN_INDEX_PAT, so this push is
+            # PAT-authored and DOES re-trigger all required checks on the new
+            # head → the re-run goes green. Auto-fix convenience preserved.
+            echo "::notice::plan INDEX drifted — auto-syncing via PLAN_INDEX_PAT (re-triggers CI)."
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/plans/INDEX.md
+            git commit -m "chore(plan): auto-sync shipped-plan INDEX"
+            git push origin "HEAD:$HEAD_REF"
+            exit 0
+          fi
+
+          # No-PAT path (default): a GITHUB_TOKEN bot push would NOT re-trigger
+          # CI, freezing the PR on a stale pre-sync failure. So instead FAIL
+          # LOUDLY on the current head — the author re-pushes the fix as
+          # themselves, which re-triggers CI cleanly.
+          echo "::error::docs/plans/INDEX.md is out of sync with docs/plans/shipped/. Drift below."
+          echo "----- INDEX drift (run the remedy to apply) -----"
+          git --no-pager diff -- docs/plans/INDEX.md
+          echo "-------------------------------------------------"
+          echo "Remedy: bash agents/scripts/core/test-plan-index.sh --fix"
+          echo "        git add docs/plans/INDEX.md && git commit && git push"
+          echo "(Auto-fix can be enabled by adding the PLAN_INDEX_PAT repo secret"
+          echo " — fine-grained PAT, Contents: Read and write. See job header.)"
+          exit 1
 
   doc-anchors-and-agent-contract:
     name: Doc anchors + agent contract
