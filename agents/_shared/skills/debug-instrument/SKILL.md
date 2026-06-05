@@ -190,7 +190,7 @@ cmake --preset ninja-msvc-asan
 cmake --build --preset ninja-msvc-asan --target SmatchetStandalone
 ```
 
-Presets: ASan+UBSan `ninja-msvc-asan` (GCC; ASan implies LSan); TSan `ninja-debug-msvc-tsan` (GCC; MinGW partial → hand to `build-doctor`); MSan `ninja-debug-msvc-msan` (Clang-only; needs `clang`/`clang++` on PATH). Sanitizer runtime DLLs (`libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll`) must be on `PATH` at launch — "DLL not found" on a sanitized exe is the runtime, not the build. If MSan errors `requires Clang`, `winget install LLVM.LLVM`. Wiring lives in `cmake/Sanitizers.cmake`; preset failures / new sanitizer requests go to `build-doctor`.
+Presets: ASan `ninja-msvc-asan` (MSVC; ASan only, no UBSan) or `ninja-clang-asan` (Clang; ASan+UBSan). TSan / MSan have **no dedicated preset** — set `-DSMATCHET_SANITIZER=tsan|msan` on a Clang preset (MSVC no-ops TSan; MSan needs `clang`/`clang++` on PATH → hand to `build-doctor`). Sanitizer runtime DLLs (`libasan-*.dll`, `libtsan-*.dll`, `libubsan-*.dll`, `libclang_rt.msan*.dll`) must be on `PATH` at launch — "DLL not found" on a sanitized exe is the runtime, not the build. If MSan errors `requires Clang`, `winget install LLVM.LLVM`. Wiring lives in `cmake/Sanitizers.cmake`; preset failures / new sanitizer requests go to `build-doctor`.
 
 ## Cleanup — four mandatory steps
 

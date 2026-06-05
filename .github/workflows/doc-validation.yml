@@ -33,6 +33,7 @@ on:
       - 'agents/scripts/core/test-doc-anchors.sh'
       - 'agents/scripts/core/test_doc_anchors.py'
       - 'agents/scripts/core/test-agent-contract.sh'
+      - 'agents/scripts/core/test-agent-build-facts.sh'
       - 'agents/scripts/core/test-plan-index.sh'
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
       - 'agents/scripts/core/test-portable-purity.sh'
@@ -63,6 +64,7 @@ on:
       - 'agents/scripts/core/test-doc-anchors.sh'
       - 'agents/scripts/core/test_doc_anchors.py'
       - 'agents/scripts/core/test-agent-contract.sh'
+      - 'agents/scripts/core/test-agent-build-facts.sh'
       - 'agents/scripts/core/test-plan-index.sh'
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
       - 'agents/scripts/core/test-markdown-links.sh'
@@ -168,6 +170,9 @@ jobs:
 
       - name: test-agent-contract — required headings + frontmatter parity
         run: bash agents/scripts/core/test-agent-contract.sh
+
+      - name: test-agent-build-facts — agent prompts cite real presets + live toolchain
+        run: bash agents/scripts/core/test-agent-build-facts.sh
 
       - name: Validate project.config.json against schema
         run: |

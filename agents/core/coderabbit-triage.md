@@ -92,7 +92,7 @@ First match wins. Cite the rule when rejecting so the orchestrator (and the user
 
 | # | Suggestion shape | Reject because |
 |---|---|---|
-| 1 | Use `std::string_view`, `std::optional`, `std::variant`, structured bindings, `if constexpr`, designated initialisers | C++14 hard — must compile on MinGW UCRT (`AGENTS.md` § Project rules). |
+| 1 | Use `std::string_view`, `std::optional`, `std::variant`, structured bindings, `if constexpr`, designated initialisers | C++14 hard — must compile on MSVC + Clang (Unreal compat) (`AGENTS.md` § Project rules). |
 | 2 | Add `#include <GLFW/...>` / `<glad/...>` / `<GL/...>` to a header under `Source/Core/include/` | Dual-target — DX12 compiles those headers too. |
 | 3 | Redefine `IMGUI_USE_WCHAR32` locally | Already PUBLIC on `ImGuiLib`. |
 | 4 | Replace `LOG_*` with `printf` / `std::cerr` / `std::cout` / `fprintf(stderr,…)` | Logger contract. |

@@ -172,9 +172,9 @@ Coordinate-based slicing of the PPM is brittle; prefer counting global colour-cl
 For UAF / leak / heap-overflow checks at shutdown, run the scenario under ASan / UBSan. `cmake/Sanitizers.cmake` already wires the flags; the existing CMakePresets has sanitizer variants. Test script invocation:
 
 ```bash
-cmake --preset ninja-asan
-cmake --build --preset ninja-asan --target SmatchetStandalone
-build/ninja-asan/Smatchet.exe cmd scenario.run --name=<feature>-stress --frames=600 --mcp-port=<...> --spawn --yes
+cmake --preset ninja-msvc-asan
+cmake --build --preset ninja-msvc-asan --target SmatchetStandalone
+build/ninja-msvc-asan/Smatchet.exe cmd scenario.run --name=<feature>-stress --frames=600 --mcp-port=<...> --spawn --yes
 # Exit code != 0 OR stderr contains "==ERROR: AddressSanitizer:" → fail
 ```
 
