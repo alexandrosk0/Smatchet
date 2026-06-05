@@ -1,0 +1,78 @@
+# C++ rules — editing `Source/` (load on-demand)
+
+Trigger: **editing C++** in `Source/Core` / `Source/Plugins` / `Source/Standalone`. AGENTS.md § Project rules keeps the every-edit invariants + the enforcement contract-card (the gated rule-ids, zone globs, and caps); this doc holds the on-demand detail — layout, quality mechanics, the file-split + ImGui-draw recipes, the full tiered-enforcement explanation, and the `SMATCHET_DEVIATION` grammar. The contract-card in AGENTS.md is the single source of truth for the gated tokens; this doc explains how each gate works.
+
+## Layout
+
+`Source/Core/{src,include}` is the shared core — used by both standalone and Unreal. `Source/Standalone/` builds the OpenGL exe. `Source/Plugins/{Mcp,LuaConsole}` are static plugins. `*_DX12` targets are `EXCLUDE_FROM_ALL` (Unreal only) — don't touch unless asked.
+
+## Available libs
+
+(FetchContent, linked): nlohmann/json, cpr, SQLiteCpp, cpp-httplib, md4c, ImGui (docking), GLFW, Lua + sol2, ghc::filesystem.
+
+## nlohmann json
+
+`obj["k"] = v`, not `obj = {...}` (reassignment with brace-list won't compile).
+
+## Optional plugins
+
+Gate with `#if SMATCHET_WITH_LUA_AUTOMATION` / `#if SMATCHET_WITH_MCP`. Lua bindings split: `AppController_LuaBindings.cpp` (on) ↔ `AppController_LuaStubs.cpp` (off) — keep in sync.
+
+## Dual-target
+
+`Source/Core/` compiles into both `SmatchetStandalone` (OpenGL+GLFW) and `SmatchetCore_DX12` (Unreal). Diverging macros: `SMATCHET_EMBEDDED_IN_UNREAL=1` (DX12 only); `SMATCHET_WITH_MCP=1` (Standalone only — `SMATCHET_WITH_MCP_UNREAL` is OFF). Full verify: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. In a worktree shell without `cl.exe` on PATH, wrap it: `powershell -ExecutionPolicy Bypass -File scripts/dev/with-msvc.ps1 cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (vswhere → vcvars64, toolset-pinned; PowerShell sibling of `scripts/dev/with-msvc-env.sh`). **Don't**: add GLFW/OpenGL includes to `Source/Core/` headers (DX12 compiles them too); redefine `IMGUI_USE_WCHAR32` (PUBLIC on `ImGuiLib`).
+
+## Quality
+
+RAII (no raw `new`/`delete` — use `std::unique_ptr` + `make_unique`; named exceptions must have inline comment: C ABI ownership boundaries `// C-ABI handle`, custom-deleter wraps `// custom-deleter — make_unique inapplicable`, third-party adapter seams); `const&` for non-trivial params; `std::move` on last use; small focused functions; `LOG_TRACE`/`LOG_DEBUG` in non-trivial branches. **`std::unique_ptr<T>` member in a class declared in a header — include `T`'s full definition in that header.** A forward-decl only works with an out-of-line dtor defined in a TU where `T` is complete; without it, `error: invalid application of sizeof to incomplete type` fires at *every* consumer's implicit-dtor instantiation site (not just the owning TU), so lift to the full include up-front instead of attempting forward-decl + pImpl.
+
+## File size
+
+Source files in `Source/Core/` and `Source/Plugins/` stay under **67 KB** (the GitHub diff-render limit; past it, review tooling truncates). When a file approaches the cap, split before adding more. Split recipe: create a `Foo_detail.h` for shared types / guards / constants; move shared free functions *out* of the anonymous namespace (gives them external linkage); keep only truly TU-private helpers anonymous. **Watch:** `thread_local` and `static` globals inside an anonymous namespace have internal linkage — each split TU gets its *own* copy (silent breakage); define them at file scope with an `extern` declaration in the `_detail.h` instead.
+
+## ImGui draw functions
+
+Approaching **200 lines**, use the section-helper pattern (`DrawCtx` + `DrawHeader`/`DrawBody`/`DrawFooter`/`DrawModals`/`HandleHotkeys`, perf scopes reused verbatim at section seams, `static` locals hoisted to a `<Foo>WindowState` member) — see [`docs/guides/imgui-draw-pattern.md`](../guides/imgui-draw-pattern.md); enforced by the `function-too-long` / `function-too-branchy` gate. Existing monoliths are **ride-along only** (decompose when a feature already opens the file; no dedicated sweep).
+
+## Lint
+
+Your harness may run an automatic lint pass after C++ edits. Claude Code does so via a `PostToolUse` hook wired by `bash agents/scripts/core/setup-harness.sh claude-code` — `clang-format -i` applies in place; `cppcheck` + `clang-tidy` report to stderr. If your harness lacks hook automation, run those three tools manually on every edited `.cpp` / `.h` in `Source/Core` / `Plugins` / `Source/Standalone` and fix all reported issues before responding.
+
+## Shell lint
+
+Shell scripts under `scripts/dev/` go through `agents/scripts/core/test-shell-lint.sh` (5 rules; checklist at [`shell-script-self-review.md`](shell-script-self-review.md)). Auto-runs via `scripts/dev/test-all.sh` at the pre-push gate. Bypass: `SMATCHET_SKIP_SHELL_LINT=1` (logged; emergency-only).
+
+## Subagent eval (advisory)
+
+Edits to `agents/*.md` agent prompts can be scored base-vs-head across quality dimensions instead of shipping on judgment alone — the perf-gate shape, one level up the stack. `scripts/dev/agent-eval-run.sh` (`--prompt-root` before/after seam, `--fake-runner` for tokenless CI) drives a curated case; `scripts/dev/agent-eval-score.py` diffs two result JSONs (objective inline checks + an **external** judge command) and exits `0` clean / `1` regression (WARN) / `2` malformed (FAIL). **Advisory only** — malformed artifacts FAIL, quality regressions WARN; the WARN→BLOCK graduation is deferred until judge-vs-human calibration data exists. Phase-1 MVP is `code-review` only. Full contract + two-worktree recipe + case-authoring: [`subagent-eval.md`](subagent-eval.md). Tests: `tests/bats/agent_eval_score.bats`, `tests/bats/agent_eval_run.bats`.
+
+## Tiered enforcement
+
+High-integrity C++; plan [`docs/plans/shipped/high-integrity-cpp-enforcement.md`](../plans/shipped/high-integrity-cpp-enforcement.md). `agents/scripts/project/test-lint-rules.sh` gates the **strict zone** on a delta basis — every NEW `(rule, file, snippet)` vs `origin/develop` fails CI; existing violators are grandfathered (snapshot: [`docs/high-integrity/baseline.md`](../high-integrity/baseline.md)). **Run this delta gate locally before every push** — `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` (the exact gate CI runs, comment-bloat `comment_audit.py --diff` included), or the convenience wrapper **`bash scripts/dev/pre-ship.sh`** which `clang-format -i`s the changed first-party C++ **first**, **then** runs the delta gate — the correct order, since clang-format can reflow a comment into a flagged shape (`comment-blank-run` / `comment-commented-out-code`) *after* a hand-run gate passes (the #1 build-green-but-lint-fails footgun for decomposition work) — and **finally** runs the markdown style lint (`agents/scripts/core/md_lint.py --all`, e.g. `MD028` blockquote breaks), since docs are not covered by the C++ delta gate and a markdown issue otherwise surfaces only as a post-push CodeRabbit finding (also gated in CI by `doc-validation.yml`). A targeted `cmake --build`/`ctest` does **not** run it (only `test-all.sh` and CI do), so a slice verified by a bespoke build alone can still hit a push-time-only comment-bloat / strict-zone failure.
+
+Strict-zone delta-gated rules: `no-printf-stderr`, `define-imgui` (both have legitimate first-party uses outside the strict zone — Standalone CLI stdout, the ImGui localization-alias macro — so they stay strict-only). **First-party-wide absolute rules** (`no-raw-new`, `deviation-overdue`, `no-detach`) are enforced at **0 across ALL first-party C++** — `Source/Core`, `Source/Plugins`, `Source/Standalone` (the `comment_audit.py` SWEEP_ROOTS; ThirdParty + tests excluded), not just the strict zone: every raw `new` must use `make_unique` or carry an exemption marker, no `SMATCHET_DEVIATION` may sit past its `revisit=`, and no raw `std::thread(...).detach()` is allowed — fire-and-forget work routes through the joined `AppController::LaunchBackgroundTask` pool (joined at shutdown via `JoinBackgroundTasks`), which closes the use-after-free-on-shutdown window; anywhere. Absolute (no grandfathering); the tree is clean today, so any hit is a regression.
+
+Plus the repo-wide comment-regrowth rules `comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run` (classified by `comment_audit.py --diff`; hard-fail anywhere in first-party C++, not just the strict zone; escape with `SMATCHET_DEVIATION(rule=comment-...)`. A soft, advisory comment-ratio warning also fires — never blocking — when a touched file's comment ratio rises AND exceeds 0.50. reduce-source-comment-bloat Phase 4). The repo-wide **function-size** rules `function-too-long` and `function-too-branchy` are likewise delta-gated anywhere in first-party C++ (classified by `function_size_audit.py --diff`, keyed by `(rule, basename, qualified-name, arity)` so the existing monoliths are grandfathered; escape with `SMATCHET_DEVIATION(rule=function-too-long; ...)` above the signature — list multiple rules comma-separated to suppress both caps; snapshot [`docs/high-integrity/function-size-baseline.md`](../high-integrity/function-size-baseline.md); decompose-top-20-monoliths Slice 0). The line cap is **tiered** (maintainer decision 2026-06-01): `function-too-long` blocks at body **> 120 lines (non-UI)** or **> 200 lines (ImGui-draw)** — declarative UI is inherently noisier, so it gets the escape hatch; `function-too-branchy` blocks at **> 30 decision points** for all functions. A function counts as **ImGui-draw** (200-line cap) if EITHER its path is under a `Ui/` dir (`**/Ui/**`) OR its unqualified name starts with `Draw`/`Render`/`draw`/`render` (draw helpers live in non-Ui files too, e.g. `SmatchetDrawAiAssistantPanel`, `drawMainMenuBar`); everything else is non-UI (120-line cap). This rule lives in one place — `function_size_audit.py is_ui_function()` — and `--selftest` asserts it stays in sync with the AGENTS.md contract-card. A **soft, advisory warning** also fires — never blocking, never changes exit code — when a new/changed function exceeds **100 lines OR 20 branches** but stays under the hard caps (a `[func-size] WARN` line on stderr, mirroring the comment-ratio advisory), nudging new code toward the 40-80-line ideal.
+
+The repo-wide **`duplication`** rule (DRY — the **Engineering Quality Pillar 5**; [ADR-0015](../adr/0015-dry-quality-pillar-duplication-gate.md)) is delta-gated over the same first-party C++ SWEEP_ROOTS by `dup_audit.py --diff` — a token-normalized **copy-paste clone** detector (identifier + literal normalized, so copy-then-rename is caught; min ~70 tokens / ~8 lines) that grandfathers all existing duplication (snapshot [`docs/high-integrity/dup-baseline.md`](../high-integrity/dup-baseline.md)) and flags only NEW cross-file clones. It is **WARN-first (calibration phase)**: a `[dup] WARN` line on stderr, never blocking, until a measured false-positive rate **< 10% over ~20 PRs** graduates it to a hard block (plan [`docs/plans/shipped/dry-pillar-dup-gate.md`](../plans/shipped/dry-pillar-dup-gate.md) § Verification). It flags **copy-paste only**, never structural similarity; escape with `SMATCHET_DEVIATION(rule=duplication; ...)` on/above the clone — an exemption is cheap and **preferred over abstracting across unrelated subsystems** (a DRY-motivated refactor that couples two otherwise-independent subsystems is a code-review **CRITICAL**, not an improvement). Standing exemptions: dual-target forward-decls, per-backend `*Client` boilerplate, generated code.
+
+`narrowing-conversions` (clang-tidy) is **gated on a dedicated Windows job** (`high-integrity-narrowing`, develop post-merge): it configures a PCH-free clang-cl compile-DB (`ninja-iter-clang -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON`) and fails on any **first-party** strict-zone narrowing — vendored `ThirdParty/` headers (e.g. `stb_image.h` pulled into a strict TU) are excluded. It stays excluded from the ubuntu `--diff` delta gate (clang-cl is Windows-only, and the base worktree has no clang DB). Reproduce locally with `SMATCHET_LINT_NARROWING=1` + a PCH-free clang DB. Zones (the scanner asserts this list matches its own copy via `--selftest`, against the AGENTS.md contract-card):
+
+- **strict** (any violation fails): `Source/Core/src/Tracker/`, `Source/Core/src/Sync/`, `Source/Core/src/Persistence/`, `Source/Core/src/Config/`, `Source/Core/src/Commands/`, `Source/Plugins/Mcp/` (+ matching `Source/Core/include/` subdirs).
+- **light** (not gated; existing inline exemptions apply): `Source/Core/src/Ui/`, `Source/Standalone/`.
+- **exempt** (not scanned): `ThirdParty/`, `build/`, non-C++ trees.
+
+## Subsystem guides
+
+Heavy `Source/Core/src/<ctx>/` dirs carry their own leaf docs: an `AGENTS.md` (scoped rules — the subsystem invariants that used to live in `code-review.md`), and for the exemplar `Tracker/` also a `CONTEXT.md` (domain glossary) + `README.md` (orientation / request flow). When you touch a subsystem, read its leaf `AGENTS.md` and apply its invariants — they are the single source of truth for that dir and override any central summary. Leaves today: `Tracker/`, `Commands/`, `Persistence/`, `Sync/`, `Ui/` (the strict zones above + the light `Ui/`). The full registry + per-context coverage + harness-discovery index is [`CONTEXT-MAP.md`](../../CONTEXT-MAP.md); the coverage + README-staleness gate is `agents/scripts/project/test-subsystem-docs.sh`. Claude Code auto-loads each leaf via a gitignored `CLAUDE.md` shim that `setup-harness.sh claude-code` generates beside it (Claude Code reads nested `CLAUDE.md`, not nested `AGENTS.md`).
+
+## `SMATCHET_DEVIATION` comment
+
+Forward-only superset of the inline exemption markers, for new strict-zone deviations. Grammar (pure comment; zero compile cost; the next non-blank line is the target):
+
+```cpp
+// SMATCHET_DEVIATION(rule=<rule-id>; reason=<short>; owner=<handle-or-unowned>; revisit=<YYYY-MM-DD | YYYY-Qn | slug | never>)
+int w = obj["w"].get<int64_t>();  // suppresses `narrowing-conversions` on this line
+```
+
+`rule` = scanner rule-id (suppresses that rule on the next line). `revisit` calendar markers that have passed emit `deviation-overdue` (a strict rule), forcing the audit loop; slug / `never` don't expire. Legacy markers (`// CLI stdout`, `// pre-logger-init`, `// C-ABI handle`, `// custom-deleter`) stay valid in perpetuity.
