@@ -1,3 +1,4 @@
+agents/_shared/skills/coderabbit-handoff/SKILL.md	Source/Core
 agents/_shared/skills/debug-instrument/SKILL.md	DX12
 agents/_shared/skills/debug-instrument/SKILL.md	SMATCHET
 agents/_shared/skills/debug-instrument/SKILL.md	Smatchet
@@ -28,6 +29,13 @@ agents/_shared/skills/perf-measure/SKILL.md	Smatchet
 agents/_shared/skills/perf-measure/SKILL.md	SmatchetStandalone
 agents/_shared/skills/perf-measure/SKILL.md	Source/Core
 agents/_shared/skills/perf-measure/SKILL.md	ninja-iter-msvc
+agents/_shared/skills/test-authoring/SKILL.md	SMATCHET
+agents/_shared/skills/test-authoring/SKILL.md	Smatchet
+agents/_shared/skills/test-authoring/SKILL.md	SmatchetStandalone
+agents/_shared/skills/test-authoring/SKILL.md	Source/Core
+agents/_shared/skills/test-authoring/SKILL.md	Source/Standalone
+agents/_shared/skills/test-authoring/SKILL.md	ninja-iter-msvc
+agents/_shared/skills/test-authoring/SKILL.md	ninja-msvc-asan
 agents/_shared/token-tracking/SKILL.md	Smatchet
 agents/_shared/token-tracking/agents-statusline.py	Smatchet
 agents/_shared/token-tracking/skill-load-log.py	Smatchet
@@ -99,12 +107,7 @@ agents/core/spike-hunter.md	Smatchet
 agents/core/spike-hunter.md	Source/Core
 agents/core/spike-hunter.md	ninja-iter-msvc
 agents/core/spike-hunter.md	ninja-publish-msvc
-agents/core/test-author.md	SMATCHET
-agents/core/test-author.md	Smatchet
-agents/core/test-author.md	SmatchetStandalone
 agents/core/test-author.md	Source/Core
-agents/core/test-author.md	Source/Standalone
-agents/core/test-author.md	ninja-iter-msvc
 agents/core/test-author.md	ninja-msvc-asan
 agents/core/test-rig.md	SMATCHET
 agents/core/test-rig.md	Smatchet

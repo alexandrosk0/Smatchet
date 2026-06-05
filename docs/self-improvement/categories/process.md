@@ -8,10 +8,10 @@
 <!-- Latest first. Append new entries at the top. -->
 
 - 2026-06-05 · orchestrator · [process] · P2 — `agent-size-reduction` is unblocked (its #868 gate merged) but tracked only as an `active/` plan stub — the exact "trigger dies in a plan" loss the triggered-follow-up field fixes
-  Details: `docs/plans/active/agent-size-reduction.md` (stub, #870) shrinks `debug-detective` (419) / `test-author` (268) / `coderabbit-triage` (215) under the 250 `agent-too-long` cap via skill extraction. It was deferred from `agent-audit-remediation` "until after PR #868 merges" — and #868 IS merged, so the work is unblocked NOW, yet nothing surfaces that. Dogfoods `triggered-followup-tracking` Decision 4 (triggers live on backlog entries, not plan-docs).
-  Concrete next action: pick up `docs/plans/active/agent-size-reduction.md` — extract debug-detective §8/§9 into `debug-instrument`, carve a `test-authoring` skill out of test-author, de-dup coderabbit-triage; get all three under 250 and retire their `agent-size-baseline.md` entries.
-  Triggered-follow-up: when=pr-count:base=develop;since=2026-06-05;n=1; action=start docs/plans/active/agent-size-reduction.md (gate #868 merged — unblocked); baseline=3 agents over the 250 cap (419/268/215 lines), zero headroom; fired=never
-  Status: open
+  Details: `docs/plans/shipped/agent-size-reduction.md` shrinks `debug-detective` (418→316, stays grandfathered) / `test-author` (268→130) / `coderabbit-triage` (214→183) via skill extraction (new `test-authoring` + `coderabbit-handoff` skills). Its trigger fired the SessionStart nudge, which surfaced the unblocked work — this entry is now stamped `fired=` (dogfooding `triggered-followup-tracking` Decision 4 end-to-end: trigger authored → fired → acted → stamped).
+  Concrete next action: DONE — test-author + coderabbit-triage under cap; debug-detective at its irreducible judgment floor (316, grandfathered; a deeper `debug-reporting` split is the only path lower, deliberately not taken). `agent-size-baseline.md` regenerated (test-author dropped off; debug-detective 733→316).
+  Triggered-follow-up: when=pr-count:base=develop;since=2026-06-05;n=1; action=start docs/plans/shipped/agent-size-reduction.md (gate #868 merged — unblocked); baseline=3 agents over the 250 cap (419/268/215 lines), zero headroom; fired=2026-06-05
+  Status: applied (shrink shipped; debug-detective grandfathered at 316 is the accepted end-state)
   Last-reviewed: 2026-06-05
 
 - 2026-06-05 · orchestrator · [process] · P3 — effectiveness measurement for `reduce-coderabbit-review-spend` is documented in the plan but NOT actionably tracked (will be forgotten once the plan archives to `shipped/`)

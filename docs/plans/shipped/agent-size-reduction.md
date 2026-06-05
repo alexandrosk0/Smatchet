@@ -87,10 +87,23 @@ Three independent shrinks + one contract-hardening, each verifiable via `agent_s
 - **A generic "extract to skill" tool** — the extraction is per-agent judgement, not yet mechanizable.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `agents/core/test-author.md` **268 → 130** — deterministic mechanics (Bucket-E wire-up + 4 gotchas, Patterns A/B/C/D bash/cpp skeletons, Mock-tracker recipes, Bash conventions, Report-format template) extracted verbatim to new `agents/_shared/skills/test-authoring/SKILL.md` (188 lines, `version: 1`). v2→v3. **Under the 150 soft-warn** — baseline entry retired.
+- `agents/core/coderabbit-triage.md` **214 → 183** — the `## Output format` report-shape template extracted to new `agents/_shared/skills/coderabbit-handoff/SKILL.md` (62 lines); `## Outcome:` / `## Session context append` / `## Self-improvement` **re-promoted** from fenced-template text to real headings. v2→v3. Under the 200 polish target.
+- `agents/core/debug-detective.md` **418 → 316** — 10 mechanics blocks (scenario search/add, hypothesis/metric examples, evidence catalogue, race checklist, crash-collect, handoff packet, promote-logs mechanics) appended to existing `debug-instrument` skill; preamble dedup. v6→v7. `reproducer-first contract` literal kept (7×).
+- `agents/scripts/core/test-skill-vs-agent-parity.sh` — `test-authoring` + `coderabbit-handoff` added to `SKILL_ONLY_HELPERS`.
+- `docs/high-integrity/agent-size-baseline.md` — regenerated: `test-author` removed (under cap), `debug-detective` 733 → 316.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **debug-detective ships at 316, NOT < 250.** Analysis (workflow, 2026-06-05) measured its irreducible judgment floor at ~253-316: the reproducer-first-contract spine, the 5-phase pause-loop discipline, the §11 cause-area→owner routing table, and ~16 hard refusals can't be extracted without deleting reasoning the agent exists to encode. Shipped the best achievable **418 → 316 (−24%)**; it **stays grandfathered** (the delta-gate keeps it green at any size still > 250, no `SMATCHET_DEVIATION` needed). A deeper split (a second `debug-reproducer` skill) was considered and **rejected** — it would fragment the contract across two skill files for marginal gain.
+- **Contract-heading hygiene + the 14th `test-agent-contract.sh` check DEFERRED.** Per the `agent-audit-remediation` reconsideration, check 4 already greps `## Outcome:` in any form, so promoting inline `## Self-improvement` to literal trailing headings in 6 agents is **cosmetic, not a detectability fix** — scoped out to keep this PR focused on the actual size reduction. (Residual; low priority.)
+- **`coderabbit-triage` included** though it was lower-priority (already under the 250 hard cap) — the under-200 polish was cheap (one template extraction) and clean.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Sizes (independently re-run, not trusting subagent self-reports)**: test-author 130, coderabbit-triage 183, debug-detective 316. New skills: test-authoring 188 / coderabbit-handoff 62 (both `version: 1`, in `SKILL_ONLY_HELPERS`).
+- **Faithfulness**: extracted content verified *present* in the skills (test-authoring has Patterns A-D + Bucket-E + Report-format; coderabbit-handoff has the triage-table + Findings examples; debug-instrument got all 5 new sections); each agent carries a one-line pointer — content **moved**, not dropped.
+- **Gates**: `agent_size_audit --diff origin/develop` exit 0; `test-agent-contract.sh` **26/0**; `test-skill-vs-agent-parity.sh` **3/0**; `test-docs.sh` **9/9**; `test-lint-bash.sh` EXIT 0. `reproducer-first contract` (check 13) intact; all 6 diagnostic headings present in debug-instrument (check 3).
+- **Residual**: `debug-instrument` SKILL.md is now 427 > 400 (skill soft-warn tier) — **non-blocking** (extraction sinks are soft-warn-only). A future trim or a `debug-instrument`/`debug-reporting` split could address it; tracked as low-priority.
+- **Build gate**: N/A — pure-docs/agentic-shell.

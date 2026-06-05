@@ -41,6 +41,8 @@ SKILL_ONLY_HELPERS=(
     drain-memory
     debug-instrument
     git-cleanup-procedures
+    test-authoring
+    coderabbit-handoff
 )
 
 is_skill_only() {
