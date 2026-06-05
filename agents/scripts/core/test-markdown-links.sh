@@ -16,6 +16,8 @@
 #      build state.
 #   5. Targets: docs/**/*.md, agents/**/*.md, AGENTS.md, BUILD.md, README.md
 #      (if present).
+#   6. Links inside fenced code blocks (``` / ~~~) are skipped — illustrative
+#      example paths in a template are literal, not navigable links.
 #
 # Bypass: SMATCHET_SKIP_MARKDOWN_LINK_CHECK=1 (logged when used).
 #
@@ -132,7 +134,17 @@ checked = 0
 for path in TARGETS:
     try:
         with open(path, encoding="utf-8") as fh:
+            in_fence = False
             for lineno, line in enumerate(fh, 1):
+                stripped = line.lstrip()
+                # Skip fenced code blocks (``` / ~~~): a link inside a fence is
+                # illustrative/literal (e.g. example paths in a doc template),
+                # never a navigable link — checking it produces false positives.
+                if stripped.startswith("```") or stripped.startswith("~~~"):
+                    in_fence = not in_fence
+                    continue
+                if in_fence:
+                    continue
                 for m in LINK_RE.finditer(line):
                     href = m.group(1)
                     # Skip absolute / external / anchor-only / mailto.

@@ -96,6 +96,6 @@ Per AGENTS.md § Agent output contract § Maintenance class — these sections m
 ## Cross-links
 
 - Sibling: [`agents/core/git-janitor.md`](git-janitor.md) — git/GitHub side.
-- Bring-up: [`docs/perforce/SETUP.md`](../docs/perforce/SETUP.md).
-- Verb-choice playbook: [`docs/perforce/AGENT_FLOWS.md`](../docs/perforce/AGENT_FLOWS.md).
-- Plan: [`docs/plans/shipped/git-to-perforce-migration.md`](../docs/plans/shipped/git-to-perforce-migration.md) § Phase 6.
+- Bring-up: [`docs/perforce/SETUP.md`](../../docs/perforce/SETUP.md).
+- Verb-choice playbook: [`docs/perforce/AGENT_FLOWS.md`](../../docs/perforce/AGENT_FLOWS.md).
+- Plan: [`docs/plans/shipped/git-to-perforce-migration.md`](../../docs/plans/shipped/git-to-perforce-migration.md) § Phase 6.

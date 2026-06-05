@@ -7,7 +7,7 @@ version: 1
 # gate-escape-postmortem
 
 The invocation shortcut for the gate-escape postmortem. Plan + rationale:
-[`docs/plans/shipped/gate-escape-postmortem.md`](../../../docs/plans/shipped/gate-escape-postmortem.md).
+[`docs/plans/shipped/gate-escape-postmortem.md`](../../../../docs/plans/shipped/gate-escape-postmortem.md).
 This skill is the incident **finder**; the existing self-improvement apply-loop
 (`docs/self-improvement/categories/*` + `AGENT_SELF_IMPROVEMENT.md` threshold +
 triage) is the **applier**. No second system.

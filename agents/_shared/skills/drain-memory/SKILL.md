@@ -7,7 +7,7 @@ version: 1
 # drain-memory
 
 One-keystroke driver for the weekly memory drain. The full process spec is
-[`docs/agent-rules/memory-drain.md`](../../../docs/agent-rules/memory-drain.md);
+[`docs/agent-rules/memory-drain.md`](../../../../docs/agent-rules/memory-drain.md);
 this skill is the invocation shortcut.
 
 ## When
