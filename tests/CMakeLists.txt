@@ -124,6 +124,9 @@ add_executable(SmatchetTests
     Core/TicketSyncService.test.cpp
     Core/OfflineQueueServiceRuntime.test.cpp
     Core/OfflineFieldEditMerge.test.cpp
+    # ADR-0016 — pure scalar offline-conflict classifier (ServerMovedFromBase). Header-only
+    # policy (OfflineFieldConflictPolicy.h), zero banned includes; no extra .cpp link.
+    Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp
@@ -321,6 +324,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
