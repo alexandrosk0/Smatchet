@@ -82,6 +82,11 @@ struct PendingFieldEdit {
     ///   base = OriginalRichValue, mine = queued payload, theirs = current server content.
     /// Empty for non-ADF/HTML fields and for edits made before this field was introduced.
     std::string OriginalRichValue;
+    /// Original scalar DISPLAY value (CachedTicket::GetFieldValue) at edit-commit time — the
+    /// scalar twin of OriginalRichValue. Persisted with the offline queue entry so replay can
+    /// detect a concurrent server change for non-rich fields (base vs re-fetched display). Empty
+    /// for rich fields (which use OriginalRichValue) and for edits with no captured base. ADR-0016.
+    std::string OriginalValue;
 };
 
 struct FieldEditCommitResult {

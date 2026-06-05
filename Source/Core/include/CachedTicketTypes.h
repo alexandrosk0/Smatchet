@@ -70,11 +70,20 @@ struct PendingFieldEditRecord {
     /// before replaying (base=this, mine=FieldsPayloadJson, theirs=server). Empty for
     /// non-ADF fields and edits queued before this field was introduced.
     std::string OriginalRichValue;
-    /// True when the offline-replay 3-way merge produced a conflict. The record stays
-    /// in the queue and is not retried until the user resolves via the conflict UI.
+    /// Original scalar DISPLAY value (CachedTicket::GetFieldValue) at edit-commit time — the
+    /// scalar twin of OriginalRichValue. Used by `TickOfflineFieldEdits` to detect a concurrent
+    /// server change for non-rich fields (base=this vs theirs=re-fetched display) via
+    /// OfflineFieldConflictPolicy::ServerMovedFromBase. Empty for rich fields and for edits
+    /// queued before this column existed (legacy rows keep last-write-wins). See ADR-0016.
+    std::string OriginalValue;
+    /// True when the offline-replay conflict gate (rich 3-way merge OR scalar 2-way compare OR
+    /// an unverifiable re-fetch) suspended this row. The record stays in the queue and is not
+    /// retried until the user resolves via the conflict UI.
     bool HasMergeConflict = false;
-    /// JSON blob: {base, mine, theirs, richKind} populated when HasMergeConflict is true.
-    /// Used by the conflict-resolution modal to show both sides. See RICH_TEXT_EDITING_V2_PLAN.md.
+    /// JSON blob populated when HasMergeConflict is true. Top-level `kind` ∈ {text, scalar,
+    /// unverified} selects the conflict category (absent = legacy rich "text"); the rich `text`
+    /// shape additionally carries `richKind` ∈ {adf, html} for reconversion. See ADR-0016 /
+    /// RICH_TEXT_EDITING_V2_PLAN.md.
     std::string ConflictContextJson;
     int Attempts = 0;
     std::string LastError;

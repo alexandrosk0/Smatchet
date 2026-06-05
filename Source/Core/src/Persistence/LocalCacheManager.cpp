@@ -79,11 +79,16 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "field_id TEXT NOT NULL, "
             "fields_payload_json TEXT NOT NULL, "
             "original_rich_value TEXT, "
+            "original_value TEXT, "
             "attempts INTEGER NOT NULL DEFAULT 0, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL)");
     if (!SqliteTableHasColumn(db, "pending_field_edits", "original_rich_value")) {
         db.exec("ALTER TABLE pending_field_edits ADD COLUMN original_rich_value TEXT");
+    }
+    // ADR-0016: additive scalar conflict base (display value). Twin of original_rich_value.
+    if (!SqliteTableHasColumn(db, "pending_field_edits", "original_value")) {
+        db.exec("ALTER TABLE pending_field_edits ADD COLUMN original_value TEXT");
     }
     if (!SqliteTableHasColumn(db, "pending_field_edits", "has_merge_conflict")) {
         db.exec("ALTER TABLE pending_field_edits ADD COLUMN has_merge_conflict INTEGER NOT NULL DEFAULT 0");
@@ -98,6 +103,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "field_id TEXT NOT NULL, "
             "fields_payload_json TEXT NOT NULL, "
             "original_rich_value TEXT, "
+            "original_value TEXT, "
             "attempts INTEGER NOT NULL, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL, "
@@ -105,6 +111,10 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "terminal_reason TEXT NOT NULL)");
     if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "original_rich_value")) {
         db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN original_rich_value TEXT");
+    }
+    // ADR-0016: additive scalar conflict base twin on the dead-letter table.
+    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "original_value")) {
+        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN original_value TEXT");
     }
     if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "archived_at")) {
         db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0");
@@ -174,9 +184,9 @@ void LocalCacheManager::writeTicketRows_(const CachedTicket& ticket) {
     deleteRich.reset();
     deleteRich.clearBindings();
 
-    auto& richUpsert = stmt(
-        stmt_save_insert_rich_,
-        "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+    auto& richUpsert =
+        stmt(stmt_save_insert_rich_,
+             "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
     for (const auto& kv : ticket.fieldRichValues) {
         if (kv.second.empty())
             continue;
@@ -638,13 +648,14 @@ void LocalCacheManager::DeleteDeadPendingCreate(const std::int64_t deadId) {
 
 std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& issueKey, const std::string& fieldId,
                                                         const std::string& fieldsPayloadJson,
-                                                        const std::string& originalRichValue) {
+                                                        const std::string& originalRichValue,
+                                                        const std::string& originalValue) {
     try {
         const auto now = std::chrono::system_clock::now();
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-        SQLite::Statement insert(
-            db, "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
-                "original_rich_value, attempts, last_error, created_at) VALUES (?, ?, ?, ?, 0, '', ?)");
+        SQLite::Statement insert(db, "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
+                                     "original_rich_value, original_value, attempts, last_error, created_at) "
+                                     "VALUES (?, ?, ?, ?, ?, 0, '', ?)");
         insert.bind(1, issueKey);
         insert.bind(2, fieldId);
         insert.bind(3, fieldsPayloadJson);
@@ -652,7 +663,11 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& issue
             insert.bind(4); // NULL
         else
             insert.bind(4, originalRichValue);
-        insert.bind(5, epoch);
+        if (originalValue.empty())
+            insert.bind(5); // NULL
+        else
+            insert.bind(5, originalValue);
+        insert.bind(6, epoch);
         insert.exec();
         return db.getLastInsertRowid();
     } catch (const std::exception& ex) {
@@ -667,7 +682,7 @@ std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
         SQLite::Statement query(db, "SELECT id, issue_key, field_id, fields_payload_json, "
                                     "COALESCE(original_rich_value, ''), "
                                     "COALESCE(has_merge_conflict, 0), COALESCE(conflict_context_json, ''), "
-                                    "attempts, last_error, created_at "
+                                    "attempts, last_error, created_at, COALESCE(original_value, '') "
                                     "FROM pending_field_edits ORDER BY id ASC");
         while (query.executeStep()) {
             PendingFieldEditRecord row;
@@ -684,6 +699,8 @@ std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
             row.Attempts = query.getColumn(7).getInt();
             row.LastError = query.getColumn(8).isNull() ? std::string() : std::string(query.getColumn(8).getText());
             row.CreatedAtEpochSec = query.getColumn(9).getInt64();
+            row.OriginalValue =
+                query.getColumn(10).isNull() ? std::string() : std::string(query.getColumn(10).getText());
             results.push_back(std::move(row));
         }
         return results;
@@ -723,9 +740,9 @@ void LocalCacheManager::MarkFieldEditConflict(std::int64_t id, const std::string
 
 void LocalCacheManager::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson) {
     try {
-        SQLite::Statement upd(db,
-                              "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
-                              "original_rich_value = NULL, fields_payload_json = ? WHERE id = ?");
+        SQLite::Statement upd(
+            db, "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
+                "original_rich_value = NULL, original_value = NULL, fields_payload_json = ? WHERE id = ?");
         upd.bind(1, resolvedPayloadJson);
         upd.bind(2, id);
         upd.exec();
@@ -753,7 +770,8 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
     try {
         SQLite::Transaction transaction(db);
         SQLite::Statement select(db, "SELECT issue_key, field_id, fields_payload_json, "
-                                     "COALESCE(original_rich_value,''), attempts, last_error, created_at FROM "
+                                     "COALESCE(original_rich_value,''), attempts, last_error, created_at, "
+                                     "COALESCE(original_value,'') FROM "
                                      "pending_field_edits WHERE id = ?");
         select.bind(1, id);
         if (!select.executeStep()) {
@@ -773,14 +791,16 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
                 ? terminalError
                 : (select.getColumn(5).isNull() ? std::string() : std::string(select.getColumn(5).getText()));
         const std::int64_t createdAtEpochSec = select.getColumn(6).getInt64();
+        const std::string originalValue =
+            select.getColumn(7).isNull() ? std::string() : std::string(select.getColumn(7).getText());
         const std::int64_t archivedAtEpochSec =
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
                 .count();
 
         SQLite::Statement insert(db, "INSERT INTO pending_field_edits_dead "
                                      "(original_id, issue_key, field_id, fields_payload_json, original_rich_value, "
-                                     "attempts, last_error, created_at, archived_at, terminal_reason) "
-                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                                     "original_value, attempts, last_error, created_at, archived_at, terminal_reason) "
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         insert.bind(1, id);
         insert.bind(2, issueKey);
         insert.bind(3, fieldId);
@@ -789,11 +809,15 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
             insert.bind(5);
         else
             insert.bind(5, originalRichValue);
-        insert.bind(6, attempts);
-        insert.bind(7, lastError);
-        insert.bind(8, createdAtEpochSec);
-        insert.bind(9, archivedAtEpochSec);
-        insert.bind(10, terminalReason);
+        if (originalValue.empty())
+            insert.bind(6);
+        else
+            insert.bind(6, originalValue);
+        insert.bind(7, attempts);
+        insert.bind(8, lastError);
+        insert.bind(9, createdAtEpochSec);
+        insert.bind(10, archivedAtEpochSec);
+        insert.bind(11, terminalReason);
         insert.exec();
 
         SQLite::Statement del(db, "DELETE FROM pending_field_edits WHERE id = ?");
