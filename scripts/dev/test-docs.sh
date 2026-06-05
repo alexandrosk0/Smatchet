@@ -45,6 +45,8 @@ STEPS=(
   "test-plan-naming|bash $CORE/test-plan-naming.sh"
   "test-portable-purity|bash $CORE/test-portable-purity.sh"
   "test-agent-discovery-fixture|bash $CORE/test-agent-discovery-fixture.sh"
+  "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"
+  "test-markdown-links|bash $CORE/test-markdown-links.sh"
 )
 
 declare -a FAILED=()

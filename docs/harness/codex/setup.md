@@ -3,7 +3,7 @@
 No local files required. Codex reads:
 
 - [`AGENTS.md`](../../../AGENTS.md) at the repo root — project rules + delegation table.
-- [`agents/*.md`](../../../agents/) — individual agent definitions.
+- [`agents/core/*.md`](../../../agents/core/) + [`agents/project/*.md`](../../../agents/project/) — individual agent definitions.
 
 Per the [agents.md spec](https://agents.md/), this layout is the entire adapter.
 

@@ -60,8 +60,13 @@ owed=()   # "PR #N — <trigger>"
 # `gh pr list --json statusCheckRollup` returns every PR's checks in a single
 # API call — fast enough for a SessionStart hook (no per-PR `gh pr view` loop).
 # Each row: number <TAB> space-joined-labels <TAB> comma-joined-red-checks.
+# `gh pr list` has no mergedAt sort key, so over-fetch by its default
+# createdAt-desc order, then re-sort by mergedAt and keep the most-recently
+# MERGED SCAN_N. Without this, a long-lived branch created early but merged
+# late falls outside a createdAt-ordered window and its escape is never seen.
+FETCH_N="${POSTMORTEM_FETCH_N:-$((SCAN_N * 3))}"
 # shellcheck disable=SC2016  # $c is a jq variable, not a shell expansion
-JQ_ROWS='.[] | [
+JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:'"$SCAN_N"']) | .[] | [
     (.number|tostring),
     ([.labels[].name] | join(" ")),
     ([.statusCheckRollup[]? | ((.conclusion // .state)) as $c
@@ -81,8 +86,8 @@ while IFS=$'\t' read -r num labels redchecks; do
         done
     fi
     [ -n "$trigger" ] && owed+=("PR #$num — $trigger")
-done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$SCAN_N" \
-            --json number,labels,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null || true)
+done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
+            --json number,labels,mergedAt,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null || true)
 
 # --- Trigger 3: Revert commits on develop ------------------------------------
 while IFS= read -r line; do
