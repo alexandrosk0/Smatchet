@@ -82,10 +82,29 @@ The trade-off — lossless-but-distributed (every actor must cooperatively write
 - **Pruning / rotation of the JSONL ledger** — defer until size matters.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(bullet per shipped commit: `<sha> · <one-line summary>` — sha filled in by the orchestrator at commit time)*
+
+- `docs/self-improvement/merge-snapshots.jsonl` (new) — committed empty append-only ledger; confirmed NOT gitignored (`git check-ignore` returns nothing; `.gitignore`'s `smatchet_backend_audit.jsonl` is a specific filename, not a `*.jsonl` wildcard).
+- `agents/scripts/core/merge-snapshot-append.sh` (new) — shared idempotent helper `append_merge_snapshot <pr> <mergeCommit> <headSha> <gatesVerdict> <redChecksCsv> <overrideLabelsCsv> <mergeActor>`. jq-composed single-line JSON (csv→array for redChecks + overrideLabels, UTF-8-safe), grep-guard idempotency on `pr`+`mergeCommit`, `mergedAt` derived via `date -u` (overridable via `SNAPSHOT_MERGED_AT`), source-able (`if [ "${BASH_SOURCE[0]}" = "$0" ]` dispatch guard), `--selftest` mode. Passes `test-shell-lint.sh` (5-rule) + shellcheck-clean.
+- `agents/scripts/core/merge-watcher.py` `handle_pass()` — appends the snapshot AFTER `merge_sha` is set, BEFORE `maybe_remove_from_registry`, via a new `_append_merge_snapshot()` that fetches `labels,headRefOid` (`gh pr view`), filters labels to the config override set (`_configured_override_labels()` reads `project.config.json`), shells out to the helper with `mergeActor='merge-watcher'`, redChecks="". Wrapped in try/except (returns a status string into `extras["merge_snapshot"]`); a ledger-write failure never aborts the merge path.
+- `docs/agent-rules/ship-loops.md` — after the GATES_PASSED squash-merge step: the in-session orchestrator merge + `git-janitor` MUST run `merge-snapshot-append.sh` immediately after their `gh api .../merge` (mergeActor `orchestrator`/`git-janitor`), with the exact command form.
+- `agents/scripts/core/postmortem-owed.sh` — reads `merge-snapshots.jsonl` first: for an in-window merged PR with a ledger line (keyed by `pr`+`mergeCommit`, via new `has_snapshot()`/`snapshot_trigger()` jq helpers) the trigger is derived from the snapshot; live `statusCheckRollup`/labels is the documented degraded fallback only when no ledger entry exists. Added `mergeCommit.oid` to the `gh pr list` query + `JQ_ROWS` as a new TSV column. `has_entry()` dedupe, the mergedAt-ordered window, and the Revert/overdue-deviation triggers are UNCHANGED.
+- `docs/adr/0017-merge-time-snapshot-ledger.md` (new) — the lossless-but-distributed vs lossy-but-single-reader decision; why a committed JSONL ledger (not the machine-local watcher registry, not a CI artifact, not a `completedAt<=mergedAt` rollup filter). Status: Accepted.
+- `docs/plans/shipped/gate-escape-postmortem.md` § Implementation-log — note that the red-check trigger now reads the ledger first (lossless); live `statusCheckRollup` demoted to fallback.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **ADR number is 0017, not `NNNN`** — the plan used the `NNNN` placeholder; the next free ADR number on disk is 0017 (latest committed is `0016-offline-scalar-edit-conflict-detection.md`).
+- **Helper signature carries `redChecksCsv` explicitly** — the plan's Files-to-modify §2 lists the signature as `append_merge_snapshot <pr> <mergeCommit> <headSha> <gatesVerdict> <overrideLabelsCsv> <mergeActor>` (6 args) but its own watcher-call example and §1 schema include a `redChecks` array. Implemented as **7 args** with `redChecksCsv` in 5th position (`<… gatesVerdict> <redChecksCsv> <overrideLabelsCsv> <mergeActor>`) so the field is first-class for a future override-merge path; the watcher passes `""` for it (GATES_PASSED → no red). The user's deliverable-3 instruction shows exactly this 7-arg form (`… GATES_PASSED "" "<override-csv>" merge-watcher`), so the implementation matches the caller contract.
+- **`has_snapshot()` added alongside `snapshot_trigger()`** — needed to distinguish "ledger says this merge was clean" (present, empty trigger → do NOT fall through to the lossy live read) from "no ledger entry" (absent → use the live fallback). Without it, a clean snapshotted merge would incorrectly re-consult the live query.
+- **Plan-INDEX regen deferred to post-commit** — `test-plan-index.sh --fix` derives each row's date from `git log --follow`, which needs the `git mv` committed first; the orchestrator runs `--fix` after committing the move (INDEX is NOT hand-edited with a `—` placeholder).
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- `bash agents/scripts/core/merge-snapshot-append.sh --selftest` → **PASS** (append works; idempotent re-append is a no-op; a distinct mergeCommit for the same PR appends; csv→array correct; too-few-args / non-numeric-pr / empty-mergeCommit all fail cleanly with no line written).
+- `bash agents/scripts/core/test-shell-lint.sh --target …` → **Passed: 1 Failed: 0** for both new/edited `.sh`. `shellcheck` fail-set (SC2086/2046/2128/2155/2068) **clean** on both; full `shellcheck` clean on the new helper, and only the pre-existing info-level **SC1091** (sourced-file-not-followed) on `postmortem-owed.sh` — not in the fail-set, not a regression.
+- `python3 -m py_compile agents/scripts/core/merge-watcher.py` → **OK** (no syntax error).
+- `bash agents/scripts/core/postmortem-owed.sh --list` → runs cleanly; empty ledger → falls through to the live path → "no gate escapes owed a postmortem (last 20 merges clean)." (same output as before the change). Seeded-ledger unit test confirms: a red-check+override snapshot derives the combined trigger, a clean-but-present snapshot yields no trigger and skips the live fallback, an absent PR falls through to live.
+- `git check-ignore docs/self-improvement/merge-snapshots.jsonl` → **nothing** (tracked, not ignored).
+- **Doc validation** (`scripts/dev/test-docs.sh`: anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint): run by the orchestrator at commit time (plan-index regen needs the `git mv` committed first — see Deviations).
+- **Build gate**: N/A — pure-docs/agentic-shell diff (`is-pure-docs-diff.sh` allowlists `*.md` + `agents/scripts/**` + the `*.jsonl` ledger); build/ctest/perf gates skip.

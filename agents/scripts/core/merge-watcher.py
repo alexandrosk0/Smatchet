@@ -133,6 +133,7 @@ read_registry = _CLI.read_registry
 
 
 MERGE_GATES_SCRIPT = _HERE / "merge-gates.sh"
+MERGE_SNAPSHOT_SCRIPT = _HERE / "merge-snapshot-append.sh"
 
 
 # ---------------------------------------------------------------------------
@@ -1750,6 +1751,81 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         return {"auto_act_action": f"spawn failed: {exc}"}
 
 
+def _configured_override_labels() -> list[str]:
+    """Read project.config.json merge_gates.override_labels (config-sourced, not
+    hardcoded — same set merge-gates.sh / postmortem-owed.sh use). Returns [] on
+    any read/parse failure (the snapshot still writes, just with no labels)."""
+    try:
+        cfg_path = _HERE / ".." / ".." / ".." / "project.config.json"
+        with open(cfg_path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        labels = cfg.get("merge_gates", {}).get("override_labels", [])
+        return [str(x) for x in labels] if isinstance(labels, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _append_merge_snapshot(owner: str, repo: str, pr: int, merge_sha: str) -> str:
+    """Write a lossless merge-time gate-verdict snapshot to the committed JSONL
+    ledger via merge-snapshot-append.sh (mergeActor='merge-watcher').
+
+    Closes the scope gap: handle_pass() has neither the head SHA nor the
+    override-labels at the write-site, so fetch them here (`gh pr view --json
+    labels,headRefOid`), filter labels to the configured override set, and shell
+    out to the shared idempotent helper. redChecks is empty for the watcher path
+    (it only reaches here on GATES_PASSED → no red check at the decision instant).
+
+    NEVER raises: a ledger-write failure must not abort the merge path. Returns a
+    short status string for the extras dict (caller logs it; merge already done).
+    """
+    try:
+        meta = _gh_json(
+            [
+                "pr",
+                "view",
+                str(pr),
+                "--repo",
+                f"{owner}/{repo}",
+                "--json",
+                "labels,headRefOid",
+            ]
+        )
+        head_sha = meta.get("headRefOid", "") if isinstance(meta, dict) else ""
+        pr_labels = [
+            lbl.get("name", "")
+            for lbl in (meta.get("labels", []) if isinstance(meta, dict) else [])
+            if isinstance(lbl, dict)
+        ]
+        override_set = _configured_override_labels()
+        override_present = [lbl for lbl in pr_labels if lbl in override_set]
+        override_csv = ",".join(override_present)
+        result = subprocess.run(
+            [
+                BASH_BIN,
+                str(MERGE_SNAPSHOT_SCRIPT),
+                str(pr),
+                merge_sha,
+                head_sha,
+                "GATES_PASSED",
+                "",  # redChecks — empty for the GATES_PASSED watcher path
+                override_csv,
+                "merge-watcher",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return f"snapshot_append_failed (exit {result.returncode}): {result.stderr.strip()[:200]}"
+        return "snapshot_appended"
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        # Lossless ledger is best-effort — the live statusCheckRollup fallback in
+        # postmortem-owed.sh covers a missed write; never abort the merge path.
+        return f"snapshot_append_skipped: {exc}"
+
+
 def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
     """PASS-branch handler — squash-merge + cascade to stacked children.
 
@@ -1779,6 +1855,9 @@ def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
     extras["merge_action"] = "merged"
     extras["merge_sha"] = merge_sha
     extras["merged_branch"] = head_branch
+    # 3b. Lossless gate-verdict snapshot to the committed ledger (best-effort;
+    #     never aborts the merge path). See docs/adr/0017-merge-time-snapshot-ledger.md.
+    extras["merge_snapshot"] = _append_merge_snapshot(owner, repo, pr, merge_sha)
     # 4. Drop from registry.
     maybe_remove_from_registry(pr, clone_path)
     # 5. Cascade — find stacked children + trigger update-branch on each.

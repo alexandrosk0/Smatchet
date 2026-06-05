@@ -112,6 +112,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`reduce-agent-prompt-bloat`](shipped/reduce-agent-prompt-bloat.md) | 2026-06-04 | Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate) |
 | [`agent-audit-remediation`](shipped/agent-audit-remediation.md) | 2026-06-05 | Plan — Agent-audit remediation (portfolio eval + infra-feedback fixes) |
 | [`agent-size-reduction`](shipped/agent-size-reduction.md) | 2026-06-05 | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
+| [`merge-snapshot-ledger`](shipped/merge-snapshot-ledger.md) | 2026-06-05 | Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection) |
 <!-- END auto-plan-index -->
 
 ### Notes

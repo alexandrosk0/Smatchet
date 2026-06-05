@@ -54,12 +54,55 @@ has_entry() {
     grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER"
 }
 
+# --- Lossless merge-time snapshot ledger (PRIMARY source for trigger 1+2) -----
+# docs/self-improvement/merge-snapshots.jsonl is the committed, append-only
+# gate-verdict ledger written by every merge actor at the decision instant
+# (docs/adr/0017-merge-time-snapshot-ledger.md). It is LOSSLESS where the live
+# `statusCheckRollup` query below is provably lossy — GitHub overwrites rollup
+# contexts by name on re-run, and override labels are stripped post-merge
+# (merge-gates.sh). So for any in-window merged PR that HAS a ledger line (keyed
+# by pr + mergeCommit), derive the escape trigger from the snapshot; fall through
+# to the live query ONLY when no ledger entry exists (documented degraded
+# fallback for un-instrumented / pre-ledger merges — the detector never goes
+# blind). schema=1: {"pr","mergeCommit","redChecks":[...],"overrideLabels":[...]}.
+SNAPSHOT_LEDGER="${SNAPSHOT_LEDGER:-docs/self-improvement/merge-snapshots.jsonl}"
+
+# snapshot_trigger <pr> <mergeCommit> — print the trigger derived from the most
+# recent ledger line matching BOTH pr and mergeCommit (redChecks / overrideLabels
+# non-empty), or nothing if no such line exists. Requires jq; degrades to "no
+# entry" (empty output) when jq is absent so the live fallback still runs.
+snapshot_trigger() {
+    local pr="$1" mc="$2"
+    [ -f "$SNAPSHOT_LEDGER" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    jq -rj --argjson pr "$pr" --arg mc "$mc" '
+        select(.pr == $pr and .mergeCommit == $mc)
+        | [ (if (.redChecks | length) > 0 then "red-check: " + (.redChecks | join(", ")) else empty end),
+            (.overrideLabels[]? | "override: " + .) ]
+        | join("; ")
+    ' "$SNAPSHOT_LEDGER" 2>/dev/null | tail -1 || true
+}
+
+# has_snapshot <pr> <mergeCommit> — is there ANY ledger line for this pr+commit?
+# (distinguishes "ledger says clean" from "no ledger entry → use live fallback").
+has_snapshot() {
+    local pr="$1" mc="$2"
+    [ -f "$SNAPSHOT_LEDGER" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    jq -e --argjson pr "$pr" --arg mc "$mc" \
+        'select(.pr == $pr and .mergeCommit == $mc)' \
+        "$SNAPSHOT_LEDGER" >/dev/null 2>&1
+}
+
 owed=()   # "PR #N — <trigger>"
 
 # --- Trigger 1 + 2: per merged PR (checks + labels), ONE batched gh call ------
 # `gh pr list --json statusCheckRollup` returns every PR's checks in a single
 # API call — fast enough for a SessionStart hook (no per-PR `gh pr view` loop).
-# Each row: number <TAB> space-joined-labels <TAB> comma-joined-red-checks.
+# Each row: number <TAB> mergeCommit-oid <TAB> space-joined-labels <TAB>
+# comma-joined-red-checks. The mergeCommit column lets us key the lossless
+# snapshot-ledger lookup (snapshot_trigger) on pr+mergeCommit before falling
+# back to the (lossy) live labels/statusCheckRollup columns.
 # `gh pr list` has no mergedAt sort key, so over-fetch by its default
 # createdAt-desc order, then re-sort by mergedAt and keep the most-recently
 # MERGED SCAN_N. Without this, a long-lived branch created early but merged
@@ -68,26 +111,36 @@ FETCH_N="${POSTMORTEM_FETCH_N:-$((SCAN_N * 3))}"
 # shellcheck disable=SC2016  # $c is a jq variable, not a shell expansion
 JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:'"$SCAN_N"']) | .[] | [
     (.number|tostring),
+    (.mergeCommit.oid // ""),
     ([.labels[].name] | join(" ")),
     ([.statusCheckRollup[]? | ((.conclusion // .state)) as $c
       | select($c != null and $c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL")
       | (.name // .context)] | unique | join(", "))
   ] | @tsv'
-while IFS=$'\t' read -r num labels redchecks; do
+while IFS=$'\t' read -r num mergecommit labels redchecks; do
     [ -z "$num" ] && continue
     has_entry "$num" && continue
     trigger=""
-    [ -n "$redchecks" ] && trigger="red-check: ${redchecks}"
-    if [ -n "$OVERRIDE_LABELS" ] && [ -n "$labels" ]; then
-        for lbl in $OVERRIDE_LABELS; do
-            case " $labels " in
-                *" $lbl "*) trigger="${trigger:+$trigger; }override: $lbl" ;;
-            esac
-        done
+    # PRIMARY: lossless ledger first. If this pr+mergeCommit has a snapshot line,
+    # the verdict at the merge instant is authoritative — derive the trigger from
+    # it and do NOT consult the (lossy) live labels/statusCheckRollup columns.
+    if [ -n "$mergecommit" ] && has_snapshot "$num" "$mergecommit"; then
+        trigger="$(snapshot_trigger "$num" "$mergecommit")"
+    else
+        # FALLBACK (documented degraded path): no ledger entry (un-instrumented /
+        # pre-ledger merge) → derive from the live query as before.
+        [ -n "$redchecks" ] && trigger="red-check: ${redchecks}"
+        if [ -n "$OVERRIDE_LABELS" ] && [ -n "$labels" ]; then
+            for lbl in $OVERRIDE_LABELS; do
+                case " $labels " in
+                    *" $lbl "*) trigger="${trigger:+$trigger; }override: $lbl" ;;
+                esac
+            done
+        fi
     fi
     [ -n "$trigger" ] && owed+=("PR #$num — $trigger")
 done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
-            --json number,labels,mergedAt,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null || true)
+            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null || true)
 
 # --- Trigger 3: Revert commits on develop ------------------------------------
 while IFS= read -r line; do

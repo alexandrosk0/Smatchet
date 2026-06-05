@@ -28,6 +28,17 @@ All clarifications that the orchestrator anticipates needing are batched **once 
 1. **After opening the PR**: start `agents/scripts/core/merge-gates.sh` polling immediately. DO NOT ask "should I poll?" or "will you check manually?"
 2. **After CodeRabbit posts actionable findings**: fetch the CR comments, assess each finding, fix valid ones, push, and resume polling. DO NOT ask the user whether to address CR findings.
 3. **After `GATES_PASSED`**: squash-merge immediately (when authorised). DO NOT ask "should I merge now?"
+
+   **Append a merge-time gate-verdict snapshot (mandatory, all merge actors).** Immediately after the `gh api -X PUT repos/<owner>/<repo>/pulls/<N>/merge -f merge_method=squash` call returns (capture its `.sha` as `<mergeCommit>`), the in-session orchestrator merge **and** `git-janitor` MUST append a lossless snapshot line to the committed ledger `docs/self-improvement/merge-snapshots.jsonl`. This captures the override-labels + red-checks *at the merge-decision instant* — the only lossless capture, since GitHub overwrites `statusCheckRollup` contexts on re-run and override labels are stripped post-merge (`docs/adr/0017-merge-time-snapshot-ledger.md`). The `merge-watcher` daemon does this in `handle_pass()`; the two in-session actors run the shared helper directly:
+
+   ```bash
+   bash agents/scripts/core/merge-snapshot-append.sh \
+       <N> <mergeCommit> <headSha> GATES_PASSED "" "<override-labels-csv>" orchestrator
+   #                                              ^redChecks="" on the GATES_PASSED path
+   # git-janitor passes mergeActor 'git-janitor' as the final arg instead of 'orchestrator'.
+   ```
+
+   `<headSha>` is the PR head oid (`gh pr view <N> --json headRefOid --jq .headRefOid`); `<override-labels-csv>` is the comma-joined subset of the PR's labels that are in `project.config.json` `merge_gates.override_labels`. The helper is idempotent on `pr`+`mergeCommit` (a retry is a no-op) and never aborts the merge path — a write failure is logged, not fatal (`postmortem-owed.sh` keeps the live `statusCheckRollup` fallback for un-snapshotted merges).
 4. **After merge conflicts on rebase**: resolve conflicts autonomously (prefer the semantically correct version), force-push the rebased branch, and resume polling. DO NOT ask which side to keep unless both sides are substantive and ambiguous.
 5. **After squash-merge succeeds**: proceed to git-janitor cleanup and backlog entry. DO NOT ask "anything else?"
 6. **Closeout issue-sweep** (advisory, non-blocking): run `bash agents/scripts/core/issue-sweep.sh` (dry-run) — surfaces open-Issue triage verdicts + the top-`P0`/`P1` `[issue-propose]` line (`docs/agent-rules/issue-triage.md` § Fixing an Issue). It **proposes** the next bug; it does **not** auto-fix and does **not** pause the loop. Deeper / periodic triage is the `issue-janitor` (off-loop).
