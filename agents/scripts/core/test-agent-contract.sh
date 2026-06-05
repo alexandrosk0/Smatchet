@@ -97,15 +97,17 @@ if [[ $miss -eq 0 ]]; then check_pass "debug-detective 6/6"; else check_fail "de
 # 4. Every agent has ## Outcome: mandate text.
 # -------------------------------------------------------------------------
 echo
-echo "[4/13] ## Outcome: mandate present in every agent prompt (24 files, README excluded)"
+echo "[4/13] ## Outcome: mandate present in every agent prompt (README excluded)"
 miss_outcome=()
+total_agents=0
 for f in $(agent_files); do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
+  total_agents=$((total_agents + 1))
   if ! grep -qF "## Outcome:" "$f"; then miss_outcome+=("$base"); fi
 done
 if [[ ${#miss_outcome[@]} -eq 0 ]]; then
-  check_pass "24/24 agents have ## Outcome: mandate"
+  check_pass "$total_agents/$total_agents agents have ## Outcome: mandate"
 else
   for m in "${miss_outcome[@]}"; do echo "    missing: $m"; done
   check_fail "${#miss_outcome[@]} agents missing ## Outcome: mandate"
