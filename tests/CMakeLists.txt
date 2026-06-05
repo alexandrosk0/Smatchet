@@ -124,6 +124,9 @@ add_executable(SmatchetTests
     Core/TicketSyncService.test.cpp
     Core/OfflineQueueServiceRuntime.test.cpp
     Core/OfflineFieldEditMerge.test.cpp
+    # ADR-0016 — pure scalar offline-conflict classifier (ServerMovedFromBase). Header-only
+    # policy (OfflineFieldConflictPolicy.h), zero banned includes; no extra .cpp link.
+    Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp
