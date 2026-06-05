@@ -301,11 +301,16 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
 }
 
 void QueueEdit(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
-               std::vector<PendingFieldEdit>& pendingEdits) {
+               std::vector<PendingFieldEdit>& pendingEdits, const std::string& originalValue) {
     PendingFieldEdit edit;
     edit.IssueId = issueId;
     edit.Field = field;
     edit.Values = values;
+    // Scalar conflict base (ADR-0016): the pre-edit display value, captured at the single
+    // QueueEdit choke point so every scalar grid/cell editor path records a base uniformly.
+    // Rich (long-text modal) edits set OriginalRichValue instead and never reach here.
+    edit.OriginalValue = originalValue;
+    edit.HasOriginalValue = true; // a scalar base WAS captured here, even if it's blank (ADR-0016).
     pendingEdits.push_back(std::move(edit));
 }
 
@@ -387,7 +392,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         state.ClearEditing();
     } else if (submitted || (!editJustStarted && ImGui::IsItemDeactivatedAfterEdit())) {
-        QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits);
+        QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, ticket.GetFieldValue(field.Id));
         state.ClearEditing();
     } else if (editJustStarted) {
         state.EditJustStarted = false;
@@ -524,7 +529,7 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     const std::string currentId = ResolveOptionId(field, currentValue);
     const bool selectedNone = currentId.empty();
     if (ImGui::Selectable("<clear>", selectedNone)) {
-        QueueEdit(ticket.id, field, {}, pendingEdits);
+        QueueEdit(ticket.id, field, {}, pendingEdits, ticket.GetFieldValue(field.Id));
     }
     ImGui::Separator();
 
@@ -554,7 +559,7 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
         const bool isSelected = (option.Id == currentId);
         ImGui::PushID(optionId.c_str());
         if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
-            QueueEdit(ticket.id, field, {option.Id}, pendingEdits);
+            QueueEdit(ticket.id, field, {option.Id}, pendingEdits, ticket.GetFieldValue(field.Id));
             ImGui::CloseCurrentPopup();
         }
         ImGui::PopID();
@@ -565,7 +570,7 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     // Pressing enter commits when the filter narrows to a single match. When several still match,
     // the top one is committed as a least-surprise default that mirrors typeahead pickers.
     if (submitOnEnter && firstMatch != nullptr) {
-        QueueEdit(ticket.id, field, {firstMatch->Id}, pendingEdits);
+        QueueEdit(ticket.id, field, {firstMatch->Id}, pendingEdits, ticket.GetFieldValue(field.Id));
         ImGui::CloseCurrentPopup();
     }
 }
@@ -672,7 +677,7 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
     }
 
     if (ImGui::Selectable("<clear all>", selectedSet.empty())) {
-        QueueEdit(ticket.id, field, {}, pendingEdits);
+        QueueEdit(ticket.id, field, {}, pendingEdits, ticket.GetFieldValue(field.Id));
     }
     ImGui::Separator();
 
@@ -705,7 +710,7 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
             }
             std::vector<std::string> updated(selectedSet.begin(), selectedSet.end());
             std::sort(updated.begin(), updated.end());
-            QueueEdit(ticket.id, field, updated, pendingEdits);
+            QueueEdit(ticket.id, field, updated, pendingEdits, ticket.GetFieldValue(field.Id));
         }
         if (option.Disabled) {
             ImGui::EndDisabled();
@@ -841,14 +846,15 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo("##cascadeselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
         if (ImGui::Selectable("<clear>", parentId.empty() && childId.empty())) {
-            QueueEdit(ticket.id, field, {}, pendingEdits);
+            QueueEdit(ticket.id, field, {}, pendingEdits, ticket.GetFieldValue(field.Id));
         }
         ImGui::Separator();
         for (const auto& parent : field.AllowedValueOptions) {
             if (parent.Children.empty()) {
                 const bool selected = (parent.Id == parentId && childId.empty());
                 if (ImGui::Selectable(parent.Value.c_str(), selected)) {
-                    QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, std::string())}, pendingEdits);
+                    QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, std::string())}, pendingEdits,
+                              ticket.GetFieldValue(field.Id));
                 }
                 continue;
             }
@@ -856,13 +862,15 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
             if (ImGui::BeginMenu(parent.Value.c_str())) {
                 const bool parentOnlySelected = (parent.Id == parentId && childId.empty());
                 if (ImGui::Selectable("<parent only>", parentOnlySelected)) {
-                    QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, std::string())}, pendingEdits);
+                    QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, std::string())}, pendingEdits,
+                              ticket.GetFieldValue(field.Id));
                 }
                 ImGui::Separator();
                 for (const auto& child : parent.Children) {
                     const bool selected = (parent.Id == parentId && child.Id == childId);
                     if (ImGui::Selectable(child.Value.c_str(), selected)) {
-                        QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, child.Id)}, pendingEdits);
+                        QueueEdit(ticket.id, field, {EncodeCascadingSelection(parent.Id, child.Id)}, pendingEdits,
+                                  ticket.GetFieldValue(field.Id));
                     }
                 }
                 ImGui::EndMenu();
@@ -1305,7 +1313,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         TrackerLabelsEditor::RenderLabelsFieldEditor(
             app, ticket, *field, currentValue,
             [&](const std::string& issueId, const TrackerField& fld, const std::vector<std::string>& values) {
-                QueueEdit(issueId, fld, values, pendingEdits);
+                QueueEdit(issueId, fld, values, pendingEdits, currentValue);
             },
             state, singleClickToEdit);
         return;
@@ -1341,7 +1349,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         TrackerDateTimeFieldEditor::RenderDateTimeFieldEditor(
             ticket, *field, currentValue, state,
             [&](const std::string& issueId, const TrackerField& fld, const std::vector<std::string>& values) {
-                QueueEdit(issueId, fld, values, pendingEdits);
+                QueueEdit(issueId, fld, values, pendingEdits, currentValue);
             },
             dateFormatOption, thresholdDays, singleClickToEdit);
         return;

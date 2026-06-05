@@ -198,12 +198,14 @@ AppController::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds)
 
 std::int64_t AppController::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                                   const std::string& fieldsPayloadJson, std::string& outError,
-                                                  const std::string& originalRichValue) {
+                                                  const std::string& originalRichValue,
+                                                  const std::string& originalValue, bool hasOriginalValue) {
     if (!offlineQueue_) {
         outError = "Offline queue not initialized.";
         return 0;
     }
-    return offlineQueue_->QueueFieldEditOffline(issueKey, fieldId, fieldsPayloadJson, outError, originalRichValue);
+    return offlineQueue_->QueueFieldEditOffline(issueKey, fieldId, fieldsPayloadJson, outError, originalRichValue,
+                                                originalValue, hasOriginalValue);
 }
 
 std::vector<PendingFieldEditRecord> AppController::GetPendingFieldEdits() const {
@@ -214,10 +216,10 @@ std::vector<DeadPendingFieldEdit> AppController::GetDeadPendingFieldEdits() cons
     return offlineQueue_ ? offlineQueue_->GetDeadPendingFieldEdits() : std::vector<DeadPendingFieldEdit>{};
 }
 
-void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
-                                             const std::string& richKind) {
+void AppController::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
+                                             const std::string& richKind, const std::string& kind) {
     if (offlineQueue_) {
-        offlineQueue_->ResolveFieldEditConflict(id, resolvedMarkdown, richKind);
+        offlineQueue_->ResolveFieldEditConflict(id, resolvedValue, richKind, kind);
         offlineQueue_->RestartReplayTimersNow(std::chrono::steady_clock::now());
     }
 }

@@ -495,6 +495,257 @@ TEST_CASE("OfflineQueueServiceRuntime: field-edit → merge conflict marks row, 
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0016 — Scalar conflict: server moved since the user edited → suspend (kind:scalar), no PUT.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: scalar conflict suspends with kind:scalar, no PUT" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    // Server's current display value for `status` diverged from the captured base.
+    CachedTicket fresh;
+    fresh.id = "PROJ-50";
+    fresh.fieldValues["status"] = "Done"; // theirs
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "In Review"}}.dump();
+    // base="In Progress" (display), no rich base → scalar path. hasOriginalValue=true marks a
+    // captured scalar base (ADR-0016 presence flag).
+    const auto id = svc.QueueFieldEditOffline("PROJ-50", "status", payload, err, std::string(), "In Progress", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    CHECK(row.HasMergeConflict);
+    CHECK(row.ConflictContextJson.find("\"kind\":\"scalar\"") != std::string::npos);
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 — Scalar, server unchanged: base == theirs → replay normally (no conflict).
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: scalar unchanged replays (no conflict)") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+    CachedTicket fresh;
+    fresh.id = "PROJ-51";
+    fresh.fieldValues["priority"] = "High"; // theirs == base → no divergence
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"priority", "High"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-51", "priority", payload, err, std::string(), "High", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 decision (c) — permanent re-fetch failure with a base captured → kind:unverified
+// suspend (never silent dead-letter, never silent overwrite).
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: permanent re-fetch failure with base → unverified suspend" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    // 404 is permanent (IsTrackerTransportErrorText==false).
+    deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "HTTP 404: not found");
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-52", "status", payload, err, std::string(), "In Progress", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    CHECK(row.HasMergeConflict);
+    CHECK(row.ConflictContextJson.find("\"kind\":\"unverified\"") != std::string::npos);
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 decision (c) — transient re-fetch failure retries (bumps attempts), then routes to
+// unverified at the attempt cap. Never silently dead-lettered.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: transient re-fetch failure retries then unverified at cap" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    // Timeout is transient (IsTrackerTransportErrorText==true).
+    deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "Operation timed out after 30000 ms");
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-53", "status", payload, err, std::string(), "In Progress", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    // First tick: transient + below cap → retry (attempts bumped, no conflict yet).
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    CHECK_FALSE(svc.GetPendingFieldEdits().front().HasMergeConflict);
+    CHECK(svc.GetPendingFieldEdits().front().Attempts == 1);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+
+    // Walk attempts to one-below-cap; the next transient tick would tip it over → unverified.
+    deps.CacheImpl->UpdatePendingFieldEdit(id, OfflineQueueReplayPolicy::kMaxReplayAttempts - 1, "transient");
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    CHECK(row.HasMergeConflict);
+    CHECK(row.ConflictContextJson.find("\"kind\":\"unverified\"") != std::string::npos);
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 residue — a row with NO base captured (legacy) still replays (last-write-wins). The
+// re-fetch is not even attempted (no base to compare against).
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: no-base row replays (documented last-write-wins residue)") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+    // Even if a fetch WOULD diverge, no base means we never look.
+    deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "HTTP 404: not found");
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-54", "status", payload, err, std::string(), std::string());
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+    CHECK(deps.BackendImpl->FetchIssuesForKeysCallCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 (#3 regression) — a CAPTURED-but-BLANK scalar base (originalValue=="" with
+// hasOriginalValue=true) is still conflict-checked: when the server moved from blank to a value,
+// the replay suspends (kind:scalar), NOT silently last-write-wins. Detection keys on the presence
+// flag, not emptiness.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: blank-but-captured scalar base still conflict-checks" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    // Server now has a non-empty value; the captured base was blank → server moved.
+    CachedTicket fresh;
+    fresh.id = "PROJ-57";
+    fresh.fieldValues["status"] = "Done"; // theirs (base was "")
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "In Review"}}.dump();
+    // base="" but hasOriginalValue=true → presence, not emptiness, drives detection.
+    const auto id = svc.QueueFieldEditOffline("PROJ-57", "status", payload, err, std::string(), std::string(), true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    // Without the presence flag this would have last-write-won (PUT issued, queue drained). With
+    // it, the blank base is recognized and the conflict suspends.
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    CHECK(row.HasMergeConflict);
+    CHECK(row.ConflictContextJson.find("\"kind\":\"scalar\"") != std::string::npos);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 (#1 regression) — resolving a conflict for a NON-EXISTENT row must NOT fabricate a
+// payload. The service logs-and-skips; no fabricated `__resolved__`-keyed row is created.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: resolve on missing row does not fabricate a payload") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+
+    // No row with id 999999 exists. Resolve must be a no-op (log-and-skip), not a fabricated write.
+    svc.ResolveFieldEditConflict(999999, "whatever", std::string(), "scalar");
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 — Discard resolution: hard-deletes the queue row AND emits an audit entry.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: discard hard-deletes row + emits audit entry") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-55", "status", payload, err, std::string(), "In Progress", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+
+    // The UI "Discard my edit" path routes through DeletePendingFieldEdits (ADR-0016).
+    const auto summary = svc.DeletePendingFieldEdits({id});
+    CHECK(summary.Deleted == 1);
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(svc.GetDeadPendingFieldEdits().empty()); // dead-letter stays failures-only.
+
+    // Audit entry for the discard (offline_queue_field_edit_delete) lands in the audit log.
+    const std::size_t matches = WaitForAuditLines("offline_queue_field_edit_delete", 1u);
+    CHECK(matches >= 1u);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 — Resolve clears BOTH bases so the next replay performs the consented overwrite.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: resolve clears both rich + scalar bases") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-56", "status", payload, err, std::string(), "In Progress", true);
+    REQUIRE(id > 0);
+    REQUIRE(svc.GetPendingFieldEdits().front().OriginalValue == "In Progress");
+
+    // Resolve a scalar conflict to "Done" — clears bases, rewrites payload value.
+    svc.ResolveFieldEditConflict(id, "Done", std::string(), "scalar");
+
+    const auto row = svc.GetPendingFieldEdits().front();
+    CHECK(row.OriginalValue.empty());     // scalar base nulled
+    CHECK(row.OriginalRichValue.empty()); // rich base nulled
+    CHECK_FALSE(row.HasMergeConflict);
+}
+
+// ---------------------------------------------------------------------------
 // Case 12 — `OfflineQueueReplayPolicy::ShouldArchive` boundary coverage in isolation, both
 // pre-attempt and post-failure shapes. Mirrors how the runtime invokes the policy.
 // ---------------------------------------------------------------------------

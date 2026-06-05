@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
+#include "FieldEditAuditSource.h"
 #include "IOfflineQueueDeps.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
@@ -11,6 +12,7 @@
 #include "LocalCacheManager.h"
 #include "Logger.h"
 #include "MarkdownConvert.h"
+#include "OfflineFieldConflictPolicy.h"
 #include "OfflineQueueReplayPolicy.h"
 #include "TextMerge.h"
 #include "TrackerHttpUtils.h"
@@ -418,7 +420,8 @@ OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendi
 
 std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                                         const std::string& fieldsPayloadJson, std::string& outError,
-                                                        const std::string& originalRichValue) {
+                                                        const std::string& originalRichValue,
+                                                        const std::string& originalValue, bool hasOriginalValue) {
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -435,8 +438,8 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         return 0;
     }
     try {
-        const std::int64_t id =
-            deps_.Cache()->EnqueuePendingFieldEdit(issueKey, fieldId, fieldsPayloadJson, originalRichValue);
+        const std::int64_t id = deps_.Cache()->EnqueuePendingFieldEdit(
+            issueKey, fieldId, fieldsPayloadJson, originalRichValue, originalValue, hasOriginalValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
                  issueKey.c_str(), fieldId.c_str());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
@@ -483,54 +486,63 @@ std::vector<DeadPendingFieldEdit> OfflineQueueService::GetDeadPendingFieldEdits(
     }
 }
 
-void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedMarkdown,
-                                                   const std::string& richKind) {
+void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
+                                                   const std::string& richKind, const std::string& kind) {
     if (!deps_.Cache())
         return;
+    // ADR-0016 resolution shapes. A rich `text` resolution reconverts the resolved Markdown to
+    // ADF/HTML via `richKind` and writes it into the payload key. A `scalar` resolution writes
+    // the chosen display value into the payload key verbatim (no conversion). An `unverified`
+    // resolution ("Force Mine") keeps the original queued payload unchanged and just replays it.
+    const bool isRichText = (kind != "scalar" && kind != "unverified");
+    const bool isUnverified = (kind == "unverified");
     try {
-        // Rebuild the final backend payload from the resolved Markdown.
-        std::string resolvedPayloadJson;
-        if (richKind == "adf") {
-            const nlohmann::json adfDoc = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
-            // We don't know the field id here, but the existing payload key is preserved by
-            // wrapping as-is. The replay will use the stored payload JSON directly.
-            resolvedPayloadJson = nlohmann::json{{std::string("__resolved__"), adfDoc}}.dump();
-        } else {
-            resolvedPayloadJson = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
-        }
-        // Simple approach: store the resolved payload back — the replay will use it directly.
-        // We parse the existing payload first to keep the correct field key.
         try {
             auto existing = deps_.Cache()->LoadPendingFieldEdits();
             const auto rowIt =
                 std::find_if(existing.begin(), existing.end(), [&](const auto& row) { return row.Id == id; });
             if (rowIt != existing.end()) {
                 const auto& row = *rowIt;
+                if (isUnverified) {
+                    // Force Mine: replay the original backend-format payload untouched; only the
+                    // conflict flag + bases are cleared by ResolveFieldEditConflict.
+                    deps_.Cache()->ResolveFieldEditConflict(id, row.FieldsPayloadJson);
+                    return;
+                }
                 nlohmann::json newPayload;
                 try {
                     newPayload = nlohmann::json::parse(row.FieldsPayloadJson);
-                } catch (...) {
+                } catch (...) { // catch-all-ok: malformed stored payload → rebuild from the key
                     newPayload = nlohmann::json::object();
                 }
-                // Determine the actual payload key: may be "description" (Jira)
-                // or "description_html" (Plane). Use the key already present in the payload.
                 std::string payloadKey = row.FieldId;
                 if (!newPayload.contains(payloadKey)) {
                     const std::string altKey = row.FieldId + "_html";
                     if (newPayload.contains(altKey))
                         payloadKey = altKey;
                 }
-                if (richKind == "adf") {
-                    newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedMarkdown);
+                if (isRichText) {
+                    if (richKind == "adf") {
+                        newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedValue);
+                    } else {
+                        newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedValue);
+                    }
                 } else {
-                    newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedMarkdown);
+                    // Scalar: the chosen display value is written under the same key the queued
+                    // payload already used (scalar payloads store a display-compatible string).
+                    newPayload[payloadKey] = resolvedValue;
                 }
                 deps_.Cache()->ResolveFieldEditConflict(id, newPayload.dump());
                 return;
             }
-        } catch (...) {
+        } catch (...) { // catch-all-ok: load/find failure → log-and-skip below (never fabricate a payload)
         }
-        deps_.Cache()->ResolveFieldEditConflict(id, resolvedPayloadJson);
+        // Row not found (or load threw): there is no real field key to write under, so a fabricated
+        // payload would lose the field key and misapply / dead-letter on the next replay. Leave the
+        // row untouched — it stays conflict-suspended and the user can retry resolution. (ADR-0016.)
+        LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld — pending row not loadable; skipping (no "
+                 "fabricated payload)",
+                 static_cast<long long>(id));
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::ResolveFieldEditConflict id=%lld err=%s", static_cast<long long>(id),
                   ex.what());
@@ -707,14 +719,148 @@ bool OfflineQueueService::RunFieldEditCacheMutation(const char* action, std::int
     }
 }
 
-bool OfflineQueueService::ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row,
-                                                        nlohmann::json& fieldsPayload, LocalCacheManager* cache,
-                                                        ITrackerIssueReader* reader, FieldEditReplayTally& tally) {
-    // 3-way merge: if the edit carries an original rich value as the base, fetch the current
-    // server document as theirs and attempt to merge before replaying.
-    if (row.OriginalRichValue.empty() || !fieldsPayload.is_object()) {
-        return false;
+OfflineQueueService::FieldEditConflictOutcome
+OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
+                                               LocalCacheManager* cache, ITrackerIssueReader* reader,
+                                               FieldEditReplayTally& tally) {
+    // Decide which base this row captured: rich (3-way text merge) vs scalar (2-way display
+    // compare). A row with neither base keeps last-write-wins (documented residue, ADR-0016).
+    // Scalar presence keys on the HasOriginalValue flag (NOT emptiness) so a genuinely BLANK
+    // captured base is still conflict-checked instead of mistaken for a legacy no-base row.
+    const bool hasRichBase = !row.OriginalRichValue.empty();
+    const bool hasScalarBase = row.HasOriginalValue;
+    if ((!hasRichBase && !hasScalarBase) || !fieldsPayload.is_object()) {
+        return FieldEditConflictOutcome::Proceed;
     }
+
+    // Single server re-fetch shared by both kinds. Decision (c): a based edit never dies
+    // silently — a transient failure retries (until the cap, then asks); a permanent failure
+    // (4xx, classified via IsTrackerTransportErrorText==false) asks immediately.
+    std::vector<CachedTicket> freshTickets;
+    std::string fetchErr;
+    bool fetchOk = false;
+    try {
+        const TrackerConfig cfgForFetch = ConfigManager::Load();
+        const ViewsStore viewsForFetch = ConfigManager::LoadViewsOrBootstrap(cfgForFetch);
+        const std::vector<std::string> keysForFetch = {row.IssueKey};
+        fetchOk = reader->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch, freshTickets, fetchErr);
+    } catch (const std::exception& ex) {
+        fetchOk = false;
+        fetchErr = ex.what();
+        LOG_WARN("TickOfflineFieldEdits: conflict re-fetch threw issue=%s field=%s err=%s", row.IssueKey.c_str(),
+                 row.FieldId.c_str(), ex.what());
+    } catch (...) {
+        fetchOk = false;
+        fetchErr = "unknown exception";
+        LOG_WARN("TickOfflineFieldEdits: conflict re-fetch threw (unknown) issue=%s field=%s", row.IssueKey.c_str(),
+                 row.FieldId.c_str());
+    }
+
+    if (!fetchOk || freshTickets.empty()) {
+        const bool transient = fetchOk ? true : IsTrackerTransportErrorText(fetchErr);
+        if (transient && !OfflineQueueReplayPolicy::ShouldArchive(row.Attempts + 1)) {
+            // Transient + below cap: retry next tick (caller bumps attempts). Never a silent replay.
+            LOG_INFO("TickOfflineFieldEdits: re-fetch unavailable (transient) issue=%s field=%s — retry next tick",
+                     row.IssueKey.c_str(), row.FieldId.c_str());
+            return FieldEditConflictOutcome::RetryTransient;
+        }
+        // Permanent error, OR transient that would hit the cap → ask the user (never dead-letter).
+        LOG_WARN("TickOfflineFieldEdits: server value unverifiable issue=%s field=%s — recording unverified conflict",
+                 row.IssueKey.c_str(), row.FieldId.c_str());
+        return RecordUnverifiedFieldEditConflict(row, fieldsPayload, cache, tally);
+    }
+
+    const CachedTicket& fresh = freshTickets.front();
+    if (hasRichBase) {
+        return ResolveFieldEditThreeWayMerge(row, fieldsPayload, fresh, cache, tally);
+    }
+    return ResolveFieldEditScalarConflict(row, fieldsPayload, fresh, cache, tally);
+}
+
+OfflineQueueService::FieldEditConflictOutcome
+OfflineQueueService::RecordUnverifiedFieldEditConflict(const PendingFieldEditRecord& row,
+                                                       const nlohmann::json& fieldsPayload, LocalCacheManager* cache,
+                                                       FieldEditReplayTally& tally) {
+    // Best-effort "mine" display for the modal: the payload value under the field key, stringified.
+    std::string mine;
+    if (fieldsPayload.is_object()) {
+        std::string payloadKey = row.FieldId;
+        if (!fieldsPayload.contains(payloadKey)) {
+            const std::string altKey = row.FieldId + "_html";
+            if (fieldsPayload.contains(altKey))
+                payloadKey = altKey;
+        }
+        if (fieldsPayload.contains(payloadKey)) {
+            const nlohmann::json& v = fieldsPayload[payloadKey];
+            mine = v.is_string() ? v.get<std::string>() : v.dump();
+        }
+    }
+    nlohmann::json ctx;
+    ctx["kind"] = "unverified";
+    ctx["mine"] = mine;
+    ctx["fieldId"] = row.FieldId;
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("offline-field-conflict");
+    const nlohmann::json auditData{
+        {"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}, {"kind", "unverified"}};
+    BackendAuditTrail::AppendBegin("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                   auditOp, auditData);
+    RunFieldEditCacheMutation(
+        "mark_field_edit_conflict_unverified", row.Id, [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); },
+        tally);
+    BackendAuditTrail::AppendResult("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                    auditOp, true, std::string(), auditData);
+    return FieldEditConflictOutcome::Suspend;
+}
+
+OfflineQueueService::FieldEditConflictOutcome
+OfflineQueueService::ResolveFieldEditScalarConflict(const PendingFieldEditRecord& row,
+                                                    const nlohmann::json& fieldsPayload, const CachedTicket& fresh,
+                                                    LocalCacheManager* cache, FieldEditReplayTally& tally) {
+    const std::string& fid = row.FieldId;
+    const std::string theirs = fresh.GetFieldValue(fid);
+    // Presence-aware: a captured BLANK base is a real reference, so blank→non-blank is a move.
+    if (!OfflineFieldConflictPolicy::ServerMovedFromCapturedBase(row.HasOriginalValue, row.OriginalValue, theirs)) {
+        return FieldEditConflictOutcome::Proceed; // server unchanged → replay the queued value.
+    }
+    // The locally-applied display value is the user's intent ("mine"); the queued payload is
+    // backend format and not shown. We surface the field's current cached display as mine.
+    std::string mine = row.OriginalValue;
+    if (fieldsPayload.is_object()) {
+        std::string payloadKey = fid;
+        if (!fieldsPayload.contains(payloadKey)) {
+            const std::string altKey = fid + "_html";
+            if (fieldsPayload.contains(altKey))
+                payloadKey = altKey;
+        }
+        if (fieldsPayload.contains(payloadKey)) {
+            const nlohmann::json& v = fieldsPayload[payloadKey];
+            if (v.is_string())
+                mine = v.get<std::string>();
+        }
+    }
+    LOG_WARN("TickOfflineFieldEdits: scalar conflict issue=%s field=%s — suspending replay pending user resolution",
+             row.IssueKey.c_str(), fid.c_str());
+    nlohmann::json ctx;
+    ctx["kind"] = "scalar";
+    ctx["base"] = row.OriginalValue;
+    ctx["mine"] = mine;
+    ctx["theirs"] = theirs;
+    ctx["fieldId"] = fid;
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("offline-field-conflict");
+    const nlohmann::json auditData{{"pending_field_edit_id", row.Id}, {"field_id", fid}, {"kind", "scalar"}};
+    BackendAuditTrail::AppendBegin("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                   auditOp, auditData);
+    RunFieldEditCacheMutation(
+        "mark_field_edit_conflict_scalar", row.Id, [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); }, tally);
+    BackendAuditTrail::AppendResult("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                    auditOp, true, std::string(), auditData);
+    return FieldEditConflictOutcome::Suspend;
+}
+
+OfflineQueueService::FieldEditConflictOutcome
+OfflineQueueService::ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
+                                                   const CachedTicket& fresh, LocalCacheManager* cache,
+                                                   FieldEditReplayTally& tally) {
     const std::string& fid = row.FieldId;
     std::string payloadKey = fid;
     if (!fieldsPayload.contains(fid)) {
@@ -723,44 +869,27 @@ bool OfflineQueueService::ResolveFieldEditThreeWayMerge(const PendingFieldEditRe
             payloadKey = altKey;
     }
     if (!fieldsPayload.contains(payloadKey)) {
-        return false;
+        return FieldEditConflictOutcome::Proceed;
     }
 
     const bool isAdf = OfflineFieldEditMergeDetail::DetectRichKindIsAdf(row.OriginalRichValue);
-
-    bool skipMergeConflict = false;
-    try {
-        const TrackerConfig cfgForFetch = ConfigManager::Load();
-        const ViewsStore viewsForFetch = ConfigManager::LoadViewsOrBootstrap(cfgForFetch);
-        std::vector<CachedTicket> freshTickets;
-        std::string fetchErr;
-        const std::vector<std::string> keysForFetch = {row.IssueKey};
-        if (reader->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch, freshTickets, fetchErr) &&
-            !freshTickets.empty()) {
-
-            const CachedTicket& fresh = freshTickets.front();
-            const std::string theirsRich = fresh.GetFieldRichValue(fid);
-
-            if (!theirsRich.empty() && theirsRich != row.OriginalRichValue) {
-                const std::string baseMd = OfflineFieldEditMergeDetail::RichToMarkdown(row.OriginalRichValue);
-                const std::string theirsMd = OfflineFieldEditMergeDetail::RichToMarkdown(theirsRich);
-                const std::string mineMd = OfflineFieldEditMergeDetail::MineValueToMarkdown(fieldsPayload[payloadKey]);
-
-                const TextMerge::MergeResult merged = TextMerge::ThreeWayMerge(baseMd, mineMd, theirsMd);
-                skipMergeConflict = ApplyOrRecordMergeResult(row, fieldsPayload, payloadKey, isAdf, merged, baseMd,
-                                                             mineMd, theirsMd, cache, tally);
-            }
-        }
-    } catch (const std::exception& ex) {
-        LOG_WARN("TickOfflineFieldEdits: 3-way merge fetch/merge failed issue=%s field=%s err=%s — "
-                 "replaying original edit as-is",
-                 row.IssueKey.c_str(), fid.c_str(), ex.what());
-    } catch (...) {
-        LOG_WARN("TickOfflineFieldEdits: 3-way merge failed (unknown) issue=%s field=%s — "
-                 "replaying original edit as-is",
-                 row.IssueKey.c_str(), fid.c_str());
+    const std::string theirsRich = fresh.GetFieldRichValue(fid);
+    // Only an UNCHANGED server (theirs == base) skips the merge. An empty `theirsRich` that differs
+    // from a non-empty base is a concurrent server clear/delete — a real change worth asking about
+    // (ADR-0016: a clear IS a change), so it falls through to the 3-way merge below. When base is
+    // also empty, theirs==base catches the no-op case here.
+    if (theirsRich == row.OriginalRichValue) {
+        return FieldEditConflictOutcome::Proceed; // server unchanged → replay the queued value.
     }
-    return skipMergeConflict;
+
+    const std::string baseMd = OfflineFieldEditMergeDetail::RichToMarkdown(row.OriginalRichValue);
+    const std::string theirsMd = OfflineFieldEditMergeDetail::RichToMarkdown(theirsRich);
+    const std::string mineMd = OfflineFieldEditMergeDetail::MineValueToMarkdown(fieldsPayload[payloadKey]);
+
+    const TextMerge::MergeResult merged = TextMerge::ThreeWayMerge(baseMd, mineMd, theirsMd);
+    const bool suspended =
+        ApplyOrRecordMergeResult(row, fieldsPayload, payloadKey, isAdf, merged, baseMd, mineMd, theirsMd, cache, tally);
+    return suspended ? FieldEditConflictOutcome::Suspend : FieldEditConflictOutcome::Proceed;
 }
 
 bool OfflineQueueService::ApplyOrRecordMergeResult(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
@@ -781,13 +910,17 @@ bool OfflineQueueService::ApplyOrRecordMergeResult(const PendingFieldEditRecord&
     LOG_WARN("TickOfflineFieldEdits: 3-way merge conflict for issue=%s field=%s — "
              "suspending replay pending user resolution",
              row.IssueKey.c_str(), row.FieldId.c_str());
-    const nlohmann::json ctx = {{"base", baseMd},
-                                {"mine", mineMd},
-                                {"theirs", theirsMd},
-                                {"fieldId", row.FieldId},
-                                {"richKind", isAdf ? "adf" : "html"}};
+    // `kind:"text"` selects the rich modal branch; `richKind` (orthogonal) drives reconversion.
+    const nlohmann::json ctx = {{"kind", "text"},     {"base", baseMd},         {"mine", mineMd},
+                                {"theirs", theirsMd}, {"fieldId", row.FieldId}, {"richKind", isAdf ? "adf" : "html"}};
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("offline-field-conflict");
+    const nlohmann::json auditData{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}, {"kind", "text"}};
+    BackendAuditTrail::AppendBegin("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                   auditOp, auditData);
     RunFieldEditCacheMutation(
         "mark_field_edit_conflict", row.Id, [&]() { cache->MarkFieldEditConflict(row.Id, ctx.dump()); }, tally);
+    BackendAuditTrail::AppendResult("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,
+                                    auditOp, true, std::string(), auditData);
     return true;
 }
 
@@ -830,7 +963,20 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
 
     tally.RanUpdate = true;
 
-    if (ResolveFieldEditThreeWayMerge(row, fieldsPayload, cache, reader, tally)) {
+    const FieldEditConflictOutcome conflict = EvaluateFieldEditConflict(row, fieldsPayload, cache, reader, tally);
+    if (conflict == FieldEditConflictOutcome::Suspend) {
+        // A rich, scalar, or unverified conflict was recorded — the row stays suspended for the
+        // user to resolve before it replays.
+        ++tally.Failures;
+        return;
+    }
+    if (conflict == FieldEditConflictOutcome::RetryTransient) {
+        // Transient re-fetch failure on a based row, below the cap: bump attempts, retry next tick.
+        const int nextAttempts = row.Attempts + 1;
+        (void)RunFieldEditCacheMutation(
+            "update_pending_field_edit_refetch_retry", row.Id,
+            [&]() { cache->UpdatePendingFieldEdit(row.Id, nextAttempts, "conflict re-fetch unavailable (transient)"); },
+            tally);
         ++tally.Failures;
         return;
     }
