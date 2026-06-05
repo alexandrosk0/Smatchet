@@ -7,8 +7,17 @@
 **Rule**: orchestrator runs each user task end-to-end in **one turn** without pausing for confirmation at each stage. The default sequence:
 
 ```
-diagnose → fix → build → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
+diagnose → fix → build → [pre-first-push gate] → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
+
+**`[pre-first-push gate]` (mandatory before the FIRST push of a feature branch — `reduce-coderabbit-review-spend` Slice 1).** Before the branch ever reaches GitHub (where CodeRabbit's `auto_review` fires on every push), the implementer MUST have run, locally, the full pre-merge gate set + a subsystem self-review — never deferring locally-knowable findings to CI/CR. The gate is:
+
+1. `bash scripts/dev/pre-ship.sh` — clang-format + strict-zone delta + comment-noise + function-size + md_lint → green.
+2. Dual-target `/WX` build when `Source/Core/` changed — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` → exit 0, warning-clean (warnings are errors).
+3. The relevant `ninja-test-msvc` ctest subset when logic changed → green.
+4. **Leaf-`AGENTS.md` self-review** — for every strict-zone dir touched, re-read its leaf `AGENTS.md` and self-check the diff against its invariants (e.g. the Sync audit begin/result pair, Persistence additive-schema + presence-not-emptiness, no empty `catch(...)`). These are exactly the finding classes CR raised on #854; catching them pre-push removes a whole CR round-trip.
+
+**Why:** the last-10-PRs CR-spend audit found re-pushes (each a fresh CR auto-review) dominate review cost, concentrated in PRs that fix-cycled on locally-knowable issues after the first push. The gate lands CR's first review on near-final code. It does NOT eliminate CI-toolchain-version-only findings (e.g. MSVC-14.40+ `/WX` warnings unreproducible on an older local toolset) — those are accepted residue. Batch all CR-fix-round changes into a **single** push (don't push-per-finding). See [`docs/agent-rules/process-rules.md`](process-rules.md) § Cadence + verification for the once-per-slice build/test discipline this composes with.
 
 `[gate-check]` is the merge-gates poller (see [`docs/agent-rules/merge-gates.md`](merge-gates.md)) — polls CI + CodeRabbit + user-comments before squash-merge. Triggered only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher" or in-session "merge when green"). The `smatchet-merge-watcher` host daemon (per `docs/plans/shipped/smatchet-merge-watcher.md`) takes over from this point when the user picks post-ship option 3; the orchestrator's in-session role ends at register-time. Halt + `AskUserQuestion` on block / timeout / `gh` API failure / PR closed-externally / pagination overflow.
 
