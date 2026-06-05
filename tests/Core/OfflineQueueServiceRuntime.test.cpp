@@ -510,8 +510,9 @@ TEST_CASE("OfflineQueueServiceRuntime: scalar conflict suspends with kind:scalar
     OfflineQueueService svc(deps);
     std::string err;
     const std::string payload = nlohmann::json{{"status", "In Review"}}.dump();
-    // base="In Progress" (display), no rich base → scalar path.
-    const auto id = svc.QueueFieldEditOffline("PROJ-50", "status", payload, err, std::string(), "In Progress");
+    // base="In Progress" (display), no rich base → scalar path. hasOriginalValue=true marks a
+    // captured scalar base (ADR-0016 presence flag).
+    const auto id = svc.QueueFieldEditOffline("PROJ-50", "status", payload, err, std::string(), "In Progress", true);
     REQUIRE(err.empty());
     REQUIRE(id > 0);
 
@@ -541,7 +542,7 @@ TEST_CASE("OfflineQueueServiceRuntime: scalar unchanged replays (no conflict)") 
     OfflineQueueService svc(deps);
     std::string err;
     const std::string payload = nlohmann::json{{"priority", "High"}}.dump();
-    const auto id = svc.QueueFieldEditOffline("PROJ-51", "priority", payload, err, std::string(), "High");
+    const auto id = svc.QueueFieldEditOffline("PROJ-51", "priority", payload, err, std::string(), "High", true);
     REQUIRE(err.empty());
     REQUIRE(id > 0);
 
@@ -566,7 +567,7 @@ TEST_CASE("OfflineQueueServiceRuntime: permanent re-fetch failure with base → 
     OfflineQueueService svc(deps);
     std::string err;
     const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
-    const auto id = svc.QueueFieldEditOffline("PROJ-52", "status", payload, err, std::string(), "In Progress");
+    const auto id = svc.QueueFieldEditOffline("PROJ-52", "status", payload, err, std::string(), "In Progress", true);
     REQUIRE(err.empty());
     REQUIRE(id > 0);
 
@@ -595,7 +596,7 @@ TEST_CASE("OfflineQueueServiceRuntime: transient re-fetch failure retries then u
     OfflineQueueService svc(deps);
     std::string err;
     const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
-    const auto id = svc.QueueFieldEditOffline("PROJ-53", "status", payload, err, std::string(), "In Progress");
+    const auto id = svc.QueueFieldEditOffline("PROJ-53", "status", payload, err, std::string(), "In Progress", true);
     REQUIRE(err.empty());
     REQUIRE(id > 0);
 
@@ -646,6 +647,58 @@ TEST_CASE("OfflineQueueServiceRuntime: no-base row replays (documented last-writ
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0016 (#3 regression) — a CAPTURED-but-BLANK scalar base (originalValue=="" with
+// hasOriginalValue=true) is still conflict-checked: when the server moved from blank to a value,
+// the replay suspends (kind:scalar), NOT silently last-write-wins. Detection keys on the presence
+// flag, not emptiness.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: blank-but-captured scalar base still conflict-checks" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    // Server now has a non-empty value; the captured base was blank → server moved.
+    CachedTicket fresh;
+    fresh.id = "PROJ-57";
+    fresh.fieldValues["status"] = "Done"; // theirs (base was "")
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "In Review"}}.dump();
+    // base="" but hasOriginalValue=true → presence, not emptiness, drives detection.
+    const auto id = svc.QueueFieldEditOffline("PROJ-57", "status", payload, err, std::string(), std::string(), true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    // Without the presence flag this would have last-write-won (PUT issued, queue drained). With
+    // it, the blank base is recognized and the conflict suspends.
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    CHECK(row.HasMergeConflict);
+    CHECK(row.ConflictContextJson.find("\"kind\":\"scalar\"") != std::string::npos);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0016 (#1 regression) — resolving a conflict for a NON-EXISTENT row must NOT fabricate a
+// payload. The service logs-and-skips; no fabricated `__resolved__`-keyed row is created.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: resolve on missing row does not fabricate a payload") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+
+    // No row with id 999999 exists. Resolve must be a no-op (log-and-skip), not a fabricated write.
+    svc.ResolveFieldEditConflict(999999, "whatever", std::string(), "scalar");
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+}
+
+// ---------------------------------------------------------------------------
 // ADR-0016 — Discard resolution: hard-deletes the queue row AND emits an audit entry.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: discard hard-deletes row + emits audit entry") {
@@ -654,7 +707,7 @@ TEST_CASE("OfflineQueueServiceRuntime: discard hard-deletes row + emits audit en
     OfflineQueueService svc(deps);
     std::string err;
     const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
-    const auto id = svc.QueueFieldEditOffline("PROJ-55", "status", payload, err, std::string(), "In Progress");
+    const auto id = svc.QueueFieldEditOffline("PROJ-55", "status", payload, err, std::string(), "In Progress", true);
     REQUIRE(err.empty());
     REQUIRE(id > 0);
     REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
@@ -679,7 +732,7 @@ TEST_CASE("OfflineQueueServiceRuntime: resolve clears both rich + scalar bases")
     OfflineQueueService svc(deps);
     std::string err;
     const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
-    const auto id = svc.QueueFieldEditOffline("PROJ-56", "status", payload, err, std::string(), "In Progress");
+    const auto id = svc.QueueFieldEditOffline("PROJ-56", "status", payload, err, std::string(), "In Progress", true);
     REQUIRE(id > 0);
     REQUIRE(svc.GetPendingFieldEdits().front().OriginalValue == "In Progress");
 

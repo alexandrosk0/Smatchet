@@ -34,6 +34,20 @@ TEST_CASE("ServerMovedFromBase — empty base → no detection (documented resid
     CHECK_FALSE(ServerMovedFromBase("   ", "Done")); // all-whitespace base trims to empty
 }
 
+TEST_CASE("ServerMovedFromCapturedBase — presence flag drives detection (ADR-0016)") {
+    using OfflineFieldConflictPolicy::ServerMovedFromCapturedBase;
+    // hasBase=false → never detect (legacy / no-base residue), regardless of values.
+    CHECK_FALSE(ServerMovedFromCapturedBase(false, "", "Done"));
+    CHECK_FALSE(ServerMovedFromCapturedBase(false, "In Progress", "Done"));
+    // hasBase=true → a captured BLANK base is a real reference: blank→non-blank IS a move.
+    CHECK(ServerMovedFromCapturedBase(true, "", "Done"));
+    CHECK(ServerMovedFromCapturedBase(true, "In Progress", "Done"));
+    // hasBase=true, unchanged (incl. blank==blank after trim) → not a move.
+    CHECK_FALSE(ServerMovedFromCapturedBase(true, "Done", "Done"));
+    CHECK_FALSE(ServerMovedFromCapturedBase(true, "", ""));
+    CHECK_FALSE(ServerMovedFromCapturedBase(true, "  ", "")); // both trim to empty
+}
+
 TEST_CASE("TrimWhitespace — strips leading + trailing ASCII whitespace") {
     CHECK(TrimWhitespace("  hi  ") == "hi");
     CHECK(TrimWhitespace("\t\nx\r\n") == "x");
