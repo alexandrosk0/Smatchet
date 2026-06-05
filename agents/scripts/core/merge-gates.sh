@@ -45,17 +45,20 @@
 #   MERGE_GATES_CR_INSTALLED     — override CR-installed auto-detection
 #   MERGE_GATES_STALE_REREVIEW_POLLS — consecutive STALE polls on same HEAD
 #                                  before auto-posting `@coderabbitai review`
-#                                  (default 5; 0 disables). Also gates the
-#                                  CR=NONE early-nudge (fires on the first
-#                                  blocking NONE poll per HEAD; 0 disables it
-#                                  too).
+#                                  (default 5; 0 disables the STALE nudge only).
+#   MERGE_GATES_NONE_NUDGE_POLLS — consecutive blocking-NONE polls on same HEAD
+#                                  before auto-posting `@coderabbitai review`
+#                                  (default 0 = DISABLED; auto_review already
+#                                  reviews every push). Decoupled from the STALE
+#                                  knob — reduce-coderabbit-review-spend Slice 2.
 #   MERGE_GATES_PRIOR_NUDGE_HEAD — seed the once-per-HEAD nudge guard +
-#   MERGE_GATES_PRIOR_STALE_HEAD    STALE streak from a prior invocation. Set by
-#   MERGE_GATES_PRIOR_STALE_STREAK  smatchet-merge-watcher (which persists them in
-#                                  the registry) so the once-per-HEAD nudge + the
-#                                  STALE re-review survive MERGE_GATES_MAX_POLLS=1
-#                                  cycles. The poll emits the updated values on a
-#                                  `GATE_CARRY` stdout line before `return 1`.
+#   MERGE_GATES_PRIOR_STALE_HEAD    STALE/NONE streaks from a prior invocation.
+#   MERGE_GATES_PRIOR_STALE_STREAK  Set by smatchet-merge-watcher (which persists
+#   MERGE_GATES_PRIOR_NONE_HEAD     them in the registry) so the once-per-HEAD
+#   MERGE_GATES_PRIOR_NONE_STREAK   nudge + the STALE/NONE streaks survive
+#                                  MERGE_GATES_MAX_POLLS=1 cycles. The poll emits
+#                                  the updated values on a `GATE_CARRY` stdout
+#                                  line before `return 1`.
 #
 # Manual CR re-review trigger: post `@coderabbitai review` as a PR comment
 # (`gh pr comment <pr> --body "@coderabbitai review"`) when CR's review is
@@ -136,13 +139,24 @@ poll_merge_gates() {
     # When CR state is STALE_WITH_FINDINGS / STALE_UNKNOWN on the same HEAD for
     # this many consecutive polls, post `@coderabbitai review` once per HEAD to
     # nudge CR into re-reviewing. Default 5 polls (~5 min at default interval).
-    # Set to 0 to disable the auto-trigger. This same knob also gates the
-    # CR=NONE early-nudge below (0 disables both); the NONE nudge fires on the
-    # first blocking NONE poll per HEAD rather than waiting for a streak, so CR
-    # resolves before the grace window instead of after it.
+    # Set to 0 to disable the STALE auto-trigger. (The CR=NONE early-nudge is a
+    # SEPARATE knob — MERGE_GATES_NONE_NUDGE_POLLS, below — so the redundant
+    # first-poll NONE nudge can be off while this STALE backstop stays on.)
     local STALE_REREVIEW_POLLS="${MERGE_GATES_STALE_REREVIEW_POLLS:-5}"
     if ! [[ "$STALE_REREVIEW_POLLS" =~ ^[0-9]+$ ]]; then
         echo "poll_merge_gates: MERGE_GATES_STALE_REREVIEW_POLLS must be a non-negative integer (got: $STALE_REREVIEW_POLLS)" >&2
+        return 3
+    fi
+    # CR=NONE early-nudge threshold — consecutive blocking-NONE polls on the same
+    # HEAD before posting one `@coderabbitai review`. Default 0 = DISABLED:
+    # `.coderabbit.yaml` auto_review already reviews every push, so the nudge was
+    # redundant and (firing on the first NONE poll) raced ahead of auto_review.
+    # Set > 0 to re-enable after an N-poll grace that lets auto_review post first.
+    # The grace-then-pass fall-through + the STALE trigger remain the backstops.
+    # (reduce-coderabbit-review-spend Slice 2.)
+    local NONE_NUDGE_POLLS="${MERGE_GATES_NONE_NUDGE_POLLS:-0}"
+    if ! [[ "$NONE_NUDGE_POLLS" =~ ^[0-9]+$ ]]; then
+        echo "poll_merge_gates: MERGE_GATES_NONE_NUDGE_POLLS must be a non-negative integer (got: $NONE_NUDGE_POLLS)" >&2
         return 3
     fi
     # Number of consecutive polls the gate will wait for CodeRabbit when the repo has
@@ -206,6 +220,12 @@ poll_merge_gates() {
     local stale_streak="${MERGE_GATES_PRIOR_STALE_STREAK:-0}"
     [[ "$stale_streak" =~ ^[0-9]+$ ]] || stale_streak=0
     local stale_head="${MERGE_GATES_PRIOR_STALE_HEAD:-}"
+    # NONE early-nudge streak — consecutive blocking-NONE polls on the same HEAD
+    # (mirror of stale_streak). Carries across MAX_POLLS=1 watcher cycles via the
+    # GATE_CARRY line so the per-HEAD grace survives the merge-watcher's 1-poll loop.
+    local none_streak="${MERGE_GATES_PRIOR_NONE_STREAK:-0}"
+    [[ "$none_streak" =~ ^[0-9]+$ ]] || none_streak=0
+    local none_head="${MERGE_GATES_PRIOR_NONE_HEAD:-}"
     # Shared once-per-HEAD guard for the `@coderabbitai review` auto-nudge —
     # both the STALE re-review trigger and the NONE early-nudge dedup on this so
     # at most one comment is posted per head SHA (they never double-post).
@@ -643,8 +663,17 @@ poll_merge_gates() {
                 # second `@coderabbitai review` on top of CR's own auto-review.
                 if [ "$cr_pass" = false ] && [ "$cr_installed" = true ] && \
                    [ "$cr_size_skip_block" != true ] && [ "$cr_context_present" != 1 ] && \
-                   [ "$STALE_REREVIEW_POLLS" -gt 0 ]; then
-                    nudge_coderabbit "$head_sha" "CR=NONE on HEAD ${head_sha:0:8} (no review yet, within grace)"
+                   [ "$NONE_NUDGE_POLLS" -gt 0 ]; then
+                    # Streak-gated (NOT first-poll): let auto_review post first.
+                    if [ "$none_head" = "$head_sha" ]; then
+                        none_streak=$((none_streak + 1))
+                    else
+                        none_head="$head_sha"
+                        none_streak=1
+                    fi
+                    if [ "$none_streak" -ge "$NONE_NUDGE_POLLS" ]; then
+                        nudge_coderabbit "$head_sha" "CR=NONE on HEAD ${head_sha:0:8} for $none_streak polls (auto_review not yet posted)"
+                    fi
                 fi
                 ;;
         esac
@@ -659,6 +688,12 @@ poll_merge_gates() {
         if [ "$cr_state" != "STALE" ] || [ "$cr_pass" = true ]; then
             stale_streak=0
             stale_head=""
+        fi
+        # NONE early-nudge streak resets whenever the state leaves blocking-NONE
+        # (CR engaged / passed). Mirrors the STALE reset above.
+        if [ "$cr_state" != "NONE" ] || [ "$cr_pass" = true ]; then
+            none_streak=0
+            none_head=""
         fi
 
         printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
@@ -732,8 +767,8 @@ poll_merge_gates() {
     # counter). Distinct `GATE_CARRY` prefix; the per-iteration `Poll …` line
     # above always precedes it on this return path, so a caller parsing the
     # status line (first `Poll ` line) is unaffected.
-    printf 'GATE_CARRY nudge_head=%s stale_head=%s stale_streak=%s\n' \
-        "$rereview_posted_head" "$stale_head" "$stale_streak"
+    printf 'GATE_CARRY nudge_head=%s stale_head=%s stale_streak=%s none_head=%s none_streak=%s\n' \
+        "$rereview_posted_head" "$stale_head" "$stale_streak" "$none_head" "$none_streak"
     return 1
 }
 

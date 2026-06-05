@@ -134,6 +134,7 @@ teardown() {
     unset MERGE_GATES_TEST_ANSWER MERGE_GATES_STUB_CR_CONFIG MERGE_GATES_STUB_READY_MARKER
     unset MERGE_GATES_STUB_COMMENT_COUNTER MERGE_GATES_STUB_COMMENT_EXIT
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS MERGE_GATES_STALE_REREVIEW_POLLS
+    unset MERGE_GATES_NONE_NUDGE_POLLS MERGE_GATES_PRIOR_NONE_STREAK MERGE_GATES_PRIOR_NONE_HEAD
 }
 
 # ---------- helpers ----------
@@ -807,11 +808,12 @@ set_fixture() {
 
 # ---------- CR=NONE early auto-nudge (@coderabbitai review, once per HEAD) ----------
 
-@test "CR installed + NONE within grace → posts exactly one @coderabbitai review" {
-    # CR installed, no review yet, within grace → blocks (NONE+pending) AND
-    # fires the early-nudge once. Counter file records each gh pr comment call;
-    # assert exactly one line.
+@test "CR installed + NONE within grace + NONE_NUDGE_POLLS=1 → posts exactly one @coderabbitai review" {
+    # NONE early-nudge is OFF by default (Slice 2); opt in with NONE_NUDGE_POLLS=1
+    # so a single NONE poll (streak 1 ≥ 1) fires the nudge once. Counter file
+    # records each gh pr comment call; assert exactly one line.
     export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
@@ -827,8 +829,9 @@ set_fixture() {
 
 @test "CR=NONE nudge is idempotent per HEAD — 3 polls on same head still post once" {
     # Across multiple polls on the same head SHA, the shared once-per-HEAD guard
-    # must keep the post count at exactly one.
+    # must keep the post count at exactly one (NONE_NUDGE_POLLS=1 to opt in).
     export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_MAX_POLLS=3
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
@@ -840,9 +843,11 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_MAX_POLLS
 }
 
-@test "CR=NONE nudge disabled when MERGE_GATES_STALE_REREVIEW_POLLS=0 → no post" {
+@test "CR=NONE early-nudge OFF by default (NONE_NUDGE_POLLS=0) → no post (Slice 2)" {
+    # Default after Slice 2: the NONE early-nudge is disabled — .coderabbit.yaml
+    # auto_review already reviews every push, so nudging was redundant. NONE still
+    # blocks within grace, but no @coderabbitai review is posted.
     export MERGE_GATES_CR_INSTALLED=true
-    export MERGE_GATES_STALE_REREVIEW_POLLS=0
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
@@ -851,7 +856,7 @@ set_fixture() {
     [[ "$output" == *"NONE+pending"* ]]
     [ ! -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
-    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
+    unset MERGE_GATES_CR_INSTALLED
 }
 
 @test "CR=NONE but a CodeRabbit context already present on head -> no redundant nudge" {
@@ -860,7 +865,9 @@ set_fixture() {
     # poking @coderabbitai review while CR is already reviewing is the "multiple
     # pokes" noise (e.g. a bot auto-commit moves the head, CR auto-reviews it, and
     # the poller used to re-poke on top). cr_context_present (field 21) gates it.
+    # NONE_NUDGE_POLLS=1 so the default-off doesn't mask the context-present gate.
     export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     local f
@@ -883,6 +890,7 @@ set_fixture() {
     # attempt per poll (2), the poller surfaces the retry WARN, and the run
     # still completes cleanly (exit 1, NONE+pending block).
     export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_MAX_POLLS=2
     export MERGE_GATES_STUB_COMMENT_EXIT=1
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
@@ -898,7 +906,9 @@ set_fixture() {
 }
 
 @test "CR not installed + NONE → no nudge (NONE is steady state)" {
-    # cr_installed=false (default 404 probe) → NONE passes, no nudge.
+    # cr_installed=false (default 404 probe) → NONE passes, no nudge — even with
+    # the early-nudge opted in, the cr_installed gate (not the default-off) wins.
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
@@ -909,6 +919,56 @@ set_fixture() {
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
 }
 
+@test "NONE_NUDGE_POLLS=3 + single poll → streak 1 < 3 → no nudge yet (Slice 2 grace)" {
+    # Opt-in but with a 3-poll grace: one NONE poll only reaches streak 1, below
+    # the threshold, so auto_review still gets its window before any nudge.
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=3
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [ ! -f "$MERGE_GATES_STUB_COMMENT_COUNTER" ]
+    [[ "$output" == *"none_streak=1"* ]]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_NONE_NUDGE_POLLS
+}
+
+@test "NONE_NUDGE_POLLS=3 + PRIOR_NONE_STREAK=2 on same head → streak 3 → one nudge (carry round-trip)" {
+    # The none_streak carries across MAX_POLLS=1 watcher cycles via
+    # MERGE_GATES_PRIOR_NONE_STREAK/HEAD (mirror of the STALE carry). Seed a prior
+    # streak of 2 on the fixture head (abc123); the third poll crosses the
+    # threshold and fires exactly one nudge.
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=3
+    export MERGE_GATES_PRIOR_NONE_HEAD="abc123"
+    export MERGE_GATES_PRIOR_NONE_STREAK=2
+    export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [ "$(wc -l < "$MERGE_GATES_STUB_COMMENT_COUNTER")" -eq 1 ]
+    grep -q "@coderabbitai review" "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    [[ "$output" == *"none_streak=3"* ]]
+    rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_NONE_NUDGE_POLLS MERGE_GATES_PRIOR_NONE_HEAD MERGE_GATES_PRIOR_NONE_STREAK
+}
+
+@test "GATE_CARRY line carries none_head + none_streak (Slice 2 round-trip fields)" {
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=3
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"GATE_CARRY "* ]]
+    [[ "$output" == *"none_head=abc123"* ]]
+    [[ "$output" == *"none_streak=1"* ]]
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_NONE_NUDGE_POLLS
+}
+
 # ---------- cross-poll nudge/STALE persistence (MERGE_GATES_PRIOR_* <-> GATE_CARRY) ----------
 # The watcher runs the poller with MERGE_GATES_MAX_POLLS=1 once per cycle, so the
 # in-process once-per-HEAD guard + STALE streak reset every invocation. These
@@ -917,6 +977,7 @@ set_fixture() {
 
 @test "nudge guard survives MAX_POLLS=1 cycles via GATE_CARRY round-trip → exactly one post" {
     export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
@@ -943,6 +1004,7 @@ set_fixture() {
 
 @test "nudge re-arms when MERGE_GATES_PRIOR_NUDGE_HEAD is a stale (different) head" {
     export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_PRIOR_NUDGE_HEAD="staleHEAD000"
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
