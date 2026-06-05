@@ -70,7 +70,7 @@ Net: the per-PR redundant nudge disappears with zero review-coverage loss.
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-`N/A — no `Source/Core/` change; both slices are agent-prompt/docs (Slice 1) and a bash gate-poller + bats (Slice 2).`
+N/A — no `Source/Core/` change; both slices are agent-prompt/docs (Slice 1) and a bash gate-poller + bats (Slice 2).
 
 ## Risks / non-goals
 
