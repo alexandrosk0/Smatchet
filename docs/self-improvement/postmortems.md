@@ -27,6 +27,45 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-05 · develop direct-push (`a678741f`) · direct push to `develop` (no PR/CI/CR)
+
+> Self-reported. A one-line docs link fix was committed + pushed straight to
+> `develop`, bypassing the PR/CI/CodeRabbit gates, because the orchestrator was on
+> the `develop` branch (from a prior `git checkout develop` to start merge-gate
+> pollers) and never switched back to the intended feature branch before
+> `git commit` + `git pull && git push`.
+
+### What escaped
+The **PR-only / branch-protection gate** for `develop`. The fix (`a678741f` —
+`docs/agent-rules/delegation.md`, adding the `../../` prefix to the
+`scratchpad-recall` skill link) reached `develop` with no PR, no CI run, and no
+CodeRabbit review. Branch protection (strict + required checks) did not block it
+because the push used the repo owner's credentials (admin bypass).
+
+### Root cause
+Branch-state drift in a long multi-PR session. The orchestrator ran
+`git checkout develop` to start the merge-gate pollers (which don't need a feature
+branch), then — several steps later, fixing a CI failure on PR #858 — edited
+`delegation.md` and `git commit`ed WITHOUT re-checking `git branch --show-current`.
+The commit landed on local `develop`; `git pull --no-edit` (clearing a
+non-fast-forward) then `git push` sent it to `origin/develop`. The content was
+correct + locally-verified (`test-markdown-links` + `test-portable-purity` passed),
+so no breakage shipped — develop's latent broken link was actually fixed — but the
+gate was bypassed. The intended target was `claude/slice1-pre-first-push-gate`
+(#858), which now inherits the fix via update-branch.
+
+### Preventing gate
+A git **`pre-push` hook that rejects any direct push to `develop` / `main`** from a
+local same-named branch (a `develop -> develop` push) unless an explicit
+`SMATCHET_ALLOW_DEVELOP_PUSH=1` escape is set — turning the branch-protection
+contract (which admin credentials bypass) into a **local hard stop**. Pairs with an
+orchestrator discipline: **verify `git branch --show-current` immediately before
+every `git commit` in a multi-branch session** — the pollers' `git checkout develop`
+is the recurring trigger for branch-state drift.
+
+### Filed as
+[`docs/self-improvement/categories/tooling.md`](categories/tooling.md) (2026-06-05, P2 — pre-push develop-guard hook + branch-verify discipline).
+
 ## 2026-06-04 · PR #844 · override label (`tests-out-of-band`)
 
 > Flagged by `postmortem-owed.sh` because #844 merged carrying a `tests-out-of-band`
