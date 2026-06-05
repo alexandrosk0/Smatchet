@@ -16,14 +16,19 @@
 # fix/lock-staleness-yaml-parse and the Phase 4 deviations log in
 # docs/plans/shipped/git-ref-plan-locks.md.
 #
-# Required environment (provided by the workflow):
-#   REPO              — e.g. "alexandrosk0/Smatchet"
+# Environment (the workflow provides all three; in a local gh-authed shell
+# REPO + GH_TOKEN are OPTIONAL — both fall back to gh's ambient auth so the
+# sweep is runnable from a normal session, e.g. git-janitor's pre-flight,
+# without manual token plumbing):
+#   REPO              — e.g. "alexandrosk0/Smatchet"; if unset, resolved via
+#                       `gh repo view --json nameWithOwner` (current repo).
 #   THRESHOLD_DAYS    — integer (default 14)
-#   GH_TOKEN          — gh CLI auth (default GITHUB_TOKEN under Actions)
+#   GH_TOKEN          — gh CLI auth (default GITHUB_TOKEN under Actions); if
+#                       unset, falls back to gh's stored auth (`gh auth status`).
 #
 # Exit codes:
 #   0 — sweep finished (with or without findings)
-#   1 — required env var missing
+#   1 — repo unresolvable or gh unauthenticated
 #   2 — refs/locks/* could not be enumerated
 #
 # Side effects:
@@ -35,9 +40,22 @@ set -euo pipefail
 
 command -v gh >/dev/null 2>&1 || { echo "gh required" >&2; exit 2; }
 
-: "${REPO:?REPO env var required (e.g. alexandrosk0/Smatchet)}"
+# REPO: the workflow sets it explicitly; in a local shell fall back to the repo
+# gh resolves from the current directory's remote (ambient auth) so the sweep
+# isn't unrunnable without manual env plumbing (git-janitor's pre-flight already
+# authenticates gh).
+REPO="${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)}"
+[ -n "$REPO" ] || { echo "lock-staleness-sweep: REPO unset and 'gh repo view' could not resolve it (run from the repo dir with gh authed, or set REPO=owner/name)" >&2; exit 1; }
+
 : "${THRESHOLD_DAYS:=14}"
-: "${GH_TOKEN:?GH_TOKEN env var required}"
+
+# GH_TOKEN: under Actions the workflow provides it; in a local shell gh uses its
+# own stored credentials, so don't hard-require the env var — only fail when gh
+# is not authenticated at all.
+if [ -z "${GH_TOKEN:-}" ] && ! gh auth status >/dev/null 2>&1; then
+    echo "lock-staleness-sweep: no GH_TOKEN and gh is not authenticated (run 'gh auth login' or set GH_TOKEN)" >&2
+    exit 1
+fi
 
 PYBIN="${PYBIN:-}"
 if [ -z "$PYBIN" ]; then
