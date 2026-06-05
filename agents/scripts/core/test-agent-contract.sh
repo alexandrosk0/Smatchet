@@ -47,7 +47,7 @@ agent_files() {
 # 1. Implementer agents — 3 required headings.
 # -------------------------------------------------------------------------
 echo "[1/13] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
-IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-annotate unreal-bridge mechanic)
+IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-annotate unreal-bridge mechanic ui-host)
 for a in "${IMPLEMENTERS[@]}"; do
   f="$(agent_path "$a")"
   miss=0
