@@ -37,6 +37,7 @@ on:
       - 'agents/scripts/core/test-plan-index.sh'
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
       - 'agents/scripts/core/test-portable-purity.sh'
+      - 'agents/scripts/core/test-config-globs.sh'
       - 'agents/scripts/core/test-plan-naming.sh'
       - 'agents/scripts/core/test-markdown-links.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
@@ -274,6 +275,12 @@ jobs:
       - name: test-portable-purity — no NEW project literals in portable dirs
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-portable-purity.sh
+
+      - name: test-config-globs — project.config.json globs match >=1 tracked file
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-config-globs.sh --selftest
+          bash agents/scripts/core/test-config-globs.sh --check
 
       - name: test-markdown-links — no dangling [label](href) targets
         if: steps.detect.outputs.docs == 'true'
