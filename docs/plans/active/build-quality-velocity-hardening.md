@@ -159,6 +159,14 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - `c3c9a72b` (#909) · #33 `build.md`: MSVC toolset-pin (canonical `STL1001` / `with-msvc-env.sh` / `msvc_toolset_pin`) + stale-PCH (C2859) recovery.
 - `272dbabc` (#911) · #24 `no-glfw-in-core-headers` lint rule + #15 `function_size_audit.py --assert-absent` + #4 repoint dead `Locales/*.json` glob at the real source (+ `test-config-globs.sh`).
 - #38 (prune retired msys2 debris): already removed in `6537dc3` (`bootstrap-msys2.ps1` + `*-msys2` presets); leftover untracked `build/*msys2*` dirs cleared locally.
+- `0f3e6ab5` (#915) · Sprint-1 hygiene finish: #3 drop the dead `JiraClient.h` include from `AppController.h` (add the 5 cpr-free role interfaces it transitively provided — drops cpr from ~105 includers) · #5 tests glob-vs-list configure assert + `check-test-list.sh` · #6 `is-exe-fresh.sh` exe-staleness preflight.
+- `37562965` (#917) · #22 SHA-pin remaining FetchContent deps + `test-lua-mirror-smoke.sh`.
+- `c2287c02` (#918) · Test-delta gate auto-exempts no-new-runtime-surface diffs (the test-light exemption filed in the 2026-06-06 postmortem).
+- `e1bd3d38` (#921) · #7 prose-guard the comment-noise gate (`comment_audit.py` `is_prose_not_code` + `--selftest`, regression-guarded by `lint_rules.bats`) + wire the CI delta-lint gate into the Stop hook (`pre-ship-stop-gate.sh` — fires only in the ready-to-ship state, non-trapping, `SMATCHET_SKIP_STOP_GATE` escape).
+- `5a45dc49` (#922) · #11 per-PR UBSan job (`Sanitizer (UBSan via Clang)`, clang-cl) + #25 `SmatchetPackageUnrealLibs_DX12` packaging-graph smoke. Both non-required, additive. **Caveat (filed `infra.md` P2)**: the UBSan job is path-gated to `source_core_cpp` and merged without ever executing — validate on the next Source/Core C++ PR.
+- `20f63bb3` (#923) · #31 verified the Tracker `*Pure` extraction is already comprehensive (all 9 units have substantive tests); filled the one real gap — `IssueTableSerializer` (35 tests / 108 assertions). #32 doctest-native flaky-test quarantine (`SMATCHET_QUARANTINED_TEST_CASE` + `SMATCHET_QT_CHECK`, env-flip via `SMATCHET_RUN_FLAKY`).
+- `ea4017fa` (#927) · coverage fast-follow: `coverage.sh --no-breaks`. OpenCppCoverage attaches as a debugger, so doctest broke into it on #923's intentional WARN-on-false → `0x80000003` (all tests passed; the process crashed at teardown). `--no-breaks` disables only the break; real failures still fail. Fixes a latent coverage-job fragility. (Required because #923 auto-merged past the resulting red **non-required** Coverage check — gate-escape postmortem `postmortems.md` 2026-06-06 "#923".)
+- `9f5e56a6` (#929) · #8/#13 **PARKED**: `docs/plans/active/perf-gate-revival.md` — full investigation + 8-step playbook. The gate is a guaranteed-pass no-op today (zero `ci-windows-latest` baselines; perf workflows provision no Mesa software-GL so the headless `--spawn` launch is unproven; 6.94 ms is not encoded in `perf-compare.py`/`regression-policy.json`). SAFE-NOW steps (Mesa wiring, scenario-set fix, mean-ceiling code) + PARKED steps (live CI run → human-approved golden baselines → flake calibration → required-wiring) split in the doc; blocked on human baseline approval + multi-run flake calibration.
 
 ## Deviations from plan (Sprint 2 additions)
 - **#37**: planned shorthand was "add the `// catch-all-ok:` marker"; upgraded to a policy-mandated `LOG_WARN` (`exception-handling-policy.md` Network/API tier — a 2xx-response parse failure is not an escape-hatch case).
@@ -176,7 +184,13 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - **ctest** (`ninja-test-msvc`) 100%; the #16 discriminating case runs (8/8 assertions).
 - **#24/#15/#4**: `test-lint-rules.sh --selftest` + `lint_rules.bats` (27) + `function_size.bats` (19) + `function_size_audit.py --selftest` + `test-config-globs.sh` + doc suite — all green.
 - **#33**: `scripts/dev/test-docs.sh` 9/9.
-- **Not yet done** (remaining Sprint-1 hygiene): #3 (drop dead `JiraClient.h` include), #5 (tests glob-vs-list assert), #6 (`is-exe-fresh.sh`).
+- **Sprint-1 hygiene #3/#5/#6**: SHIPPED in #915 (`0f3e6ab5`) — see implementation log. (Sprint 1 now fully complete.)
+- **Sprint-2 status (as of 2026-06-06):**
+  - **Shipped:** #7 (#921), #11+#25 (#922), #22 (#917), #31+#32 (#923), #9/#18-partial + #29-skipped (#925), #14-via-strict-off (#920), coverage `--no-breaks` (#927). #12 batch-1 = 5/8 windows (#926).
+  - **Parked (human-gated):** #8/#13 (#929 revival playbook — golden-baseline approval + flake calibration).
+  - **Remaining 🟢:** #20/#28 (Core_DX12 json-PCH trial — deferred; needs a quiet build for a clean before/after timing measurement), #12 batch-2 (3 inline windows: Attachment Preview, New Issue Draft row, Offline Queue panel).
+  - **Escalated 🔴 (await user):** #19 (pImpl `AppController`), #21 (`Optional<T>`/`Result`). #10 (TSan) remains NO-GO-in-place (needs a Linux Clang preset).
+- **Open decision (filed `infra.md` P1):** merge-gates "never merge past ANY red" (AGENTS.md) ⇄ "non-required → pass" (tested impl) contradiction — surfaced after #923; awaiting an A/B/C choice.
 - Sprint 2 #9/#18 (partial) — fixed wrong FetchContent cache paths in `perf-pr-fast.yml`, `perf-full.yml`, and `coverage.yml` (all three cached `build/<preset>/_deps`, which is the subbuild CMakeCache dir, not the downloaded sources at `.fetchcontent-src`). Added sccache cross-job restore-key fallback in `perf-pr-fast.yml`. #29 skipped (justified below in Deviations).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
