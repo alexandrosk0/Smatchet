@@ -1,0 +1,6 @@
+{
+  "_comment": "Maps the canonical agent model TIERS (from each agent's harness-hints.claude-code.model, or an explicit harness-hints.pi.model) to a concrete pi --model pattern. These are Anthropic IDs from pi's model registry (@earendil-works/pi-ai models.generated.js). Empty string => omit `model:` so the subagent inherits pi's default model. Override per-run with env PI_MODEL_OPUS / PI_MODEL_SONNET / PI_MODEL_HAIKU. Requires an Anthropic provider configured in pi (ANTHROPIC_API_KEY or providers config). Bump the version suffix as newer GA models land (e.g. opus-4.6/4.7/4.8).",
+  "opus": "anthropic/claude-opus-4.5",
+  "sonnet": "anthropic/claude-sonnet-4.5",
+  "haiku": "anthropic/claude-haiku-4.5"
+}

@@ -6,13 +6,14 @@ Smatchet ships **harness-agnostic** agent definitions:
 - [`agents/*.md`](../../agents/) — one file per delegated agent (per the [agents.md spec](https://agents.md/)).
 - [`agents/_shared/`](../../agents/_shared/) — shared skills + token-tracking scripts any harness can wire.
 
-Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`) are **gitignored** — they're local build output that links into the canonical `agents/` tree and copies a small number of templates. After cloning the repo, run the setup script for the harness you use:
+Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`) are **gitignored** — they're local build output that links into the canonical `agents/` tree and copies a small number of templates. After cloning the repo, run the setup script for the harness you use:
 
 | Harness | Setup command | Details |
 |---|---|---|
 | Claude Code | `bash agents/scripts/core/setup-harness.sh claude-code` | [claude-code/setup.md](claude-code/setup.md) |
 | Codex / OpenAI Agents | `bash agents/scripts/core/setup-harness.sh codex` (no-op confirmation) | [codex/setup.md](codex/setup.md) |
 | Cursor | `bash agents/scripts/core/setup-harness.sh cursor` | [cursor/setup.md](cursor/setup.md) |
+| pi (earendil-works) | `bash agents/scripts/core/setup-harness.sh pi` | [pi/README.md](pi/README.md) |
 | Aider / generic | Manual — paste agent files from `agents/` as needed. No adapter dir. | — |
 
 Windows users can substitute `pwsh agents/scripts/core/setup-harness.ps1 <name>`.
