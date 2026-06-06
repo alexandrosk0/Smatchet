@@ -12,6 +12,9 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Tier-check base — overridable so --selftest can point at a temp fixture tree.
+PLAN_BASE="${SMATCHET_PLAN_BASE:-docs/plans}"
+
 # Known pre-existing dangling refs — citations to plans that never existed (or
 # illustrative placeholders), dangling as docs/design/<x>.md before the Phase-D
 # rename too. Allowlisted so this guard passes on inherited debt while still
@@ -22,14 +25,53 @@ cd "$(git rev-parse --show-toplevel)"
 #   stale structure refs: README.md, _plan-locks.md (real file is _plan-locks.generated.md)
 ALLOW_RE='/(example|foo|bar|baz|agentic-coding-handoff|agentic-flow-implementation|agentic-triage-flow|visual-regression-bootstrap|README|_plan-locks)\.md$'
 
-# Collect every referenced docs/plans/(active|shipped|deferred)/<slug>.md across tracked
-# files, then assert each exists.
-mapfile -t refs < <(git grep -hoE 'docs/plans/(active|shipped|deferred)/[A-Za-z0-9._-]+\.md' \
-                      -- ':!.understand-anything/' 2>/dev/null | sort -u)
+# Collect every referenced plan path across tracked files. Two forms resolve:
+#   * tier-ful   docs/plans/(active|shipped|deferred)/<slug>.md  — exact path.
+#   * tier-LESS  docs/plans/<slug>.md  — the move-proof form: resolves against
+#     ANY tier, so archiving a plan (git mv active->shipped) never breaks the
+#     reference and needs no ref-sweep. Prefer this form in NEW references.
+mapfile -t refs < <(git grep -hoE 'docs/plans/((active|shipped|deferred)/)?[A-Za-z0-9._-]+\.md' \
+                      -- ':!.understand-anything/' ':!agents/scripts/core/test-plan-ref-integrity.sh' \
+                      2>/dev/null | sort -u)
+
+# resolves <ref> — true if the ref points at a real plan file. A tier-less
+# docs/plans/<slug>.md resolves when <slug>.md exists in active/, shipped/, or
+# deferred/ (the plan can live in any tier without the ref naming which).
+resolves() {
+  local r="$1" slug t
+  [ -f "$r" ] && return 0                      # exact path (tier-ful, or a real flat file e.g. INDEX.md)
+  case "$r" in
+    docs/plans/*/*) return 1 ;;                # tier-ful (has a subdir) but absent -> dangling
+    docs/plans/*.md)                           # tier-less -> try every tier
+      slug="${r#docs/plans/}"
+      for t in active shipped deferred; do
+        [ -f "$PLAN_BASE/$t/$slug" ] && return 0
+      done
+      return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+# --selftest — self-contained: a temp tier tree + assertions on resolves().
+if [ "${1:-}" = "--selftest" ]; then
+  fail=0
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  mkdir -p "$tmp/active" "$tmp/shipped" "$tmp/deferred"
+  : > "$tmp/active/in-active.md"; : > "$tmp/shipped/in-shipped.md"; : > "$tmp/deferred/in-deferred.md"
+  SMATCHET_PLAN_BASE="$tmp"; PLAN_BASE="$tmp"
+  check() { if resolves "$1"; then got=0; else got=1; fi; [ "$got" = "$2" ] || { echo "FAIL: resolves('$1') want=$2 got=$got"; fail=1; }; }
+  check "docs/plans/in-active.md"          0   # tier-less, lives in active   -> resolves
+  check "docs/plans/in-shipped.md"         0   # tier-less, lives in shipped  -> resolves
+  check "docs/plans/in-deferred.md"        0   # tier-less, lives in deferred -> resolves
+  check "docs/plans/nonexistent-xyz.md"    1   # tier-less, nowhere           -> dangling
+  check "docs/plans/active/nope.md"        1   # tier-ful, absent             -> dangling
+  if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5/5)"; exit 0; fi
+  echo "test-plan-ref-integrity --selftest: FAIL"; exit 1
+fi
 
 missing=()
 for r in "${refs[@]}"; do
-  [ -f "$r" ] && continue
+  resolves "$r" && continue
   printf '%s\n' "$r" | grep -qE "$ALLOW_RE" && continue   # known pre-existing — skip
   missing+=("$r")
 done
