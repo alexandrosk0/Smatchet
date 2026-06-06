@@ -257,7 +257,9 @@ jobs:
 
       - name: test-plan-ref-integrity — no dangling docs/plans refs
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-plan-ref-integrity.sh
+        run: |
+          bash agents/scripts/core/test-plan-ref-integrity.sh --selftest
+          bash agents/scripts/core/test-plan-ref-integrity.sh
 
       - name: test-plan-naming — plan files are kebab-case
         if: steps.detect.outputs.docs == 'true'
