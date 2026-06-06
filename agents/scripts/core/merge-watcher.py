@@ -1583,6 +1583,96 @@ AUTO_ACT_SANITIZER_PROMPT = (
 )
 
 
+def _session_kv_int(text: str, key: str) -> int | None:
+    """First `key=<int>` value from a session-registry file's key=value lines,
+    or None when absent / non-numeric. Mirrors the bash `sed -n 's/^key=//p' |
+    head -n1` + numeric `case` guard in git-janitor.sh / session-tree-banner.sh."""
+    prefix = key + "="
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            val = line[len(prefix):].strip()
+            return int(val) if val.isdigit() else None
+    return None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort liveness probe for a registered session's ppid.
+
+    POSIX: signal 0 checks existence without delivering anything. Windows:
+    os.kill(pid, 0) maps to TerminateProcess and would *kill* the process, so it
+    is NEVER used there — probe read-only via OpenProcess + GetExitCodeProcess
+    through ctypes instead. Any probe failure returns False (the caller then
+    falls back to the ts-freshness signal), matching git-janitor.sh's
+    `kill -0 … || alive=0` bash behaviour.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            process_query_limited_information = 0x1000
+            still_active = 259
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if not handle:
+                return False
+            try:
+                code = wintypes.DWORD()
+                ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+                return bool(ok) and code.value == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        except (OSError, AttributeError):
+            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just not signalable by us
+    except OSError:
+        return False
+    return True
+
+
+def _count_live_sessions(tree_path: str) -> int:
+    """Count live interactive Claude Code sessions registered in a tree.
+
+    Mirrors the bash confinement guard git-janitor.sh got in PR #913 (its Step
+    3.5): read `<tree>/.claude/.active-sessions/*` — each file is key=value lines
+    (branch=/sha=/ppid=/ts=) named by session id (session-tree-banner.sh) — and
+    count an entry live when its `ts` is fresh (< 1800s old) OR its `ppid` is
+    still alive. Used by maybe_auto_act to confine the HEAD-mutating
+    `gh pr checkout` its spawn performs. No self-exclusion: the watcher daemon
+    is not itself a registered interactive session.
+    """
+    reg_dir = pathlib.Path(tree_path) / ".claude" / ".active-sessions"
+    if not reg_dir.is_dir():
+        return 0
+    now = int(time.time())
+    live = 0
+    try:
+        entries = list(reg_dir.iterdir())
+    except OSError:
+        return 0
+    for f in entries:
+        if not f.is_file():
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ts = _session_kv_int(text, "ts")
+        ppid = _session_kv_int(text, "ppid")
+        fresh = ts is not None and (now - ts) < 1800
+        alive = ppid is not None and _pid_alive(ppid)
+        if fresh or alive:
+            live += 1
+    return live
+
+
 def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
     """Option-A loop closer — spawn `claude -p ...` in the background to
     address CR findings OR sanitizer failures when the watcher detects them.
@@ -1679,6 +1769,24 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
             }
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return {"auto_act_action": f"skipped: git status check failed: {exc}"}
+    # Concurrent-session confinement — mirror the guard git-janitor.sh got in
+    # PR #913 (its Step 3.5). The spawn below runs `claude -p` with
+    # cwd=clone_path, whose prompt does `gh pr checkout <pr>` — that moves the
+    # clone's HEAD. If live interactive Claude Code sessions share this tree,
+    # that rug-pulls them (the exact multi-session collision #913 fixes). Defer
+    # — without consuming a budget slot (the reserve below is what increments
+    # auto_act_attempts) — when any session is live; the next push / poll
+    # re-attempts once the tree is idle. See docs/agent-rules/process-rules.md
+    # § Concurrent interactive sessions. The server-side squash-merge path
+    # (handle_pass) needs no such guard — it never touches a local HEAD.
+    live_sessions = _count_live_sessions(clone_path)
+    if live_sessions > 0:
+        return {
+            "auto_act_action": (
+                f"deferred: {live_sessions} live session(s) in clone tree "
+                "(HEAD-mutating gh pr checkout would rug-pull them)"
+            ),
+        }
     # Atomically check dedup + budget AND reserve a slot under a single
     # `registry_lock()` critical section. Closes a race where two daemons
     # could both observe attempts=N before either wrote attempts=N+1.

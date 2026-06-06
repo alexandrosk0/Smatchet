@@ -137,6 +137,24 @@ function Invoke-New {
     if (Test-Path -LiteralPath $path) { throw "Path already exists: $path" }
     if (-not (Test-Path -LiteralPath $TreesRoot)) { New-Item -ItemType Directory -Path $TreesRoot -Force | Out-Null }
 
+    # First-run bootstrap: close the #913 fresh-clone hole. The HEAD-drift guard
+    # lives in the gitignored .claude/, wired only by setup-harness. If THIS tree
+    # (the integration clone the launcher runs from) has never been provisioned,
+    # its guard is INACTIVE - so a concurrent session in the main clone is
+    # unprotected until someone remembers to run setup-harness. Provision it now,
+    # before spinning the worktree, so the standard launcher closes the hole
+    # without the user remembering. Idempotent (skips once the guard hook exists);
+    # non-fatal (a failure just warns - worktree creation still proceeds).
+    # See docs/harness/SETUP.md - Concurrent-session HEAD-drift guard.
+    $repoGuard = Join-Path $RepoRoot '.claude\hooks\guard-head-drift.sh'
+    if (-not (Test-Path -LiteralPath $repoGuard)) {
+        $bashBoot  = Get-BashExe
+        $setupBoot = (Join-Path $RepoRoot 'agents/scripts/core/setup-harness.sh') -replace '\\', '/'
+        Write-Host "First run: provisioning .claude/ in the integration tree ($RepoRoot) so its HEAD-drift guard is active ..." -ForegroundColor DarkGray
+        try { Invoke-Native -FailureMessage "setup-harness (integration tree) failed" -Arguments $bashBoot, $setupBoot, "claude-code" }
+        catch { Write-Host "  WARNING: could not provision the integration tree's .claude/ - run 'bash agents/scripts/core/setup-harness.sh claude-code' there manually. ($_)" -ForegroundColor Yellow }
+    }
+
     Write-Host "Fetching origin/$Base ..." -ForegroundColor DarkGray
     try { Invoke-Native -FailureMessage "fetch failed" -Arguments "git", "-C", $RepoRoot, "fetch", "--quiet", "origin", $Base }
     catch { Write-Host "  (fetch failed - using local $Base)" -ForegroundColor Yellow }

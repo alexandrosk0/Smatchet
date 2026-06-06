@@ -20,9 +20,15 @@
 #   7. Print a concise report.
 #
 # Exit codes:
-#   0 — clean cleanup; dual-target build passed.
+#   0 — clean cleanup; dual-target build passed (or deferred: other live sessions).
 #   1 — refused to act (uncommitted work, PR not merged, build failed).
 #   2 — usage error / required tool missing.
+#
+# Env knobs (concurrent-session confinement, Step 3.5):
+#   CLAUDE_SESSION_ID / SMATCHET_JANITOR_SELF_SESSION — caller's own session id,
+#       excluded from the live-session count so the orchestrator never blocks itself.
+#   SMATCHET_JANITOR_DEFER — unset/1 (default): hard-defer when another session is
+#       live; 0: force cleanup anyway.
 
 set -euo pipefail
 
@@ -71,20 +77,25 @@ git fetch --all --prune
 
 # ---------- Step 3.5: concurrent-session confinement -------------------------
 # Steps 4-5 mutate THIS tree's HEAD/branches (checkout develop, ff-merge,
-# branch -D). If interactive Claude sessions are live in this tree, those ops
-# rug-pull them (the documented multi-session collision). Detect + warn; hard-
-# defer only when SMATCHET_JANITOR_DEFER=1. Default is warn-only because the
-# autonomous ship-loop orchestrator is itself a registered session and a bash
-# script can't identify its own caller to self-exclude — full self-excluding
-# defer + merge-watcher confinement are a planned fast-follow.
-# See docs/agent-rules/process-rules.md § Concurrent interactive sessions.
+# branch -D). If OTHER interactive Claude sessions are live in this tree, those
+# ops rug-pull them (the documented multi-session collision). Count live
+# entries in the per-tree registry, EXCLUDING the caller's own session
+# (CLAUDE_SESSION_ID; override via SMATCHET_JANITOR_SELF_SESSION) so the
+# autonomous ship-loop orchestrator that invoked this janitor never blocks
+# itself. Hard-defer by DEFAULT when any OTHER session is live;
+# SMATCHET_JANITOR_DEFER=0 forces cleanup anyway (legacy =1 still defers).
+# Registry files are key=value lines (branch=/sha=/ppid=/ts=) named by session
+# id (session-tree-banner.sh). See docs/agent-rules/process-rules.md
+# § Concurrent interactive sessions.
 JANITOR_TREE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SESS_REGDIR="$JANITOR_TREE/.claude/.active-sessions"
+SELF_SESSION="${SMATCHET_JANITOR_SELF_SESSION:-${CLAUDE_SESSION_ID:-}}"
 LIVE_SESSIONS=0
 if [ -d "$SESS_REGDIR" ]; then
     NOW_TS="$(date -u +%s)"
     for f in "$SESS_REGDIR"/*; do
         [ -f "$f" ] || continue
+        [ -n "$SELF_SESSION" ] && [ "$(basename "$f")" = "$SELF_SESSION" ] && continue
         fts="$(sed -n 's/^ts=//p' "$f" | head -n1)"
         fpid="$(sed -n 's/^ppid=//p' "$f" | head -n1)"
         fresh=0; case "$fts" in ''|*[!0-9]*) : ;; *) [ $((NOW_TS - fts)) -lt 1800 ] && fresh=1 ;; esac
@@ -93,12 +104,12 @@ if [ -d "$SESS_REGDIR" ]; then
     done
 fi
 if [ "$LIVE_SESSIONS" -gt 0 ]; then
-    echo "git-janitor: WARNING — ${LIVE_SESSIONS} live session(s) registered in ${JANITOR_TREE}." >&2
+    echo "git-janitor: ${LIVE_SESSIONS} other live session(s) registered in ${JANITOR_TREE} (excluding self)." >&2
     echo "             Steps 4-5 change HEAD here and can corrupt a concurrent session." >&2
-    echo "             Prefer cleanup when none are active; keep feature work in worktrees" >&2
-    echo "             (pwsh scripts/dev/worktree.ps1 new <slug>)." >&2
-    if [ "${SMATCHET_JANITOR_DEFER:-}" = "1" ]; then
-        echo "[git-janitor] DEFER (SMATCHET_JANITOR_DEFER=1): ${LIVE_SESSIONS} live session(s) in integration tree — skipping HEAD-mutating cleanup. Re-run when idle." >&2
+    if [ "${SMATCHET_JANITOR_DEFER:-1}" = "0" ]; then
+        echo "git-janitor: WARNING — SMATCHET_JANITOR_DEFER=0 forces cleanup despite ${LIVE_SESSIONS} live sibling(s); HEAD may move under them." >&2
+    else
+        echo "[git-janitor] DEFER (default): ${LIVE_SESSIONS} other live session(s) in integration tree — skipping HEAD-mutating cleanup. Set SMATCHET_JANITOR_DEFER=0 to force, or re-run when idle." >&2
         exit 0
     fi
 fi
