@@ -365,6 +365,37 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
     drawActiveProjectHeader(ctx);
 
+    applyActiveProjectViewChange(ctx);
+
+    // Unsaved-layout strip + offline-queues panel (the unscoped "above the table"
+    // header UI). All BeginChild/EndChild + BeginPopupModal/EndPopup pairs stay inside
+    // the helper — never split across this boundary.
+    drawActiveProjectUnsavedStrip(ctx);
+
+    drawActiveProjectTable(ctx);
+
+    // Google-Sheets-style selection: end drag on mouse release, clear on outside
+    // click, and service Ctrl+C (copy as TSV) / Escape (clear) / Shift+Space (whole
+    // row) while focused. The helper early-returns when no grid was drawn this frame.
+    drawActiveProjectGridRectSelKeys(ctx);
+
+    // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
+    // of view. Edits accepted in the modal are appended to `pendingEdits` and flow through the same
+    // ProcessGridFieldEdits path below.
+    TicketFieldEditor::RenderLongTextModal(pendingEdits);
+
+    ProcessGridFieldEdits(app, d, tickets, pendingEdits, readOnlyMode);
+    MaybeToastGridBannerFromSession(d);
+    ImGui::End();
+}
+
+// View-switch + grid-context-change bookkeeping. Split out of drawActiveProjectWindow under the
+// function-size cap; behaviour-identical (the body moved verbatim, writing gridSortEnvironmentChanged
+// back through the ctx reference instead of the former orchestrator local).
+void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
+
     const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != d.lastGridActiveViewId);
     if (viewChanged && activeViewForGrid) {
         d.lastGridActiveViewId = activeViewForGrid->Id;
@@ -389,12 +420,15 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
     }
     d.lastGridContextSignature = gridContextSignature;
 
-    gridSortEnvironmentChanged = viewChanged || gridContextChanged;
+    ctx.gridSortEnvironmentChanged = viewChanged || gridContextChanged;
+}
 
-    // Unsaved-layout strip + offline-queues panel (the unscoped "above the table"
-    // header UI). All BeginChild/EndChild + BeginPopupModal/EndPopup pairs stay inside
-    // the helper — never split across this boundary.
-    drawActiveProjectUnsavedStrip(ctx);
+// The TicketGrid BeginTable block: the five grid section helpers plus the post-layout inside-table
+// click detection. Split out of drawActiveProjectWindow under the function-size cap; behaviour-
+// identical (the inside-table hit flags write back through the ctx references).
+void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    const std::vector<TicketGridColumn>& columns = ctx.columns;
 
     const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                        ImGuiTableFlags_Reorderable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
@@ -427,8 +461,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
                     ImRect hit(tb->OuterRect);
                     hit.Add(tb->InnerClipRect);
                     if (hit.Contains(ImGui::GetIO().MousePos)) {
-                        ticketGridLeftClickInsideTableHit = true;
-                        rectCellClickedThisFrame = true;
+                        ctx.ticketGridLeftClickInsideTableHit = true;
+                        ctx.rectCellClickedThisFrame = true;
                     }
                 }
             }
@@ -436,20 +470,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
-
-    // Google-Sheets-style selection: end drag on mouse release, clear on outside
-    // click, and service Ctrl+C (copy as TSV) / Escape (clear) / Shift+Space (whole
-    // row) while focused. The helper early-returns when no grid was drawn this frame.
-    drawActiveProjectGridRectSelKeys(ctx);
-
-    // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
-    // of view. Edits accepted in the modal are appended to `pendingEdits` and flow through the same
-    // ProcessGridFieldEdits path below.
-    TicketFieldEditor::RenderLongTextModal(pendingEdits);
-
-    ProcessGridFieldEdits(app, d, tickets, pendingEdits, readOnlyMode);
-    MaybeToastGridBannerFromSession(d);
-    ImGui::End();
 }
 
 // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one
@@ -883,9 +903,7 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
                                            bool idKeySelectableSelected, bool activeIssueWasThisRow, float rowHeight) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
-    const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
     const bool readOnlyMode = ctx.readOnlyMode;
-    std::vector<PendingFieldEdit>& pendingEdits = ctx.pendingEdits;
 
     if (!ImGui::TableSetColumnIndex(colIndex)) {
         if (!d.gridState.IsEditingField(ticket.id, column.FieldId)) {
@@ -901,10 +919,10 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
     // (not just the rendered text / widget extent).
     const ImVec2 cellOriginForSel = ImGui::GetCursorScreenPos();
     const float cellWidthForSel = ImGui::GetContentRegionAvail().x;
-    ImVec2 cellGroupMin(0.0f, 0.0f);
-    ImVec2 cellGroupMax(0.0f, 0.0f);
 
     if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+        ImVec2 cellGroupMin(0.0f, 0.0f);
+        ImVec2 cellGroupMax(0.0f, 0.0f);
         ImGui::BeginGroup();
         if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
             if (!ImGuiEffectiveKeyCtrl()) {
@@ -925,10 +943,28 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
         return;
     }
 
+    drawActiveProjectGridValueCell(ctx, ticket, column, clippedRow, colIndex, cellOriginForSel.x, cellWidthForSel);
+}
+
+// Data (non-Id) grid-cell render: write-state badge + saving/editable value + trailing rect-select.
+// Split out of drawActiveProjectGridCell under the function-size cap; behaviour-identical (cell
+// geometry arrives as floats and the rect-select hit flags write back through the ctx references).
+void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const CachedTicket& ticket,
+                                                const TicketGridColumn& column, int clippedRow, int colIndex,
+                                                float cellOriginX, float cellWidth) {
+    AppController& app = ctx.app;
+    UiDrawSession& d = ctx.d;
+    const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
+    const bool readOnlyMode = ctx.readOnlyMode;
+    std::vector<PendingFieldEdit>& pendingEdits = ctx.pendingEdits;
+
+    ImVec2 cellGroupMin(0.0f, 0.0f);
+    ImVec2 cellGroupMax(0.0f, 0.0f);
+
     const std::string currentValue = ticket.GetFieldValue(column.FieldId);
     const TrackerField* fieldMeta = catalogIndex.Find(column.FieldId);
     const float cellStartY = ImGui::GetCursorScreenPos().y;
-    const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidthForSel;
+    const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidth;
     const float valueAvailWidth = cellRightX - ImGui::GetCursorScreenPos().x;
     const std::string cellKey = BuildCellKey(ticket.id, column.FieldId);
     // Skip map lookup when feedback map is empty (common case) — avoids the hash (§3.1 item 57).
@@ -1001,8 +1037,8 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
         }
     }
 
-    handleActiveProjectCellRectSel(ctx, clippedRow, colIndex, cellOriginForSel.x, cellWidthForSel, cellGroupMin.y,
-                                   cellGroupMax.y, false, ticket.id, false);
+    handleActiveProjectCellRectSel(ctx, clippedRow, colIndex, cellOriginX, cellWidth, cellGroupMin.y, cellGroupMax.y,
+                                   false, ticket.id, false);
 }
 
 // Google-Sheets-style per-cell selection gesture (formerly the handleCellRectSel lambda).

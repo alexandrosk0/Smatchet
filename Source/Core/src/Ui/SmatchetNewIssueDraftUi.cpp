@@ -278,6 +278,43 @@ std::unordered_set<std::string> BuildDraftRequiredFieldIds(AppController& app, c
 
 // ID-column cell for the active draft row: Create / Queue-offline / Cancel / attachment controls
 // plus the staged-attachment chip strip. Mirrors the legacy inline block verbatim.
+// Horizontally-scrolling chip strip of staged attachments (filename + size, per-chip remove).
+// Extracted from DrawDraftIdColumnCell under the function-size cap; behaviour-identical. Called only
+// when StagedAttachments is non-empty.
+void DrawDraftAttachmentChipStrip(UiDrawSession& d, bool disabled) {
+    if (disabled)
+        ImGui::BeginDisabled();
+    constexpr float kChipStripH = 54.0f;
+    ImGui::BeginChild("##newissueattstrip", ImVec2(0.0f, kChipStripH), true, ImGuiWindowFlags_HorizontalScrollbar);
+    for (size_t i = 0; i < d.newIssueDraft.StagedAttachments.size();) {
+        const auto& att = d.newIssueDraft.StagedAttachments[i];
+        ImGui::PushID(static_cast<int>(i));
+        std::string label = att.FileName;
+        if (label.size() > 36) {
+            std::string temp = label.substr(0, 16) + "..." + label.substr(label.size() - 16);
+            label = std::move(temp);
+        }
+        const std::string chip = label + " (" + FormatBytesUi(att.SizeBytes) + ")";
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(chip.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x##rma")) {
+            d.newIssueDraft.StagedAttachments.erase(d.newIssueDraft.StagedAttachments.begin() +
+                                                    static_cast<std::ptrdiff_t>(i));
+            ImGui::PopID();
+            continue;
+        }
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(8.0f, 1.0f));
+        ImGui::SameLine();
+        ImGui::PopID();
+        ++i;
+    }
+    ImGui::EndChild();
+    if (disabled)
+        ImGui::EndDisabled();
+}
+
 void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
     ImGui::PushID("newissue_draft_id");
     ImGui::BeginGroup();
@@ -344,37 +381,7 @@ void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
         ImGui::EndDisabled();
 
     if (!d.newIssueDraft.StagedAttachments.empty()) {
-        if (disabled)
-            ImGui::BeginDisabled();
-        constexpr float kChipStripH = 54.0f;
-        ImGui::BeginChild("##newissueattstrip", ImVec2(0.0f, kChipStripH), true, ImGuiWindowFlags_HorizontalScrollbar);
-        for (size_t i = 0; i < d.newIssueDraft.StagedAttachments.size();) {
-            const auto& att = d.newIssueDraft.StagedAttachments[i];
-            ImGui::PushID(static_cast<int>(i));
-            std::string label = att.FileName;
-            if (label.size() > 36) {
-                std::string temp = label.substr(0, 16) + "..." + label.substr(label.size() - 16);
-                label = std::move(temp);
-            }
-            const std::string chip = label + " (" + FormatBytesUi(att.SizeBytes) + ")";
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(chip.c_str());
-            ImGui::SameLine();
-            if (ImGui::SmallButton("x##rma")) {
-                d.newIssueDraft.StagedAttachments.erase(d.newIssueDraft.StagedAttachments.begin() +
-                                                        static_cast<std::ptrdiff_t>(i));
-                ImGui::PopID();
-                continue;
-            }
-            ImGui::SameLine();
-            ImGui::Dummy(ImVec2(8.0f, 1.0f));
-            ImGui::SameLine();
-            ImGui::PopID();
-            ++i;
-        }
-        ImGui::EndChild();
-        if (disabled)
-            ImGui::EndDisabled();
+        DrawDraftAttachmentChipStrip(d, disabled);
     }
 
     ImGui::EndGroup();
