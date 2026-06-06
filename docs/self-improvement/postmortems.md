@@ -27,6 +27,34 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-06 · PR #905, #906, #907, #908 (recurring class: #892, #894, #896, #897, #898) · 6-PR burst exhausted CodeRabbit quota → override cascade
+
+> Surfaced while merging the build-quality-velocity-hardening Sprint-1 PRs: a
+> 6-PR-per-feature split blew CodeRabbit's hourly review quota, and the
+> `Test-delta gate` fired on test-light correctness fixes — both waved through
+> with override labels.
+>
+> Covers (clears the owed nudges): PR #905, PR #906, PR #907, PR #908, and the
+> recurring funcsize instances PR #892, PR #894, PR #896, PR #897, PR #898.
+
+### What escaped
+Two gate classes, both via sanctioned-but-cascading overrides:
+1. **CodeRabbit never reviewed #905–#908** — `cr-out-of-band` downgraded the CR gate to WARN on all four — because a 6-PR burst exhausted CR's hourly per-developer quota. The green `CodeRabbit` / `CR findings (0 actionable)` checks were **status-only default-passes**, not real reviews (the only CR comment on the unreviewed PRs was the rate-limit notice). Nothing prevented opening PRs faster than CR's quota; CR demonstrably adds value (it caught a real `STL1001` terminology/accuracy issue on #909, which *was* reviewed before the limit).
+2. **`Test-delta gate` fired RED on legitimately test-light correctness changes** — #906 (a `LOG_WARN` replacing an empty catch) and #907 (a compile-time `static_assert`) this session, and recurrently #892/#894/#896/#897/#898 (funcsize decompositions) — each merged via `tests-out-of-band`. The gate has no exemption for diffs that are inherently compile-time-tested / logging-only / no-new-runtime-surface.
+
+(Also 2 admin force-merges of strict-`BEHIND` #908/#911 — deliberate, conflict-free, user-authorized to beat concurrent plan-doc churn; no gate owed per [ADR-0013](../adr/0013-solo-no-required-review.md), same as the 2026-05-23 entry.)
+
+### Root cause
+1. **CR quota**: the PR-batching rule (`AGENTS.md` § Autonomous ship-loop default — "one PR per logical *feature*… related slices accumulate on one branch") was violated. Sprint-1 was split into 6 subsystem PRs opened back-to-back, exceeding CodeRabbit's hourly per-developer limit. The rule is prose-only — nothing measures the burst or warns before it blows the quota.
+2. **Test-delta shape**: `coverage-delta-gate.sh` keys purely on coverage / test-file delta. A correctness change with no new runtime surface (a `static_assert`, a `LOG_*` line, a marker/comment, a CMake edit, a pure relocation) *cannot* add coverage, so it always trips → recurring override. ≥7 PRs across two unrelated work-streams hitting the same override shows the gate's shape — not the PRs — is wrong.
+
+### Preventing gate
+1. **`pr-burst-guard`** (NEW) — a pre-ship check (wired into `scripts/dev/pre-ship.sh` / the autonomous ship-loop) that counts the author's open PRs + recent create-rate and WARNs (or pauses the loop) before opening a PR that would exceed CodeRabbit's hourly quota — enforcing the PR-batching rule mechanically instead of by prose. Filed to infra.
+2. **Test-delta test-light exemption** (NEW) — extend `coverage-delta-gate.sh` to auto-PASS (no override needed) a diff whose product-code change is provably compile-time-tested / no-new-runtime-surface: `static_assert`-only, logging-only (`LOG_*` additions), comment/marker-only, or CMake-only. Removes the standing incentive to reach for `tests-out-of-band`. Filed to infra.
+
+### Filed as
+[`docs/self-improvement/categories/infra.md`](categories/infra.md) — two entries: `pr-burst-guard` (CR-quota-aware PR spacing) + `test-delta-test-light-exemption`.
+
 ## 2026-06-05 · PR #880, #881, #882 · required-but-path-filtered check deadlocked product-only PRs
 
 > Discovered while a merge-gate poller exhausted its window against three PRs that
