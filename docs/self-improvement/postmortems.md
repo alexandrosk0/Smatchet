@@ -36,6 +36,11 @@
 >
 > Covers (clears the owed nudges): PR #905, PR #906, PR #907, PR #908, and the
 > recurring funcsize instances PR #892, PR #894, PR #896, PR #897, PR #898.
+> Also PR #915 (Sprint-1 hygiene finish) and PR #917 (#22 SHA-pin + Lua-mirror
+> smoke) — same root cause (test-light correctness diffs tripping `Test-delta
+> gate` → `tests-out-of-band`). The preventing gate has since SHIPPED: PR #918
+> taught `coverage-delta-gate.sh` to auto-exempt no-new-runtime-surface diffs, so
+> this class should stop requiring the override going forward.
 
 ### What escaped
 Two gate classes, both via sanctioned-but-cascading overrides:
