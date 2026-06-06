@@ -139,7 +139,10 @@
     "visual_validation": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "trigger_globs": { "type": "array", "items": { "type": "string" } } }
+      "properties": {
+        "_doc": { "type": "string" },
+        "trigger_globs": { "type": "array", "items": { "type": "string" } }
+      }
     },
     "golden": {
       "type": "object",

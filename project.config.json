@@ -88,7 +88,8 @@
     "excluded": ["Source/Core/src/Ui", "Source/Core/include/Ui"]
   },
   "visual_validation": {
-    "trigger_globs": ["**/SmatchetTheme.cpp", "**/Smatchet*Ui*.cpp", "**/Locales/*.json"]
+    "_doc": "Globs over TRACKED source whose edit warrants visual verification (Pillar 4). The localization strings live in the C++ string table SmatchetLocalization.cpp (+ its headers), NOT in a tracked Locales/*.json — those are user-supplied runtime override files placed next to the exe and are never committed (README § localization). The earlier `**/Locales/*.json` glob matched zero tracked files; a zero-match glob is dead config. test-config-globs.sh asserts every glob here matches >=1 tracked file.",
+    "trigger_globs": ["**/SmatchetTheme.cpp", "**/Smatchet*Ui*.cpp", "**/SmatchetLocalization.cpp", "**/SmatchetLocaliz*.h"]
   },
   "golden": {
     "artifacts_dir": "tests/golden"
@@ -104,6 +105,7 @@
       "test-plan-ref-integrity",
       "test-plan-archived",
       "test-portable-purity",
+      "test-config-globs",
       "test-markdown-links"
     ]
   },

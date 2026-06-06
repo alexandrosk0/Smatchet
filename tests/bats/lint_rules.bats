@@ -57,6 +57,68 @@ setup() {
     [[ "$output" != *"no-detach"* ]]
 }
 
+# ---------- no-glfw-in-core-headers (#24) ----------
+
+@test "no-glfw-in-core-headers fires on a header with a GLFW include" {
+    run bash "$LINT" --scan-file "$FIX/known-bad-glfw-header.h"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no-glfw-in-core-headers"* ]]
+}
+
+@test "no-glfw-in-core-headers does NOT fire on a clean header (incl. prose mentions)" {
+    run bash "$LINT" --scan-file "$FIX/known-good-core-header.h"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"no-glfw-in-core-headers"* ]]
+}
+
+@test "no-glfw-in-core-headers suppressed by SMATCHET_DEVIATION(rule=no-glfw-in-core-headers)" {
+    run bash "$LINT" --scan-file "$FIX/glfw-deviation-header.h"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"no-glfw-in-core-headers"* ]]
+}
+
+@test "--scan-glfw FAILs on a GLFW include in a Source/Core/include header" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/include/Tracker"
+    printf '#pragma once\n#include <GLFW/glfw3.h>\nstruct X {};\n' \
+        > "$tmp/Source/Core/include/Tracker/Bad.h"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-glfw
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no-glfw-in-core-headers"* ]]
+    [[ "$output" == *"Tracker/Bad.h"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-glfw ignores GLFW in a .cpp and in Source/Standalone" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Ui" "$tmp/Source/Standalone"
+    # GLFW in a .cpp under Core is fine (DX12 doesn't compile .cpp window code into the lib).
+    printf '#include <GLFW/glfw3.h>\nvoid f() {}\n' > "$tmp/Source/Core/src/Ui/Win.cpp"
+    # GLFW header in Standalone is fine (not a Source/Core/include header).
+    printf '#pragma once\n#include <GLFW/glfw3.h>\n' > "$tmp/Source/Standalone/glue.h"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-glfw
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-glfw is clean on the real first-party tree" {
+    run bash "$LINT" --scan-glfw
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "--diff enforces the no-glfw-in-core-headers absolute-0 gate (clean tree PASSes)" {
+    run bash "$LINT" --full
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | sed -n 's/^  //p' > /tmp/lr_base_all
+    SMATCHET_LINT_BASELINE_SET=/tmp/lr_base_all run bash "$LINT" --diff
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no GLFW/glad/OpenGL include in Source/Core/include headers"* ]]
+}
+
 # ---------- SMATCHET_DEVIATION ----------
 
 @test "deviation-overdue fires when calendar revisit has passed" {
