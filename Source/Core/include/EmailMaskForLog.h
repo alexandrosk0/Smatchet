@@ -11,7 +11,6 @@ namespace pure {
 /// plus the domain (which is enough for diagnosis), e.g. "alice@acme.com" ->
 /// "a***@acme.com". An empty or malformed (no usable '@') value is fully
 /// redacted so no personal data reaches the log. Issue #820.
-///
 /// Extracted verbatim from the anonymous namespace in SmatchetPreferencesUi.cpp
 /// into this standalone pure header so the doctest rig can exercise it without
 /// that Ui TU's ImGui / cpr / AppController dependency chain. `inline` so callers

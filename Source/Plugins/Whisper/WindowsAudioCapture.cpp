@@ -416,9 +416,9 @@ bool DrainCapturePacket(IAudioCaptureClient& captureClient, const WAVEFORMATEX& 
     // allocation.
     std::int32_t peakAbs = 0;
     for (UINT32 i = 0; i < numFrames; ++i) {
-        // GetBuffer can return data==NULL when AUDCLNT_BUFFERFLAGS_SILENT is set;
-        // computing data + offset would be NULL-pointer arithmetic UB even though
-        // the value is unused (mono is forced to 0 on the silent path below).
+        // Under AUDCLNT_BUFFERFLAGS_SILENT, GetBuffer may hand back a null data
+        // pointer, so offsetting it would be null-pointer arithmetic (UB) even
+        // though the value goes unused (mono is forced to zero on the silent path).
         const BYTE* framePtr = silent ? nullptr : data + (i * frameSize);
         std::int16_t mono = silent ? 0 : MixToMonoInt16(framePtr, negotiated);
         const std::int32_t magnitude = mono >= 0 ? static_cast<std::int32_t>(mono) : -static_cast<std::int32_t>(mono);
