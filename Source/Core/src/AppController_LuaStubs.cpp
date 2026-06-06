@@ -20,15 +20,11 @@ void AppController::InitLua() {}
 
 void AppController::RunLuaSetupScript(const std::string& /*scriptPath*/) {}
 
-std::vector<std::string> AppController::GetLuaTicketActionNames() const {
-    return {};
-}
+std::vector<std::string> AppController::GetLuaTicketActionNames() const { return {}; }
 
 void AppController::ExecuteLuaTicketAction(const std::string& /*name*/, const std::string& /*issueId*/) {}
 
-std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
-    return {};
-}
+std::vector<std::string> AppController::GetLuaGlobalActionNames() const { return {}; }
 
 void AppController::ExecuteLuaGlobalAction(const std::string& /*name*/) {}
 
@@ -54,15 +50,13 @@ void AppController::NotifyLuaTicketDataChanged() {}
 
 void AppController::LuaUiInvalidateWindowBind(const std::string& /*name*/) {}
 
-bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/,
-                                                      const std::string& /*luaFnName*/,
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/, const std::string& /*luaFnName*/,
                                                       std::string& outError) {
     outError = "Lua automation disabled";
     return false;
 }
 
-bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/,
-                                                      const std::string& /*luaFnName*/,
+bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& /*fieldId*/, const std::string& /*luaFnName*/,
                                                       const std::vector<std::string>& /*extraScripts*/,
                                                       std::string& outError) {
     outError = "Lua automation disabled";
@@ -73,5 +67,6 @@ void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& /*fie
 
 void AppController::ScenarioInvalidateLuaFieldCache() {}
 
-void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/) {}
+void AppController::RunAutoScript(const std::string& /*scriptPath*/, const std::vector<std::string>& /*selectedIds*/,
+                                  bool /*processAll*/) {}
 void AppController::RunFlatScriptAsync(const std::string& /*scriptPath*/) {}

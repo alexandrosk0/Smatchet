@@ -38,7 +38,7 @@ stays grandfathered (same model as the comment-bloat rules). A `// SMATCHET_DEVI
 Exit contract (so test-lint-rules.sh can fail CLOSED): 0 = clean, 1 = violations found (printed
 to stdout), >=2 = infra error (git / IO).
 
-See docs/plans/active/decompose-top-20-monoliths.md § Slice 0.
+See docs/plans/shipped/decompose-top-20-monoliths.md § Slice 0.
 """
 
 import argparse

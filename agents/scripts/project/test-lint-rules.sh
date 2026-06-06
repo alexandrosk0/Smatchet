@@ -664,7 +664,7 @@ case "$MODE" in
         echo
         echo "FAIL: new oversized functions vs $BASE (cap 120 lines non-UI / 200 lines ImGui-draw / 30 branches):"
         printf '%s\n' "$fs_out" | sed 's/^/  /'
-        echo "  Decompose it (see docs/plans/active/decompose-top-20-monoliths.md § Approach), or add"
+        echo "  Decompose it (see docs/plans/shipped/decompose-top-20-monoliths.md § Approach), or add"
         echo "  SMATCHET_DEVIATION(rule=function-too-long; reason=...; owner=...; revisit=...) above the signature"
         echo "  (comma-separate the rule ids — rule=function-too-long,function-too-branchy — to suppress both caps)."
     else
