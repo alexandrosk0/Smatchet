@@ -317,8 +317,14 @@ void ModelDownloader::RunDownloadWorker(std::shared_ptr<Impl> implPtr, const std
         return true;
     }};
 
+    // Keep total-timeout disabled (large models legitimately run > 2 min), but
+    // add a low-speed floor so a stalled / zero-byte transfer aborts: if the
+    // average rate stays below 1 byte/s for 30 s, libcurl ends the request.
+    // Without this a connection that hangs before any byte arrives never runs
+    // WriteCallback, so the cancel atom (only polled there) can never take
+    // effect and the worker blocks indefinitely.
     cpr::Response resp = cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{10000},
-                                  cpr::Timeout{0}); // disable total-timeout; large models > 2 min
+                                  cpr::Timeout{0}, cpr::LowSpeed{1, 30});
     ofs.close();
 
     if (cancelled) {
