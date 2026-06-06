@@ -114,6 +114,32 @@ static bool BulkImportStatusIsTerminal(const std::string& status) {
     return true;
 }
 
+/** Drain in-flight bulk-import futures onto a background thread so the UI thread never
+ *  blocks on a pending future destructor (Pillar 2: UI never freezes — no UI-thread block
+ *  > 100 ms without visible cue). Replaces a bare `.clear()` on the futures vector, which
+ *  triggers the blocking destructor of every in-flight std::future. */
+static void BulkImportDrainFutures(AppController& app, std::vector<std::future<IssueCreateResult>>& futures) {
+    if (futures.empty()) {
+        return;
+    }
+    auto pending = std::make_unique<std::vector<std::future<IssueCreateResult>>>();
+    pending->reserve(futures.size());
+    for (auto& fut : futures) {
+        if (fut.valid()) {
+            pending->push_back(std::move(fut));
+        }
+    }
+    futures.clear(); // Clears only moved-from (invalid) futures — never blocks.
+    if (!pending->empty()) {
+        // std::future destructor blocks until the async task completes; run it on a
+        // worker thread so the UI thread stays responsive.  Follows the existing
+        // app.LaunchBackgroundTask pattern (no std::thread::detach — banned by no-detach).
+        app.LaunchBackgroundTask([pending = std::move(pending)]() mutable {
+            pending.reset(); // Blocks here, but on a worker thread.
+        });
+    }
+}
+
 /** Parse the source text into preview rows + reset per-row status/future tracking. */
 void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string& fallbackProject) {
     const std::string text(d.bulkImportTextBuf.data());
@@ -124,7 +150,7 @@ void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string&
     d.bulkImportError = d.bulkImportPreview.Error;
     d.bulkImportCompleted = 0;
     d.bulkImportRunning = false;
-    d.bulkImportFutures.clear();
+    BulkImportDrainFutures(app, d.bulkImportFutures);
     d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
 }
 
@@ -230,7 +256,7 @@ void BulkImportPumpRun(AppController& app, UiDrawSession& d, int maxConcurrent,
 }
 
 /** Reset transient bulk-import state when the window is closed (cancels any in-flight load). */
-void BulkImportResetOnClose(UiDrawSession& d) {
+void BulkImportResetOnClose(AppController& app, UiDrawSession& d) {
     if (d.bulkImportLoadCancel) {
         d.bulkImportLoadCancel->store(true);
     }
@@ -239,7 +265,7 @@ void BulkImportResetOnClose(UiDrawSession& d) {
     d.bulkImportFormatSel = 0;
     d.bulkImportPreview = {};
     d.bulkImportStatus.clear();
-    d.bulkImportFutures.clear();
+    BulkImportDrainFutures(app, d.bulkImportFutures);
     d.bulkImportCompleted = 0;
     d.bulkImportRunning = false;
     d.bulkImportError.clear();
@@ -368,7 +394,7 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
 }
 
 /** Source-text editor + the Run-import button/tooltip and the live completed counter. */
-void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
+void DrawBulkImportRunControls(AppController& app, UiDrawSession& d, int maxConcurrent) {
     ImGui::Separator();
     ImGui::TextDisabled("Paste / edit source text here (headers = field ids or display names):");
     ImGui::InputTextMultiline("##bulkImportText", d.bulkImportTextBuf.data(), d.bulkImportTextBuf.size(),
@@ -390,7 +416,7 @@ void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
         d.bulkImportRunning = true;
         d.bulkImportCompleted = 0;
         d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), "queued");
-        d.bulkImportFutures.clear();
+        BulkImportDrainFutures(app, d.bulkImportFutures);
         d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -510,7 +536,7 @@ void DrawBulkImportPreviewTable(AppController& app, UiDrawSession& d, const std:
 void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     if (!d.showBulkImport) {
         if (d.bulkImportWasOpen) {
-            BulkImportResetOnClose(d);
+            BulkImportResetOnClose(app, d);
         }
         return;
     }
@@ -540,7 +566,7 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     DrawBulkImportParseControls(app, d);
 
     const int maxConcurrent = (std::max)(1, d.cfg.ImportMaxConcurrent);
-    DrawBulkImportRunControls(d, maxConcurrent);
+    DrawBulkImportRunControls(app, d, maxConcurrent);
 
     {
         std::vector<std::string> keysNeedingHydration;
