@@ -15,6 +15,15 @@
 #include <cstdio>
 #include <string>
 
+// WCHAR32 ABI parity guard (build-quality-velocity-hardening #23). IMGUI_USE_WCHAR32 is
+// hand-synced across three points — SmatchetImConfig.h, the Unreal SmatchetImGuiPlugin.Build.cs,
+// and the packaged imconfig.h — with no compile-time check. A desync silently narrows ImWchar to
+// 16-bit, which would corrupt the glyph-range arrays built below (and the font-atlas ABI at
+// large). This TU compiles into both the GLFW and DX12 targets, so the assert guards both worlds:
+// a future desync fails the build instead of corrupting text memory at runtime.
+static_assert(sizeof(ImWchar) == 4, "IMGUI_USE_WCHAR32 desynced: ImWchar must be 32-bit. Check SmatchetImConfig.h, "
+                                    "SmatchetImGuiPlugin.Build.cs, and the packaged imconfig.h.");
+
 namespace {
 
 // Extra blocks beyond ImGui helpers: bullets (U+2022), ● (U+25CF), dingbats, arrows, box drawing, etc.
