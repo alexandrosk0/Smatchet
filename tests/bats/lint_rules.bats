@@ -157,6 +157,15 @@ setup() {
     [[ "$output" == *"in sync"* ]]
 }
 
+# ---------- comment_audit prose-vs-code discriminator (build-quality #7) ----------
+
+@test "comment_audit.py --selftest passes (prose-vs-code fixtures)" {
+    PY="$(command -v python3 || command -v python)"
+    run "$PY" "$REPO_ROOT/agents/scripts/core/comment_audit.py" --selftest
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PASS"* ]]
+}
+
 # ---------- catalog: format + determinism ----------
 
 @test "--catalog emits the rule-id sections + Totals" {

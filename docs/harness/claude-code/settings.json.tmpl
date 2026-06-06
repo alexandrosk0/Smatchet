@@ -145,6 +145,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-ship-stop-gate.sh\"",
+            "timeout": 60000
+          },
+          {
+            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/check-main-repo-clean.sh\"",
             "timeout": 5000
           },

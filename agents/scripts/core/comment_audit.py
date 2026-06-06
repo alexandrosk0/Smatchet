@@ -71,6 +71,39 @@ CODE_LIKE_RE = re.compile(
 )
 KEEP_NOTE_RE = re.compile(r"//.*\b(kept:|reference impl|example:|e\.g\.|usage:)", re.I)
 
+# Prose-vs-code discriminator for the flag-commented-code heuristic. CODE_LIKE_RE's
+# decl/assign/call alternative over-matches English prose that merely contains a
+# "word word(" or "word = word" fragment — e.g. "...reset the latch (mirroring the
+# sibling returns)" or "...drops cpr from the include graph (about a hundred TUs)" —
+# the #1 false-positive source for the comment-commented-out-code gate
+# (build-quality-velocity-hardening #7; the #915 `).identifier` prose miss). A
+# CODE_LIKE_RE match is demoted to prose (NOT flagged) only on a strong prose signal:
+# no hard code terminator, no code operator, several English words, alphabetic-dense.
+# Otherwise the original flag-commented-code verdict stands — false-negatives are far
+# cheaper than false-positives for this WARN-first gate.
+_CODE_TERMINATOR_RE = re.compile(r"[;{}]\s*$")  # commented-out code ends in ; { } ; prose ~never does
+_CODE_OPERATOR_RE = re.compile(r"->|::|==|!=|<=|>=|&&|\|\||\+\+|--|[-+*/]=|=>")
+_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+
+
+def _comment_body(raw_line):
+    """The text of a // comment after the leading slashes, stripped."""
+    return re.sub(r"^\s*//+", "", raw_line).strip()
+
+
+def is_prose_not_code(raw_line):
+    """True if a CODE_LIKE_RE-matched // comment is really English prose, not
+    commented-out code. Conservative: demotes only on a strong prose signal."""
+    body = _comment_body(raw_line)
+    if not body or _CODE_TERMINATOR_RE.search(body) or _CODE_OPERATOR_RE.search(body):
+        return False
+    words = _WORD_RE.findall(body)
+    if len(words) < 4:
+        return False
+    nonspace = len(re.sub(r"\s", "", body))
+    alpha = sum(len(w) for w in words)
+    return nonspace > 0 and (alpha / nonspace) >= 0.6
+
 
 def classify_comment(stripped, raw_line):
     """Classify a full-line comment into a taxonomy bucket id."""
@@ -88,6 +121,8 @@ def classify_comment(stripped, raw_line):
     if DOC_OPEN_RE.match(stripped):
         return "judge-apidoc"
     if stripped.startswith("//") and CODE_LIKE_RE.match(raw_line) and not KEEP_NOTE_RE.search(raw_line):
+        if is_prose_not_code(raw_line):
+            return "judge-rationale"
         return "flag-commented-code"
     # plain // or block-continuation prose
     return "judge-rationale"
@@ -321,6 +356,44 @@ def run_ratio_warn(ref, threshold=0.50):
     return 0  # advisory: never non-zero
 
 
+def run_selftest():
+    """Regression-guard the prose-vs-code discriminator (build-quality-velocity-hardening
+    #7). Every `flag` fixture is real commented-out code that MUST stay flagged; every
+    `prose` fixture is English rationale that previously false-fired and MUST NOT flag."""
+    flag = [
+        "// int x = 5;",
+        "//   foo(bar);",
+        "// if (cond) {",
+        "// return result;",
+        "// obj->method();",
+        "// Foo::Bar baz = qux();",
+        "// while (i < n) {",
+        "// std::vector<int> v = make();",
+    ]
+    prose = [
+        "// reset the latch (mirroring the sibling early returns)",
+        "// see computeValue() for details on the parser path",
+        "// Resolve the fork point of ref and head (so the diff reflects only added lines)",
+        "// drops cpr from the public include graph (about a hundred translation units)",
+    ]
+    fails = 0
+    for s in flag:
+        b = classify_comment(s.strip(), s)
+        if b != "flag-commented-code":
+            print("FAIL: expected flag-commented-code, got %s for: %s" % (b, s))
+            fails += 1
+    for s in prose:
+        b = classify_comment(s.strip(), s)
+        if b == "flag-commented-code":
+            print("FAIL: expected prose (not flagged) for: %s" % s)
+            fails += 1
+    if fails:
+        print("comment_audit --selftest: FAIL (%d)" % fails)
+        return 1
+    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures)" % (len(flag), len(prose)))
+    return 0
+
+
 def _utf8_stdio():
     # Source files (and reports/diffs echoing their comments) contain non-ASCII; force UTF-8 on
     # stdout/stderr so the platform default (cp1252 on Windows) can't crash with UnicodeEncodeError.
@@ -337,7 +410,11 @@ def main():
     ap.add_argument("--json", metavar="PATH")
     ap.add_argument("--diff", metavar="REF")
     ap.add_argument("--ratio-warn", metavar="REF")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the prose-vs-code discriminator fixtures and exit")
     args = ap.parse_args()
+    if args.selftest:
+        sys.exit(run_selftest())
     # Exit-code contract for the gate seams: 0 = clean, 1 = violations found (printed to stdout),
     # >=2 = infra failure (git/IO error) — so test-lint-rules.sh can fail CLOSED on >=2 without
     # mistaking a legitimate "violations found" (1) for an inability to run.
