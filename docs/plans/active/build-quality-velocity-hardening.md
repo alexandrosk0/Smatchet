@@ -96,10 +96,10 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 
 - `WarnIfPackagedLibsAreStale()` mtime-comparison pattern in `SmatchetImGuiPlugin.Build.cs` — reuse the shape for `is-exe-fresh.sh` (#6).
 - The existing grep-rule pattern in `test-lint-rules.sh` (`no-printf-stderr`, `define-imgui`) — clone for `no-glfw-in-core-headers` (#24).
-- `ConfigManager.h:21` + `ToolbarConfig.h:15` already use `json_fwd` — the in-repo precedent for #2 once unblocked.
+- `Config/ConfigManager.h:21` + `Config/ToolbarConfig.h:15` already use `json_fwd` — the in-repo precedent for #2 once unblocked.
 - `function_size_audit.py --scan-file` / `--list` — the absolute-list assert for #15.
 - The three sibling early-returns in `OfflineQueueService.cpp:648/653/658` — the exact reset pattern bug #16 must mirror.
-- The `// catch-all-ok: <reason>` marker convention (e.g. `ConfigManager.cpp:625`) — the fix shape for #37.
+- The `// catch-all-ok: <reason>` marker convention (e.g. `Config/ConfigManager.cpp:633`) — the fix shape for #37.
 
 ## UX Pillar callouts
 
