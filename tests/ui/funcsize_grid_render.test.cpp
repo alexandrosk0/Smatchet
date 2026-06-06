@@ -1,5 +1,5 @@
 // funcsize_grid_render.test.cpp — Phase-0 YELLOW pilot of the
-// full-function-size-compliance program (docs/plans/active/full-function-size-compliance.md).
+// full-function-size-compliance program (docs/plans/shipped/full-function-size-compliance.md).
 //
 // PURPOSE — STRUCTURAL coverage for the DATA-DEPENDENT ImGui window-draw
 // functions slated for decomposition in Phase 5. Unlike the green-pilot

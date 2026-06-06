@@ -4,7 +4,7 @@
 > `draw*` function that approaches **200 lines** uses this shape. Enforced by the
 > `function-too-long` / `function-too-branchy` gate (`function_size_audit.py`, wired
 > into `test-lint-rules.sh` — see `AGENTS.md` § Tiered enforcement). Plan:
-> [`docs/plans/active/decompose-top-20-monoliths.md`](../plans/active/decompose-top-20-monoliths.md)
+> [`docs/plans/shipped/decompose-top-20-monoliths.md`](../plans/shipped/decompose-top-20-monoliths.md)
 > § Approach A.
 >
 > **Tiered cap (2026-06-01):** non-UI functions block at **120 lines**; ImGui-draw
