@@ -58,46 +58,58 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
         for (const std::string& r : recents) {
             std::vector<Command> all = app.Commands().All();
             for (const Command& c : all) {
-                if (c.Name == r) { filtered_.push_back(c); break; }
+                if (c.Name == r) {
+                    filtered_.push_back(c);
+                    break;
+                }
             }
         }
         std::vector<Command> all = app.Commands().All();
         for (const Command& c : all) {
             bool alreadyIn = false;
             for (const Command& f : filtered_) {
-                if (f.Name == c.Name) { alreadyIn = true; break; }
+                if (f.Name == c.Name) {
+                    alreadyIn = true;
+                    break;
+                }
             }
-            if (!alreadyIn) filtered_.push_back(c);
+            if (!alreadyIn)
+                filtered_.push_back(c);
         }
     } else {
         // Fuzzy-score each command against the query.
-        struct Scored { int score; Command cmd; };
+        struct Scored {
+            int score;
+            Command cmd;
+        };
         std::vector<Scored> scored;
         std::vector<Command> all = app.Commands().All();
         scored.reserve(all.size());
         for (const Command& c : all) {
             const int s = FuzzyScore(q, c.Name + " " + c.Summary);
-            if (s > 0) scored.push_back({s, c});
+            if (s > 0)
+                scored.push_back({s, c});
         }
-        std::sort(scored.begin(), scored.end(),
-                  [](const Scored& a, const Scored& b) {
-                      if (a.score != b.score) return a.score > b.score;
-                      return a.cmd.Name < b.cmd.Name;
-                  });
+        std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
+            if (a.score != b.score)
+                return a.score > b.score;
+            return a.cmd.Name < b.cmd.Name;
+        });
         filtered_.clear();
         filtered_.reserve(scored.size());
-        for (auto& s : scored) filtered_.push_back(std::move(s.cmd));
+        for (auto& s : scored)
+            filtered_.push_back(std::move(s.cmd));
     }
     // Clamp selection.
-    if (selected_ < 0) selected_ = 0;
+    if (selected_ < 0)
+        selected_ = 0;
     if (!filtered_.empty() && selected_ >= static_cast<int>(filtered_.size())) {
         selected_ = static_cast<int>(filtered_.size()) - 1;
     }
 }
 
 void CommandPaletteUi::dispatchSelected(AppController& app) {
-    if (filtered_.empty() || selected_ < 0 ||
-        selected_ >= static_cast<int>(filtered_.size())) {
+    if (filtered_.empty() || selected_ < 0 || selected_ >= static_cast<int>(filtered_.size())) {
         return;
     }
     const Command& cmd = filtered_[selected_];
@@ -149,14 +161,14 @@ void CommandPaletteUi::drawArgForm(AppController& app) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-1.f);
         const std::string label = "##arg" + std::to_string(i);
-        ImGui::InputText(label.c_str(), argFormBufs_[i].data(),
-                         argFormBufs_[i].size());
+        ImGui::InputText(label.c_str(), argFormBufs_[i].data(), argFormBufs_[i].size());
         if (p.Required && argFormBufs_[i][0] == '\0') {
             allFilled = false;
         }
     }
     const bool canRun = allFilled;
-    if (!canRun) ImGui::BeginDisabled();
+    if (!canRun)
+        ImGui::BeginDisabled();
     if (ImGui::Button("Run") || (canRun && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
         nlohmann::json args = nlohmann::json::object();
         for (size_t i = 0; i < argFormCmd_.Params.size(); ++i) {
@@ -172,14 +184,14 @@ void CommandPaletteUi::drawArgForm(AppController& app) {
         ctx.ConfirmedDestructive = argFormCmd_.Destructive;
         CommandResult r = app.Commands().Dispatch(argFormCmd_.Name, args, ctx);
         if (!r.Ok) {
-            LOG_WARN("Palette (arg form): '%s' failed: %s",
-                     argFormCmd_.Name.c_str(), r.Error.Message.c_str());
+            LOG_WARN("Palette (arg form): '%s' failed: %s", argFormCmd_.Name.c_str(), r.Error.Message.c_str());
         } else {
             app.Commands().SaveRecents();
         }
         Close();
     }
-    if (!canRun) ImGui::EndDisabled();
+    if (!canRun)
+        ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         Close();
@@ -190,10 +202,13 @@ void CommandPaletteUi::Draw(AppController& app) {
     // Toggle on Ctrl+Shift+P.
     const ImGuiIO& io = ImGui::GetIO();
     if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-        if (open_) Close();
-        else       Open();
+        if (open_)
+            Close();
+        else
+            Open();
     }
-    if (!open_) return;
+    if (!open_)
+        return;
 
     // Center the modal.
     const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -201,8 +216,8 @@ void CommandPaletteUi::Draw(AppController& app) {
     ImGui::SetNextWindowSize(ImVec2(600.f, 420.f), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.97f);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoMove;
     if (!ImGui::Begin("##cmdpalette", &open_, flags)) {
         ImGui::End();
         return;
@@ -214,8 +229,8 @@ void CommandPaletteUi::Draw(AppController& app) {
     }
 
     // Filter text input.
-    const bool filterChanged = ImGui::InputTextWithHint("##cmdq", "Type a command or search...",
-                                                         filterBuf_, sizeof(filterBuf_));
+    const bool filterChanged =
+        ImGui::InputTextWithHint("##cmdq", "Type a command or search...", filterBuf_, sizeof(filterBuf_));
     if (filterChanged || filtered_.empty()) {
         rebuildFiltered(app);
     }
@@ -229,10 +244,28 @@ void CommandPaletteUi::Draw(AppController& app) {
 
     ImGui::Separator();
 
-    // Up/Down navigation.
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true) && selected_ > 0) --selected_;
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow,  true) &&
-        selected_ < static_cast<int>(filtered_.size()) - 1) ++selected_;
+    handleListNavigation(app, io);
+
+    drawCommandList(app, io);
+
+    // Hint line.
+    ImGui::Separator();
+    if (!filtered_.empty() && filtered_[selected_].Destructive) {
+        ImGui::TextColored(SmatchetTheme::Colors::PriorityHigh, "Destructive — hold Shift+Enter to confirm");
+    } else {
+        ImGui::TextDisabled("Enter to run · Esc to close · Up/Down to navigate");
+    }
+
+    ImGui::End();
+}
+
+// Up/Down selection movement + Enter/Escape dispatch. Destructive commands require Shift+Enter.
+// Split out of Draw for function-size compliance; runs inside the active palette Begin scope.
+void CommandPaletteUi::handleListNavigation(AppController& app, const ImGuiIO& io) {
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) && selected_ > 0)
+        --selected_;
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) && selected_ < static_cast<int>(filtered_.size()) - 1)
+        ++selected_;
 
     // Enter dispatch. Destructive requires Shift.
     if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !filtered_.empty()) {
@@ -244,8 +277,11 @@ void CommandPaletteUi::Draw(AppController& app) {
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         Close();
     }
+}
 
-    // Scrollable command list.
+// Scrollable command-list child. Owns its own BeginChild/EndChild pair. Destructive rows render in
+// the warning colour and require Shift to dispatch on click.
+void CommandPaletteUi::drawCommandList(AppController& app, const ImGuiIO& io) {
     const float listH = 300.f;
     ImGui::BeginChild("##cmdlist", ImVec2(0, listH), false);
     for (int i = 0; i < static_cast<int>(filtered_.size()); ++i) {
@@ -259,8 +295,7 @@ void CommandPaletteUi::Draw(AppController& app) {
 
         // Selectable row.
         const std::string rowLabel = c.Name + "  " + c.Summary;
-        if (ImGui::Selectable(rowLabel.c_str(), isSelected,
-                              ImGuiSelectableFlags_None, ImVec2(0, 0))) {
+        if (ImGui::Selectable(rowLabel.c_str(), isSelected, ImGuiSelectableFlags_None, ImVec2(0, 0))) {
             selected_ = i;
             if (!c.Destructive || io.KeyShift) {
                 dispatchSelected(app);
@@ -275,18 +310,7 @@ void CommandPaletteUi::Draw(AppController& app) {
         }
     }
     ImGui::EndChild();
-
-    // Hint line.
-    ImGui::Separator();
-    if (!filtered_.empty() && filtered_[selected_].Destructive) {
-        ImGui::TextColored(SmatchetTheme::Colors::PriorityHigh,
-                           "Destructive — hold Shift+Enter to confirm");
-    } else {
-        ImGui::TextDisabled("Enter to run · Esc to close · Up/Down to navigate");
-    }
-
-    ImGui::End();
 }
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet

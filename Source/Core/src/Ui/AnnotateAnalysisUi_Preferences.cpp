@@ -69,7 +69,9 @@ void DrawJiraFieldCombo(const AppController& app, const AnnotateUiThemeColors& t
 
 } // namespace
 
-void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUiThemeColors& theme) {
+// Scalar + text fields (max frames, ignore keywords, p4/p4vc execs, command templates, AI URL).
+// Split out of DrawAnnotatePersistedOptionsForm for function-size compliance.
+void DrawAnnotateScalarAndTextFields() {
     auto& cfg = State().annotateCfg;
 
     ImGui::InputInt("Max frames", &State().maxFramesVal);
@@ -101,6 +103,12 @@ void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUi
 
     ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
     CommitTextField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl");
+}
+
+// Jira-field source combos (callstack, before-changelist, last-occurrences date). Split out of
+// DrawAnnotatePersistedOptionsForm for function-size compliance.
+void DrawAnnotateJiraFieldCombos(const AppController& app, const AnnotateUiThemeColors& theme) {
+    auto& cfg = State().annotateCfg;
 
     ImGui::Separator();
     ImGui::TextUnformatted("Callstack from Jira");
@@ -127,56 +135,64 @@ void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUi
     DrawJiraFieldCombo(app, theme, "Last-occurrences date field",
                        "Jira date field used to seed the Before-changelist day picker when Annotate opens.",
                        cfg.LastOccurrencesTrackerFieldId, "lastoccurrences", "edit_lastocc");
+}
 
+// Path-remap rules editor (per-row from/to + add/remove). Keeps the per-row edit buffers in
+// lockstep with the rule vector. Split out of DrawAnnotatePersistedOptionsForm.
+void DrawAnnotatePathRemaps() {
+    auto& cfg = State().annotateCfg;
     ImGui::Separator();
     ImGui::TextUnformatted("Path remaps");
     ImGui::TextDisabled("Rewrite source-path prefixes before resolving callstack frames. Longest matching "
                         "prefix wins; add rules in any order.");
-    {
-        auto& remaps = cfg.PathRemaps;
-        // Keep the per-row edit buffers in lockstep with the rule vector — this seeds them after
-        // a config load (buffers empty, rules non-empty) and re-syncs after add/remove.
-        if (State().remapBufs.size() != remaps.size()) {
-            State().remapBufs.assign(remaps.size(), RemapEditBuf{});
-            for (size_t i = 0; i < remaps.size(); ++i) {
-                CopyToBuffer(State().remapBufs[i].from, remaps[i].FromPrefix);
-                CopyToBuffer(State().remapBufs[i].to, remaps[i].ToPrefix);
-            }
-        }
-        int removeIdx = -1;
+    auto& remaps = cfg.PathRemaps;
+    // Keep the per-row edit buffers in lockstep with the rule vector — this seeds them after
+    // a config load (buffers empty, rules non-empty) and re-syncs after add/remove.
+    if (State().remapBufs.size() != remaps.size()) {
+        State().remapBufs.assign(remaps.size(), RemapEditBuf{});
         for (size_t i = 0; i < remaps.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
-            ImGui::SetNextItemWidth(220.f);
-            ImGui::InputText("from", State().remapBufs[i].from, sizeof(State().remapBufs[i].from));
-            const bool fromDirty = ImGui::IsItemDeactivatedAfterEdit();
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(220.f);
-            ImGui::InputText("to", State().remapBufs[i].to, sizeof(State().remapBufs[i].to));
-            const bool toDirty = ImGui::IsItemDeactivatedAfterEdit();
-            ImGui::SameLine();
-            const bool remove = ImGui::Button("Remove");
-            ImGui::PopID();
-            if (fromDirty || toDirty) {
-                remaps[i].FromPrefix = State().remapBufs[i].from;
-                remaps[i].ToPrefix = State().remapBufs[i].to;
-                PersistAnnotateCfg("edit_remap");
-            }
-            if (remove) {
-                removeIdx = static_cast<int>(i);
-            }
-        }
-        if (removeIdx >= 0) {
-            remaps.erase(remaps.begin() + removeIdx);
-            State().remapBufs.erase(State().remapBufs.begin() + removeIdx);
-            PersistAnnotateCfg("remove_remap");
-        }
-        if (ImGui::Button("Add path remap")) {
-            remaps.push_back(PathRemapRule{});
-            State().remapBufs.push_back(RemapEditBuf{});
-            PersistAnnotateCfg("add_remap");
+            CopyToBuffer(State().remapBufs[i].from, remaps[i].FromPrefix);
+            CopyToBuffer(State().remapBufs[i].to, remaps[i].ToPrefix);
         }
     }
+    int removeIdx = -1;
+    for (size_t i = 0; i < remaps.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::SetNextItemWidth(220.f);
+        ImGui::InputText("from", State().remapBufs[i].from, sizeof(State().remapBufs[i].from));
+        const bool fromDirty = ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220.f);
+        ImGui::InputText("to", State().remapBufs[i].to, sizeof(State().remapBufs[i].to));
+        const bool toDirty = ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SameLine();
+        const bool remove = ImGui::Button("Remove");
+        ImGui::PopID();
+        if (fromDirty || toDirty) {
+            remaps[i].FromPrefix = State().remapBufs[i].from;
+            remaps[i].ToPrefix = State().remapBufs[i].to;
+            PersistAnnotateCfg("edit_remap");
+        }
+        if (remove) {
+            removeIdx = static_cast<int>(i);
+        }
+    }
+    if (removeIdx >= 0) {
+        remaps.erase(remaps.begin() + removeIdx);
+        State().remapBufs.erase(State().remapBufs.begin() + removeIdx);
+        PersistAnnotateCfg("remove_remap");
+    }
+    if (ImGui::Button("Add path remap")) {
+        remaps.push_back(PathRemapRule{});
+        State().remapBufs.push_back(RemapEditBuf{});
+        PersistAnnotateCfg("add_remap");
+    }
+}
 
+// Changelist-cache-size input + the collapsible UI-color editors. Split out of
+// DrawAnnotatePersistedOptionsForm.
+void DrawAnnotateCacheAndColors() {
+    auto& cfg = State().annotateCfg;
     ImGui::Separator();
     ImGui::InputInt("Changelist cache size", &State().clCacheVal);
     const bool clCacheDirty = ImGui::IsItemDeactivatedAfterEdit();
@@ -204,6 +220,13 @@ void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUi
         colorRow("Import existing", cfg.UiColors.ImportExisting);
         colorRow("CL tooltip title", cfg.UiColors.ClTooltipTitle);
     }
+}
+
+void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUiThemeColors& theme) {
+    DrawAnnotateScalarAndTextFields();
+    DrawAnnotateJiraFieldCombos(app, theme);
+    DrawAnnotatePathRemaps();
+    DrawAnnotateCacheAndColors();
 }
 
 } // namespace AnnotateInternal

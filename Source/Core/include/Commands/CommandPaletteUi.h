@@ -61,6 +61,13 @@ class CommandPaletteUi {
 
     /// Render the required-args input form for argFormCmd_.
     void drawArgForm(AppController& app);
+
+    /// Up/Down selection + Enter/Escape dispatch for the command list (split out of Draw for
+    /// function-size compliance; runs inside the active palette Begin scope).
+    void handleListNavigation(AppController& app, const ImGuiIO& io);
+
+    /// Scrollable command-list child window (owns its own BeginChild/EndChild pair).
+    void drawCommandList(AppController& app, const ImGuiIO& io);
 };
 
 } // namespace cmd

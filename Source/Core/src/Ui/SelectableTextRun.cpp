@@ -170,49 +170,10 @@ void RegisterSegment(Context& ctx, const char* begin, const char* end, ImVec2 sc
     ctx.segments.push_back(std::move(seg));
 }
 
-void End(Context& ctx) {
-    if (ctx.segments.empty()) {
-        return;
-    }
-
-    // Compute the bounding box across all registered segments. The hit-test
-    // ItemAdd below uses this rectangle to claim the area so the parent
-    // window's drag-to-move doesn't fire when the user clicks inside the
-    // selectable text. Width covers the widest line; height spans first
-    // segment's top to last segment's bottom.
-    const detail::BoundingBox bb = detail::ComputeBoundingBox(ctx.segments);
-    const ImVec2 bbMin = bb.min;
-    const ImVec2 bbMax = bb.max;
-
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    if (!window) {
-        return;
-    }
-
-    // Stable per-window ID so ImGui's active-widget machinery routes input to
-    // us. The string-id constant keeps the ID stable across frames inside the
-    // same window; if the caller embeds multiple SelectableText regions in
-    // one ImGui window they share input — acceptable for MVP (cross-region
-    // selection isn't supported anyway).
-    const ImGuiID hitId = window->GetID("##selectable_text_hitbox");
-    const ImRect hitBb(bbMin, bbMax);
-
-    // ItemAdd registers the hit-test rect on the window's draw list. Without
-    // this, ImGui treats clicks inside the segments as "empty space" on the
-    // parent window, which then drags the popup / modal. AllowOverlap lets
-    // sibling widgets (links inside the text) still get hover events; we set
-    // ButtonBehavior below to actually claim input on press.
-    ImGui::ItemAdd(hitBb, hitId, NULL, ImGuiItemFlags_AllowOverlap);
-    bool hovered = false;
-    bool held = false;
-    ImGui::ButtonBehavior(hitBb, hitId, &hovered, &held,
-                          ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
-                              ImGuiButtonFlags_PressedOnClick | ImGuiButtonFlags_AllowOverlap);
-
-    const ImGuiIO& io = ImGui::GetIO();
-    const ImVec2 mouse = io.MousePos;
-    const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-
+// Pointer hit-testing + drag-selection state machine for End(). Updates the hovered segment/char,
+// sets the text cursor, and initiates/extends/ends the drag selection. Split out for
+// function-size compliance.
+static void HandleSelectionPointerInput(Context& ctx, bool hovered, const ImVec2& mouse, bool mouseDown) {
     // Hit-test the mouse against registered segments — needed for the char
     // offset within the segment under the cursor. Tracks hover for the
     // GetHoveredHref accessor too.
@@ -244,18 +205,12 @@ void End(Context& ctx) {
     if (!mouseDown) {
         ctx.dragging = false;
     }
-    // Held flag is used implicitly via ButtonBehavior — also signal to ImGui
-    // that we own the active state during a drag so window-drag stays off.
-    (void)held;
+}
 
-    // Draw selection overlay. Selection invalidated if either endpoint refers
-    // to a segment that no longer exists (e.g. content shrank between frames).
-    const int segCount = static_cast<int>(ctx.segments.size());
-    DrawSelectionOverlay(ctx);
-
-    // Keyboard shortcuts — gated on the hit area being hovered so they don't
-    // collide with global Ctrl+A / Ctrl+C bindings outside the SelectableText
-    // region.
+// Keyboard shortcuts for select-all and copy, plus the right-click context menu, for the End path.
+// Shortcuts are gated on hover so they do not collide with global bindings. Split out for
+// function-size compliance.
+static void HandleSelectionKeyboardAndMenu(Context& ctx, bool hovered, int segCount, const ImGuiIO& io) {
     const bool ctrl = io.KeyCtrl;
     if (hovered && ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && segCount > 0) {
         // Select all — span from start of first segment to end of last.
@@ -288,6 +243,62 @@ void End(Context& ctx) {
         }
         ImGui::EndPopup();
     }
+}
+
+void End(Context& ctx) {
+    if (ctx.segments.empty()) {
+        return;
+    }
+
+    // Compute the bounding box across all registered segments. The hit-test
+    // ItemAdd below uses this rectangle to claim the area so the parent
+    // window's drag-to-move doesn't fire when the user clicks inside the
+    // selectable text. Width covers the widest line; height spans first
+    // segment's top to last segment's bottom.
+    const detail::BoundingBox bb = detail::ComputeBoundingBox(ctx.segments);
+    const ImVec2 bbMin = bb.min;
+    const ImVec2 bbMax = bb.max;
+
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (!window) {
+        return;
+    }
+
+    // Stable per-window ID so ImGui's active-widget machinery routes input to
+    // us. The string-id constant keeps the ID stable across frames inside the
+    // same window; if the caller embeds multiple SelectableText regions in
+    // one ImGui window they share input — acceptable for MVP (cross-region
+    // selection isn't supported anyway).
+    const ImGuiID hitId = window->GetID("##selectable_text_hitbox");
+    const ImRect hitBb(bbMin, bbMax);
+
+    // ItemAdd registers the hit-test rect on the window's draw list. Without
+    // this, ImGui treats clicks inside the segments as "empty space" on the
+    // parent window, which then drags the popup / modal. AllowOverlap lets
+    // sibling widgets such as links inside the text still get hover events. We then call
+    // ButtonBehavior below to actually claim input on press.
+    ImGui::ItemAdd(hitBb, hitId, NULL, ImGuiItemFlags_AllowOverlap);
+    bool hovered = false;
+    bool held = false;
+    ImGui::ButtonBehavior(hitBb, hitId, &hovered, &held,
+                          ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+                              ImGuiButtonFlags_PressedOnClick | ImGuiButtonFlags_AllowOverlap);
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 mouse = io.MousePos;
+    const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+
+    HandleSelectionPointerInput(ctx, hovered, mouse, mouseDown);
+    // Held flag is used implicitly via ButtonBehavior — also signal to ImGui
+    // that we own the active state during a drag so window-drag stays off.
+    (void)held;
+
+    // Draw selection overlay. Selection invalidated if either endpoint refers
+    // to a segment that no longer exists (e.g. content shrank between frames).
+    const int segCount = static_cast<int>(ctx.segments.size());
+    DrawSelectionOverlay(ctx);
+
+    HandleSelectionKeyboardAndMenu(ctx, hovered, segCount, io);
 }
 
 bool HasSelection(const Context& ctx) {

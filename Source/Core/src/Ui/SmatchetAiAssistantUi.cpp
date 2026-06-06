@@ -503,6 +503,51 @@ void RenderTurnActionRow(AiHistoryDrawCtx& ctx, int messageIndex, AiMessage* msg
 // has no persistence row). `body` is mutable on persistent rows so the
 // pin-toggle can flip Pinned. Extracted verbatim from the former renderTurn
 // lambda in DrawHistoryArea — behaviour is byte-identical.
+// Off-screen culling for a finalised (cacheable) history turn with a known height. Computes the
+// body hash into outBodyKey, then — when the turn is fully off-screen — emits a Dummy of the
+// realised height and returns true (caller should early-return). Returns false otherwise.
+bool TryCullHistoryTurn(const std::string& body, bool cacheable, float actionRowSlotH, std::uint64_t& outBodyKey) {
+    outBodyKey = 0;
+    if (!cacheable) {
+        return false;
+    }
+    outBodyKey = MarkdownPreviewRender::HashContent(body);
+    const auto hit = s_messageHeightCache.find(outBodyKey);
+    if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
+        const float labelH = ImGui::GetTextLineHeightWithSpacing();
+        // Include the always-reserved action-row slot so the culling
+        // height matches the realised layout (otherwise a culled turn
+        // skips by labelH+body while a rendered turn advances by
+        // labelH+body+actionRow, drifting the scroll position).
+        const float totalH = labelH + hit->second + actionRowSlotH;
+        if (!ImGui::IsRectVisible(ImVec2(1.0f, totalH))) {
+            ImGui::Dummy(ImVec2(0.0f, totalH));
+            return true;
+        }
+    }
+    return false;
+}
+
+// Pre-draw the user-message bubble background via ImDrawList before the text renders. Uses the
+// message-height cache populated on the FIRST render. A fresh user message misses the cache on its
+// first frame, so it has no bubble that frame — an acceptable single-frame delay since it just
+// appeared.
+void DrawUserBubbleBackground(const SmatchetThemeAiColors& aiPalette, std::uint64_t bodyKey,
+                              const ImVec2& turnStartScreen) {
+    const auto hit = s_messageHeightCache.find(bodyKey);
+    if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
+        const float labelH = ImGui::GetTextLineHeightWithSpacing();
+        const float bubbleH = labelH + hit->second;
+        const float bubbleW = ImGui::GetContentRegionAvail().x;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 bubbleColor =
+            ImGui::ColorConvertFloat4ToU32(ImVec4(aiPalette.AiUserBubbleBg[0], aiPalette.AiUserBubbleBg[1],
+                                                  aiPalette.AiUserBubbleBg[2], aiPalette.AiUserBubbleBg[3]));
+        dl->AddRectFilled(turnStartScreen, ImVec2(turnStartScreen.x + bubbleW, turnStartScreen.y + bubbleH),
+                          bubbleColor, ImGui::GetStyle().FrameRounding);
+    }
+}
+
 void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* roleLabel, const ImVec4& roleColor,
                        AiMessage* msgPtr, const std::string& body, bool cacheable) {
     SMATCHET_UI_PERF_SCOPE("ai_chat.history.render_turn");
@@ -522,41 +567,13 @@ void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* role
     // fully so the height cache populates on first sight.
     std::uint64_t bodyKey = 0;
     const float actionRowSlotH = ImGui::GetFrameHeightWithSpacing() * 0.9f;
-    if (cacheable) {
-        bodyKey = MarkdownPreviewRender::HashContent(body);
-        const auto hit = s_messageHeightCache.find(bodyKey);
-        if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
-            const float labelH = ImGui::GetTextLineHeightWithSpacing();
-            // Include the always-reserved action-row slot so the culling
-            // height matches the realised layout (otherwise a culled turn
-            // skips by labelH+body while a rendered turn advances by
-            // labelH+body+actionRow, drifting the scroll position).
-            const float totalH = labelH + hit->second + actionRowSlotH;
-            if (!ImGui::IsRectVisible(ImVec2(1.0f, totalH))) {
-                ImGui::Dummy(ImVec2(0.0f, totalH));
-                return;
-            }
-        }
+    if (TryCullHistoryTurn(body, cacheable, actionRowSlotH, bodyKey)) {
+        return;
     }
 
-    // For user messages: pre-draw the bubble bg via ImDrawList before the
-    // text renders. Uses the message-height cache populated on the FIRST
-    // render — first frame after a fresh user message has cache miss → no
-    // bubble bg that frame (acceptable single-frame visual delay since the
-    // message just appeared).
+    // For user messages: pre-draw the bubble bg via ImDrawList before the text renders.
     if (cacheable && isUser) {
-        const auto hit = s_messageHeightCache.find(bodyKey);
-        if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
-            const float labelH = ImGui::GetTextLineHeightWithSpacing();
-            const float bubbleH = labelH + hit->second;
-            const float bubbleW = ImGui::GetContentRegionAvail().x;
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            const ImU32 bubbleColor =
-                ImGui::ColorConvertFloat4ToU32(ImVec4(aiPalette.AiUserBubbleBg[0], aiPalette.AiUserBubbleBg[1],
-                                                      aiPalette.AiUserBubbleBg[2], aiPalette.AiUserBubbleBg[3]));
-            dl->AddRectFilled(turnStartScreen, ImVec2(turnStartScreen.x + bubbleW, turnStartScreen.y + bubbleH),
-                              bubbleColor, ImGui::GetStyle().FrameRounding);
-        }
+        DrawUserBubbleBackground(aiPalette, bodyKey, turnStartScreen);
     }
 
     ImGui::BeginGroup();
@@ -1203,6 +1220,42 @@ void DrawCopyToastStrip(UiDrawSession& d, float toastRowH) {
     }
 }
 
+// Register the chat-input buffer with the dictation router for the
+// duration of the panel being open. Re-registering each frame is cheap
+// (router treats the buf pointer as an idempotent key). Phase F — uses
+// the AI-Assistant flavour so the post-insertion auto-send-on-punctuation
+// check can identify this splice target. The callback is registered once
+// (idempotent flag); it simply flips a static atomic that the next panel
+// draw observes — keeps the work on the UI thread without re-entering
+// ImGui state from the dispatcher drain context.
+void RegisterAssistantDictationInput() {
+    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
+    if (!s_autoSendCallbackRegistered) {
+        s_autoSendCallbackRegistered = true;
+        g_dictationRouter.SetAiAssistantSendCallback(
+            []() { s_pendingAutoSend.store(true, std::memory_order_release); });
+    }
+}
+
+// Pillar 2 (UI never freezes): dock-integrated window — ImGui's dock manager
+// owns layout, sizing, and the resize/swap chrome. The panel attaches to the
+// primary side bar (left) by default and migrates to the secondary side bar
+// (right) when the user toggles the swap button. A pending-side request fires
+// SetNextWindowDockID with ImGuiCond_Always so the move actually takes effect,
+// otherwise FirstUseEver lets the user's saved imgui.ini state win.
+void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
+    const ImGuiID primaryDockId = SmatchetDockNodeIds::kPrimarySideBar;
+    const ImGuiID secondaryDockId = SmatchetDockNodeIds::kSecondarySideBar;
+    const ImGuiID targetDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
+    if (d.assistantPendingSideSwap || needsReDock) {
+        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
+        d.assistantPendingSideSwap = false;
+        needsReDock = false;
+    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
+    }
+}
+
 } // namespace
 
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
@@ -1217,38 +1270,10 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         PersistOpenStateImmediate(d);
         return;
     }
-    // Register the chat-input buffer with the dictation router for the
-    // duration of the panel being open. Re-registering each frame is cheap
-    // (router treats the buf pointer as an idempotent key). Phase F — uses
-    // the AI-Assistant flavour so the post-insertion auto-send-on-punctuation
-    // check can identify this splice target. The callback is registered once
-    // (idempotent flag); it simply flips a static atomic that the next panel
-    // draw observes — keeps the work on the UI thread without re-entering
-    // ImGui state from the dispatcher drain context.
-    g_dictationRouter.RegisterAiAssistantInputText(s_inputCharBuf.data(), s_inputCharBuf.size(), nullptr);
-    if (!s_autoSendCallbackRegistered) {
-        s_autoSendCallbackRegistered = true;
-        g_dictationRouter.SetAiAssistantSendCallback(
-            []() { s_pendingAutoSend.store(true, std::memory_order_release); });
-    }
+    RegisterAssistantDictationInput();
 
-    // Pillar 2 (UI never freezes): dock-integrated window — ImGui's dock manager
-    // owns layout, sizing, and the resize/swap chrome. The panel attaches to the
-    // primary side bar (left) by default and migrates to the secondary side bar
-    // (right) when the user toggles the swap button. A pending-side request fires
-    // SetNextWindowDockID with ImGuiCond_Always so the move actually takes effect,
-    // otherwise FirstUseEver lets the user's saved imgui.ini state win.
-    const ImGuiID primaryDockId = SmatchetDockNodeIds::kPrimarySideBar;
-    const ImGuiID secondaryDockId = SmatchetDockNodeIds::kSecondarySideBar;
-    const ImGuiID targetDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
     static bool s_assistantNeedsReDock = false;
-    if (d.assistantPendingSideSwap || s_assistantNeedsReDock) {
-        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
-        d.assistantPendingSideSwap = false;
-        s_assistantNeedsReDock = false;
-    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
-    }
+    ApplyAssistantDocking(d, s_assistantNeedsReDock);
 
     if (d.requestAssistantFocus) {
         ImGui::SetNextWindowFocus();

@@ -447,31 +447,15 @@ bool SmatchetImGuiHost::UpdateRendererColorFormat(int colorFormat, std::string& 
 #endif
 }
 
-bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outError) {
-    outError.clear();
-    if (!ImplData) {
-        outError = "Host state is unavailable.";
-        return false;
-    }
-    ImplData->LastInitError.clear();
-    if (ImplData->Initialized.load(std::memory_order_acquire)) {
-        return true;
-    }
-
-#if !defined(_WIN32)
-    outError = "SmatchetImGuiHost renderer backend is unavailable on this platform.";
-    ImplData->LastInitError = outError;
-    LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
-    return false;
-#else
+#if defined(_WIN32)
+// Resolve the runtime asset + user-data directories from the DB path on first init. Plugin defaults
+// to the Portable per-Unreal-project preference to preserve historical config-file behaviour. The
+// user can opt into Shared mode via Preferences then Local data.
+void SmatchetImGuiHost::initResolveStorageDirs(const InitOptions& options) {
     if (ConfigManager::GetFilesBaseDirectory().empty()) {
         const std::string baseFromDbPath = SmatchetDirectoryFromFilePath(options.DbPath);
         if (!baseFromDbPath.empty()) {
             ConfigManager::SetRuntimeAssetDirectory(baseFromDbPath);
-            // Plugin defaults to Portable (per-Unreal-project) to preserve historical
-            // <Project>/Saved/smatchet_config.json behaviour. The user can opt into Shared
-            // mode via Preferences -> Local data when the project dir isn't writable
-            // (UE source control, network share, sandboxed CI runner, etc.).
             const ConfigManager::StoragePreference pref =
                 ConfigManager::GetStoragePreference(baseFromDbPath, ConfigManager::StoragePreference::Portable);
             std::string userDataDir = baseFromDbPath;
@@ -484,7 +468,11 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
             ConfigManager::SetUserDataDirectory(userDataDir);
         }
     }
+}
 
+// Validate the renderer backend + required DX12 resources. Returns false (and sets outError +
+// LastInitError) when the backend is not DX12 or any required handle is missing.
+bool SmatchetImGuiHost::initValidateRenderer(const InitOptions& options, std::string& outError) {
     if (options.Renderer.Backend != SmatchetRendererBackend::Dx12) {
         outError = "Only DX12 backend is implemented in this runtime build.";
         ImplData->LastInitError = outError;
@@ -499,7 +487,13 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
         return false;
     }
+    return true;
+}
 
+// Create the ImGui context, run the layout-schema ini migration, apply the initial theme + font,
+// init the DX12 backend, and warm up the font atlas. Returns false (destroying the context) on
+// backend init failure. Preconditions validated by initValidateRenderer().
+bool SmatchetImGuiHost::initImGuiContextAndBackend(const InitOptions& options, std::string& outError) {
     auto* device = reinterpret_cast<ID3D12Device*>(options.Renderer.NativeDevice);
     auto* fontSrvDescriptorHeap = reinterpret_cast<ID3D12DescriptorHeap*>(options.Renderer.RendererResource0);
     D3D12_CPU_DESCRIPTOR_HANDLE fontSrvCpuHandle{};
@@ -568,13 +562,14 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         int height = 0;
         warmupIo.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height); // Force atlas build / builder init.
     }
+    return true;
+}
 
-    TrackerConfig cfg = ConfigManager::Load();
-
-    ImplData->App.SetOpenUrlHandler(options.OpenUrlHandler);
-    ImplData->App.SetAttachmentViewerHandler(options.AttachmentViewerHandler);
-    ImplData->App.SetCloseEmbeddedUiHandler([this]() { SetUiVisible(false); });
-
+// Register optional plugins (MCP, Lua console) per build flags + config. Mirrors the
+// pre-decomposition inline order verbatim.
+void SmatchetImGuiHost::initRegisterPlugins(const InitOptions& options, const TrackerConfig& cfg) {
+    (void)options;
+    (void)cfg;
 #if defined(SMATCHET_WITH_MCP)
     {
         const int mcpPort = (cfg.McpPort >= 1 && cfg.McpPort <= 65535) ? cfg.McpPort : options.McpPort;
@@ -595,6 +590,43 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
 #else
     LOG_WARN("SmatchetImGuiHost: built without SMATCHET_WITH_LUA_AUTOMATION — LuaConsole not loaded.");
 #endif
+}
+#endif
+
+bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outError) {
+    outError.clear();
+    if (!ImplData) {
+        outError = "Host state is unavailable.";
+        return false;
+    }
+    ImplData->LastInitError.clear();
+    if (ImplData->Initialized.load(std::memory_order_acquire)) {
+        return true;
+    }
+
+#if !defined(_WIN32)
+    outError = "SmatchetImGuiHost renderer backend is unavailable on this platform.";
+    ImplData->LastInitError = outError;
+    LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
+    return false;
+#else
+    initResolveStorageDirs(options);
+
+    if (!initValidateRenderer(options, outError)) {
+        return false;
+    }
+
+    if (!initImGuiContextAndBackend(options, outError)) {
+        return false;
+    }
+
+    TrackerConfig cfg = ConfigManager::Load();
+
+    ImplData->App.SetOpenUrlHandler(options.OpenUrlHandler);
+    ImplData->App.SetAttachmentViewerHandler(options.AttachmentViewerHandler);
+    ImplData->App.SetCloseEmbeddedUiHandler([this]() { SetUiVisible(false); });
+
+    initRegisterPlugins(options, cfg);
     ImplData->Plugins.OnEarlyInit(ImplData->App);
 
     std::string resolvedDbPath = options.DbPath;

@@ -165,6 +165,17 @@ class SmatchetUI {
     void drawMenuBarToolsMenu(MainMenuDrawCtx& ctx);
     void drawMenuBarHelpMenu(MainMenuDrawCtx& ctx);
     void drawMenuBarInlinePalette(MainMenuDrawCtx& ctx);
+#if defined(SMATCHET_WITH_WHISPER)
+    void drawMenuBarDictationIndicator(MainMenuDrawCtx& ctx);
+#endif
+#ifdef SMATCHET_EMBEDDED_IN_UNREAL
+    void drawMenuBarUnrealCloseButton(MainMenuDrawCtx& ctx);
+#endif
+    // drawMenuBarAppearanceMenu sub-sections (function-size-compliance). Each runs inside the
+    // active Appearance BeginMenu scope; the theme/density/font helper opens and closes its own
+    // nested BeginMenu/EndMenu pairs, matching the pre-decomposition order verbatim.
+    void drawAppearanceThemeDensityFont(MainMenuDrawCtx& ctx);
+    void drawAppearancePanelPosition(MainMenuDrawCtx& ctx);
 
     // Section helpers for SmatchetUI::Draw (function-size-compliance, monoliths campaign).
     // No positional-ImGui scope pair is split across a helper boundary; each helper either
@@ -180,6 +191,9 @@ class SmatchetUI {
     void handlePanelVisibilityShortcuts(UiDrawSession& d);
     void handleViewRevealShortcuts(UiDrawSession& d);
     void drawSecondaryWindows(AppController& app, UiDrawSession& d);
+    // Tail half of drawSecondaryWindows (toasts onward) — split for function-size compliance.
+    // Each contained window owns its own Begin/End scope; no scope crosses the boundary.
+    void drawSecondaryWindowsTail(AppController& app, UiDrawSession& d);
     void drawDockDebugOverlay(UiDrawSession& d);
     void drawEndOfFramePersistence(UiDrawSession& d);
 

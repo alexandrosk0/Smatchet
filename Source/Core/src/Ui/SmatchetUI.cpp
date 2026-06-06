@@ -800,6 +800,12 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
         SMATCHET_UI_PERF_SCOPE("DrawPlanDocViewer");
         smatchet::DrawPlanDocViewer(d);
     }
+    drawSecondaryWindowsTail(app, d);
+}
+
+// Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
+// list windows, MCP server, log window, FPS overlay. Split out for function-size compliance.
+void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");
         SmatchetToastManager::Instance().Render();

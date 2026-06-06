@@ -131,16 +131,30 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         ImGui::EndDisabled();
 
 #if defined(SMATCHET_WITH_WHISPER)
-    // Phase E — push-to-talk REC indicator in the menu bar, just before
-    // the (Unreal) Close button. Polls the lock-free recording flag on
-    // the router; cheap (one atomic load per frame). Per Pillar 2 the
-    // indicator must appear < 100 ms after hotkey press; the worker
-    // flips the atomic immediately on onPress, and the next UI frame
-    // picks it up.
-    // REC indicator stays red while audio is being captured; switches to
-    // an amber "Transcribing" indicator once the user releases the hotkey
-    // and the worker is running. Closes the visual gap between mic stop
-    // and text insertion for the multi-second local-model path.
+    drawMenuBarDictationIndicator(ctx);
+#endif
+#ifdef SMATCHET_EMBEDDED_IN_UNREAL
+    drawMenuBarUnrealCloseButton(ctx);
+#endif
+    if (nortonMenuTint) {
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndMainMenuBar();
+}
+
+#if defined(SMATCHET_WITH_WHISPER)
+// Phase E — push-to-talk REC indicator in the menu bar, just before
+// the (Unreal) Close button. Polls the lock-free recording flag on
+// the router; cheap (one atomic load per frame). Per Pillar 2 the
+// indicator must appear < 100 ms after hotkey press; the worker
+// flips the atomic immediately on onPress, and the next UI frame
+// picks it up.
+// REC indicator stays red while audio is being captured; switches to
+// an amber "Transcribing" indicator once the user releases the hotkey
+// and the worker is running. Closes the visual gap between mic stop
+// and text insertion for the multi-second local-model path.
+void SmatchetUI::drawMenuBarDictationIndicator(MainMenuDrawCtx& ctx) {
+    (void)ctx;
     const bool isRec = g_dictationRouter.IsRecording();
     const bool isTx = !isRec && g_dictationRouter.IsTranscribing();
     if (isRec || isTx) {
@@ -172,28 +186,27 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
             ImGui::SetTooltip("%s", tip);
         }
     }
-#endif
-#ifdef SMATCHET_EMBEDDED_IN_UNREAL
-    {
-        const char* closeLabel = "Close";
-        const float btnW = ImGui::CalcTextSize(closeLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        constexpr float kRightMargin = 10.0f;
-        const float xPos =
-            (std::max)(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - btnW - kRightMargin);
-        ImGui::SetCursorPosX(xPos);
-        if (ImGui::SmallButton(closeLabel)) {
-            app.CloseEmbeddedUi();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Hide Smatchet overlay (same as Ctrl+Shift+J)");
-        }
-    }
-#endif
-    if (nortonMenuTint) {
-        ImGui::PopStyleColor();
-    }
-    ImGui::EndMainMenuBar();
 }
+#endif
+
+#ifdef SMATCHET_EMBEDDED_IN_UNREAL
+// Embedded-overlay Close button, right-aligned in the menu bar. Hides the Smatchet
+// overlay (same effect as Ctrl+Shift+J). Only present in the Unreal-embedded build.
+void SmatchetUI::drawMenuBarUnrealCloseButton(MainMenuDrawCtx& ctx) {
+    AppController& app = ctx.app;
+    const char* closeLabel = "Close";
+    const float btnW = ImGui::CalcTextSize(closeLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    constexpr float kRightMargin = 10.0f;
+    const float xPos = (std::max)(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - btnW - kRightMargin);
+    ImGui::SetCursorPosX(xPos);
+    if (ImGui::SmallButton(closeLabel)) {
+        app.CloseEmbeddedUi();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Hide Smatchet overlay (same as Ctrl+Shift+J)");
+    }
+}
+#endif
 
 // Rect-select "Select All" over the active filtered/unfiltered row set. Was the
 // `selectAllRows` lambda inside the menu-bar body.
@@ -269,22 +282,10 @@ void SmatchetUI::drawMenuBarSelectionMenu(MainMenuDrawCtx& ctx) {
     }
 }
 
-// View > Appearance submenu (themes, density, font, panel position, zoom, panel toggles).
-// Owns its own BeginMenu/EndMenu pair; nested theme/density/font/panel submenus own theirs.
-void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
+// Theme / Density / Font nested submenus inside Appearance. Each opens and closes its own
+// BeginMenu/EndMenu pair; runs inside the active Appearance scope (no scope of its own).
+void SmatchetUI::drawAppearanceThemeDensityFont(MainMenuDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
-    if (!ImGui::BeginMenu("Appearance")) {
-        return;
-    }
-#ifndef SMATCHET_EMBEDDED_IN_UNREAL
-    if (ImGui::MenuItem("Full Screen", "F11", d.cfg.FullScreen)) {
-        d.requestFullScreenToggle = true;
-    }
-#endif
-    if (ImGui::MenuItem("Zen Mode", "Ctrl+M, Z", d.cfg.ZenMode)) {
-        d.cfg.ZenMode = !d.cfg.ZenMode;
-    }
-    ImGui::Separator();
     if (ImGui::BeginMenu("Theme")) {
         struct ThemeEntry {
             ThemeId id;
@@ -340,7 +341,12 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         }
         ImGui::EndMenu();
     }
-    ImGui::Separator();
+}
+
+// Panel Position nested submenu inside Appearance. Owns its own BeginMenu/EndMenu pair; runs
+// inside the active Appearance scope.
+void SmatchetUI::drawAppearancePanelPosition(MainMenuDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
     if (ImGui::BeginMenu("Panel Position")) {
         if (ImGui::MenuItem("Bottom", nullptr, d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Bottom)) {
             if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Bottom) {
@@ -360,6 +366,27 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         }
         ImGui::EndMenu();
     }
+}
+
+// View > Appearance submenu (themes, density, font, panel position, zoom, panel toggles).
+// Owns its own BeginMenu/EndMenu pair; nested theme/density/font/panel submenus own theirs.
+void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    if (!ImGui::BeginMenu("Appearance")) {
+        return;
+    }
+#ifndef SMATCHET_EMBEDDED_IN_UNREAL
+    if (ImGui::MenuItem("Full Screen", "F11", d.cfg.FullScreen)) {
+        d.requestFullScreenToggle = true;
+    }
+#endif
+    if (ImGui::MenuItem("Zen Mode", "Ctrl+M, Z", d.cfg.ZenMode)) {
+        d.cfg.ZenMode = !d.cfg.ZenMode;
+    }
+    ImGui::Separator();
+    drawAppearanceThemeDensityFont(ctx);
+    ImGui::Separator();
+    drawAppearancePanelPosition(ctx);
     {
         const char* swapLabel =
             d.cfg.PrimarySideBarOnRight ? "Move Primary Side Bar Left" : "Move Primary Side Bar Right";

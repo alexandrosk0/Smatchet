@@ -538,6 +538,47 @@ void ApplyHighContrast(ImGuiStyle& /*style*/, ImVec4* colors) {
 // and BRIGHT CYAN (#55FFFF) for numeric metadata. Dialogs render on light-gray (#C0C0C0) with
 // dark text in the real Norton — but ImGui has a single global Text color, so we keep PopupBg
 // gray and accept yellow-on-gray for dialogs as the trade-off for the iconic yellow filename look.
+// Norton Commander chrome is sharp 1px boxes — no rounded corners anywhere. Split out of
+// ApplyNortonCommander for function-size compliance.
+void ApplyNortonRounding(ImGuiStyle& style) {
+    style.WindowRounding = 0.0f;
+    style.ChildRounding = 0.0f;
+    style.FrameRounding = 0.0f;
+    style.PopupRounding = 0.0f;
+    style.ScrollbarRounding = 0.0f;
+    style.GrabRounding = 0.0f;
+    style.TabRounding = 0.0f;
+}
+
+// Norton Commander C++ syntax palette + AI-bubble palette. Split out of ApplyNortonCommander for
+// function-size compliance; the color values are unchanged.
+void ApplyNortonSyntaxAndAi() {
+    // C++ syntax palette — match NC's panel tones. Keyword bright yellow (filename accent),
+    // string light red, comment light gray, number bright cyan (matches the date/time column
+    // in the file panel), preproc bright green. Keyword R/G/B differs from HighContrast's pure
+    // yellow on the B channel (0.333 vs 0.0) so pairwise-divergence tests still pass.
+    const SmatchetThemeSyntaxColors syn = {{1.00f, 1.00f, 0.333f, 1.0f},   // Keyword  bright yellow
+                                           {1.00f, 0.50f, 0.50f, 1.0f},    // String   light red
+                                           {0.667f, 0.667f, 0.667f, 1.0f}, // Comment light gray
+                                           {0.333f, 1.00f, 1.00f, 1.0f},   // Number   bright cyan
+                                           {0.333f, 1.00f, 0.333f, 1.0f},  // Preproc bright green
+                                           {1.00f, 1.00f, 1.00f, 1.0f}};   // Identifier bright white (NC text default)
+    SetSyntaxColors(syn);
+    // AI palette — Norton Commander 5.51 DOS aesthetic. Bubble uses NC bright yellow
+    // (the iconic filename accent) tinted at 0.22 alpha against the teal panel bg.
+    // Role labels use yellow (user) / bright cyan (assistant) per the NC palette
+    // convention — yellow accents go on user actions, cyan on system / output.
+    const SmatchetThemeAiColors ai = {
+        {1.00f, 1.00f, 0.333f, 0.22f}, // AiUserBubbleBg — NC yellow, 0.22 alpha
+        {1.00f, 1.00f, 0.333f, 1.00f}, // AiUserRoleLabel — NC bright yellow
+        {0.333f, 1.00f, 1.00f, 1.00f}, // AiAssistantRoleLabel — NC bright cyan
+        {0.80f, 0.80f, 0.80f, 1.00f},  // AiActionRowIcon — NC light grey
+        {1.00f, 1.00f, 0.333f, 1.00f}, // AiActionRowIconHover — NC bright yellow accent
+        {0.00f, 0.00f, 0.667f, 0.95f}  // AiPinStripBg — NC selection blue (#0000AA-ish)
+    };
+    SetAiColors(ai);
+}
+
 void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
     // Inverted Norton palette: blue dominates panels/chrome, teal becomes the accent / selection.
     const ImVec4 ncTeal = ImVec4(0.00f, 0.00f, 0.667f, 1.00f);      // #0000AA — panel bg (was teal)
@@ -550,13 +591,7 @@ void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
     const ImVec4 ncGray = ImVec4(0.667f, 0.667f, 0.667f, 1.00f);    // #AAAAAA — NC 2.01 menu bar bg
 
     // Norton Commander's chrome is sharp 1px boxes — no rounded corners on any region.
-    style.WindowRounding = 0.0f;
-    style.ChildRounding = 0.0f;
-    style.FrameRounding = 0.0f;
-    style.PopupRounding = 0.0f;
-    style.ScrollbarRounding = 0.0f;
-    style.GrabRounding = 0.0f;
-    style.TabRounding = 0.0f;
+    ApplyNortonRounding(style);
 
     // Body text = yellow (filename color). Most iconic NC tone — reads on teal panels, blue
     // selection bars, and (less ideally) on gray popups.
@@ -634,30 +669,7 @@ void ApplyNortonCommander(ImGuiStyle& style, ImVec4* colors) {
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.00f, 0.00f, 0.20f, 0.40f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.20f, 0.55f);
 
-    // C++ syntax palette — match NC's panel tones. Keyword bright yellow (filename accent),
-    // string light red, comment light gray, number bright cyan (matches the date/time column
-    // in the file panel), preproc bright green. Keyword R/G/B differs from HighContrast's pure
-    // yellow on the B channel (0.333 vs 0.0) so pairwise-divergence tests still pass.
-    const SmatchetThemeSyntaxColors syn = {{1.00f, 1.00f, 0.333f, 1.0f},   // Keyword  bright yellow
-                                           {1.00f, 0.50f, 0.50f, 1.0f},    // String   light red
-                                           {0.667f, 0.667f, 0.667f, 1.0f}, // Comment light gray
-                                           {0.333f, 1.00f, 1.00f, 1.0f},   // Number   bright cyan
-                                           {0.333f, 1.00f, 0.333f, 1.0f},  // Preproc bright green
-                                           {1.00f, 1.00f, 1.00f, 1.0f}};   // Identifier bright white (NC text default)
-    SetSyntaxColors(syn);
-    // AI palette — Norton Commander 5.51 DOS aesthetic. Bubble uses NC bright yellow
-    // (the iconic filename accent) tinted at 0.22 alpha against the teal panel bg.
-    // Role labels use yellow (user) / bright cyan (assistant) per the NC palette
-    // convention — yellow accents go on user actions, cyan on system / output.
-    const SmatchetThemeAiColors ai = {
-        {1.00f, 1.00f, 0.333f, 0.22f}, // AiUserBubbleBg — NC yellow, 0.22 alpha
-        {1.00f, 1.00f, 0.333f, 1.00f}, // AiUserRoleLabel — NC bright yellow
-        {0.333f, 1.00f, 1.00f, 1.00f}, // AiAssistantRoleLabel — NC bright cyan
-        {0.80f, 0.80f, 0.80f, 1.00f},  // AiActionRowIcon — NC light grey
-        {1.00f, 1.00f, 0.333f, 1.00f}, // AiActionRowIconHover — NC bright yellow accent
-        {0.00f, 0.00f, 0.667f, 0.95f}  // AiPinStripBg — NC selection blue (#0000AA-ish)
-    };
-    SetAiColors(ai);
+    ApplyNortonSyntaxAndAi();
 }
 
 // Pristine ImGui-built-in dark palette — bright cyan-blue accents (HeaderHovered #4296FA,
