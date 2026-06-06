@@ -310,7 +310,11 @@ smatchet_fetch_status("Fetching nlohmann/json...")
 # fails with "Failed to update submodules in: .../json-src". Declaring no
 # submodules sidesteps it entirely. See docs/guides/offline-builds.md
 # § Troubleshooting + agents/core/build-doctor.md § Common causes.
-FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3
+# Pinned to the exact commit the v3.11.3 lightweight tag resolves to (reproducible
+# builds / supply chain) — same content the floating tag points to today, zero
+# behaviour change. Lightweight tag (points straight at the commit); resolved via:
+# git ls-remote https://github.com/nlohmann/json.git refs/tags/v3.11.3
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG 9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03  # json v3.11.3
     GIT_SUBMODULES "")
 FetchContent_MakeAvailable(json)
 
@@ -365,7 +369,11 @@ endif()
 
 smatchet_fetch_status("Fetching cpp-httplib...")
 smatchet_prepare_httplib()
-FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.14.1)
+# Pinned to the exact commit the v0.14.1 lightweight tag resolves to (reproducible
+# builds / supply chain) — same content the floating tag points to today, zero
+# behaviour change. Lightweight tag; resolved via:
+# git ls-remote https://github.com/yhirose/cpp-httplib.git refs/tags/v0.14.1
+FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG a609330e4c6374f741d3b369269f7848255e1954)  # cpp-httplib v0.14.1
 FetchContent_MakeAvailable(httplib)
 
 
@@ -375,7 +383,11 @@ FetchContent_MakeAvailable(httplib)
 smatchet_fetch_status("Fetching md4c (CommonMark/GFM parser)...")
 FetchContent_Declare(md4c
     GIT_REPOSITORY https://github.com/mity/md4c.git
-    GIT_TAG release-0.5.2
+    # Pinned to the exact commit the release-0.5.2 lightweight tag resolves to
+    # (reproducible builds / supply chain) — same content, zero behaviour change.
+    # Lightweight tag; resolved via:
+    # git ls-remote https://github.com/mity/md4c.git refs/tags/release-0.5.2
+    GIT_TAG 729e6b8b320caa96328968ab27d7db2235e4fb47  # md4c release-0.5.2
 )
 FetchContent_GetProperties(md4c)
 if(NOT md4c_POPULATED)
@@ -394,7 +406,11 @@ endif()
 smatchet_fetch_status("Fetching ghc::filesystem (C++14 Polyfill)...")
 FetchContent_Declare(ghc_filesystem
     GIT_REPOSITORY https://github.com/gulrak/filesystem.git
-    GIT_TAG v1.5.14
+    # Pinned to the exact commit the v1.5.14 lightweight tag resolves to
+    # (reproducible builds / supply chain) — same content, zero behaviour change.
+    # Lightweight tag; resolved via:
+    # git ls-remote https://github.com/gulrak/filesystem.git refs/tags/v1.5.14
+    GIT_TAG 8a2edd6d92ed820521d42c94d179462bf06b5ed3  # ghc::filesystem v1.5.14
 )
 
 # FIX: CMake <3.10 compatibility removal warning
@@ -430,7 +446,12 @@ smatchet_fetch_status("Fetching GLFW...")
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 3.3.8)
+# Pinned to the exact commit the 3.3.8 annotated tag resolves to (reproducible
+# builds / supply chain) — same content the floating tag points to today, zero
+# behaviour change. 3.3.8 is an annotated tag; resolved to its underlying commit
+# (NOT the tag-object SHA, which would re-fetch) via:
+# git ls-remote https://github.com/glfw/glfw.git 'refs/tags/3.3.8^{}'
+FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 7482de6071d21db77a7236155da44c172a7f6c9e)  # glfw 3.3.8
 FetchContent_MakeAvailable(glfw)
 
 # ==============================================================================
@@ -705,9 +726,13 @@ if(SMATCHET_WITH_WHISPER AND SMATCHET_WHISPER_LOCAL_BACKEND)
     # win in exchange for a clean MinGW UCRT64 link. Re-evaluate if/when we
     # add a libgomp shipping story (or migrate to clang's libomp).
     set(GGML_OPENMP            OFF CACHE BOOL "" FORCE)
+    # Pinned to the exact commit the v1.7.4 lightweight tag resolves to
+    # (reproducible builds / supply chain) — same content, zero behaviour change.
+    # Lightweight tag; resolved via:
+    # git ls-remote https://github.com/ggerganov/whisper.cpp.git refs/tags/v1.7.4
     FetchContent_Declare(whisper_cpp
         GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git
-        GIT_TAG v1.7.4)
+        GIT_TAG 8a9ad7844d6e2a10cddf4b92de4089d7ac2b14a9)  # whisper.cpp v1.7.4
     FetchContent_MakeAvailable(whisper_cpp)
 endif()
 

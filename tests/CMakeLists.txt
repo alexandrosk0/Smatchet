@@ -1,9 +1,13 @@
 include(FetchContent)
 
 # doctest — header-only C++ unit test framework. Latest stable v2.4.x.
+# Pinned to the exact commit the v2.4.11 lightweight tag resolves to (reproducible
+# builds / supply chain) — same content the floating tag points to today, zero
+# behaviour change. Lightweight tag; resolved via:
+# git ls-remote https://github.com/doctest/doctest.git refs/tags/v2.4.11
 FetchContent_Declare(doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
-    GIT_TAG v2.4.11)
+    GIT_TAG ae7a13539fb71f270b87eb2e874fbac80bc8dda2)  # doctest v2.4.11
 FetchContent_MakeAvailable(doctest)
 
 # Per-unit linkage: each test target lists the specific Core/*.cpp files
