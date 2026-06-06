@@ -128,8 +128,6 @@ Tests and build:
 - **Linear-native query UI**: follow-up only if the JQL-subset translator proves too limiting.
 - **Multi-team aggregation**: single active team first; multi-team views need a separate UX decision and more pagination/rate-limit work.
 
-> **Scope note — superseded by the [`multi-grid-tabs`](multi-grid-tabs.md) foundation (not yet shipped):** that plan adds concurrent per-pane backends. Once its foundation lands, "single active backend / single active team" stops being a *global* app constraint — it scopes to a single Linear *pane*'s MVP. Multiple concurrent Linear panes (across teams, in separate dockable grids) then become possible with no change here. Full multi-team *aggregation inside one grid* stays out of scope. Revisit this bullet's wording in the multi-grid-tabs post-ship residue sweep.
-
 ## Verification
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: `LinearClientHelpers`, `LinearIssueMappingPure`, `LinearQueryFromJql`, config round-trip/env override, field catalog option mapping, and GraphQL error parser tests.
