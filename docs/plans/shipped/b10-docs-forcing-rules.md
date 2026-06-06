@@ -1,5 +1,7 @@
 # Plan — B10: encode deferred process forcing-rules into the docs
 
+> **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
+>
 > **Slug**: `b10-docs-forcing-rules` (matches this file's basename without `.md`).
 >
 > Sub-plan of [`agentic-backlog-campaign.md`](agentic-backlog-campaign.md) batch **B10**. Mandatory rules cross-link: see `AGENTS.md` § Project rules § Plan-doc family.

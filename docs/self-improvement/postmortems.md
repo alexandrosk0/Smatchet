@@ -27,6 +27,42 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-05 · PR #880, #881, #882 · required-but-path-filtered check deadlocked product-only PRs
+
+> Discovered while a merge-gate poller exhausted its window against three PRs that
+> were green on every other required check yet stuck `BLOCKED`.
+
+### What escaped
+The **branch-protection required-checks configuration** itself. `Doc anchors +
+agent contract` is a **required** context (`project.config.json` §
+`branch_protection.required_contexts`) but its workflow `doc-validation.yml` was
+**path-filtered** to docs/agents paths. On a PR touching none of those paths the
+workflow never runs → the required context is never reported → GitHub holds the
+PR `BLOCKED` forever. No gate flagged that making a path-filtered workflow a
+*required* context creates a permanent deadlock for any diff outside the filter.
+
+### Root cause
+The required context was added to live branch protection without a companion
+always-runs emitter. The deadlock only manifests on a PR touching **none** of the
+filtered paths — rare, because almost every PR also touches a `.md` (a plan / ADR
+/ backlog update) which trips the filter. So it lay dormant: the last 8 pure-product
+PRs (#766–#844) all merged 2026-06-03/04 *before* the context became live-required,
+and #880/#881/#882 (pure product/test diffs) are the first to hit it. The merge-gates
+poller's own `req-missing` detector (#877) correctly *flagged* the block — detection
+worked; what was missing was a gate preventing the deadlock-prone config.
+
+### Preventing gate
+PR #884 — `doc-validation.yml` drops its `pull_request.paths` filter and the
+`Doc anchors + agent contract` job **self-gates** (a `Detect doc-relevant changes`
+step runs the real validation or no-ops green), so the required context is reported
+on **every** PR. Durable class-fix (filed below): a selftest asserting every
+`branch_protection.required_contexts` entry maps to a workflow that runs
+unconditionally on `pull_request` (no `paths:` filter, or an internal self-gate) —
+so a path-filtered required context can never be re-introduced.
+
+### Filed as
+`docs/self-improvement/categories/infra.md` — *required-context ⇄ unconditional-workflow parity selftest* (P1).
+
 ## 2026-06-05 · develop direct-push (`a678741f`) · direct push to `develop` (no PR/CI/CR)
 
 > Self-reported. A one-line docs link fix was committed + pushed straight to
@@ -115,7 +151,7 @@ contract" = `failure`** on its head (`b648abb8`), no override label. It shipped
 two doc-validation defects to `develop`: an **MD028** blank-line-in-blockquote in
 `docs/plans/deferred/self-improvement-one-entry-per-file.md` (carried by an
 active→deferred `git mv`), and a **broken `AGENTS.md §` anchor ref** in
-`docs/plans/active/ci-build-time-reduction.md:116` (`§ Scope-reduction edits +
+`docs/plans/shipped/ci-build-time-reduction.md:116` (`§ Scope-reduction edits +
 final-check grep` — an inline mid-bullet bold the anchor-collector never registers
 as an anchor, compounded by `+` being a `TERMINATOR_CHARS` split point). Both
 `md_lint --all` + `test-doc-anchors` scan tree-wide, so the red surfaced on every

@@ -54,8 +54,12 @@ they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
    finalising.
 7. **Post-ship is PR-only.** Note that § Implementation log / § Deviations /
    § Verification(actual) get filled after the work ships, via a PR (never a
-   direct push to develop) — and the plan is `git mv`'d active → shipped once its
-   post-ship sections are populated and all cited PRs are merged.
+   direct push to develop) — and in that SAME PR the plan's `> **Status**:`
+   header is flipped to `shipped` AND the file is `git mv`'d active → shipped
+   (the template's § Archive checklist). Both happen together once the post-ship
+   sections are populated and all cited PRs are merged; the `git mv` is the step
+   that historically drops off, so `plan-archival-owed.sh` nags at SessionStart
+   for any `active/` plan already marked `shipped` but not moved.
 
 ## Out of scope
 

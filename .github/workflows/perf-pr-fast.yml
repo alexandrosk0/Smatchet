@@ -49,7 +49,7 @@ concurrency:
   group: perf-pr-fast-${{ github.ref }}
   cancel-in-progress: true
 
-# sccache (local-dir backend) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+# sccache (local-dir backend) — docs/plans/ci-build-time-reduction.md Phase 1.
 # Local disk (not SCCACHE_GHA_ENABLED) so a GH-cache-service outage can't fail the
 # build. /Z7 (CI gate in CMakeLists.txt) is perf-neutral — debug-info location
 # only, no codegen change (plan Q3).
