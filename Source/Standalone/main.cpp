@@ -817,6 +817,71 @@ static void PersistWindowState(GLFWwindow* window, int persistWindowedX, int per
 // bounds + tear down the app/plugin/window-owned UI via ShutdownApplication.
 // ImGui/GLFW teardown stays with main() (mirrors the original inline ordering).
 // Returns the process exit code (0 normal; 1 on a top-level exception).
+// Env-gated autonomous FPS / frame-time measurement for the real GL window. When
+// SMATCHET_FPS_MEASURE_SECONDS=N is set, samples per-frame wall time for N seconds (after a warmup
+// that excludes startup/sync churn — SMATCHET_FPS_WARMUP_SECONDS, default 0.5 s), prints
+// avg/best/p99/worst frame-ms + fps to stderr, then requests window close. SMATCHET_FPS_VSYNC=0
+// disables vsync first to measure uncapped throughput. Zero cost when the env var is unset (one
+// getenv at Begin + a single early-return branch per frame).
+struct FpsMeasure {
+    double measureSecs = 0.0;
+    double warmupSecs = 0.5;
+    double startT = 0.0;
+    double lastT = 0.0;
+    bool vsyncOff = false;
+    bool done = false;
+    std::vector<double> frameMs;
+
+    void Begin(GLFWwindow* window) {
+        (void)window;
+        const char* m = std::getenv("SMATCHET_FPS_MEASURE_SECONDS");
+        measureSecs = m ? std::atof(m) : 0.0;
+        if (measureSecs <= 0.0) {
+            return;
+        }
+        const char* w = std::getenv("SMATCHET_FPS_WARMUP_SECONDS");
+        warmupSecs = w ? std::atof(w) : 0.5;
+        const char* v = std::getenv("SMATCHET_FPS_VSYNC");
+        vsyncOff = (v != nullptr && v[0] == '0');
+        if (vsyncOff) {
+            glfwSwapInterval(0);
+        }
+        startT = glfwGetTime();
+        lastT = startT;
+    }
+
+    void Sample(GLFWwindow* window) {
+        if (measureSecs <= 0.0 || done) {
+            return;
+        }
+        const double nowT = glfwGetTime();
+        const double dtMs = (nowT - lastT) * 1000.0;
+        lastT = nowT;
+        if (nowT - startT > warmupSecs) {
+            frameMs.push_back(dtMs);
+        }
+        if (nowT - startT < measureSecs || frameMs.empty()) {
+            return;
+        }
+        std::sort(frameMs.begin(), frameMs.end());
+        double sum = 0.0;
+        for (double d : frameMs) {
+            sum += d;
+        }
+        const size_t n = frameMs.size();
+        const double avgMs = sum / static_cast<double>(n);
+        const size_t p99i = (n * 99) / 100 >= n ? n - 1 : (n * 99) / 100;
+        ::fprintf(stderr,
+                  "[fps-measure] frames=%zu vsync=%s | avg=%.2fms (%.0f fps) | best=%.2fms (%.0f fps) | "
+                  "p99=%.2fms (%.0f fps) | worst=%.2fms (%.0f fps)\n",
+                  n, vsyncOff ? "off" : "on", avgMs, 1000.0 / avgMs, frameMs.front(), 1000.0 / frameMs.front(),
+                  frameMs[p99i], 1000.0 / frameMs[p99i], frameMs.back(), 1000.0 / frameMs.back());
+        ::fflush(stderr);
+        done = true;
+        glfwSetWindowShouldClose(window, 1);
+    }
+};
+
 static int RunFrameLoop(MainBootState& boot) {
     BootstrapContext& bootCtx = boot.bootCtx;
     GLFWwindow* window = bootCtx.window;
@@ -848,8 +913,13 @@ static int RunFrameLoop(MainBootState& boot) {
         int s_persistWindowedW = initialWindowW;
         int s_persistWindowedH = initialWindowH;
 
+        FpsMeasure fpsMeasure;
+        fpsMeasure.Begin(window);
+
         while (!glfwWindowShouldClose(window)) {
             const bool redactThisFrame = RenderOneFrame(window, mainWindow, smatchetApp, pluginHost, clear_color);
+
+            fpsMeasure.Sample(window);
 
             // Snapshot windowed bounds whenever the window is in a normal (non-maximized,
             // non-fullscreen) state so we can persist them on exit.
