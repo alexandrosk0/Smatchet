@@ -23,7 +23,7 @@ The role that fetches a project's field catalog, per-issue edit metadata, and co
 The role that builds create/update payloads and performs issue create, field update, attachment, and sprint-assignment writes.
 
 **ITrackerCollaboration**:
-The role that handles comments, watchers, votes, worklogs, and user search.
+The role that handles comments, watchers, votes, worklogs, user search, group membership, and per-user activity. Nullable — a backend that returns `nullptr` here (e.g. `PlaneClient` today) supports none of these; callers degrade gracefully (empty groups / empty activity), never crash.
 
 **Role interface**:
 One of the five capability-sliced interfaces (`ITrackerIssueReader`, `ITrackerConnectivity`, `ITrackerFieldCatalog`, `ITrackerIssueMutations`, `ITrackerCollaboration`) that `ITrackerBackend` aggregates; the last three are nullable — a backend returns `nullptr` for a capability it doesn't support.
@@ -37,6 +37,14 @@ A read-only backend (`GitHubFixtureBackend`, `PlaneFixtureBackend`) that loads c
 
 **TrackerIssueKey**:
 The canonical, opaque issue identifier carried across the backend virtuals, with a per-backend shape (Jira `PROJ-123`, Plane UUID, GitHub `owner/repo#N`); only the owning backend parses it.
+
+### User & activity
+
+**TrackerActivityEntry**:
+One row of a user's tracker activity feed — timestamp, issue key, issue URL, summary, action label, details. Transient (in-memory), rebuilt per User-Info-Window open and dropped by `ClearUserActivity`; never persisted (it is **not** a `CachedTicket`). Sourced per-backend (Jira: JQL `assignee was/reporter was` window + changelog scan); a `nullptr`-Collaboration backend yields an empty feed.
+
+**Group roster**:
+The in-memory map of group name → member names, loaded on demand from the active backend (`GroupMemberCache`). Transient — no SQLite, no schema. _Avoid_: "group catalog" (collides with **Field catalog**, which is the project field schema).
 
 ### Field model
 
