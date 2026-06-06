@@ -402,7 +402,7 @@ smatchet::cmd::Command BuildCancelDownloadCommand() {
 // `outOk` distinguishes "resolved" from "early-failure".
 smatchet::cmd::CommandResult ResolveTranscribeOnceMode(const std::string& mode, const TrackerConfig& cfg,
                                                        const std::string& modelDir, std::string& outEffectiveMode,
-                                                       bool& outOk) {
+                                                       std::string& outModelName, bool& outOk) {
     using smatchet::cmd::CommandResult;
     using smatchet::cmd::ErrorCode;
     outOk = false;
@@ -412,8 +412,13 @@ smatchet::cmd::CommandResult ResolveTranscribeOnceMode(const std::string& mode, 
     // falls back to cloud. `local` is hard-gated on a present model. `cloud`
     // unconditionally takes the cloud path. Cloud-on-fallback after a local
     // failure is handled at the higher Phase E layer; CLI is one-shot.
-    const bool localPresent =
-        !cfg.WhisperModel.empty() && smatchet::whisper::catalog::IsModelPresent(cfg.WhisperModel, modelDir);
+    // Mirror the streaming path's empty-model fallback (ResolveLocalModelPresent
+    // / Transcribe both default an empty cfg.WhisperModel to "ggml-base.en").
+    // Without this, an empty WhisperModel made auto/local probe a bogus
+    // "<dir>/.bin" path and never resolve to local. Resolve the effective name
+    // once and use it for both the presence probe and the on-disk model path.
+    outModelName = cfg.WhisperModel.empty() ? std::string("ggml-base.en") : cfg.WhisperModel;
+    const bool localPresent = smatchet::whisper::catalog::IsModelPresent(outModelName, modelDir);
     if (mode == "cloud") {
         outEffectiveMode = "cloud";
     } else if (mode == "local") {
@@ -485,8 +490,9 @@ smatchet::cmd::CommandResult RunTranscribeOnce(const nlohmann::json& args) {
     const std::string modelDir = ResolveWhisperModelDir();
 
     std::string effectiveMode;
+    std::string effectiveModelName;
     bool modeOk = false;
-    CommandResult modeRes = ResolveTranscribeOnceMode(mode, cfg, modelDir, effectiveMode, modeOk);
+    CommandResult modeRes = ResolveTranscribeOnceMode(mode, cfg, modelDir, effectiveMode, effectiveModelName, modeOk);
     if (!modeOk) {
         return modeRes;
     }
@@ -534,7 +540,7 @@ smatchet::cmd::CommandResult RunTranscribeOnce(const nlohmann::json& args) {
                 "local mode currently only accepts captured audio (omit --file). A WAV decoder "
                 "for --file lands with the Phase D scenario harness.");
         }
-        const std::string modelPath = modelDir + "/" + cfg.WhisperModel + ".bin";
+        const std::string modelPath = modelDir + "/" + effectiveModelName + ".bin";
         smatchet::whisper::WhisperLocal local;
         std::string loadErr;
         if (!local.LoadModel(modelPath, loadErr)) {
