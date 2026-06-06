@@ -271,6 +271,62 @@ static void SmatchetApplyPendingWindowResize(GLFWwindow* window) {
     LOG_INFO("debug.window.resize: %dx%d", w, h);
 }
 
+// Honour SMATCHET_USER_DATA: normalize + ensure the dir exists + point ConfigManager at it.
+void ApplyUserDataEnvOverride() {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+    const char* envUserData = std::getenv("SMATCHET_USER_DATA");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    if (envUserData && envUserData[0] != '\0') {
+        const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
+        SmatchetEnsureDirectoryExists(userDataDir);
+        ConfigManager::SetUserDataDirectory(userDataDir);
+    }
+}
+
+// Per-platform GLFW GL-context window hints; sets ctx.glslVersion. Window starts hidden.
+void ConfigureGlfwWindowHints(BootstrapContext& ctx) {
+#if defined(__APPLE__)
+    ctx.glslVersion = "#version 150";
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#else
+    ctx.glslVersion = "#version 130";
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#endif
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+}
+
+// Set up the ImGui context: ini path (migrating the layout schema when stale), config flags,
+// dark theme, and the extended-glyph default font.
+void SetupImGuiContext() {
+    ImGuiIO& io = ImGui::GetIO();
+    static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
+    {
+        TrackerConfig bootCfg = ConfigManager::Load();
+        if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
+            ConfigManager::WriteDefaultImGuiSettingsFile();
+            bootCfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
+            ConfigManager::Save(bootCfg);
+        } else {
+            ConfigManager::EnsureDefaultImGuiSettingsFile();
+        }
+    }
+    io.IniFilename = s_imguiIniPath.c_str();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+    ImGui::StyleColorsDark();
+    SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
+}
+
 } // namespace
 
 bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli) {
@@ -385,21 +441,7 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     (void)argv;
     err.clear();
 
-    {
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
-#endif
-        const char* envUserData = std::getenv("SMATCHET_USER_DATA");
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-        if (envUserData && envUserData[0] != '\0') {
-            const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
-            SmatchetEnsureDirectoryExists(userDataDir);
-            ConfigManager::SetUserDataDirectory(userDataDir);
-        }
-    }
+    ApplyUserDataEnvOverride();
 
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {
@@ -413,19 +455,7 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     const int initialWindowW = std::max(320, windowStateCfg.WindowWidth);
     const int initialWindowH = std::max(240, windowStateCfg.WindowHeight);
 
-#if defined(__APPLE__)
-    ctx.glslVersion = "#version 150";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-#else
-    ctx.glslVersion = "#version 130";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-#endif
-
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    ConfigureGlfwWindowHints(ctx);
 
     GLFWwindow* window = glfwCreateWindow(initialWindowW, initialWindowH, "Smatchet - Standalone", NULL, NULL);
     if (window == NULL) {
@@ -439,24 +469,7 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    static std::string s_imguiIniPath = ConfigManager::GetImGuiSettingsPath();
-    {
-        TrackerConfig bootCfg = ConfigManager::Load();
-        if (bootCfg.LayoutSchemaVersion < ConfigManager::kCurrentLayoutSchemaVersion) {
-            ConfigManager::WriteDefaultImGuiSettingsFile();
-            bootCfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
-            ConfigManager::Save(bootCfg);
-        } else {
-            ConfigManager::EnsureDefaultImGuiSettingsFile();
-        }
-    }
-    io.IniFilename = s_imguiIniPath.c_str();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-
-    ImGui::StyleColorsDark();
-    SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
+    SetupImGuiContext();
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);

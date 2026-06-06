@@ -459,24 +459,77 @@ std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, AppControlle
     return ctx.fired;
 }
 
+// Invoke a cached-field provider on the recorder `rec`, returning call status via out-params.
+// `callOk` is false on a C++ exception, `callValid` false on a Lua error; `truthy` is the
+// provider's first return value coerced to bool. Mirrors the original inline try-block.
+void InvokeCachedFieldProvider(sol::state& lua, sol::protected_function& providerCopy, const std::string& issueId,
+                               const std::string& fieldId, const std::string& rawValue, float availWidth,
+                               bool isReadOnly, const sol::object& fieldNameObj,
+                               const std::shared_ptr<LuaDrawList>& rec, bool& callOk, bool& callValid, bool& truthy,
+                               std::string& errMsg) {
+    // `res` stays inside the try-block — see DrawLuaWindows above for the
+    // -Wmaybe-uninitialized rationale (sol.hpp:12398 dtor reads L/index/popcount).
+    // Provider return is also extracted inside the try so the success-branch below
+    // doesn't need `res` to be in scope.
+    try {
+        LuaHookGuard hook(lua);
+        LuaImmediateModeGuard imm(false);
+        sol::protected_function_result res =
+            providerCopy(issueId, fieldId, rawValue, availWidth, isReadOnly, fieldNameObj, rec);
+        callValid = res.valid();
+        if (callValid) {
+            if (res.return_count() >= 1) {
+                sol::object ret = res.get<sol::object>(0);
+                truthy = LuaTruthy(ret);
+            }
+        } else {
+            sol::error e = res;
+            errMsg = e.what();
+            LOG_WARN("TryRenderCachedLuaField: Lua error field=%s err=%s", fieldId.c_str(), e.what());
+        }
+    } catch (const std::exception& ex) {
+        callOk = false;
+        errMsg = ex.what();
+        LOG_WARN("TryRenderCachedLuaField: exception field=%s err=%s", fieldId.c_str(), ex.what());
+    } catch (...) {
+        callOk = false;
+        errMsg = "unknown C++ exception";
+        LOG_WARN("TryRenderCachedLuaField: unknown exception field=%s", fieldId.c_str());
+    }
+}
+
 } // namespace
+
+sol::protected_function* AppController::ResolveLuaFieldProvider(const std::string& fieldId,
+                                                                const TrackerField* fieldMeta) {
+    const auto itId = fieldDisplayCachedProviders_.find(fieldId);
+    if (itId != fieldDisplayCachedProviders_.end() && itId->second.valid()) {
+        return &itId->second;
+    }
+    if (fieldMeta && !fieldMeta->Name.empty() && !fieldDisplayCachedProvidersByName_.empty()) {
+        const auto itName = fieldDisplayCachedProvidersByName_.find(AsciiLowerCopy(fieldMeta->Name));
+        if (itName != fieldDisplayCachedProvidersByName_.end() && itName->second.valid()) {
+            return &itName->second;
+        }
+    }
+    return nullptr;
+}
+
+void AppController::SurfaceLuaFieldError(const std::string& fieldName, const std::string& issueId,
+                                         const std::string& errMsg) {
+    const std::string bare = "[LUA cell] field=" + fieldName + " id=" + issueId + ": " + errMsg;
+    LuaLogInfoBind(std::string("[ERROR] ") + bare);
+    for (const auto& sink : errorSinks_) {
+        sink(bare);
+    }
+    scriptingWindowOpenRequested_.store(true);
+}
 
 bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const CachedTicket& ticket,
                                             const std::string& rawValue, float availWidth,
                                             const TrackerField* fieldMeta, bool allowEdits) {
     // 1. Provider lookup — by field id first, then lowercased display name.
-    sol::protected_function* providerSlot = nullptr;
-    {
-        const auto itId = fieldDisplayCachedProviders_.find(fieldId);
-        if (itId != fieldDisplayCachedProviders_.end() && itId->second.valid()) {
-            providerSlot = &itId->second;
-        } else if (fieldMeta && !fieldMeta->Name.empty() && !fieldDisplayCachedProvidersByName_.empty()) {
-            const auto itName = fieldDisplayCachedProvidersByName_.find(AsciiLowerCopy(fieldMeta->Name));
-            if (itName != fieldDisplayCachedProvidersByName_.end() && itName->second.valid()) {
-                providerSlot = &itName->second;
-            }
-        }
-    }
+    sol::protected_function* providerSlot = ResolveLuaFieldProvider(fieldId, fieldMeta);
     if (providerSlot == nullptr)
         return false;
 
@@ -510,39 +563,12 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     sol::protected_function providerCopy = *providerSlot; // crash-safety §C3 (own a ref)
     auto rec = std::make_shared<LuaDrawList>();           // F6 lifetime: shared with Lua
     sol::object fieldNameObj = fieldMeta ? sol::make_object(lua, fieldMeta->Name) : sol::make_object(lua, sol::nil);
-    // `res` stays inside the try-block — see DrawLuaWindows above for the
-    // -Wmaybe-uninitialized rationale (sol.hpp:12398 dtor reads L/index/popcount).
-    // Provider return is also extracted inside the try so the success-branch below
-    // doesn't need `res` to be in scope.
     bool callOk = true;
     bool callValid = false;
     bool truthy = false;
     std::string errMsg;
-    try {
-        LuaHookGuard hook(lua);
-        LuaImmediateModeGuard imm(false);
-        sol::protected_function_result res =
-            providerCopy(ticket.id, fieldId, rawValue, availWidth, isReadOnly, fieldNameObj, rec);
-        callValid = res.valid();
-        if (callValid) {
-            if (res.return_count() >= 1) {
-                sol::object ret = res.get<sol::object>(0);
-                truthy = LuaTruthy(ret);
-            }
-        } else {
-            sol::error e = res;
-            errMsg = e.what();
-            LOG_WARN("TryRenderCachedLuaField: Lua error field=%s err=%s", fieldId.c_str(), e.what());
-        }
-    } catch (const std::exception& ex) {
-        callOk = false;
-        errMsg = ex.what();
-        LOG_WARN("TryRenderCachedLuaField: exception field=%s err=%s", fieldId.c_str(), ex.what());
-    } catch (...) {
-        callOk = false;
-        errMsg = "unknown C++ exception";
-        LOG_WARN("TryRenderCachedLuaField: unknown exception field=%s", fieldId.c_str());
-    }
+    InvokeCachedFieldProvider(lua, providerCopy, ticket.id, fieldId, rawValue, availWidth, isReadOnly, fieldNameObj,
+                              rec, callOk, callValid, truthy, errMsg);
     rec->Deactivate();
 
     LuaFieldCacheEntry entry;
@@ -556,12 +582,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
         // open Scripting window so the user can debug instead of staring at a silent C++
         // fallback. Cache-key is populated below, so this error fires once per cell per
         // (rawValue, fieldName, width, readOnly, providerGen) tuple — never per frame.
-        const std::string bare = "[LUA cell] field=" + fieldName + " id=" + ticket.id + ": " + errMsg;
-        LuaLogInfoBind(std::string("[ERROR] ") + bare);
-        for (const auto& sink : errorSinks_) {
-            sink(bare);
-        }
-        scriptingWindowOpenRequested_.store(true);
+        SurfaceLuaFieldError(fieldName, ticket.id, errMsg);
         entry.handled = false;
         entry.cmds.clear();
     } else {
@@ -1065,6 +1086,65 @@ std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName,
     return ret;
 }
 
+void AppController::RecordLuaWindow(smatchet::lua::LuaWindowEntry& w, std::uint64_t curDataGen,
+                                    std::uint64_t curProviderGen) {
+    auto rec = std::make_shared<LuaDrawList>();
+    FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
+    sol::protected_function drawFnCopy = w.drawFn; // Crash-safety §C3
+    bool callOk = true;
+    bool callValid = false;
+    std::string callErr;
+    // `res` stays inside the try-block; on the exception path it never
+    // exists, so its uninit-on-throw state can't leak past the catch.
+    // Silences sol2's -Wmaybe-uninitialized through `~protected_function_result()`
+    // (stack::remove of L/index/popcount at sol.hpp:12398).
+    try {
+        SMATCHET_UI_PERF_SCOPE("LuaWindow::Record");
+        LuaHookGuard hook(lua);
+        LuaImmediateModeGuard imm(false);
+        sol::protected_function_result res = drawFnCopy(rec);
+        callValid = res.valid();
+        if (!callValid) {
+            sol::error e = res;
+            callErr = e.what();
+        }
+    } catch (const std::exception& ex) {
+        callOk = false;
+        callErr = ex.what();
+        LOG_WARN("DrawLuaWindows: C++ exception window=%s %s", w.name.c_str(), ex.what());
+    } catch (...) {
+        callOk = false;
+        callErr = "unknown C++ exception";
+        LOG_WARN("DrawLuaWindows: unknown C++ exception window=%s", w.name.c_str());
+    }
+    rec->Deactivate();
+    if (callOk && callValid) {
+        w.cmds = rec->Take();
+        w.cachedDataGen = curDataGen;
+        w.cachedProviderGen = curProviderGen;
+        w.dirty = false;
+        w.hasError = false;
+        w.errorMessage.clear();
+    } else {
+        LOG_TRACE("DrawLuaWindows: error window=%s %s", w.name.c_str(), callErr.c_str());
+        // Surface in the persistent "Lua Errors" panel + scrolling log +
+        // auto-open Scripting window. Negative-cache below means this fires
+        // once per record-event per window, not per frame.
+        const std::string bare = "[LUA window] " + w.name + ": " + callErr;
+        LuaLogInfoBind(std::string("[ERROR] ") + bare);
+        for (const auto& sink : errorSinks_) {
+            sink(bare);
+        }
+        scriptingWindowOpenRequested_.store(true);
+        w.cmds.clear();
+        w.hasError = true;
+        w.errorMessage = std::move(callErr);
+        w.cachedDataGen = curDataGen;
+        w.cachedProviderGen = curProviderGen;
+        w.dirty = false;
+    }
+}
+
 void AppController::DrawLuaWindows() {
     // Recorded-cmd-list draw path. The Lua draw fn runs only on a dirty / gen-mismatch
     // frame; otherwise we replay the cached recording. See plan §Window draw.
@@ -1078,61 +1158,7 @@ void AppController::DrawLuaWindows() {
         if (ImGui::Begin(w.name.c_str(), &open)) {
             const bool needRecord = w.dirty || w.cachedDataGen != curDataGen || w.cachedProviderGen != curProviderGen;
             if (needRecord) {
-                auto rec = std::make_shared<LuaDrawList>();
-                FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
-                sol::protected_function drawFnCopy = w.drawFn; // Crash-safety §C3
-                bool callOk = true;
-                bool callValid = false;
-                std::string callErr;
-                // `res` stays inside the try-block; on the exception path it never
-                // exists, so its uninit-on-throw state can't leak past the catch.
-                // Silences sol2's -Wmaybe-uninitialized through `~protected_function_result()`
-                // (stack::remove of L/index/popcount at sol.hpp:12398).
-                try {
-                    SMATCHET_UI_PERF_SCOPE("LuaWindow::Record");
-                    LuaHookGuard hook(lua);
-                    LuaImmediateModeGuard imm(false);
-                    sol::protected_function_result res = drawFnCopy(rec);
-                    callValid = res.valid();
-                    if (!callValid) {
-                        sol::error e = res;
-                        callErr = e.what();
-                    }
-                } catch (const std::exception& ex) {
-                    callOk = false;
-                    callErr = ex.what();
-                    LOG_WARN("DrawLuaWindows: C++ exception window=%s %s", w.name.c_str(), ex.what());
-                } catch (...) {
-                    callOk = false;
-                    callErr = "unknown C++ exception";
-                    LOG_WARN("DrawLuaWindows: unknown C++ exception window=%s", w.name.c_str());
-                }
-                rec->Deactivate();
-                if (callOk && callValid) {
-                    w.cmds = rec->Take();
-                    w.cachedDataGen = curDataGen;
-                    w.cachedProviderGen = curProviderGen;
-                    w.dirty = false;
-                    w.hasError = false;
-                    w.errorMessage.clear();
-                } else {
-                    LOG_TRACE("DrawLuaWindows: error window=%s %s", w.name.c_str(), callErr.c_str());
-                    // Surface in the persistent "Lua Errors" panel + scrolling log +
-                    // auto-open Scripting window. Negative-cache below means this fires
-                    // once per record-event per window, not per frame.
-                    const std::string bare = "[LUA window] " + w.name + ": " + callErr;
-                    LuaLogInfoBind(std::string("[ERROR] ") + bare);
-                    for (const auto& sink : errorSinks_) {
-                        sink(bare);
-                    }
-                    scriptingWindowOpenRequested_.store(true);
-                    w.cmds.clear();
-                    w.hasError = true;
-                    w.errorMessage = std::move(callErr);
-                    w.cachedDataGen = curDataGen;
-                    w.cachedProviderGen = curProviderGen;
-                    w.dirty = false;
-                }
+                RecordLuaWindow(w, curDataGen, curProviderGen);
             }
             if (w.hasError) {
                 ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Lua Error: %s", w.errorMessage.c_str());

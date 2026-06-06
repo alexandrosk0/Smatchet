@@ -207,6 +207,58 @@ bool CoerceJsonValue(const nlohmann::json& in, ParamType type, nlohmann::json& o
     return false;
 }
 
+// Param validation plus coercion plus defaults. On failure it fills the failure result and
+// returns false. On success it fills the resolved-args object and returns true.
+bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args, nlohmann::json& argsResolved,
+                            CommandResult& outFailure) {
+    argsResolved = (args.is_object() ? args : nlohmann::json::object());
+    for (const ParamSpec& p : snapshot.Params) {
+        if (!argsResolved.contains(p.Name) || argsResolved[p.Name].is_null()) {
+            if (p.Required) {
+                CommandResult r =
+                    CommandResult::Failure(ErrorCode::MissingRequiredArg,
+                                           "Missing required argument '" + p.Name + "' for '" + snapshot.Name + "'.",
+                                           "Pass --" + p.Name + "=<value>.");
+                r.Error.Details = nlohmann::json{{"param", p.Name}};
+                outFailure = std::move(r);
+                return false;
+            }
+            if (!p.Default.is_null()) {
+                argsResolved[p.Name] = p.Default;
+            }
+            continue;
+        }
+        nlohmann::json coerced;
+        std::string err;
+        if (!CoerceJsonValue(argsResolved[p.Name], p.Type, coerced, err)) {
+            CommandResult r = CommandResult::Failure(ErrorCode::ValidationError, "Argument '" + p.Name + "' for '" +
+                                                                                     snapshot.Name + "': " + err + ".");
+            r.Error.Details = nlohmann::json{{"param", p.Name}, {"reason", err}};
+            outFailure = std::move(r);
+            return false;
+        }
+        if (!p.Enum.empty() && coerced.is_string()) {
+            const std::string s = coerced.get<std::string>();
+            bool ok = false;
+            for (const std::string& e : p.Enum) {
+                if (e == s) {
+                    ok = true;
+                    break;
+                }
+            }
+            if (!ok) {
+                CommandResult r = CommandResult::Failure(
+                    ErrorCode::ValidationError, "Argument '" + p.Name + "' must be one of the allowed enum values.");
+                r.Error.Details = nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}};
+                outFailure = std::move(r);
+                return false;
+            }
+        }
+        argsResolved[p.Name] = std::move(coerced);
+    }
+    return true;
+}
+
 } // namespace
 
 CommandResult CommandRegistry::Dispatch(const std::string& name, const nlohmann::json& args,
@@ -234,47 +286,12 @@ CommandResult CommandRegistry::Dispatch(const std::string& name, const nlohmann:
     }
 
     // (3) param validation + coercion + defaults.
-    nlohmann::json argsResolved = (args.is_object() ? args : nlohmann::json::object());
-    for (const ParamSpec& p : snapshot.Params) {
-        if (!argsResolved.contains(p.Name) || argsResolved[p.Name].is_null()) {
-            if (p.Required) {
-                CommandResult r =
-                    CommandResult::Failure(ErrorCode::MissingRequiredArg,
-                                           "Missing required argument '" + p.Name + "' for '" + snapshot.Name + "'.",
-                                           "Pass --" + p.Name + "=<value>.");
-                r.Error.Details = nlohmann::json{{"param", p.Name}};
-                return r;
-            }
-            if (!p.Default.is_null()) {
-                argsResolved[p.Name] = p.Default;
-            }
-            continue;
+    nlohmann::json argsResolved;
+    {
+        CommandResult validationFailure;
+        if (!ValidateAndResolveArgs(snapshot, args, argsResolved, validationFailure)) {
+            return validationFailure;
         }
-        nlohmann::json coerced;
-        std::string err;
-        if (!CoerceJsonValue(argsResolved[p.Name], p.Type, coerced, err)) {
-            CommandResult r = CommandResult::Failure(ErrorCode::ValidationError, "Argument '" + p.Name + "' for '" +
-                                                                                     snapshot.Name + "': " + err + ".");
-            r.Error.Details = nlohmann::json{{"param", p.Name}, {"reason", err}};
-            return r;
-        }
-        if (!p.Enum.empty() && coerced.is_string()) {
-            const std::string s = coerced.get<std::string>();
-            bool ok = false;
-            for (const std::string& e : p.Enum) {
-                if (e == s) {
-                    ok = true;
-                    break;
-                }
-            }
-            if (!ok) {
-                CommandResult r = CommandResult::Failure(
-                    ErrorCode::ValidationError, "Argument '" + p.Name + "' must be one of the allowed enum values.");
-                r.Error.Details = nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}};
-                return r;
-            }
-        }
-        argsResolved[p.Name] = std::move(coerced);
     }
 
     // (4) destructive guard (dry-run bypasses).

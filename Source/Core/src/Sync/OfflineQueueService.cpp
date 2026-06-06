@@ -205,85 +205,9 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
         return;
     }
 
-    int recovered = 0;
-    int deadLettered = 0;
-    int untouched = 0;
+    LegacyProjectSweepTally tally;
     for (const PendingCreate& pc : rows) {
-        IssueDraft draft;
-        std::string parseErr;
-        if (!IssueDraftHelpers::FromJson(pc.Payload, draft, parseErr)) {
-            // Malformed payloads are handled by the normal replay tick (which archives them);
-            // skip here so we don't double-archive.
-            ++untouched;
-            continue;
-        }
-        if (!draft.ProjectKey.empty()) {
-            ++untouched;
-            continue;
-        }
-        // Strategy 1: parent key prefix (Jira-style PROJ-123).
-        std::string recoveredKey;
-        std::string recoverySource;
-        if (!draft.ExistingIssueKey.empty()) {
-            const std::size_t dashPos = draft.ExistingIssueKey.find('-');
-            if (dashPos != std::string::npos && dashPos > 0) {
-                recoveredKey = draft.ExistingIssueKey.substr(0, dashPos);
-                recoverySource = std::string("parent='") + draft.ExistingIssueKey + "' -> '" + recoveredKey + "'";
-            }
-        }
-        // Strategy 2: legacy global project (per-backend).
-        if (recoveredKey.empty() && !legacyForBackend.empty()) {
-            recoveredKey = legacyForBackend;
-            recoverySource = std::string("legacy='") + legacyForBackend + "'";
-        }
-
-        if (!recoveredKey.empty()) {
-            draft.ProjectKey = recoveredKey;
-            const std::string newPayload = IssueDraftHelpers::ToJson(draft);
-            try {
-                deps_.Cache()->UpdatePendingCreatePayload(pc.Id, newPayload);
-                ++recovered;
-                LOG_INFO("Sweep: pending_create id=%lld project recovered from %s", static_cast<long long>(pc.Id),
-                         recoverySource.c_str());
-                BackendAuditTrail::AppendResult("offline_legacy_project_sweep", "startup_migration", std::string(),
-                                                std::to_string(pc.Id), true, std::string(),
-                                                nlohmann::json{{"pending_create_id", pc.Id},
-                                                               {"recovery_source", recoverySource},
-                                                               {"project", recoveredKey}});
-            } catch (const std::exception& ex) {
-                LOG_ERROR("Sweep: UpdatePendingCreatePayload failed id=%lld err=%s", static_cast<long long>(pc.Id),
-                          ex.what());
-                ++untouched;
-            }
-            continue;
-        }
-
-        // Strategy 3: dead-letter.
-        const std::string terminal = FormatOfflineQueueTerminalLine(
-            "offline_legacy_project_sweep", "startup_migration", "legacy_missing_project",
-            std::string("IssueDraft has no ProjectKey and no parent/legacy fallback is available."));
-        try {
-            deps_.Cache()->ArchivePendingCreate(pc.Id, "legacy_missing_project", terminal);
-            ++deadLettered;
-            LOG_WARN("Sweep: pending_create id=%lld dead-lettered (legacy_missing_project)",
-                     static_cast<long long>(pc.Id));
-            BackendAuditTrail::AppendResult(
-                "offline_dead_letter", "startup_migration", std::string(), std::to_string(pc.Id), true, std::string(),
-                nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "legacy_missing_project"}});
-        } catch (const std::exception& ex) {
-            LOG_ERROR("Sweep: ArchivePendingCreate failed id=%lld err=%s; falling back to delete",
-                      static_cast<long long>(pc.Id), ex.what());
-            try {
-                deps_.Cache()->DeletePendingCreate(pc.Id);
-                ++deadLettered;
-                LOG_WARN("Sweep: pending_create id=%lld dropped (archive unavailable). payload_preview=%.200s",
-                         static_cast<long long>(pc.Id), pc.Payload.c_str());
-            } catch (const std::exception& ex2) {
-                LOG_ERROR("Sweep: DeletePendingCreate fallback failed id=%lld err=%s", static_cast<long long>(pc.Id),
-                          ex2.what());
-                ++untouched;
-            }
-        }
+        SweepOneLegacyPendingCreate(pc, legacyForBackend, tally);
     }
 
     try {
@@ -292,7 +216,86 @@ void OfflineQueueService::RunLegacyProjectSweep(const std::string& legacyJiraPro
         LOG_ERROR("OfflineQueueService::RunLegacyProjectSweep flag set failed: %s", ex.what());
     }
 
-    LOG_INFO("Legacy-project sweep: recovered=%d, dead-lettered=%d, untouched=%d", recovered, deadLettered, untouched);
+    LOG_INFO("Legacy-project sweep: recovered=%d, dead-lettered=%d, untouched=%d", tally.Recovered, tally.DeadLettered,
+             tally.Untouched);
+}
+
+void OfflineQueueService::SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
+                                                      LegacyProjectSweepTally& tally) {
+    IssueDraft draft;
+    std::string parseErr;
+    if (!IssueDraftHelpers::FromJson(pc.Payload, draft, parseErr)) {
+        // Malformed payloads are handled by the normal replay tick, which archives them.
+        // Skip here so we don't double-archive.
+        ++tally.Untouched;
+        return;
+    }
+    if (!draft.ProjectKey.empty()) {
+        ++tally.Untouched;
+        return;
+    }
+    // Strategy 1: parent key prefix (Jira-style PROJ-123).
+    std::string recoveredKey;
+    std::string recoverySource;
+    if (!draft.ExistingIssueKey.empty()) {
+        const std::size_t dashPos = draft.ExistingIssueKey.find('-');
+        if (dashPos != std::string::npos && dashPos > 0) {
+            recoveredKey = draft.ExistingIssueKey.substr(0, dashPos);
+            recoverySource = std::string("parent='") + draft.ExistingIssueKey + "' -> '" + recoveredKey + "'";
+        }
+    }
+    // Strategy 2: legacy global project (per-backend).
+    if (recoveredKey.empty() && !legacyForBackend.empty()) {
+        recoveredKey = legacyForBackend;
+        recoverySource = std::string("legacy='") + legacyForBackend + "'";
+    }
+
+    if (!recoveredKey.empty()) {
+        draft.ProjectKey = recoveredKey;
+        const std::string newPayload = IssueDraftHelpers::ToJson(draft);
+        try {
+            deps_.Cache()->UpdatePendingCreatePayload(pc.Id, newPayload);
+            ++tally.Recovered;
+            LOG_INFO("Sweep: pending_create id=%lld project recovered from %s", static_cast<long long>(pc.Id),
+                     recoverySource.c_str());
+            BackendAuditTrail::AppendResult("offline_legacy_project_sweep", "startup_migration", std::string(),
+                                            std::to_string(pc.Id), true, std::string(),
+                                            nlohmann::json{{"pending_create_id", pc.Id},
+                                                           {"recovery_source", recoverySource},
+                                                           {"project", recoveredKey}});
+        } catch (const std::exception& ex) {
+            LOG_ERROR("Sweep: UpdatePendingCreatePayload failed id=%lld err=%s", static_cast<long long>(pc.Id),
+                      ex.what());
+            ++tally.Untouched;
+        }
+        return;
+    }
+
+    // Strategy 3: dead-letter.
+    const std::string terminal = FormatOfflineQueueTerminalLine(
+        "offline_legacy_project_sweep", "startup_migration", "legacy_missing_project",
+        std::string("IssueDraft has no ProjectKey and no parent/legacy fallback is available."));
+    try {
+        deps_.Cache()->ArchivePendingCreate(pc.Id, "legacy_missing_project", terminal);
+        ++tally.DeadLettered;
+        LOG_WARN("Sweep: pending_create id=%lld dead-lettered (legacy_missing_project)", static_cast<long long>(pc.Id));
+        BackendAuditTrail::AppendResult(
+            "offline_dead_letter", "startup_migration", std::string(), std::to_string(pc.Id), true, std::string(),
+            nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "legacy_missing_project"}});
+    } catch (const std::exception& ex) {
+        LOG_ERROR("Sweep: ArchivePendingCreate failed id=%lld err=%s; falling back to delete",
+                  static_cast<long long>(pc.Id), ex.what());
+        try {
+            deps_.Cache()->DeletePendingCreate(pc.Id);
+            ++tally.DeadLettered;
+            LOG_WARN("Sweep: pending_create id=%lld dropped (archive unavailable). payload_preview=%.200s",
+                     static_cast<long long>(pc.Id), pc.Payload.c_str());
+        } catch (const std::exception& ex2) {
+            LOG_ERROR("Sweep: DeletePendingCreate fallback failed id=%lld err=%s", static_cast<long long>(pc.Id),
+                      ex2.what());
+            ++tally.Untouched;
+        }
+    }
 }
 
 // --- Phase 1B: write methods + remaining field-edit read accessors ----------------------
@@ -983,40 +986,7 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
 
     std::string err;
     if (!mutations->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
-        if (IsTrackerTransportErrorText(err)) {
-            const int nextAttempts = row.Attempts + 1;
-            if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
-                const std::string terminal =
-                    FormatOfflineQueueTerminalLine("offline_field_replay", "transport_cap", "max_attempts",
-                                                   "Transport failures exhausted replay attempts: " + err);
-                if (RunFieldEditCacheMutation(
-                        "archive_pending_field_edit_transport_cap", row.Id,
-                        [&]() {
-                            cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err);
-                            cache->ArchivePendingFieldEdit(row.Id, "transport_cap", terminal);
-                        },
-                        tally)) {
-                    ++tally.Archived;
-                } else {
-                    ++tally.Failures;
-                }
-            } else {
-                (void)RunFieldEditCacheMutation(
-                    "update_pending_field_edit", row.Id,
-                    [&]() { cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err); }, tally);
-                ++tally.Failures;
-            }
-        } else {
-            const std::string terminal =
-                FormatOfflineQueueTerminalLine("offline_field_replay", "replay_rejected", "jira_error", err);
-            if (RunFieldEditCacheMutation(
-                    "archive_pending_field_edit_rejected", row.Id,
-                    [&]() { cache->ArchivePendingFieldEdit(row.Id, "replay_rejected", terminal); }, tally)) {
-                ++tally.Archived;
-            } else {
-                ++tally.Failures;
-            }
-        }
+        HandleFieldEditUpdateFailure(row, cache, err, tally);
         return;
     }
 
@@ -1029,6 +999,44 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
                                         nlohmann::json{{"pending_field_edit_id", row.Id}, {"field_id", row.FieldId}});
     } else {
         ++tally.Failures;
+    }
+}
+
+void OfflineQueueService::HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, LocalCacheManager* cache,
+                                                       const std::string& err, FieldEditReplayTally& tally) {
+    if (IsTrackerTransportErrorText(err)) {
+        const int nextAttempts = row.Attempts + 1;
+        if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
+            const std::string terminal =
+                FormatOfflineQueueTerminalLine("offline_field_replay", "transport_cap", "max_attempts",
+                                               "Transport failures exhausted replay attempts: " + err);
+            if (RunFieldEditCacheMutation(
+                    "archive_pending_field_edit_transport_cap", row.Id,
+                    [&]() {
+                        cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err);
+                        cache->ArchivePendingFieldEdit(row.Id, "transport_cap", terminal);
+                    },
+                    tally)) {
+                ++tally.Archived;
+            } else {
+                ++tally.Failures;
+            }
+        } else {
+            (void)RunFieldEditCacheMutation(
+                "update_pending_field_edit", row.Id,
+                [&]() { cache->UpdatePendingFieldEdit(row.Id, nextAttempts, err); }, tally);
+            ++tally.Failures;
+        }
+    } else {
+        const std::string terminal =
+            FormatOfflineQueueTerminalLine("offline_field_replay", "replay_rejected", "jira_error", err);
+        if (RunFieldEditCacheMutation(
+                "archive_pending_field_edit_rejected", row.Id,
+                [&]() { cache->ArchivePendingFieldEdit(row.Id, "replay_rejected", terminal); }, tally)) {
+            ++tally.Archived;
+        } else {
+            ++tally.Failures;
+        }
     }
 }
 

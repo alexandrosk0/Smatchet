@@ -377,13 +377,10 @@ void SaveInheritFieldIds(nlohmann::json& j, const TrackerConfig& config) {
     j["migrated_inherit_issuetype_v1"] = config.MigratedInheritIssueTypeV1;
 }
 
-// Purges legacy keys carried over from LoadMergedConfigJson() and writes the secret fields
-// (DPAPI-encrypted on Win32 with a plaintext fallback when protection fails; plaintext on other
-// platforms). One source-of-truth for the full secret/erase contract — see the inline notes.
-void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config) {
-    // Purge legacy keys carried over from the deleted SMATCHET_WITH_AGENTIC config block.
-    // Save() merges over existing on-disk JSON via LoadMergedConfigJson(); without explicit
-    // j.erase() the agentic-era secrets + settings would persist indefinitely.
+// Purge legacy keys carried over from the deleted SMATCHET_WITH_AGENTIC config block.
+// Save() merges over existing on-disk JSON via LoadMergedConfigJson(); without explicit
+// j.erase() the agentic-era secrets + settings would persist indefinitely.
+void PurgeLegacyAgenticKeys(nlohmann::json& j) {
     j.erase("github_pat");
     j.erase("github_pat_enc");
     j.erase("agentic_poll_enabled");
@@ -403,6 +400,9 @@ void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("handoff_auto_start_on_approve");
     j.erase("coderabbit_react");
     j.erase("ci_react");
+}
+
+void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
 #if defined(_WIN32)
     j.erase("token");
     j.erase("plane_api_key");
@@ -484,6 +484,14 @@ void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config) {
     j["whisper_api_key"] = config.WhisperApiKey;
 #endif
 #endif
+}
+
+// Purges legacy keys carried over from LoadMergedConfigJson() and writes the secret fields
+// (DPAPI-encrypted on Win32 with a plaintext fallback when protection fails; plaintext on other
+// platforms). One source-of-truth for the full secret/erase contract — see the inline notes.
+void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config) {
+    PurgeLegacyAgenticKeys(j);
+    WriteSecretFields(j, config);
 }
 
 } // namespace

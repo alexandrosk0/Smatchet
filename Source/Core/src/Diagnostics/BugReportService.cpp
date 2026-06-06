@@ -391,6 +391,52 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
     }
 }
 
+// Upload + inline-embed the screenshot, degrading to a local stage dir on upload failure.
+// Returns the markdown to embed; on local-stage success sets result.LocalStageDir.
+std::string BuildScreenshotMarkdown(const ResolvedBugTarget& target, const BugReportOptions& opts,
+                                    SubmitResult& result) {
+    if (!opts.IncludeScreenshot || opts.ScreenshotAbsPath.empty()) {
+        return std::string();
+    }
+    const std::string stamp = TimestampStamp();
+    const std::string rawUrl = UploadScreenshotAsset(target.BaseUrl, target.Pat, target.AssetsOwner, target.AssetsRepo,
+                                                     opts.ScreenshotAbsPath, stamp);
+    if (!rawUrl.empty()) {
+        return "![screenshot](" + rawUrl + ")";
+    }
+    // Degrade: copy to a local stage dir + note the path in the body.
+    std::error_code ec;
+    const std::string stageDir = ConfigManager::GetUserDataDirectory() + "bug_reports/" + stamp + "/";
+    fs::create_directories(fs::path(stageDir), ec);
+    const std::string destName = std::string("screenshot") + (opts.Censored ? "-censored" : "") + ".png";
+    fs::copy_file(fs::path(opts.ScreenshotAbsPath), fs::path(stageDir + destName), fs::copy_options::overwrite_existing,
+                  ec);
+    if (!ec) {
+        result.LocalStageDir = stageDir;
+        return "_Screenshot saved locally (upload unavailable): `" + destName + "`_";
+    }
+    LOG_WARN("BugReport: screenshot local-stage failed: %s", ec.message().c_str());
+    return "_Screenshot capture present but could not be uploaded or saved._";
+}
+
+// Build the github.com browse URL for a created issue key, mapping the API base URL back to the
+// web host. The public api host maps to github.com and an Enterprise api/v3 base maps to its host.
+std::string BuildBugReportBrowseUrl(const ResolvedBugTarget& target, const std::string& issueKey) {
+    smatchet::github::ParsedIssueKey parsed;
+    if (!smatchet::github::ParseGitHubIssueKey(issueKey, parsed)) {
+        return std::string();
+    }
+    std::string host = "https://github.com";
+    if (target.BaseUrl != "https://api.github.com") {
+        const std::string apiSuffix = "/api/v3";
+        if (target.BaseUrl.size() > apiSuffix.size() &&
+            target.BaseUrl.compare(target.BaseUrl.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
+            host = target.BaseUrl.substr(0, target.BaseUrl.size() - apiSuffix.size());
+        }
+    }
+    return host + "/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
+}
+
 } // namespace
 
 ContextBundle GatherContext(const AppController& app, const BugReportOptions& opts) {
@@ -462,30 +508,7 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
     }
 
     // Screenshot: upload + inline-embed, degrading to local stage on failure.
-    std::string screenshotMarkdown;
-    if (opts.IncludeScreenshot && !opts.ScreenshotAbsPath.empty()) {
-        const std::string stamp = TimestampStamp();
-        const std::string rawUrl = UploadScreenshotAsset(target.BaseUrl, target.Pat, target.AssetsOwner,
-                                                         target.AssetsRepo, opts.ScreenshotAbsPath, stamp);
-        if (!rawUrl.empty()) {
-            screenshotMarkdown = "![screenshot](" + rawUrl + ")";
-        } else {
-            // Degrade: copy to a local stage dir + note the path in the body.
-            std::error_code ec;
-            const std::string stageDir = ConfigManager::GetUserDataDirectory() + "bug_reports/" + stamp + "/";
-            fs::create_directories(fs::path(stageDir), ec);
-            const std::string destName = std::string("screenshot") + (opts.Censored ? "-censored" : "") + ".png";
-            fs::copy_file(fs::path(opts.ScreenshotAbsPath), fs::path(stageDir + destName),
-                          fs::copy_options::overwrite_existing, ec);
-            if (!ec) {
-                result.LocalStageDir = stageDir;
-                screenshotMarkdown = "_Screenshot saved locally (upload unavailable): `" + destName + "`_";
-            } else {
-                screenshotMarkdown = "_Screenshot capture present but could not be uploaded or saved._";
-                LOG_WARN("BugReport: screenshot local-stage failed: %s", ec.message().c_str());
-            }
-        }
-    }
+    const std::string screenshotMarkdown = BuildScreenshotMarkdown(target, opts, result);
 
     // Phase-2 crash path. Upload the minidump as a Release asset and link it in the body.
     std::string dumpMarkdown;
@@ -533,19 +556,7 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
     result.IssueKey = created.IssueKey;
     // Browse URL — built directly from the key, NOT app.BuildIssueBrowseUrl (which
     // targets the ACTIVE backend's cfg and would be wrong for this foreign repo).
-    smatchet::github::ParsedIssueKey parsed;
-    if (smatchet::github::ParseGitHubIssueKey(created.IssueKey, parsed)) {
-        // api.github.com -> github.com; Enterprise "https://host/api/v3" -> "https://host".
-        std::string host = "https://github.com";
-        if (target.BaseUrl != "https://api.github.com") {
-            const std::string apiSuffix = "/api/v3";
-            if (target.BaseUrl.size() > apiSuffix.size() &&
-                target.BaseUrl.compare(target.BaseUrl.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
-                host = target.BaseUrl.substr(0, target.BaseUrl.size() - apiSuffix.size());
-            }
-        }
-        result.Url = host + "/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
-    }
+    result.Url = BuildBugReportBrowseUrl(target, created.IssueKey);
     return result;
 }
 
