@@ -89,7 +89,7 @@ fi
 if [ "${SMATCHET_LUA_SMOKE_NETWORK:-0}" = "1" ]; then
     if ! command -v curl >/dev/null 2>&1; then
         echo "Passed: $PASS  Failed: $FAIL"
-        echo "ERROR: SMATCHET_LUA_SMOKE_NETWORK=1 but curl not on PATH"
+        echo "ERROR: SMATCHET_LUA_SMOKE_NETWORK=1 but curl(1) not found on PATH"
         exit 2
     fi
     # Resolve a sha256 tool (sha256sum on Linux/CI, shasum -a 256 on macOS).
