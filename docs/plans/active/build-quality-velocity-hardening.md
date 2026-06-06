@@ -112,13 +112,13 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 
 **Fires** — Sprint-1 #16/#23/#3 and all of Sprint-2's structural items touch `Source/Core/`.
 
-1. **PR-fast CI** — header/pImpl slices (#2/#19/#20): run the `grid` + `command-palette-fuzzy` scenarios (closest to the changed AppController/Command paths) per `agents/core/perf-gatekeeper.md`. The Sprint-1 bug fixes are off any hot path.
+1. **PR-fast CI** — the header/pImpl slices (#2/#19/#20) touch the `AppController` / `Command` hub → scenario **`idle`** (`command-palette-fuzzy` is bucket-C-only — requires `--screenshotPath` — per `agents/core/perf-gatekeeper.md` § Curated diff → scenario map); a slice that also touches grid files adds `priority-grid-scroll`. The Sprint-1 bug fixes are off any hot path.
 2. **Pillar 2 static scanner** — no new sync-I/O reachable from `ImGui::*` is added by any slice.
 3. **Dispatcher drain** — bug #16 touches `OfflineQueueService` replay scheduling, not `MainThreadDispatcher::Drain()`; no change.
 4. **Visible-cue bucket-E harness** — no new > 100 ms sync-stall code path.
 5. **Marker inventory** — #36 (backlog) would change a `SMATCHET_UI_PERF_SCOPE` name; regen `docs/perf/MARKER_INVENTORY.md` in that PR. #13 is itself a perf-system change → re-baseline intentionally with golden-approval.
 
-**Pre-push local check**: run `docs/guides/perf-workflow.md` § Gate-check against the named scenario(s) before opening any Source/Core PR.
+**Pre-push local check** (self-contained): `bash scripts/dev/perf-run.sh <scenario>` then `python scripts/dev/perf-compare.py docs/perf/baselines/<scenario>.<host>.json build/perf-runs/<scenario>-<ts>.json` for the scenario(s) named above, before opening any Source/Core PR (full procedure: `docs/guides/perf-workflow.md` § Gate-check).
 
 ## Risks / non-goals
 
@@ -159,8 +159,11 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 *(populated post-ship)*
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip the § Status header to `shipped`,
-2. `git mv docs/plans/active/build-quality-velocity-hardening.md docs/plans/shipped/build-quality-velocity-hardening.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
+1. *flip the § Status header to `shipped`,*
+2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
+3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
 
-*(Delete this `## Archive` block as part of step 2.)*
+*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
+
+*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
