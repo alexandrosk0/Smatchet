@@ -69,6 +69,40 @@ echo "[git-janitor] PR #${PR_NUMBER} (${PR_BRANCH}) is MERGED on GitHub."
 echo "[git-janitor] fetching + pruning remotes..."
 git fetch --all --prune
 
+# ---------- Step 3.5: concurrent-session confinement -------------------------
+# Steps 4-5 mutate THIS tree's HEAD/branches (checkout develop, ff-merge,
+# branch -D). If interactive Claude sessions are live in this tree, those ops
+# rug-pull them (the documented multi-session collision). Detect + warn; hard-
+# defer only when SMATCHET_JANITOR_DEFER=1. Default is warn-only because the
+# autonomous ship-loop orchestrator is itself a registered session and a bash
+# script can't identify its own caller to self-exclude — full self-excluding
+# defer + merge-watcher confinement are a planned fast-follow.
+# See docs/agent-rules/process-rules.md § Concurrent interactive sessions.
+JANITOR_TREE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+SESS_REGDIR="$JANITOR_TREE/.claude/.active-sessions"
+LIVE_SESSIONS=0
+if [ -d "$SESS_REGDIR" ]; then
+    NOW_TS="$(date -u +%s)"
+    for f in "$SESS_REGDIR"/*; do
+        [ -f "$f" ] || continue
+        fts="$(sed -n 's/^ts=//p' "$f" | head -n1)"
+        fpid="$(sed -n 's/^ppid=//p' "$f" | head -n1)"
+        fresh=0; case "$fts" in ''|*[!0-9]*) : ;; *) [ $((NOW_TS - fts)) -lt 1800 ] && fresh=1 ;; esac
+        alive=0; case "$fpid" in ''|*[!0-9]*) : ;; *) kill -0 "$fpid" 2>/dev/null && alive=1 ;; esac
+        { [ "$fresh" = 1 ] || [ "$alive" = 1 ]; } && LIVE_SESSIONS=$((LIVE_SESSIONS + 1))
+    done
+fi
+if [ "$LIVE_SESSIONS" -gt 0 ]; then
+    echo "git-janitor: WARNING — ${LIVE_SESSIONS} live session(s) registered in ${JANITOR_TREE}." >&2
+    echo "             Steps 4-5 change HEAD here and can corrupt a concurrent session." >&2
+    echo "             Prefer cleanup when none are active; keep feature work in worktrees" >&2
+    echo "             (pwsh scripts/dev/worktree.ps1 new <slug>)." >&2
+    if [ "${SMATCHET_JANITOR_DEFER:-}" = "1" ]; then
+        echo "[git-janitor] DEFER (SMATCHET_JANITOR_DEFER=1): ${LIVE_SESSIONS} live session(s) in integration tree — skipping HEAD-mutating cleanup. Re-run when idle." >&2
+        exit 0
+    fi
+fi
+
 # ---------- Step 4: switch to develop, fast-forward --------------------------
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$CURRENT_BRANCH" != "develop" ]; then

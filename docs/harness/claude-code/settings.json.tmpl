@@ -33,6 +33,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/plan-archival-owed.sh\" --nudge",
             "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/session-tree-banner.sh\"",
+            "timeout": 3000
           }
         ]
       }
@@ -55,6 +60,26 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/clear-tree-dirty.sh\"",
             "timeout": 2000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-head-drift.sh\"",
+            "timeout": 3000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-shared-tree.sh\"",
+            "timeout": 3000
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-head-drift.sh\"",
+            "timeout": 3000
           }
         ]
       }
@@ -88,6 +113,11 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/autoregister-pr.sh\"",
             "timeout": 30000,
             "statusMessage": "Registering new PR with merge-watcher..."
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/resync-head-baseline.sh\"",
+            "timeout": 3000
           }
         ]
       }
@@ -117,6 +147,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/check-main-repo-clean.sh\"",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/session-heartbeat.sh\"",
+            "timeout": 2000
           }
         ]
       }
