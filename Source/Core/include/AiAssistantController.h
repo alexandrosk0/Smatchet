@@ -9,6 +9,7 @@
 #else
 
 #include "AiTypes.h"
+#include "AiXmlAttrEscape.h"
 #include "IAiClient.h"
 
 #include <atomic>
@@ -26,6 +27,11 @@ class AppController;
 namespace smatchet {
 namespace ai {
 namespace pure {
+
+// `EscapeXmlAttr` now lives in the standalone pure header "AiXmlAttrEscape.h"
+// (included above) so the doctest rig can exercise it without this controller
+// header's AppController / cpr / Ui-session dependency chain. The call site at
+// `ComposeSystemPrompt` below uses it unchanged (#826).
 
 /// Compose the AI system prompt from a (possibly empty) merged agents.md blob and the
 /// already-resolved context blocks. Pure (no I/O, no AppController coupling) so it is
@@ -61,7 +67,7 @@ inline std::string ComposeSystemPrompt(const std::string& agentsMd,
             contextSection.push_back('\n');
         }
         contextSection.append("<smatchet_context block=\"");
-        contextSection.append(block.Name);
+        contextSection.append(EscapeXmlAttr(block.Name));
         contextSection.append("\">\n");
         contextSection.append(block.Body);
         if (block.Body.back() != '\n') {

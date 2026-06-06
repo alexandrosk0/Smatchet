@@ -416,7 +416,10 @@ bool DrainCapturePacket(IAudioCaptureClient& captureClient, const WAVEFORMATEX& 
     // allocation.
     std::int32_t peakAbs = 0;
     for (UINT32 i = 0; i < numFrames; ++i) {
-        const BYTE* framePtr = data + (i * frameSize);
+        // Under AUDCLNT_BUFFERFLAGS_SILENT, GetBuffer may hand back a null data
+        // pointer, so offsetting it would be null-pointer arithmetic (UB) even
+        // though the value goes unused (mono is forced to zero on the silent path).
+        const BYTE* framePtr = silent ? nullptr : data + (i * frameSize);
         std::int16_t mono = silent ? 0 : MixToMonoInt16(framePtr, negotiated);
         const std::int32_t magnitude = mono >= 0 ? static_cast<std::int32_t>(mono) : -static_cast<std::int32_t>(mono);
         if (magnitude > peakAbs) {
@@ -587,6 +590,11 @@ void WindowsAudioCapture::CaptureThreadMain() {
             if (!DrainCapturePacket(*rig.captureClient, negotiated, rig.frameSize, decim, pcmMutex_, pcmBuffer_,
                                     lastPeakAmplitude_, stats)) {
                 recordError("IAudioCaptureClient::GetBuffer failed");
+                // A GetBuffer failure is fatal for this session; without this the
+                // inner break only exits the packet loop and the outer wait loop
+                // respins forever on the same error. Request stop so the outer
+                // `while (!stopRequested_)` test exits and the worker terminates.
+                stopRequested_.store(true, std::memory_order_release);
                 break;
             }
             hr = rig.captureClient->GetNextPacketSize(&packetSize);

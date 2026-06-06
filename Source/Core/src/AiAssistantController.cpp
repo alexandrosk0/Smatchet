@@ -292,9 +292,16 @@ bool AiAssistantController::RefreshProviderForTurn() {
             cachedProvider_ = refreshProvider;
             cachedProviderName_ = client_->GetProviderName();
         } else {
+            // Fail CLOSED: a null rebuild means the new provider could not be
+            // constructed (missing key/url/model). Dropping the stale client_ and
+            // returning false aborts the turn with a clear error rather than
+            // silently routing it through the previous provider (#825).
             LOG_ERROR("AiAssistantController: MakeAiClient returned null for provider %d — "
-                      "turn aborted, retaining prior client.",
+                      "turn aborted, clearing client (fail closed).",
                       static_cast<int>(refreshProvider));
+            client_.reset();
+            cachedProvider_ = refreshProvider;
+            cachedProviderName_.clear();
         }
     }
     clientConfig_ = BuildClientConfig(refreshCfg, cachedProvider_);

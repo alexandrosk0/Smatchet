@@ -26,6 +26,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "EmailMaskForLog.h"
 #include "IssueDraft.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
@@ -126,6 +127,11 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
     }
     return result;
 }
+
+// MaskEmailForLog (#820 PII redaction) now lives in the standalone pure header
+// "EmailMaskForLog.h" (smatchet::logging::pure) so the doctest rig can cover it
+// without this Ui TU's ImGui / cpr / AppController dependency chain. The call
+// site below uses the namespaced name.
 
 } // namespace
 
@@ -422,7 +428,11 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     d.cfg.Email = d.emailBuf;
     d.cfg.ApiToken = d.tokenBuf;
     // PR 6: ProjectKey / PlaneProjectId writebacks removed — project is per-operation.
-    d.cfg.TrackerType = d.trackerTypeBuf;
+    // Canonicalize so a hand-edited lowercase "plane"/"github" buffer value
+    // persists as the canonical PascalCase form the rest of the code (and the
+    // exact-match TrackerType == "Plane"/"GitHub" branches below) expect. The
+    // same normalizer is applied to TrackerType a few lines down. Issue #820.
+    d.cfg.TrackerType = ConfigManager::NormalizeViewsBackendKey(std::string(d.trackerTypeBuf));
     d.cfg.PlaneUrl = d.planeUrlBuf;
     d.cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
     d.cfg.PlaneApiKey = d.planeApiKeyBuf;
@@ -497,7 +507,8 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
                  d.cfg.GitHubBaseUrl.c_str(), d.cfg.GitHubOwner.c_str(), d.cfg.GitHubRepo.c_str(),
                  d.cfg.GitHubPat.size());
     } else {
-        LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(), d.cfg.Email.c_str());
+        LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(),
+                 smatchet::logging::pure::MaskEmailForLog(d.cfg.Email).c_str());
     }
     d.triggerCatalogRefetch = true;
     const std::string oldBackend = d.lastViewsBackendKey;
