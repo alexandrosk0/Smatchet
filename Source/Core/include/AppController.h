@@ -37,13 +37,12 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
-// The removed JiraClient.h include was transitively supplying TrackerConfig + the
-// tracker role-interface types (connectivity probes, fetch summaries, etc.) that
-// AppController.h and its ~105 includers use. Depend on their real homes directly:
-// ConfigManager.h + the five ITracker* role interfaces — all cpr-free, so this
-// still drops cpr (libcurl) from AppController.h's include graph, which was the
-// whole point (build-quality-velocity-hardening #3). cpr is the only thing
-// JiraClient.h provided that is intentionally NOT re-added here.
+// JiraClient.h was transitively supplying TrackerConfig and the tracker
+// role-interface types (connectivity probes, fetch summaries, and others) used by
+// AppController.h and its ~105 includers. Include their real homes directly here:
+// ConfigManager.h and the five ITracker role interfaces, which are all cpr-free.
+// That removes the heavy cpr dependency JiraClient.h dragged into every includer,
+// which is the whole point of build-quality finding 3.
 #include "ConfigManager.h"
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
