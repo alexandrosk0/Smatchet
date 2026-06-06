@@ -77,10 +77,17 @@ jobs:
       - name: Cache FetchContent _deps
         uses: actions/cache@v4
         with:
-          path: build/ninja-test-msvc/_deps
+          # FETCHCONTENT_BASE_DIR defaults to .fetchcontent-src (CMakeLists.txt:280).
+          # The previous path (build/ninja-test-msvc/_deps) was wrong — that dir
+          # holds only the subbuild CMakeCache, not the downloaded sources — so
+          # every coverage run cold-fetched all deps. Aligned to .fetchcontent-src
+          # with a restore-key fallback to the main msvc build cache so a warm
+          # build-and-test.yml run can seed this job too.
+          path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-coverage-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', 'CMakePresets.json') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-msvc-coverage-
+            ${{ runner.os }}-fetchcontent-msvc-
             ${{ runner.os }}-fetchcontent-
 
       - name: Configure ninja-test-msvc

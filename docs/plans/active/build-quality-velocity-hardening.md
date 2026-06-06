@@ -150,7 +150,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - The 4 developer-owned `SmatchetPreferencesUi*` / UI WIP files — untouched.
 
 ## Implementation log
-*Sprint 1 shipped; Sprint 2 + hygiene #3/#5/#6 remain → plan stays `active` (not archived).*
+*Sprint 1 shipped; Sprint 2 (partial) + hygiene #3/#5/#6 remain → plan stays `active` (not archived).*
 
 - `4cc7c4a6` (#905) · #16 OfflineQueue: reset the in-flight latch on the null-`Mutations()` early-return (mirror the 3 sibling returns) + a discriminating runtime test (count 0→1 across the reset).
 - `57789552` (#906) · #37 Plane `CreateIssue`: `LOG_WARN` instead of an empty `catch(...){}` on response-parse (Network/API tier) + `catch-all-ok` markers on the 2 sibling parse-fallbacks.
@@ -160,12 +160,14 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - `272dbabc` (#911) · #24 `no-glfw-in-core-headers` lint rule + #15 `function_size_audit.py --assert-absent` + #4 repoint dead `Locales/*.json` glob at the real source (+ `test-config-globs.sh`).
 - #38 (prune retired msys2 debris): already removed in `6537dc3` (`bootstrap-msys2.ps1` + `*-msys2` presets); leftover untracked `build/*msys2*` dirs cleared locally.
 
-## Deviations from plan
+## Deviations from plan (Sprint 2 additions)
 - **#37**: planned shorthand was "add the `// catch-all-ok:` marker"; upgraded to a policy-mandated `LOG_WARN` (`exception-handling-policy.md` Network/API tier — a 2xx-response parse failure is not an escape-hatch case).
 - **#23**: planned home was `SmatchetImGuiHost.cpp`; relocated to `SmatchetImGuiFonts.cpp` (leaner DX12+GLFW TU with no `SmatchetUI.h`, clears the strict clang `-Wmicrosoft-include` lint, and is the semantic home — it builds the ImWchar glyph-range arrays). Compiles in both targets (broader than the planned DX12-only TU).
 - **#4**: there are **no tracked `Locales/*.json`** (runtime override files placed next to the exe); repointed the glob at the real tracked source (`SmatchetLocalization.cpp` + `SmatchetLocaliz*.h`) and added `test-config-globs.sh` (fail-closed zero-match).
 - **#15**: implemented as a new `function_size_audit.py --assert-absent <name>` mode (exit 1 if still over-cap) rather than a bare `--diff` check.
 - **Merge mechanics**: a 6-PR-per-feature split (vs the PR-batching "one PR per feature") exhausted CodeRabbit's hourly quota → `cr-out-of-band` ×4 (#905-908) + `tests-out-of-band` (#906/#907) + 2 strict-`BEHIND` admin force-merges (#908/#911). Postmortem: `postmortems.md` 2026-06-06.
+- **#29 (serial configure split) — skipped**: the two configure presets (`ninja-test-msvc` and `ninja-iter-msvc`) share `.fetchcontent-src` and their FetchContent subbuilds embed the absolute source-dir path in `CMakeCache.txt`. Backgrounding/parallelising within the same job would cause subbuild CMakeCache path collisions. Splitting into two separate jobs doubles the fixed overhead (checkout ~10s + MSVC setup ~30s + cache-restore ~15s = ~55s fixed cost per job × 2 = ~110s added overhead vs ~100s saved) — net-negative. Leave serial; the ~100s is the irreducible FetchContent populate cost on a cold run.
+- **#9/#18 (coverage cold-rebuild) — partial**: coverage uses `ninja-test-msvc` with an instrumented OpenCppCoverage run; the build flags (`/Zi` debug info, OpenCppCoverage hooks) differ from `ninja-iter-msvc`. The compiled artifacts CANNOT be reused across the two workflows — the coverage rebuild is irreducible. The genuine win was fixing the wrong FetchContent cache path (see implementation log entry above) so the dep downloads are not re-fetched on every run.
 - **#14 (merge queue) — blocked by platform; goal met another way**: the GitHub merge queue is an **org-only feature** (Team/Enterprise), absent from both classic branch protection AND rulesets on this user-owned repo, and there is no classic-protection API field to enable it. The actual goal (kill the `strict=true` O(n) per-PR force-merge dance) was achieved instead by turning **strict off** on develop's required-status-checks (`strict=false`, the 5 required checks preserved) — PRs now merge on their own green head; post-merge CI is the backstop. The `merge_group` workflow triggers + watcher `--auto` from #919 are kept (harmless, future-proof if the repo ever moves under an org). AGENTS.md / merge-gates.md updated to describe strict-off (not "develop is behind a queue").
 
 ## Verification (actual)
@@ -174,6 +176,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - **#24/#15/#4**: `test-lint-rules.sh --selftest` + `lint_rules.bats` (27) + `function_size.bats` (19) + `function_size_audit.py --selftest` + `test-config-globs.sh` + doc suite — all green.
 - **#33**: `scripts/dev/test-docs.sh` 9/9.
 - **Not yet done** (remaining Sprint-1 hygiene): #3 (drop dead `JiraClient.h` include), #5 (tests glob-vs-list assert), #6 (`is-exe-fresh.sh`).
+- Sprint 2 #9/#18 (partial) — fixed wrong FetchContent cache paths in `perf-pr-fast.yml`, `perf-full.yml`, and `coverage.yml` (all three cached `build/<preset>/_deps`, which is the subbuild CMakeCache dir, not the downloaded sources at `.fetchcontent-src`). Added sccache cross-job restore-key fallback in `perf-pr-fast.yml`. #29 skipped (justified below in Deviations).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
