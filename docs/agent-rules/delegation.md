@@ -61,6 +61,8 @@ Run two or more subagents in a **single tool-use block** (multiple `Agent` calls
 
 **Do not parallelise when one delegation feeds another** (`architect` → subsystem agents). Sequential when contract-coupled; parallel otherwise. Wall-clock saved scales linearly with batch width; context isolation preserved per agent.
 
+→ For **deterministic** fan-out (barrier / pipeline / loop-until-dry / adversarial-verify) or a **saved** multi-agent recipe, use a `Workflow` instead of an ad-hoc batch — see [`workflow-orchestration.md`](workflow-orchestration.md) (decision rule, the 7 fan-out-safe read-only agents, the three boundaries, cost guardrails). Claude-Code-only; other harnesses stay on the manual dispatch above.
+
 ## Session scratchpad protocol
 
 A per-session orchestrator scratchpad lives at `.session-context.md` at the repo root (gitignored). The `SessionStart` hook (`agents/scripts/core/clear-session-context.sh`) archives the prior scratchpad (when it carries any agent-appended `## ` section) to `.session-context.archive/<ts>-<sid8>.md`, then writes a fresh banner. The `SubagentStop` hook (`agent-token-log.py`) appends a dated header block from each subagent whose report carries a `## Session context append` section.
