@@ -1,5 +1,7 @@
 # Plan - MSVC build onboarding hardening
 
+> **Status**: shipped — archived 2026-06-05; post-ship sections populated and cited PRs merged (see § Implementation log).
+>
 > **Slug**: `msvc-build-onboarding-hardening`
 
 ## Context

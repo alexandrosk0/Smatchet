@@ -78,11 +78,13 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
 | [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
 | [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
+| [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | 2026-05-28 | Plan — Decompose Top-20 Monolith Functions |
 | [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | 2026-05-28 | Plan — Gate enforcement hardening (agent → GitHub promotion) |
 | [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | 2026-05-28 | Plan - GitHub commit tracker rows |
 | [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | 2026-05-28 | Plan — High-Integrity C++ Enforcement (slim profile) |
 | [`mcp-lua-fresh-state-race`](shipped/mcp-lua-fresh-state-race.md) | 2026-05-28 | Plan — MCP Lua execution: fresh per-call `sol::state` (cross-thread race fix) |
 | [`merge-watcher-triage-recovery`](shipped/merge-watcher-triage-recovery.md) | 2026-05-28 | Plan — merge-watcher triage-budget recovery + CR-thread resolution |
+| [`msvc-build-onboarding-hardening`](shipped/msvc-build-onboarding-hardening.md) | 2026-05-28 | Plan - MSVC build onboarding hardening |
 | [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | 2026-05-28 | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
 | [`session-friction-fixes`](shipped/session-friction-fixes.md) | 2026-05-28 | Plan — Session-friction fixes (post-backlog-sweep session retro) |
 | [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | 2026-05-28 | Plan — Shell-script self-review lint |
@@ -100,6 +102,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
 | [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
 | [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | 2026-06-02 | Plan — Agent charter altitude (operating-principle preamble + context budget) |
+| [`b10-docs-forcing-rules`](shipped/b10-docs-forcing-rules.md) | 2026-06-02 | Plan — B10: encode deferred process forcing-rules into the docs |
 | [`coverage-threshold-graduation`](shipped/coverage-threshold-graduation.md) | 2026-06-02 | Plan — Coverage threshold graduation (advisory → blocking) |
 | [`full-function-size-compliance`](shipped/full-function-size-compliance.md) | 2026-06-02 | Plan — Full Function-Size Compliance (zero grandfathered monoliths) |
 | [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | 2026-06-02 | Plan — Gate-escape postmortem (incident → new gate) |
@@ -107,12 +110,16 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | 2026-06-02 | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
 | [`solo-merge-review-gate`](shipped/solo-merge-review-gate.md) | 2026-06-02 | Plan — Solo-workflow review gate (drop required approval, codify protection) |
 | [`ai-control-policy`](shipped/ai-control-policy.md) | 2026-06-03 | Plan — AI control policy (human authority, loop modes, escalate-don't-assume) |
+| [`ci-build-time-reduction`](shipped/ci-build-time-reduction.md) | 2026-06-03 | Plan — CI build-time reduction (sccache + build-reuse + matrix rebalance) |
 | [`dry-pillar-dup-gate`](shipped/dry-pillar-dup-gate.md) | 2026-06-03 | Plan — DRY Quality Pillar + duplication delta-gate |
 | [`issue-triage-protocol`](shipped/issue-triage-protocol.md) | 2026-06-03 | Plan — GitHub Issue triage protocol (Issues-canonical for product bugs) |
+| [`offline-conflict-ask-all-fields`](shipped/offline-conflict-ask-all-fields.md) | 2026-06-04 | Plan — Ask the user on offline-replay conflict for all field edits |
 | [`reduce-agent-prompt-bloat`](shipped/reduce-agent-prompt-bloat.md) | 2026-06-04 | Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate) |
 | [`agent-audit-remediation`](shipped/agent-audit-remediation.md) | 2026-06-05 | Plan — Agent-audit remediation (portfolio eval + infra-feedback fixes) |
 | [`agent-size-reduction`](shipped/agent-size-reduction.md) | 2026-06-05 | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
 | [`merge-snapshot-ledger`](shipped/merge-snapshot-ledger.md) | 2026-06-05 | Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection) |
+| [`reduce-coderabbit-review-spend`](shipped/reduce-coderabbit-review-spend.md) | 2026-06-05 | Plan — Reduce CodeRabbit review spend |
+| [`triggered-followup-tracking`](shipped/triggered-followup-tracking.md) | 2026-06-05 | Plan — Triggered follow-up tracking (machine-checkable deferred follow-ups) |
 <!-- END auto-plan-index -->
 
 ### Notes

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # followup_due_nudge.bats — regression suite for
 # agents/scripts/core/followup-due-nudge.sh (triggered-follow-up SessionStart
-# nudge; plan: docs/plans/active/triggered-followup-tracking.md).
+# nudge; plan: docs/plans/shipped/triggered-followup-tracking.md).
 #
 # Covers the 4 trigger kinds (date / plan-shipped / pr-count via a STUBBED gh /
 # file-age), fired= idempotency suppression, malformed-when= WARN (no false

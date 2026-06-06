@@ -1,5 +1,7 @@
 # Plan — Ask the user on offline-replay conflict for all field edits
 
+> **Status**: shipped — archived 2026-06-05; post-ship sections populated and cited PRs merged (see § Implementation log).
+>
 > **Slug**: `offline-conflict-ask-all-fields` (matches this file's basename without `.md`).
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section. Sections that genuinely don't apply get `N/A — <one-line reason>`, not deletion.

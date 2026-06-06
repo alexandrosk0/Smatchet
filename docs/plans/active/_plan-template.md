@@ -2,6 +2,8 @@
 
 > **Slug**: `<kebab-case-slug>` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+>
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section. Sections that genuinely don't apply get `N/A — <one-line reason>`, not deletion — the headings drive the "did you consider this?" forcing function for every author + reviewer agent.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
@@ -80,3 +82,12 @@ Bulleted. Sister-features the user might assume are included; name + one-line "f
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+## Archive (post-ship — DO IN THIS PR, never a follow-up)
+*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
+1. *flip the § Status header to `shipped`,*
+2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
+3. *sweep refs: `grep -rln "plans/active/<slug>" docs/ agents/ scripts/ AGENTS.md` → repoint each to `plans/shipped/<slug>`,*
+4. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+
+*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*

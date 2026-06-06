@@ -9,7 +9,7 @@
 # after ~10 PRs", "after ~20 PRs flip the gate"). As prose in a `Concrete next
 # action:` line nothing machine-checks the condition, so the firing relies on
 # manual triage and silently never happens once the originating plan archives.
-# Plan: docs/plans/active/triggered-followup-tracking.md.
+# Plan: docs/plans/shipped/triggered-followup-tracking.md.
 #
 # Entry-line grammar (one optional line per backlog entry, fields in this order):
 #   Triggered-follow-up: when=<kind>:<spec>; action=<one-line>; baseline=<prose>; fired=<never|YYYY-MM-DD>

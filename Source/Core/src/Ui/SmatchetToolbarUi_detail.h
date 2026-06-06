@@ -3,7 +3,7 @@
 
 // Pure (ImGui-free) helpers extracted from SmatchetToolbarUi::RenderEditor so the
 // editor draw body stays layout-only and the value-formatting / index math is
-// bucket-A testable. See docs/plans/active/decompose-top-20-monoliths.md.
+// bucket-A testable. See docs/plans/shipped/decompose-top-20-monoliths.md.
 
 #include <string>
 

@@ -82,7 +82,7 @@ endif()
 # '/Zi' with '/Z7'"), which scripts/dev/test-build-warnings.sh would fail on.
 # Single-config Ninja only consumes the active config's vars, but we rewrite both
 # RelWithDebInfo (iter/test/ui-test presets) and Debug (asan preset) for safety.
-# See docs/plans/active/ci-build-time-reduction.md § Q1.
+# See docs/plans/shipped/ci-build-time-reduction.md § Q1.
 if(DEFINED ENV{CI} AND MSVC)
     foreach(_z7_cfg RELWITHDEBINFO DEBUG)
         foreach(_z7_lang C CXX)

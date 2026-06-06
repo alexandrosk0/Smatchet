@@ -1,5 +1,7 @@
 # Plan — Reduce CodeRabbit review spend
 
+> **Status**: shipped — archived 2026-06-05; post-ship sections populated and cited PRs merged (see § Implementation log).
+>
 > **Slug**: `reduce-coderabbit-review-spend` (matches this file's basename without `.md`).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules, § Merge gates, § Autonomous ship-loop default, and `docs/agent-rules/ship-loops.md`.
