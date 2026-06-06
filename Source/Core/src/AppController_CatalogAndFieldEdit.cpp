@@ -345,7 +345,16 @@ const TrackerField* AppController::FindFieldById(const std::string& fieldId) con
 }
 
 void AppController::EnsureCatalogHistoryField() {
-    if (FindFieldById("history") != nullptr) {
+    // Atomic check-then-insert under the catalog lock (#823). The existence
+    // check is done INLINE (not via FindFieldById, which locks the same
+    // non-recursive availableFieldsMutex_ → would self-deadlock) so the lookup
+    // and the push_back can't race a concurrent catalog read/write. Safe to
+    // lock here: the prior FindFieldById call already implied no caller holds
+    // the mutex across this method.
+    std::lock_guard<std::mutex> lk(availableFieldsMutex_);
+    const auto it = std::find_if(AvailableFields.begin(), AvailableFields.end(),
+                                 [](const TrackerField& field) { return field.Id == "history"; });
+    if (it != AvailableFields.end()) {
         return;
     }
     TrackerField historyField;
