@@ -240,3 +240,52 @@ _mk_repo_dualcap() {
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
+
+# ---------- --assert-absent (decomposition verification, #15) ----------
+# Unlike --diff (which grandfathers a still-over-cap function in BOTH HEAD and base sets),
+# --assert-absent is an ABSOLUTE check: a partial decomposition that is still over cap FAILS.
+
+@test "--assert-absent FAILS for a function that is STILL over a hard cap" {
+    repo="$BATS_TEST_TMPDIR/absent_bad"
+    _mk_repo "$repo" 230              # 'Generated' well over the 120/200 cap
+    # scan_head() lists TRACKED files (git ls-files) — stage so the working tree is visible.
+    git -C "$repo" add -A
+    cd "$repo"
+    run "$PY" "$AUD" --assert-absent Generated
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"STILL over a hard cap"* ]]
+    [[ "$output" == *"Generated"* ]]
+}
+
+@test "--assert-absent PASSES for a function that is now UNDER cap" {
+    repo="$BATS_TEST_TMPDIR/absent_good"
+    _mk_repo "$repo" 10              # 'Generated' is small -> not on the oversized list
+    git -C "$repo" add -A
+    cd "$repo"
+    run "$PY" "$AUD" --assert-absent Generated
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"absent from the absolute oversized list"* ]]
+}
+
+@test "--assert-absent PASSES for a name that does not exist at all" {
+    repo="$BATS_TEST_TMPDIR/absent_missing"
+    _mk_repo "$repo" 230
+    git -C "$repo" add -A
+    cd "$repo"
+    run "$PY" "$AUD" --assert-absent NoSuchFunction
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"absent from the absolute oversized list"* ]]
+}
+
+@test "--assert-absent --in scopes the match to a path substring" {
+    repo="$BATS_TEST_TMPDIR/absent_scope"
+    _mk_repo "$repo" 230             # over-cap 'Generated' under Source/Core/src/Tracker
+    git -C "$repo" add -A
+    cd "$repo"
+    # scoped to a DIFFERENT path -> the over-cap function is out of scope -> PASS
+    run "$PY" "$AUD" --assert-absent Generated --in "Source/Core/src/Sync/"
+    [ "$status" -eq 0 ]
+    # scoped to the REAL path -> still over cap -> FAIL
+    run "$PY" "$AUD" --assert-absent Generated --in "Source/Core/src/Tracker/"
+    [ "$status" -eq 1 ]
+}

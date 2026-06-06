@@ -27,6 +27,11 @@ Modes mirror comment_audit.py (the comment-regrowth sibling gate):
                                            #   crossed a cap vs the merge-base of <ref>, PLUS
                                            #   advisory `[func-size] WARN ...` lines (non-failing)
                                            #   rule<TAB>basename:line<TAB>name (NL/MB)
+  function_size_audit.py --assert-absent NAME  # decomposition verification (#15): exit 0 iff NAME
+                                           #   is ABSENT from the absolute oversized list (i.e. now
+                                           #   genuinely under cap), exit 1 if it is STILL over cap.
+                                           #   NAME matches the qualified name (`Cls::Foo`) or its
+                                           #   simple tail (`Foo`). Scope with --in <path-substr>.
   function_size_audit.py --selftest        # assert the UI-classification rule matches AGENTS.md
 
 Delta semantics (grandfathering): a function is keyed by (rule, basename, qualified-name). The
@@ -593,6 +598,46 @@ def run_scan_file(path):
     return 0
 
 
+def _absent_hits(head, name, path_substr=None):
+    """Pure matcher (no git/IO — selftestable): given a scan_head()-shaped dict, return the list of
+    oversized-list entries whose function name matches `name` (qualified `Cls::Foo` OR simple tail
+    `Foo`), optionally scoped to paths containing `path_substr`. Empty list == ABSENT == under cap."""
+    simple_target = name.split("::")[-1].lstrip("~")
+    hits = []
+    for (rule, bname, fname, arity), (path, line, ln, br) in sorted(head.items()):
+        fsimple = fname.split("::")[-1].lstrip("~")
+        if fname != name and fsimple != simple_target:
+            continue
+        if path_substr is not None and path_substr not in path.replace("\\", "/"):
+            continue
+        metric = ("%dL" % ln) if rule == RULE_LONG else ("%dbr" % br)
+        hits.append("%s\t%s:%d\t%s/%d (%dL/%dbr) over cap (%s)"
+                    % (rule, bname, line, fname, arity, ln, br, metric))
+    return hits
+
+
+def run_assert_absent(name, path_substr=None):
+    """Decomposition verification (#15). Exit 0 iff `name` is ABSENT from the absolute oversized
+    list of the working tree (i.e. it is now genuinely under every hard cap), exit 1 if it is STILL
+    over a cap. This is the assertion the `--diff` gate canNOT make: a partial decomposition that is
+    still over cap passes `--diff` (the function is grandfathered in both HEAD and base sets), so a
+    decomposition agent needs an absolute check that the function actually dropped under the cap.
+
+    `name` matches either the fully-qualified name (`Cls::Foo`) or its simple tail (`Foo`); pass
+    `--in <path-substr>` to scope to a single file when an unqualified name collides across files."""
+    head = scan_head()
+    hits = _absent_hits(head, name, path_substr)
+    if hits:
+        print("ASSERT-ABSENT FAIL: '%s' is STILL over a hard cap (decomposition incomplete):" % name,
+              file=sys.stderr)
+        for h in hits:
+            print("  " + h, file=sys.stderr)
+        return 1
+    scope = (" (in '%s')" % path_substr) if path_substr else ""
+    print("assert-absent: '%s'%s is absent from the absolute oversized list (under cap)" % (name, scope))
+    return 0
+
+
 def run_list():
     head = scan_head()
     rows = []
@@ -693,6 +738,33 @@ def run_selftest():
             print("SELFTEST FAIL: is_ui_function(%r, %r) = %s, expected %s"
                   % (path, name, got, expect), file=sys.stderr)
             miss = 1
+    # --assert-absent (#15): a still-over-cap function must NOT be absent (FAIL=non-empty hits);
+    # an under-cap function (not in the oversized list at all) must be absent (PASS=empty hits).
+    # Build a synthetic scan_head()-shaped dict: one over-cap entry, keyed as scan_head keys it.
+    over_head = {
+        (RULE_LONG, "Big.cpp", "Cls::RenderBigPanel", 2):
+            ("Source/Core/src/Ui/Big.cpp", 10, 321, 5),
+    }
+    # Still-over-cap by qualified name -> must report hits (assertion would FAIL).
+    if not _absent_hits(over_head, "Cls::RenderBigPanel"):
+        print("SELFTEST FAIL: assert-absent matched nothing for a STILL-over-cap function "
+              "(should report it present)", file=sys.stderr)
+        miss = 1
+    # Still-over-cap by simple tail -> must also report hits.
+    if not _absent_hits(over_head, "RenderBigPanel"):
+        print("SELFTEST FAIL: assert-absent simple-tail match missed a STILL-over-cap function",
+              file=sys.stderr)
+        miss = 1
+    # An under-cap (decomposed / never-listed) function -> ABSENT (no hits, assertion PASSes).
+    if _absent_hits(over_head, "Cls::SmallHelper"):
+        print("SELFTEST FAIL: assert-absent matched an under-cap function (should be absent)",
+              file=sys.stderr)
+        miss = 1
+    # --in path scoping: same name in a different file -> not a hit when scoped elsewhere.
+    if _absent_hits(over_head, "RenderBigPanel", path_substr="Source/Core/src/Tracker/"):
+        print("SELFTEST FAIL: assert-absent --in scoping matched outside the requested path",
+              file=sys.stderr)
+        miss = 1
     if miss:
         return 1
     print("selftest: tiered caps + UI-classification rule in sync with AGENTS.md")
@@ -712,6 +784,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--diff", metavar="REF")
     ap.add_argument("--scan-file", metavar="PATH")
+    ap.add_argument("--assert-absent", metavar="NAME", dest="assert_absent",
+                    help="exit 0 iff NAME is absent from the absolute oversized list (under cap)")
+    ap.add_argument("--in", metavar="PATH_SUBSTR", dest="in_path",
+                    help="scope --assert-absent to paths containing this substring")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--baseline-md", action="store_true")
     ap.add_argument("--selftest", action="store_true")
@@ -719,6 +795,8 @@ def main():
     try:
         if args.selftest:
             sys.exit(run_selftest())
+        if args.assert_absent:
+            sys.exit(run_assert_absent(args.assert_absent, args.in_path))
         if args.diff:
             sys.exit(run_diff(args.diff))
         if args.scan_file:

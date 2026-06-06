@@ -16,6 +16,8 @@
 #   no-printf-stderr       printf/fprintf/cerr/cout without an exemption marker
 #   no-raw-new             raw `new T` (use make_unique) without an exemption marker
 #   no-detach              `.detach()` (use AppController::LaunchBackgroundTask; first-party-wide)
+#   no-glfw-in-core-headers  GLFW/glad/OpenGL #include in a Source/Core/include header
+#                          (DX12 target compiles them too; absolute-0, no grandfathering)
 #   narrowing-conversions  clang-tidy cppcoreguidelines-narrowing-conversions (strict TUs)
 #   define-imgui           `#define ImGui...` macro-alias trick
 #   deviation-overdue      SMATCHET_DEVIATION whose calendar revisit= has passed
@@ -264,6 +266,29 @@ scan_file_rules() {
                     fi ;;
             esac
         fi
+
+        # no-glfw-in-core-headers — GLFW / glad / OpenGL includes must not appear in
+        # a Source/Core/ HEADER: the DX12 target (SmatchetCore_DX12) compiles those
+        # headers too and has no GL/GLFW toolchain, so a window-system include there
+        # breaks the dual-target build (AGENTS.md § Project rules § Don't). Fires only
+        # for header files (.h/.hpp) — GLFW in a .cpp or in Source/Standalone is fine;
+        # the diff/wide gate restricts the enforced surface to Source/Core/include/.
+        # Pure-comment lines are already skipped above; the string-literal guard keeps
+        # a path mentioned in a string from firing. Absolute-0: any hit = regression,
+        # only a SMATCHET_DEVIATION(rule=no-glfw-in-core-headers; ...) above escapes.
+        case "$f" in
+            *.h|*.hpp)
+                if [[ "$line" =~ \#include[[:space:]]*[\<\"](GLFW/|glad|GL/gl) ]] \
+                   || [[ "$line" =~ \#include[[:space:]]*[\<\"][^\>\"]*glfw3\.h ]]; then
+                    case "$line" in
+                        *'"'*'#include'*) : ;;   # `#include` inside a string literal
+                        *)
+                            if [ "$suppress" != "no-glfw-in-core-headers" ]; then
+                                printf 'no-glfw-in-core-headers\t%s:%s\t%s\n' "$f" "$lineno" "$line"
+                            fi ;;
+                    esac
+                fi ;;
+        esac
     done < "$f"
 }
 
@@ -390,6 +415,26 @@ compute_wide_violations() {
     return 0
 }
 
+# no-glfw-in-core-headers — ABSOLUTE-0 over Source/Core/include HEADERS only (.h/.hpp).
+# The DX12 target (SmatchetCore_DX12) compiles these headers and ships no GL/GLFW
+# toolchain, so a window-system include here breaks the dual-target build. The tree is
+# GLFW-clean today, so any hit is a regression (no grandfathering — same model as
+# no-raw-new). A SMATCHET_DEVIATION(rule=no-glfw-in-core-headers; ...) above the include
+# escapes (handled in scan_file_rules). Emits `<rule>\t<path>:<line>`.
+compute_glfw_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/include/**' \
+            2>/dev/null \
+        | grep -E '\.(h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_file_rules "$f"; done \
+        | awk -F'\t' '$1=="no-glfw-in-core-headers" { print $1"\t"$2 }'
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Modes
 # ---------------------------------------------------------------------------
@@ -410,9 +455,10 @@ case "${1:-}" in
     --scan-file=*) MODE=scanfile; ARG="${1#--scan-file=}" ;;
     --full)        MODE=full ;;
     --scan-wide)   MODE=scanwide ;;
+    --scan-glfw)   MODE=scanglfw ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -445,6 +491,8 @@ case "$MODE" in
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
     # Assert the duplication rule-id (DRY Engineering Pillar 5) is documented in AGENTS.md.
     if ! grep -qF "duplication" AGENTS.md; then echo "SELFTEST FAIL: 'duplication' rule missing from AGENTS.md" >&2; miss=1; fi
+    # Assert the no-glfw-in-core-headers rule-id is documented in AGENTS.md (absolute-0 gate).
+    if ! grep -qF "no-glfw-in-core-headers" AGENTS.md; then echo "SELFTEST FAIL: 'no-glfw-in-core-headers' rule missing from AGENTS.md" >&2; miss=1; fi
     st_py="$(resolve_python || true)"
     if [ -n "$st_py" ]; then
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
@@ -466,6 +514,12 @@ case "$MODE" in
     # First-party-wide no-raw-new / deviation-overdue set (debug + bats harness).
     # `--root <dir>` (handled above) points this at an arbitrary tree.
     compute_wide_violations
+    ;;
+
+  scanglfw)
+    # no-glfw-in-core-headers absolute-0 set over Source/Core/include headers (debug +
+    # bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_glfw_violations
     ;;
 
   catalog)
@@ -635,6 +689,24 @@ case "$MODE" in
         echo "  Or revisit the overdue SMATCHET_DEVIATION / add SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
     else
         echo "[test-lint-rules] PASS — no first-party no-raw-new / deviation-overdue / no-detach (whole tree)"
+    fi
+
+    # --- no-glfw-in-core-headers (Source/Core/include headers; ABSOLUTE-0) ---
+    # GLFW/glad/OpenGL #include in a Source/Core/ header breaks the DX12 dual-target
+    # build (SmatchetCore_DX12 compiles these headers with no GL/GLFW toolchain). The
+    # tree is GLFW-clean today, so any hit is a regression — absolute-0, no grandfathering
+    # (same model as no-raw-new). A SMATCHET_DEVIATION(rule=no-glfw-in-core-headers; ...)
+    # above the include escapes.
+    glfw_out="$(compute_glfw_violations)"
+    if [ -n "$glfw_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: GLFW/glad/OpenGL include in a Source/Core/include header (breaks the DX12 dual-target build):"
+        printf '%s\n' "$glfw_out" | sed 's/^/  /'
+        echo "  Move the GL/GLFW include into a .cpp (or Source/Standalone), not a Source/Core/ header,"
+        echo "  or add SMATCHET_DEVIATION(rule=no-glfw-in-core-headers; reason=...; owner=...; revisit=...) above the include."
+    else
+        echo "[test-lint-rules] PASS — no GLFW/glad/OpenGL include in Source/Core/include headers"
     fi
 
     # --- function-size rules (repo-wide, delta-gated, TIERED; decompose-top-20-monoliths Slice 0) ---
