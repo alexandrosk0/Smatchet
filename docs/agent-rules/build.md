@@ -20,11 +20,17 @@ Default when the task is NOT an AI/Whisper/MCP feature — faster, fewer moving 
 
 ## Dual-target verify
 
-`Source/Core/` compiles into both `SmatchetStandalone` (OpenGL+GLFW) and `SmatchetCore_DX12` (Unreal). Full verify: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. In a worktree shell without `cl.exe` on PATH, wrap it via `scripts/dev/with-msvc.ps1`. (Macro divergence + the don't-pollute-Core-headers rules live in [`cpp-rules.md`](cpp-rules.md) § Dual-target.)
+`Source/Core/` compiles into both `SmatchetStandalone` (OpenGL+GLFW) and `SmatchetCore_DX12` (Unreal). Full verify: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. In a shell without `cl.exe` on PATH, wrap it via `scripts/dev/with-msvc-env.sh` (bash) or `scripts/dev/with-msvc.ps1` (PowerShell) — see § MSVC toolset env. (Macro divergence + the don't-pollute-Core-headers rules live in [`cpp-rules.md`](cpp-rules.md) § Dual-target.)
 
-## MSVC toolset env (pin to the configured version)
+## MSVC toolset env (bash wrapper + multi-VS pin)
 
-Prefer the repo wrappers (`scripts/dev/with-msvc.ps1`, `scripts/dev/build_and_run.ps1`) — they bootstrap a consistent MSVC env via `vswhere`→`vcvars64`. If you invoke `vcvars64.bat` **manually**, pin the toolset to the one the build dir was configured with: `vcvars64.bat -vcvars_ver=<ver>` (e.g. `14.38.33130`). A bare `vcvars64` selects the *newest* installed toolset (e.g. 14.50), whose C++23 `static operator()` STL fails to compile under `/std:c++14` against the older configured `cl.exe` — surfacing as `error C2801`/`C2333` inside `<memory>`/`<vector>`/`<thread>`. The configured version is in `build/<preset>/CMakeCache.txt` (`CMAKE_CXX_COMPILER` path); installed toolsets live under `…/VC/Tools/MSVC/`.
+Build from bash through the wrapper — it sources `vcvars64` with the pinned toolset so `cl.exe` gets `INCLUDE`/`LIB` and a newer side-by-side toolset can't shadow it:
+
+`bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
+
+(PowerShell equivalents: `scripts/dev/with-msvc.ps1`, `scripts/dev/build_and_run.ps1`.) Without a wrapper, a bare `cmake --build` from bash fails with `Cannot open include file: 'stdio.h'` (no `INCLUDE`).
+
+The toolset pin is `build.msvc_toolset_pin` in `project.config.json` (currently `14.38`; override with `$SMATCHET_VCVARS_VER`). It matters on a multi-VS box: an **unpinned** `vcvars64` selects the *newest* installed toolset, whose STL headers reject the cached older `cl.exe` with **`error STL1001`** — which can cascade to `C2801`/`C2333` inside `<memory>`/`<vector>`/`<thread>` (the C++23 `static operator()` STL under `/std:c++14`). The wrappers pass `-vcvars_ver=<pin>`; if you call `vcvars64.bat` by hand, pass the same `-vcvars_ver` (the configured toolset is in `build/<preset>/CMakeCache.txt`).
 
 ## Stale-PCH recovery (C2859)
 
