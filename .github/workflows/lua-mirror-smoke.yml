@@ -1,0 +1,72 @@
+name: Lua mirror smoke
+
+# Supply-chain smoke for the Lua 5.3.6 tarball pin (finding #22 of
+# docs/plans/active/build-quality-velocity-hardening.md). Lua is the ONE
+# FetchContent dependency fetched over plain HTTP (lua.org publishes no immutable
+# git ref) — a single upstream SPOF. A lua.org outage or a tampered mirror would
+# only surface mid-build, taking develop red for hours (observed: curl error 28
+# "Timeout was reached"; see docs/self-improvement/categories/infra.md). Every
+# other dependency is an immutable, SHA-pinned git ref.
+#
+# This job runs scripts/dev/test-lua-mirror-smoke.sh in NETWORK mode
+# (SMATCHET_LUA_SMOKE_NETWORK=1): it parses the EXPECTED_HASH pin + the mirror URL
+# list straight out of CMakeLists.txt (single source of truth), downloads the
+# tarball from EACH declared mirror, and asserts the bytes hash to the pin. An
+# upstream outage or a byte-for-byte mismatch fails the job EARLY — before it can
+# break a real build.
+#
+# Triggers:
+#   - PR / push touching the Lua pin or the smoke script (catch a regression at
+#     review time)
+#   - daily schedule (catch a mirror silently going dark / drifting, independent
+#     of any code change — the whole point of an availability smoke)
+#   - workflow_dispatch (manual re-check after an upstream incident)
+#
+# NOT a required branch-protection check: an upstream availability blip is not the
+# PR author's breakage, so it must not block unrelated merges. It is a standalone
+# early-warning signal. Runs on ubuntu (curl + sha256sum preinstalled, zero
+# install cost); seconds-fast.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'CMakeLists.txt'
+      - 'scripts/dev/test-lua-mirror-smoke.sh'
+      - '.github/workflows/lua-mirror-smoke.yml'
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'CMakeLists.txt'
+      - 'scripts/dev/test-lua-mirror-smoke.sh'
+      - '.github/workflows/lua-mirror-smoke.yml'
+  schedule:
+    # 06:17 UTC daily — odd minute to avoid the top-of-hour scheduler stampede.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: lua-mirror-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  lua-mirror-smoke:
+    name: Lua mirror smoke (reachability + sha256)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # No history needed; no later step uses the token.
+          persist-credentials: false
+
+      - name: test-lua-mirror-smoke — reachability + sha256 vs CMakeLists pin
+        run: bash scripts/dev/test-lua-mirror-smoke.sh
+        env:
+          SMATCHET_LUA_SMOKE_NETWORK: "1"
