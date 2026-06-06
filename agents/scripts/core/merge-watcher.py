@@ -647,25 +647,76 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
     return False
 
 
-def squash_merge_pr(owner: str, repo: str, pr: int) -> str:
-    """Squash-merge a PR via REST. Returns the merge commit SHA.
+#: Sentinel return from squash_merge_pr when the PR was placed on a merge queue
+#: (auto-merge enabled, GitHub will merge it once the queue's merge_group checks
+#: pass) rather than merged immediately. handle_pass treats this distinctly from
+#: an actual merge SHA: it does NOT cascade / snapshot / drop-from-registry, so a
+#: later poll cycle observes the real merge (merge-gates exit 4) and unregisters.
+ENQUEUED_SENTINEL = "enqueued"
 
-    Per AGENTS.md § Merge gates: REST merge call is what GitHub enforces;
-    no client-side branch-protection / conflict duplication.
+
+def squash_merge_pr(owner: str, repo: str, pr: int) -> str:
+    """Enable squash auto-merge on a PR. Returns the merge commit SHA when the
+    PR merges immediately (no merge queue configured), or ENQUEUED_SENTINEL when
+    it was placed on a GitHub merge queue.
+
+    Queue-safe (docs/plans/active/build-quality-velocity-hardening.md finding #14
+    path B): a repo behind a GitHub merge queue FORBIDS a direct REST merge
+    (`PUT pulls/{pr}/merge` → 405 "merge queue is enabled"). `gh pr merge --auto`
+    is the one call that works both ways — it merges immediately if no queue is
+    set (preserving the prior behaviour) and enqueues if a queue exists. The
+    pre-enqueue gate-poll (merge-gates.sh) still runs in poll_one before we reach
+    here, so this only fires on a PR that already passed the custom poller.
+
+    Per AGENTS.md § Merge gates: GitHub enforces branch protection / conflicts /
+    required checks on the merge (or on the queue's merge_group run); we do not
+    duplicate that client-side.
     """
-    merge = _gh_json(
+    result = subprocess.run(
         [
-            "api",
-            "-X",
-            "PUT",
-            f"repos/{owner}/{repo}/pulls/{pr}/merge",
-            "-f",
-            "merge_method=squash",
-        ]
+            GH_BIN,
+            "pr",
+            "merge",
+            str(pr),
+            "--repo",
+            f"{owner}/{repo}",
+            "--squash",
+            "--auto",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
     )
-    if not merge.get("merged"):
-        raise RuntimeError(f"squash-merge of PR #{pr} returned merged=false: {merge}")
-    return merge.get("sha", "")
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"gh pr merge --auto of PR #{pr} exited {result.returncode}: "
+            f"{(result.stderr or result.stdout).strip()[:200]}"
+        )
+    # Determine the outcome: immediate merge (no queue) yields state=MERGED +
+    # a mergeCommit oid; enqueue (queue configured) leaves state=OPEN.
+    try:
+        meta = _gh_json(
+            [
+                "pr",
+                "view",
+                str(pr),
+                "--repo",
+                f"{owner}/{repo}",
+                "--json",
+                "state,mergeCommit",
+            ]
+        )
+    except RuntimeError:
+        # The merge/enqueue call succeeded; only the follow-up read failed. Treat
+        # as enqueued (conservative — avoids a false cascade/unregister on a PR
+        # that may not actually be merged yet).
+        return ENQUEUED_SENTINEL
+    if isinstance(meta, dict) and meta.get("state") == "MERGED":
+        merge_commit = meta.get("mergeCommit") or {}
+        return merge_commit.get("oid", "") if isinstance(merge_commit, dict) else ""
+    return ENQUEUED_SENTINEL
 
 
 def detect_merged_branch_name(owner: str, repo: str, pr: int) -> str | None:
@@ -1954,11 +2005,18 @@ def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
     ensure_pr_ready_for_review(owner, repo, pr)
     # 2. Detect the head branch (for cascade after merge).
     head_branch = detect_merged_branch_name(owner, repo, pr)
-    # 3. Squash-merge.
+    # 3. Squash auto-merge (queue-safe: merges now if no queue, else enqueues).
     try:
         merge_sha = squash_merge_pr(owner, repo, pr)
     except RuntimeError as exc:
         extras["merge_action"] = f"merge_failed: {exc}"
+        return extras
+    # 3a. Enqueued onto a merge queue (queue configured) — NOT yet merged. Leave
+    #     the registry entry in place so a later cycle catches the real merge
+    #     (merge-gates exit 4 → PR_CLOSED_OR_MERGED → auto-unregister) and skip
+    #     the cascade/snapshot, which require an actual merge commit on develop.
+    if merge_sha == ENQUEUED_SENTINEL:
+        extras["merge_action"] = "enqueued"
         return extras
     extras["merge_action"] = "merged"
     extras["merge_sha"] = merge_sha

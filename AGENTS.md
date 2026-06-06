@@ -52,7 +52,9 @@ Before any squash-merge (orchestrator / `git-janitor` / `smatchet-merge-watcher`
 
 **Never merge past ANY red check — required or not.** A non-required RED check (e.g. **"Doc anchors + agent contract"**, which runs the doc-validation suite) is real breakage; every check must be terminal-green before merge — *especially* a direct `gh api … /merge` (bypasses the poller). Exceptions: an override label that *names* the check, or a positively-confirmed flake. Admin-merge is only for a **stale-BLOCKED** state where everything is actually green. **Never trust a CodeRabbit "✅ Addressed" annotation blindly** — it matches commit keywords, not the diff; read the cited commit before treating a finding resolved. (Incidents in [`postmortems.md`](docs/self-improvement/postmortems.md).)
 
-Full per-outcome semantics + halt-prompt return-code table + env knobs + REST contract: [`docs/agent-rules/merge-gates.md`](docs/agent-rules/merge-gates.md). Tests: `tests/bats/merge_gates.bats`.
+**Merge queue (develop)**: develop is moving behind a GitHub merge queue — the 5 required checks gate via the queue on the `merge_group` ref (all 4 hosting workflows trigger on `merge_group`; each required job runs or self-gates green there, else the queue deadlocks). Queue-safe merge = enable auto-merge (`gh pr merge --squash --auto`), never a direct `PUT .../merge` (405 under a queue); the watcher's PASS handler uses `--auto`. The custom poller + `*-out-of-band` labels remain for the legacy/manual path; CR stays PR-advisory (not a queue-required check).
+
+Full per-outcome semantics + halt-prompt return-code table + env knobs + REST contract + merge-queue `merge_group` detail: [`docs/agent-rules/merge-gates.md`](docs/agent-rules/merge-gates.md). Tests: `tests/bats/merge_gates.bats`.
 
 ## Issue triage
 

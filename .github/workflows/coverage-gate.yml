@@ -16,6 +16,16 @@ on:
   pull_request:
     branches: [develop]
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # Merge-queue readiness (docs/plans/active/build-quality-velocity-hardening.md
+  # finding #14 path B): `Test-delta gate` is a branch-protection REQUIRED check.
+  # When develop is behind a GitHub merge queue, required checks run on the
+  # synthetic `merge_group` ref; a required check that never reports there
+  # deadlocks the queue forever (#880/#881/#882 class). This gate is inherently
+  # PR-scoped (it diffs the PR head vs its base + reads the PR's override label),
+  # and the queued commit already passed it at PR time, so on `merge_group` the
+  # job SELF-GATES to a green no-op that still reports the same `Test-delta gate`
+  # context — mirroring doc-validation.yml's Detect self-gate pattern.
+  merge_group:
 
 concurrency:
   group: coverage-gate-${{ github.ref }}
@@ -39,8 +49,18 @@ jobs:
         with:
           fetch-depth: 0  # need full history for merge-base against develop
 
+      # Self-gate for the merge queue: the delta gate is PR-scoped (diffs PR
+      # head vs base, reads the PR's override label). On a `merge_group` event
+      # there is no pull_request context — the queued commit already passed this
+      # gate at PR time, so both PR-only steps below skip and the job reports the
+      # `Test-delta gate` required context green (no-op). See the `on:` header.
+      - name: Merge-queue no-op note
+        if: github.event_name != 'pull_request'
+        run: echo "merge_group event — Test-delta already enforced at PR time; reporting green."
+
       - name: Check for tests-out-of-band override label
         id: label_check
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -55,7 +75,7 @@ jobs:
           fi
 
       - name: Run delta gate
-        if: steps.label_check.outputs.override != '1'
+        if: github.event_name == 'pull_request' && steps.label_check.outputs.override != '1'
         env:
           SMATCHET_COVERAGE_GATE_BASE: origin/${{ github.event.pull_request.base.ref }}
         run: bash scripts/dev/coverage-delta-gate.sh

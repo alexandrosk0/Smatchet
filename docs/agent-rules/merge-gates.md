@@ -75,6 +75,8 @@ gh api -X DELETE "repos/$owner/$repo/git/refs/heads/$branch"
 
 Conflicts, missing required checks, and branch-protection rules are enforced by GitHub on the REST merge call. We do not duplicate.
 
+**GitHub merge queue**: a repo may put its protected branch behind a GitHub merge queue, in which case the branch-protection required checks gate the merge by re-running on the queue's synthetic `merge_group` ref. Every workflow hosting a required check must then also trigger on `merge_group`, and every required job must either run there or self-gate to a green no-op that reports the same check context — a required check that never reports on `merge_group` **deadlocks the queue forever** (the same path-filtered-required-check class that previously deadlocked product-only PRs). When a queue is active a **direct** REST merge (`PUT pulls/{pr}/merge`) returns 405; the queue-safe path is to **enable auto-merge** (`gh pr merge --squash --auto`), which merges immediately if no queue is set and enqueues if one is — the merge-watcher's PASS handler uses `--auto` accordingly, keeping its `merge-gates.sh` gate-poll as the pre-enqueue check. The custom poller above + the `*-out-of-band` labels remain for the legacy / manual (non-queue) path; **CodeRabbit stays PR-advisory** — not a queue-required `merge_group` check.
+
 **Env knobs**:
 - `MERGE_GATES_POLL_INTERVAL` — seconds between polls (default 60).
 - `MERGE_GATES_MAX_POLLS` — max poll count (default 60).

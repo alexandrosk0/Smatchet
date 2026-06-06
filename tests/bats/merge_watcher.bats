@@ -309,9 +309,11 @@ with mw.cascade_lock('chore/v2-agentic-ripout-doc-cleanup'):
     [[ "$output" == *"found: True"* ]]
 }
 
-@test "handle_pass on PR-already-merged (404 from merge API) → merge_failed" {
-    # Stub gh on PATH to return 404 for the merge call. Verifies the error
+@test "handle_pass on PR-already-merged (gh pr merge fails) → merge_failed" {
+    # Stub gh on PATH to fail the `gh pr merge --auto` call. Verifies the error
     # path doesn't crash the daemon — just records merge_failed in state.
+    # (squash_merge_pr now enables auto-merge via `gh pr merge --squash --auto`
+    # for merge-queue safety, replacing the former `gh api -X PUT .../merge`.)
     STUB_BIN=$(mktemp -d)
     cat > "$STUB_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -319,8 +321,8 @@ case "$2 $3" in
     "repo view") echo '{"owner":{"login":"o"},"name":"r"}'; exit 0 ;;
     "api repos/o/r/pulls/999")          # detect_merged_branch_name
         echo '{"head":{"ref":"feat/foo"}}'; exit 0 ;;
-    "api -X")                            # merge call
-        echo "HTTP 404" >&2; exit 1 ;;
+    "pr merge")                          # auto-merge enable call
+        echo "failed to merge: Pull Request is not mergeable" >&2; exit 1 ;;
 esac
 exit 0
 STUB
@@ -337,6 +339,79 @@ print('merge_action:', extras.get('merge_action'))
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"merge_action: merge_failed"* ]] || [[ "$output" == *"merge_action: skipped"* ]]
+    rm -rf "$STUB_BIN"
+}
+
+@test "handle_pass enqueues on a merge queue (state OPEN after --auto) → merge_action: enqueued" {
+    # Merge-queue-safe path: `gh pr merge --auto` succeeds (enqueue) but the PR
+    # is still OPEN afterwards (queue will merge it once merge_group checks pass).
+    # squash_merge_pr returns ENQUEUED_SENTINEL → handle_pass records `enqueued`,
+    # does NOT cascade / snapshot / drop-from-registry (a later cycle catches the
+    # real merge). docs/plans/active/build-quality-velocity-hardening.md #14 path B.
+    STUB_BIN=$(mktemp -d)
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$2 $3" in
+    "repo view") echo '{"owner":{"login":"o"},"name":"r"}'; exit 0 ;;
+    "api repos/o/r/pulls/999")          # detect_merged_branch_name
+        echo '{"head":{"ref":"feat/foo"}}'; exit 0 ;;
+    "pr merge") exit 0 ;;                # auto-merge enable succeeds (enqueued)
+    "pr view")                          # state read: still OPEN → enqueued
+        echo '{"state":"OPEN","mergeCommit":null}'; exit 0 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN/gh"
+    PATH="$STUB_BIN:$PATH" run python -c "
+import os, sys
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+print('merge_action:', extras.get('merge_action'))
+print('merge_sha:', extras.get('merge_sha', '<none>'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merge_action: enqueued"* ]]
+    [[ "$output" == *"merge_sha: <none>"* ]]
+    rm -rf "$STUB_BIN"
+}
+
+@test "handle_pass merges immediately when no queue (state MERGED after --auto) → merge_action: merged" {
+    # No merge queue configured: `gh pr merge --auto` merges immediately; the PR
+    # state reads MERGED with a mergeCommit oid → squash_merge_pr returns the SHA
+    # → handle_pass proceeds to merged + cascade (prior behaviour preserved).
+    STUB_BIN=$(mktemp -d)
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$2 $3" in
+    "repo view") echo '{"owner":{"login":"o"},"name":"r"}'; exit 0 ;;
+    "api repos/o/r/pulls/999")          # detect_merged_branch_name
+        echo '{"head":{"ref":"feat/foo"}}'; exit 0 ;;
+    "pr merge") exit 0 ;;                # auto-merge enable succeeds (immediate)
+    "pr view")                          # state read: MERGED → return SHA
+        echo '{"state":"MERGED","mergeCommit":{"oid":"abc123def456"}}'; exit 0 ;;
+    "pr list") echo '[]'; exit 0 ;;     # find_stacked_children → none
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN/gh"
+    PATH="$STUB_BIN:$PATH" run python -c "
+import os, sys
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+print('merge_action:', extras.get('merge_action'))
+print('merge_sha:', extras.get('merge_sha', '<none>'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merge_action: merged"* ]]
+    [[ "$output" == *"merge_sha: abc123def456"* ]]
     rm -rf "$STUB_BIN"
 }
 
