@@ -37,11 +37,19 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
-// TrackerConfig (used by value/ref in several method signatures below) was being
-// supplied transitively via the now-removed JiraClient.h include. Depend on its
-// real home directly — ConfigManager.h is cpr-free, so this still drops cpr from
-// AppController.h's ~105 includers (build-quality-velocity-hardening #3).
+// The removed JiraClient.h include was transitively supplying TrackerConfig + the
+// tracker role-interface types (connectivity probes, fetch summaries, etc.) that
+// AppController.h and its ~105 includers use. Depend on their real homes directly:
+// ConfigManager.h + the five ITracker* role interfaces — all cpr-free, so this
+// still drops cpr (libcurl) from AppController.h's include graph, which was the
+// whole point (build-quality-velocity-hardening #3). cpr is the only thing
+// JiraClient.h provided that is intentionally NOT re-added here.
 #include "ConfigManager.h"
+#include "ITrackerCollaboration.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerFieldCatalog.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 
 #include <nlohmann/json.hpp>
 
