@@ -390,8 +390,37 @@ every current 120-200-line non-UI function (in both HEAD and base sets at the ne
 **Phase B (ImGui-draw monoliths) remains perpetual ride-along** per § Status — decompose-on-touch,
 gate-protected, never a sweep.
 
+### Closeout (2026-06-05) — Phase B swept, baseline regenerated, plan archived
+
+Re-validated against live `develop`. Two findings closed the plan:
+
+- **Phase B was fully swept, not left as perpetual ride-along.** Every UI-draw monolith named in
+  § Files Phase B was decomposed by feature-driven ride-along PRs that subsequently landed —
+  `SmatchetAiAssistantUi` (#751), `AnnotateAnalysisUi::DrawContent` 945→split (#761, the largest in
+  the tree), plus the Whisper / ViewsDashboard / main-shell / preferences draws. A live
+  `function_size_audit.py --scan-file` over all 23 candidates shows **zero** functions over the
+  ImGui-draw 200-line hard cap; the single largest function anywhere in the tree is now
+  `SmatchetWhisperSetupBanner::Render` at **195 lines** (UI, under the 200 cap).
+- **The `function-size-baseline.md` snapshot was badly stale.** It was last regenerated at #682/#683,
+  before the ride-along sweep landed, so it still listed 116 grandfathered entries that no longer
+  exist over any hard cap. Regenerated per § Approach-A Rule 7's once-per-campaign cadence →
+  **116 entries → 0** (`function-too-long` 0, `function-too-branchy` 0). Gate remains green.
+
+Nothing remains over a hard cap. Residual soft-tier `[func-size] WARN` advisories (100–195 lines /
+20–30 branches) are **non-blocking by design** (tiered-cap philosophy) and out of this plan's scope.
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Phase B shipped as a full sweep, not perpetual ride-along.** The plan deliberately scoped Phase B
+  as decompose-on-touch to avoid a risky mechanical sweep; in practice ordinary feature work opened
+  every one of those files and the draws were decomposed along the way (#751, #761, …). Net outcome
+  matches the plan's *goal* (all UI draws under cap) via the *mechanism* the plan tried to avoid —
+  with no observed regression, because each ride-along carried its own bucket-C/E golden gate.
+- **Baseline snapshot drifted stale between regenerations.** Rule 7's "regenerate once per campaign"
+  cadence left a long window where the snapshot under-reported reality (116 phantom entries). Harmless
+  to the live gate (the gate is the merge-base delta, not the file) but it misleads a human reader
+  into thinking monoliths remain. Regenerated at closeout → 0.
 
 - **Grandfather snapshot lives in its OWN file** (`docs/high-integrity/function-size-baseline.md`),
   not co-mingled into `docs/high-integrity/baseline.md` as the plan's § Files-to-modify row 1
@@ -463,3 +492,12 @@ gate-protected, never a sweep.
   PR's fork point. Hit on #633 (drawActiveProjectWindow flagged). Workaround used: merge develop into
   the branch before merge. Real fix: CI checkout `fetch-depth: 0` (or deepen to the merge-base). Backlog:
   `docs/self-improvement/categories/tooling.md`.
+
+**Closeout verification (2026-06-05):**
+- **Gate green** — `function_size_audit.py --diff origin/develop` exit 0; zero new/crossed functions.
+- **Baseline regenerated** — `function-size-baseline.md`: `function-too-long` 0 entries,
+  `function-too-branchy` 0 entries (was 116 stale entries). Snapshot now matches live truth.
+- **Tree-wide hard-cap scan** — no function over the 120 non-UI / 200 ImGui-draw / 30-branch hard caps.
+  Largest function in the tree: `SmatchetWhisperSetupBanner::Render` 195 lines (UI, under 200).
+- **No build/ctest run** — closeout is pure-docs + a regenerated informational snapshot (no `Source/`
+  change); per `AGENTS.md` § Cadence, build/perf gates N/A.

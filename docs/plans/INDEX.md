@@ -113,6 +113,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`agent-audit-remediation`](shipped/agent-audit-remediation.md) | 2026-06-05 | Plan — Agent-audit remediation (portfolio eval + infra-feedback fixes) |
 | [`agent-size-reduction`](shipped/agent-size-reduction.md) | 2026-06-05 | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
 | [`merge-snapshot-ledger`](shipped/merge-snapshot-ledger.md) | 2026-06-05 | Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection) |
+| [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | — | Plan — Decompose Top-20 Monolith Functions |
 <!-- END auto-plan-index -->
 
 ### Notes
