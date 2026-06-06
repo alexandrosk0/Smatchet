@@ -203,10 +203,12 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
     d.preferencesBuffersLoaded = true;
 }
 
-void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
-    if (!ImGui::BeginTabItem("Tracker")) {
-        return;
-    }
+namespace {
+
+// Backend-selection section of the Tracker tab: read-only toggle + the Jira/Plane/GitHub combo.
+// Returns the selected backend index (0=Jira, 1=Plane, 2=GitHub). Extracted from
+// drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
+int DrawTrackerBackendSelection(UiDrawSession& d) {
     ImGui::TextUnformatted("Backend Selection");
     ImGui::Separator();
     ImGui::Spacing();
@@ -240,7 +242,12 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
+    return currentItem;
+}
 
+// Per-backend credential/config inputs of the Tracker tab (Jira / Plane / GitHub). Extracted from
+// drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
+void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
     if (currentItem == 0) {
         ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
         ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
@@ -290,61 +297,75 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
             "(e.g. body, labels, assignees, milestone).");
     }
     ImGui::Spacing();
+}
 
+// "Recently used projects" section of the Tracker tab: cached-project list filtered to the current
+// backend + endpoint, each with a Forget button. Extracted from drawPreferencesTrackerTab during the
+// over-100-line decomposition; behaviour-identical.
+void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
     // PR 6: "Recently used projects" — read-only listbox sourced from FieldCatalogCache,
     // filtered to the current backend + endpoint. Replaces the deleted "Project Key" /
     // "Project ID (UUID)" preference rows. Each row has a Forget button.
     ImGui::Separator();
     ImGui::TextUnformatted(SmatchetLocalization::T("prefs.recentProjects", "Recently used projects"));
-    {
-        std::string backendKind;
-        std::string endpoint;
-        if (currentItem == 1) {
-            backendKind = "Plane";
-            endpoint = std::string(d.planeUrlBuf) + std::string("|") + std::string(d.planeWorkspaceBuf);
-        } else if (currentItem == 2) {
-            backendKind = "GitHub";
-            endpoint = std::string(d.githubBaseUrlBuf) + std::string("|") + std::string(d.githubOwnerBuf) +
-                       std::string("/") + std::string(d.githubRepoBuf);
-        } else {
-            backendKind = "Jira";
-            endpoint = std::string(d.domainBuf);
-        }
-        std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
-        // Filter to current backend + endpoint.
-        cached.erase(std::remove_if(cached.begin(), cached.end(),
-                                    [&](const FieldCatalogCache::CachedProjectEntry& e) {
-                                        return e.backend != backendKind || e.endpoint != endpoint;
-                                    }),
-                     cached.end());
-        if (cached.empty()) {
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.recentProjects.empty", "(none yet)"));
-        } else {
-            const char* forgetLabel = SmatchetLocalization::T("prefs.recentProjects.forget", "Forget");
-            for (const auto& entry : cached) {
-                ImGui::PushID(entry.projectKey.c_str());
-                // Format: KEY — lastUsed timestamp. (CachedProjectEntry has no displayName
-                // field today; PR 7 may extend the schema with one — for now the key alone
-                // is enough since the picker UI already resolves display names live.)
-                char timeBuf[32] = {0};
-                const std::time_t t = static_cast<std::time_t>(entry.lastUsedUnix);
-                std::tm tmv{};
+    std::string backendKind;
+    std::string endpoint;
+    if (currentItem == 1) {
+        backendKind = "Plane";
+        endpoint = std::string(d.planeUrlBuf) + std::string("|") + std::string(d.planeWorkspaceBuf);
+    } else if (currentItem == 2) {
+        backendKind = "GitHub";
+        endpoint = std::string(d.githubBaseUrlBuf) + std::string("|") + std::string(d.githubOwnerBuf) +
+                   std::string("/") + std::string(d.githubRepoBuf);
+    } else {
+        backendKind = "Jira";
+        endpoint = std::string(d.domainBuf);
+    }
+    std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
+    // Filter to current backend + endpoint.
+    cached.erase(std::remove_if(cached.begin(), cached.end(),
+                                [&](const FieldCatalogCache::CachedProjectEntry& e) {
+                                    return e.backend != backendKind || e.endpoint != endpoint;
+                                }),
+                 cached.end());
+    if (cached.empty()) {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.recentProjects.empty", "(none yet)"));
+    } else {
+        const char* forgetLabel = SmatchetLocalization::T("prefs.recentProjects.forget", "Forget");
+        for (const auto& entry : cached) {
+            ImGui::PushID(entry.projectKey.c_str());
+            // Format: KEY — lastUsed timestamp. (CachedProjectEntry has no displayName
+            // field today; PR 7 may extend the schema with one — for now the key alone
+            // is enough since the picker UI already resolves display names live.)
+            char timeBuf[32] = {0};
+            const std::time_t t = static_cast<std::time_t>(entry.lastUsedUnix);
+            std::tm tmv{};
 #if defined(_WIN32)
-                localtime_s(&tmv, &t);
+            localtime_s(&tmv, &t);
 #else
-                localtime_r(&t, &tmv);
+            localtime_r(&t, &tmv);
 #endif
-                std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M", &tmv);
-                ImGui::Text("%s — %s", entry.projectKey.c_str(), timeBuf);
-                ImGui::SameLine();
-                if (ImGui::SmallButton(forgetLabel)) {
-                    FieldCatalogCache::ForgetProject(entry.projectKey, entry.backend, entry.endpoint);
-                }
-                ImGui::PopID();
+            std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M", &tmv);
+            ImGui::Text("%s — %s", entry.projectKey.c_str(), timeBuf);
+            ImGui::SameLine();
+            if (ImGui::SmallButton(forgetLabel)) {
+                FieldCatalogCache::ForgetProject(entry.projectKey, entry.backend, entry.endpoint);
             }
+            ImGui::PopID();
         }
     }
     ImGui::Spacing();
+}
+
+} // namespace
+
+void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
+    if (!ImGui::BeginTabItem("Tracker")) {
+        return;
+    }
+    const int currentItem = DrawTrackerBackendSelection(d);
+    DrawTrackerBackendConfig(d, currentItem);
+    DrawTrackerRecentProjects(d, currentItem);
     ImGui::TextWrapped("Query/JQL and column fields are configured in the Views dashboard.");
     if (ImGui::Button("Open Views Dashboard")) {
         d.showViewsDashboard = true;
@@ -423,6 +444,28 @@ void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSessio
 }
 #endif
 
+namespace {
+
+// Parse a comma-separated "inherit fields from last row" buffer into `out` (dropping empties and
+// the implicit "summary"), fall back to the default set when empty, and canonicalize the buffer
+// back to the joined form. Collapses the three identical Jira/Plane/GitHub blocks that previously
+// inlined this in onPreferencesSaveAndSync (over-100-line decomposition); behaviour-identical.
+template <std::size_t N> void ApplyInheritFieldsBuf(char (&buf)[N], std::vector<std::string>& out) {
+    std::vector<std::string> parsedInherit = ParseCsv(std::string(buf));
+    out.clear();
+    for (const auto& s : parsedInherit) {
+        if (!s.empty() && s != "summary") {
+            out.push_back(s);
+        }
+    }
+    if (out.empty()) {
+        out = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
+    }
+    CopyStringToBuffer(buf, JoinCsv(out));
+}
+
+} // namespace
+
 void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) {
     d.cfg.Domain = d.domainBuf;
     d.cfg.Email = d.emailBuf;
@@ -443,45 +486,9 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     d.cfg.GitHubPat = d.githubPatBuf;
     d.cfg.GitHubOwner = d.githubOwnerBuf;
     d.cfg.GitHubRepo = d.githubRepoBuf;
-    {
-        std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsBuf));
-        d.cfg.NewIssueInheritFieldIds.clear();
-        for (const auto& s : parsedInherit) {
-            if (!s.empty() && s != "summary") {
-                d.cfg.NewIssueInheritFieldIds.push_back(s);
-            }
-        }
-        if (d.cfg.NewIssueInheritFieldIds.empty()) {
-            d.cfg.NewIssueInheritFieldIds = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
-        }
-        CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
-    }
-    {
-        std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsPlaneBuf));
-        d.cfg.NewIssueInheritFieldIdsPlane.clear();
-        for (const auto& s : parsedInherit) {
-            if (!s.empty() && s != "summary") {
-                d.cfg.NewIssueInheritFieldIdsPlane.push_back(s);
-            }
-        }
-        if (d.cfg.NewIssueInheritFieldIdsPlane.empty()) {
-            d.cfg.NewIssueInheritFieldIdsPlane = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
-        }
-        CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
-    }
-    {
-        std::vector<std::string> parsedInherit = ParseCsv(std::string(d.newIssueInheritFieldsGitHubBuf));
-        d.cfg.NewIssueInheritFieldIdsGitHub.clear();
-        for (const auto& s : parsedInherit) {
-            if (!s.empty() && s != "summary") {
-                d.cfg.NewIssueInheritFieldIdsGitHub.push_back(s);
-            }
-        }
-        if (d.cfg.NewIssueInheritFieldIdsGitHub.empty()) {
-            d.cfg.NewIssueInheritFieldIdsGitHub = IssueDraftHelpers::DefaultNewIssueInheritFieldIds();
-        }
-        CopyStringToBuffer(d.newIssueInheritFieldsGitHubBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsGitHub));
-    }
+    ApplyInheritFieldsBuf(d.newIssueInheritFieldsBuf, d.cfg.NewIssueInheritFieldIds);
+    ApplyInheritFieldsBuf(d.newIssueInheritFieldsPlaneBuf, d.cfg.NewIssueInheritFieldIdsPlane);
+    ApplyInheritFieldsBuf(d.newIssueInheritFieldsGitHubBuf, d.cfg.NewIssueInheritFieldIdsGitHub);
 #if defined(SMATCHET_WITH_MCP)
     d.cfg.McpEnabled = d.mcpEnabled;
     d.cfg.McpPort = d.mcpPort;

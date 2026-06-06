@@ -418,6 +418,65 @@ void DrawWhisperTestConnection(AppController& app, UiDrawSession& d, WhisperPref
     }
 }
 
+// Background worker for the mic capture-smoke test: capture 3 s via WindowsAudioCapture, measure
+// peak amplitude, and post a classified result string back to the UI thread. Extracted from the
+// LaunchBackgroundTask lambda in DrawWhisperTestMicrophone (over-100-line decomposition); identical.
+void RunMicCaptureTestWorker(AppController& app, WhisperPrefsTabState* st) {
+    smatchet::whisper::WindowsAudioCapture cap;
+    std::string startErr;
+    if (!cap.Start(startErr)) {
+        const std::string err = startErr.empty() ? std::string("capture start failed") : startErr;
+        app.mainThreadDispatcher.PostToMainThread([err, st]() {
+            st->micTestInFlight.store(false, std::memory_order_release);
+            st->micTestResult = std::string("Failed: ") + err;
+            st->micTestResultType = 2;
+        });
+        return;
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    cap.Stop();
+    std::vector<std::int16_t> pcm;
+    cap.DrainCapturedPcm(pcm);
+    std::int32_t peakAbs = 0;
+    for (std::int16_t s : pcm) {
+        const std::int32_t m = s >= 0 ? static_cast<std::int32_t>(s) : -static_cast<std::int32_t>(s);
+        if (m > peakAbs) {
+            peakAbs = m;
+        }
+    }
+    const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
+    const std::size_t samples = pcm.size();
+    app.mainThreadDispatcher.PostToMainThread([samples, peakAbs, peakNorm, st]() {
+        st->micTestInFlight.store(false, std::memory_order_release);
+        char buf[256];
+        if (samples == 0) {
+            std::snprintf(buf, sizeof(buf),
+                          "Failed: 0 samples captured (mic unplugged / muted / "
+                          "consent denied)");
+            st->micTestResultType = 2;
+        } else if (peakAbs == 0) {
+            std::snprintf(buf, sizeof(buf),
+                          "Failed: %zu samples but peak=0 (format unwrap broken or mic "
+                          "muted at hardware)",
+                          samples);
+            st->micTestResultType = 2;
+        } else if (peakNorm < 0.01f) {
+            std::snprintf(buf, sizeof(buf),
+                          "Warn: %zu samples, peak=%.3f (very quiet — speak "
+                          "louder or check mic gain)",
+                          samples, peakNorm);
+            st->micTestResultType = 2;
+        } else {
+            std::snprintf(buf, sizeof(buf),
+                          "OK: %zu samples, peak=%.3f (ready for "
+                          "transcription)",
+                          samples, peakNorm);
+            st->micTestResultType = 1;
+        }
+        st->micTestResult = buf;
+    });
+}
+
 void DrawWhisperTestMicrophone(AppController& app, WhisperPrefsTabState& state) {
     // --- Test microphone end-to-end (capture-only). Captures 3 s of audio via
     // WindowsAudioCapture, reports total samples + peak amplitude inline so the
@@ -450,61 +509,7 @@ void DrawWhisperTestMicrophone(AppController& app, WhisperPrefsTabState& state) 
         // shuttingDown_ atomic flips), but the worker thread dangling on a dead
         // dispatcher would still UB on the captured-by-reference access — the
         // LaunchBackgroundTask contract eliminates both halves.
-        app.LaunchBackgroundTask([&app, st]() {
-            smatchet::whisper::WindowsAudioCapture cap;
-            std::string startErr;
-            if (!cap.Start(startErr)) {
-                const std::string err = startErr.empty() ? std::string("capture start failed") : startErr;
-                app.mainThreadDispatcher.PostToMainThread([err, st]() {
-                    st->micTestInFlight.store(false, std::memory_order_release);
-                    st->micTestResult = std::string("Failed: ") + err;
-                    st->micTestResultType = 2;
-                });
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-            cap.Stop();
-            std::vector<std::int16_t> pcm;
-            cap.DrainCapturedPcm(pcm);
-            std::int32_t peakAbs = 0;
-            for (std::int16_t s : pcm) {
-                const std::int32_t m = s >= 0 ? static_cast<std::int32_t>(s) : -static_cast<std::int32_t>(s);
-                if (m > peakAbs) {
-                    peakAbs = m;
-                }
-            }
-            const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
-            const std::size_t samples = pcm.size();
-            app.mainThreadDispatcher.PostToMainThread([samples, peakAbs, peakNorm, st]() {
-                st->micTestInFlight.store(false, std::memory_order_release);
-                char buf[256];
-                if (samples == 0) {
-                    std::snprintf(buf, sizeof(buf),
-                                  "Failed: 0 samples captured (mic unplugged / muted / "
-                                  "consent denied)");
-                    st->micTestResultType = 2;
-                } else if (peakAbs == 0) {
-                    std::snprintf(buf, sizeof(buf),
-                                  "Failed: %zu samples but peak=0 (format unwrap broken or mic "
-                                  "muted at hardware)",
-                                  samples);
-                    st->micTestResultType = 2;
-                } else if (peakNorm < 0.01f) {
-                    std::snprintf(buf, sizeof(buf),
-                                  "Warn: %zu samples, peak=%.3f (very quiet — speak "
-                                  "louder or check mic gain)",
-                                  samples, peakNorm);
-                    st->micTestResultType = 2;
-                } else {
-                    std::snprintf(buf, sizeof(buf),
-                                  "OK: %zu samples, peak=%.3f (ready for "
-                                  "transcription)",
-                                  samples, peakNorm);
-                    st->micTestResultType = 1;
-                }
-                st->micTestResult = buf;
-            });
-        });
+        app.LaunchBackgroundTask([&app, st]() { RunMicCaptureTestWorker(app, st); });
     }
     if (inFlight) {
         ImGui::EndDisabled();
@@ -604,6 +609,93 @@ bool RunE2ETranscription(const WhisperE2ERoute& route, const TrackerConfig& cfgS
     return local.Transcribe(pcm, lang, text, txErr);
 }
 
+// Background worker for the end-to-end transcription test: resolve route (fast-fail before capture),
+// capture 4 s, run the full transcription pipeline, and post per-phase + final classified status back
+// to the UI thread. Extracted from the LaunchBackgroundTask lambda in DrawWhisperTestE2E
+// (over-100-line decomposition); behaviour-identical.
+void RunE2ETestWorker(AppController& app, const TrackerConfig& cfgSnap, WhisperPrefsTabState* st) {
+    // --- Resolve route BEFORE spending 4 s capturing, so cloud-only with
+    // no key / local-only with no model fail fast.
+    const WhisperE2ERoute route = ResolveE2ERoute(cfgSnap);
+    const std::string effectiveMode = route.effectiveMode;
+    if (!route.fastFail.empty()) {
+        const std::string fastFail = route.fastFail;
+        app.mainThreadDispatcher.PostToMainThread([fastFail, st]() {
+            st->e2eInFlight.store(false, std::memory_order_release);
+            st->e2eResult = std::string("Failed: ") + fastFail;
+            st->e2eResultType = 2;
+        });
+        return;
+    }
+
+    // --- Capture once, route by effectiveMode below. Per-phase status
+    // updates keep the user informed — local-model transcription on
+    // medium.en can take 5+ seconds, and the "button disabled, nothing
+    // visible" silence was confusing.
+    const std::string modeForUi = effectiveMode;
+    app.mainThreadDispatcher.PostToMainThread([modeForUi, st]() {
+        st->e2eResult = std::string("[1/3] Capturing 4 s (route=") + modeForUi + ") — speak now...";
+        st->e2eResultType = 0;
+    });
+    smatchet::whisper::WindowsAudioCapture cap;
+    std::string err;
+    if (!cap.Start(err)) {
+        const std::string e = err.empty() ? std::string("capture start failed") : err;
+        app.mainThreadDispatcher.PostToMainThread([e, st]() {
+            st->e2eInFlight.store(false, std::memory_order_release);
+            st->e2eResult = std::string("Failed (capture): ") + e;
+            st->e2eResultType = 2;
+        });
+        return;
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(4));
+    cap.Stop();
+    std::vector<std::int16_t> pcm;
+    cap.DrainCapturedPcm(pcm);
+    app.mainThreadDispatcher.PostToMainThread([modeForUi, st]() {
+        st->e2eResult = std::string("[2/3] Captured; transcribing via ") + modeForUi + "...";
+        st->e2eResultType = 0;
+    });
+    if (pcm.empty()) {
+        app.mainThreadDispatcher.PostToMainThread([st]() {
+            st->e2eInFlight.store(false, std::memory_order_release);
+            st->e2eResult = "Failed: 0 PCM samples (mic / consent / format issue — "
+                            "click Test microphone for narrower diagnosis)";
+            st->e2eResultType = 2;
+        });
+        return;
+    }
+
+    const std::size_t samples = pcm.size();
+    std::string text;
+    std::string txErr;
+    const bool ok = RunE2ETranscription(route, cfgSnap, pcm, text, txErr);
+
+    const std::string mode = effectiveMode;
+    app.mainThreadDispatcher.PostToMainThread([ok, txErr, text, samples, mode, st]() {
+        st->e2eInFlight.store(false, std::memory_order_release);
+        char buf[1024];
+        if (!ok) {
+            std::snprintf(buf, sizeof(buf),
+                          "[3/3] Failed (%s, transcribe): captured %zu "
+                          "samples; %s",
+                          mode.c_str(), samples, txErr.c_str());
+            st->e2eResultType = 2;
+        } else if (text.empty()) {
+            std::snprintf(buf, sizeof(buf),
+                          "[3/3] Warn (%s): captured %zu samples + "
+                          "transcribe ok, but empty result (silence at "
+                          "recogniser)",
+                          mode.c_str(), samples);
+            st->e2eResultType = 2;
+        } else {
+            std::snprintf(buf, sizeof(buf), "[3/3] OK (%s, %zu samples): \"%s\"", mode.c_str(), samples, text.c_str());
+            st->e2eResultType = 1;
+        }
+        st->e2eResult = buf;
+    });
+}
+
 void DrawWhisperTestE2E(AppController& app, UiDrawSession& d, WhisperPrefsTabState& state) {
     // --- Test transcription end-to-end. Captures 4 s, runs the full
     // transcription pipeline — silence trim, mode router, cloud or local — and
@@ -637,89 +729,7 @@ void DrawWhisperTestE2E(AppController& app, UiDrawSession& d, WhisperPrefsTabSta
         // rationale): JoinBackgroundTasks at shutdown waits for the worker, and
         // PostToMainThread is shutdown-safe via the dispatcher's shuttingDown_
         // atomic. No more dangling-reference UAF.
-        app.LaunchBackgroundTask([cfgSnap, &app, st]() {
-            // --- Resolve route BEFORE spending 4 s capturing, so cloud-only with
-            // no key / local-only with no model fail fast.
-            const WhisperE2ERoute route = ResolveE2ERoute(cfgSnap);
-            const std::string effectiveMode = route.effectiveMode;
-            if (!route.fastFail.empty()) {
-                const std::string fastFail = route.fastFail;
-                app.mainThreadDispatcher.PostToMainThread([fastFail, st]() {
-                    st->e2eInFlight.store(false, std::memory_order_release);
-                    st->e2eResult = std::string("Failed: ") + fastFail;
-                    st->e2eResultType = 2;
-                });
-                return;
-            }
-
-            // --- Capture once, route by effectiveMode below. Per-phase status
-            // updates keep the user informed — local-model transcription on
-            // medium.en can take 5+ seconds, and the "button disabled, nothing
-            // visible" silence was confusing.
-            const std::string modeForUi = effectiveMode;
-            app.mainThreadDispatcher.PostToMainThread([modeForUi, st]() {
-                st->e2eResult = std::string("[1/3] Capturing 4 s (route=") + modeForUi + ") — speak now...";
-                st->e2eResultType = 0;
-            });
-            smatchet::whisper::WindowsAudioCapture cap;
-            std::string err;
-            if (!cap.Start(err)) {
-                const std::string e = err.empty() ? std::string("capture start failed") : err;
-                app.mainThreadDispatcher.PostToMainThread([e, st]() {
-                    st->e2eInFlight.store(false, std::memory_order_release);
-                    st->e2eResult = std::string("Failed (capture): ") + e;
-                    st->e2eResultType = 2;
-                });
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(4));
-            cap.Stop();
-            std::vector<std::int16_t> pcm;
-            cap.DrainCapturedPcm(pcm);
-            app.mainThreadDispatcher.PostToMainThread([modeForUi, st]() {
-                st->e2eResult = std::string("[2/3] Captured; transcribing via ") + modeForUi + "...";
-                st->e2eResultType = 0;
-            });
-            if (pcm.empty()) {
-                app.mainThreadDispatcher.PostToMainThread([st]() {
-                    st->e2eInFlight.store(false, std::memory_order_release);
-                    st->e2eResult = "Failed: 0 PCM samples (mic / consent / format issue — "
-                                    "click Test microphone for narrower diagnosis)";
-                    st->e2eResultType = 2;
-                });
-                return;
-            }
-
-            const std::size_t samples = pcm.size();
-            std::string text;
-            std::string txErr;
-            const bool ok = RunE2ETranscription(route, cfgSnap, pcm, text, txErr);
-
-            const std::string mode = effectiveMode;
-            app.mainThreadDispatcher.PostToMainThread([ok, txErr, text, samples, mode, st]() {
-                st->e2eInFlight.store(false, std::memory_order_release);
-                char buf[1024];
-                if (!ok) {
-                    std::snprintf(buf, sizeof(buf),
-                                  "[3/3] Failed (%s, transcribe): captured %zu "
-                                  "samples; %s",
-                                  mode.c_str(), samples, txErr.c_str());
-                    st->e2eResultType = 2;
-                } else if (text.empty()) {
-                    std::snprintf(buf, sizeof(buf),
-                                  "[3/3] Warn (%s): captured %zu samples + "
-                                  "transcribe ok, but empty result (silence at "
-                                  "recogniser)",
-                                  mode.c_str(), samples);
-                    st->e2eResultType = 2;
-                } else {
-                    std::snprintf(buf, sizeof(buf), "[3/3] OK (%s, %zu samples): \"%s\"", mode.c_str(), samples,
-                                  text.c_str());
-                    st->e2eResultType = 1;
-                }
-                st->e2eResult = buf;
-            });
-        });
+        app.LaunchBackgroundTask([cfgSnap, &app, st]() { RunE2ETestWorker(app, cfgSnap, st); });
     }
     if (inFlight) {
         ImGui::EndDisabled();
