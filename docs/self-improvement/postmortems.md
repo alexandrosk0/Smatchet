@@ -27,6 +27,68 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-06 · PR #923 · auto-merged past a RED non-required "Coverage" check (spec inconsistency)
+
+> Self-reported. The `smatchet-merge-watcher` auto-merged #923 (via
+> `gh pr merge --squash --auto`) while the **non-required** `Coverage
+> (windows-2022 + OpenCppCoverage)` check was RED — it was a `0x80000003`
+> debugger-break crash from #923's own intentional `WARN`-on-false flaky-quarantine
+> self-test under OpenCppCoverage (all 1314 tests PASSED; the process broke at
+> teardown). `postmortem-owed.sh` did NOT flag it — by the gate's own design it was
+> a clean merge (all 5 *required* checks were green).
+
+### What escaped
+A check that is **intended to block** (its CI step is literally named
+`Capture coverage (blocking; --threshold 65)`) but is **configured non-required**
+and **gate-ignored**. Two layers let it through:
+1. The merge-watcher's gate (`merge-gates.sh`) only blocks on `isRequired==true`
+   contexts (`GATE_FILTER` line 345: `$failing` is computed over `$req`, not all
+   `$ctx`). This is **deliberate + tested** — `tests/fixtures/merge_gates_pass.json`
+   contains a `non-required-fail` check and the "all gates pass → return 0" test
+   asserts the gate PASSES past it.
+2. GitHub auto-merge (`--auto`) likewise only gates on required checks, so even
+   without the poller a non-required red never blocks `--auto`.
+
+So #923 merged at its pre-fix head past the red coverage check, briefly leaving
+develop's coverage job broken for any coverage-triggering PR. (Remediated same day:
+PR #927 added `coverage.sh --no-breaks` so OpenCppCoverage's attached-debugger no
+longer turns a failing/WARN assertion into a `STATUS_BREAKPOINT` crash.)
+
+### Root cause
+A **spec inconsistency**, not a code bug: `AGENTS.md` § Merge gates prose says
+*"Never merge past ANY red check — required or not,"* but the merge-gates
+implementation + its bats contract deliberately **ignore non-required checks**, and
+`Coverage` (intended "blocking") is configured non-required with no skip-companion.
+The prose policy and the tested implementation directly contradict; the watcher
+followed the implementation. Coverage rarely runs (path-filtered to Source/tests),
+so the contradiction lay dormant until a coverage-triggering PR with a red coverage
+job hit the watcher.
+
+### Preventing gate
+**Resolve the inconsistency — a DESIGN DECISION surfaced to the maintainer (this
+session), one of:**
+- **(A)** Make `Coverage (windows-2022 + OpenCppCoverage)` a **required** check
+  (`project.config.json` `branch_protection.required_contexts` + `setup-branch-protection.sh`)
+  **and** add a `coverage-skip.yml` companion (Pattern B) so docs-only PRs don't
+  deadlock. The watcher's existing required-only gate then blocks it. (Branch-protection
+  change → maintainer approval.)
+- **(B)** Add a curated **non-required-but-blocking allow-list** to `merge-gates.sh`
+  (broaden `$failing` to include non-required contexts whose name is NOT advisory
+  and IS in the allow-list — e.g. Coverage, Sanitizer, Bucket-E), update
+  `merge_gates_pass.json` + add a bats case. Keeps truly-advisory checks
+  (`Duplication scanner (advisory)`) non-blocking. (Code change; contradicts the
+  current tested "non-required → pass" contract, hence needs the explicit decision.)
+- **(C)** Accept Coverage as advisory — rename the step to drop "blocking" and
+  document that only required checks gate merges. (Cheapest; weakens Pillar-1/3 coverage
+  enforcement.)
+Filed to `infra.md` (P1, decision-pending). Until resolved, the orchestrator merges
+via the strict finisher (`build/finish-pr.sh`, which blocks on ANY non-Test-delta
+red) and unregisters at-risk PRs from the watcher.
+
+### Filed as
+`docs/self-improvement/categories/infra.md` — *merge-gates non-required-red policy
+(AGENTS.md "never merge past any red" ⇄ tested "non-required → pass" contradiction)* (P1, decision-pending).
+
 ## 2026-06-06 · PR #905, #906, #907, #908 (recurring class: #892, #894, #896, #897, #898) · 6-PR burst exhausted CodeRabbit quota → override cascade
 
 > Surfaced while merging the build-quality-velocity-hardening Sprint-1 PRs: a
