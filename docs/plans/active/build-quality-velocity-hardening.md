@@ -150,13 +150,29 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - The 4 developer-owned `SmatchetPreferencesUi*` / UI WIP files — untouched.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*Sprint 1 shipped; Sprint 2 + hygiene #3/#5/#6 remain → plan stays `active` (not archived).*
+
+- `4cc7c4a6` (#905) · #16 OfflineQueue: reset the in-flight latch on the null-`Mutations()` early-return (mirror the 3 sibling returns) + a discriminating runtime test (count 0→1 across the reset).
+- `57789552` (#906) · #37 Plane `CreateIssue`: `LOG_WARN` instead of an empty `catch(...){}` on response-parse (Network/API tier) + `catch-all-ok` markers on the 2 sibling parse-fallbacks.
+- `909aa2a8` (#907) · #23 ImWchar: `static_assert(sizeof(ImWchar)==4)` in `SmatchetImGuiFonts.cpp` guarding `IMGUI_USE_WCHAR32` parity (compiled in both targets).
+- `8a06ae74` (#908) · #1 `smatchet_patch_or_die` helper routing all vendored patches (FATAL on a vanished target) + SHA-pin cpr/sqlitecpp/sol2 + a sol2-token configure-time assert.
+- `c3c9a72b` (#909) · #33 `build.md`: MSVC toolset-pin (canonical `STL1001` / `with-msvc-env.sh` / `msvc_toolset_pin`) + stale-PCH (C2859) recovery.
+- `272dbabc` (#911) · #24 `no-glfw-in-core-headers` lint rule + #15 `function_size_audit.py --assert-absent` + #4 repoint dead `Locales/*.json` glob at the real source (+ `test-config-globs.sh`).
+- #38 (prune retired msys2 debris): already removed in `6537dc3` (`bootstrap-msys2.ps1` + `*-msys2` presets); leftover untracked `build/*msys2*` dirs cleared locally.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **#37**: planned shorthand was "add the `// catch-all-ok:` marker"; upgraded to a policy-mandated `LOG_WARN` (`exception-handling-policy.md` Network/API tier — a 2xx-response parse failure is not an escape-hatch case).
+- **#23**: planned home was `SmatchetImGuiHost.cpp`; relocated to `SmatchetImGuiFonts.cpp` (leaner DX12+GLFW TU with no `SmatchetUI.h`, clears the strict clang `-Wmicrosoft-include` lint, and is the semantic home — it builds the ImWchar glyph-range arrays). Compiles in both targets (broader than the planned DX12-only TU).
+- **#4**: there are **no tracked `Locales/*.json`** (runtime override files placed next to the exe); repointed the glob at the real tracked source (`SmatchetLocalization.cpp` + `SmatchetLocaliz*.h`) and added `test-config-globs.sh` (fail-closed zero-match).
+- **#15**: implemented as a new `function_size_audit.py --assert-absent <name>` mode (exit 1 if still over-cap) rather than a bare `--diff` check.
+- **Merge mechanics**: a 6-PR-per-feature split (vs the PR-batching "one PR per feature") exhausted CodeRabbit's hourly quota → `cr-out-of-band` ×4 (#905-908) + `tests-out-of-band` (#906/#907) + 2 strict-`BEHIND` admin force-merges (#908/#911). Postmortem: `postmortems.md` 2026-06-06.
 
 ## Verification (actual)
-*(populated post-ship)*
+- **Dual-target build** (`ninja-iter-msvc`, `SmatchetStandalone` + `SmatchetCore_DX12`) green for the bug fixes (#16/#23/#37); #1 verified configure-idempotent + negative-test FATAL + dual-target build.
+- **ctest** (`ninja-test-msvc`) 100%; the #16 discriminating case runs (8/8 assertions).
+- **#24/#15/#4**: `test-lint-rules.sh --selftest` + `lint_rules.bats` (27) + `function_size.bats` (19) + `function_size_audit.py --selftest` + `test-config-globs.sh` + doc suite — all green.
+- **#33**: `scripts/dev/test-docs.sh` 9/9.
+- **Not yet done** (remaining Sprint-1 hygiene): #3 (drop dead `JiraClient.h` include), #5 (tests glob-vs-list assert), #6 (`is-exe-fresh.sh`).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
