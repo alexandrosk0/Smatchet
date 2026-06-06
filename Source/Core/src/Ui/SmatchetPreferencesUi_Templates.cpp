@@ -370,9 +370,10 @@ void DrawCommentTemplateDetailAndAdd(UiDrawSession& d, const char* titleWidgetId
 }
 
 // Shared body for a comment-template editor sub-tab. The Quick-Comments and Annotate-Comments
-// sub-tabs were byte-identical apart from their labels / widget-ids / backing config field, so this
-// collapses both (DRY) — behaviour-identical; every ImGui id + label is supplied verbatim by the
-// caller. `cfgField` is the persisted vector; `loadedFlag` gates the one-time working-copy load.
+// sub-tabs were byte-identical apart from their labels, widget ids, and backing config field, so
+// this collapses both for DRY while staying behaviour-identical, with the caller passing every
+// ImGui id and label verbatim. The cfgField argument is the persisted vector and loadedFlag gates
+// the one-time working-copy load.
 void DrawCommentTemplateSubTab(UiDrawSession& d, const char* tabLabel, const char* heading, const char* placeholderHelp,
                                const char* childId, const char* titleWidgetId, const char* idWidgetId,
                                const char* bodyWidgetId, std::vector<CommentTemplate>& cfgField, bool& loadedFlag,
