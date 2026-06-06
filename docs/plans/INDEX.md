@@ -78,6 +78,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
 | [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
 | [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
+| [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | 2026-05-28 | Plan — Decompose Top-20 Monolith Functions |
 | [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | 2026-05-28 | Plan — Gate enforcement hardening (agent → GitHub promotion) |
 | [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | 2026-05-28 | Plan - GitHub commit tracker rows |
 | [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | 2026-05-28 | Plan — High-Integrity C++ Enforcement (slim profile) |
@@ -113,7 +114,6 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`agent-audit-remediation`](shipped/agent-audit-remediation.md) | 2026-06-05 | Plan — Agent-audit remediation (portfolio eval + infra-feedback fixes) |
 | [`agent-size-reduction`](shipped/agent-size-reduction.md) | 2026-06-05 | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
 | [`merge-snapshot-ledger`](shipped/merge-snapshot-ledger.md) | 2026-06-05 | Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection) |
-| [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | — | Plan — Decompose Top-20 Monolith Functions |
 <!-- END auto-plan-index -->
 
 ### Notes
