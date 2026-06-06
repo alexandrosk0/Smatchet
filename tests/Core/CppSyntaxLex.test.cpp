@@ -148,6 +148,71 @@ TEST_CASE("CppLexLine: hex/float number literals") {
     CHECK(std::string(s + t[4].offset, t[4].length) == "12345L");
 }
 
+TEST_CASE("CppLexLine: C++14 digit separators and case-insensitive suffixes (Issue #818)") {
+    // Each sample's leading number literal must tokenise as one Number span
+    // covering the whole literal — digit separators (') wedged between digits
+    // and the full integer-suffix set (incl. uppercase U) are part of the token.
+    struct Sample {
+        const char* line;
+        const char* expectNumber;
+    };
+    const Sample samples[] = {
+        {"1'000", "1'000"},
+        {"0xFF'FFU", "0xFF'FFU"},
+        {"0b1010'0101", "0b1010'0101"},
+        {"42U", "42U"},
+        {"100UL", "100UL"},
+        {"1'000'000ULL", "1'000'000ULL"},
+        {"1'000'000", "1'000'000"},
+        {"0xDEAD'BEEFull", "0xDEAD'BEEFull"},
+    };
+    for (std::size_t k = 0; k < sizeof(samples) / sizeof(samples[0]); ++k) {
+        const char* s = samples[k].line;
+        const std::vector<CppLexToken> t = CppLexLine(s, std::strlen(s));
+        AssertTiling(t);
+        CHECK(Reassemble(s, t) == std::string(s));
+        REQUIRE_FALSE(t.empty());
+        CHECK(t[0].kind == CppLexKind::Number);
+        CHECK(std::string(s + t[0].offset, t[0].length) == std::string(samples[k].expectNumber));
+    }
+}
+
+TEST_CASE("CppLexLine: stray quote is NOT swallowed into a number (Issue #818)") {
+    // A trailing separator with no following digit stops the number; the ' is
+    // left for the quote scanner. "1'" + non-digit must yield Number("1") then
+    // a String/other token starting at the quote, never Number("1'...").
+    {
+        const char* s = "1'+2";
+        const std::vector<CppLexToken> t = CppLexLine(s, std::strlen(s));
+        AssertTiling(t);
+        CHECK(Reassemble(s, t) == std::string(s));
+        REQUIRE_FALSE(t.empty());
+        CHECK(t[0].kind == CppLexKind::Number);
+        CHECK(std::string(s + t[0].offset, t[0].length) == "1"); // just "1", quote not swallowed
+    }
+    {
+        // A char literal adjacent to a number: 'a' is a String, never folded
+        // into a neighbouring Number token.
+        const char* s = "x = 'a'";
+        const std::vector<CppLexToken> t = CppLexLine(s, std::strlen(s));
+        AssertTiling(t);
+        CHECK(Reassemble(s, t) == std::string(s));
+        CHECK(t.back().kind == CppLexKind::String);
+        CHECK(std::string(s + t.back().offset, t.back().length) == "'a'");
+    }
+    {
+        // Bare separator between non-digits must not start/extend a number; the
+        // leading char here is a digit but the quote is immediately doubled.
+        const char* s = "1''0";
+        const std::vector<CppLexToken> t = CppLexLine(s, std::strlen(s));
+        AssertTiling(t);
+        CHECK(Reassemble(s, t) == std::string(s));
+        REQUIRE_FALSE(t.empty());
+        CHECK(t[0].kind == CppLexKind::Number);
+        CHECK(std::string(s + t[0].offset, t[0].length) == "1"); // doubled '' is not a separator
+    }
+}
+
 TEST_CASE("CppLexLine: preprocessor directive run") {
     const char* s = "#define FOO 1";
     const std::vector<CppLexToken> t = CppLexLine(s, std::strlen(s));
