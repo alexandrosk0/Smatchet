@@ -272,6 +272,28 @@ Fixes whose cost is obvious from the code (e.g. removing a confirmed per-frame d
 
 ---
 
+## Real wall-clock FPS (vsync / GPU present)
+
+The `scenario.run` path above measures **UI-thread CPU time** under headless software GL (Mesa) — it
+does NOT capture real framerate (no GPU, no vsync, no present). For the actual perceived FPS, run the
+real standalone window with the env-gated measurement built into `RunFrameLoop` (`FpsMeasure` in
+`Source/Standalone/main.cpp`):
+
+```bash
+# Real perceived FPS (vsync ON → capped to monitor refresh). Warmup excludes startup/sync churn.
+SMATCHET_FPS_MEASURE_SECONDS=12 SMATCHET_FPS_WARMUP_SECONDS=5 build/ninja-iter-msvc/Smatchet.exe
+# Uncapped max throughput (vsync OFF).
+SMATCHET_FPS_MEASURE_SECONDS=12 SMATCHET_FPS_WARMUP_SECONDS=5 SMATCHET_FPS_VSYNC=0 build/ninja-iter-msvc/Smatchet.exe
+```
+
+Runs the real GL window for N seconds (after the warmup), prints one `[fps-measure]` line to stderr —
+`frames=… vsync=on|off | avg | best | p99 | worst` (frame-ms + fps each) — then auto-quits. Zero cost
+when the env var is unset. **Always set a warmup** (≈5 s): the first few seconds include catalog
+fetch + cache hydrate + plugin init, whose hitches otherwise dominate p99/worst and read as a false
+steady-state regression. The live in-app readout is `Inspect > Performance Monitor...` (`SmatchetPerfUi`).
+
+---
+
 ## CLI reference
 
 The CLI talks to a running Smatchet instance via MCP HTTP. Discovery order: `SMATCHET_MCP_HOST` / `SMATCHET_MCP_PORT` env vars → PID-verified `instance.json` in user-data dir → `--mcp-host` / `--mcp-port` flags.
