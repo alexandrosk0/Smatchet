@@ -2,7 +2,7 @@
 # `agents/` tree and copying small adapter templates from
 # `docs/harness/<name>/`. Idempotent.
 #
-# Supported harnesses: claude-code | codex | cursor
+# Supported harnesses: claude-code | codex | cursor | pi
 #
 # Why links: keeps `agents/*.md` the single source of truth — edits to canonical
 # agent definitions are visible to the harness immediately, no sync step.
@@ -33,6 +33,7 @@ Harnesses:
   codex         No local setup needed — Codex reads AGENTS.md directly per
                 the agents.md spec. Run for confirmation.
   cursor        Generate .cursor/rules/agents.mdc.
+  pi            Generate .pi\agents\*.md (pi-native) + patched subagent extension.
 
 Idempotent — re-running is safe. Edits to .claude/settings.json (or other
 templates) survive: the script skips copies if the local file differs from
@@ -146,12 +147,47 @@ function Setup-Cursor {
     Write-Host 'Done. .cursor\rules\agents.mdc points Cursor at AGENTS.md + agents\.'
 }
 
+function Setup-Pi {
+    Write-Host 'Setting up pi adapter at .pi\ ...'
+    # 1. Generate the pi-native agent files (flatten + capability->tools + model map).
+    $py = (Get-Command python3 -ErrorAction SilentlyContinue) ?? (Get-Command python -ErrorAction SilentlyContinue)
+    if (-not $py) { Write-Error 'python3 not found - needed to generate .pi\agents\*.md'; exit 1 }
+    & $py.Source 'agents/scripts/core/gen-pi-agents.py' (Get-Location).Path (Join-Path (Get-Location).Path '.pi/agents')
+
+    # 2. Install + patch the subagent extension from the installed pi package.
+    $dst = '.pi\extensions\subagent'
+    $cands = @($env:PI_PACKAGE_DIR,
+               (Join-Path (& npm root -g 2>$null) '@earendil-works/pi-coding-agent'),
+               (Join-Path $env:APPDATA 'npm\node_modules\@earendil-works\pi-coding-agent'))
+    $pkg = $cands | Where-Object { $_ -and (Test-Path (Join-Path $_ 'examples/extensions/subagent')) } | Select-Object -First 1
+    if ($pkg) {
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        Copy-Template (Join-Path $pkg 'examples\extensions\subagent\index.ts')  (Join-Path $dst 'index.ts')
+        Copy-Template (Join-Path $pkg 'examples\extensions\subagent\agents.ts') (Join-Path $dst 'agents.ts')
+        $idx = Join-Path $dst 'index.ts'
+        $txt = Get-Content -Raw $idx
+        if ($txt -match 'params\.agentScope \?\? "user"') {
+            $txt = $txt -replace 'params\.agentScope \?\? "user"', 'params.agentScope ?? "both"'
+            $txt = $txt -replace 'params\.confirmProjectAgents \?\? true', 'params.confirmProjectAgents ?? false'
+            $txt = $txt -replace 'args\.agentScope \?\? "user"', 'args.agentScope ?? "both"'
+            Set-Content -NoNewline -Path $idx -Value $txt
+            Write-Host "  patch      $idx (agentScope=both, confirmProjectAgents=false)"
+        } else {
+            Write-Host "  patch      $idx already patched (skip)"
+        }
+    } else {
+        Write-Host '  WARN  pi package not found - set PI_PACKAGE_DIR and re-run. Agents were still generated.'
+    }
+    Write-Host 'Done. .pi\ ready for pi. See docs/harness/pi/README.md.'
+}
+
 switch ($Harness) {
     'claude-code' { Setup-ClaudeCode }
     'codex'       { Setup-Codex }
     'cursor'      { Setup-Cursor }
+    'pi'          { Setup-Pi }
     default {
-        Write-Error "unknown harness '$Harness'. Supported: claude-code | codex | cursor"
+        Write-Error "unknown harness '$Harness'. Supported: claude-code | codex | cursor | pi"
         exit 1
     }
 }
