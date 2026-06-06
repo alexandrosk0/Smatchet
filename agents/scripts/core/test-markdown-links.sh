@@ -129,6 +129,27 @@ else:
 # but stops at whitespace (defensive against malformed links).
 LINK_RE = re.compile(r'(?<!\!)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 
+# Match a tier-LESS plan path `docs/plans/<slug>.md` (no active/shipped/deferred
+# segment) anywhere in the repo-relative resolved target.
+_TIERLESS_PLAN_RE = re.compile(r"(?:^|/)docs/plans/([A-Za-z0-9._-]+\.md)$")
+
+
+def plan_tierless_resolves(target):
+    """A tier-less plan link `docs/plans/<slug>.md` resolves when <slug>.md
+    exists in active/, shipped/, or deferred/ — so a plan can move between tiers
+    without breaking the reference (no ref-sweep on archival). Returns True iff
+    the target is such a path AND the slug exists in some tier."""
+    rel = os.path.relpath(target, REPO_ROOT).replace(os.sep, "/")
+    m = _TIERLESS_PLAN_RE.search("/" + rel)
+    if not m:
+        return False
+    slug = m.group(1)
+    return any(
+        os.path.exists(os.path.join(REPO_ROOT, "docs", "plans", tier, slug))
+        for tier in ("active", "shipped", "deferred")
+    )
+
+
 violations = []
 checked = 0
 for path in TARGETS:
@@ -164,7 +185,7 @@ for path in TARGETS:
                     # Resolve relative to the file's directory.
                     src_dir = os.path.dirname(path)
                     target = os.path.normpath(os.path.join(src_dir, href_path))
-                    if not os.path.exists(target):
+                    if not os.path.exists(target) and not plan_tierless_resolves(target):
                         rel_src = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
                         violations.append(
                             f"{rel_src}:{lineno}: BROKEN_LINK: '{href}' "
