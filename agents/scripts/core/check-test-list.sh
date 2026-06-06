@@ -37,7 +37,8 @@ case "${1:-}" in
 esac
 
 if [ "$MODE" = "selftest" ]; then
-    fail=0; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    fail=0; tmp="$(mktemp -d)" || { echo "check-test-list selftest: mktemp failed" >&2; exit 1; }
+    trap 'rm -rf "$tmp"' EXIT
     mkdir -p "$tmp/Core"
     : > "$tmp/Core/Listed.test.cpp"
     : > "$tmp/Core/Unlisted.test.cpp"

@@ -21,15 +21,22 @@
 
 set -uo pipefail
 
-# Newest first-party source mtime (epoch seconds) under <dir>. Empty if none.
-_newest_source_mtime() {
-    find "$1" -type f \
-        \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.c' \
-           -o -name '*.cc' -o -name '*.cxx' -o -name '*.inl' \) \
-        -printf '%T@\n' 2>/dev/null | sort -nr | head -1
-}
-
 _file_mtime() { stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null; }
+
+# Newest first-party source mtime (epoch seconds) under <dir>. Empty if none.
+# Loops via _file_mtime (portable: GNU `stat -c` + BSD `stat -f`) instead of
+# GNU-only `find -printf`, so it works on macOS/BSD too (CR #915). The while body
+# runs in the current shell (process substitution), so `newest` persists.
+_newest_source_mtime() {
+    local f newest=0 m
+    while IFS= read -r f; do
+        m="$(_file_mtime "$f")"
+        [ -n "$m" ] && [ "$m" -gt "$newest" ] && newest="$m"
+    done < <(find "$1" -type f \
+        \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.c' \
+           -o -name '*.cc' -o -name '*.cxx' -o -name '*.inl' \) 2>/dev/null)
+    [ "$newest" -gt 0 ] && printf '%s\n' "$newest"
+}
 
 # is_stale <exe> <source-dir> -> echoes "stale"/"fresh"/"indeterminate"
 _freshness() {
@@ -40,13 +47,13 @@ _freshness() {
     newest="$(_newest_source_mtime "$srcdir")"
     exe_m="$(_file_mtime "$exe")"
     [ -n "$newest" ] && [ -n "$exe_m" ] || { echo indeterminate; return; }
-    newest="${newest%.*}"   # float epoch -> int
     if [ "$newest" -gt "$exe_m" ]; then echo stale; else echo fresh; fi
 }
 
 # --- selftest ---------------------------------------------------------------
 if [ "${1:-}" = "--selftest" ]; then
-    fail=0; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    fail=0; tmp="$(mktemp -d)" || { echo "is-exe-fresh selftest: mktemp failed" >&2; exit 1; }
+    trap 'rm -rf "$tmp"' EXIT
     mkdir -p "$tmp/Source"
     : > "$tmp/Source/a.cpp"
     exe="$tmp/app.exe"; : > "$exe"
