@@ -149,6 +149,15 @@ void PrimeCreatePipelineHappy(FakeOfflineQueueDeps& deps) {
     deps.Fields = {MakeField("summary"), MakeField("priority")};
 }
 
+// Deps variant whose Mutations() role can be toggled null at runtime, leaving Cache()/Reader()
+// valid — exercises the `if (!reader || !mutations)` early-return inside TickOfflineFieldEdits
+// (both other roles must stay non-null to reach that guard). #16 regression fixture.
+class NullableMutationsDeps : public FakeOfflineQueueDeps {
+  public:
+    bool MutationsNull = false;
+    ITrackerIssueMutations* Mutations() override { return MutationsNull ? nullptr : FakeOfflineQueueDeps::Mutations(); }
+};
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -761,4 +770,44 @@ TEST_CASE("OfflineQueueServiceRuntime: ShouldArchive boundary — pre-attempt + 
     // Below cap → retry.
     CHECK_FALSE(OfflineQueueReplayPolicy::ShouldArchive(0));
     CHECK_FALSE(OfflineQueueReplayPolicy::ShouldArchive(1));
+}
+
+// ---------------------------------------------------------------------------
+// #16 (build-quality-velocity-hardening) — the null-Mutations early-return inside
+// TickOfflineFieldEdits must release the in-flight latch, exactly like the three sibling
+// early-returns above it. Discriminating shape: tick once with Mutations()==null + a non-empty
+// queue (the previously unguarded path), then restore Mutations() and tick again. WITH the fix
+// the second tick replays + drains the row; WITHOUT it the latch is stuck true so the second
+// tick short-circuits at the in-flight guard → UpdateIssueFields never runs, the edit is lost
+// forever (the permanent wedge). [high-risk]
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: null Mutations early-return resets in-flight latch (#16)" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    NullableMutationsDeps deps;
+    deps.MutationsNull = true; // live mutations role transiently unavailable
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const auto id =
+        svc.QueueFieldEditOffline("PROJ-16", "summary", nlohmann::json{{"summary", "v"}}.dump(), err, std::string());
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+
+    // First tick hits the null-Mutations early-return: row untouched, backend never called.
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+
+    // Mutations comes back online; a later tick MUST proceed (latch released by the fix).
+    deps.MutationsNull = false;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    CHECK(svc.GetPendingFieldEdits().empty());
+    CHECK(svc.GetDeadPendingFieldEdits().empty());
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
 }

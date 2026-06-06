@@ -667,6 +667,12 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     ITrackerIssueReader* reader = deps_.Reader();
     ITrackerIssueMutations* mutations = deps_.Mutations();
     if (!reader || !mutations) {
+        // Mirror the three early-returns above: release the in-flight latch before bailing.
+        // Otherwise offlineFieldEditReplayInFlight_ stays true forever, every later tick
+        // short-circuits at the in-flight guard above, and offline field edits silently never
+        // replay (the user's offline edits are lost). See build-quality-velocity-hardening #16.
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineFieldEditReplayInFlight_ = false;
         return;
     }
 
