@@ -208,8 +208,7 @@ void RegisterViewsDashboardWindowRenderSmoke(ImGuiTestEngine* engine) {
 //
 // Robust probe: "##bulkExportPath" InputText — submitted immediately after Begin().
 void RegisterBulkExportWindowRenderSmoke(ImGuiTestEngine* engine) {
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "BulkExportWindow_RendersAndShowsPathInput");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "BulkExportWindow_RendersAndShowsPathInput");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         RunWindowRenderSmoke(ctx, &UiDrawSession::showBulkExport, &UiDrawSession::requestBulkExportFocus,
                              "Bulk export tickets", "##bulkExportPath");
@@ -289,8 +288,7 @@ void RegisterPlanDocViewerWindowRenderSmoke(ImGuiTestEngine* engine) {
 // always active on first open, queryable as an item in the ImGui Test Engine
 // tree (tab items have an ID derived from their label within the tab bar scope).
 void RegisterPerformanceWindowRenderSmoke(ImGuiTestEngine* engine) {
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "PerformanceWindow_RendersAndShowsTabBar");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "PerformanceWindow_RendersAndShowsTabBar");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         RunWindowRenderSmoke(ctx, &UiDrawSession::showPerformance, &UiDrawSession::requestPerformanceFocus,
                              "Performance", "CPU");
