@@ -224,310 +224,200 @@ void DrawWorkLogTemplatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
     }
 }
 
-void DrawQuickCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    if (ImGui::BeginTabItem("Quick Comments")) {
-        ImGui::TextUnformatted("Grid Right-Click Quick Comments");
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::TextDisabled("Customize templates displayed when right-clicking issue cells in the grid. "
-                            "Placeholders: {key} (or {issueKey})");
-        ImGui::Spacing();
+// Persistent per-sub-tab state for a comment-template editor (working-copy list, selection, and the
+// detail-editor input buffers). One static instance per sub-tab keeps the two editors independent —
+// exactly the behaviour the former separate function-static sets had.
+struct CommentTemplateSubTabState {
+    std::vector<CommentTemplate> workingList;
+    int selectedIdx = -1;
+    char titleBuf[64] = "";
+    char idBuf[64] = "";
+    char textBuf[512] = "";
+    int lastSelectedIdx = -2;
+};
 
-        static std::vector<CommentTemplate> s_quickTemplatesList;
-        if (!flags.quickTemplatesLoaded) {
-            s_quickTemplatesList = d.cfg.QuickCommentTemplates;
-            flags.quickTemplatesLoaded = true;
+// Scrollable list of templates with per-row move-up / move-down / delete. Extracted from the shared
+// comment-template sub-tab body (over-100-line decomposition); behaviour-identical.
+void DrawCommentTemplateList(UiDrawSession& d, const char* childId, std::vector<CommentTemplate>& cfgField,
+                             CommentTemplateSubTabState& st) {
+    // Render list of current comment templates on top
+    ImGui::BeginChild(childId, ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    for (size_t i = 0; i < st.workingList.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::AlignTextToFramePadding();
+        std::string displayName = st.workingList[i].Title + " (" + st.workingList[i].Id + ")";
+        if (ImGui::Selectable(displayName.c_str(), st.selectedIdx == static_cast<int>(i))) {
+            st.selectedIdx = static_cast<int>(i);
         }
-        static int s_selectedQuickIdx = -1;
-        if (s_selectedQuickIdx >= static_cast<int>(s_quickTemplatesList.size())) {
-            s_selectedQuickIdx = static_cast<int>(s_quickTemplatesList.size()) - 1;
-        }
 
-        // Render list of current comment templates on top
-        ImGui::BeginChild("QuickListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders,
-                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
-        for (size_t i = 0; i < s_quickTemplatesList.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
-            ImGui::AlignTextToFramePadding();
-            std::string displayName = s_quickTemplatesList[i].Title + " (" + s_quickTemplatesList[i].Id + ")";
-            if (ImGui::Selectable(displayName.c_str(), s_selectedQuickIdx == static_cast<int>(i))) {
-                s_selectedQuickIdx = static_cast<int>(i);
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
-            if (i > 0) {
-                if (ImGui::Button("▲")) {
-                    std::swap(s_quickTemplatesList[i], s_quickTemplatesList[i - 1]);
-                    if (s_selectedQuickIdx == static_cast<int>(i))
-                        s_selectedQuickIdx = static_cast<int>(i - 1);
-                    else if (s_selectedQuickIdx == static_cast<int>(i - 1))
-                        s_selectedQuickIdx = static_cast<int>(i);
-                    d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▲");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
-            if (i < s_quickTemplatesList.size() - 1) {
-                if (ImGui::Button("▼")) {
-                    std::swap(s_quickTemplatesList[i], s_quickTemplatesList[i + 1]);
-                    if (s_selectedQuickIdx == static_cast<int>(i))
-                        s_selectedQuickIdx = static_cast<int>(i + 1);
-                    else if (s_selectedQuickIdx == static_cast<int>(i + 1))
-                        s_selectedQuickIdx = static_cast<int>(i);
-                    d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▼");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-            if (ImGui::Button("✖")) {
-                s_quickTemplatesList.erase(s_quickTemplatesList.begin() + i);
-                if (s_selectedQuickIdx == static_cast<int>(i)) {
-                    s_selectedQuickIdx = -1;
-                } else if (s_selectedQuickIdx > static_cast<int>(i)) {
-                    s_selectedQuickIdx--;
-                }
-                d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                MarkPrefsDirty(d);
-                --i;
-            }
-            ImGui::PopStyleColor();
-            ImGui::PopID();
-        }
-        ImGui::EndChild();
-
-        ImGui::Spacing();
-
-        // Detail section / Add section
-        if (s_selectedQuickIdx >= 0 && s_selectedQuickIdx < static_cast<int>(s_quickTemplatesList.size())) {
-            auto& t = s_quickTemplatesList[s_selectedQuickIdx];
-            ImGui::TextDisabled("Edit Selected Template details:");
-
-            static char titleBuf[64] = "";
-            static char idBuf[64] = "";
-            static char textBuf[512] = "";
-
-            // Copy to buffer if different to avoid typing overwrites
-            static int lastSelectedIdx = -2;
-            if (lastSelectedIdx != s_selectedQuickIdx) {
-                std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1);
-                titleBuf[sizeof(titleBuf) - 1] = '\0';
-                std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1);
-                idBuf[sizeof(idBuf) - 1] = '\0';
-                std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1);
-                textBuf[sizeof(textBuf) - 1] = '\0';
-                lastSelectedIdx = s_selectedQuickIdx;
-            }
-
-            ImGui::TextUnformatted("Title:");
-            ImGui::SameLine(60.0f);
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::InputText("##EditQuickTitle", titleBuf, sizeof(titleBuf))) {
-                t.Title = titleBuf;
-                d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                MarkPrefsDirty(d);
-            }
-
-            ImGui::SameLine(280.0f);
-            ImGui::TextUnformatted("ID:");
-            ImGui::SameLine(310.0f);
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::InputText("##EditQuickId", idBuf, sizeof(idBuf))) {
-                t.Id = idBuf;
-                d.cfg.QuickCommentTemplates = s_quickTemplatesList;
-                MarkPrefsDirty(d);
-            }
-
-            ImGui::TextUnformatted("Body:");
-            if (ImGui::InputTextMultiline("##EditQuickText", textBuf, sizeof(textBuf), ImVec2(-FLT_MIN, 60.0f))) {
-                t.Text = textBuf;
-                d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
+        if (i > 0) {
+            if (ImGui::Button("▲")) {
+                std::swap(st.workingList[i], st.workingList[i - 1]);
+                if (st.selectedIdx == static_cast<int>(i))
+                    st.selectedIdx = static_cast<int>(i - 1);
+                else if (st.selectedIdx == static_cast<int>(i - 1))
+                    st.selectedIdx = static_cast<int>(i);
+                cfgField = st.workingList;
                 MarkPrefsDirty(d);
             }
         } else {
-            ImGui::TextDisabled("Select a template above to view or edit its details.");
+            ImGui::BeginDisabled();
+            ImGui::Button("▲");
+            ImGui::EndDisabled();
         }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
+        if (i < st.workingList.size() - 1) {
+            if (ImGui::Button("▼")) {
+                std::swap(st.workingList[i], st.workingList[i + 1]);
+                if (st.selectedIdx == static_cast<int>(i))
+                    st.selectedIdx = static_cast<int>(i + 1);
+                else if (st.selectedIdx == static_cast<int>(i + 1))
+                    st.selectedIdx = static_cast<int>(i);
+                cfgField = st.workingList;
+                MarkPrefsDirty(d);
+            }
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::Button("▼");
+            ImGui::EndDisabled();
+        }
 
-        if (ImGui::Button("+ Add New Template", ImVec2(160.0f, 0.0f))) {
-            CommentTemplate t;
-            t.Title = "New Template";
-            t.Id = "new_template";
-            t.Text = "Template text for {key}";
-            s_quickTemplatesList.push_back(t);
-            s_selectedQuickIdx = static_cast<int>(s_quickTemplatesList.size()) - 1;
-            d.cfg.QuickCommentTemplates = s_quickTemplatesList;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        if (ImGui::Button("✖")) {
+            st.workingList.erase(st.workingList.begin() + i);
+            if (st.selectedIdx == static_cast<int>(i)) {
+                st.selectedIdx = -1;
+            } else if (st.selectedIdx > static_cast<int>(i)) {
+                st.selectedIdx--;
+            }
+            cfgField = st.workingList;
+            MarkPrefsDirty(d);
+            --i;
+        }
+        ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+}
+
+// Detail editor for the selected template (Title / ID / Body) plus the "+ Add New Template" button.
+// Extracted from the shared comment-template sub-tab body (over-100-line decomposition); behaviour-identical.
+void DrawCommentTemplateDetailAndAdd(UiDrawSession& d, const char* titleWidgetId, const char* idWidgetId,
+                                     const char* bodyWidgetId, std::vector<CommentTemplate>& cfgField,
+                                     CommentTemplateSubTabState& st) {
+    // Detail section / Add section
+    if (st.selectedIdx >= 0 && st.selectedIdx < static_cast<int>(st.workingList.size())) {
+        auto& t = st.workingList[st.selectedIdx];
+        ImGui::TextDisabled("Edit Selected Template details:");
+
+        // Copy to buffer if different to avoid typing overwrites
+        if (st.lastSelectedIdx != st.selectedIdx) {
+            std::strncpy(st.titleBuf, t.Title.c_str(), sizeof(st.titleBuf) - 1);
+            st.titleBuf[sizeof(st.titleBuf) - 1] = '\0';
+            std::strncpy(st.idBuf, t.Id.c_str(), sizeof(st.idBuf) - 1);
+            st.idBuf[sizeof(st.idBuf) - 1] = '\0';
+            std::strncpy(st.textBuf, t.Text.c_str(), sizeof(st.textBuf) - 1);
+            st.textBuf[sizeof(st.textBuf) - 1] = '\0';
+            st.lastSelectedIdx = st.selectedIdx;
+        }
+
+        ImGui::TextUnformatted("Title:");
+        ImGui::SameLine(60.0f);
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::InputText(titleWidgetId, st.titleBuf, sizeof(st.titleBuf))) {
+            t.Title = st.titleBuf;
+            cfgField = st.workingList;
             MarkPrefsDirty(d);
         }
 
-        ImGui::EndTabItem();
+        ImGui::SameLine(280.0f);
+        ImGui::TextUnformatted("ID:");
+        ImGui::SameLine(310.0f);
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::InputText(idWidgetId, st.idBuf, sizeof(st.idBuf))) {
+            t.Id = st.idBuf;
+            cfgField = st.workingList;
+            MarkPrefsDirty(d);
+        }
+
+        ImGui::TextUnformatted("Body:");
+        if (ImGui::InputTextMultiline(bodyWidgetId, st.textBuf, sizeof(st.textBuf), ImVec2(-FLT_MIN, 60.0f))) {
+            t.Text = st.textBuf;
+            cfgField = st.workingList;
+            MarkPrefsDirty(d);
+        }
+    } else {
+        ImGui::TextDisabled("Select a template above to view or edit its details.");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Button("+ Add New Template", ImVec2(160.0f, 0.0f))) {
+        CommentTemplate t;
+        t.Title = "New Template";
+        t.Id = "new_template";
+        t.Text = "Template text for {key}";
+        st.workingList.push_back(t);
+        st.selectedIdx = static_cast<int>(st.workingList.size()) - 1;
+        cfgField = st.workingList;
+        MarkPrefsDirty(d);
     }
 }
 
-void DrawAnnotateCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    if (ImGui::BeginTabItem("Annotate Comments")) {
-        ImGui::TextUnformatted("Annotate Quick Comments");
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::TextDisabled("Customize templates displayed when clicking on the Annotate rows. "
-                            "Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}");
-        ImGui::Spacing();
-
-        static std::vector<CommentTemplate> s_annotateTemplatesList;
-        if (!flags.annotateTemplatesLoaded) {
-            s_annotateTemplatesList = d.cfg.AnnotateCommentTemplates;
-            flags.annotateTemplatesLoaded = true;
-        }
-        static int s_selectedAnnotateIdx = -1;
-        if (s_selectedAnnotateIdx >= static_cast<int>(s_annotateTemplatesList.size())) {
-            s_selectedAnnotateIdx = static_cast<int>(s_annotateTemplatesList.size()) - 1;
-        }
-
-        // Render list of current comment templates on top
-        ImGui::BeginChild("AnnotateListChild", ImVec2(0.0f, 120.0f), ImGuiChildFlags_Borders,
-                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
-        for (size_t i = 0; i < s_annotateTemplatesList.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
-            ImGui::AlignTextToFramePadding();
-            std::string displayName = s_annotateTemplatesList[i].Title + " (" + s_annotateTemplatesList[i].Id + ")";
-            if (ImGui::Selectable(displayName.c_str(), s_selectedAnnotateIdx == static_cast<int>(i))) {
-                s_selectedAnnotateIdx = static_cast<int>(i);
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
-            if (i > 0) {
-                if (ImGui::Button("▲")) {
-                    std::swap(s_annotateTemplatesList[i], s_annotateTemplatesList[i - 1]);
-                    if (s_selectedAnnotateIdx == static_cast<int>(i))
-                        s_selectedAnnotateIdx = static_cast<int>(i - 1);
-                    else if (s_selectedAnnotateIdx == static_cast<int>(i - 1))
-                        s_selectedAnnotateIdx = static_cast<int>(i);
-                    d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▲");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
-            if (i < s_annotateTemplatesList.size() - 1) {
-                if (ImGui::Button("▼")) {
-                    std::swap(s_annotateTemplatesList[i], s_annotateTemplatesList[i + 1]);
-                    if (s_selectedAnnotateIdx == static_cast<int>(i))
-                        s_selectedAnnotateIdx = static_cast<int>(i + 1);
-                    else if (s_selectedAnnotateIdx == static_cast<int>(i + 1))
-                        s_selectedAnnotateIdx = static_cast<int>(i);
-                    d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▼");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-            if (ImGui::Button("✖")) {
-                s_annotateTemplatesList.erase(s_annotateTemplatesList.begin() + i);
-                if (s_selectedAnnotateIdx == static_cast<int>(i)) {
-                    s_selectedAnnotateIdx = -1;
-                } else if (s_selectedAnnotateIdx > static_cast<int>(i)) {
-                    s_selectedAnnotateIdx--;
-                }
-                d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
-                MarkPrefsDirty(d);
-                --i;
-            }
-            ImGui::PopStyleColor();
-            ImGui::PopID();
-        }
-        ImGui::EndChild();
-
-        ImGui::Spacing();
-
-        // Detail section / Add section
-        if (s_selectedAnnotateIdx >= 0 && s_selectedAnnotateIdx < static_cast<int>(s_annotateTemplatesList.size())) {
-            auto& t = s_annotateTemplatesList[s_selectedAnnotateIdx];
-            ImGui::TextDisabled("Edit Selected Template details:");
-
-            static char titleBuf[64] = "";
-            static char idBuf[64] = "";
-            static char textBuf[512] = "";
-
-            // Copy to buffer if different to avoid typing overwrites
-            static int lastSelectedIdx = -2;
-            if (lastSelectedIdx != s_selectedAnnotateIdx) {
-                std::strncpy(titleBuf, t.Title.c_str(), sizeof(titleBuf) - 1);
-                titleBuf[sizeof(titleBuf) - 1] = '\0';
-                std::strncpy(idBuf, t.Id.c_str(), sizeof(idBuf) - 1);
-                idBuf[sizeof(idBuf) - 1] = '\0';
-                std::strncpy(textBuf, t.Text.c_str(), sizeof(textBuf) - 1);
-                textBuf[sizeof(textBuf) - 1] = '\0';
-                lastSelectedIdx = s_selectedAnnotateIdx;
-            }
-
-            ImGui::TextUnformatted("Title:");
-            ImGui::SameLine(60.0f);
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::InputText("##EditAnnotateTitle", titleBuf, sizeof(titleBuf))) {
-                t.Title = titleBuf;
-                d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
-                MarkPrefsDirty(d);
-            }
-
-            ImGui::SameLine(280.0f);
-            ImGui::TextUnformatted("ID:");
-            ImGui::SameLine(310.0f);
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::InputText("##EditAnnotateId", idBuf, sizeof(idBuf))) {
-                t.Id = idBuf;
-                d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
-                MarkPrefsDirty(d);
-            }
-
-            ImGui::TextUnformatted("Body:");
-            if (ImGui::InputTextMultiline("##EditAnnotateText", textBuf, sizeof(textBuf), ImVec2(-FLT_MIN, 60.0f))) {
-                t.Text = textBuf;
-                d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
-                MarkPrefsDirty(d);
-            }
-        } else {
-            ImGui::TextDisabled("Select a template above to view or edit its details.");
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        if (ImGui::Button("+ Add New Template", ImVec2(160.0f, 0.0f))) {
-            CommentTemplate t;
-            t.Title = "New Template";
-            t.Id = "new_template";
-            t.Text = "Template text for {key}";
-            s_annotateTemplatesList.push_back(t);
-            s_selectedAnnotateIdx = static_cast<int>(s_annotateTemplatesList.size()) - 1;
-            d.cfg.AnnotateCommentTemplates = s_annotateTemplatesList;
-            MarkPrefsDirty(d);
-        }
-
-        ImGui::EndTabItem();
+// Shared body for a comment-template editor sub-tab. The Quick-Comments and Annotate-Comments
+// sub-tabs were byte-identical apart from their labels, widget ids, and backing config field, so
+// this collapses both for DRY while staying behaviour-identical, with the caller passing every
+// ImGui id and label verbatim. The cfgField argument is the persisted vector and loadedFlag gates
+// the one-time working-copy load.
+void DrawCommentTemplateSubTab(UiDrawSession& d, const char* tabLabel, const char* heading, const char* placeholderHelp,
+                               const char* childId, const char* titleWidgetId, const char* idWidgetId,
+                               const char* bodyWidgetId, std::vector<CommentTemplate>& cfgField, bool& loadedFlag,
+                               CommentTemplateSubTabState& st) {
+    if (!ImGui::BeginTabItem(tabLabel)) {
+        return;
     }
+    ImGui::TextUnformatted(heading);
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", placeholderHelp);
+    ImGui::Spacing();
+
+    if (!loadedFlag) {
+        st.workingList = cfgField;
+        loadedFlag = true;
+    }
+    if (st.selectedIdx >= static_cast<int>(st.workingList.size())) {
+        st.selectedIdx = static_cast<int>(st.workingList.size()) - 1;
+    }
+
+    DrawCommentTemplateList(d, childId, cfgField, st);
+    ImGui::Spacing();
+    DrawCommentTemplateDetailAndAdd(d, titleWidgetId, idWidgetId, bodyWidgetId, cfgField, st);
+
+    ImGui::EndTabItem();
+}
+
+void DrawQuickCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    static CommentTemplateSubTabState st;
+    DrawCommentTemplateSubTab(d, "Quick Comments", "Grid Right-Click Quick Comments",
+                              "Customize templates displayed when right-clicking issue cells in the grid. "
+                              "Placeholders: {key} (or {issueKey})",
+                              "QuickListChild", "##EditQuickTitle", "##EditQuickId", "##EditQuickText",
+                              d.cfg.QuickCommentTemplates, flags.quickTemplatesLoaded, st);
+}
+
+void DrawAnnotateCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    static CommentTemplateSubTabState st;
+    DrawCommentTemplateSubTab(d, "Annotate Comments", "Annotate Quick Comments",
+                              "Customize templates displayed when clicking on the Annotate rows. "
+                              "Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}",
+                              "AnnotateListChild", "##EditAnnotateTitle", "##EditAnnotateId", "##EditAnnotateText",
+                              d.cfg.AnnotateCommentTemplates, flags.annotateTemplatesLoaded, st);
 }
 
 void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
