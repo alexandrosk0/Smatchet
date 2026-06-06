@@ -360,6 +360,12 @@ add_executable(SmatchetTests
     # FormatCompactJiraDateForDisplay (parse-failure passthrough + absolute_iso /
     # absolute_friendly). CompactDateFormat.cpp is already linked above (line ~233).
     Core/CompactDateFormat.test.cpp
+    # PR #880 product bug-fix sweep — pure relocations extracted so the coverage-delta
+    # gate has meaningful unit deltas. Both are header-only inline pures (no extra
+    # .cpp link): EscapeXmlAttr (#826 XML-attr escaping, "AiXmlAttrEscape.h") and
+    # MaskEmailForLog (#820 PII log redaction, "EmailMaskForLog.h").
+    Core/XmlAttrEscape.test.cpp
+    Core/EmailMask.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent
