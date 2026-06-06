@@ -8,10 +8,10 @@
 # move command — never after an arbitrary Bash call (so a plain `git status` / `ls`
 # right after an EXTERNAL drift cannot mask it).
 #
-# Residual (documented): if an external actor drifts HEAD and the session then
-# runs a command merely containing a move-word before its next Edit/commit, the
-# re-sync could mask it. Narrow corner — the Edit/Write drift guard fires first in
-# the normal flow.
+# Safe against drift-masking: guard-head-drift.sh DENIES any HEAD-moving git op
+# while the session is already drifted, so a matched move command only ever
+# succeeds from a clean baseline; this re-baseline therefore can never lock in a
+# pre-existing external drift.
 #
 # exit 0 always.
 set -u

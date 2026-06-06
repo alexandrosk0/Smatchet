@@ -97,6 +97,15 @@ function Get-BashExe {
     return 'bash'
 }
 
+function Assert-SafeSlug {
+    <# Guard against path traversal / shell-odd slugs before they reach paths +
+       branch names: letters, digits, dot, underscore, hyphen only. #>
+    param([string]$Value)
+    if ($Value -eq '.' -or $Value -eq '..' -or $Value -notmatch '^[A-Za-z0-9._-]+$') {
+        throw "Invalid slug '$Value' - use only letters, digits, dot, underscore, hyphen (no spaces or path separators)."
+    }
+}
+
 # --- Per-tree session registry (mirrors the bash hooks' format) --------------
 function Get-RegistryDir { param([string]$Tree) Join-Path (Join-Path $Tree '.claude') '.active-sessions' }
 
@@ -122,6 +131,7 @@ function Get-LiveSessionCount {
 
 function Invoke-New {
     if ([string]::IsNullOrWhiteSpace($Slug)) { throw "new requires a <slug>: worktree.ps1 new <slug>" }
+    Assert-SafeSlug $Slug
     $branchName = if ([string]::IsNullOrWhiteSpace($Branch)) { "feat/$Slug" } else { $Branch }
     $path = Join-Path $TreesRoot $Slug
     if (Test-Path -LiteralPath $path) { throw "Path already exists: $path" }
@@ -147,13 +157,21 @@ function Invoke-New {
     $bash  = Get-BashExe
     $setup = (Join-Path $path 'agents/scripts/core/setup-harness.sh') -replace '\\', '/'
     Write-Host "Wiring .claude/ adapter in the new worktree (via $bash) ..." -ForegroundColor DarkGray
+    $wired = $true
     try { Invoke-Native -FailureMessage "setup-harness failed" -Arguments $bash, $setup, "claude-code" }
-    catch { Write-Host "  (setup-harness reported an issue - run it manually in $path)" -ForegroundColor Yellow }
+    catch { $wired = $false }
 
+    $settings = Join-Path $path '.claude\settings.json'
     Write-Host ""
-    Write-Host "Worktree ready: $path  (branch $branchName)" -ForegroundColor Green
-    Write-Host "Launch a session there:" -ForegroundColor Green
-    Write-Host "  cd `"$path`"; claude"
+    if ($wired -and (Test-Path -LiteralPath $settings)) {
+        Write-Host "Worktree ready: $path  (branch $branchName)" -ForegroundColor Green
+        Write-Host "Launch a session there:" -ForegroundColor Green
+        Write-Host "  cd `"$path`"; claude"
+    } else {
+        Write-Host "WARNING: worktree created at $path (branch $branchName) but .claude/ is NOT wired -" -ForegroundColor Yellow
+        Write-Host "         the HEAD-drift guard is INACTIVE there. Finish setup before relying on isolation:" -ForegroundColor Yellow
+        Write-Host "         `"$bash`" `"$setup`" claude-code" -ForegroundColor Yellow
+    }
 }
 
 function Invoke-Resync {
@@ -205,6 +223,7 @@ function Invoke-List {
 
 function Invoke-Rm {
     if ([string]::IsNullOrWhiteSpace($Slug)) { throw "rm requires a <slug>: worktree.ps1 rm <slug>" }
+    if (-not (Test-Path -LiteralPath $Slug)) { Assert-SafeSlug $Slug }
     $path = if (Test-Path -LiteralPath $Slug) { $Slug } else { Join-Path $TreesRoot $Slug }
     $rmArgs = @("git", "-C", $RepoRoot, "worktree", "remove", $path)
     if ($Force) { $rmArgs += "--force" }

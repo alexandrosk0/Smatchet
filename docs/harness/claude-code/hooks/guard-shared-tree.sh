@@ -18,6 +18,15 @@
 
 set -u
 
+# Minimal JSON string escape (backslash + double-quote) so Windows paths (C:\...)
+# can't produce invalid JSON that silently fails open.
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
 [ "${SMATCHET_ALLOW_SHARED_SWITCH:-}" = "1" ] && exit 0
 
 PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
@@ -62,7 +71,7 @@ for f in "$REGDIR"/*; do
 done
 
 if [ "$live" -gt 0 ]; then
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' \
-    "${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. Override: SMATCHET_ALLOW_SHARED_SWITCH=1."
+  reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. Override: SMATCHET_ALLOW_SHARED_SWITCH=1."
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$(json_escape "$reason")"
 fi
 exit 0

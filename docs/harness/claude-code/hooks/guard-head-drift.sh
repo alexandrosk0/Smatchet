@@ -9,19 +9,35 @@
 # pull/reset) and DENIES the write/commit. It also blocks direct commits to
 # develop/main in the integration tree.
 #
+# When already drifted it ALSO denies further HEAD-moving git ops (pull/reset/
+# merge/rebase/checkout/switch) — recovery is `worktree.ps1 resync` or a new
+# worktree, never another shared-tree move. This is what makes resync-head-
+# baseline.sh safe: a HEAD-moving op only succeeds from a clean baseline, so the
+# PostToolUse re-baseline can never mask a pre-existing external drift.
+#
 # Registry-INDEPENDENT of sibling liveness: it only reads THIS session's own
 # baseline, so it fires even against a sibling that predates these hooks.
 #
 # Allow = exit 0 (no stdout). Deny = the PreToolUse permissionDecision JSON.
 # Override: SMATCHET_ACK_BRANCH_DRIFT=1 (you accept the current branch).
 #
-# See docs/agent-rules/process-rules.md § Concurrent interactive sessions.
+# See docs/agent-rules/process-rules.md - Concurrent interactive sessions.
 
 set -u
 
+# Minimal JSON string escape (backslash + double-quote) so Windows paths (C:\...)
+# and branch names with quotes can't produce invalid JSON and silently fail open.
+# Reasons are single-line static text + git refs/paths, so control-char escaping
+# beyond this is unnecessary.
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
 deny() {
-  # %s is pre-sanitised (our own static text + git refs); keep it on one line.
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$1"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$(json_escape "$1")"
   exit 0
 }
 
@@ -66,25 +82,29 @@ drifted=0
 short_base="$(printf '%s' "$BASE_SHA" | cut -c1-8)"
 short_cur="$(printf '%s' "$CUR_SHA" | cut -c1-8)"
 
+drift_reason="HEAD moved under this session (started ${BASE_BRANCH}@${short_base}, now ${CUR_BRANCH}@${short_cur}). Re-baseline if intended: pwsh scripts/dev/worktree.ps1 resync. Or isolate: pwsh scripts/dev/worktree.ps1 new <slug>. Do NOT git switch back in a shared tree (it rug-pulls live siblings)."
+
 TOOL="$(json_field '.tool_name' 'tool_name')"
 
 case "$TOOL" in
   Bash)
     CMD="$(json_field '.tool_input.command' 'command')"
-    # git commit detection: `git [-C path|-c k=v|--flag]* commit`.
+    # git commit: `git [-C path|-c k=v|--flag]* commit`.
     if printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*[[:space:]]+commit($|[[:space:]])'; then
       if [ "$IS_INTEGRATION" = "1" ] && { [ "$CUR_BRANCH" = "develop" ] || [ "$CUR_BRANCH" = "main" ]; }; then
         deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. Override: SMATCHET_ACK_BRANCH_DRIFT=1."
       fi
-      if [ "$drifted" = "1" ]; then
-        deny "HEAD moved under this session (started ${BASE_BRANCH}@${short_base}, now ${CUR_BRANCH}@${short_cur}) — about to commit to the wrong branch. Re-baseline if intended: pwsh scripts/dev/worktree.ps1 resync. Or isolate: pwsh scripts/dev/worktree.ps1 new <slug> + cherry-pick. Do NOT git switch back in a shared tree (it rug-pulls live siblings)."
-      fi
+    fi
+    # When already drifted, deny any further HEAD-moving git op so the PostToolUse
+    # re-baseline can never lock in an external drift (recover via resync first).
+    if [ "$drifted" = "1" ] && printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*[[:space:]]+(commit|pull|reset|merge|rebase|checkout|switch|cherry-pick|am|revert)($|[[:space:]])'; then
+      deny "$drift_reason"
     fi
     exit 0
     ;;
   Edit|Write|MultiEdit|NotebookEdit)
     if [ "$drifted" = "1" ]; then
-      deny "HEAD moved under this session (started ${BASE_BRANCH}@${short_base}, now ${CUR_BRANCH}@${short_cur}). Your last Read is stale and this write would land against the wrong branch. Re-baseline if intended: pwsh scripts/dev/worktree.ps1 resync. Or isolate: pwsh scripts/dev/worktree.ps1 new <slug>."
+      deny "$drift_reason Your last Read is stale and this write would land against the wrong branch."
     fi
     exit 0
     ;;

@@ -166,6 +166,8 @@ docs/agent-rules/ship-loops.md	Source/Core
 docs/harness/SETUP.md	SMATCHET
 docs/harness/SETUP.md	Smatchet
 docs/harness/SETUP.md	Source/Core
+docs/harness/claude-code/hooks/guard-head-drift.sh	SMATCHET
+docs/harness/claude-code/hooks/guard-shared-tree.sh	SMATCHET
 docs/harness/claude-code/hooks/lint-cpp-common.sh	SMATCHET
 docs/harness/claude-code/hooks/lint-cpp-common.sh	Smatchet
 docs/harness/claude-code/hooks/lint-cpp-common.sh	Source/Core
