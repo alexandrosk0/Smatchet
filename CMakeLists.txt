@@ -316,7 +316,11 @@ FetchContent_MakeAvailable(json)
 
 smatchet_fetch_status("Fetching cpr (C++ Requests)...")
 smatchet_prepare_cpr()
-FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG 1.9.2)
+# Pinned to the exact commit the 1.9.2 tag resolves to (reproducible builds /
+# supply chain) — same content the floating tag points to today, zero behaviour
+# change. 1.9.2 is a lightweight tag (points straight at the commit); resolved
+# via: git ls-remote https://github.com/libcpr/cpr.git 1.9.2
+FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG f88fd7737de3e640c61703eb57a0fa0ce00c60cd)  # cpr 1.9.2
 FetchContent_GetProperties(cpr)
 if(NOT cpr_POPULATED)
     FetchContent_Populate(cpr)
@@ -328,14 +332,21 @@ smatchet_patch_cpr_after_fetch("${cpr_SOURCE_DIR}")
 # CMakeLists.txt to strip -Werror before add_subdirectory processes it.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     file(READ "${cpr_SOURCE_DIR}/CMakeLists.txt" _cpr_cml)
-    string(REPLACE "-Wpedantic -Werror" "-Wpedantic" _cpr_cml "${_cpr_cml}")
+    # Load-bearing for Clang: clang-cl fires dozens of warnings under -Wpedantic
+    # that turn fatal under cpr's -Werror. A silent no-op after a cpr bump would
+    # red-wall the Clang build; FATAL at configure names the vanished target.
+    smatchet_patch_or_die(_cpr_cml "-Wpedantic -Werror" "-Wpedantic" "cpr CMakeLists.txt -Werror strip (Clang)")
     file(WRITE "${cpr_SOURCE_DIR}/CMakeLists.txt" "${_cpr_cml}")
 endif()
 add_subdirectory("${cpr_SOURCE_DIR}" "${cpr_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
 smatchet_fetch_status("Fetching SQLiteCpp...")
 smatchet_prepare_sqlitecpp()
-FetchContent_Declare(sqlitecpp GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git GIT_TAG 3.3.1)
+# Pinned to the exact commit the 3.3.1 annotated tag resolves to (reproducible
+# builds / supply chain) — same content the floating tag points to today, zero
+# behaviour change. 3.3.1 is an annotated tag; resolved to its underlying commit
+# via: git ls-remote https://github.com/SRombauts/SQLiteCpp.git 'refs/tags/3.3.1^{}'
+FetchContent_Declare(sqlitecpp GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git GIT_TAG fe6086c12679d8744c02fa03e83e75feca2413d8)  # SQLiteCpp 3.3.1
 FetchContent_GetProperties(sqlitecpp)
 if(NOT sqlitecpp_POPULATED)
     FetchContent_Populate(sqlitecpp)
@@ -390,6 +401,12 @@ FetchContent_Declare(ghc_filesystem
 # The upstream ghc_filesystem CMakeLists starts with:
 #   cmake_minimum_required(VERSION 3.7.2)
 # Newer CMake versions emit a deprecation warning for this.
+#
+# Cosmetic / best-effort: only suppresses that deprecation warning. NOT routed
+# through smatchet_patch_or_die — if a future ghc bump raises its own
+# cmake_minimum_required past 3.10 this target legitimately disappears, and
+# FATAL-ing on a vanished cosmetic target would be wrong. Left a plain
+# string(REPLACE).
 FetchContent_GetProperties(ghc_filesystem)
 if(NOT ghc_filesystem_POPULATED)
     FetchContent_Populate(ghc_filesystem)
@@ -497,11 +514,21 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     set(_luaconf_h "${LUA_SRC_DIR}/src/luaconf.h")
     if(EXISTS "${_luaconf_h}")
         file(READ "${_luaconf_h}" _luaconf_contents)
+        # The outer SMATCHET_LUA_EXTERN_C_PATCH find is the idempotency sentinel
+        # (NOT redundant with the helper): the patch's <find> "#define LUA_API\t
+        # \textern" stays a substring of the patched "#define LUA_API\t\textern
+        # \"C\"" form, so re-running the bare helper would re-wrap. Once the
+        # sentinel token is present we skip. On a fresh fetch (new Lua version)
+        # where the token is absent, the helper runs and FATALs if the LUA_API
+        # define text itself vanished — this patch is load-bearing (Lua-as-C++
+        # link failure if dropped).
         string(FIND "${_luaconf_contents}" "SMATCHET_LUA_EXTERN_C_PATCH" _patched_idx)
         if(_patched_idx EQUAL -1)
-            string(REPLACE "#define LUA_API\t\textern"
+            set(_luaconf_patched "${_luaconf_contents}")
+            smatchet_patch_or_die(_luaconf_patched
+                "#define LUA_API\t\textern"
                 "/* SMATCHET_LUA_EXTERN_C_PATCH: Lua 5.3 lacks extern \"C\" guards; force them when compiled as C++ so symbol names match the sol2 caller side that includes via lua.hpp. */\n#if defined(__cplusplus)\n#define LUA_API\t\textern \"C\"\n#else\n#define LUA_API\t\textern\n#endif"
-                _luaconf_patched "${_luaconf_contents}")
+                "luaconf.h extern \"C\" guards (Lua-as-C++)")
             file(WRITE "${_luaconf_h}" "${_luaconf_patched}")
             message(STATUS "Patched luaconf.h with extern \"C\" guards for Lua-as-C++ build.")
         endif()
@@ -528,7 +555,12 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     set(LUA_LIBRARIES Smatchet_Lua_Internal CACHE STRING "" FORCE)
     set(SOL2_BUILD_LUA OFF CACHE BOOL "" FORCE)
 
-    FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG v2.20.6)
+    # Pinned to the exact commit the v2.20.6 annotated tag resolves to
+    # (reproducible builds / supply chain) — same content the floating tag points
+    # to today, zero behaviour change. v2.20.6 is an annotated tag; resolved to
+    # its underlying commit via:
+    #   git ls-remote https://github.com/ThePhD/sol2.git 'refs/tags/v2.20.6^{}'
+    FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG 902ceaf8a1d53ea1b70cf9f3f0302da87f5a7f8c)  # sol2 v2.20.6
 
     FetchContent_GetProperties(sol2)
     if(NOT sol2_POPULATED)
@@ -539,6 +571,11 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     if(EXISTS "${_sol2_cmakelists}")
         file(READ "${_sol2_cmakelists}" _sol2_cmakelists_contents)
 
+        # Cosmetic / best-effort: only suppresses a CMake deprecation warning.
+        # NOT routed through smatchet_patch_or_die — these are two alternative
+        # spellings (3.5.0 / 3.5); on any given sol2 version at most one matches,
+        # so the helper's vanish-FATAL would fire on the non-matching spelling
+        # even on a healthy fresh tree. Left plain string(REPLACE).
         string(REPLACE "cmake_minimum_required(VERSION 3.5.0)"
                        "cmake_minimum_required(VERSION 3.10.0)"
                        _sol2_patched_contents
@@ -560,54 +597,89 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     set(_sol2_single_header "${sol2_SOURCE_DIR}/single/sol/sol.hpp")
     if(EXISTS "${_sol2_single_header}")
         file(READ "${_sol2_single_header}" _sol2_single_contents)
+        set(_sol2_single_patched "${_sol2_single_contents}")
 
-        string(REPLACE "#include <cctype>\n#if defined(__GNUC__) && defined(__MINGW32__) && (__GNUC__ < 6)"
-                       "#include <cctype>\n#include <cstdint>\n#if defined(__GNUC__) && defined(__MINGW32__) && (__GNUC__ < 6)"
-                       _sol2_single_patched
-                       "${_sol2_single_contents}")
+        # HEAP-CORRUPTION-CRITICAL (Pillar 3): every replace below is routed
+        # through smatchet_patch_or_die so a sol2 bump that changes the upstream
+        # text FATALs at configure instead of silently no-op'ing and resurrecting
+        # the GCC/MinGW __gc-metatable-collision heap corruption. Two groups:
+        #
+        #   PRIMARY (cstdint include + detail:: struct injection + the four
+        #   metatable-key rewrites) — must run FIRST.
+        #
+        #   RE-RUN CLEANUP (the four ".append(...suffix...)" double-suffix fixers)
+        #   — only match an OLD already-double-appended tree. On a FRESH tree their
+        #   <find> (the double-appended form) is absent, but their <replace> (the
+        #   single-suffix form the PRIMARY group just produced) is PRESENT, so
+        #   smatchet_patch_or_die passes via the already-present branch and
+        #   no-ops cleanly. This is exactly why the PRIMARY group must run first.
+        smatchet_patch_or_die(_sol2_single_patched
+            "#include <cctype>\n#if defined(__GNUC__) && defined(__MINGW32__) && (__GNUC__ < 6)"
+            "#include <cctype>\n#include <cstdint>\n#if defined(__GNUC__) && defined(__MINGW32__) && (__GNUC__ < 6)"
+            "sol2 sol.hpp <cstdint> include")
 
-        string(REPLACE "namespace sol {\n\n\ttemplate <typename T>\n\tstruct usertype_traits {"
-                       "namespace sol {\n\n\tnamespace detail {\n\t\ttemplate <typename T>\n\t\tstruct smatchet_type_id_token {\n\t\t\tstatic char id;\n\t\t};\n\n\t\ttemplate <typename T>\n\t\tchar smatchet_type_id_token<T>::id;\n\n\t\ttemplate <typename T>\n\t\tstd::string smatchet_type_identity_suffix() {\n\t\t\treturn std::string(\"@\").append(std::to_string(reinterpret_cast<std::uintptr_t>(&smatchet_type_id_token<T>::id)));\n\t\t}\n\t} // namespace detail\n\n\ttemplate <typename T>\n\tstruct usertype_traits {"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
+        smatchet_patch_or_die(_sol2_single_patched
+            "namespace sol {\n\n\ttemplate <typename T>\n\tstruct usertype_traits {"
+            "namespace sol {\n\n\tnamespace detail {\n\t\ttemplate <typename T>\n\t\tstruct smatchet_type_id_token {\n\t\t\tstatic char id;\n\t\t};\n\n\t\ttemplate <typename T>\n\t\tchar smatchet_type_id_token<T>::id;\n\n\t\ttemplate <typename T>\n\t\tstd::string smatchet_type_identity_suffix() {\n\t\t\treturn std::string(\"@\").append(std::to_string(reinterpret_cast<std::uintptr_t>(&smatchet_type_id_token<T>::id)));\n\t\t}\n\t} // namespace detail\n\n\ttemplate <typename T>\n\tstruct usertype_traits {"
+            "sol2 sol.hpp detail::smatchet_type_id_token injection")
 
-        string(REPLACE "static const std::string m = std::string(\"sol.\").append(detail::demangle<T>());"
-                       "static const std::string m = std::string(\"sol.\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
-        string(REPLACE "static const std::string u_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\");"
-                       "static const std::string u_m = std::string(\"sol.user\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
-        string(REPLACE "static const std::string u_g_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\\xE2\\x99\\xBB\");"
-                       "static const std::string u_g_m = std::string(\"sol.usergc\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
-        string(REPLACE "static const std::string g_t = std::string(\"sol.\").append(detail::demangle<T>()).append(\".\\xE2\\x99\\xBB\");"
-                       "static const std::string g_t = std::string(\"sol.gc\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string m = std::string(\"sol.\").append(detail::demangle<T>());"
+            "static const std::string m = std::string(\"sol.\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key m")
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string u_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\");"
+            "static const std::string u_m = std::string(\"sol.user\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key u_m")
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string u_g_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\\xE2\\x99\\xBB\");"
+            "static const std::string u_g_m = std::string(\"sol.usergc\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key u_g_m")
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string g_t = std::string(\"sol.\").append(detail::demangle<T>()).append(\".\\xE2\\x99\\xBB\");"
+            "static const std::string g_t = std::string(\"sol.gc\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key g_t")
 
-        # Also rewrite already-patched build trees when CMake is re-run without refetching sol2.
-        string(REPLACE "static const std::string m = std::string(\"sol.\").append(detail::demangle<T>()).append(detail::smatchet_type_identity_suffix<T>());"
-                       "static const std::string m = std::string(\"sol.\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
-        string(REPLACE "static const std::string u_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\").append(detail::smatchet_type_identity_suffix<T>());"
-                       "static const std::string u_m = std::string(\"sol.user\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
-        string(REPLACE "static const std::string u_g_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\\xE2\\x99\\xBB\").append(detail::smatchet_type_identity_suffix<T>());"
-                       "static const std::string u_g_m = std::string(\"sol.usergc\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
-        string(REPLACE "static const std::string g_t = std::string(\"sol.\").append(detail::demangle<T>()).append(\".\\xE2\\x99\\xBB\").append(detail::smatchet_type_identity_suffix<T>());"
-                       "static const std::string g_t = std::string(\"sol.gc\").append(detail::smatchet_type_identity_suffix<T>());"
-                       _sol2_single_patched
-                       "${_sol2_single_patched}")
+        # Re-run cleanup — collapse a double-appended suffix from an older patched
+        # tree back to the single-suffix form. Safe on a fresh tree (passes via
+        # the already-present <replace> branch — see the block comment above).
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string m = std::string(\"sol.\").append(detail::demangle<T>()).append(detail::smatchet_type_identity_suffix<T>());"
+            "static const std::string m = std::string(\"sol.\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key m (re-run cleanup)")
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string u_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\").append(detail::smatchet_type_identity_suffix<T>());"
+            "static const std::string u_m = std::string(\"sol.user\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key u_m (re-run cleanup)")
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string u_g_m = std::string(\"sol.\").append(detail::demangle<T>()).append(\".user\\xE2\\x99\\xBB\").append(detail::smatchet_type_identity_suffix<T>());"
+            "static const std::string u_g_m = std::string(\"sol.usergc\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key u_g_m (re-run cleanup)")
+        smatchet_patch_or_die(_sol2_single_patched
+            "static const std::string g_t = std::string(\"sol.\").append(detail::demangle<T>()).append(\".\\xE2\\x99\\xBB\").append(detail::smatchet_type_identity_suffix<T>());"
+            "static const std::string g_t = std::string(\"sol.gc\").append(detail::smatchet_type_identity_suffix<T>());"
+            "sol2 sol.hpp metatable key g_t (re-run cleanup)")
 
         if(NOT _sol2_single_patched STREQUAL _sol2_single_contents)
             file(WRITE "${_sol2_single_header}" "${_sol2_single_patched}")
+        endif()
+
+        # Part D — CI smoke (plan #1 Verification): assert the heap-corruption fix
+        # is actually present in the on-disk header after the patch step. file(READ)
+        # back and FATAL if the patched token is absent. This makes a silently
+        # broken sol2 patch fail `cmake` configure, which CI runs everywhere — no
+        # extra CI infra. Gated to this SMATCHET_WITH_LUA_AUTOMATION block, the
+        # only path that fetches sol2.
+        file(READ "${_sol2_single_header}" _sol2_single_verify)
+        string(FIND "${_sol2_single_verify}" "detail::smatchet_type_identity_suffix<T>()" _sol2_token_pos)
+        if(_sol2_token_pos EQUAL -1)
+            message(FATAL_ERROR
+                "sol2 metatable-token patch verification FAILED: "
+                "'detail::smatchet_type_identity_suffix<T>()' is absent from "
+                "${_sol2_single_header} after the patch step. The GCC/MinGW "
+                "__gc-metatable-collision heap-corruption fix is NOT in effect. "
+                "A sol2 bump likely changed the upstream source — re-derive the "
+                "metatable-key patches in CMakeLists.txt before continuing.")
         endif()
     endif()
 
