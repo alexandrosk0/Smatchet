@@ -93,35 +93,38 @@ scan() {
 if [ "$MODE" = "selftest" ]; then
     fail=0
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-    mkdir -p "$tmp/docs/plans/active"
-    cat > "$tmp/docs/plans/active/done-a.md"       <<'EOF'
+    # Fixture dir kept free of the literal "docs/plans/active/<slug>.md" path so
+    # test-plan-ref-integrity's git grep does not mistake these for real refs.
+    act="$tmp/active"
+    mkdir -p "$act"
+    cat > "$act/done-a.md"       <<'EOF'
 # Plan — done a
 > **Status**: shipped — archived 2026-06-05; see § Implementation log.
 EOF
-    cat > "$tmp/docs/plans/active/done-b.md"       <<'EOF'
+    cat > "$act/done-b.md"       <<'EOF'
 # Plan — done b
 > **STATUS: SHIPPED** (legacy all-caps banner form)
 EOF
-    cat > "$tmp/docs/plans/active/live.md"         <<'EOF'
+    cat > "$act/live.md"         <<'EOF'
 # Plan — live campaign
 > **Status**: active — shipped slice 1 only; B5–B11 still live.
 EOF
-    cat > "$tmp/docs/plans/active/deferred.md"     <<'EOF'
+    cat > "$act/deferred.md"     <<'EOF'
 # Plan — parked
 > **STATUS: DEFERRED (pending demand)**
 EOF
-    cat > "$tmp/docs/plans/active/nostatus.md"     <<'EOF'
+    cat > "$act/nostatus.md"     <<'EOF'
 # Plan — old plan, no Status field
 > **Slug**: `nostatus`.
 EOF
-    cat > "$tmp/docs/plans/active/_plan-template.md" <<'EOF'
+    cat > "$act/_plan-template.md" <<'EOF'
 # Plan — <feature>
 > **Status**: shipped
 EOF
     # Absolute fixture dir so the re-invoked script's own `cd` to repo-root does
     # not redirect the scan back at the real active/ tree. Run from repo-root
     # (current cwd post-`cd`) via the repo-relative script path.
-    PLAN_ACTIVE_DIR="$tmp/docs/plans/active" REPO="x/y" \
+    PLAN_ACTIVE_DIR="$act" REPO="x/y" \
         bash agents/scripts/core/plan-archival-owed.sh --list 2>/dev/null > "$tmp/out" || true
     assert_has()  { grep -q "plan archival owed: $1\b" "$tmp/out" || { echo "FAIL: expected $1 owed"; fail=1; }; }
     assert_miss() { grep -q "plan archival owed: $1\b" "$tmp/out" && { echo "FAIL: $1 should NOT be owed"; fail=1; } || true; }
