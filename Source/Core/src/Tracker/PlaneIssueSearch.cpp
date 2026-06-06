@@ -26,6 +26,43 @@ using smatchet::plane_detail::ResolvePlaneProject;
 
 namespace {
 
+// Widen neutral id-and-name pairs into a typed cache vector. Templated so it
+// works for any cache struct that carries an Id and a Name member.
+template <typename CachedT>
+std::vector<CachedT> PairsToCached(std::vector<std::pair<std::string, std::string>>& pairs) {
+    std::vector<CachedT> out;
+    out.reserve(pairs.size());
+    for (auto& p : pairs) {
+        CachedT c;
+        c.Id = std::move(p.first);
+        c.Name = std::move(p.second);
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+// Normalize the configured Plane URL to the REST API base, logging once when
+// the configured value was the web-app host and got rewritten.
+std::string NormalizeAndLogPlaneApiBase(const std::string& configuredUrl) {
+    const std::string planeApi = NormalizePlaneApiBase(configuredUrl);
+    if (planeApi != configuredUrl) {
+        LOG_INFO(
+            "PlaneClient::FetchIssuesStreamed: REST base %s (configured URL was web app host; use https://api.plane.so "
+            "in preferences to skip this rewrite).",
+            planeApi.c_str());
+    }
+    return planeApi;
+}
+
+// Convert a header name→value map into a cpr::Header.
+cpr::Header ToCprHeader(const std::unordered_map<std::string, std::string>& kvs) {
+    cpr::Header headers;
+    for (const auto& kv : kvs) {
+        headers.insert({kv.first, kv.second});
+    }
+    return headers;
+}
+
 bool LooksHtmlPrefix(const std::string& t) {
     size_t i = 0;
     while (i < t.size() && std::isspace(static_cast<unsigned char>(t[i])) != 0) {
@@ -68,7 +105,7 @@ std::string ExtractProjectFromPlaneQuery(const std::string& planeQueryJson) {
         }
     } catch (const std::exception&) {
         return "";
-    } catch (...) {
+    } catch (...) { // catch-all-ok: project-name lookup is best-effort; empty string on any parse failure
         return "";
     }
     return "";
@@ -370,32 +407,23 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
         return summary;
     }
 
-    const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
-    if (planeApi != cfg.PlaneUrl) {
-        LOG_INFO(
-            "PlaneClient::FetchIssuesStreamed: REST base %s (configured URL was web app host; use https://api.plane.so "
-            "in preferences to skip this rewrite).",
-            planeApi.c_str());
-    }
+    const std::string planeApi = NormalizeAndLogPlaneApiBase(cfg.PlaneUrl);
 
-    cpr::Header headers;
-    for (const auto& kv : BuildPlaneHeaders(cfg)) {
-        headers.insert({kv.first, kv.second});
-    }
+    const cpr::Header headers = ToCprHeader(BuildPlaneHeaders(cfg));
 
     std::string prevProjectId;
-    std::string prevProjectIdentifier;
+    std::string tempProjectId;
+    std::string tempProjectIdentifier;
     std::vector<TrackerUser> localCachedUsers;
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
         prevProjectId = planeProjectId_;
-        prevProjectIdentifier = planeProjectIdentifier_;
+        tempProjectId = planeProjectId_;
+        tempProjectIdentifier = planeProjectIdentifier_;
         localCachedUsers = cachedUsers_;
     }
 
     std::string resolveError;
-    std::string tempProjectId = prevProjectId;
-    std::string tempProjectIdentifier = prevProjectIdentifier;
     if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, tempProjectId, tempProjectIdentifier, &resolveError)) {
         summary.FetchError = resolveError;
         return summary;
@@ -409,29 +437,19 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
             keyToId_.clear();
         }
     }
-    const std::string planeProjectId = tempProjectId;
-
+    const std::string& planeProjectId = tempProjectId;
     std::unordered_map<std::string, std::string> localKeyToId;
 
     try {
         // Phase 3: fetch states for display value mapping. A 200 + parseable body commits even when
         // the parsed list is empty (clears stale states); non-200 / discarded leave the cache as-is.
-        {
-            bool shouldCommitStates = false;
-            std::vector<std::pair<std::string, std::string>> statePairs =
-                FetchPlaneStatePairs(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, headers, shouldCommitStates);
-            if (shouldCommitStates) {
-                std::vector<CachedState> tempCachedStates;
-                tempCachedStates.reserve(statePairs.size());
-                for (auto& p : statePairs) {
-                    CachedState cs;
-                    cs.Id = std::move(p.first);
-                    cs.Name = std::move(p.second);
-                    tempCachedStates.push_back(std::move(cs));
-                }
-                std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
-                cachedStates_ = std::move(tempCachedStates);
-            }
+        bool shouldCommitStates = false;
+        std::vector<std::pair<std::string, std::string>> statePairs =
+            FetchPlaneStatePairs(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, headers, shouldCommitStates);
+        if (shouldCommitStates) {
+            std::vector<CachedState> tempCachedStates = PairsToCached<CachedState>(statePairs);
+            std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+            cachedStates_ = std::move(tempCachedStates);
         }
 
         // Assignee-display lookup for the pure mapper: translate cached TrackerUsers into the

@@ -27,6 +27,56 @@ using TrackerDateTimePure::TodayUtcParsed;
 
 namespace {
 
+// Compute the single-line display string for a date cell in its non-editing
+// state. Falls back to the raw value, strips embedded newlines, and uses the
+// caller-supplied format params (loading config only when they're empty).
+std::string ComputeDateCellDisplay(const std::string& currentValue, const std::string& dateFormatOption,
+                                   int thresholdDays) {
+    std::string fmt = dateFormatOption;
+    int thresh = thresholdDays;
+    if (fmt.empty() || thresh <= 0) {
+        const auto cfg = ConfigManager::Load();
+        if (fmt.empty())
+            fmt = cfg.DateFormatOption;
+        if (thresh <= 0)
+            thresh = cfg.DateCompactRelativeThresholdDays;
+    }
+    std::string display = FormatCompactJiraDateForDisplay(currentValue, fmt, thresh);
+    if (display.empty()) {
+        display = currentValue;
+    }
+    auto it = std::find_if(display.begin(), display.end(), [](char c) { return c == '\n' || c == '\r'; });
+    if (it != display.end()) {
+        display.erase(it, display.end());
+    }
+    if (display.empty()) {
+        display = "";
+    }
+    return display;
+}
+
+// Initialise the picker working-state from the current value when an edit
+// session has just started. Seeds the working date, the calendar view month,
+// and the text-mode fallback flag for unparseable non-empty values.
+void InitDatePickerWorking(const std::string& currentValue, bool isDateOnly, ParsedJiraDateTime& working, int& viewYear,
+                           int& viewMonth, bool& forceTextMode) {
+    ParsedJiraDateTime parsed;
+    if (TryParseJiraDateTime(currentValue, parsed)) {
+        working = parsed;
+        forceTextMode = false;
+        viewYear = parsed.Year;
+        viewMonth = parsed.Month;
+        ClampDayToMonth(working, viewYear, viewMonth);
+    } else if (currentValue.empty()) {
+        working = TodayUtcParsed(!isDateOnly);
+        forceTextMode = false;
+        viewYear = working.Year;
+        viewMonth = working.Month;
+    } else {
+        forceTextMode = true;
+    }
+}
+
 static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* data) {
     if (data->EventFlag != ImGuiInputTextFlags_CallbackAlways || !data->UserData) {
         return 0;
@@ -363,26 +413,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
 
     if (!state.IsEditingField(ticket.id, field.Id)) {
         // Use caller-supplied format params when available; only Load() when called from non-hot paths.
-        std::string fmt = dateFormatOption;
-        int thresh = thresholdDays;
-        if (fmt.empty() || thresh <= 0) {
-            const auto cfg = ConfigManager::Load();
-            if (fmt.empty())
-                fmt = cfg.DateFormatOption;
-            if (thresh <= 0)
-                thresh = cfg.DateCompactRelativeThresholdDays;
-        }
-        std::string display = FormatCompactJiraDateForDisplay(currentValue, fmt, thresh);
-        if (display.empty()) {
-            display = currentValue;
-        }
-        auto it = std::find_if(display.begin(), display.end(), [](char c) { return c == '\n' || c == '\r'; });
-        if (it != display.end()) {
-            display.erase(it, display.end());
-        }
-        if (display.empty()) {
-            display = "";
-        }
+        std::string display = ComputeDateCellDisplay(currentValue, dateFormatOption, thresholdDays);
         const bool blankValue = std::all_of(currentValue.begin(), currentValue.end(),
                                             [](unsigned char ch) { return std::isspace(ch) != 0; });
         if (ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
@@ -397,21 +428,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
 
     const bool editJustStarted = state.EditJustStarted;
     if (editJustStarted) {
-        ParsedJiraDateTime parsed;
-        if (TryParseJiraDateTime(currentValue, parsed)) {
-            s_working = parsed;
-            s_forceTextMode = false;
-            s_viewYear = parsed.Year;
-            s_viewMonth = parsed.Month;
-            ClampDayToMonth(s_working, s_viewYear, s_viewMonth);
-        } else if (currentValue.empty()) {
-            s_working = TodayUtcParsed(!isDateOnly);
-            s_forceTextMode = false;
-            s_viewYear = s_working.Year;
-            s_viewMonth = s_working.Month;
-        } else {
-            s_forceTextMode = true;
-        }
+        InitDatePickerWorking(currentValue, isDateOnly, s_working, s_viewYear, s_viewMonth, s_forceTextMode);
         ImGui::SetNextWindowPos(ImGui::GetIO().MousePos, ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
     }
     if (!ImGui::IsPopupOpen("picker")) {
@@ -454,6 +471,129 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
     }
 
     ImGui::PopID();
+}
+
+// Draw the calendar dropdown popup for the generic date picker. Owns the
+// "calendar_dropdown" BeginPopup/EndPopup pair. On Apply, writes ioValue and
+// sets valueChanged; retains the existing time-of-day from `parsed`.
+void DrawGenericCalendarDropdown(const ParsedJiraDateTime& parsed, bool isDateTime, std::string& ioValue,
+                                 bool& valueChanged) {
+    static bool s_initWorking = false;
+
+    if (!ImGui::IsPopupOpen("calendar_dropdown")) {
+        s_initWorking = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(236.0f, 0.0f));
+    if (ImGui::BeginPopup("calendar_dropdown")) {
+        static ParsedJiraDateTime s_genWorking{};
+        static int s_genViewYear = 2000;
+        static int s_genViewMonth = 1;
+        static bool s_genForceTextMode = false;
+        if (!s_initWorking) {
+            s_genWorking = parsed;
+            s_genViewYear = parsed.Year;
+            s_genViewMonth = parsed.Month;
+            s_genForceTextMode = false;
+            s_initWorking = true;
+        }
+
+        static char genRawBuf[128] = "";
+
+        PickerAction action =
+            DrawCalendarPicker(s_genWorking, s_genViewYear, s_genViewMonth, s_genForceTextMode, !isDateTime, ioValue,
+                               genRawBuf, sizeof(genRawBuf), nullptr, nullptr, true);
+
+        if (action == PickerAction::Apply) {
+            ClampDayToMonth(s_genWorking, s_genWorking.Year, s_genWorking.Month);
+            // Retain existing time
+            s_genWorking.Hour = parsed.Hour;
+            s_genWorking.Minute = parsed.Minute;
+            s_genWorking.Second = parsed.Second;
+            s_genWorking.HasWallTime = parsed.HasWallTime;
+
+            ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, s_genWorking);
+            valueChanged = true;
+            s_initWorking = false;
+            ImGui::CloseCurrentPopup();
+        } else if (action == PickerAction::Cancel) {
+            s_initWorking = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+// Draw the time column (input + clear button + time_dropdown popup) for the
+// generic date picker. Owns the "time_dropdown" BeginPopup/EndPopup pair.
+// Mutates `parsed` / `ioValue` / `valueChanged` on edit.
+void DrawGenericTimeColumn(float colWidth, ParsedJiraDateTime& parsed, bool isDateTime, std::string& ioValue,
+                           bool& valueChanged, char* timeBuf, std::size_t timeBufSize) {
+    ImGui::SameLine(0.0f, 6.0f);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
+    ImGui::SetNextItemWidth(colWidth - 26.0f);
+    if (ImGui::InputText("##FriendlyTime", timeBuf, timeBufSize)) {
+        int h = 0, m = 0;
+        if (ParseFriendlyTime(timeBuf, h, m)) {
+            parsed.Hour = h;
+            parsed.Minute = m;
+            parsed.Second = 0;
+            parsed.HasWallTime = true;
+            ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
+            valueChanged = true;
+        }
+    }
+    if (ImGui::IsItemClicked()) {
+        ImGui::OpenPopup("time_dropdown");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("✖", ImVec2(24.0f, 0.0f))) {
+        parsed.Hour = 0;
+        parsed.Minute = 0;
+        parsed.Second = 0;
+        parsed.HasWallTime = true;
+        ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
+        valueChanged = true;
+    }
+    ImGui::PopStyleVar();
+
+    // Scrollable dropdown popup for recommended times
+    ImGui::SetNextWindowSize(ImVec2(colWidth, 200.0f));
+    if (ImGui::BeginPopup("time_dropdown")) {
+        for (int h = 0; h < 24; ++h) {
+            for (int m : {0, 30}) {
+                int displayH = h;
+                const char* ampm = "AM";
+                if (displayH >= 12) {
+                    ampm = "PM";
+                    if (displayH > 12)
+                        displayH -= 12;
+                }
+                if (displayH == 0)
+                    displayH = 12;
+
+                char timeStr[16];
+                std::snprintf(timeStr, sizeof(timeStr), "%d:%02d %s", displayH, m, ampm);
+
+                const bool isSelected = (parsed.Hour == h && parsed.Minute == m);
+                if (ImGui::Selectable(timeStr, isSelected)) {
+                    parsed.Hour = h;
+                    parsed.Minute = m;
+                    parsed.Second = 0;
+                    parsed.HasWallTime = true;
+                    ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
+                    valueChanged = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (isSelected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+        }
+        ImGui::EndPopup();
+    }
 }
 
 bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDateTime, float totalWidth) {
@@ -506,118 +646,11 @@ bool RenderGenericDatePicker(const char* label, std::string& ioValue, bool isDat
     ImGui::PopStyleVar();
 
     // Dropdown Calendar Popup
-    static bool s_initWorking = false;
-
-    if (!ImGui::IsPopupOpen("calendar_dropdown")) {
-        s_initWorking = false;
-    }
-
-    ImGui::SetNextWindowSize(ImVec2(236.0f, 0.0f));
-    if (ImGui::BeginPopup("calendar_dropdown")) {
-        static ParsedJiraDateTime s_genWorking{};
-        static int s_genViewYear = 2000;
-        static int s_genViewMonth = 1;
-        static bool s_genForceTextMode = false;
-        if (!s_initWorking) {
-            s_genWorking = parsed;
-            s_genViewYear = parsed.Year;
-            s_genViewMonth = parsed.Month;
-            s_genForceTextMode = false;
-            s_initWorking = true;
-        }
-
-        static char genRawBuf[128] = "";
-
-        PickerAction action =
-            DrawCalendarPicker(s_genWorking, s_genViewYear, s_genViewMonth, s_genForceTextMode, !isDateTime, ioValue,
-                               genRawBuf, sizeof(genRawBuf), nullptr, nullptr, true);
-
-        if (action == PickerAction::Apply) {
-            ClampDayToMonth(s_genWorking, s_genWorking.Year, s_genWorking.Month);
-            // Retain existing time
-            s_genWorking.Hour = parsed.Hour;
-            s_genWorking.Minute = parsed.Minute;
-            s_genWorking.Second = parsed.Second;
-            s_genWorking.HasWallTime = parsed.HasWallTime;
-
-            ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, s_genWorking);
-            valueChanged = true;
-            s_initWorking = false;
-            ImGui::CloseCurrentPopup();
-        } else if (action == PickerAction::Cancel) {
-            s_initWorking = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
+    DrawGenericCalendarDropdown(parsed, isDateTime, ioValue, valueChanged);
 
     // Column 2 (Time Field): Side-by-side with close button, only if isDateTime is true
     if (isDateTime) {
-        ImGui::SameLine(0.0f, 6.0f);
-
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
-        ImGui::SetNextItemWidth(colWidth - 26.0f);
-        if (ImGui::InputText("##FriendlyTime", timeBuf, sizeof(timeBuf))) {
-            int h = 0, m = 0;
-            if (ParseFriendlyTime(timeBuf, h, m)) {
-                parsed.Hour = h;
-                parsed.Minute = m;
-                parsed.Second = 0;
-                parsed.HasWallTime = true;
-                ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
-                valueChanged = true;
-            }
-        }
-        if (ImGui::IsItemClicked()) {
-            ImGui::OpenPopup("time_dropdown");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("✖", ImVec2(24.0f, 0.0f))) {
-            parsed.Hour = 0;
-            parsed.Minute = 0;
-            parsed.Second = 0;
-            parsed.HasWallTime = true;
-            ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
-            valueChanged = true;
-        }
-        ImGui::PopStyleVar();
-
-        // Scrollable dropdown popup for recommended times
-        ImGui::SetNextWindowSize(ImVec2(colWidth, 200.0f));
-        if (ImGui::BeginPopup("time_dropdown")) {
-            for (int h = 0; h < 24; ++h) {
-                for (int m : {0, 30}) {
-                    int displayH = h;
-                    const char* ampm = "AM";
-                    if (displayH >= 12) {
-                        ampm = "PM";
-                        if (displayH > 12)
-                            displayH -= 12;
-                    }
-                    if (displayH == 0)
-                        displayH = 12;
-
-                    char timeStr[16];
-                    std::snprintf(timeStr, sizeof(timeStr), "%d:%02d %s", displayH, m, ampm);
-
-                    const bool isSelected = (parsed.Hour == h && parsed.Minute == m);
-                    if (ImGui::Selectable(timeStr, isSelected)) {
-                        parsed.Hour = h;
-                        parsed.Minute = m;
-                        parsed.Second = 0;
-                        parsed.HasWallTime = true;
-                        ioValue = FormatJiraDateOrDateTimeForApi(!isDateTime, parsed);
-                        valueChanged = true;
-                        ImGui::CloseCurrentPopup();
-                    }
-                    if (isSelected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-            }
-            ImGui::EndPopup();
-        }
+        DrawGenericTimeColumn(colWidth, parsed, isDateTime, ioValue, valueChanged, timeBuf, sizeof(timeBuf));
     }
 
     ImGui::PopID();
