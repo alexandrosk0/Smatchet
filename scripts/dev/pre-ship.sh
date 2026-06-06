@@ -109,5 +109,15 @@ if ! python3 agents/scripts/core/md_lint.py --all; then
     exit 1
 fi
 
-echo "pre-ship: PASS — formatted + delta lint gate + markdown lint clean. Safe to push."
+# Test-list consistency (build-quality-velocity-hardening #5): a new
+# tests/Core/*.test.cpp not added to tests/CMakeLists.txt is silently uncompiled
+# (false green). The configure-time assert in tests/CMakeLists.txt catches it in
+# CI; run the same check here so it surfaces before push, not at configure time.
+echo "pre-ship: running test-list consistency check"
+if ! bash agents/scripts/core/check-test-list.sh --check; then
+    echo "pre-ship: FAIL — add the unreferenced test(s) to tests/CMakeLists.txt before pushing." >&2
+    exit 1
+fi
+
+echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list clean. Safe to push."
 exit 0

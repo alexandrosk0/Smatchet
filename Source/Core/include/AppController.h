@@ -37,7 +37,18 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
-#include "JiraClient.h"
+// JiraClient.h was transitively supplying TrackerConfig and the tracker
+// role-interface types (connectivity probes, fetch summaries, and others) used by
+// AppController.h and its ~105 includers. Include their real homes directly here:
+// ConfigManager.h and the five ITracker role interfaces, which are all cpr-free.
+// That removes the heavy cpr dependency JiraClient.h dragged into every includer,
+// which is the whole point of build-quality finding 3.
+#include "ConfigManager.h"
+#include "ITrackerCollaboration.h"
+#include "ITrackerConnectivity.h"
+#include "ITrackerFieldCatalog.h"
+#include "ITrackerIssueMutations.h"
+#include "ITrackerIssueReader.h"
 
 #include <nlohmann/json.hpp>
 
