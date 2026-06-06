@@ -1122,9 +1122,10 @@ void AppController::ClearLuaTicketContextGlue() {
     lua["__smatchet_app_ui"] = sol::lua_nil;
 }
 
-void AppController::RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds) {
+void AppController::RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds,
+                                  bool processAll) {
     std::lock_guard<std::mutex> lock(automationJobMutex_);
-    automationJobs_.push_back({AutomationJob::Type::RunAutoScript, scriptPath, selectedIds, ""});
+    automationJobs_.push_back({AutomationJob::Type::RunAutoScript, scriptPath, selectedIds, "", processAll});
     automationJobCv_.notify_one();
 }
 
@@ -1312,12 +1313,19 @@ void AppController::RunAutomationAutoScript(sol::state& state, const AutomationJ
     const auto snap = GetActiveTicketsSnapshot();
     std::unordered_set<std::string> selectedSet(job.selectedIds.begin(), job.selectedIds.end());
 
+    // Issue #824: an empty selection must require explicit intent. Without process_all we refuse
+    // to run — never a silent mass-modify, never a silent no-op. With process_all set, the
+    // selection filter is bypassed and every loaded ticket is processed.
+    if (selectedSet.empty() && !job.processAll) {
+        logErr("[LUA auto] ", "empty selection and process_all not set — refusing to run; "
+                              "pass process_all=true to run across all loaded tickets");
+        return;
+    }
+
     for (auto& ticket : *snap) {
-        if (!selectedSet.empty() && selectedSet.find(ticket.id) == selectedSet.end()) {
+        // processAll bypasses the selection filter and runs across every ticket in the snapshot.
+        if (!job.processAll && selectedSet.find(ticket.id) == selectedSet.end()) {
             continue;
-        }
-        if (selectedSet.empty()) {
-            break;
         }
 
         // Copy ticket so we don't modify the snapshot elements in-place directly without protection
