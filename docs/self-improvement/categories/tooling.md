@@ -7,6 +7,12 @@
 
 ## Triage log
 
+- 2026-06-06 · orchestrator · [tooling] · P3 — `subsystem-invariant-audit` workflow deferred — portable dir can't hold a project-path literal
+  Details: adopt-workflow-orchestration slice 3 (`agents/_shared/workflows/subsystem-invariant-audit.js`) was authored (read-only `code-review` fan-out per `Source/Core/src/<ctx>/` leaf-AGENTS.md zone → aggregator) but removed from PR #887 because it hardcodes the `Source/Core` path — a project literal in the portable `agents/_shared/` dir, which `test-portable-purity` (correctly) fails. A portable saved-workflow can't name a project-specific path. The pre-merge-review workflow (slice 2) shipped fine (generic).
+  Concrete next action: pick one — (a) a project-scoped workflows location outside the portable purity zone (e.g. `agents/project/workflows/`) + extend `setup-harness.sh`'s link loop to it; or (b) make the workflow discover its zones at runtime (the subagent globs `Source/Core/src/*/AGENTS.md`) so the `.js` embeds no project path. Then re-add the workflow + its plan-doc § Implementation-log line. Est ~1-2 h. The intended shape (read-only code-review per disjoint zone, respecting fan-out-safety Boundary 2) is captured in `docs/plans/shipped/adopt-workflow-orchestration.md` § Deviations.
+  Status: open
+  Last-reviewed: 2026-06-06
+
 - 2026-06-05 · orchestrator · [tooling] · P3 — `merge-snapshot-ledger` (lossless gate-snapshot) deferred to its own plan + ADR; date-forced revisit so it isn't forgotten
   Details: `docs/plans/shipped/merge-snapshot-ledger.md` (was a stub, #870) is C2-part-1 of `agent-audit-remediation`: a committed merge-time gate-verdict ledger written by the 3 merge actors so `postmortem-owed.sh` reads lossless truth instead of live `statusCheckRollup` (provably lossy — re-runs overwrite RED contexts; override labels stripped post-merge). The mechanical ordering half shipped in #868; this lossless half needed an ADR + a 3-writer contract.
   Concrete next action: SHIPPED — `docs/adr/0017-merge-time-snapshot-ledger.md` + `merge-snapshot-append.sh` + the `handle_pass()` / `postmortem-owed.sh` / `ship-loops.md` wiring landed per the plan (now under `docs/plans/shipped/`).

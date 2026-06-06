@@ -235,6 +235,18 @@ setup_claude_code() {
     done
   fi
 
+  # Auto-link every saved Workflow under agents/_shared/workflows/ into the
+  # gitignored .claude/workflows/ so the Workflow tool resolves them by name
+  # (Workflow({name: '<base>'})). Workflows are single .js files (link_file,
+  # not link_dir like skills). Future workflows get picked up with no script
+  # edit. See docs/agent-rules/workflow-orchestration.md.
+  if [[ -d "agents/_shared/workflows" ]]; then
+    for wf in agents/_shared/workflows/*.js; do
+      [[ -e "$wf" ]] || continue
+      link_file ".claude/workflows/$(basename "$wf")" "$wf"
+    done
+  fi
+
   # Special case: token-tracking lives at a non-conforming path
   # (agents/_shared/token-tracking/, not agents/_shared/skills/token-tracking/).
   # Until that's normalised, link the single file by hand.
