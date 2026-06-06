@@ -137,33 +137,105 @@ bool TrackerQueryAcp_QueueApplyReplacement(UiDrawSession& d, const QuerySuggestB
 /** No-op: replacement now applied inside callback. Kept for callers that flush after the InputText call. */
 void TrackerQueryAcp_FlushPendingReplace(UiDrawSession& /*d*/) {}
 
+// CallbackHistory event for Up and Down arrows through the suggestion list. Rebuilds suggestions,
+// merges async user results, then resolves the new selection. Split out of the input callback.
+static void HandleAcpHistoryEvent(ImGuiInputTextCallbackData* data, TrackerQueryAcpCallbackUserData* ud,
+                                  UiDrawSession* d) {
+    if (ud != nullptr && ud->app != nullptr && ud->suggestBuild != nullptr) {
+        RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart,
+                        data->SelectionEnd, *ud->app, *ud->suggestBuild, ud->meta);
+        if (d != nullptr) {
+            MergeAsyncUserSuggestionsIntoBuild(*d, *ud->suggestBuild);
+            d->jqlAcpLastCursor = data->CursorPos;
+            d->jqlAcpLastSelectionStart = data->SelectionStart;
+            d->jqlAcpLastSelectionEnd = data->SelectionEnd;
+            d->jqlAcpListDismissed = false;
+        }
+        const int n = static_cast<int>(ud->suggestBuild->Items.size());
+        if (d != nullptr) {
+            const bool isDown = data->EventKey == ImGuiKey_DownArrow;
+            const bool isUp = data->EventKey == ImGuiKey_UpArrow;
+            const SmatchetAutocompleteDetail::AcpHistoryNav nav =
+                SmatchetAutocompleteDetail::ResolveAcpHistoryNav(n, d->jqlAcpListSelected, isDown, isUp);
+            d->jqlAcpListSelected = nav.selected;
+            if (nav.scrollToSelected) {
+                d->jqlAcpScrollToSelected = true;
+            }
+        }
+    }
+}
+
+// CallbackAlways event that fires every frame. Applies any pending inline replacement, rebuilds
+// suggestions, handles the Escape, Enter, and Tab commit keys, and the post-apply caret snap.
+// Split out of the input callback.
+static void HandleAcpAlwaysEvent(ImGuiInputTextCallbackData* data, TrackerQueryAcpCallbackUserData* ud,
+                                 UiDrawSession* d) {
+    // Apply pending replacement first (before rebuilding suggestions with new buf).
+    if (d != nullptr && d->jqlAcpApplyReplace) {
+        d->jqlAcpApplyReplace = false;
+        d->jqlAcpListSelected = -1;
+        const int caretOffset = d->jqlAcpReplaceCaretOffset;
+        ApplyInlineReplace(data, d->jqlAcpReplaceStart, d->jqlAcpReplaceEnd, d->jqlAcpReplaceText, caretOffset);
+        d->jqlAcpReplaceStart = -1;
+        d->jqlAcpReplaceEnd = -1;
+        d->jqlAcpReplaceText.clear();
+        d->jqlAcpReplaceCaretOffset = -1;
+        // Sync the external buf so it reflects what ImGui has internally.
+        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d->viewJqlBuf, data->Buf);
+        // Force cursor+scroll to end for a few more frames so ImGui's re-init (from
+        // SetKeyboardFocusHere) does not leave the scroll at 0. Skip this when a
+        // mid-insert caret was requested — the snap-to-end logic would fight the
+        // caret position we just set inside the parens.
+        if (caretOffset < 0) {
+            d->jqlAcpCaretSnapFramesRemaining = 3;
+        }
+    }
+
+    RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
+                    *ud->app, *ud->suggestBuild, ud->meta);
+    if (d != nullptr) {
+        MergeAsyncUserSuggestionsIntoBuild(*d, *ud->suggestBuild);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && d != nullptr) {
+        d->jqlAcpListDismissed = true;
+    }
+    const int n = static_cast<int>(ud->suggestBuild->Items.size());
+    if (d != nullptr) {
+        const bool enterDown =
+            ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+        const bool tabDown = ImGui::IsKeyPressed(ImGuiKey_Tab, false);
+        const SmatchetAutocompleteDetail::AcpCommitDecision commit =
+            SmatchetAutocompleteDetail::ResolveAcpCommit(n, d->jqlAcpListSelected, enterDown, tabDown);
+        d->jqlAcpListSelected = commit.selected;
+        if (commit.queueApply) {
+            TrackerQueryAcp_QueueApplyReplacement(*d, *ud->suggestBuild, d->jqlAcpListSelected, false);
+        }
+        if (commit.wantsApplyFromEnter) {
+            d->jqlWantsApplyFromEnter = true;
+        }
+        d->jqlAcpLastCursor = data->CursorPos;
+        d->jqlAcpLastSelectionStart = data->SelectionStart;
+        d->jqlAcpLastSelectionEnd = data->SelectionEnd;
+    }
+    // Snap cursor to end of text for N frames after an inline apply to ensure ImGui scrolls
+    // to the cursor after SetKeyboardFocusHere re-initialises the widget state.
+    if (d != nullptr && d->jqlAcpCaretSnapFramesRemaining > 0) {
+        const int endPos = data->BufTextLen;
+        data->CursorPos = endPos;
+        data->SelectionStart = data->SelectionEnd = endPos;
+        d->jqlAcpLastCursor = endPos;
+        d->jqlAcpLastSelectionStart = endPos;
+        d->jqlAcpLastSelectionEnd = endPos;
+        --d->jqlAcpCaretSnapFramesRemaining;
+    }
+}
+
 int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
     auto* ud = static_cast<TrackerQueryAcpCallbackUserData*>(data->UserData);
     UiDrawSession* d = ud != nullptr ? ud->session : nullptr;
 
     if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
-        if (ud != nullptr && ud->app != nullptr && ud->suggestBuild != nullptr) {
-            RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart,
-                            data->SelectionEnd, *ud->app, *ud->suggestBuild, ud->meta);
-            if (d != nullptr) {
-                MergeAsyncUserSuggestionsIntoBuild(*d, *ud->suggestBuild);
-                d->jqlAcpLastCursor = data->CursorPos;
-                d->jqlAcpLastSelectionStart = data->SelectionStart;
-                d->jqlAcpLastSelectionEnd = data->SelectionEnd;
-                d->jqlAcpListDismissed = false;
-            }
-            const int n = static_cast<int>(ud->suggestBuild->Items.size());
-            if (d != nullptr) {
-                const bool isDown = data->EventKey == ImGuiKey_DownArrow;
-                const bool isUp = data->EventKey == ImGuiKey_UpArrow;
-                const SmatchetAutocompleteDetail::AcpHistoryNav nav =
-                    SmatchetAutocompleteDetail::ResolveAcpHistoryNav(n, d->jqlAcpListSelected, isDown, isUp);
-                d->jqlAcpListSelected = nav.selected;
-                if (nav.scrollToSelected) {
-                    d->jqlAcpScrollToSelected = true;
-                }
-            }
-        }
+        HandleAcpHistoryEvent(data, ud, d);
         return 0;
     }
 
@@ -175,65 +247,7 @@ int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
 
     if (ud != nullptr && ud->app != nullptr && ud->suggestBuild != nullptr &&
         data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
-
-        // Apply pending replacement first (before rebuilding suggestions with new buf).
-        if (d != nullptr && d->jqlAcpApplyReplace) {
-            d->jqlAcpApplyReplace = false;
-            d->jqlAcpListSelected = -1;
-            const int caretOffset = d->jqlAcpReplaceCaretOffset;
-            ApplyInlineReplace(data, d->jqlAcpReplaceStart, d->jqlAcpReplaceEnd, d->jqlAcpReplaceText, caretOffset);
-            d->jqlAcpReplaceStart = -1;
-            d->jqlAcpReplaceEnd = -1;
-            d->jqlAcpReplaceText.clear();
-            d->jqlAcpReplaceCaretOffset = -1;
-            // Sync the external buf so it reflects what ImGui has internally.
-            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d->viewJqlBuf, data->Buf);
-            // Force cursor+scroll to end for a few more frames so ImGui's re-init (from
-            // SetKeyboardFocusHere) does not leave the scroll at 0. Skip this when a
-            // mid-insert caret was requested — the snap-to-end logic would fight the
-            // caret position we just set inside the parens.
-            if (caretOffset < 0) {
-                d->jqlAcpCaretSnapFramesRemaining = 3;
-            }
-        }
-
-        RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart,
-                        data->SelectionEnd, *ud->app, *ud->suggestBuild, ud->meta);
-        if (d != nullptr) {
-            MergeAsyncUserSuggestionsIntoBuild(*d, *ud->suggestBuild);
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && d != nullptr) {
-            d->jqlAcpListDismissed = true;
-        }
-        const int n = static_cast<int>(ud->suggestBuild->Items.size());
-        if (d != nullptr) {
-            const bool enterDown =
-                ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
-            const bool tabDown = ImGui::IsKeyPressed(ImGuiKey_Tab, false);
-            const SmatchetAutocompleteDetail::AcpCommitDecision commit =
-                SmatchetAutocompleteDetail::ResolveAcpCommit(n, d->jqlAcpListSelected, enterDown, tabDown);
-            d->jqlAcpListSelected = commit.selected;
-            if (commit.queueApply) {
-                TrackerQueryAcp_QueueApplyReplacement(*d, *ud->suggestBuild, d->jqlAcpListSelected, false);
-            }
-            if (commit.wantsApplyFromEnter) {
-                d->jqlWantsApplyFromEnter = true;
-            }
-            d->jqlAcpLastCursor = data->CursorPos;
-            d->jqlAcpLastSelectionStart = data->SelectionStart;
-            d->jqlAcpLastSelectionEnd = data->SelectionEnd;
-        }
-        // Snap cursor to end of text for N frames after an inline apply to ensure ImGui scrolls
-        // to the cursor after SetKeyboardFocusHere re-initialises the widget state.
-        if (d != nullptr && d->jqlAcpCaretSnapFramesRemaining > 0) {
-            const int endPos = data->BufTextLen;
-            data->CursorPos = endPos;
-            data->SelectionStart = data->SelectionEnd = endPos;
-            d->jqlAcpLastCursor = endPos;
-            d->jqlAcpLastSelectionStart = endPos;
-            d->jqlAcpLastSelectionEnd = endPos;
-            --d->jqlAcpCaretSnapFramesRemaining;
-        }
+        HandleAcpAlwaysEvent(data, ud, d);
     }
 
     return 0;

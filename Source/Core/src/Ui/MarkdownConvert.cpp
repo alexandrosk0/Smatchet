@@ -149,8 +149,47 @@ void AdfEmitText(AdfBuilder& b, const std::string& text) {
     b.topContent()->push_back(std::move(node));
 }
 
+// Push a typed container node onto the current parent and open a child-content frame for it.
+// Shared by the table cell/row/table cases. Mirrors the inline push pattern verbatim.
+void AdfPushContainerWithChildren(AdfBuilder& b, json node) {
+    auto* parent = b.topContent();
+    parent->push_back(std::move(node));
+    b.contentStack.push_back(&parent->back()["content"]);
+}
+
+// Table block group (table, header/body wrappers, rows, header/data cells). Each pushes its own
+// container (header/body wrappers are transparent) and returns true to signal the type is handled,
+// so the main switch in AdfEnterBlock can early-return. Returns false for non-table block types.
+bool AdfTryEnterTableBlock(AdfBuilder& b, MD_BLOCKTYPE type) {
+    switch (type) {
+    case MD_BLOCK_TABLE:
+        AdfPushContainerWithChildren(b, {{"type", "table"},
+                                         {"attrs", {{"layout", "default"}, {"isNumberColumnEnabled", false}}},
+                                         {"content", json::array()}});
+        return true;
+    case MD_BLOCK_THEAD:
+    case MD_BLOCK_TBODY:
+        return true;
+    case MD_BLOCK_TR:
+        AdfPushContainerWithChildren(b, {{"type", "tableRow"}, {"content", json::array()}});
+        return true;
+    case MD_BLOCK_TH:
+        AdfPushContainerWithChildren(b, {{"type", "tableHeader"}, {"content", json::array()}});
+        return true;
+    case MD_BLOCK_TD:
+        AdfPushContainerWithChildren(b, {{"type", "tableCell"}, {"content", json::array()}});
+        return true;
+    default:
+        return false;
+    }
+}
+
 int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     auto& b = *static_cast<AdfBuilder*>(userdata);
+
+    if (AdfTryEnterTableBlock(b, type)) {
+        return 0;
+    }
 
     json node;
     bool pushChildContent = true;
@@ -214,39 +253,6 @@ int AdfEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     case MD_BLOCK_P:
         node = {{"type", "paragraph"}, {"content", json::array()}};
         break;
-    case MD_BLOCK_TABLE: {
-        node = {{"type", "table"},
-                {"attrs", {{"layout", "default"}, {"isNumberColumnEnabled", false}}},
-                {"content", json::array()}};
-        auto* parent = b.topContent();
-        parent->push_back(std::move(node));
-        b.contentStack.push_back(&parent->back()["content"]);
-        return 0;
-    }
-    case MD_BLOCK_THEAD:
-    case MD_BLOCK_TBODY:
-        return 0;
-    case MD_BLOCK_TR: {
-        json row = {{"type", "tableRow"}, {"content", json::array()}};
-        auto* parent = b.topContent();
-        parent->push_back(std::move(row));
-        b.contentStack.push_back(&parent->back()["content"]);
-        return 0;
-    }
-    case MD_BLOCK_TH: {
-        json cell = {{"type", "tableHeader"}, {"content", json::array()}};
-        auto* parent = b.topContent();
-        parent->push_back(std::move(cell));
-        b.contentStack.push_back(&parent->back()["content"]);
-        return 0;
-    }
-    case MD_BLOCK_TD: {
-        json cell = {{"type", "tableCell"}, {"content", json::array()}};
-        auto* parent = b.topContent();
-        parent->push_back(std::move(cell));
-        b.contentStack.push_back(&parent->back()["content"]);
-        return 0;
-    }
     case MD_BLOCK_HTML:
         return 0;
     default:

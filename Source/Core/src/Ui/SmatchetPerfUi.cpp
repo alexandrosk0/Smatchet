@@ -243,86 +243,98 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
         ImGui::Separator();
 
         if (ImGui::BeginTabBar("PerformanceTabs")) {
-            if (ImGui::BeginTabItem("CPU")) {
-                ImGui::TextUnformatted(
-                    "Wall time per scoped UI path; nested scopes overlap (not additive). "
-                    "Values use heavy time-based smoothing (~few second response) and 2 decimal places. "
-                    "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame.");
-                ImGui::Separator();
-                std::vector<UiPerfRow> rows;
-                buildSmoothedCpuRows(UiPerfMonitor::Instance().GetLastFrameRows(), rows, dt);
-                if (ImGui::BeginTable("UiPerfTable", 7,
-                                      ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
-                                          ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable)) {
-                    ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_None, 0.0f,
-                                            static_cast<ImGuiID>(PerfTableCol::Scope));
-                    ImGui::TableSetupColumn("Calls/Frame", ImGuiTableColumnFlags_None, 0.0f,
-                                            static_cast<ImGuiID>(PerfTableCol::Calls));
-                    ImGui::TableSetupColumn(
-                        "Last (ms)", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending,
-                        0.0f, static_cast<ImGuiID>(PerfTableCol::Last));
-                    ImGui::TableSetupColumn("Avg/call (ms)", ImGuiTableColumnFlags_None, 0.0f,
-                                            static_cast<ImGuiID>(PerfTableCol::Avg));
-                    ImGui::TableSetupColumn("EMA avg (ms)", ImGuiTableColumnFlags_None, 0.0f,
-                                            static_cast<ImGuiID>(PerfTableCol::Ema));
-                    ImGui::TableSetupColumn("Max (ms)", ImGuiTableColumnFlags_None, 0.0f,
-                                            static_cast<ImGuiID>(PerfTableCol::Max));
-                    ImGui::TableSetupColumn("Total Calls", ImGuiTableColumnFlags_None, 0.0f,
-                                            static_cast<ImGuiID>(PerfTableCol::LifetimeHits));
-                    ImGui::TableHeadersRow();
-                    if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
-                        if (sort_specs->SpecsCount > 0) {
-                            SortUiPerfRows(rows, sort_specs);
-                            if (sort_specs->SpecsDirty) {
-                                sort_specs->SpecsDirty = false;
-                            }
-                        } else {
-                            SortRowsByStableLastDesc(rows);
-                        }
-                    } else {
-                        SortRowsByStableLastDesc(rows);
-                    }
-                    for (const UiPerfRow& r : rows) {
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextUnformatted(r.name.c_str());
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%llu", static_cast<unsigned long long>(r.calls));
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%.2f", r.lastTotalMs);
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%.2f", r.avgPerCallMs);
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%.2f", r.emaAvgMs);
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%.2f", r.maxMs);
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%llu", static_cast<unsigned long long>(r.lifetimeHits));
-                    }
-                    ImGui::EndTable();
-                }
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Network")) {
-                const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
-                ImGui::TextWrapped("HTTP traffic from this session of Smatchet. Downloaded = response bodies; "
-                                   "uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET (estimate).",
-                                   static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
-                ImGui::Separator();
-                ImGui::TextUnformatted("Jira API");
-                ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.trackerRequests));
-                ImGui::BulletText("Uploaded (approx.): %s", FormatNetworkBytes(snap.trackerUploadBytes).c_str());
-                ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.trackerDownloadBytes).c_str());
-                ImGui::Separator();
-                if (ImGui::Button("Reset counters")) {
-                    NetworkUsageTracker::Instance().Reset();
-                }
-                ImGui::EndTabItem();
-            }
+            drawCpuTab(dt);
+            drawNetworkTab();
             ImGui::EndTabBar();
         }
     }
     ImGui::End();
+}
+
+// CPU tab body showing the per-scope smoothed wall-time table. Owns its own tab-item begin and end
+// pair and runs inside the active tab-bar scope. Split out of DrawWindow for function-size
+// compliance.
+void SmatchetPerfUi::drawCpuTab(double dtSec) {
+    if (ImGui::BeginTabItem("CPU")) {
+        ImGui::TextUnformatted("Wall time per scoped UI path; nested scopes overlap (not additive). "
+                               "Values use heavy time-based smoothing (~few second response) and 2 decimal places. "
+                               "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame.");
+        ImGui::Separator();
+        std::vector<UiPerfRow> rows;
+        buildSmoothedCpuRows(UiPerfMonitor::Instance().GetLastFrameRows(), rows, dtSec);
+        if (ImGui::BeginTable("UiPerfTable", 7,
+                              ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                                  ImGuiTableFlags_Sortable)) {
+            ImGui::TableSetupColumn("Scope", ImGuiTableColumnFlags_None, 0.0f,
+                                    static_cast<ImGuiID>(PerfTableCol::Scope));
+            ImGui::TableSetupColumn("Calls/Frame", ImGuiTableColumnFlags_None, 0.0f,
+                                    static_cast<ImGuiID>(PerfTableCol::Calls));
+            ImGui::TableSetupColumn("Last (ms)",
+                                    ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending,
+                                    0.0f, static_cast<ImGuiID>(PerfTableCol::Last));
+            ImGui::TableSetupColumn("Avg/call (ms)", ImGuiTableColumnFlags_None, 0.0f,
+                                    static_cast<ImGuiID>(PerfTableCol::Avg));
+            ImGui::TableSetupColumn("EMA avg (ms)", ImGuiTableColumnFlags_None, 0.0f,
+                                    static_cast<ImGuiID>(PerfTableCol::Ema));
+            ImGui::TableSetupColumn("Max (ms)", ImGuiTableColumnFlags_None, 0.0f,
+                                    static_cast<ImGuiID>(PerfTableCol::Max));
+            ImGui::TableSetupColumn("Total Calls", ImGuiTableColumnFlags_None, 0.0f,
+                                    static_cast<ImGuiID>(PerfTableCol::LifetimeHits));
+            ImGui::TableHeadersRow();
+            if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
+                if (sort_specs->SpecsCount > 0) {
+                    SortUiPerfRows(rows, sort_specs);
+                    if (sort_specs->SpecsDirty) {
+                        sort_specs->SpecsDirty = false;
+                    }
+                } else {
+                    SortRowsByStableLastDesc(rows);
+                }
+            } else {
+                SortRowsByStableLastDesc(rows);
+            }
+            for (const UiPerfRow& r : rows) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(r.name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%llu", static_cast<unsigned long long>(r.calls));
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", r.lastTotalMs);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", r.avgPerCallMs);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", r.emaAvgMs);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", r.maxMs);
+                ImGui::TableNextColumn();
+                ImGui::Text("%llu", static_cast<unsigned long long>(r.lifetimeHits));
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndTabItem();
+    }
+}
+
+// Network tab body: session HTTP traffic counters + reset button. Owns its own BeginTabItem/
+// EndTabItem pair; runs inside the active BeginTabBar scope.
+void SmatchetPerfUi::drawNetworkTab() {
+    if (ImGui::BeginTabItem("Network")) {
+        const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
+        ImGui::TextWrapped("HTTP traffic from this session of Smatchet. Downloaded = response bodies; "
+                           "uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET (estimate).",
+                           static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
+        ImGui::Separator();
+        ImGui::TextUnformatted("Jira API");
+        ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.trackerRequests));
+        ImGui::BulletText("Uploaded (approx.): %s", FormatNetworkBytes(snap.trackerUploadBytes).c_str());
+        ImGui::BulletText("Downloaded: %s", FormatNetworkBytes(snap.trackerDownloadBytes).c_str());
+        ImGui::Separator();
+        if (ImGui::Button("Reset counters")) {
+            NetworkUsageTracker::Instance().Reset();
+        }
+        ImGui::EndTabItem();
+    }
 }
 
 void SmatchetPerfUi::DrawFpsOverlay() {

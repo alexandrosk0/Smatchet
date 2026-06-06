@@ -220,6 +220,110 @@ std::atomic<bool> g_FontReloadRequested{false};
 // through SmatchetGetPreviewFonts() rather than reading this directly.
 SmatchetPreviewFonts g_PreviewFonts;
 
+#if defined(_WIN32)
+// Markdown-variant + monospace fonts resolved alongside the body font. Each is a separate ImFont
+// (no MergeMode) so the renderer can PushFont/PopFont per inline run.
+struct MarkdownVariantFonts {
+    ImFont* bold = nullptr;
+    ImFont* italic = nullptr;
+    ImFont* boldItalic = nullptr;
+    ImFont* mono = nullptr;
+};
+
+// Font Awesome 6 Solid merge — Phase 4 of ai-chat-claude-desktop-parity.
+// Drops the FA6 PUA range onto the atlas so the AI-chat hover row, pin
+// strip, and header buttons can render `ICON_FA_COPY`, `ICON_FA_THUMBTACK`,
+// `ICON_FA_THUMBTACK_SLASH`, `ICON_FA_XMARK`, `ICON_FA_TRASH`. Merge uses
+// a separate kFontAwesomeRange[] static (NOT the BuildRanges output) —
+// ImGui merges only intersect glyph ranges that overlap, so passing the
+// narrower FA-specific range avoids the atlas building empty bins for
+// every kFA glyph the body font doesn't have. Missing TTF → LOG_WARN +
+// g_FaIconsLoaded stays false; UI falls back to text labels.
+void MergeFontAwesomeSolid(ImGuiIO& io, float fontSizePixels) {
+    g_FaIconsLoaded.store(false, std::memory_order_release);
+    const std::string faTtfPath = ResolveAssetTtfPath("fa-solid-900.ttf");
+    if (!faTtfPath.empty()) {
+        ImFontConfig fa_cfg;
+        fa_cfg.MergeMode = true;
+        fa_cfg.PixelSnapH = true;
+        // FA glyphs visually align tighter when nudged ~1px down at typical UI
+        // sizes — matches the upstream Dear ImGui FA-merge convention.
+        fa_cfg.GlyphOffset.y = 1.0f;
+        fa_cfg.GlyphMinAdvanceX = fontSizePixels;
+        const ImFont* faFont =
+            io.Fonts->AddFontFromFileTTF(faTtfPath.c_str(), fontSizePixels, &fa_cfg, kFontAwesomeRange);
+        if (faFont != nullptr) {
+            g_FaIconsLoaded.store(true, std::memory_order_release);
+        } else {
+            LOG_WARN("FA Solid TTF load failed (path=%s); falling back to text labels", faTtfPath.c_str());
+        }
+    } else {
+        LOG_WARN("FA Solid TTF not found in exe-dir or SMATCHET_ASSETS_SOURCE_DIR; "
+                 "AI chat hover row will render text labels. See assets/fonts/README.md.");
+    }
+}
+
+// Markdown preview style variants + the Consolas monospace pin. Each variant is a separate ImFont
+// (no MergeMode). Symbol and emoji merging is intentionally skipped on variants — the atlas would
+// ~5x in size; bold / italic text containing emoji is rare enough to live with the missing-glyph
+// fallback for now. Consolas is pinned regardless of body font choice for inline `code` blocks.
+MarkdownVariantFonts BuildMarkdownVariantFonts(ImGuiIO& io, const std::string& fontName, float fontSizePixels,
+                                               const ImWchar* glyphRanges) {
+    MarkdownVariantFonts out;
+    const FontVariantPaths variants = GetFontVariantPaths(fontName);
+    ImFontConfig variant_cfg;
+    variant_cfg.GlyphRanges = glyphRanges;
+    if (variants.bold && FileExistsUtf8(variants.bold)) {
+        out.bold = io.Fonts->AddFontFromFileTTF(variants.bold, fontSizePixels, &variant_cfg, glyphRanges);
+    }
+    if (variants.italic && FileExistsUtf8(variants.italic)) {
+        out.italic = io.Fonts->AddFontFromFileTTF(variants.italic, fontSizePixels, &variant_cfg, glyphRanges);
+    }
+    if (variants.boldItalic && FileExistsUtf8(variants.boldItalic)) {
+        out.boldItalic = io.Fonts->AddFontFromFileTTF(variants.boldItalic, fontSizePixels, &variant_cfg, glyphRanges);
+    }
+    static const char kConsolasPath[] = "C:\\Windows\\Fonts\\consola.ttf";
+    if (FileExistsUtf8(kConsolasPath)) {
+        out.mono = io.Fonts->AddFontFromFileTTF(kConsolasPath, fontSizePixels, &variant_cfg, glyphRanges);
+    }
+    return out;
+}
+
+// Bug-report censor font. ImGui 1.92 bakes glyphs ON DEMAND, so restricting
+// the glyph range does NOT stop other glyphs loading — instead we load the
+// body font + merged FA normally, then AddRemapChar() every TEXT codepoint to
+// U+2588 (█). When this font is active the whole UI renders as blocks while FA
+// icons stay real. Used for the bug-report screenshot capture frame.
+ImFont* BuildRedactionFont(ImGuiIO& io, const char* path, float fontSizePixels, const ImWchar* glyphRanges) {
+    ImFontConfig redact_cfg;
+    redact_cfg.GlyphRanges = glyphRanges;
+    ImFont* redactFont = io.Fonts->AddFontFromFileTTF(path, fontSizePixels, &redact_cfg, glyphRanges);
+    if (redactFont != nullptr) {
+        const std::string faRedactPath = ResolveAssetTtfPath("fa-solid-900.ttf");
+        if (!faRedactPath.empty()) {
+            ImFontConfig fa_redact;
+            fa_redact.MergeMode = true;
+            fa_redact.PixelSnapH = true;
+            fa_redact.GlyphOffset.y = 1.0f;
+            fa_redact.GlyphMinAdvanceX = fontSizePixels;
+            io.Fonts->AddFontFromFileTTF(faRedactPath.c_str(), fontSizePixels, &fa_redact, kFontAwesomeRange);
+        }
+        redactFont->FallbackChar = static_cast<ImWchar>(0x2588);
+        // Point every text codepoint at the block glyph; keep the FA icon
+        // range (0xe005..0xf8ff) and the block itself real.
+        for (const ImWchar* gr = glyphRanges; gr[0] != 0 && gr[1] != 0; gr += 2) {
+            for (unsigned cp = gr[0]; cp <= gr[1]; ++cp) {
+                if ((cp >= 0xe005 && cp <= 0xf8ff) || cp == 0x2588) {
+                    continue;
+                }
+                redactFont->AddRemapChar(static_cast<ImWchar>(cp), static_cast<ImWchar>(0x2588));
+            }
+        }
+    }
+    return redactFont;
+}
+#endif
+
 } // namespace
 
 void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float fontSizePixels) {
@@ -268,100 +372,16 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
             io.Fonts->AddFontFromFileTTF(kSegoeUiEmojiPath, fontSizePixels, &emoji_cfg, glyph_ranges.Data);
         }
 
-        // Font Awesome 6 Solid merge — Phase 4 of ai-chat-claude-desktop-parity.
-        // Drops the FA6 PUA range onto the atlas so the AI-chat hover row, pin
-        // strip, and header buttons can render `ICON_FA_COPY`, `ICON_FA_THUMBTACK`,
-        // `ICON_FA_THUMBTACK_SLASH`, `ICON_FA_XMARK`, `ICON_FA_TRASH`. Merge uses
-        // a separate kFontAwesomeRange[] static (NOT the BuildRanges output) —
-        // ImGui merges only intersect glyph ranges that overlap, so passing the
-        // narrower FA-specific range avoids the atlas building empty bins for
-        // every kFA glyph the body font doesn't have. Missing TTF → LOG_WARN +
-        // g_FaIconsLoaded stays false; UI falls back to text labels.
-        g_FaIconsLoaded.store(false, std::memory_order_release);
-        const std::string faTtfPath = ResolveAssetTtfPath("fa-solid-900.ttf");
-        if (!faTtfPath.empty()) {
-            ImFontConfig fa_cfg;
-            fa_cfg.MergeMode = true;
-            fa_cfg.PixelSnapH = true;
-            // FA glyphs visually align tighter when nudged ~1px down at typical UI
-            // sizes — matches the upstream Dear ImGui FA-merge convention.
-            fa_cfg.GlyphOffset.y = 1.0f;
-            fa_cfg.GlyphMinAdvanceX = fontSizePixels;
-            const ImFont* faFont =
-                io.Fonts->AddFontFromFileTTF(faTtfPath.c_str(), fontSizePixels, &fa_cfg, kFontAwesomeRange);
-            if (faFont != nullptr) {
-                g_FaIconsLoaded.store(true, std::memory_order_release);
-            } else {
-                LOG_WARN("FA Solid TTF load failed (path=%s); falling back to text labels", faTtfPath.c_str());
-            }
-        } else {
-            LOG_WARN("FA Solid TTF not found in exe-dir or SMATCHET_ASSETS_SOURCE_DIR; "
-                     "AI chat hover row will render text labels. See assets/fonts/README.md.");
-        }
+        MergeFontAwesomeSolid(io, fontSizePixels);
 
-        // Markdown preview style variants. Each variant is a separate ImFont (no
-        // MergeMode) so the renderer can PushFont/PopFont per inline run. Symbol
-        // and emoji merging is intentionally skipped on variants — the atlas would
-        // ~5x in size; bold / italic text containing emoji is rare enough to live
-        // with the missing-glyph fallback for now.
-        const FontVariantPaths variants = GetFontVariantPaths(fontName);
-        ImFontConfig variant_cfg;
-        variant_cfg.GlyphRanges = glyph_ranges.Data;
-        ImFont* boldFont = nullptr;
-        ImFont* italicFont = nullptr;
-        ImFont* boldItalicFont = nullptr;
-        if (variants.bold && FileExistsUtf8(variants.bold)) {
-            boldFont = io.Fonts->AddFontFromFileTTF(variants.bold, fontSizePixels, &variant_cfg, glyph_ranges.Data);
-        }
-        if (variants.italic && FileExistsUtf8(variants.italic)) {
-            italicFont = io.Fonts->AddFontFromFileTTF(variants.italic, fontSizePixels, &variant_cfg, glyph_ranges.Data);
-        }
-        if (variants.boldItalic && FileExistsUtf8(variants.boldItalic)) {
-            boldItalicFont =
-                io.Fonts->AddFontFromFileTTF(variants.boldItalic, fontSizePixels, &variant_cfg, glyph_ranges.Data);
-        }
+        const MarkdownVariantFonts variantFonts =
+            BuildMarkdownVariantFonts(io, fontName, fontSizePixels, glyph_ranges.Data);
+        ImFont* boldFont = variantFonts.bold;
+        ImFont* italicFont = variantFonts.italic;
+        ImFont* boldItalicFont = variantFonts.boldItalic;
+        ImFont* monoFont = variantFonts.mono;
 
-        // Monospace pin: Consolas always, regardless of body font choice. This is
-        // what users expect for inline `code` and ```code blocks``` in the preview.
-        ImFont* monoFont = nullptr;
-        static const char kConsolasPath[] = "C:\\Windows\\Fonts\\consola.ttf";
-        if (FileExistsUtf8(kConsolasPath)) {
-            monoFont = io.Fonts->AddFontFromFileTTF(kConsolasPath, fontSizePixels, &variant_cfg, glyph_ranges.Data);
-        }
-
-        // Bug-report censor font. ImGui 1.92 bakes glyphs ON DEMAND, so restricting
-        // the glyph range does NOT stop other glyphs loading — instead we load the
-        // body font + merged FA normally, then AddRemapChar() every TEXT codepoint to
-        // U+2588 (█). When this font is active the whole UI renders as blocks while FA
-        // icons stay real. Used for the bug-report screenshot capture frame.
-        ImFont* redactFont = nullptr;
-        {
-            ImFontConfig redact_cfg;
-            redact_cfg.GlyphRanges = glyph_ranges.Data;
-            redactFont = io.Fonts->AddFontFromFileTTF(path, fontSizePixels, &redact_cfg, glyph_ranges.Data);
-            if (redactFont != nullptr) {
-                const std::string faRedactPath = ResolveAssetTtfPath("fa-solid-900.ttf");
-                if (!faRedactPath.empty()) {
-                    ImFontConfig fa_redact;
-                    fa_redact.MergeMode = true;
-                    fa_redact.PixelSnapH = true;
-                    fa_redact.GlyphOffset.y = 1.0f;
-                    fa_redact.GlyphMinAdvanceX = fontSizePixels;
-                    io.Fonts->AddFontFromFileTTF(faRedactPath.c_str(), fontSizePixels, &fa_redact, kFontAwesomeRange);
-                }
-                redactFont->FallbackChar = static_cast<ImWchar>(0x2588);
-                // Point every text codepoint at the block glyph; keep the FA icon
-                // range (0xe005..0xf8ff) and the block itself real.
-                for (const ImWchar* gr = glyph_ranges.Data; gr[0] != 0 && gr[1] != 0; gr += 2) {
-                    for (unsigned cp = gr[0]; cp <= gr[1]; ++cp) {
-                        if ((cp >= 0xe005 && cp <= 0xf8ff) || cp == 0x2588) {
-                            continue;
-                        }
-                        redactFont->AddRemapChar(static_cast<ImWchar>(cp), static_cast<ImWchar>(0x2588));
-                    }
-                }
-            }
-        }
+        ImFont* redactFont = BuildRedactionFont(io, path, fontSizePixels, glyph_ranges.Data);
 
         g_PreviewFonts.Regular = newFont;
         g_PreviewFonts.Bold = boldFont ? boldFont : newFont;

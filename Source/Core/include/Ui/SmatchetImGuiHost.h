@@ -12,6 +12,7 @@
 class AppController;
 class PluginHost;
 class SmatchetUI;
+struct TrackerConfig;
 
 enum class SmatchetRendererBackend : uint32_t { Unknown = 0, Dx12 = 1, Ps5 = 2, Xbox = 3 };
 
@@ -70,7 +71,8 @@ class SmatchetImGuiHost {
     void AddMouseWheel(float wheelX, float wheelY);
     void SetKeyDown(int imguiKey, bool isDown);
     void SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey);
-    /** Atomically apply modifier keys + key-down in one ImGui mutex hold (avoids render-thread NewFrame clearing modifiers). */
+    /** Atomically apply modifier keys + key-down in one ImGui mutex hold (avoids render-thread NewFrame clearing
+     * modifiers). */
     void ApplyKeyChordDown(int imguiKey, bool ctrl, bool shift, bool alt, bool superKey);
     /** Atomically apply modifier keys + key-up in one ImGui mutex hold. */
     void ApplyKeyChordUp(int imguiKey, bool ctrl, bool shift, bool alt, bool superKey);
@@ -106,6 +108,15 @@ class SmatchetImGuiHost {
 
   private:
     void DrainCommandQueue(std::size_t maxCount);
+
+#if defined(_WIN32)
+    // Initialize() sub-steps (Windows-only; split out for function-size compliance). Each runs in
+    // the same order and under the same preconditions as the pre-decomposition inline body.
+    void initResolveStorageDirs(const InitOptions& options);
+    bool initValidateRenderer(const InitOptions& options, std::string& outError);
+    bool initImGuiContextAndBackend(const InitOptions& options, std::string& outError);
+    void initRegisterPlugins(const InitOptions& options, const TrackerConfig& cfg);
+#endif
 
     struct Impl;
     std::unique_ptr<Impl> ImplData;

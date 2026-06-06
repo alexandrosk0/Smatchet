@@ -29,14 +29,13 @@ class SmatchetPerfUi {
     /// Per-scope EMA so the table is readable; per-frame `calls` / `lifetimeHits` come from the monitor.
     void buildSmoothedCpuRows(const std::vector<UiPerfRow>& raw, std::vector<UiPerfRow>& out, double dtSec);
 
+    // CPU / Network tab bodies, split out of DrawWindow for function-size compliance. Each owns its
+    // own BeginTabItem/EndTabItem pair and runs inside the active BeginTabBar scope.
+    void drawCpuTab(double dtSec);
+    void drawNetworkTab();
+
     std::unordered_map<std::string, CpuSmoothBucket> cpuSmooth_;
     double smoothFps_ = 0.0;
     double smoothFrameMs_ = 0.0;
     bool fpsSmoothInit_ = false;
 };
-
-
-
-
-
-

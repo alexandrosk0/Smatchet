@@ -335,12 +335,14 @@ static int PreviewEnterBlock(MD_BLOCKTYPE type, void* detail, void* ud) {
     return 0;
 }
 
-static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
-    auto& s = *static_cast<PreviewState*>(ud);
+// Table block-leave handling: snapshot a finished table into a plan block (baking header-bold
+// marks), close cells, and ignore everything inside a nested skipped table. Returns true when the
+// type (or current skipped-table state) is fully handled, so PreviewLeaveBlock can early-return.
+static bool PreviewTryLeaveTableBlock(PreviewState& s, MD_BLOCKTYPE type) {
     if (type == MD_BLOCK_TABLE) {
         if (s.tableDepth > 1) {
             --s.tableDepth;
-            return 0; // closing a nested skipped table
+            return true; // closing a nested skipped table
         }
         // Snapshot the collected table into a plan block. Header-bold
         // marker mutation is baked in here so RenderPlan stays mutation-free.
@@ -366,11 +368,11 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
         s.tableColCount = 0;
         s.tableDepth = 0;
         s.activeRuns = nullptr;
-        return 0;
+        return true;
     }
     // While inside a nested skipped table, ignore everything.
     if (s.tableDepth > 1)
-        return 0;
+        return true;
     if (type == MD_BLOCK_TH || type == MD_BLOCK_TD) {
         if (s.tableDepth == 1) {
             if (!s.tableRows.empty()) {
@@ -381,9 +383,17 @@ static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
             s.tableCellRuns.clear();
             s.activeRuns = nullptr;
         }
-        return 0;
+        return true;
     }
     if (type == MD_BLOCK_TR || type == MD_BLOCK_THEAD || type == MD_BLOCK_TBODY) {
+        return true;
+    }
+    return false;
+}
+
+static int PreviewLeaveBlock(MD_BLOCKTYPE type, void* /*detail*/, void* ud) {
+    auto& s = *static_cast<PreviewState*>(ud);
+    if (PreviewTryLeaveTableBlock(s, type)) {
         return 0;
     }
     switch (type) {
