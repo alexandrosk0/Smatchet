@@ -12,9 +12,7 @@
 namespace IssueTableSerializer {
 
 std::string LowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
 
@@ -41,15 +39,12 @@ std::string ResolveColumnKey(const std::string& header, const std::vector<Tracke
         return "__existing_issue_key__";
     }
 
-    auto idIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) {
-        return LowerAscii(f.Id) == low;
-    });
+    auto idIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return LowerAscii(f.Id) == low; });
     if (idIt != catalog.end())
         return idIt->Id;
 
-    auto nameIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) {
-        return LowerAscii(f.Name) == low;
-    });
+    auto nameIt =
+        std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return LowerAscii(f.Name) == low; });
     if (nameIt != catalog.end())
         return nameIt->Id;
     if (low == "project" || low == "projectkey" || low == "project key")
@@ -170,9 +165,8 @@ std::vector<std::vector<std::string>> ParseDelimited(const std::string& text, ch
 }
 
 std::string EscapeCsvCell(const std::string& s, char delim) {
-    bool needsQuote = std::any_of(s.begin(), s.end(), [delim](char c) {
-        return c == delim || c == '"' || c == '\n' || c == '\r';
-    });
+    bool needsQuote =
+        std::any_of(s.begin(), s.end(), [delim](char c) { return c == delim || c == '"' || c == '\n' || c == '\r'; });
     if (!needsQuote)
         return s;
     std::string out;
@@ -201,16 +195,13 @@ ImportResult ParseCsvOrTsv(const std::string& text, char delim, const std::vecto
     const auto& header = rows.front();
     std::vector<std::string> keys;
     keys.reserve(header.size());
-    std::transform(header.begin(), header.end(), std::back_inserter(keys), [&](const auto& h) {
-        return ResolveColumnKey(h, catalog);
-    });
+    std::transform(header.begin(), header.end(), std::back_inserter(keys),
+                   [&](const auto& h) { return ResolveColumnKey(h, catalog); });
 
     for (size_t r = 1; r < rows.size(); ++r) {
         const auto& row = rows[r];
         // Skip fully empty lines (e.g. trailing blank).
-        bool anyNonEmpty = std::any_of(row.begin(), row.end(), [](const auto& c) {
-            return !Trim(c).empty();
-        });
+        bool anyNonEmpty = std::any_of(row.begin(), row.end(), [](const auto& c) { return !Trim(c).empty(); });
         if (!anyNonEmpty)
             continue;
 
@@ -228,6 +219,44 @@ ImportResult ParseCsvOrTsv(const std::string& text, char delim, const std::vecto
         result.Rows.push_back(std::move(ir));
     }
     return result;
+}
+
+// Coerce a single JSON value to the flat string the import draft stores.
+// Simple arrays such as strings or labels flatten to a comma-separated list,
+// recognising value-bearing and name-bearing objects; other objects dump raw.
+std::string JsonValueToImportString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number()) {
+        return std::to_string(value.get<double>());
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? "true" : "false";
+    }
+    if (value.is_null()) {
+        return std::string();
+    }
+    if (value.is_array()) {
+        std::string joined;
+        for (const auto& el : value) {
+            if (!joined.empty())
+                joined.push_back(',');
+            if (el.is_string())
+                joined += el.get<std::string>();
+            else if (el.is_object() && el.contains("value") && el["value"].is_string())
+                joined += el["value"].get<std::string>();
+            else if (el.is_object() && el.contains("name") && el["name"].is_string())
+                joined += el["name"].get<std::string>();
+            else
+                joined += el.dump();
+        }
+        return joined;
+    }
+    return value.dump();
 }
 
 ImportResult ParseJson(const std::string& text, const std::vector<TrackerField>& catalog,
@@ -282,36 +311,7 @@ ImportResult ParseJson(const std::string& text, const std::vector<TrackerField>&
                 const std::string key = ResolveColumnKey(it.key(), catalog);
                 if (key.empty())
                     continue;
-                std::string value;
-                if (it->is_string()) {
-                    value = it->get<std::string>();
-                } else if (it->is_number_integer()) {
-                    value = std::to_string(it->get<long long>());
-                } else if (it->is_number()) {
-                    value = std::to_string(it->get<double>());
-                } else if (it->is_boolean()) {
-                    value = it->get<bool>() ? "true" : "false";
-                } else if (it->is_null()) {
-                    value.clear();
-                } else if (it->is_array()) {
-                    // Flatten simple arrays (strings / labels) to comma-separated.
-                    std::string joined;
-                    for (const auto& el : *it) {
-                        if (!joined.empty())
-                            joined.push_back(',');
-                        if (el.is_string())
-                            joined += el.get<std::string>();
-                        else if (el.is_object() && el.contains("value") && el["value"].is_string())
-                            joined += el["value"].get<std::string>();
-                        else if (el.is_object() && el.contains("name") && el["name"].is_string())
-                            joined += el["name"].get<std::string>();
-                        else
-                            joined += el.dump();
-                    }
-                    value = joined;
-                } else {
-                    value = it->dump();
-                }
+                const std::string value = JsonValueToImportString(*it);
                 ApplyKeyValueToDraft(ir.Draft, key, value);
             }
         };
@@ -421,9 +421,3 @@ std::string SerializeTickets(const std::vector<CachedTicket>& tickets, const std
 }
 
 } // namespace IssueTableSerializer
-
-
-
-
-
-

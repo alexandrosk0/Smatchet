@@ -374,29 +374,34 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                                  outWarning, nullptr);
 }
 
-std::vector<CachedTicket>
-FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
-                      const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
-                      std::string* outFetchError, std::string* outWarning,
-                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage) {
-    if (outFullSyncCompleted) {
-        *outFullSyncCompleted = false;
-    }
+namespace {
 
-    if (pat.empty()) {
-        if (outFetchError) {
-            *outFetchError = kPatMissingError;
-        }
-        return {};
-    }
+// Result of translating JQL into the GraphQL fetch shape: the resolved query
+// string, the source-run flags from the fetch plan, and whether translation
+// failed. On failure the error is already written to the fetch-error out param.
+struct GitHubFetchSetup {
+    bool fatal = false;
+    std::string graphQlQuery;
+    bool includePullRequests = false;
+    bool includeCommits = false;
+    bool includeIssuesOrPullRequests = false;
+};
 
-    // Translate JQL once; warnings are non-fatal.
+// Translate JQL once and build the GraphQL query + run flags. Warnings are
+// non-fatal and appended to `outWarning`; a translation failure sets
+// `outFetchError` and returns `fatal = true`.
+GitHubFetchSetup BuildGitHubFetchSetup(const std::string& owner, const std::string& repo,
+                                       const std::string& jqlQueryOrEmpty, std::string* outFetchError,
+                                       std::string* outWarning) {
+    GitHubFetchSetup setup;
+
     const JqlToGitHubResult translated = TranslateJqlToGitHubSearch(jqlQueryOrEmpty, owner, repo);
     if (!translated.Ok) {
         if (outFetchError) {
             *outFetchError = std::string("JQL translation failed: ") + translated.Error;
         }
-        return {};
+        setup.fatal = true;
+        return setup;
     }
     if (!translated.Warning.empty()) {
         AppendOutWarning(outWarning, translated.Warning);
@@ -424,14 +429,44 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
     if (graphQlQuery.empty()) {
         graphQlQuery = "is:issue is:open";
     }
+    setup.graphQlQuery = std::move(graphQlQuery);
+    setup.includePullRequests = plan.includePullRequests;
+    setup.includeCommits = plan.includeCommits;
+    setup.includeIssuesOrPullRequests = plan.includeIssuesOrPullRequests;
+    return setup;
+}
+
+} // namespace
+
+std::vector<CachedTicket>
+FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
+                      const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
+                      std::string* outFetchError, std::string* outWarning,
+                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage) {
+    if (outFullSyncCompleted) {
+        *outFullSyncCompleted = false;
+    }
+
+    if (pat.empty()) {
+        if (outFetchError) {
+            *outFetchError = kPatMissingError;
+        }
+        return {};
+    }
+
+    const GitHubFetchSetup setup = BuildGitHubFetchSetup(owner, repo, jqlQueryOrEmpty, outFetchError, outWarning);
+    if (setup.fatal) {
+        return {};
+    }
+    const std::string& graphQlQuery = setup.graphQlQuery;
     const std::string endpoint = ResolveGraphQlEndpoint(baseUrl);
     const cpr::Header headers = BuildGitHubHeaders(pat);
 
     // github-commit-tracker-rows — orchestrate up to two row sources: the
     // GraphQL issue/PR search and the REST commit fetch. The terminal `isLast`
     // emission must fire exactly once total; the final source that runs owns it.
-    const bool willRunCommits = plan.includeCommits; // already downgraded if owner/repo missing
-    const bool willRunIssues = plan.includeIssuesOrPullRequests;
+    const bool willRunCommits = setup.includeCommits; // already downgraded if owner/repo missing
+    const bool willRunIssues = setup.includeIssuesOrPullRequests;
 
     std::vector<CachedTicket> results;
     bool emittedTerminal = false;
@@ -460,7 +495,7 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
     if (willRunIssues) {
         bool fatal = false;
         issuesFullSync =
-            RunGraphQlIssueSearch(endpoint, headers, graphQlQuery, owner, repo, plan.includePullRequests,
+            RunGraphQlIssueSearch(endpoint, headers, graphQlQuery, owner, repo, setup.includePullRequests,
                                   /*isFinalSource=*/!willRunCommits, results, emit, outFetchError, outWarning, &fatal);
         if (fatal) {
             emitTerminalIfNeeded();
@@ -488,7 +523,7 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
         *outFullSyncCompleted = anySourceRan && issuesFullSync && commitsFullSync;
     }
     LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu rows (issues=%d commits=%d includePRs=%d)",
-             results.size(), willRunIssues ? 1 : 0, willRunCommits ? 1 : 0, plan.includePullRequests ? 1 : 0);
+             results.size(), willRunIssues ? 1 : 0, willRunCommits ? 1 : 0, setup.includePullRequests ? 1 : 0);
     return results;
 }
 

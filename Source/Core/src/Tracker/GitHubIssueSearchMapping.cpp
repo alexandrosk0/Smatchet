@@ -62,16 +62,12 @@ std::string JsonNestedString(const nlohmann::json& parent, const char* outerKey,
     return JsonString(*it, innerKey);
 }
 
-} // namespace
-
-CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue, const std::string& ownerHint,
-                                                     const std::string& repoHint) {
-    CachedTicket ticket;
+// Resolve the stable ticket id. Cross-repo path embeds the repo in
+// `repository_url` of the form "https://api.github.com/repos/<owner>/<repo>".
+std::string ResolveTicketId(const nlohmann::json& issue, const std::string& ownerHint, const std::string& repoHint) {
     std::string owner = ownerHint;
     std::string repo = repoHint;
 
-    // Cross-repo path embeds the repo in `repository_url` of the form
-    // "https://api.github.com/repos/<owner>/<repo>".
     const std::string repoUrl = JsonString(issue, "repository_url");
     if (!repoUrl.empty()) {
         const std::size_t reposPos = repoUrl.find("/repos/");
@@ -87,10 +83,51 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
 
     const std::string number = IssueNumberString(issue);
     if (!owner.empty() && !repo.empty() && number != "0") {
-        ticket.id = owner + "/" + repo + "#" + number;
-    } else {
-        ticket.id = std::string("#") + number;
+        return owner + "/" + repo + "#" + number;
     }
+    return std::string("#") + number;
+}
+
+// Derive the status string for a PR. For PRs, status encodes the merge state
+// (open / closed / merged-PR) via the `pull_request.merged_at` sub-field.
+std::string ResolvePullRequestStatus(const nlohmann::json& issue, const std::string& state) {
+    if (state == "open") {
+        return "open";
+    }
+    const std::string mergedAt = JsonNestedString(issue, "pull_request", "merged_at");
+    return mergedAt.empty() ? std::string("closed") : std::string("merged-PR");
+}
+
+// Collect issue labels into the comma-separated string the grid stores.
+std::string CollectLabels(const nlohmann::json& issue) {
+    std::string labelStr;
+    if (issue.is_object() && issue.contains("labels") && issue["labels"].is_array()) {
+        for (const auto& lbl : issue["labels"]) {
+            std::string name;
+            if (lbl.is_object()) {
+                name = JsonString(lbl, "name");
+            } else if (lbl.is_string()) {
+                name = lbl.get<std::string>();
+            }
+            if (name.empty()) {
+                continue;
+            }
+            if (!labelStr.empty()) {
+                labelStr.append(", ");
+            }
+            labelStr.append(name);
+        }
+    }
+    return labelStr;
+}
+
+} // namespace
+
+CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue, const std::string& ownerHint,
+                                                     const std::string& repoHint) {
+    CachedTicket ticket;
+
+    ticket.id = ResolveTicketId(issue, ownerHint, repoHint);
     ticket.fieldValues["key"] = ticket.id;
 
     const bool isPr = IsPullRequest(issue);
@@ -111,16 +148,7 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     // merged-PR). For plain issues, pass through the raw GitHub state.
     const std::string state = JsonString(issue, "state");
     if (isPr) {
-        std::string status;
-        if (state == "open") {
-            status = "open";
-        } else {
-            // closed branch — distinguish merged vs not-merged via the
-            // `pull_request.merged_at` sub-field (only set on merged PRs).
-            const std::string mergedAt = JsonNestedString(issue, "pull_request", "merged_at");
-            status = mergedAt.empty() ? std::string("closed") : std::string("merged-PR");
-        }
-        ticket.fieldValues["status"] = status;
+        ticket.fieldValues["status"] = ResolvePullRequestStatus(issue, state);
         ticket.fieldValues[kIsPullRequestSentinel] = "1";
     } else {
         ticket.fieldValues["status"] = state;
@@ -141,25 +169,7 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     ticket.fieldValues["reporter"] = creatorLogin;
     ticket.fieldValues["author"] = creatorLogin;
 
-    std::string labelStr;
-    if (issue.is_object() && issue.contains("labels") && issue["labels"].is_array()) {
-        for (const auto& lbl : issue["labels"]) {
-            std::string name;
-            if (lbl.is_object()) {
-                name = JsonString(lbl, "name");
-            } else if (lbl.is_string()) {
-                name = lbl.get<std::string>();
-            }
-            if (name.empty()) {
-                continue;
-            }
-            if (!labelStr.empty()) {
-                labelStr.append(", ");
-            }
-            labelStr.append(name);
-        }
-    }
-    ticket.fieldValues["labels"] = labelStr;
+    ticket.fieldValues["labels"] = CollectLabels(issue);
 
     std::string body = JsonString(issue, "body");
     if (body.size() > kGitHubBodyMaxBytes) {

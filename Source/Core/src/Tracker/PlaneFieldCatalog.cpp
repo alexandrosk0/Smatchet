@@ -347,6 +347,21 @@ void PopulateUserFieldOptions(std::vector<TrackerField>& fields, const std::vect
     }
 }
 
+// Widen neutral id-and-name pairs into a typed cache vector. Works for any of
+// the simple cache structs that carry an Id and a Name member.
+template <typename CachedT>
+std::vector<CachedT> PairsToCached(std::vector<std::pair<std::string, std::string>>& pairs) {
+    std::vector<CachedT> out;
+    out.reserve(pairs.size());
+    for (auto& p : pairs) {
+        CachedT c;
+        c.Id = std::move(p.first);
+        c.Name = std::move(p.second);
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
 } // namespace
 
 bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKeyArg,
@@ -430,30 +445,9 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
 
     outCatalog.Fields = std::move(fields);
 
-    std::vector<CachedState> localStates;
-    localStates.reserve(statePairs.size());
-    for (auto& p : statePairs) {
-        CachedState cs;
-        cs.Id = std::move(p.first);
-        cs.Name = std::move(p.second);
-        localStates.push_back(std::move(cs));
-    }
-    std::vector<CachedCycle> localCycles;
-    localCycles.reserve(cyclePairs.size());
-    for (auto& p : cyclePairs) {
-        CachedCycle cc;
-        cc.Id = std::move(p.first);
-        cc.Name = std::move(p.second);
-        localCycles.push_back(std::move(cc));
-    }
-    std::vector<CachedLabel> localLabels;
-    localLabels.reserve(labelPairs.size());
-    for (auto& p : labelPairs) {
-        CachedLabel cl;
-        cl.Id = std::move(p.first);
-        cl.Name = std::move(p.second);
-        localLabels.push_back(std::move(cl));
-    }
+    std::vector<CachedState> localStates = PairsToCached<CachedState>(statePairs);
+    std::vector<CachedCycle> localCycles = PairsToCached<CachedCycle>(cyclePairs);
+    std::vector<CachedLabel> localLabels = PairsToCached<CachedLabel>(labelPairs);
 
     // Securely publish the fully loaded local cache results under a quick brief lock.
     {
