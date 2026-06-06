@@ -4,8 +4,6 @@
 >
 > **Status**: `active`
 >
-> **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section.
->
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan-doc family.
 
 ## Context
@@ -47,7 +45,7 @@ Pi pays zero (direct import).
 4. `docs/harness/codex/hooks.json` — **new**, Codex adapter config (PreToolUse `^Bash$|^apply_patch$|^Edit$|^Write$` + SessionStart + PostToolUse + Stop → `node guard.mjs … --harness codex`).
 5. `docs/harness/codex/hooks-equivalent.md` — update: the drift-guard now uses a Codex PreToolUse hook; the lint-scanner stays on the git pre-commit hook.
 6. `project.config.json` — add `"pi"` to `harness.supported` (`codex` already listed).
-7. `agents/scripts/core/test-session-guard.sh` — **new**, fixture decision tests (ports #913's 7 functional cases against the core + a cross-harness sibling-count case).
+7. `agents/scripts/core/test-session-guard.sh` — **new**, fixture decision tests (ports #913's functional decision cases — 8 scenarios — against the core + a cross-harness sibling-count case).
 8. `docs/harness/claude-code/hooks/{guard-head-drift,resync-head-baseline,guard-shared-tree}.sh` + `agents/scripts/core/{session-tree-banner,session-heartbeat}.sh` — **delete** (logic → core).
 9. `docs/harness/claude-code/settings.json.tmpl` — swap the 5 bash-hook entries → `node guard.mjs … --harness claude` (SessionStart / PreToolUse Edit|Write|MultiEdit|NotebookEdit + Bash / PostToolUse Bash / Stop).
 10. `agents/scripts/core/setup-harness.sh` — `setup_claude_code`: drop the 3 guard-hook `copy_template` lines + add a `node` presence check; `setup_pi`: copy `index.ts` + `guard.mjs` into `.pi/extensions/session-guard/`; `setup_codex`: deploy `.codex/hooks.json`.
@@ -94,7 +92,7 @@ Per `AGENTS.md` § Verification automation. Buckets (this is agentic-shell, so n
 
 - **Bucket A (pure-logic)**: `N/A — no Source/Core helper` (the equivalent is the fixture suite below).
 - **Bucket E (ImGui Test Engine)**: `N/A — no UI surface`.
-- **Bash/Node-driver scenario**: `agents/scripts/core/test-session-guard.sh` feeds normalized events to `node guard.mjs … --harness pi|claude|codex` and asserts #913's 7 cases (drift Edit→deny, no-direct-commit→deny, clean→allow, escape-env→allow, drifted-move→deny, resync-clears, aggressor-sibling→deny, solo→allow) + a cross-harness sibling-count case + a valid-deny-JSON check via `jq -e` for claude & codex shims.
+- **Bash/Node-driver scenario**: `agents/scripts/core/test-session-guard.sh` feeds normalized events to `node guard.mjs … --harness pi|claude|codex` and asserts the #913 decision cases — 8 scenarios: drift Edit→deny, no-direct-commit→deny, clean→allow, escape-env→allow, drifted-move→deny, resync-clears, aggressor-sibling→deny, solo→allow — plus a cross-harness sibling-count case + a valid-deny-JSON check via `jq -e` for claude & codex shims.
 - **Build gate**: `N/A — no C++ target changes`; instead `node --check guard.mjs` + `jq -e` on `docs/harness/codex/hooks.json` + `tsc --noEmit` on `index.ts` if a TS toolchain is present.
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint). A red doc-validation job blocks merge even though non-required.
 - **Plan stress-test — `grill-with-docs` (keep this bullet)**: this plan was stress-tested across three explicit triple-check passes in-session (Pi + Codex runtime contracts verified against upstream docs; ESM/jiti, `project.env_prefix`, tool-name + deny-JSON schemas corrected). Re-run `grill-with-docs` before the *implementation* PR if the domain model shifts.
@@ -121,5 +119,5 @@ filenames (being deleted) + `.claude/.active-sessions` (being renamed), and revi
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status → `shipped`,
-2. `git mv docs/plans/active/session-guard-agnostic.md docs/plans/shipped/session-guard-agnostic.md`,
+2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
 3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
