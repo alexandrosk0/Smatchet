@@ -3,7 +3,7 @@
 # `agents/` tree and copying small adapter templates from
 # `docs/harness/<name>/`. Idempotent.
 #
-# Supported harnesses: claude-code | codex | cursor
+# Supported harnesses: claude-code | codex | cursor | pi
 #
 # Why links: keeps `agents/*.md` the single source of truth — edits to canonical
 # agent definitions are visible to the harness immediately, no sync step.
@@ -25,6 +25,9 @@ Harnesses:
   codex         No local setup needed — Codex reads AGENTS.md directly per
                 the agents.md spec. Run for confirmation.
   cursor        Generate .cursor/rules/agents.mdc.
+  pi            Generate .pi/agents/*.md (pi-native, from agents/{core,project}/)
+                + install the subagent extension into .pi/extensions/ with
+                project-local agents enabled (trusted-repo defaults).
 
 Idempotent — re-running is safe. Edits to .claude/settings.json (or other
 templates) survive: the script skips copies if the local file differs from
@@ -267,6 +270,68 @@ install_git_hooks() {
   fi
 }
 
+# --- pi (earendil-works/pi-coding-agent) -----------------------------------
+# Two pieces, both written under the gitignored .pi/ (regenerated, never
+# committed — mirrors .claude/ / .codex/ / .cursor/):
+#   1. .pi/agents/*.md   pi-native agent files transformed from the canonical
+#                        agents/{core,project}/ tree (gen-pi-agents.py).
+#   2. .pi/extensions/subagent/  the stock subagent example, copied from the
+#                        installed pi package and PATCHED so project-local
+#                        agents load without per-call opt-in (agentScope "both",
+#                        confirmProjectAgents false). Only safe because this is a
+#                        trusted repo; the relaxed default stays scoped to .pi/.
+# Resolve the installed pi package (for the subagent example source).
+_pi_pkg_dir() {
+    local cand
+  for cand in \
+      "${PI_PACKAGE_DIR:-}" \
+      "$(npm root -g 2>/dev/null)/@earendil-works/pi-coding-agent" \
+      "$APPDATA/npm/node_modules/@earendil-works/pi-coding-agent" \
+      "$HOME/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent" \
+      "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent"; do
+    [[ -n "$cand" && -d "$cand/examples/extensions/subagent" ]] && { echo "$cand"; return 0; }
+  done
+  return 1
+}
+
+setup_pi() {
+  echo "Setting up pi adapter at .pi/ ..."
+
+  # 1. Generate the pi-native agent files.
+  if command -v python3 >/dev/null 2>&1; then
+    python3 agents/scripts/core/gen-pi-agents.py "$ROOT" "$ROOT/.pi/agents"
+  else
+    echo "  error: python3 not found — needed to generate .pi/agents/*.md" >&2
+    exit 1
+  fi
+
+  # 2. Install + patch the subagent extension.
+  local pkg dst=".pi/extensions/subagent"
+  if pkg="$(_pi_pkg_dir)"; then
+    mkdir -p "$dst"
+    copy_template "$pkg/examples/extensions/subagent/index.ts"  "$dst/index.ts"
+    copy_template "$pkg/examples/extensions/subagent/agents.ts" "$dst/agents.ts"
+    # Patch the two security defaults so this trusted repo's project agents
+    # load with no per-call opt-in. Idempotent (the markers vanish after the
+    # first patch, so a re-run is a no-op).
+    if grep -q 'params.agentScope ?? "user"' "$dst/index.ts"; then
+      sed -i 's/params.agentScope ?? "user"/params.agentScope ?? "both"/' "$dst/index.ts"
+      sed -i 's/params.confirmProjectAgents ?? true/params.confirmProjectAgents ?? false/' "$dst/index.ts"
+      # Cosmetic: keep the renderCall scope label honest (display-only path).
+      sed -i 's/args.agentScope ?? "user"/args.agentScope ?? "both"/' "$dst/index.ts"
+      echo "  patch      $dst/index.ts (agentScope=both, confirmProjectAgents=false)"
+    else
+      echo "  patch      $dst/index.ts already patched (skip)"
+    fi
+  else
+    echo "  WARN  pi package not found — set PI_PACKAGE_DIR to its path and re-run." >&2
+    echo "        .pi/agents/*.md were still generated; install the subagent" >&2
+    echo "        extension manually per docs/harness/pi/README.md." >&2
+  fi
+
+  echo "Done. .pi/ ready for pi. See docs/harness/pi/README.md for usage."
+}
+
 setup_codex() {
   echo "Codex / OpenAI Agents reads AGENTS.md + agents/*.md directly per the"
   echo "agents.md spec — no local adapter required."
@@ -333,8 +398,9 @@ case "$HARNESS" in
   claude-code) setup_claude_code ;;
   codex)       setup_codex ;;
   cursor)      setup_cursor ;;
+  pi)          setup_pi ;;
   *)
-    echo "error: unknown harness '$HARNESS'. Supported: claude-code | codex | cursor" >&2
+    echo "error: unknown harness '$HARNESS'. Supported: claude-code | codex | cursor | pi" >&2
     echo "Run: bash agents/scripts/core/setup-harness.sh --help" >&2
     exit 1
     ;;
