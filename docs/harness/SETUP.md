@@ -18,6 +18,22 @@ Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`) are 
 
 Windows users can substitute `pwsh agents/scripts/core/setup-harness.ps1 <name>`.
 
+## Concurrent-session HEAD-drift guard — INACTIVE until first setup
+
+> **Bootstrap hole:** the concurrent-session HEAD-drift guard is **INACTIVE until you run `setup-harness` once** in a clone. Until then, the "protected even if you forget to use a worktree" guarantee does not hold.
+
+The guard ([`guard-head-drift.sh`](claude-code/hooks/guard-head-drift.sh)) is the `PreToolUse` hook that **denies** an Edit/Write/commit when another session, your terminal, or a janitor moves the shared HEAD under you — the fix shipped in [PR #913](https://github.com/alexandrosk0/Smatchet/pull/913). It lives in the **gitignored** `.claude/` adapter, which **only `setup-harness.sh claude-code` provisions**. A fresh clone therefore has no hooks at all, so the guard cannot self-bootstrap (there is no committed hook to fire and re-wire itself).
+
+Close the hole:
+
+| Path | What closes it |
+|---|---|
+| **Recommended launcher** | `nsc <slug>` / `pwsh scripts/dev/worktree.ps1 new <slug>` provisions the new worktree **and**, on first run, the integration tree's `.claude/` — so using the standard launcher closes the hole automatically, no remembering required. |
+| **Working directly in the main clone** | Run `bash agents/scripts/core/setup-harness.sh claude-code` **once** before relying on the guard. |
+| **Check anytime** | `bash agents/scripts/core/check-harness-provisioned.sh` warns (exit 1) when the current tree's guard hook is missing and prints the fix; exit 0 when wired. |
+
+Guard mechanics + recovery: [`process-rules.md`](../agent-rules/process-rules.md) § Concurrent interactive sessions.
+
 ## Required CLI tools
 
 `setup-harness.sh` runs `scripts/dev/check-required-tools.sh` as its first step. The probe fails loudly if any of these isn't on `PATH`:
