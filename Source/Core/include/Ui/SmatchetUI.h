@@ -241,7 +241,22 @@ class SmatchetUI {
     void drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx);
     void drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx);
     void drawViewsSortTab(ViewsDashboardDrawCtx& ctx);
+    // Sort-tab sub-sections split out of drawViewsSortTab under the function-size cap: the
+    // drag-reorderable per-key rows, and the "+ Add sort key" popup picker.
+    void drawViewsSortRows(ViewsDashboardDrawCtx& ctx, ViewDefinition* mutableActive);
+    void drawViewsAddSortKeyPopup(ViewsDashboardDrawCtx& ctx, ViewDefinition* mutableActive);
     void drawViewsModals(ViewsDashboardDrawCtx& ctx);
+    // Action + chrome helpers split out of drawViewsDashboardWindow under the function-size cap. The
+    // five "views*" methods hold the former action-closure bodies (the lambdas bound into
+    // ViewsDashboardDrawCtx now just forward to these); the banner + shortcut helpers are chrome.
+    void viewsApplyAndSync(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
+    void viewsDiscardChanges(UiDrawSession& d);
+    void viewsActivateView(AppController& app, UiDrawSession& d, const std::string& id);
+    void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                              const std::string& id);
+    void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);
+    void drawViewsConnectivityBanner(AppController& app, UiDrawSession& d);
+    void handleViewsDashboardShortcuts(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
     // the pre-existing SMATCHET_UI_PERF_SCOPE seams VERBATIM. Positional-ImGui Begin/End
@@ -261,6 +276,12 @@ class SmatchetUI {
     void drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const CachedTicket& ticket,
                                    const TicketGridColumn& column, int clippedRow, int colIndex,
                                    bool idKeySelectableSelected, bool activeIssueWasThisRow, float rowHeight);
+    // Renders a non-Id (data) grid cell: write-state badge, saving vs editable value render, and the
+    // trailing rect-select hit-box. Split out of drawActiveProjectGridCell under the function-size cap.
+    // Cell geometry passed as floats (no imgui include in this header).
+    void drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const CachedTicket& ticket,
+                                        const TicketGridColumn& column, int clippedRow, int colIndex, float cellOriginX,
+                                        float cellWidth);
     // Google-Sheets-style per-cell selection gesture (formerly the handleCellRectSel
     // lambda). Cell geometry passed as floats to avoid an imgui include in this header.
     void handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx, float cellOriginX,
@@ -269,6 +290,12 @@ class SmatchetUI {
     void drawActiveProjectGridNewIssue(ActiveProjectDrawCtx& ctx);
     void drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx);
     void drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx);
+    // View-switch + grid-context-change bookkeeping (resets unsaved-edit flags, recomputes
+    // gridSortEnvironmentChanged). Split out of drawActiveProjectWindow under the function-size cap.
+    void applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx);
+    // The TicketGrid BeginTable block: setup / sort / rows / new-issue / post section helpers plus the
+    // post-layout inside-table click detection. Split out of drawActiveProjectWindow under the cap.
+    void drawActiveProjectTable(ActiveProjectDrawCtx& ctx);
 
     /// Hoisted singleton-window text buffers that were function-local `static`s inside
     /// drawActiveProjectWindow. Behaviour-identical for this single-instance window;
