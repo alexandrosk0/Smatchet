@@ -44,8 +44,11 @@ jobs:
       - name: Cache FetchContent _deps
         uses: actions/cache@v4
         with:
-          path: |
-            build/ninja-iter-msvc/_deps
+          # FETCHCONTENT_BASE_DIR defaults to .fetchcontent-src (CMakeLists.txt:280).
+          # The previous path (build/ninja-iter-msvc/_deps) was wrong — that dir
+          # contains only the subbuild CMakeCache, not the downloaded sources — so
+          # every perf-full run cold-fetched all deps. Aligned with build-and-test.yml.
+          path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
