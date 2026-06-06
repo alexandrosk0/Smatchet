@@ -218,6 +218,9 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/vexp-guard.sh"       ".claude/hooks/vexp-guard.sh"
   copy_template "docs/harness/claude-code/hooks/lint-syntax-both.py" ".claude/hooks/lint-syntax-both.py"
   copy_template "docs/harness/claude-code/hooks/autoregister-pr.sh"  ".claude/hooks/autoregister-pr.sh"
+  copy_template "docs/harness/claude-code/hooks/guard-head-drift.sh"     ".claude/hooks/guard-head-drift.sh"
+  copy_template "docs/harness/claude-code/hooks/resync-head-baseline.sh" ".claude/hooks/resync-head-baseline.sh"
+  copy_template "docs/harness/claude-code/hooks/guard-shared-tree.sh"    ".claude/hooks/guard-shared-tree.sh"
 
   link_agents
 
