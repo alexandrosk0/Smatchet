@@ -578,6 +578,175 @@ jobs:
           fi
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+  sanitizer-ubsan-pr:
+    name: Sanitizer (UBSan via Clang)
+    # Per-PR UBSan using ninja-clang-asan (Clang -fsanitize=address,undefined).
+    # MSVC has no UBSan; clang-cl (present on windows-2022) delivers both ASan
+    # and UBSan via Sanitizers.cmake's "asan" branch for Clang.
+    # docs/plans/active/build-quality-velocity-hardening.md #11.
+    #
+    # Core-delta gate: mirrors sanitizer-asan — skip on Standalone-only / docs /
+    # yaml PRs (source_core_cpp=false); sanitizer-nightly still covers those paths
+    # nightly. This job is NOT a required branch-protection check.
+    needs: [changes, windows-msvc]
+    if: ${{ needs.changes.outputs.source_core_cpp == 'true' }}
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Put LLVM (clang-cl) on PATH
+        shell: bash
+        run: |
+          # windows-2022 ships LLVM at C:\Program Files\LLVM; ensure clang-cl is
+          # reachable for the ninja-clang-asan preset. Mirrors sanitizer-nightly.yml.
+          echo "C:\\Program Files\\LLVM\\bin" >> "$GITHUB_PATH"
+
+      - name: Verify clang-cl
+        shell: bash
+        run: clang-cl --version
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (clang-ubsan-pr)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-clang-ubsan-pr-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-clang-ubsan-pr-
+
+      - name: Cache FetchContent _deps (clang-ubsan-pr)
+        uses: actions/cache@v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-clang-ubsan-pr-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      # Configure with Whisper + LuaAutomation off — fast/portable subset matching
+      # the ASAN per-PR job. Add SMATCHET_BUILD_TESTS so ctest actually exercises
+      # code under the sanitizer (not just a "no tests" green). UBSan halt-on-error
+      # is not a separate flag here — Clang's -fno-sanitize-recover=all (set by
+      # Sanitizers.cmake for the non-MSVC Clang path) already terminates on the
+      # first UB violation rather than continuing, which is the correct behaviour
+      # for a CI gate: a UB finding must fail the job, not be logged and ignored.
+      - name: Configure ninja-clang-asan (ASan+UBSan, tests on)
+        run: cmake --preset ninja-clang-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF -DSMATCHET_BUILD_TESTS=ON
+
+      - name: Build (Clang ASan+UBSan)
+        run: cmake --build --preset ninja-clang-asan --target SmatchetStandalone SmatchetTests
+
+      - name: Run ctest under ASan+UBSan
+        working-directory: build/ninja-clang-asan
+        run: ctest --output-on-failure
+
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
+      - name: Surface sanitizer report in job summary
+        if: failure()
+        shell: bash
+        run: |
+          echo "## UBSan failure (Clang, per-PR)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          log=build/ninja-clang-asan/Testing/Temporary/LastTest.log
+          if [ -f "$log" ]; then
+            grep -A 30 -E 'ERROR: AddressSanitizer|runtime error:|UndefinedBehaviorSanitizer' "$log" \
+              | head -120 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  packaging-graph-smoke:
+    name: Packaging graph smoke (SmatchetPackageUnrealLibs_DX12)
+    # CI smoke for the SmatchetPackageUnrealLibs_DX12 packaging graph
+    # (docs/plans/active/build-quality-velocity-hardening.md #25).
+    # The packaging target is EXCLUDE_FROM_ALL and is never exercised by the
+    # normal per-PR build — it can silently diverge from a valid build graph.
+    # This job configures ninja-iter-unreal-msvc (which sets
+    # SMATCHET_UNREAL_THIRDPARTY_DIR) and then does a Ninja dry-run
+    # (cmake --build -- -n) to validate the dependency graph WITHOUT compiling
+    # the full set of static libraries (which would be ~15+ min, too heavy for
+    # per-PR). A dry-run resolves all targets + dependency edges; a broken graph
+    # (missing target, wrong dep) fails here. Actual library output is NOT
+    # produced — this is a graph-resolution smoke only.
+    #
+    # NOT a required branch-protection check (branch-protection changes are
+    # out-of-scope); it runs as a non-required advisory PR check.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (packaging-smoke)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-packaging-smoke-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-packaging-smoke-
+
+      - name: Cache FetchContent _deps (packaging-smoke)
+        uses: actions/cache@v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-packaging-smoke-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      # Configure with the Unreal-iteration preset. SMATCHET_UNREAL_THIRDPARTY_DIR
+      # is already baked into the preset (pointing to the plugin ThirdParty dir);
+      # the dir does not need to exist for configure to succeed — the packaging
+      # target's file-copy COMMANDs are generator expressions evaluated at build
+      # time. Whisper off (not relevant to the DX12 packaging target; skips a
+      # large FetchContent download).
+      - name: Configure ninja-iter-unreal-msvc
+        run: cmake --preset ninja-iter-unreal-msvc -DSMATCHET_WITH_WHISPER=OFF
+
+      # Ninja dry-run (-n): Ninja resolves the full build graph for
+      # SmatchetPackageUnrealLibs_DX12 (all transitive deps: SmatchetCore_DX12,
+      # SmatchetImGuiHost_DX12, ImGuiLib_DX12, cpr, SQLiteCpp, etc.) and prints
+      # the commands it WOULD execute — but does not run any compiler. A missing
+      # target, a broken dependency edge, or a bad generator expression causes
+      # Ninja to exit non-zero, failing this job. This is the "graph resolves"
+      # invariant we care about per-PR.
+      #
+      # Limitation: a dry-run validates the build graph but does NOT verify that
+      # the compiled output links correctly or that the packaged .lib files are
+      # byte-valid. A full packaging build (SmatchetCore_DX12 + all deps) would
+      # provide that guarantee but takes ~15+ min and would double CI cost per PR.
+      # The nightly sanitizer run and the publish preset provide the deeper gate
+      # on develop-post-merge; this per-PR smoke closes the "graph silently broken"
+      # gap at low cost.
+      - name: Validate packaging graph (Ninja dry-run)
+        shell: bash
+        run: cmake --build --preset ninja-iter-unreal-msvc -- -n 2>&1 | head -200
+
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
   high-integrity-baseline-drift:
     name: High-integrity baseline (develop drift)
     # develop post-merge only: regenerate the grandfathered baseline and fail if
