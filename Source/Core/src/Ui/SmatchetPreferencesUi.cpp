@@ -26,6 +26,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "EmailMaskForLog.h"
 #include "IssueDraft.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
@@ -127,24 +128,10 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
     return result;
 }
 
-// Masks a user email for logging (PII): keeps only the first local-part char
-// plus the domain (which is enough for diagnosis), e.g. "alice@acme.com" ->
-// "a***@acme.com". An empty or malformed (no usable '@') value is fully
-// redacted so no personal data reaches the log. Issue #820.
-std::string MaskEmailForLog(const std::string& email) {
-    if (email.empty()) {
-        return "(none)";
-    }
-    const size_t at = email.find('@');
-    if (at == std::string::npos || at == 0 || at + 1 >= email.size()) {
-        return "(redacted)";
-    }
-    std::string out;
-    out.push_back(email[0]);
-    out += "***";
-    out += email.substr(at); // "@domain"
-    return out;
-}
+// MaskEmailForLog (#820 PII redaction) now lives in the standalone pure header
+// "EmailMaskForLog.h" (smatchet::logging::pure) so the doctest rig can cover it
+// without this Ui TU's ImGui / cpr / AppController dependency chain. The call
+// site below uses the namespaced name.
 
 } // namespace
 
@@ -521,7 +508,7 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
                  d.cfg.GitHubPat.size());
     } else {
         LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(),
-                 MaskEmailForLog(d.cfg.Email).c_str());
+                 smatchet::logging::pure::MaskEmailForLog(d.cfg.Email).c_str());
     }
     d.triggerCatalogRefetch = true;
     const std::string oldBackend = d.lastViewsBackendKey;
