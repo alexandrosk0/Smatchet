@@ -96,18 +96,18 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 Shipped as one PR (`adopt-workflow-orchestration` branch):
 - Slice 1 · `docs/agent-rules/workflow-orchestration.md` (new) — decision rule (Workflow vs § Parallel dispatch vs inline), the 7 fan-out-safe read-only agents, the three boundaries (vexp-guard / write-set collision / gated-tail ownership), cost guardrails (Opus concurrency ≤ 6, sonnet/haiku for wide sweeps, escalate-before-unbounded), saved-workflow table + canonical excerpt. Cross-linked from `delegation.md` § Parallel dispatch (one line; **no AGENTS.md edit** — it is at the 154/150 grandfathered cap).
 - Slice 2 · `agents/_shared/workflows/pre-merge-review.js` (new) — parallel-barrier `code-review` + `security-review` (read-only) → schema-forced judge `agent()` → one ranked deduped verdict. `args = {pr}` / `{base}` / default-local-diff.
-- Slice 3 · `agents/_shared/workflows/subsystem-invariant-audit.js` (new) — read-only `code-review` fan-out per leaf-AGENTS.md zone → aggregator. **Shipped (not deferred)** — slice 2 landed clean; see Deviations for the read-only-reviewer substitution.
+- Slice 3 · `subsystem-invariant-audit.js` — **DEFERRED** (not shipped). It hardcodes `Source/Core/src/<ctx>/` zones (genuinely project-specific), which leaks a project literal into the portable `agents/_shared/` dir (`test-portable-purity`). Deferred to a project-scoped location or a config-driven zone discovery — see Deviations + `docs/self-improvement/categories/tooling.md`.
 - Slice 4 · `setup-harness.sh` workflows `link_file` loop (after the skills loop) + `agents/README.md` `_shared/workflows/` row — auto-links every `*.js` into the gitignored `.claude/workflows/` so `Workflow({name})` resolves it.
 
 ## Deviations from plan
 
-- **Slice 3 uses read-only `code-review` per zone, not the editing project specialists** the plan envisioned. Rationale: the specialists (`tracker-backend`, `offline-sync`, …) are NOT declared `read-only`, so a parallel fan-out of them would bend slice 1's own fan-out-safety Boundary 2 (write fan-out needs worktree + lock). Slice 3 should *exemplify* that boundary, not violate it — so it fans out read-only `code-review` (each scoped to one disjoint zone vs its leaf AGENTS.md). A worktree-isolated specialist-depth variant is a clean future iteration if depth proves needed.
-- No other deviations — all 4 slices shipped on one branch as planned.
+- **Slice 3 (subsystem-invariant-audit) DEFERRED** (the plan marked it deferral-eligible). It is *inherently* project-specific — it audits each `Source/Core/src/<ctx>/` zone vs its leaf `AGENTS.md`, so it embeds the `Source/Core` literal. That leaks into the portable `agents/_shared/workflows/` dir and fails `test-portable-purity`. A portable saved-workflow can't name a project path; the clean resolutions (a project-scoped workflows location, or discovering the zones from a manifest/config at runtime) are a follow-up, filed in `tooling.md`. The originally-noted read-only-`code-review`-per-zone substitution (vs editing specialists, to respect fan-out-safety Boundary 2) stands as the intended shape when it returns.
+- Slices 1, 2, 4 shipped; slice 3 deferred (above).
 
 ## Verification (actual)
 
 - **JS validity**: both `agents/_shared/workflows/*.js` pass `node --check` (async-fn-wrapped — the Workflow runtime wraps the body, so top-level `return`/`await` are legal there; a bare module-mode check falsely rejects them).
-- **Slice 4 link loop**: `bash agents/scripts/core/setup-harness.sh claude-code` → exit 0, links both `pre-merge-review.js` + `subsystem-invariant-audit.js` into `.claude/workflows/`; idempotent re-run exit 0.
+- **Slice 4 link loop**: `bash agents/scripts/core/setup-harness.sh claude-code` → exit 0, links `pre-merge-review.js` into `.claude/workflows/`; idempotent re-run exit 0.
 - **Doc validation**: doc-anchors / agent-contract (27/0) / markdown-links / portable-purity / md_lint / agent-size green locally; `test-plan-ref-integrity` is green after this branch update-branches onto develop with #885's `full-function-size-compliance` ref-fix merged (a pre-existing #882 dangling ref, unrelated to this diff).
 - **Build / ctest**: N/A — pure docs + agentic-shell (`is-pure-docs-diff` / agentic-shell envelope); no `Source/Core/` touched.
 - **Workflow smoke**: deferred to first real use (manual residue, logged) — the saved `pre-merge-review` resolves by name post-`setup-harness`; a fixture-PR golden-punch-list bats check is the deferred-automation follow-up in `tooling.md`.

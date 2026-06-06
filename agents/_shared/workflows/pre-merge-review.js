@@ -1,4 +1,4 @@
-// pre-merge-review.js — the first saved Smatchet Workflow (canonical, tracked).
+// pre-merge-review.js — the first saved Workflow (canonical, tracked).
 //
 // Parallel-barrier `code-review` + `security-review` (both read-only → zero
 // write-set collision, no worktree, no lock) → a judge stage (plain `agent()`,
@@ -96,7 +96,7 @@ const reviewPrompt = (lens) =>
 
 phase('Review')
 const reviews = await parallel([
-  () => agent(reviewPrompt('correctness, Smatchet invariants (C++14, RAII, LOG_*, UI-thread non-blocking), and code quality'),
+  () => agent(reviewPrompt('correctness, the project invariants (C++14, RAII, LOG_*, UI-thread non-blocking), and code quality'),
               { agentType: 'code-review',     label: 'code-review',     phase: 'Review', schema: FINDINGS }),
   () => agent(reviewPrompt('security: input validation, injection, secret leakage, deserialization, sandbox/MCP/CLI/Lua/p4/HTTP/SQLite trust-boundary surfaces'),
               { agentType: 'security-review', label: 'security-review', phase: 'Review', schema: FINDINGS }),
