@@ -78,6 +78,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
 | [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
 | [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
+| [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | 2026-05-28 | Plan — Decompose Top-20 Monolith Functions |
 | [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | 2026-05-28 | Plan — Gate enforcement hardening (agent → GitHub promotion) |
 | [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | 2026-05-28 | Plan - GitHub commit tracker rows |
 | [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | 2026-05-28 | Plan — High-Integrity C++ Enforcement (slim profile) |

@@ -11,12 +11,20 @@ bool IsIdentCont(char c) { return IsIdentStart(c) || (c >= '0' && c <= '9'); }
 
 bool IsDigit(char c) { return c >= '0' && c <= '9'; }
 
+// A "digit-like" character valid inside one of our supported literal bases:
+// decimal/octal digits plus the hex digit letters (a-f / A-F). The number
+// scanner uses this to decide whether a C++14 digit separator (') is wedged
+// between two real digits (a separator) versus a stray quote (a char literal).
+// Base is not tracked precisely — being permissive here only ever extends a
+// cosmetic highlight span, never mis-validates a literal.
+bool IsNumberDigitChar(char c) { return IsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+
 // Characters that continue a numeric literal after the leading digit: more
 // digits, the radix dot, hex prefix/digits (x/X, a-f, A-F), and the integer
-// suffixes (u/l/L). Matches the original inline `||` chain byte-for-byte — the
-// C++14 digit separator (') and uppercase U suffix are intentionally omitted to
-// preserve the legacy highlighter's exact token spans (backlogged as a cosmetic
-// improvement, not a refactor regression).
+// suffixes (u/U/l/L). The C++14 digit separator (') is handled context-
+// sensitively in the scan loop (it is part of the number only between two
+// digits), so it is deliberately NOT accepted here. Issue #818: uppercase U is
+// now accepted alongside lowercase u so 42U / 0xFFU / 1'000UL tokenise fully.
 bool IsNumberCont(char c) {
     if (IsDigit(c)) {
         return true;
@@ -30,7 +38,7 @@ bool IsNumberCont(char c) {
     if (c >= 'A' && c <= 'F') {
         return true;
     }
-    return c == 'u' || c == 'l' || c == 'L';
+    return c == 'u' || c == 'U' || c == 'l' || c == 'L';
 }
 
 // Scan a "// line comment" or "/* block comment" starting at i. Returns the
@@ -166,7 +174,21 @@ std::vector<CppLexToken> CppLexLine(const char* line, std::size_t n) {
         }
         if (IsDigit(c)) {
             std::size_t j = i + 1;
-            while (j < n && IsNumberCont(line[j])) {
+            while (j < n) {
+                // C++14 digit separator: a ' is part of the literal only when it
+                // sits strictly between two digit-like chars (1'000, 0xFF'FF,
+                // 0b1010'0101). A leading/trailing/doubled ' or '...' char
+                // literal is left for the quote scanner (Issue #818).
+                if (line[j] == '\'') {
+                    if (j > i && j + 1 < n && IsNumberDigitChar(line[j - 1]) && IsNumberDigitChar(line[j + 1])) {
+                        ++j;
+                        continue;
+                    }
+                    break;
+                }
+                if (!IsNumberCont(line[j])) {
+                    break;
+                }
                 ++j;
             }
             Push(out, i, j - i, CppLexKind::Number);

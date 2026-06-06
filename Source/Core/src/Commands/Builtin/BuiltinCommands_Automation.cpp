@@ -72,11 +72,13 @@ void RegisterAutomationCommands(CommandRegistry& reg, AppController& app) {
                                                                       "missing required 'script' parameter");
                                     }
                                     const std::vector<std::string> ids = ExtractIdsArray(args);
-                                    app.RunAutoScript(script, ids);
+                                    const bool processAll = args.value("process_all", false);
+                                    app.RunAutoScript(script, ids, processAll);
                                     nlohmann::json out;
                                     out["queued"] = true;
                                     out["script"] = script;
                                     out["idCount"] = ids.size();
+                                    out["processAll"] = processAll;
                                     return CommandResult::Success(std::move(out));
                                 });
         c.Idempotent = false;
@@ -86,10 +88,19 @@ void RegisterAutomationCommands(CommandRegistry& reg, AppController& app) {
             [] {
                 ParamSpec p;
                 p.Name = "ids";
-                p.Description = "Array of ticket IDs to pass to process_ticket(). Empty = no-op (script's "
-                                "process_ticket() requires at least one selected id).";
+                p.Description = "Array of ticket IDs to pass to process_ticket(). Empty + process_all unset "
+                                "= the job refuses to run (Issue #824: no silent mass-modify, no silent no-op).";
                 p.Required = false;
                 p.Type = ParamType::Json;
+                return p;
+            }(),
+            [] {
+                ParamSpec p;
+                p.Name = "process_all";
+                p.Description = "Explicit opt-in to run process_ticket() across EVERY loaded ticket. Required "
+                                "when 'ids' is empty; ignored (selection wins) when 'ids' is non-empty.";
+                p.Required = false;
+                p.Type = ParamType::Bool;
                 return p;
             }(),
         };

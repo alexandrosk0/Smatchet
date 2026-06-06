@@ -28,7 +28,7 @@ Per-member table. **Status**: LIVE = not present anywhere; PARTIAL = a sibling r
 
 | # | Rule (source backlog entry) | Target file → section | Status | Portable? |
 |---|---|---|---|---|
-| 1 | baseline.md is informational, not gate input — don't edit per-decomposition; regen once per campaign (process 2026-06-01) | `docs/guides/imgui-draw-pattern.md` + `docs/plans/active/decompose-top-20-monoliths.md` § Approach | LIVE | no |
+| 1 | baseline.md is informational, not gate input — don't edit per-decomposition; regen once per campaign (process 2026-06-01) | `docs/guides/imgui-draw-pattern.md` + `docs/plans/shipped/decompose-top-20-monoliths.md` § Approach | LIVE | no |
 | 2 | Loss/residue audits diff vs `origin/<base>` post-fetch; `gh pr state==MERGED` is merge-truth (process 2026-05-30) | `docs/agent-rules/process-rules.md` § Git/p4 discipline (new bullet) | LIVE | **yes** |
 | 3 | Backlog/SI/plan claims about a file's behaviour must cite a verified line (process 2026-05-30) | `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` § Workflow step 2 | LIVE (process-rules has CR-reply sibling, different scope) | no |
 | 4 | `Source/Core` / `Plugins` source files stay < 67 KB; split-recipe (process 2026-05-26) | `AGENTS.md` § Project rules (cap 1-liner) + split-recipe detail | LIVE | no |
