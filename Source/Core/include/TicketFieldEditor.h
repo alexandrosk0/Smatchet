@@ -25,4 +25,14 @@ class TicketFieldEditor {
     /// modal stays alive even if the originating cell scrolls out of view. Drains its own state when the
     /// user submits or cancels, appending any accepted edit to `pendingEdits`.
     static void RenderLongTextModal(std::vector<PendingFieldEdit>& pendingEdits);
+
+  private:
+    /// RenderFieldCell helper — dispatch the per-column RenderPlan to the matching editor (or a
+    /// read-only plain-text fallback when edits are disabled). Returns true when the cell is fully
+    /// handled and the caller should return; false to fall through to the time-tracking modal.
+    static bool DispatchEditorByPlan(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
+                                     const TrackerField* field, const std::string& currentValue, float availWidth,
+                                     bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
+                                     std::vector<PendingFieldEdit>& pendingEdits, const std::string& dateFormatOption,
+                                     int thresholdDays, bool singleClickToEdit);
 };

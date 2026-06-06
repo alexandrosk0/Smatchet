@@ -66,11 +66,28 @@ class McpPlugin : public IPlugin {
     void EmitToolsCallResult(httplib::Response& res, const std::string& name, const std::string& remote,
                              const nlohmann::json& arguments, const std::string& error, const std::string& result);
 
+    /// REST `tools/call` registry-hit arm: dispatch a registered command and emit the canonical
+    /// envelope. Extracted from HandleToolsCall; wire shape byte-for-byte identical.
+    void DispatchRegistryToolsCall(const std::string& name, const nlohmann::json& arguments, const std::string& remote,
+                                   httplib::Response& res);
+
+    /// REST `tools/call` unknown-name arm: dispatch through the registry to produce a canonical
+    /// unknown-command envelope with fuzzy suggestions. Wire shape byte-for-byte identical.
+    void EmitUnknownToolsCallEnvelope(const std::string& name, const nlohmann::json& arguments,
+                                      const std::string& remote, httplib::Response& res);
+
     /// Handle a JSON-RPC `tools/call` request. Populates `jres["result"]` or
     /// `jres["error"]` (the caller already seeded jres with jsonrpc/id). Split
     /// out of RegisterJsonRpcRoutes to keep that registration phase under the
     /// branch cap; behaviour is byte-for-byte identical to the inlined form.
     void HandleJsonRpcToolsCall(const std::string& remote, const nlohmann::json& params, nlohmann::json& jres);
+
+    /// JSON-RPC `tools/call` registry-hit arm: dispatch a registered command into `jres`.
+    void HandleJsonRpcRegistryCall(const std::string& name, const nlohmann::json& params, const std::string& rpcRemote,
+                                   nlohmann::json& jres);
+
+    /// JSON-RPC `tools/call` `run_lua` arm: execute (or reject) a Lua snippet/script into `jres`.
+    void HandleJsonRpcRunLua(const nlohmann::json& params, const std::string& rpcRemote, nlohmann::json& jres);
 
     int port_;
     struct Impl;

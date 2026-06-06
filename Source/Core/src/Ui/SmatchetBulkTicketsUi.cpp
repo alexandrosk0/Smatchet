@@ -574,6 +574,60 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     ImGui::End();
 }
 
+namespace {
+
+// Build the serialised export text for the current grid selection (rectangle + key-column picks, or
+// all view rows when nothing is selected) in the chosen CSV/TSV/JSON format. Extracted from the
+// buildText lambda in drawBulkExportWindow under the function-size cap; behaviour-identical.
+std::string BuildBulkExportText(AppController& app, UiDrawSession& d) {
+    auto snap = app.GetActiveTicketsSnapshot();
+    std::vector<CachedTicket> tickets;
+    if (snap) {
+        // Match grid copy behavior: union rectangle rows and key-column row picks.
+        // Export used to only read RectSel.Rows, so shift-drag / rect-only selection exported all tickets.
+        const auto& sel = d.gridState.RectSel;
+        std::set<int> allRows;
+        if (sel.Active) {
+            for (int r = sel.MinRow(); r <= sel.MaxRow(); ++r) {
+                if (r >= 0) {
+                    allRows.insert(r);
+                }
+            }
+        }
+        for (int r : sel.Rows) {
+            if (r >= 0) {
+                allRows.insert(r);
+            }
+        }
+        if (!allRows.empty()) {
+            const bool useSorted = !d.filteredIndices.empty();
+            for (int row : allRows) {
+                const size_t logicalRow = static_cast<size_t>(row);
+                size_t ticketIndex = logicalRow;
+                if (useSorted) {
+                    if (logicalRow >= d.filteredIndices.size()) {
+                        continue;
+                    }
+                    ticketIndex = d.filteredIndices[logicalRow];
+                }
+                if (ticketIndex < snap->size()) {
+                    tickets.push_back((*snap)[ticketIndex]);
+                }
+            }
+        } else {
+            tickets = *snap;
+        }
+    }
+    IssueTableSerializer::Format fmt = IssueTableSerializer::Format::Csv;
+    if (d.bulkExportFormatSel == 1)
+        fmt = IssueTableSerializer::Format::Tsv;
+    else if (d.bulkExportFormatSel == 2)
+        fmt = IssueTableSerializer::Format::Json;
+    return IssueTableSerializer::SerializeTickets(tickets, {}, fmt);
+}
+
+} // namespace
+
 void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
     if (!d.showBulkExport)
         return;
@@ -604,55 +658,8 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
     ImGui::SetNextItemWidth(100);
     ImGui::Combo("##bulkExportFmt", &d.bulkExportFormatSel, kFormats, IM_ARRAYSIZE(kFormats));
 
-    auto buildText = [&]() -> std::string {
-        auto snap = app.GetActiveTicketsSnapshot();
-        std::vector<CachedTicket> tickets;
-        if (snap) {
-            // Match grid copy behavior: union rectangle rows and key-column row picks.
-            // Export used to only read RectSel.Rows, so shift-drag / rect-only selection exported all tickets.
-            const auto& sel = d.gridState.RectSel;
-            std::set<int> allRows;
-            if (sel.Active) {
-                for (int r = sel.MinRow(); r <= sel.MaxRow(); ++r) {
-                    if (r >= 0) {
-                        allRows.insert(r);
-                    }
-                }
-            }
-            for (int r : sel.Rows) {
-                if (r >= 0) {
-                    allRows.insert(r);
-                }
-            }
-            if (!allRows.empty()) {
-                const bool useSorted = !d.filteredIndices.empty();
-                for (int row : allRows) {
-                    const size_t logicalRow = static_cast<size_t>(row);
-                    size_t ticketIndex = logicalRow;
-                    if (useSorted) {
-                        if (logicalRow >= d.filteredIndices.size()) {
-                            continue;
-                        }
-                        ticketIndex = d.filteredIndices[logicalRow];
-                    }
-                    if (ticketIndex < snap->size()) {
-                        tickets.push_back((*snap)[ticketIndex]);
-                    }
-                }
-            } else {
-                tickets = *snap;
-            }
-        }
-        IssueTableSerializer::Format fmt = IssueTableSerializer::Format::Csv;
-        if (d.bulkExportFormatSel == 1)
-            fmt = IssueTableSerializer::Format::Tsv;
-        else if (d.bulkExportFormatSel == 2)
-            fmt = IssueTableSerializer::Format::Json;
-        return IssueTableSerializer::SerializeTickets(tickets, {}, fmt);
-    };
-
     if (ImGui::Button("Copy to clipboard")) {
-        const std::string text = buildText();
+        const std::string text = BuildBulkExportText(app, d);
         ImGui::SetClipboardText(text.c_str());
         d.bulkExportFeedback = "Copied " + std::to_string(text.size()) + " bytes.";
     }
@@ -667,7 +674,7 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
         ImGui::SameLine();
         ImGui::TextDisabled("Saving...");
     } else if (ImGui::Button("Save to file")) {
-        std::string text = buildText();
+        std::string text = BuildBulkExportText(app, d);
         const std::string capturedPath = d.bulkExportPathBuf;
         const size_t byteCount = text.size();
         d.bulkExportSaveInFlight = true;

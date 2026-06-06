@@ -25,7 +25,6 @@
 
 using SmatchetViewsDashboardUiDetail::CategorizeAvailableFields;
 using SmatchetViewsDashboardUiDetail::CategorizedFields;
-using SmatchetViewsDashboardUiDetail::IsBasicFieldId;
 using SmatchetViewsDashboardUiDetail::PrettyColumnLabel;
 
 namespace {
@@ -324,6 +323,91 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
     }
 }
 
+namespace {
+
+// One collapsible field group (System / Custom) with a per-field selection checkbox. Extracted from
+// the renderFieldGroup lambda in drawViewsFieldsTab (over-100-line decomposition); behaviour-identical.
+void DrawViewsFieldGroup(UiDrawSession& d, const char* groupName, const std::vector<const TrackerField*>& fields,
+                         std::unordered_set<std::string>& selectedFieldSet) {
+    if (fields.empty()) {
+        return;
+    }
+    const size_t selectedInGroup = static_cast<size_t>(std::count_if(
+        fields.begin(), fields.end(), [&](const TrackerField* f) { return f && selectedFieldSet.count(f->Id); }));
+    const std::string label = std::string(groupName) + " (" + std::to_string(selectedInGroup) + "/" +
+                              std::to_string(fields.size()) + ")###grp_" + groupName;
+    if (!ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+    for (const TrackerField* field : fields) {
+        bool checked = selectedFieldSet.find(field->Id) != selectedFieldSet.end();
+        const std::string checkboxId = "##ViewField_" + field->Id;
+        if (ImGui::Checkbox(checkboxId.c_str(), &checked)) {
+            if (checked) {
+                selectedFieldSet.insert(field->Id);
+            } else {
+                selectedFieldSet.erase(field->Id);
+            }
+            SyncSelectedFieldsBuffer(d, selectedFieldSet);
+            d.viewsDirty = true;
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s (%s)", field->Name.c_str(), field->Id.c_str());
+    }
+}
+
+// The "Basic fields" group: the locked ID row plus the six core Jira fields in fixed order. Extracted
+// from drawViewsFieldsTab during the over-100-line decomposition. Behaviour is identical.
+void DrawViewsBasicFieldsGroup(UiDrawSession& d, const std::vector<const TrackerField*>& basicFields,
+                               std::unordered_set<std::string>& selectedFieldSet) {
+    // Basic group: ID (always selected, locked) + the six core Jira fields.
+    const bool hasVisibleId = SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive("id", d.fieldSearchBuf);
+    if (basicFields.empty() && !hasVisibleId) {
+        return;
+    }
+    // ID counts as 1; plus the selected fields in this group.
+    const size_t selectedInGroup =
+        1 + static_cast<size_t>(std::count_if(basicFields.begin(), basicFields.end(), [&](const TrackerField* f) {
+            return f && selectedFieldSet.count(f->Id);
+        }));
+    const size_t total = basicFields.size() + 1;
+    const std::string label =
+        std::string("Basic fields (") + std::to_string(selectedInGroup) + "/" + std::to_string(total) + ")###grp_basic";
+    if (!ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+    bool idChecked = true;
+    ImGui::BeginDisabled();
+    ImGui::Checkbox("##ViewField_id", &idChecked);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("ID (locked)");
+    const char* basicOrder[] = {"summary", "assignee", "priority", "status", "created", "updated"};
+    for (const char* fid : basicOrder) {
+        auto it = std::find_if(basicFields.begin(), basicFields.end(),
+                               [&](const TrackerField* f) { return f && f->Id == fid; });
+        if (it == basicFields.end() || !*it) {
+            continue;
+        }
+        const TrackerField* field = *it;
+        bool checked = selectedFieldSet.find(field->Id) != selectedFieldSet.end();
+        const std::string checkboxId = "##ViewField_" + field->Id;
+        if (ImGui::Checkbox(checkboxId.c_str(), &checked)) {
+            if (checked) {
+                selectedFieldSet.insert(field->Id);
+            } else {
+                selectedFieldSet.erase(field->Id);
+            }
+            SyncSelectedFieldsBuffer(d, selectedFieldSet);
+            d.viewsDirty = true;
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s (%s)", field->Name.c_str(), field->Id.c_str());
+    }
+}
+
+} // namespace
+
 void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
@@ -391,87 +475,14 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::Spacing();
             ImGui::BeginChild("##AvailableScroll", ImVec2(0, 0), false);
 
-            const auto renderFieldGroup = [&](const char* groupName, const std::vector<const TrackerField*>& fields) {
-                if (fields.empty()) {
-                    return;
-                }
-                const size_t selectedInGroup =
-                    static_cast<size_t>(std::count_if(fields.begin(), fields.end(), [&](const TrackerField* f) {
-                        return f && selectedFieldSet.count(f->Id);
-                    }));
-                const std::string label = std::string(groupName) + " (" + std::to_string(selectedInGroup) + "/" +
-                                          std::to_string(fields.size()) + ")###grp_" + groupName;
-                if (!ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-                    return;
-                }
-                for (const TrackerField* field : fields) {
-                    bool checked = selectedFieldSet.find(field->Id) != selectedFieldSet.end();
-                    const std::string checkboxId = "##ViewField_" + field->Id;
-                    if (ImGui::Checkbox(checkboxId.c_str(), &checked)) {
-                        if (checked) {
-                            selectedFieldSet.insert(field->Id);
-                        } else {
-                            selectedFieldSet.erase(field->Id);
-                        }
-                        SyncSelectedFieldsBuffer(d, selectedFieldSet);
-                        d.viewsDirty = true;
-                    }
-                    ImGui::SameLine();
-                    ImGui::Text("%s (%s)", field->Name.c_str(), field->Id.c_str());
-                }
-            };
-
             if (availableFields.empty()) {
                 ImGui::TextDisabled("No field catalog loaded yet.");
             } else if (visibleFields.empty()) {
                 ImGui::TextDisabled("No fields match current search.");
             } else {
-                // Basic group: ID (always selected, locked) + the six core Jira fields.
-                const bool hasVisibleId =
-                    SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive("id", d.fieldSearchBuf);
-                if (!basicFields.empty() || hasVisibleId) {
-                    // ID counts as 1; plus the selected fields in this group.
-                    const size_t selectedInGroup =
-                        1 + static_cast<size_t>(
-                                std::count_if(basicFields.begin(), basicFields.end(), [&](const TrackerField* f) {
-                                    return f && selectedFieldSet.count(f->Id);
-                                }));
-                    const size_t total = basicFields.size() + 1;
-                    const std::string label = std::string("Basic fields (") + std::to_string(selectedInGroup) + "/" +
-                                              std::to_string(total) + ")###grp_basic";
-                    if (ImGui::CollapsingHeader(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-                        bool idChecked = true;
-                        ImGui::BeginDisabled();
-                        ImGui::Checkbox("##ViewField_id", &idChecked);
-                        ImGui::EndDisabled();
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("ID (locked)");
-                        const char* basicOrder[] = {"summary", "assignee", "priority", "status", "created", "updated"};
-                        for (const char* fid : basicOrder) {
-                            auto it = std::find_if(basicFields.begin(), basicFields.end(),
-                                                   [&](const TrackerField* f) { return f && f->Id == fid; });
-                            if (it == basicFields.end() || !*it) {
-                                continue;
-                            }
-                            const TrackerField* field = *it;
-                            bool checked = selectedFieldSet.find(field->Id) != selectedFieldSet.end();
-                            const std::string checkboxId = "##ViewField_" + field->Id;
-                            if (ImGui::Checkbox(checkboxId.c_str(), &checked)) {
-                                if (checked) {
-                                    selectedFieldSet.insert(field->Id);
-                                } else {
-                                    selectedFieldSet.erase(field->Id);
-                                }
-                                SyncSelectedFieldsBuffer(d, selectedFieldSet);
-                                d.viewsDirty = true;
-                            }
-                            ImGui::SameLine();
-                            ImGui::Text("%s (%s)", field->Name.c_str(), field->Id.c_str());
-                        }
-                    }
-                }
-                renderFieldGroup("System fields", systemFields);
-                renderFieldGroup("Custom fields", customFields);
+                DrawViewsBasicFieldsGroup(d, basicFields, selectedFieldSet);
+                DrawViewsFieldGroup(d, "System fields", systemFields, selectedFieldSet);
+                DrawViewsFieldGroup(d, "Custom fields", customFields, selectedFieldSet);
             }
 
             ImGui::EndChild();
@@ -545,7 +556,6 @@ void SmatchetUI::drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx) {
 }
 
 void SmatchetUI::drawViewsSortTab(ViewsDashboardDrawCtx& ctx) {
-    AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
 
     if (ImGui::BeginTabItem("Sort")) {
@@ -557,7 +567,6 @@ void SmatchetUI::drawViewsSortTab(ViewsDashboardDrawCtx& ctx) {
 
         // We mutate the active view's SortSpecs in-place; bump revision after.
         ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
-        const auto& availableFields = app.GetAvailableFields();
         const float listHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 2.0f;
 
         ImGui::BeginChild("##SortScroll", ImVec2(0, listHeight), true);
@@ -565,111 +574,128 @@ void SmatchetUI::drawViewsSortTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::TextDisabled("(no sort keys) — click \"+ Add sort key\" below.");
         }
         if (mutableActive) {
-            // Promote SortSpecs into a parallel column-key list so we can reuse the
-            // string-vector drag helper, then write any reorder back at end.
-            std::vector<std::string> keyOrder;
-            keyOrder.reserve(mutableActive->SortSpecs.size());
-            for (const auto& spec : mutableActive->SortSpecs) {
-                keyOrder.push_back(spec.ColumnKey);
-            }
-            bool reordered = false;
-            for (int i = 0; i < static_cast<int>(keyOrder.size()); ++i) {
-                const std::string key = keyOrder[static_cast<size_t>(i)];
-                ImGui::PushID(i);
-                ImGui::BeginGroup();
-                SmatchetViewsDashboardUiDetail::DrawDragHandle("##h", i, "VIEWS_SORT_ROW");
-                const bool selected = (d.viewsKeyboardReorderRow == i);
-                const std::string label = PrettyColumnLabel(key, availableFields);
-                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
-                    d.viewsKeyboardReorderRow = i;
-                }
-                ImGui::SameLine();
-                int dir = mutableActive->SortSpecs[static_cast<size_t>(i)].Direction;
-                const char* dirLabel = (dir == 1) ? "Asc" : (dir == 2 ? "Desc" : "—");
-                if (ImGui::SmallButton(dirLabel)) {
-                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                    dir = (dir + 1) % 3; // cycle —, Asc, Desc
-                    mutableActive->SortSpecs[static_cast<size_t>(i)].Direction = dir;
-                    ViewState.BumpRevision();
-                    d.viewsDirty = true;
-                }
-                ImGui::SameLine();
-                bool erased = false;
-                if (ImGui::SmallButton("X")) {
-                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                    mutableActive->SortSpecs.erase(mutableActive->SortSpecs.begin() + i);
-                    keyOrder.erase(keyOrder.begin() + i);
-                    ViewState.BumpRevision();
-                    d.viewsDirty = true;
-                    erased = true;
-                }
-                ImGui::EndGroup();
-                if (erased) {
-                    ImGui::PopID();
-                    break;
-                }
-                // BeginDragDropTarget inside HandleRowReorder binds to the
-                // group's full-row rect — entire Sort row (handle + label
-                // + direction button + X) accepts drops, including over
-                // another row's handle.
-                if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, keyOrder, &d.viewsKeyboardReorderRow,
-                                                                     "VIEWS_SORT_ROW")) {
-                    reordered = true;
-                }
-                ImGui::PopID();
-            }
-            if (reordered) {
-                SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                // Rebuild SortSpecs in the new order.
-                std::vector<ViewSortSpec> rebuilt;
-                rebuilt.reserve(keyOrder.size());
-                for (const auto& k : keyOrder) {
-                    auto it = std::find_if(mutableActive->SortSpecs.begin(), mutableActive->SortSpecs.end(),
-                                           [&](const ViewSortSpec& s) { return s.ColumnKey == k; });
-                    if (it != mutableActive->SortSpecs.end()) {
-                        rebuilt.push_back(*it);
-                    }
-                }
-                mutableActive->SortSpecs = std::move(rebuilt);
-                ViewState.BumpRevision();
-                d.viewsDirty = true;
-            }
+            drawViewsSortRows(ctx, mutableActive);
         }
         SmatchetViewsDashboardUiDetail::TickDragDropAutoScroll();
         ImGui::EndChild();
 
-        // + Add sort key (popup picker scoped to current column order).
-        if (ImGui::Button("+ Add sort key")) {
-            ImGui::OpenPopup("##AddSortKeyPopup");
-        }
-        if (ImGui::BeginPopup("##AddSortKeyPopup")) {
-            if (mutableActive) {
-                for (const auto& key : d.editingColumnOrder) {
-                    const bool alreadyUsed =
-                        std::any_of(mutableActive->SortSpecs.begin(), mutableActive->SortSpecs.end(),
-                                    [&](const ViewSortSpec& s) { return s.ColumnKey == key; });
-                    if (alreadyUsed) {
-                        continue;
-                    }
-                    const std::string label = PrettyColumnLabel(key, availableFields);
-                    if (ImGui::Selectable(label.c_str())) {
-                        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                        ViewSortSpec spec;
-                        spec.ColumnKey = key;
-                        spec.Direction = 1; // Asc by default
-                        mutableActive->SortSpecs.push_back(spec);
-                        ViewState.BumpRevision();
-                        d.viewsDirty = true;
-                        ImGui::CloseCurrentPopup();
-                    }
-                }
-            } else {
-                ImGui::TextDisabled("No active view.");
-            }
-            ImGui::EndPopup();
-        }
+        drawViewsAddSortKeyPopup(ctx, mutableActive);
 
         ImGui::EndTabItem();
+    }
+}
+
+// Drag-reorderable per-key sort rows (handle + label + direction toggle + delete). Split out of
+// drawViewsSortTab under the function-size cap; behaviour-identical.
+void SmatchetUI::drawViewsSortRows(ViewsDashboardDrawCtx& ctx, ViewDefinition* mutableActive) {
+    UiDrawSession& d = ctx.d;
+    const auto& availableFields = ctx.app.GetAvailableFields();
+
+    // Promote SortSpecs into a parallel column-key list so we can reuse the
+    // string-vector drag helper, then write any reorder back at end.
+    std::vector<std::string> keyOrder;
+    keyOrder.reserve(mutableActive->SortSpecs.size());
+    for (const auto& spec : mutableActive->SortSpecs) {
+        keyOrder.push_back(spec.ColumnKey);
+    }
+    bool reordered = false;
+    for (int i = 0; i < static_cast<int>(keyOrder.size()); ++i) {
+        const std::string key = keyOrder[static_cast<size_t>(i)];
+        ImGui::PushID(i);
+        ImGui::BeginGroup();
+        SmatchetViewsDashboardUiDetail::DrawDragHandle("##h", i, "VIEWS_SORT_ROW");
+        const bool selected = (d.viewsKeyboardReorderRow == i);
+        const std::string label = PrettyColumnLabel(key, availableFields);
+        if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
+            d.viewsKeyboardReorderRow = i;
+        }
+        ImGui::SameLine();
+        int dir = mutableActive->SortSpecs[static_cast<size_t>(i)].Direction;
+        const char* dirLabel = (dir == 1) ? "Asc" : (dir == 2 ? "Desc" : "—");
+        if (ImGui::SmallButton(dirLabel)) {
+            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+            dir = (dir + 1) % 3; // cycle —, Asc, Desc
+            mutableActive->SortSpecs[static_cast<size_t>(i)].Direction = dir;
+            ViewState.BumpRevision();
+            d.viewsDirty = true;
+        }
+        ImGui::SameLine();
+        bool erased = false;
+        if (ImGui::SmallButton("X")) {
+            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+            mutableActive->SortSpecs.erase(mutableActive->SortSpecs.begin() + i);
+            keyOrder.erase(keyOrder.begin() + i);
+            ViewState.BumpRevision();
+            d.viewsDirty = true;
+            erased = true;
+        }
+        ImGui::EndGroup();
+        if (erased) {
+            ImGui::PopID();
+            break;
+        }
+        // BeginDragDropTarget inside HandleRowReorder binds to the
+        // group's full-row rect — entire Sort row (handle + label
+        // + direction button + X) accepts drops, including over
+        // another row's handle.
+        if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, keyOrder, &d.viewsKeyboardReorderRow,
+                                                             "VIEWS_SORT_ROW")) {
+            reordered = true;
+        }
+        ImGui::PopID();
+    }
+    if (reordered) {
+        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+        // Rebuild SortSpecs in the new order.
+        std::vector<ViewSortSpec> rebuilt;
+        rebuilt.reserve(keyOrder.size());
+        for (const auto& k : keyOrder) {
+            auto it = std::find_if(mutableActive->SortSpecs.begin(), mutableActive->SortSpecs.end(),
+                                   [&](const ViewSortSpec& s) { return s.ColumnKey == k; });
+            if (it != mutableActive->SortSpecs.end()) {
+                rebuilt.push_back(*it);
+            }
+        }
+        mutableActive->SortSpecs = std::move(rebuilt);
+        ViewState.BumpRevision();
+        d.viewsDirty = true;
+    }
+}
+
+// "+ Add sort key" popup picker, scoped to the current column order (skips already-used keys). Split
+// out of drawViewsSortTab under the function-size cap; behaviour-identical.
+void SmatchetUI::drawViewsAddSortKeyPopup(ViewsDashboardDrawCtx& ctx, ViewDefinition* mutableActive) {
+    UiDrawSession& d = ctx.d;
+    const auto& availableFields = ctx.app.GetAvailableFields();
+
+    // + Add sort key (popup picker scoped to current column order).
+    if (ImGui::Button("+ Add sort key")) {
+        ImGui::OpenPopup("##AddSortKeyPopup");
+    }
+    if (ImGui::BeginPopup("##AddSortKeyPopup")) {
+        if (mutableActive) {
+            for (const auto& key : d.editingColumnOrder) {
+                const bool alreadyUsed = std::any_of(mutableActive->SortSpecs.begin(), mutableActive->SortSpecs.end(),
+                                                     [&](const ViewSortSpec& s) { return s.ColumnKey == key; });
+                if (alreadyUsed) {
+                    continue;
+                }
+                const std::string label = PrettyColumnLabel(key, availableFields);
+                if (ImGui::Selectable(label.c_str())) {
+                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                    ViewSortSpec spec;
+                    spec.ColumnKey = key;
+                    spec.Direction = 1; // Asc by default
+                    mutableActive->SortSpecs.push_back(spec);
+                    ViewState.BumpRevision();
+                    d.viewsDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+        } else {
+            ImGui::TextDisabled("No active view.");
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -763,23 +789,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
     ViewState.EnsureLoaded(d.cfg);
     const ViewsStore& store = ViewState.GetStoreMutable();
 
-    // Tracker connectivity banner — preserved from the legacy UI.
-    {
-        const std::string* sessionCatalogNote = d.fieldCatalogWarning.empty() ? nullptr : &d.fieldCatalogWarning;
-        const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(sessionCatalogNote);
-        if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
-            ImGui::PopStyleColor();
-        } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
-            ImGui::PopStyleColor();
-        }
-        if (jiraBanner.Kind != TrackerConnectivityBannerForUi::Level::None) {
-            ImGui::Separator();
-        }
-    }
+    drawViewsConnectivityBanner(app, d);
 
     const ViewDefinition* activeView = ViewState.GetActiveView();
 
@@ -800,85 +810,16 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
         return;
     }
 
-    // Action helpers — closures so the tab bodies stay short.
-    auto applyAndSync = [&]() {
-        if (!activeView) {
-            return;
-        }
-        ReconcileEditingColumnOrder(d);
-        ViewDefinition updated = BuildUpdatedView(*activeView, d);
-        if (ViewState.UpdateActive(updated)) {
-            d.cfg.JqlQuery = updated.Jql;
-            d.cfg.SelectedFields = updated.Fields;
-            SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-            d.viewsDirty = false;
-            d.viewsHasOriginalSnapshot = false;
-            d.pendingViewStateSave = false;
-            SmatchetToastManager::Instance().Push("View saved", updated.Name, ToastType::Success, 1800);
-        }
+    // Action helpers — closures so the tab bodies stay short; bodies live in the views* methods.
+    auto applyAndSync = [this, &app, &d, activeView]() { viewsApplyAndSync(app, d, activeView); };
+    auto discardChanges = [this, &d]() { viewsDiscardChanges(d); };
+    auto activateView = [this, &app, &d](const std::string& id) { viewsActivateView(app, d, id); };
+    auto requestActivate = [this, &app, &d, activeView](const std::string& id) {
+        viewsRequestActivate(app, d, activeView, id);
     };
-    auto discardChanges = [&]() {
-        // Restore the in-memory view from the pre-dirty snapshot (covers grid-side
-        // width / sort mutations that happened in-place) before reloading buffers.
-        ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
-        if (mutableActive && d.viewsHasOriginalSnapshot) {
-            *mutableActive = d.viewsOriginalSnapshot;
-            ViewState.BumpRevision();
-        }
-        const ViewDefinition* a = ViewState.GetActiveView();
-        if (a) {
-            LoadBuffersFromView(d, *a);
-            d.viewsHasOriginalSnapshot = false;
-            d.pendingViewStateSave = false;
-            SmatchetToastManager::Instance().Push("Discarded changes", a->Name, ToastType::Info, 1500);
-        }
-    };
-    auto activateView = [&](const std::string& id) {
-        if (ViewState.Activate(id)) {
-            const ViewDefinition* nowActive = ViewState.GetActiveView();
-            if (nowActive) {
-                LoadBuffersFromView(d, *nowActive);
-                d.cfg.JqlQuery = nowActive->Jql;
-                d.cfg.SelectedFields = nowActive->Fields;
-                SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-            }
-        }
-    };
-    auto requestActivate = [&](const std::string& id) {
-        if (id == activeView->Id) {
-            return;
-        }
-        if (d.viewsDirty) {
-            d.viewsPendingActivateId = id;
-            d.viewsShowDiscardConfirm = true;
-        } else {
-            activateView(id);
-        }
-    };
-    auto createNewView = [&]() {
-        ReconcileEditingColumnOrder(d);
-        ViewDefinition created = BuildUpdatedView(*activeView, d);
-        created.Name = "New View";
-        created.Id.clear();
-        ViewState.Create(created);
-        const ViewDefinition* nowActive = ViewState.GetActiveView();
-        if (nowActive) {
-            LoadBuffersFromView(d, *nowActive);
-            SmatchetToastManager::Instance().Push("View created", nowActive->Name, ToastType::Success, 1800);
-        }
-    };
+    auto createNewView = [this, &d, activeView]() { viewsCreateNewView(d, activeView); };
 
-    // Global keyboard shortcuts (window-level): Ctrl+Enter = Apply, Ctrl+N = New.
-    {
-        const ImGuiIO& io = ImGui::GetIO();
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_RootWindow)) {
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
-                applyAndSync();
-            } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
-                createNewView();
-            }
-        }
-    }
+    handleViewsDashboardShortcuts(app, d, activeView);
 
     // ============================================================ Layout: sidebar | splitter | editor.
     float sidebarWidth = d.cfg.ViewsSidebarWidth;
@@ -925,4 +866,113 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
     drawViewsModals(ctx);
 
     ImGui::End();
+}
+
+// Tracker connectivity banner (error / warning strip above the editor). Split out of
+// drawViewsDashboardWindow under the function-size cap; behaviour-identical.
+void SmatchetUI::drawViewsConnectivityBanner(AppController& app, UiDrawSession& d) {
+    const std::string* sessionCatalogNote = d.fieldCatalogWarning.empty() ? nullptr : &d.fieldCatalogWarning;
+    const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(sessionCatalogNote);
+    if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+        ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
+        ImGui::PopStyleColor();
+    } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
+        ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
+        ImGui::PopStyleColor();
+    }
+    if (jiraBanner.Kind != TrackerConnectivityBannerForUi::Level::None) {
+        ImGui::Separator();
+    }
+}
+
+// Apply the editing buffers onto the active view + sync the grid. Former applyAndSync closure body.
+void SmatchetUI::viewsApplyAndSync(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
+    if (!activeView) {
+        return;
+    }
+    ReconcileEditingColumnOrder(d);
+    ViewDefinition updated = BuildUpdatedView(*activeView, d);
+    if (ViewState.UpdateActive(updated)) {
+        d.cfg.JqlQuery = updated.Jql;
+        d.cfg.SelectedFields = updated.Fields;
+        SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+        d.viewsDirty = false;
+        d.viewsHasOriginalSnapshot = false;
+        d.pendingViewStateSave = false;
+        SmatchetToastManager::Instance().Push("View saved", updated.Name, ToastType::Success, 1800);
+    }
+}
+
+// Restore the active view from its pre-dirty snapshot + reload buffers. Former discardChanges closure.
+void SmatchetUI::viewsDiscardChanges(UiDrawSession& d) {
+    // Restore the in-memory view from the pre-dirty snapshot (covers grid-side
+    // width / sort mutations that happened in-place) before reloading buffers.
+    ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
+    if (mutableActive && d.viewsHasOriginalSnapshot) {
+        *mutableActive = d.viewsOriginalSnapshot;
+        ViewState.BumpRevision();
+    }
+    const ViewDefinition* a = ViewState.GetActiveView();
+    if (a) {
+        LoadBuffersFromView(d, *a);
+        d.viewsHasOriginalSnapshot = false;
+        d.pendingViewStateSave = false;
+        SmatchetToastManager::Instance().Push("Discarded changes", a->Name, ToastType::Info, 1500);
+    }
+}
+
+// Activate a view by id + reload buffers/grid. Former activateView closure body.
+void SmatchetUI::viewsActivateView(AppController& app, UiDrawSession& d, const std::string& id) {
+    if (ViewState.Activate(id)) {
+        const ViewDefinition* nowActive = ViewState.GetActiveView();
+        if (nowActive) {
+            LoadBuffersFromView(d, *nowActive);
+            d.cfg.JqlQuery = nowActive->Jql;
+            d.cfg.SelectedFields = nowActive->Fields;
+            SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+        }
+    }
+}
+
+// Request activation, guarded by the unsaved-changes confirm. Former requestActivate closure body.
+void SmatchetUI::viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                                      const std::string& id) {
+    if (id == activeView->Id) {
+        return;
+    }
+    if (d.viewsDirty) {
+        d.viewsPendingActivateId = id;
+        d.viewsShowDiscardConfirm = true;
+    } else {
+        viewsActivateView(app, d, id);
+    }
+}
+
+// Create a new view from the current editing buffers. Former createNewView closure body.
+void SmatchetUI::viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView) {
+    ReconcileEditingColumnOrder(d);
+    ViewDefinition created = BuildUpdatedView(*activeView, d);
+    created.Name = "New View";
+    created.Id.clear();
+    ViewState.Create(created);
+    const ViewDefinition* nowActive = ViewState.GetActiveView();
+    if (nowActive) {
+        LoadBuffersFromView(d, *nowActive);
+        SmatchetToastManager::Instance().Push("View created", nowActive->Name, ToastType::Success, 1800);
+    }
+}
+
+// Window-level keyboard shortcuts: Ctrl+Enter = Apply, Ctrl+N = New. Split out of
+// drawViewsDashboardWindow under the function-size cap; behaviour-identical.
+void SmatchetUI::handleViewsDashboardShortcuts(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_RootWindow)) {
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            viewsApplyAndSync(app, d, activeView);
+        } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
+            viewsCreateNewView(d, activeView);
+        }
+    }
 }

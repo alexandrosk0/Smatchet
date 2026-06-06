@@ -48,6 +48,43 @@ bool EqIgnoreCase(const std::string& a, const std::string& b) {
     return true;
 }
 
+// Scan a quoted string starting just past the opening quote at `i` (which is
+// advanced past the closing quote on success). Returns false + sets error on
+// an unterminated string. No escape handling — JQL strings in our view editor
+// don't use backslash escapes.
+bool ScanQuotedString(const std::string& src, std::size_t& i, char quote, std::string& outStr, std::string& error) {
+    bool closed = false;
+    while (i < src.size()) {
+        const char ch = src[i];
+        if (ch == quote) {
+            closed = true;
+            ++i;
+            break;
+        }
+        outStr.push_back(ch);
+        ++i;
+    }
+    if (!closed) {
+        error = "Unterminated quoted string in JQL";
+        return false;
+    }
+    return true;
+}
+
+// Scan a bareword (identifier chars + dots/dashes) starting at `i`, advancing
+// `i` past the word. Returns the matched text.
+std::string ScanBareword(const std::string& src, std::size_t& i) {
+    const std::size_t start = i;
+    while (i < src.size()) {
+        const unsigned char cc = static_cast<unsigned char>(src[i]);
+        if (std::isalnum(cc) == 0 && cc != '_' && cc != '-' && cc != '.') {
+            break;
+        }
+        ++i;
+    }
+    return src.substr(start, i - start);
+}
+
 // Tokenize the input. Returns false + sets error on unterminated quoted string.
 bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error) {
     std::size_t i = 0;
@@ -83,21 +120,7 @@ bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error)
             const char quote = static_cast<char>(c);
             ++i;
             std::string s;
-            bool closed = false;
-            while (i < src.size()) {
-                const char ch = src[i];
-                if (ch == quote) {
-                    closed = true;
-                    ++i;
-                    break;
-                }
-                // No escape handling — JQL strings in our view editor don't
-                // use backslash escapes.
-                s.push_back(ch);
-                ++i;
-            }
-            if (!closed) {
-                error = "Unterminated quoted string in JQL";
+            if (!ScanQuotedString(src, i, quote, s, error)) {
                 return false;
             }
             Tok t;
@@ -128,17 +151,9 @@ bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error)
         }
         // Bareword: identifier chars + dots/dashes (for fields).
         if (std::isalnum(c) != 0 || c == '_' || c == '-' || c == '.') {
-            std::size_t start = i;
-            while (i < src.size()) {
-                const unsigned char cc = static_cast<unsigned char>(src[i]);
-                if (std::isalnum(cc) == 0 && cc != '_' && cc != '-' && cc != '.') {
-                    break;
-                }
-                ++i;
-            }
             Tok t;
             t.Kind = TokKind::Word;
-            t.Text = src.substr(start, i - start);
+            t.Text = ScanBareword(src, i);
             out.push_back(t);
             continue;
         }

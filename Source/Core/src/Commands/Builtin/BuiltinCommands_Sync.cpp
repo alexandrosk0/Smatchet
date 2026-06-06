@@ -16,7 +16,9 @@ namespace cmd {
 
 using builtin_detail::MakeCommand;
 
-void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
+namespace {
+
+void RegisterSyncIncrementalCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c = MakeCommand("sync.incremental", "Delta sync from tracker (last-fetched timestamp onward).",
                                 [&app](const nlohmann::json&, const CommandContext& ctx) {
@@ -37,7 +39,9 @@ void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
         c.DryRunSupported = true;
         reg.Register(std::move(c));
     }
+}
 
+void RegisterSyncFullCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c =
             MakeCommand("sync.full", "Full sync: wipe local cache and re-fetch all tickets from tracker.",
@@ -60,7 +64,9 @@ void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
         c.DryRunSupported = true;
         reg.Register(std::move(c));
     }
+}
 
+void RegisterSyncRefreshLocalCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c =
             MakeCommand("sync.refresh_local", "Rebuild in-memory ticket list from the local SQLite cache (no network).",
@@ -70,7 +76,9 @@ void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
                         });
         reg.Register(std::move(c));
     }
+}
 
+void RegisterSyncTrackerStatusCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c = MakeCommand("sync.tracker_status",
                                 "Last connectivity state and diagnostic from the tracker reachability probe.",
@@ -103,7 +111,9 @@ void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
                                 });
         reg.Register(std::move(c));
     }
+}
 
+void RegisterSyncFetchActiveViewCommand(CommandRegistry& reg, AppController& app) {
     {
         Command c =
             MakeCommand("sync.fetch_active_view",
@@ -132,6 +142,16 @@ void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
         c.AsyncSafe = false;
         reg.Register(std::move(c));
     }
+}
+
+} // namespace
+
+void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
+    RegisterSyncIncrementalCommand(reg, app);
+    RegisterSyncFullCommand(reg, app);
+    RegisterSyncRefreshLocalCommand(reg, app);
+    RegisterSyncTrackerStatusCommand(reg, app);
+    RegisterSyncFetchActiveViewCommand(reg, app);
 }
 
 } // namespace cmd

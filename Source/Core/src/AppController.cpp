@@ -355,6 +355,41 @@ bool FieldIconHasCaseInsensitivePrefix(const std::string& value, const std::stri
     return next == '/' || next == '\\';
 }
 
+// True when absStr is inside the Lua scripts directory or the runtime-asset directory.
+// Both roots are weakly-canonicalised before the case-insensitive prefix compare.
+bool FieldIconPathIsAllowed(const std::string& absStr, const std::string& luaScriptsDirectory) {
+    namespace fs = ghc::filesystem;
+    std::error_code ec;
+
+    if (!luaScriptsDirectory.empty()) {
+
+        const fs::path scriptsRoot = fs::weakly_canonical(fs::path(luaScriptsDirectory), ec);
+
+        if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, scriptsRoot.string())) {
+
+            return true;
+        }
+
+        ec.clear();
+    }
+
+    const std::string base = ConfigManager::GetRuntimeAssetDirectory();
+
+    if (!base.empty()) {
+
+        const fs::path baseRoot = fs::weakly_canonical(fs::path(base), ec);
+
+        if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, baseRoot.string())) {
+
+            return true;
+        }
+
+        ec.clear();
+    }
+
+    return false;
+}
+
 } // namespace
 
 void AppController::SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> factory) {
@@ -504,65 +539,67 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
         return;
     }
 
-    LaunchBackgroundTask([this, toFetch]() {
-        // Latch a strong handle via atomic_load: this worker reads Backend off the UI thread,
-        // which would race a live SetBackend swap on a plain .get(). The shared_ptr also keeps
-        // the backend alive for the FetchIssuesForKeys call (ADR 0012).
-        std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
+    LaunchBackgroundTask([this, toFetch]() { FetchAndCachePrefetchedTickets(toFetch); });
+}
 
-        if (!backend) {
+void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch) {
+    // Latch a strong handle via atomic_load: this worker reads Backend off the UI thread,
+    // which would race a live SetBackend swap on a plain .get(). The shared_ptr also keeps
+    // the backend alive for the FetchIssuesForKeys call (ADR 0012).
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
 
-            return;
+    if (!backend) {
+
+        return;
+    }
+
+    TrackerConfig cfg = ConfigManager::Load();
+
+    ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
+
+    std::string err;
+
+    std::vector<CachedTicket> tickets;
+
+    const bool ok = backend->Reader().FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
+
+    {
+
+        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+
+        for (const auto& k : toFetch) {
+
+            bulkImportPrefetchKeysInFlight_.erase(k);
+        }
+    }
+
+    if (!ok) {
+
+        if (IsTrackerTransportErrorText(err)) {
+
+            LOG_INFO("AppController::PrefetchIssueTicketsForKeys skipped (transport): %s", err.c_str());
+
+        } else {
+
+            LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
         }
 
-        TrackerConfig cfg = ConfigManager::Load();
+        return;
+    }
 
-        ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
+    requestDeferredLiveTrackerBackendSuccessNotify_();
 
-        std::string err;
+    if (!Cache) {
 
-        std::vector<CachedTicket> tickets;
+        return;
+    }
 
-        const bool ok = backend->Reader().FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
+    for (const auto& t : tickets) {
 
-        {
+        Cache->SaveTicket(t);
+    }
 
-            std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
-
-            for (const auto& k : toFetch) {
-
-                bulkImportPrefetchKeysInFlight_.erase(k);
-            }
-        }
-
-        if (!ok) {
-
-            if (IsTrackerTransportErrorText(err)) {
-
-                LOG_INFO("AppController::PrefetchIssueTicketsForKeys skipped (transport): %s", err.c_str());
-
-            } else {
-
-                LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
-            }
-
-            return;
-        }
-
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-
-        if (!Cache) {
-
-            return;
-        }
-
-        for (const auto& t : tickets) {
-
-            Cache->SaveTicket(t);
-        }
-
-        RefreshLocalData();
-    });
+    RefreshLocalData();
 }
 
 bool AppController::IsBulkImportPrefetchInFlight(const std::string& issueKey) const {
@@ -1857,35 +1894,7 @@ std::string AppController::ResolveFieldIconAssetPath(const std::string& pathOrUr
     std::error_code ec;
 
     auto isAllowedPath = [&](const fs::path& absPath) -> bool {
-        const std::string absStr = absPath.string();
-
-        if (!luaScriptsDirectory_.empty()) {
-
-            const fs::path scriptsRoot = fs::weakly_canonical(fs::path(luaScriptsDirectory_), ec);
-
-            if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, scriptsRoot.string())) {
-
-                return true;
-            }
-
-            ec.clear();
-        }
-
-        const std::string base = ConfigManager::GetRuntimeAssetDirectory();
-
-        if (!base.empty()) {
-
-            const fs::path baseRoot = fs::weakly_canonical(fs::path(base), ec);
-
-            if (!ec && FieldIconHasCaseInsensitivePrefix(absStr, baseRoot.string())) {
-
-                return true;
-            }
-
-            ec.clear();
-        }
-
-        return false;
+        return FieldIconPathIsAllowed(absPath.string(), luaScriptsDirectory_);
     };
 
     fs::path inp(t);

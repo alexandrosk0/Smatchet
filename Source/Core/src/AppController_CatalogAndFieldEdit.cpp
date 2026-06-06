@@ -510,64 +510,69 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
     }
     LaunchBackgroundTask([this, representatives, componentProjectKeys, backend,
                           trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
-        for (const auto& pair : representatives) {
-            if (shuttingDown_.load()) {
-                break;
-            }
-            std::string ignored;
-            EnsureIssueEditMetaLoaded(pair.second, &ignored, nullptr, &trackerCfgForWorker);
-        }
+        WarmIssueTypeEditMetaWorker(representatives, componentProjectKeys, backend, std::move(trackerCfgForWorker));
+    });
+}
 
-        ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
-        if (catalog == nullptr) {
-            return;
+void AppController::WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std::string, std::string>>& representatives,
+                                                const std::vector<std::string>& componentProjectKeys,
+                                                const std::shared_ptr<ITrackerBackend>& backend,
+                                                TrackerConfig trackerCfgForWorker) {
+    for (const auto& pair : representatives) {
+        if (shuttingDown_.load()) {
+            break;
         }
-        for (const auto& projectKey : componentProjectKeys) {
-            if (shuttingDown_.load()) {
-                break;
+        std::string ignored;
+        EnsureIssueEditMetaLoaded(pair.second, &ignored, nullptr, &trackerCfgForWorker);
+    }
+
+    ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
+    if (catalog == nullptr) {
+        return;
+    }
+    for (const auto& projectKey : componentProjectKeys) {
+        if (shuttingDown_.load()) {
+            break;
+        }
+        {
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            if (projectComponentOptions_.find(projectKey) != projectComponentOptions_.end()) {
+                continue; // already warmed
             }
-            {
-                std::lock_guard<std::mutex> lock(availableFieldsMutex_);
-                if (projectComponentOptions_.find(projectKey) != projectComponentOptions_.end()) {
-                    continue; // already warmed
-                }
-                // Respect a backoff recorded by a previous failed fetch (lazy or warm).
-                const auto retryIt = projectComponentsRetryAfter_.find(projectKey);
-                if (retryIt != projectComponentsRetryAfter_.end() &&
-                    std::chrono::steady_clock::now() < retryIt->second) {
-                    continue;
-                }
-                // Join the in-flight set so a concurrent lazy EnsureProjectComponentsLoaded for the
-                // same project skips its own fetch (and vice-versa). Marker erased on EVERY exit
-                // below (shutdown, fetch-fail, success), mirroring the lazy path's discipline.
-                if (!projectComponentsInFlight_.insert(projectKey).second) {
-                    continue; // a lazy fetch for this project is already running
-                }
-            }
-            if (shuttingDown_.load()) {
-                std::lock_guard<std::mutex> lock(availableFieldsMutex_);
-                projectComponentsInFlight_.erase(projectKey);
-                break;
-            }
-            std::vector<TrackerComponent> comps;
-            std::vector<TrackerFieldOption> opts;
-            std::string err;
-            // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
-            if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
-                LOG_DEBUG("AppController: per-project component warm skipped for %s: %s", projectKey.c_str(),
-                          err.c_str());
-                std::lock_guard<std::mutex> lock(availableFieldsMutex_);
-                // Same backoff as the lazy path so a later open doesn't immediately re-hammer.
-                projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-                projectComponentsInFlight_.erase(projectKey); // allow a later lazy open to retry
+            // Respect a backoff recorded by a previous failed fetch (lazy or warm).
+            const auto retryIt = projectComponentsRetryAfter_.find(projectKey);
+            if (retryIt != projectComponentsRetryAfter_.end() && std::chrono::steady_clock::now() < retryIt->second) {
                 continue;
             }
-            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
-            projectComponentOptions_[projectKey] = std::move(opts);
-            projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
-            projectComponentsInFlight_.erase(projectKey);
+            // Join the in-flight set so a concurrent lazy EnsureProjectComponentsLoaded for the
+            // same project skips its own fetch (and vice-versa). Marker erased on EVERY exit
+            // below (shutdown, fetch-fail, success), mirroring the lazy path's discipline.
+            if (!projectComponentsInFlight_.insert(projectKey).second) {
+                continue; // a lazy fetch for this project is already running
+            }
         }
-    });
+        if (shuttingDown_.load()) {
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            projectComponentsInFlight_.erase(projectKey);
+            break;
+        }
+        std::vector<TrackerComponent> comps;
+        std::vector<TrackerFieldOption> opts;
+        std::string err;
+        // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
+        if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
+            LOG_DEBUG("AppController: per-project component warm skipped for %s: %s", projectKey.c_str(), err.c_str());
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            // Same backoff as the lazy path so a later open doesn't immediately re-hammer.
+            projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            projectComponentsInFlight_.erase(projectKey); // allow a later lazy open to retry
+            continue;
+        }
+        std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+        projectComponentOptions_[projectKey] = std::move(opts);
+        projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
+        projectComponentsInFlight_.erase(projectKey);
+    }
 }
 
 std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(const std::string& projectKey) const {
@@ -1224,7 +1229,21 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
         return false;
     }
 
-    bool updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+    if (!ApplyFieldUpdateWithEditMetaRetry(issueId, field, fieldsPayload, issueTypeKeyOpt, *mutations, outResult)) {
+        return false;
+    }
+
+    outResult.Ok = true;
+    outResult.UpdatedDisplayValues = std::move(displayValues);
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return true;
+}
+
+bool AppController::ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId, const TrackerField& field,
+                                                      const nlohmann::json& fieldsPayload,
+                                                      const std::string* issueTypeKeyOpt,
+                                                      ITrackerIssueMutations& mutations, FieldEditResult& outResult) {
+    bool updateOk = mutations.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
@@ -1236,7 +1255,7 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                      issueId.c_str(), field.Id.c_str());
             return false;
         }
-        updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+        updateOk = mutations.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -1251,10 +1270,6 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                   TruncateForLog(payloadForLog, 1200).c_str());
         return false;
     }
-
-    outResult.Ok = true;
-    outResult.UpdatedDisplayValues = std::move(displayValues);
-    requestDeferredLiveTrackerBackendSuccessNotify_();
     return true;
 }
 

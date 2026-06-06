@@ -183,6 +183,67 @@ void JiraDiagnoseZeroIssueResult(const TrackerConfig& cfg, const std::string& ba
     }
 }
 
+// Trim leading/trailing spaces + tabs so JQL matches what you'd paste in the
+// browser. Returns the trimmed copy.
+std::string TrimJqlWhitespace(const std::string& raw) {
+    std::string jqlRaw = raw;
+    while (!jqlRaw.empty() && (jqlRaw.front() == ' ' || jqlRaw.front() == '\t'))
+        jqlRaw.erase(0, 1);
+    while (!jqlRaw.empty() && (jqlRaw.back() == ' ' || jqlRaw.back() == '\t'))
+        jqlRaw.pop_back();
+    return jqlRaw;
+}
+
+// Build the JQL key clause for the requested keys: a single equality match for
+// one key, or an "in" list for several. Reads count keys from the given offset.
+std::string BuildKeyInJql(const std::vector<std::string>& keys, std::size_t offset, std::size_t count) {
+    if (count == 1) {
+        return "key = \"" + keys[offset] + "\"";
+    }
+    std::string jql = "key in (";
+    for (std::size_t i = 0; i < count; ++i) {
+        if (i) {
+            jql += ',';
+        }
+        jql += '"';
+        jql += keys[offset + i];
+        jql += '"';
+    }
+    jql += ')';
+    return jql;
+}
+
+// Log a non-200 page response and return the summary fetch-error string.
+std::string LogAndBuildPageFetchError(int page, const cpr::Response& response) {
+    LOG_ERROR("JiraClient: failed to fetch issues page %d. HTTP %d, error code %d.", page, response.status_code,
+              static_cast<int>(response.error.code));
+    if (response.status_code == 401 || response.status_code == 403 ||
+        (response.text.find("authenticated") != std::string::npos)) {
+        LOG_WARN("JiraClient: login failed. Check Email and API token under Settings → Preferences → Jira.");
+    }
+    LOG_DEBUG("JiraClient: response error message: %s", response.error.message.c_str());
+    std::string msg = "HTTP " + std::to_string(response.status_code);
+    if (!response.error.message.empty()) {
+        msg += std::string(" ") + response.error.message;
+    }
+    return msg;
+}
+
+// Deduplicate + trim issue keys, preserving first-seen order.
+std::vector<std::string> DedupeIssueKeys(const std::vector<std::string>& issueKeys) {
+    std::vector<std::string> keys;
+    keys.reserve(issueKeys.size());
+    std::unordered_set<std::string> seen;
+    for (const auto& k : issueKeys) {
+        const std::string t = TrimCopy(k);
+        if (t.empty() || !seen.insert(t).second) {
+            continue;
+        }
+        keys.push_back(t);
+    }
+    return keys;
+}
+
 } // namespace
 
 std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
@@ -229,12 +290,8 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
 
     std::string base = NormalizeBaseUrl(cfg.Domain);
 
-    std::string jqlRaw = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
-    // Trim leading/trailing whitespace so JQL matches what you'd paste in the browser.
-    while (!jqlRaw.empty() && (jqlRaw.front() == ' ' || jqlRaw.front() == '\t'))
-        jqlRaw.erase(0, 1);
-    while (!jqlRaw.empty() && (jqlRaw.back() == ' ' || jqlRaw.back() == '\t'))
-        jqlRaw.pop_back();
+    const std::string jqlRaw =
+        TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
     const std::string jqlEncoded = UrlEncode(jqlRaw);
 
     // Prefer the active view's field list as the single source of truth.
@@ -280,20 +337,7 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
         auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
         const std::string lastResponseBody = response.text;
         if (response.status_code != 200) {
-            LOG_ERROR("JiraClient: failed to fetch issues page %d. HTTP %d, error code %d.", page, response.status_code,
-                      static_cast<int>(response.error.code));
-            if (response.status_code == 401 || response.status_code == 403 ||
-                (response.text.find("authenticated") != std::string::npos)) {
-                LOG_WARN("JiraClient: login failed. Check Email and API token under Settings → Preferences → Jira.");
-            }
-            LOG_DEBUG("JiraClient: response error message: %s", response.error.message.c_str());
-            {
-                std::string msg = "HTTP " + std::to_string(response.status_code);
-                if (!response.error.message.empty()) {
-                    msg += std::string(" ") + response.error.message;
-                }
-                summary.FetchError = std::move(msg);
-            }
+            summary.FetchError = LogAndBuildPageFetchError(page, response);
             break;
         }
 
@@ -334,16 +378,7 @@ bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<
         return false;
     }
 
-    std::vector<std::string> keys;
-    keys.reserve(issueKeys.size());
-    std::unordered_set<std::string> seen;
-    for (const auto& k : issueKeys) {
-        const std::string t = TrimCopy(k);
-        if (t.empty() || !seen.insert(t).second) {
-            continue;
-        }
-        keys.push_back(t);
-    }
+    const std::vector<std::string> keys = DedupeIssueKeys(issueKeys);
     if (keys.empty()) {
         return true;
     }
@@ -362,21 +397,7 @@ bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<
     constexpr std::size_t kMaxKeysPerRequest = 40;
     for (size_t offset = 0; offset < keys.size(); offset += kMaxKeysPerRequest) {
         const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
-        std::string jql;
-        if (n == 1) {
-            jql = "key = \"" + keys[offset] + "\"";
-        } else {
-            jql = "key in (";
-            for (size_t i = 0; i < n; ++i) {
-                if (i) {
-                    jql += ',';
-                }
-                jql += '"';
-                jql += keys[offset + i];
-                jql += '"';
-            }
-            jql += ')';
-        }
+        const std::string jql = BuildKeyInJql(keys, offset, n);
         const std::string jqlEncoded = UrlEncode(jql);
         const std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
                                     "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
