@@ -49,35 +49,18 @@ on:
       - 'scripts/dev/project-config.sh'
       - 'agents/_shared/token-tracking/**'
       - '.github/workflows/doc-validation.yml'
+  # NO paths: filter here — DELIBERATE. `Doc anchors + agent contract` is a
+  # REQUIRED branch-protection context (project.config.json § branch_protection).
+  # A path-filtered required check is the classic GitHub deadlock: on a PR that
+  # touches none of the filtered paths the workflow never runs, the required
+  # context is never reported, and GitHub holds the PR `BLOCKED` forever (it
+  # bit #880/#881/#882 — pure product/test diffs). So the workflow now runs on
+  # EVERY PR and the doc-anchors job self-gates: a `Detect doc-relevant changes`
+  # step decides whether to run the real validation or no-op green, so the
+  # required context is ALWAYS reported exactly once. (Push keeps its paths
+  # filter below — post-merge develop runs gate nothing.)
   pull_request:
     branches: [develop]
-    paths:
-      - '**/*.md'
-      - 'AGENTS.md'
-      - 'agents/**'
-      - 'docs/agent-rules/**'
-      - 'docs/backlog/**'
-      - 'docs/self-improvement/**'
-      - 'docs/plans/shipped/**'
-      - 'project.config.json'
-      - 'project.config.schema.json'
-      - 'agents/scripts/core/test-doc-anchors.sh'
-      - 'agents/scripts/core/test_doc_anchors.py'
-      - 'agents/scripts/core/test-agent-contract.sh'
-      - 'agents/scripts/core/test-agent-build-facts.sh'
-      - 'agents/scripts/core/test-plan-index.sh'
-      - 'agents/scripts/core/test-plan-ref-integrity.sh'
-      - 'agents/scripts/core/test-markdown-links.sh'
-      - 'agents/scripts/core/test-agent-discovery-fixture.sh'
-      - 'agents/scripts/project/test-subsystem-docs.sh'
-      - 'agents/scripts/core/agent_size_audit.py'
-      - 'CONTEXT-MAP.md'
-      - 'Source/Core/src/**/AGENTS.md'
-      - 'Source/Core/src/**/CONTEXT.md'
-      - 'Source/Core/src/**/README.md'
-      - 'scripts/dev/project-config.sh'
-      - 'agents/_shared/token-tracking/**'
-      - '.github/workflows/doc-validation.yml'
 
 concurrency:
   group: doc-validation-${{ github.ref }}
@@ -216,16 +199,48 @@ jobs:
         with:
           python-version: '3.11'
 
+      # Self-gate: this required check now runs on EVERY PR (no workflow paths
+      # filter — see the `on:` header). For a PR that touches no doc-relevant
+      # file, the real validation has nothing to check, so every step below is
+      # skipped and the job completes green — the required context is still
+      # reported (exactly once), which is what keeps GitHub from deadlocking a
+      # pure product/test PR. The detect predicate is intentionally a superset
+      # of the retired `pull_request.paths` list (more inclusive = fail-safe:
+      # worst case the validation runs when it strictly needn't and passes).
+      - name: Detect doc-relevant changes
+        id: detect
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+            echo "non-PR event — running full doc validation."
+            exit 0
+          fi
+          git fetch --no-tags origin "$BASE_REF" 2>/dev/null || true
+          changed="$(git diff --name-only "origin/$BASE_REF...HEAD" 2>/dev/null || true)"
+          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^\.github/workflows/doc-validation\.yml$)'; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+            echo "doc-relevant changes detected — running full doc validation."
+          else
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+            echo "no doc-relevant changes — doc validation no-ops (required check reported green)."
+          fi
+
       - name: test-doc-anchors — every AGENTS.md § <section> resolves
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-doc-anchors.sh
 
       - name: test-agent-contract — required headings + frontmatter parity
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-agent-contract.sh
 
       - name: test-agent-build-facts — agent prompts cite real presets + live toolchain
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-agent-build-facts.sh
 
       - name: Validate project.config.json against schema
+        if: steps.detect.outputs.docs == 'true'
         run: |
           python -m pip install --quiet jsonschema
           python - <<'PY'
@@ -237,30 +252,39 @@ jobs:
           PY
 
       - name: test-plan-index — shipped-plan index in sync with archive
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-plan-index.sh
 
       - name: test-plan-ref-integrity — no dangling docs/plans refs
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-plan-ref-integrity.sh
 
       - name: test-plan-naming — plan files are kebab-case
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-plan-naming.sh
 
       - name: md_lint — markdown style (MD028 etc.)
+        if: steps.detect.outputs.docs == 'true'
         run: |
           python3 agents/scripts/core/md_lint.py --selftest
           python3 agents/scripts/core/md_lint.py --all
 
       - name: test-portable-purity — no NEW project literals in portable dirs
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-portable-purity.sh
 
       - name: test-markdown-links — no dangling [label](href) targets
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-markdown-links.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-agent-discovery-fixture.sh
 
       - name: test-subsystem-docs — leaf-doc registry parity + README staleness
+        if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/project/test-subsystem-docs.sh --diff origin/develop
 
       - name: agent-size gate — agent prompt / AGENTS.md line budget (delta vs develop)
+        if: steps.detect.outputs.docs == 'true'
         run: python3 agents/scripts/core/agent_size_audit.py --diff origin/develop
