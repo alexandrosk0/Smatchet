@@ -62,6 +62,17 @@ on:
   # filter below — post-merge develop runs gate nothing.)
   pull_request:
     branches: [develop]
+  # Merge-queue readiness (docs/plans/active/build-quality-velocity-hardening.md
+  # finding #14 path B): `Doc anchors + agent contract` is a branch-protection
+  # REQUIRED check. When develop is behind a GitHub merge queue, required checks
+  # run on the synthetic `merge_group` ref; a required check that never reports
+  # there deadlocks the queue forever (#880/#881/#882 class — the very deadlock
+  # the self-gate below already exists to prevent on docs-less PRs). The
+  # `Detect doc-relevant changes` step already self-gates non-pull_request events
+  # to `docs=true` (full validation runs → reports terminal status), so adding
+  # `merge_group` here makes the required context report on the queued merge with
+  # no further change. The `autosync-plan-index` job stays PR-only (not required).
+  merge_group:
 
 concurrency:
   group: doc-validation-${{ github.ref }}

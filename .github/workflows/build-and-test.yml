@@ -35,6 +35,14 @@ on:
     branches: [develop]
   pull_request:
     branches: [develop]
+  # Merge-queue readiness (docs/plans/active/build-quality-velocity-hardening.md
+  # finding #14 path B): when develop is put behind a GitHub merge queue, the
+  # required checks run on the synthetic `merge_group` ref. A required check that
+  # never reports on `merge_group` deadlocks the queue forever (same class as the
+  # #880/#881/#882 path-filtered-required-check deadlock). The `changes` detect
+  # step below forces code=true on merge_group so BOTH MSVC required contexts
+  # always run + report a terminal status on the queued merge.
+  merge_group:
 
 # Cancel in-flight runs for the same branch on a new push.
 concurrency:
@@ -66,6 +74,16 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          # Merge-queue: a queued merge MUST report both MSVC required contexts
+          # green (a skipped/never-reporting required check deadlocks the queue).
+          # The merge_group ref IS the to-be-merged result, so building it is both
+          # correct and the safety the queue exists for — force the full build.
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "merge_group event — forcing full build (code=true, asan=true)."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "source_core_cpp=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
             range="origin/${{ github.base_ref }}...HEAD"

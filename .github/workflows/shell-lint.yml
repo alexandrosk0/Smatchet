@@ -29,6 +29,15 @@ on:
     branches: [develop]
   pull_request:
     branches: [develop]
+  # Merge-queue readiness (docs/plans/active/build-quality-velocity-hardening.md
+  # finding #14 path B): `Shell lint (shellcheck)` is a branch-protection
+  # REQUIRED check. When develop is behind a GitHub merge queue, required checks
+  # run on the synthetic `merge_group` ref; a required check that never reports
+  # there deadlocks the queue forever (#880/#881/#882 class). The two lint steps
+  # are not PR-scoped (they lint the working tree, only `git rev-parse
+  # --show-toplevel`), so they run + report a real terminal status directly on
+  # the queued merge ref — no self-gate needed.
+  merge_group:
 
 concurrency:
   group: shell-lint-${{ github.ref }}
