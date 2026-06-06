@@ -37,7 +37,9 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
 # DIRECTORY; a linked worktree's .git is a FILE (gitdir pointer).
 $cwd = (Get-Location).Path
 $tree = (& git -C $cwd rev-parse --show-toplevel 2>$null)
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tree)) { $tree = $cwd }
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tree)) {
+    throw "Not inside a git worktree ($cwd). Run new-session.ps1 from the integration tree or a worktree."
+}
 $isIntegrationTree = (Test-Path -LiteralPath (Join-Path $tree '.git') -PathType Container)
 
 if ($isIntegrationTree) {
