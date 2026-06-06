@@ -173,3 +173,9 @@
   Status: open
   Last-reviewed: 2026-06-05
 
+- 2026-06-05 · p4-annotate · [process] · P3 — lexer/highlighter-only Issues mis-route to `p4-annotate` (its P4/PathRemaps invariants don't apply)
+  Details: #818 (a pure `CppSyntaxLex` number-tokenizer fix — C++14 digit separator + uppercase `U` suffix) was routed to `p4-annotate` because its description (`agents/project/p4-annotate.md:3`) lists `CppSyntaxHighlight` in scope. But the lexer is generic C++ with NO P4 surface — p4-annotate's hard invariants (P4 CLI transport, annotate caching, approximate-line state, `PathRemaps` symbolication) were entirely inapplicable; the agent flagged the identity mismatch in its `## Self-improvement`. The highlighter is in p4-annotate's scope only because it renders annotate views, not because lexer changes belong there.
+  Concrete next action: route lexer/highlighter-only changes (`CppSyntaxLex` / `CppSyntaxHighlight` tokenizing rules with no annotate/P4 coupling) to a generic C++ agent; OR add a one-line negative-guard to `p4-annotate.md`'s scope ("`CppSyntaxHighlight` *as rendered in annotate views* — pure lexer/tokenizer changes go to a generic C++ agent"). Low priority — single mis-route, the work landed fine (#818 shipped).
+  Status: open
+  Last-reviewed: 2026-06-05
+
