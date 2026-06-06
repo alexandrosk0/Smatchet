@@ -100,6 +100,8 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 
 **Subsystem guides**: when you touch `Source/Core/src/<ctx>/`, read its leaf `AGENTS.md` first — single source of truth, overrides any central summary. Registry: [`CONTEXT-MAP.md`](CONTEXT-MAP.md) (detail in [`cpp-rules.md`](docs/agent-rules/cpp-rules.md) § Subsystem guides).
 
+**Concurrent sessions**: one worktree per session (`nsc <slug>`) — a shared-tree `checkout`/`pull`/`reset` rug-pulls a sibling's HEAD; HEAD-drift guard + `resync` recovery + self-excluding `git-janitor` / `merge-watcher` auto-act confinement in [`process-rules.md`](docs/agent-rules/process-rules.md) § Concurrent interactive sessions.
+
 ## Process rules
 
 How agents move work through the pipeline — full text + canonical recipes + carve-out list + the deferred-lint pipeline: [`docs/agent-rules/process-rules.md`](docs/agent-rules/process-rules.md).

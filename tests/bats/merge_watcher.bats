@@ -751,6 +751,58 @@ print('extras:', extras)
     [[ "$output" == *"BUDGET_EXHAUSTED (2/2)"* ]]
 }
 
+# ---------- Option A: concurrent-session confinement (#913 fast-follow) ----------
+
+@test "_count_live_sessions: fresh ts OR live ppid counts; stale+dead and absent dir do not" {
+    run python - <<'PY'
+import importlib.util, os, sys, time, tempfile, pathlib
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+tree = tempfile.mkdtemp()
+reg = pathlib.Path(tree) / ".claude" / ".active-sessions"
+reg.mkdir(parents=True)
+now = int(time.time())
+(reg / "fresh").write_text("branch=feat/a\nsha=x\nppid=999999999\nts=%d\n" % now)
+(reg / "stale-dead").write_text("branch=feat/b\nsha=y\nppid=2147483646\nts=%d\n" % (now - 99999))
+(reg / "stale-but-alive").write_text("branch=feat/c\nppid=%d\nts=%d\n" % (os.getpid(), now - 99999))
+assert m._count_live_sessions(tree) == 2, m._count_live_sessions(tree)
+assert m._count_live_sessions(tempfile.mkdtemp()) == 0  # no .active-sessions dir
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "maybe_auto_act: defers (no budget consumed) when a live session shares the clone tree" {
+    run python - <<'PY'
+import importlib.util, os, sys, time, tempfile, pathlib, subprocess
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+os.environ["MERGE_WATCH_AUTO_ACT"] = "true"
+m._gh_owner_repo = lambda _p: ("alexandrosk0", "Smatchet")
+m._gh_json = lambda args, **kw: {"headRefOid": "cafef00dcafef00dcafef00dcafef00dcafef00d"}
+m.shutil.which = lambda _n: "/fake/bin/claude"
+class _Clean:
+    returncode = 0; stdout = ""; stderr = ""
+subprocess.run = lambda *a, **kw: _Clean()   # clean `git status --porcelain`
+clone = tempfile.mkdtemp()
+reg = pathlib.Path(clone) / ".claude" / ".active-sessions"
+reg.mkdir(parents=True)
+(reg / "live").write_text("branch=feat/x\nsha=y\nppid=999999999\nts=%d\n" % int(time.time()))
+entry = {"pr": 999, "clone_path": clone}
+state = {"last_state": "TRIAGE_BUDGET_EXHAUSTED",
+         "last_status_line": "Poll 1/1 CodeRabbit: COMMENTED (3 actionable - block)"}
+extras = m.maybe_auto_act(state, entry)
+print("extras:", extras)
+assert "deferred" in extras.get("auto_act_action", ""), extras
+assert "auto_act_attempts" not in extras, "defer must not consume a budget slot"
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deferred"* ]]
+}
+
 # ---------- Triage budget default (option C: fast notify on CR findings) ----------
 
 @test "MERGE_WATCH_TRIAGE_BUDGET default is 1 (was 3 — option C)" {
