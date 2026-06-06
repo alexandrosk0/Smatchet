@@ -100,7 +100,7 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
                 detail = j["detail"].dump();
             else
                 detail = response.text;
-        } catch (...) {
+        } catch (...) { // catch-all-ok: error body not JSON — fall back to the raw response text
             detail = response.text;
         }
         outError = "Plane API error: " + std::to_string(response.status_code) + " " + detail;
@@ -297,7 +297,7 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
             } else {
                 detail = response.text;
             }
-        } catch (...) {
+        } catch (...) { // catch-all-ok: error body not JSON — fall back to the raw response text
             detail = response.text;
         }
         outError = "Plane API error: " + std::to_string(response.status_code) + " " + detail;
@@ -324,7 +324,13 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         }
 
         return visualKey;
+    } catch (const std::exception& ex) {
+        // Network/API tier (exception-handling-policy.md): the create succeeded server-side
+        // (2xx above) but its response body did not parse — surface it instead of swallowing,
+        // then fall through to an empty key so the caller treats it as "created, key unknown".
+        LOG_WARN("PlaneClient::CreateIssue: issue created but response JSON failed to parse: %s", ex.what());
     } catch (...) {
+        LOG_WARN("PlaneClient::CreateIssue: issue created but response JSON failed to parse: unknown exception");
     }
 
     return "";
