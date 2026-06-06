@@ -9,7 +9,7 @@ name: Build and test
 permissions:
   contents: read
 
-# sccache (local-dir backend) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+# sccache (local-dir backend) — docs/plans/ci-build-time-reduction.md Phase 1.
 # CMakeLists.txt auto-wraps sccache off PATH (find_program NAMES ccache sccache).
 # We deliberately use the LOCAL-DISK backend (SCCACHE_DIR) + actions/cache rather
 # than SCCACHE_GHA_ENABLED: the GHA-native backend makes sccache talk to the GH
@@ -110,7 +110,7 @@ jobs:
           fi
           echo "non-docs changes present: ${code}"
           echo "code=${code}" >> "$GITHUB_OUTPUT"
-          # ASAN Core-delta gate (docs/plans/active/ci-build-time-reduction.md Q5):
+          # ASAN Core-delta gate (docs/plans/ci-build-time-reduction.md Q5):
           # the sanitizer-asan job builds Debug (uncacheable by sccache) and is the
           # only real per-PR asan lever, so run it pre-merge ONLY when first-party
           # shared C++ that can introduce UB changed — Source/Core or Source/Plugins
@@ -352,7 +352,7 @@ jobs:
       # Cache the extracted Mesa opengl32.dll — bucket-C + bucket-E both pulled the
       # ~30 MB mesa3d 7z from GitHub releases on every run. Key is pinned to the
       # Mesa version (keep in lockstep with MESA_VERSION below); a hit skips the
-      # download entirely. docs/plans/active/ci-build-time-reduction.md Phase 2.
+      # download entirely. docs/plans/ci-build-time-reduction.md Phase 2.
       - name: Cache Mesa opengl32.dll
         uses: actions/cache@v4
         with:
@@ -493,7 +493,7 @@ jobs:
 
   sanitizer-asan:
     name: Sanitizer (ASAN via MSVC)
-    # Core-delta gate (docs/plans/active/ci-build-time-reduction.md Q5): run
+    # Core-delta gate (docs/plans/ci-build-time-reduction.md Q5): run
     # pre-merge ONLY when Source/Core|Plugins C++ changed (the `changes` job's
     # source_core_cpp output). Standalone-only / docs / yaml PRs skip it here;
     # sanitizer-nightly (cron) still covers them. asan builds Debug — uncacheable

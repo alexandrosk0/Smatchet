@@ -1,5 +1,7 @@
 # Plan — CI build-time reduction (sccache + build-reuse + matrix rebalance)
 
+> **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
+>
 > **Slug**: `ci-build-time-reduction` (matches this file's basename without `.md`).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
