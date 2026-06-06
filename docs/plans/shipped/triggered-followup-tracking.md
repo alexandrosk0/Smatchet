@@ -1,5 +1,7 @@
 # Plan — Triggered follow-up tracking (machine-checkable deferred follow-ups)
 
+> **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
+>
 > **Slug**: `triggered-followup-tracking` (matches this file's basename without `.md`).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.

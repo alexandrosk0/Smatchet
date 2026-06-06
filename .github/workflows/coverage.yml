@@ -35,7 +35,7 @@ concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
-# sccache (local-dir backend) — docs/plans/active/ci-build-time-reduction.md Phase 1.
+# sccache (local-dir backend) — docs/plans/ci-build-time-reduction.md Phase 1.
 # Local disk (not SCCACHE_GHA_ENABLED) so a GH-cache-service outage can't fail the build.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
