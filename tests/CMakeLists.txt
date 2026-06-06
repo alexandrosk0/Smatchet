@@ -370,6 +370,14 @@ add_executable(SmatchetTests
     # MaskEmailForLog (#820 PII log redaction, "EmailMaskForLog.h").
     Core/XmlAttrEscape.test.cpp
     Core/EmailMask.test.cpp
+    # build-quality-velocity-hardening #31 — pure CSV/TSV/JSON import+export surface
+    # of IssueTableSerializer. No cpr/AppController/ImGui dep — pure stdlib + nlohmann.
+    Core/IssueTableSerializer.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueTableSerializer.cpp"
+    # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
+    # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
+    # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.
+    Core/FlakySelfTest.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent
