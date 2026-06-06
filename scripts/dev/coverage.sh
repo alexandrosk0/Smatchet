@@ -173,15 +173,23 @@ OCC_FILTER_ARGS=(
 # third invocation that reads --input_coverage and exports the final Cobertura
 # XML + optional HTML. This is OpenCppCoverage's only merge surface — without
 # it, the second --export_type cobertura overwrites the first.
+# --no-breaks: OpenCppCoverage attaches via the debug API, so doctest's
+# isDebuggerActive() is TRUE under it — and doctest breaks into the debugger on a
+# FAILING assertion (incl. a WARN-level one) when no debugger interactively
+# handles the break, terminating the child with STATUS_BREAKPOINT (0x80000003 /
+# OpenCppCoverage "error code: -2147483645"), which fails the coverage capture
+# even though every test PASSED. --no-breaks disables the break; the doctest exit
+# code still reflects real failures, so a genuine test failure still fails here.
+# (Surfaced by the flaky-quarantine self-test's intentional WARN-on-false.)
 echo "[coverage] capturing SmatchetTests via $OCC..."
 set +e
-"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_TESTS" -- "$TEST_EXE" --no-intro --no-version
+"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_TESTS" -- "$TEST_EXE" --no-intro --no-version --no-breaks
 RC_TESTS=$?
 set -e
 
 echo "[coverage] capturing SmatchetLuaTests..."
 set +e
-"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_LUA" -- "$LUA_TEST_EXE" --no-intro --no-version
+"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_LUA" -- "$LUA_TEST_EXE" --no-intro --no-version --no-breaks
 RC_LUA=$?
 set -e
 
