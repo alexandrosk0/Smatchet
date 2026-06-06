@@ -37,6 +37,11 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
+// TrackerConfig (used by value/ref in several method signatures below) was being
+// supplied transitively via the now-removed JiraClient.h include. Depend on its
+// real home directly — ConfigManager.h is cpr-free, so this still drops cpr from
+// AppController.h's ~105 includers (build-quality-velocity-hardening #3).
+#include "ConfigManager.h"
 
 #include <nlohmann/json.hpp>
 
