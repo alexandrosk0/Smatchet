@@ -90,7 +90,7 @@ void DictationInsertionRouter::RegisterInputText(char* buf, std::size_t cap, int
 }
 
 void DictationInsertionRouter::RegisterInputTextWithItemId(char* buf, std::size_t cap, int* cursor,
-                                                            unsigned int itemId) {
+                                                           unsigned int itemId) {
     if (buf == nullptr || cap == 0) {
         return;
     }
@@ -154,8 +154,7 @@ void DictationInsertionRouter::UnregisterInputText(char* buf) {
         shadowCursor_ = nullptr;
         shadowItemId_ = 0;
     }
-    auto it = std::remove_if(entries_.begin(), entries_.end(),
-                             [buf](const Entry& e) { return e.Buf == buf; });
+    auto it = std::remove_if(entries_.begin(), entries_.end(), [buf](const Entry& e) { return e.Buf == buf; });
     entries_.erase(it, entries_.end());
 }
 
@@ -167,8 +166,7 @@ void DictationInsertionRouter::Insert(const std::string& text) {
     // entry point for tests and future single-target callers).
     std::lock_guard<std::mutex> lock(mutex_);
     if (entries_.empty()) {
-        LOG_DEBUG("DictationInsertionRouter::Insert: no registered target; dropping %zu bytes",
-                  text.size());
+        LOG_DEBUG("DictationInsertionRouter::Insert: no registered target; dropping %zu bytes", text.size());
         return;
     }
     Entry& e = entries_.front();
@@ -182,15 +180,14 @@ void DictationInsertionRouter::Insert(const std::string& text) {
         e.Buf[e.Cap - 1] = '\0';
         existing = e.Cap - 1;
     }
-    const std::size_t insertAt = (e.Cursor != nullptr && *e.Cursor >= 0 &&
-                                  static_cast<std::size_t>(*e.Cursor) <= existing)
-                                     ? static_cast<std::size_t>(*e.Cursor)
-                                     : existing;
+    const std::size_t insertAt =
+        (e.Cursor != nullptr && *e.Cursor >= 0 && static_cast<std::size_t>(*e.Cursor) <= existing)
+            ? static_cast<std::size_t>(*e.Cursor)
+            : existing;
     // Budget: leave room for at least one byte + terminator. UTF-8 truncation
     // happens against the incoming text so we never split a code point.
     if (existing + 1 >= e.Cap) {
-        LOG_DEBUG("DictationInsertionRouter::Insert: buffer at capacity (%zu/%zu); dropping",
-                  existing, e.Cap);
+        LOG_DEBUG("DictationInsertionRouter::Insert: buffer at capacity (%zu/%zu); dropping", existing, e.Cap);
         return;
     }
     const std::size_t available = e.Cap - existing - 1; // bytes free for new content.
@@ -227,18 +224,16 @@ void DictationInsertionRouter::SetRecording(bool active) {
     }
 }
 
-bool DictationInsertionRouter::IsTranscribing() const {
-    return transcribing_.load(std::memory_order_acquire);
-}
+bool DictationInsertionRouter::IsTranscribing() const { return transcribing_.load(std::memory_order_acquire); }
 
-void DictationInsertionRouter::SetTranscribing(bool active) {
-    transcribing_.store(active, std::memory_order_release);
-}
+void DictationInsertionRouter::SetTranscribing(bool active) { transcribing_.store(active, std::memory_order_release); }
 
 void DictationInsertionRouter::SetLastPeakAmplitude(float peak0to1) {
     float clamped = peak0to1;
-    if (clamped < 0.0f) clamped = 0.0f;
-    if (clamped > 1.0f) clamped = 1.0f;
+    if (clamped < 0.0f)
+        clamped = 0.0f;
+    if (clamped > 1.0f)
+        clamped = 1.0f;
     lastPeakAmplitude_.store(clamped, std::memory_order_release);
 }
 
@@ -290,11 +285,13 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
         shadowEntry.ItemId = shadowItemId_;
         selected = &shadowEntry;
         LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: entries_ empty, "
-                  "using shadow target (buf=%p)", static_cast<const void*>(shadowEntry.Buf));
+                  "using shadow target (buf=%p)",
+                  static_cast<const void*>(shadowEntry.Buf));
     }
     if (selected == nullptr) {
         LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: no registered target "
-                  "and no shadow; dropping %zu bytes", text.size());
+                  "and no shadow; dropping %zu bytes",
+                  text.size());
         return;
     }
     // Boundary log — worker -> UI hand-off + which buffer was actually picked.
@@ -305,9 +302,13 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     // LOG_DEBUG so verbose logs are opt-in but reachable without rebuilding.
     LOG_DEBUG("DictationInsertionRouter: splice activeId=%u entries=%zu picked buf=%p itemId=%u "
               "isAiAssistant=%d (%zu bytes)",
-              activeId, entries_.size(), static_cast<const void*>(selected->Buf),
-              selected->ItemId, selected->Buf == aiAssistantBuf_ ? 1 : 0, text.size());
-    Entry& e = *selected;
+              activeId, entries_.size(), static_cast<const void*>(selected->Buf), selected->ItemId,
+              selected->Buf == aiAssistantBuf_ ? 1 : 0, text.size());
+    const bool usedShadowTarget = (selected == &shadowEntry);
+    SpliceTextIntoEntry(*selected, text, usedShadowTarget);
+}
+
+void DictationInsertionRouter::SpliceTextIntoEntry(Entry& e, const std::string& text, bool usedShadowTarget) {
     if (e.Buf == nullptr || e.Cap == 0) {
         return;
     }
@@ -316,10 +317,10 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
         e.Buf[e.Cap - 1] = '\0';
         existing = e.Cap - 1;
     }
-    const std::size_t insertAt = (e.Cursor != nullptr && *e.Cursor >= 0 &&
-                                  static_cast<std::size_t>(*e.Cursor) <= existing)
-                                     ? static_cast<std::size_t>(*e.Cursor)
-                                     : existing;
+    const std::size_t insertAt =
+        (e.Cursor != nullptr && *e.Cursor >= 0 && static_cast<std::size_t>(*e.Cursor) <= existing)
+            ? static_cast<std::size_t>(*e.Cursor)
+            : existing;
     if (existing + 1 >= e.Cap) {
         LOG_DEBUG("DictationInsertionRouter::InsertIntoFocusedInputText: buffer at capacity "
                   "(%zu/%zu); dropping",
@@ -352,9 +353,7 @@ void DictationInsertionRouter::InsertIntoFocusedInputText(const std::string& tex
     // entries_.front() slot with ItemId=0 (panel-level idempotent register).
     // A zero result means no consumer-side reload is needed (test driver or
     // scenario runner with no live ImGui frame).
-    const bool usedShadowTarget = (selected == &shadowEntry);
-    const unsigned int reloadId =
-        (e.ItemId != 0u) ? e.ItemId : (usedShadowTarget ? shadowItemId_ : 0u);
+    const unsigned int reloadId = (e.ItemId != 0u) ? e.ItemId : (usedShadowTarget ? shadowItemId_ : 0u);
     if (reloadId != 0u) {
         pendingReloadItemId_.store(reloadId, std::memory_order_release);
     }

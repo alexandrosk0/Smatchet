@@ -485,6 +485,18 @@ class AppController
     std::string ExecuteLuaScriptForMcp(const std::string& scriptName, const nlohmann::json& args,
                                        std::string& outError);
     void DrawLuaWindows();
+
+    /// DrawLuaWindows helper — (re-)record one Lua window's draw fn into its cached cmd-list,
+    /// updating the cache generations and error state. Runs only on a dirty / gen-mismatch frame.
+    void RecordLuaWindow(smatchet::lua::LuaWindowEntry& w, std::uint64_t curDataGen, std::uint64_t curProviderGen);
+
+    /// TryRenderCachedLuaField helper — resolve the cell provider by field id, else by lowercased
+    /// display name. Returns nullptr when no valid provider is registered for the field.
+    sol::protected_function* ResolveLuaFieldProvider(const std::string& fieldId, const TrackerField* fieldMeta);
+
+    /// TryRenderCachedLuaField helper — surface a Lua cell-provider error to the persistent
+    /// errors panel, scrolling log, and auto-open the Scripting window.
+    void SurfaceLuaFieldError(const std::string& fieldName, const std::string& issueId, const std::string& errMsg);
 #endif
 
     /**
@@ -869,6 +881,11 @@ class AppController
         override
 #endif
         ;
+    /// SubmitFieldEditNetworkOnly helper — push the built payload, retrying once after a 400 with
+    /// a refreshed editmeta + edit-permission re-check. Returns true on a successful update.
+    bool ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId, const TrackerField& field,
+                                           const nlohmann::json& fieldsPayload, const std::string* issueTypeKeyOpt,
+                                           ITrackerIssueMutations& mutations, FieldEditResult& outResult);
     bool SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues,
                                     const std::string& originalEstimateSnapshot,
@@ -1123,6 +1140,10 @@ class AppController
     /** Absolute path to the `Scripts` folder (trailing slash), or empty to use `Scripts/` relative to cwd. */
     std::string luaScriptsDirectory_;
 
+    /// Background-task body of PrefetchIssueTicketsForKeys: fetch the keys off the UI thread, clear
+    /// their in-flight markers, persist results to cache, and refresh local data. Runs off-thread.
+    void FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch);
+
     /// Memoised result of `ResolveFieldIconAssetPath` keyed on the raw path-or-url input.
     /// Resolution does 2-3 `fs::weakly_canonical` syscalls on identical inputs hot-path-per-frame
     /// from `LuaDrawList::Replay`. Both base directories (`luaScriptsDirectory_`,
@@ -1158,6 +1179,12 @@ class AppController
     /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
      * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
+    /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: load editmeta for the
+    /// representative issues, then warm per-project component options. Runs off the UI thread.
+    void WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std::string, std::string>>& representatives,
+                                     const std::vector<std::string>& componentProjectKeys,
+                                     const std::shared_ptr<ITrackerBackend>& backend,
+                                     TrackerConfig trackerCfgForWorker);
     void EnsureCatalogHistoryField();
     bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
                                             const std::vector<std::string>& rawValues,

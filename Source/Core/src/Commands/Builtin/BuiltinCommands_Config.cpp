@@ -86,94 +86,99 @@ void RegisterConfigReloadCommand(CommandRegistry& reg) {
     }
 }
 
+// config.set — bidirectional key table: cmd key name maps to JSON file key name.
+// Precedence contract: env vars beat the JSON file. config.set writes to the JSON
+// file, so it is overridden by SMATCHET_* env vars if both are set simultaneously.
+// Keys marked restart-required need the app or MCP plugin to restart to take effect.
+// All others are picked up on the next config load call, such as the next sync.
+// Credentials (ApiToken, PlaneApiKey, McpAuthToken) are NOT in this table — use
+// SMATCHET_TRACKER_TOKEN / SMATCHET_MCP_AUTH_TOKEN env vars for secrets.
+struct CfgKey {
+    const char* cmd;
+    const char* json;
+    const char* hint;
+};
+
+const CfgKey* ConfigSetKeyTable() {
+    static const CfgKey kKeys[] = {
+        {"readOnlyMode", "read_only_mode", ""},
+        {"logMinLevel", "log_min_level", ""},
+        {"logTrackerHttpBodies", "log_tracker_http_bodies", ""},
+        {"showPerformance", "show_performance_window", ""},
+        {"showLogWindow", "show_log_window", ""},
+        {"enableFieldOverflowTooltips", "field_overflow_tooltips", ""},
+        {"singleClickToEditGridCells", "single_click_to_edit_grid_cells", ""},
+        {"defaultLongTextEditorPreview", "default_long_text_editor_preview", ""},
+        {"jqlQuery", "jql", "takes effect on next sync"},
+        {"domain", "domain", "restart required to reconnect"},
+        {"email", "email", "restart required to reconnect"},
+        // PR 6: projectKey / planeProjectId writable keys removed. Project is now
+        // per-operation. Pass it on ticket.create (required) or pick via the in-app picker.
+        {"trackerType", "tracker_type", "restart required"},
+        {"planeUrl", "plane_url", "restart required to reconnect"},
+        {"planeWorkspaceSlug", "plane_workspace_slug", "restart required to reconnect"},
+        {"mcpEnabled", "mcp_enabled", "MCP plugin restart required"},
+        {"mcpPort", "mcp_port", "MCP plugin restart required"},
+        {"mcpAllowRemote", "mcp_allow_remote", "MCP plugin restart required"},
+        {"mcpAllowLuaExecution", "mcp_allow_lua_execution", "MCP plugin restart required"},
+        {nullptr, nullptr, nullptr},
+    };
+    return kKeys;
+}
+
+CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx) {
+    const CfgKey* kKeys = ConfigSetKeyTable();
+    const std::string key = args.value("key", std::string());
+    // Parse the string value as JSON first (handles true/false/integers).
+    // Fall back to a plain JSON string so bare values like debug work.
+    const std::string rawVal = args.value("value", std::string());
+    nlohmann::json val;
+    try {
+        val = nlohmann::json::parse(rawVal);
+    } catch (...) {   // catch-all-ok: a bare value that is not valid JSON is intentionally kept as a plain string
+        val = rawVal; // treat as plain string
+    }
+    const CfgKey* found = nullptr;
+    for (int i = 0; kKeys[i].cmd; ++i) {
+        if (key == kKeys[i].cmd) {
+            found = &kKeys[i];
+            break;
+        }
+    }
+    if (!found) {
+        std::string allowed;
+        for (int i = 0; kKeys[i].cmd; ++i) {
+            if (i)
+                allowed += ", ";
+            allowed += kKeys[i].cmd;
+        }
+        return CommandResult::Failure(ErrorCode::ValidationError,
+                                      "Key '" + key + "' is not in the config.set allowlist.", "Allowed: " + allowed);
+    }
+    if (ctx.DryRun) {
+        return CommandResult::Success({{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});
+    }
+    nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
+    cfgJson[found->json] = val;
+    ConfigManager::WriteConfigJson(cfgJson);
+    // Invalidate the Load() cache so next call picks up the new value.
+    ConfigManager::InvalidateCache();
+    nlohmann::json out;
+    out["key"] = key;
+    out["jsonKey"] = found->json;
+    out["value"] = val;
+    out["written"] = true;
+    if (found->hint && found->hint[0]) {
+        out["hint"] = std::string(found->hint);
+    }
+    return CommandResult::Success(std::move(out));
+}
+
 void RegisterConfigSetCommand(CommandRegistry& reg) {
     {
-        // config.set — bidirectional key table: cmd key name → JSON file key name.
-        // Precedence contract: env vars beat the JSON file. config.set writes to the JSON
-        // file, so it is overridden by SMATCHET_* env vars if both are set simultaneously.
-        // Keys marked (restart) require the app or MCP plugin to restart to take effect;
-        // all others are picked up on the next ConfigManager::Load() call (next sync, etc.).
-        // Credentials (ApiToken, PlaneApiKey, McpAuthToken) are NOT in this table — use
-        // SMATCHET_TRACKER_TOKEN / SMATCHET_MCP_AUTH_TOKEN env vars for secrets.
-        struct CfgKey {
-            const char* cmd;
-            const char* json;
-            const char* hint;
-        };
-        static const CfgKey kKeys[] = {
-            {"readOnlyMode", "read_only_mode", ""},
-            {"logMinLevel", "log_min_level", ""},
-            {"logTrackerHttpBodies", "log_tracker_http_bodies", ""},
-            {"showPerformance", "show_performance_window", ""},
-            {"showLogWindow", "show_log_window", ""},
-            {"enableFieldOverflowTooltips", "field_overflow_tooltips", ""},
-            {"singleClickToEditGridCells", "single_click_to_edit_grid_cells", ""},
-            {"defaultLongTextEditorPreview", "default_long_text_editor_preview", ""},
-            {"jqlQuery", "jql", "takes effect on next sync"},
-            {"domain", "domain", "restart required to reconnect"},
-            {"email", "email", "restart required to reconnect"},
-            // PR 6: `projectKey` / `planeProjectId` writable keys removed. Project is now
-            // per-operation; pass it on `ticket.create` (required) or pick via the in-app picker.
-            {"trackerType", "tracker_type", "restart required"},
-            {"planeUrl", "plane_url", "restart required to reconnect"},
-            {"planeWorkspaceSlug", "plane_workspace_slug", "restart required to reconnect"},
-            {"mcpEnabled", "mcp_enabled", "MCP plugin restart required"},
-            {"mcpPort", "mcp_port", "MCP plugin restart required"},
-            {"mcpAllowRemote", "mcp_allow_remote", "MCP plugin restart required"},
-            {"mcpAllowLuaExecution", "mcp_allow_lua_execution", "MCP plugin restart required"},
-            {nullptr, nullptr, nullptr},
-        };
-
-        Command c = MakeCommand(
-            "config.set", "Persist one config key to smatchet_config.json (allowlisted; env vars override).",
-            [](const nlohmann::json& args, const CommandContext& ctx) {
-                const std::string key = args.value("key", std::string());
-                // Parse the string value as JSON first (handles true/false/integers).
-                // Fall back to a plain JSON string so bare values like `debug` work.
-                const std::string rawVal = args.value("value", std::string());
-                nlohmann::json val;
-                try {
-                    val = nlohmann::json::parse(rawVal);
-                } catch (...) {
-                    val = rawVal; // treat as plain string
-                }
-                const CfgKey* found = nullptr;
-                for (int i = 0; kKeys[i].cmd; ++i) {
-                    if (key == kKeys[i].cmd) {
-                        found = &kKeys[i];
-                        break;
-                    }
-                }
-                if (!found) {
-                    std::string allowed;
-                    for (int i = 0; kKeys[i].cmd; ++i) {
-                        if (i)
-                            allowed += ", ";
-                        allowed += kKeys[i].cmd;
-                    }
-                    return CommandResult::Failure(ErrorCode::ValidationError,
-                                                  "Key '" + key + "' is not in the config.set allowlist.",
-                                                  "Allowed: " + allowed);
-                }
-                if (ctx.DryRun) {
-                    return CommandResult::Success(
-                        {{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});
-                }
-                nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
-                cfgJson[found->json] = val;
-                ConfigManager::WriteConfigJson(cfgJson);
-                // Invalidate the Load() cache so next call picks up the new value.
-                ConfigManager::InvalidateCache();
-                nlohmann::json out;
-                out["key"] = key;
-                out["jsonKey"] = found->json;
-                out["value"] = val;
-                out["written"] = true;
-                if (found->hint && found->hint[0]) {
-                    out["hint"] = std::string(found->hint);
-                }
-                return CommandResult::Success(std::move(out));
-            });
+        Command c = MakeCommand("config.set",
+                                "Persist one config key to smatchet_config.json (allowlisted; env vars override).",
+                                &RunConfigSet);
         c.Destructive = false; // Config edits are easily undone; --yes would be friction.
         c.Idempotent = false;
         c.DryRunSupported = true;

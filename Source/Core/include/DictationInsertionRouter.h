@@ -142,6 +142,10 @@ class DictationInsertionRouter : public IDictationHost {
         unsigned int ItemId = 0;
     };
 
+    /// Splice `text` into entry `e` at its cursor (or end), UTF-8-safe and capacity-bounded,
+    /// then arm pendingReloadItemId_ so the focused InputText reloads. Caller holds mutex_.
+    void SpliceTextIntoEntry(Entry& e, const std::string& text, bool usedShadowTarget);
+
     mutable std::mutex mutex_;
     std::vector<Entry> entries_;
 

@@ -171,6 +171,54 @@ static int DurationInputTextCallback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
+// Decide whether the duration-suggestions popup should open this frame (down-arrow while active,
+// or first activation with an empty buffer). Updates lastActiveId tracking. Call right after the
+// InputText so the IsItemActive queries refer to it.
+bool ComputeDurationPopupShouldOpen(const char* buf, ImGuiID currentId, ImGuiID& lastActiveId) {
+    bool shouldOpen = false;
+    if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        shouldOpen = true;
+    }
+    if (ImGui::IsItemActive()) {
+        if (lastActiveId != currentId) {
+            lastActiveId = currentId;
+            if (buf[0] == '\0') {
+                shouldOpen = true;
+            }
+        }
+    } else {
+        if (lastActiveId == currentId) {
+            lastActiveId = 0;
+        }
+    }
+    return shouldOpen;
+}
+
+// Render the duration-suggestions selectable popup (BeginPopup/EndPopup whole). On a pick,
+// copies the value into buf and arms the reposition/selected-from-popup flags.
+void DrawDurationSuggestionsPopup(char* buf, size_t bufSize, bool* outManuallyEdited, bool& needRepositionAndFocus,
+                                  bool& valueSelectedFromPopup) {
+    if (ImGui::BeginPopup("duration_suggestions")) {
+        std::vector<std::string> suggestions = LoadDurationSuggestions();
+
+        for (size_t i = 0; i < suggestions.size(); ++i) {
+            const auto& item = suggestions[i];
+            if (ImGui::Selectable(item.c_str())) {
+                std::strncpy(buf, item.c_str(), bufSize - 1);
+                buf[bufSize - 1] = '\0';
+                if (outManuallyEdited) {
+                    *outManuallyEdited = true;
+                }
+                needRepositionAndFocus = true;
+                valueSelectedFromPopup = true;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
 bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSize, ImGuiInputTextFlags flags = 0,
                                       ImGuiInputTextCallback callback = nullptr, void* callbackUserData = nullptr,
                                       bool* outManuallyEdited = nullptr, bool forceOpenPopup = false) {
@@ -223,23 +271,7 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
 
     ImGuiID currentId = ImGui::GetID("##duration_input");
 
-    bool shouldOpen = false;
-    if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-        shouldOpen = true;
-    }
-    if (ImGui::IsItemActive()) {
-        if (lastActiveId != currentId) {
-            lastActiveId = currentId;
-            if (buf[0] == '\0') {
-                shouldOpen = true;
-            }
-        }
-    } else {
-        if (lastActiveId == currentId) {
-            lastActiveId = 0;
-        }
-    }
-    if (shouldOpen) {
+    if (ComputeDurationPopupShouldOpen(buf, currentId, lastActiveId)) {
         ImGui::OpenPopup("duration_suggestions");
     }
 
@@ -254,25 +286,7 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     bool popupIsOpen = ImGui::IsPopupOpen("duration_suggestions");
 
     // Suggestions popup
-    if (ImGui::BeginPopup("duration_suggestions")) {
-        std::vector<std::string> suggestions = LoadDurationSuggestions();
-
-        for (size_t i = 0; i < suggestions.size(); ++i) {
-            const auto& item = suggestions[i];
-            if (ImGui::Selectable(item.c_str())) {
-                std::strncpy(buf, item.c_str(), bufSize - 1);
-                buf[bufSize - 1] = '\0';
-                if (outManuallyEdited) {
-                    *outManuallyEdited = true;
-                }
-                needRepositionAndFocus = true;
-                valueSelectedFromPopup = true;
-                ImGui::CloseCurrentPopup();
-            }
-        }
-
-        ImGui::EndPopup();
-    }
+    DrawDurationSuggestionsPopup(buf, bufSize, outManuallyEdited, needRepositionAndFocus, valueSelectedFromPopup);
 
     // Resolve per-widget state using ImGuiStorage
     ImGuiID popupOpenKey = ImGui::GetID("##popupWasOpen");
@@ -972,26 +986,8 @@ void HandleWorklogSave(AppController& app) {
 // Draws the time-tracking modal popup (logged/remaining bar, duration inputs, date picker, work
 // description with templates, Save/Cancel). Owns its OpenPopup→BeginPopupModal lifecycle keyed on
 // s_ActiveWorklogState. Extracted from the tail of RenderFieldCell; behaviour byte-identical.
-void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
-    if (!(s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == ticket.id)) {
-        return;
-    }
-    ImGui::SetNextWindowSize(ImVec2(450.0f, 0.0f), ImGuiCond_Always);
-    if (s_ActiveWorklogState.JustOpened) {
-        ImGui::OpenPopup("TimeTrackingPopup");
-        s_ActiveWorklogState.JustOpened = false;
-    }
-
-    if (!ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        s_ActiveWorklogState.Initialized = false;
-        return;
-    }
-
-    ImGui::Text("Time tracking: %s", ticket.id.c_str());
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Logged & Remaining progress bar
+// Logged/remaining labels + Jira-blue progress bar + original-estimate note.
+void DrawWorklogProgressBar() {
     long long displaySpentSec = 0;
     long long displayRemSec = 0;
     ComputeWorklogProgressSeconds(displaySpentSec, displayRemSec);
@@ -1024,12 +1020,10 @@ void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
         ImGui::TextDisabled("The original estimate for this work item was %s.",
                             s_ActiveWorklogState.OriginalEstimate.c_str());
     }
+}
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Inputs
+// Time-spent + time-remaining duration inputs, including the auto-decrement of remaining.
+void DrawWorklogTimeInputs() {
     ImGui::Text("Time spent *");
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (DrawDurationFieldWithSuggestions("##WorklogTimeSpent", s_ActiveWorklogState.TimeSpent,
@@ -1060,13 +1054,10 @@ void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
                                          &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
         // value changed!
     }
+}
 
-    ImGui::Spacing();
-    ImGui::Text("Date started *");
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted", s_ActiveWorklogState.DateStarted, true);
-
-    ImGui::Spacing();
+// Work-description label + templates popup + the multiline description input.
+void DrawWorklogDescription() {
     ImGui::Text("Work description");
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90.0f);
     if (ImGui::Button("Templates ▼", ImVec2(90.0f, 0.0f))) {
@@ -1090,6 +1081,44 @@ void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
     ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription,
                               sizeof(s_ActiveWorklogState.WorkDescription),
                               ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
+}
+
+void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
+    if (!(s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == ticket.id)) {
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(450.0f, 0.0f), ImGuiCond_Always);
+    if (s_ActiveWorklogState.JustOpened) {
+        ImGui::OpenPopup("TimeTrackingPopup");
+        s_ActiveWorklogState.JustOpened = false;
+    }
+
+    if (!ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        s_ActiveWorklogState.Initialized = false;
+        return;
+    }
+
+    ImGui::Text("Time tracking: %s", ticket.id.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Logged & Remaining progress bar
+    DrawWorklogProgressBar();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Inputs
+    DrawWorklogTimeInputs();
+
+    ImGui::Spacing();
+    ImGui::Text("Date started *");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    TrackerDateTimeFieldEditor::RenderGenericDatePicker("##WorklogDateStarted", s_ActiveWorklogState.DateStarted, true);
+
+    ImGui::Spacing();
+    DrawWorklogDescription();
 
     if (!s_ActiveWorklogState.ErrorMsg.empty()) {
         ImGui::Spacing();
@@ -1288,27 +1317,42 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         return;
     }
 
-    auto renderPlainText = [&](bool disabled) {
-        RenderPlainTextCell(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, dateFormatOption,
-                            thresholdDays, disabled);
-    };
-
     if (TryRenderSpecialColumnPlan(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled,
                                    trackerGridAsync)) {
         return;
     }
 
+    if (DispatchEditorByPlan(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, allowEdits, state,
+                             pendingEdits, dateFormatOption, thresholdDays, singleClickToEdit)) {
+        return;
+    }
+
+    RenderTimeTrackingModal(app, ticket);
+}
+
+bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTicket& ticket,
+                                             const TicketGridColumn& column, const TrackerField* field,
+                                             const std::string& currentValue, float availWidth, bool tooltipsEnabled,
+                                             bool allowEdits, SpreadsheetState& state,
+                                             std::vector<PendingFieldEdit>& pendingEdits,
+                                             const std::string& dateFormatOption, int thresholdDays,
+                                             bool singleClickToEdit) {
+    auto renderPlainText = [&](bool disabled) {
+        RenderPlainTextCell(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, dateFormatOption,
+                            thresholdDays, disabled);
+    };
+
     switch (column.Plan) {
     case TicketGridColumn::RenderPlan::SpecialTimeSpent:
         RenderTimeSpentButton(ticket, currentValue, availWidth, tooltipsEnabled);
-        break;
+        return false;
     case TicketGridColumn::RenderPlan::PlainText:
         renderPlainText(column.CatalogReadOnly);
-        return;
+        return true;
     case TicketGridColumn::RenderPlan::Labels:
         if (!allowEdits) {
             renderPlainText(true);
-            return;
+            return true;
         }
         TrackerLabelsEditor::RenderLabelsFieldEditor(
             app, ticket, *field, currentValue,
@@ -1316,35 +1360,35 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                 QueueEdit(issueId, fld, values, pendingEdits, currentValue);
             },
             state, singleClickToEdit);
-        return;
+        return true;
     case TicketGridColumn::RenderPlan::Cascading:
         if (!allowEdits) {
             renderPlainText(true);
-            return;
+            return true;
         }
         RenderCascadingSelectEditor(app, ticket, *field, currentValue, pendingEdits, tooltipsEnabled, state,
                                     singleClickToEdit);
-        return;
+        return true;
     case TicketGridColumn::RenderPlan::MultiSelect:
         if (!allowEdits) {
             renderPlainText(true);
-            return;
+            return true;
         }
         RenderMultiSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled,
                                 singleClickToEdit);
-        return;
+        return true;
     case TicketGridColumn::RenderPlan::SingleSelect:
         if (!allowEdits) {
             renderPlainText(true);
-            return;
+            return true;
         }
         RenderSingleSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled,
                                  singleClickToEdit);
-        return;
+        return true;
     case TicketGridColumn::RenderPlan::DateTimeEditor:
         if (!allowEdits) {
             renderPlainText(true);
-            return;
+            return true;
         }
         TrackerDateTimeFieldEditor::RenderDateTimeFieldEditor(
             ticket, *field, currentValue, state,
@@ -1352,21 +1396,20 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                 QueueEdit(issueId, fld, values, pendingEdits, currentValue);
             },
             dateFormatOption, thresholdDays, singleClickToEdit);
-        return;
+        return true;
     case TicketGridColumn::RenderPlan::TextEditor:
         if (!allowEdits) {
             renderPlainText(true);
-            return;
+            return true;
         }
         RenderTextEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled, availWidth,
                          singleClickToEdit);
-        return;
+        return true;
     default:
         // The remaining special-column plans get dispatched earlier by
         // TryRenderSpecialColumnPlan and never reach this switch. Falling through
         // to the time-tracking modal preserves the prior unhandled-case behaviour.
         break;
     }
-
-    RenderTimeTrackingModal(app, ticket);
+    return false;
 }

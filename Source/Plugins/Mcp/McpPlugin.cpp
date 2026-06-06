@@ -420,6 +420,39 @@ void McpPlugin::RegisterToolsCallRoute() {
                     [this](const httplib::Request& req, httplib::Response& res) { HandleToolsCall(req, res); });
 }
 
+void McpPlugin::DispatchRegistryToolsCall(const std::string& name, const nlohmann::json& arguments,
+                                          const std::string& remote, httplib::Response& res) {
+    smatchet::cmd::CommandContext cctx;
+    cctx.App = impl_->app;
+    cctx.Source = smatchet::cmd::CommandSource::Mcp;
+    cctx.ConfirmedDestructive = arguments.value("__confirm", false);
+    cctx.DryRun = arguments.value("__dry_run", false);
+    cctx.TimeoutMs = arguments.value("__timeout_ms", 0);
+    smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
+    const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
+    const std::string envelopeStr = envelope.dump();
+    LOG_TRACE("MCP: REST tools/call registry tool=%s ok=%d", name.c_str(), cr.Ok ? 1 : 0);
+    AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + name +
+                                          (cr.Ok ? " ok" : " FAIL(" + cr.Error.Message.substr(0, 80) + ")") +
+                                          " remote=" + remote);
+    // Always HTTP 200: the envelope carries ok/error; isError=true only for
+    // genuine tool-call failures, not for structured command errors.
+    res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelopeStr}}}}}.dump(),
+                    "application/json");
+}
+
+void McpPlugin::EmitUnknownToolsCallEnvelope(const std::string& name, const nlohmann::json& arguments,
+                                             const std::string& remote, httplib::Response& res) {
+    smatchet::cmd::CommandContext cctx;
+    cctx.App = impl_->app;
+    cctx.Source = smatchet::cmd::CommandSource::Mcp;
+    smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
+    const nlohmann::json envelope = cr.ToWireJson(name, false);
+    res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
+                    "application/json");
+    AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + name + " unknown-command remote=" + remote);
+}
+
 void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& res) {
     if (!Authorize(req, res))
         return;
@@ -443,23 +476,7 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
         // even for structured errors (confirm-required, not-found, etc.). This lets
         // callers parse the envelope rather than treating every error as a transport fail.
         if (impl_->app->Commands().FindLocked(name) != nullptr) {
-            smatchet::cmd::CommandContext cctx;
-            cctx.App = impl_->app;
-            cctx.Source = smatchet::cmd::CommandSource::Mcp;
-            cctx.ConfirmedDestructive = arguments.value("__confirm", false);
-            cctx.DryRun = arguments.value("__dry_run", false);
-            cctx.TimeoutMs = arguments.value("__timeout_ms", 0);
-            smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
-            const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
-            const std::string envelopeStr = envelope.dump();
-            LOG_TRACE("MCP: REST tools/call registry tool=%s ok=%d", name.c_str(), cr.Ok ? 1 : 0);
-            AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + name +
-                                                  (cr.Ok ? " ok" : " FAIL(" + cr.Error.Message.substr(0, 80) + ")") +
-                                                  " remote=" + remote);
-            // Always HTTP 200: the envelope carries ok/error; isError=true only for
-            // genuine tool-call failures, not for structured command errors.
-            res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelopeStr}}}}}.dump(),
-                            "application/json");
+            DispatchRegistryToolsCall(name, arguments, remote, res);
             return;
         } else
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
@@ -498,14 +515,7 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
                 // Not in registry, not run_lua, not a Lua MCP tool.
                 // Dispatch through registry to get a canonical unknown-command envelope
                 // with fuzzy suggestions (e.g. "did you mean 'tickets.search_active'?").
-                smatchet::cmd::CommandContext cctx;
-                cctx.App = impl_->app;
-                cctx.Source = smatchet::cmd::CommandSource::Mcp;
-                smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
-                const nlohmann::json envelope = cr.ToWireJson(name, false);
-                res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
-                                "application/json");
-                AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + name + " unknown-command remote=" + remote);
+                EmitUnknownToolsCallEnvelope(name, arguments, remote, res);
                 return;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
             }
@@ -609,65 +619,75 @@ void McpPlugin::RegisterSseRoute() {
     });
 }
 
+void McpPlugin::HandleJsonRpcRegistryCall(const std::string& name, const nlohmann::json& params,
+                                          const std::string& rpcRemote, nlohmann::json& jres) {
+    const nlohmann::json args = params.value("arguments", nlohmann::json::object());
+    smatchet::cmd::CommandContext cctx;
+    cctx.App = impl_->app;
+    cctx.Source = smatchet::cmd::CommandSource::Mcp;
+    cctx.ConfirmedDestructive = args.value("__confirm", false);
+    cctx.DryRun = args.value("__dry_run", false);
+    cctx.TimeoutMs = args.value("__timeout_ms", 0);
+    smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, args, cctx);
+    const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
+    // MCP `result.content[0].text` carries the envelope as a string —
+    // that's the standard MCP shape and what hosts know to parse. The
+    // envelope itself stays the canonical JSON contract for agents.
+    jres["result"] = {{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}};
+    AppendMcpActivityLine(impl_->app,
+                          "MCP: JSON-RPC tools/call " + name + (cr.Ok ? " ok" : " FAIL") + " remote=" + rpcRemote);
+}
+
+void McpPlugin::HandleJsonRpcRunLua(const nlohmann::json& params, const std::string& rpcRemote, nlohmann::json& jres) {
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    const nlohmann::json luaArgs = params.value("arguments", nlohmann::json::object());
+    if (!impl_->allow_lua_execution) {
+        jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+        AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" + rpcRemote +
+                                              " err=disabled by configuration");
+    } else {
+        std::string error;
+        std::string result;
+        const std::string mode = luaArgs.value("mode", "");
+        if (mode == "snippet") {
+            result = impl_->app->ExecuteLuaSnippetForMcp(luaArgs.value("code", std::string()),
+                                                         luaArgs.value("args", nlohmann::json::object()), error);
+        } else if (mode == "script") {
+            result = impl_->app->ExecuteLuaScriptForMcp(luaArgs.value("script", std::string()),
+                                                        luaArgs.value("args", nlohmann::json::object()), error);
+        } else {
+            error = "run_lua requires mode='snippet' or mode='script'";
+        }
+        if (!error.empty()) {
+            jres["error"] = {{"code", -32603}, {"message", error}};
+        } else {
+            jres["result"] = {{"content", {{{"type", "text"}, {"text", result}}}}};
+        }
+        if (jres.contains("error")) {
+            AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" + rpcRemote +
+                                                  " err=" + ExtractJsonRpcErrorMessage(jres, 256));
+        } else {
+            AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua ok remote=" + rpcRemote + " " +
+                                                  BuildRunLuaSummary(luaArgs));
+        }
+    }
+#else
+    (void)params;
+    jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
+    AppendMcpActivityLine(impl_->app,
+                          "MCP: JSON-RPC tools/call run_lua FAIL remote=" + rpcRemote + " err=Lua automation disabled");
+#endif
+}
+
 void McpPlugin::HandleJsonRpcToolsCall(const std::string& remote, const nlohmann::json& params, nlohmann::json& jres) {
     const std::string name = params.value("name", "");
     const std::string rpcRemote = remote;
     LOG_TRACE("MCP: JSON-RPC tools/call tool=%s", name.c_str());
 
     if (impl_->app->Commands().FindLocked(name) != nullptr) {
-        const nlohmann::json args = params.value("arguments", nlohmann::json::object());
-        smatchet::cmd::CommandContext cctx;
-        cctx.App = impl_->app;
-        cctx.Source = smatchet::cmd::CommandSource::Mcp;
-        cctx.ConfirmedDestructive = args.value("__confirm", false);
-        cctx.DryRun = args.value("__dry_run", false);
-        cctx.TimeoutMs = args.value("__timeout_ms", 0);
-        smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, args, cctx);
-        const nlohmann::json envelope = cr.ToWireJson(name, cctx.DryRun);
-        // MCP `result.content[0].text` carries the envelope as a string —
-        // that's the standard MCP shape and what hosts know to parse. The
-        // envelope itself stays the canonical JSON contract for agents.
-        jres["result"] = {{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}};
-        AppendMcpActivityLine(impl_->app,
-                              "MCP: JSON-RPC tools/call " + name + (cr.Ok ? " ok" : " FAIL") + " remote=" + rpcRemote);
+        HandleJsonRpcRegistryCall(name, params, rpcRemote, jres);
     } else if (name == "run_lua") {
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        const nlohmann::json luaArgs = params.value("arguments", nlohmann::json::object());
-        if (!impl_->allow_lua_execution) {
-            jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
-            AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" + rpcRemote +
-                                                  " err=disabled by configuration");
-        } else {
-            std::string error;
-            std::string result;
-            const std::string mode = luaArgs.value("mode", "");
-            if (mode == "snippet") {
-                result = impl_->app->ExecuteLuaSnippetForMcp(luaArgs.value("code", std::string()),
-                                                             luaArgs.value("args", nlohmann::json::object()), error);
-            } else if (mode == "script") {
-                result = impl_->app->ExecuteLuaScriptForMcp(luaArgs.value("script", std::string()),
-                                                            luaArgs.value("args", nlohmann::json::object()), error);
-            } else {
-                error = "run_lua requires mode='snippet' or mode='script'";
-            }
-            if (!error.empty()) {
-                jres["error"] = {{"code", -32603}, {"message", error}};
-            } else {
-                jres["result"] = {{"content", {{{"type", "text"}, {"text", result}}}}};
-            }
-            if (jres.contains("error")) {
-                AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" + rpcRemote +
-                                                      " err=" + ExtractJsonRpcErrorMessage(jres, 256));
-            } else {
-                AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua ok remote=" + rpcRemote + " " +
-                                                      BuildRunLuaSummary(luaArgs));
-            }
-        }
-#else
-        jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
-        AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call run_lua FAIL remote=" + rpcRemote +
-                                              " err=Lua automation disabled");
-#endif
+        HandleJsonRpcRunLua(params, rpcRemote, jres);
     } else if (name == "list_active_tickets") {
         const auto ticketsPtr = impl_->app->GetActiveTicketsSnapshot();
         nlohmann::json ticketIds = nlohmann::json::array();

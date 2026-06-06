@@ -147,6 +147,30 @@ bool EnsureDirectoryExists(const std::string& dir, std::string& outError) {
     return true;
 }
 
+// Resume offset: size of an existing `<final>.partial`, or 0 to start from scratch.
+std::uint64_t DetectResumeOffset(const std::string& partialPath) {
+    std::error_code ec;
+    const bool exists = ghc::filesystem::exists(partialPath, ec);
+    if (!ec && exists) {
+        const auto sz = ghc::filesystem::file_size(partialPath, ec);
+        if (!ec) {
+            return static_cast<std::uint64_t>(sz);
+        }
+    }
+    return 0;
+}
+
+// Human-readable error string for a failed cpr download response.
+std::string BuildHttpFetchError(const cpr::Response& resp) {
+    std::string err = "HTTP fetch failed";
+    if (!resp.error.message.empty()) {
+        err += ": " + resp.error.message;
+    } else if (resp.status_code > 0) {
+        err += " (HTTP " + std::to_string(resp.status_code) + ")";
+    }
+    return err;
+}
+
 } // namespace
 
 struct ModelDownloader::Impl {
@@ -268,17 +292,7 @@ void ModelDownloader::RunDownloadWorker(std::shared_ptr<Impl> implPtr, const std
 
     // Resume: if `<final>.partial` exists with non-zero size, append
     // via Range: bytes=<size>-. Else start from scratch.
-    std::uint64_t resumeFrom = 0;
-    {
-        std::error_code ec;
-        const bool exists = ghc::filesystem::exists(partialPath, ec);
-        if (!ec && exists) {
-            const auto sz = ghc::filesystem::file_size(partialPath, ec);
-            if (!ec) {
-                resumeFrom = static_cast<std::uint64_t>(sz);
-            }
-        }
-    }
+    const std::uint64_t resumeFrom = DetectResumeOffset(partialPath);
 
     std::ios_base::openmode mode = std::ios::binary;
     mode |= (resumeFrom > 0) ? std::ios::app : std::ios::trunc;
@@ -335,13 +349,7 @@ void ModelDownloader::RunDownloadWorker(std::shared_ptr<Impl> implPtr, const std
     }
     if (resp.error.code != cpr::ErrorCode::OK ||
         (resp.status_code != 200 && resp.status_code != 206 && resp.status_code != 0)) {
-        std::string err = "HTTP fetch failed";
-        if (!resp.error.message.empty()) {
-            err += ": " + resp.error.message;
-        } else if (resp.status_code > 0) {
-            err += " (HTTP " + std::to_string(resp.status_code) + ")";
-        }
-        finalize(State::Failed, err);
+        finalize(State::Failed, BuildHttpFetchError(resp));
         implPtr->running.store(false, std::memory_order_release);
         return;
     }

@@ -226,6 +226,11 @@ class OfflineQueueService {
     void ReplayOneFieldEdit(const PendingFieldEditRecord& row, LocalCacheManager* cache, ITrackerIssueReader* reader,
                             ITrackerIssueMutations* mutations, IOfflineQueueDeps& depsRef, FieldEditReplayTally& tally);
 
+    /// Handle a failed `UpdateIssueFields` for a replayed field edit: transport errors bump the
+    /// attempt count (archiving at the cap), non-transport errors archive as `replay_rejected`.
+    void HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, LocalCacheManager* cache,
+                                      const std::string& err, FieldEditReplayTally& tally);
+
     // --- TickOfflineCreates replay helpers ------------------------------------------------
     // TickOfflineCreates dispatches a background task whose body is a thin loop over a per-row
     // helper. The helper runs off the UI thread (inside the launched task) and operates on
@@ -252,6 +257,19 @@ class OfflineQueueService {
     void ReplayOneCreate(const PendingCreate& pc, LocalCacheManager* cache, ITrackerIssueMutations* mutations,
                          const std::vector<TrackerField>& catalog, IOfflineQueueDeps& depsRef,
                          CreateReplayTally& tally);
+
+    // --- RunLegacyProjectSweep per-row helper ---------------------------------------------
+    /// Running counters for one legacy-project sweep pass.
+    struct LegacyProjectSweepTally {
+        int Recovered = 0;
+        int DeadLettered = 0;
+        int Untouched = 0;
+    };
+
+    /// Sweep a single pending-create row: recover its project key (parent prefix or legacy
+    /// fallback), or dead-letter it. Counts the outcome into `tally`.
+    void SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
+                                     LegacyProjectSweepTally& tally);
 
     IOfflineQueueDeps& deps_;
 
