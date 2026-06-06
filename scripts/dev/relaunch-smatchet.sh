@@ -92,6 +92,12 @@ fi
 if [[ -x "$EXE" ]]; then
     echo "[relaunch] exe: $EXE" >&2
     ls -la "$EXE" >&2
+    # Source-vs-exe staleness preflight (build-quality-velocity-hardening #6): a
+    # fresh build should leave the exe newer than every Source/ file. If it is
+    # still stale here, the build was a no-op — commonly because the running
+    # process held the exe lock (the very case this script's kill step guards) —
+    # so warn before relaunching a silently old binary. Advisory (|| true).
+    bash "$REPO_ROOT/scripts/dev/is-exe-fresh.sh" --exe "$EXE" >&2 || true
 else
     echo "[relaunch] FAIL: build succeeded but exe not at $EXE" >&2
     exit 1

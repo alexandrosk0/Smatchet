@@ -37,7 +37,6 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
-#include "JiraClient.h"
 
 #include <nlohmann/json.hpp>
 
