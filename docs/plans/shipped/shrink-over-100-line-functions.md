@@ -144,10 +144,55 @@ deferred branch-only set, and revise/delete.
 - **Decomposing functions already ≤100 lines toward the 40-80 ideal** — opportunistic only, not a target.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+All five batches shipped + merged to `develop` (2026-06-06), one PR each, each dual-target build
+green (`/WX`, zero warnings) + funcsize/comment/strict-lint gates clean, labelled `tests-out-of-band`:
+
+- **Batch A — Preferences UI** (8 fns) · PR #892 · `SmatchetPreferencesUi{,_Local,_Templates,_Whisper}.cpp`.
+  Collapsed a byte-identical Quick/Annotate-comments clone into one shared sub-tab helper (DRY/Pillar 5)
+  and a 3× copy-paste inherit-field block into a templated `ApplyInheritFieldsBuf`.
+- **Batch B — Views/Grid UI** (9 fns incl. an Attachment ride-along) · PR #894 ·
+  `SmatchetActiveProjectGridUi.cpp`, `SmatchetViewsDashboardUi.cpp`, `SmatchetNewIssueDraftUi.cpp`,
+  `SmatchetAttachmentPreviewUi.cpp`, `SmatchetBulkTicketsUi.cpp` (+ `SmatchetUI.h` helper decls).
+- **Batch C — shell/menus/render UI** (~17 fns) · PR #896 · main-menu / shell / project-picker / theme /
+  fonts / host / perf-UI / command-palette (strict) / autocomplete / annotate-prefs / AI-assistant /
+  markdown / selectable-text (+ 4 headers).
+- **Batch D — Tracker (strict zone)** (11 fns) · PR #897 · GitHub/Jira/Plane fetch+mapping+mutation,
+  JQL tokenize, table-serialize, date/labels editors. Non-UI logic extracted as unit-testable pure helpers.
+- **Batch E — non-UI Commands/Config/Sync/Mcp/App** (24 fns) · PR #898 · command registrars,
+  config-secrets, offline-queue, MCP handlers, AppController workers, bug-report, dictation, whisper
+  banner, ticket-field editors, model-downloader, standalone bootstrap.
+
+Prereq: PR #889 (archived `decompose-top-20-monoliths` + regenerated the stale hard-cap baseline 116→0).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred vs the original plan, one-line rationale each)*
+
+- **Batches C/D/E delegated to subagents** (the plan implied inline work). Each followed a fixed
+  decomposition playbook; the orchestrator re-verified every dual-target build independently — which
+  caught a `C4100` (unused `State&` param in `DrawRecentSection`) the Batch C subagent's still-compiling
+  build had missed. Standing lesson: always re-verify a delegated agent's build.
+- **No end-of-campaign baseline regen needed.** The plan said "regen the baseline once at campaign end",
+  but `function-size-baseline.md` only tracks **hard-cap** functions (already 0 after #889); the soft-tier
+  functions this campaign decomposed were never in it, so it is unchanged. Dropped as a no-op.
+- **Attachment `DecodeImageFileToRgba32` decomposed in Batch B** (not C) — it shares
+  `SmatchetAttachmentPreviewUi.cpp` with `drawAttachmentListPane`, so both were done together to keep the
+  file in a single PR. One-file-one-PR discipline over batch labels.
+- **Two pre-existing best-effort `catch(...)` fallbacks annotated** with `// catch-all-ok` (Jira file-size
+  estimate, Plane project-name lookup, config-set JSON-parse) — surfaced by the whole-file lint drain on
+  touched strict-zone files; pre-existing on develop, annotated for cleanliness.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result: passed / failed / not-run)*
+
+- **Tree-wide result: 0 functions over 100 lines** (`function_size_audit.py --scan-file` across all
+  first-party `Source/**/*.cpp`) — down from 68 at campaign start. Target fully met.
+- **Per batch**: dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`, `/WX`) green, zero
+  warnings; `function_size_audit.py --diff origin/develop` exit 0; `comment_audit.py --diff` clean;
+  `test-lint-rules.sh --diff` PASS (strict zones Commands/Config/Sync/Mcp/Tracker included).
+- **CI**: every required check green on each PR (one Bucket-C run hit a Mesa-cache infra flake — 3-second
+  death before any build/render — cleared on re-run, not a visual regression). The #894↔#896 shared
+  `SmatchetUI.h` 3-way merge was verified by a local dual-target build before #896 merged.
+- **Out-of-scope, confirmed deferred**: the 64 branch-only (>20 branches, ≤100 lines) functions — they
+  need logic restructuring, not extraction; tracked as residual non-blocking advisories.
+- **Known non-blocking follow-up**: Batch E's extracted `StandaloneAppBootstrap` helpers textually match
+  `main.cpp`'s parallel bootstrap blocks → a `[dup] WARN` (pre-existing duplication surfaced; WARN-first
+  under ADR-0015). A shared standalone-bootstrap helper used by both would clear it.
