@@ -63,6 +63,7 @@ smatchet_field_catalog_cache.json
 .claude/
 .codex/
 .cursor/
+.pi/
 
 # caveman (https://github.com/JuliusBrussee/caveman) — user-installed; see AGENTS.md
 .agents/
