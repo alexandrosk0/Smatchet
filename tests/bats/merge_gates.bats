@@ -211,6 +211,23 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "non-required Perf PR-fast FAILURE blocks (perf-gate-revival step 6a)" {
+    # "Perf PR-fast" joined the meant-to-block allow-list once the
+    # ci-windows-latest baselines landed (perf-gate-revival step 6a). A red
+    # perf check must block the poller even though it is not a
+    # branch-protection-required context. The perf-out-of-band downgrade
+    # (covered by its own test below) remains the override hatch.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
 @test "CI pending IN_PROGRESS → return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_pending.json"
     run poll_merge_gates org repo 1

@@ -1,13 +1,36 @@
 # Perf-gate revival (Pillar 1) — execution playbook
 
-> **STATUS: UN-PARKED — SAFE-NOW steps shipped (2026-06-06).** Steps 1, 2 and
-> 5-code landed (see § Implementation log). Remaining: step 3 (live-CI proof —
-> expected on this PR's own perf-pr-fast run), step 4 (baseline capture →
-> **human approval** → commit), step 5-calibration, 6a, 7, 6b, 8 — per
-> § Parked-state handoff. Derived from `build-quality-velocity-hardening.md`
-> item **#8/#13** via a 5-reader investigation (2026-06-06).
+> **STATUS: GATE ARMED (2026-06-07).** Steps 1–4 + 5-code + 6a complete: the
+> headless launch is proven on CI, the 4 human-approved `ci-windows-latest`
+> baselines are committed, and `Perf PR-fast` joined the merge-gates
+> meant-to-block allow-list. Remaining: step 5-calibration (set
+> `mean_abs_ceiling_ms` + perScenario overrides after observing CI noise),
+> step 7 (skip-companion) + step 6b (GitHub-required — **user confirm**),
+> step 8 partially done (hardening-plan impl-log updated; final closeout with
+> 6b). Follow-ups discovered: `scenario.run` emits no `p99Ms` (p99 ceiling
+> inert until the C++ emitter adds it); `calls=1` top rows are filtered by
+> `min_baseline_calls=10` (calibration topic). Derived from
+> `build-quality-velocity-hardening.md` item **#8/#13** (2026-06-06).
 
 ## Implementation log
+
+**2026-06-07 — steps 4 + 6a (gate armed, branch `feat/perf-gate-baselines`):**
+
+- **Step 4 (GOLDEN):** committed the 4 `ci-windows-latest` baselines
+  (`idle`, `priority-grid-scroll`, `cell-edit-burst`, `ai-chat-history-render`)
+  captured by run `27080545207` on commit `37ca9d6c` — **explicit human
+  approval given 2026-06-07** (golden-image-approval flow; cross-host rule
+  D1 honoured: runner-captured, never hand-ported). Sanity: top scope
+  `SmatchetUI::Draw` 0.35–0.42 ms avg — far under the 6.94 ms budget.
+  Committing these flips the live compare branch AND re-arms the plumbing
+  hard-fail in both perf workflows.
+- **Step 6a:** `merge-gates.sh` allow-list regex extended
+  (`Coverage|Sanitizer|Bucket-` → `…|Perf PR-fast`) + a `merge_gates.bats`
+  case (red non-required `Perf PR-fast (windows-2022)` blocks; 113-test
+  suite green). `perf-out-of-band` remains the override hatch.
+- **CodeRabbit round (PR #937):** null-safe policy render in
+  `emit_markdown` + strict `data.rows` guard in `perf-run.sh` (both
+  regression-tested).
 
 **2026-06-06 — steps 1 + 2 + 5-code (SAFE-NOW batch, branch `feat/perf-gate-revival`):**
 
