@@ -10,6 +10,10 @@
     "mean_min_abs_delta_ms": 0.05
   },
   "perScenario": {
-    "comment": "Override the default for a specific scenarioId. Empty means inherit default. Tune ONLY when a real-world signal (CI false-positives, scenario noise) justifies it; document the rationale in the override entry."
+    "comment": "Override the default for a specific scenarioId. Empty means inherit default. Tune ONLY when a real-world signal (CI false-positives, scenario noise) justifies it; document the rationale in the override entry.",
+    "cell-edit-burst": {
+      "p99_abs_ceiling_ms": 15.0,
+      "rationale": "CI-only ceiling, user-approved 2026-06-07: median-of-3 p99 on the 2-core ci-windows-latest runner is persistently ~10.9 ms (10.879 measured; earlier single-run 'flakes' 10.140/17.354 were the same signal). cell-edit-burst is a deliberate edit-storm stress scenario, not steady-state UI; 2-core shared-runner timing != user hardware. The global 10.0 ms Pillar-1 floor stays for every other scenario. Whether cell-edit-burst exceeds 10 ms on real 144 Hz hardware is tracked as a GitHub Issue (perf-detective owns it) — if it does, that is a product perf bug and this override does NOT excuse it."
+    }
   }
 }
