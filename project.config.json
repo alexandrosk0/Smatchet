@@ -58,7 +58,8 @@
       "Windows + MSVC",
       "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
       "Shell lint (shellcheck)",
-      "Doc anchors + agent contract"
+      "Doc anchors + agent contract",
+      "Perf PR-fast (windows-2022)"
     ],
     "required_review_count": 0,
     "enforce_admins": false,
@@ -70,7 +71,8 @@
       "Windows + MSVC",
       "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
       "Shell lint (shellcheck)",
-      "Doc anchors + agent contract"
+      "Doc anchors + agent contract",
+      "Perf PR-fast (windows-2022)"
     ],
     "path_filters": {
       "code_globs": ["Source/**"],

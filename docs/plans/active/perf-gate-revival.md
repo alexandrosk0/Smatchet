@@ -1,18 +1,36 @@
 # Perf-gate revival (Pillar 1) — execution playbook
 
-> **STATUS: GATE ARMED (2026-06-07).** Steps 1–4 + 5-code + 6a complete: the
-> headless launch is proven on CI, the 4 human-approved `ci-windows-latest`
-> baselines are committed, and `Perf PR-fast` joined the merge-gates
-> meant-to-block allow-list. Remaining: step 5-calibration (set
-> `mean_abs_ceiling_ms` + perScenario overrides after observing CI noise),
-> step 7 (skip-companion) + step 6b (GitHub-required — **user confirm**),
-> step 8 partially done (hardening-plan impl-log updated; final closeout with
-> 6b). Follow-ups discovered: `scenario.run` emits no `p99Ms` (p99 ceiling
-> inert until the C++ emitter adds it); `calls=1` top rows are filtered by
-> `min_baseline_calls=10` (calibration topic). Derived from
+> **STATUS: COMPLETE — GATE REQUIRED (2026-06-07).** All steps done: headless
+> launch proven on CI (steps 1–3), 4 human-approved `ci-windows-latest`
+> baselines committed (step 4), `mean_min_abs_delta_ms=0.05` noise floor
+> calibrated from the first armed run (step 5 round 1; `mean_abs_ceiling_ms`
+> itself stays null pending more CI observations), merge-gates allow-list
+> (6a), Pattern-C always-report shape (step 7 — **deviation**: Pattern C
+> instead of the planned Pattern-B skip-companion, because the old filter's
+> `!**/*.md` negation has no `paths-ignore` inverse — a Source-markdown-only
+> PR would wedge a Pattern-B pair), and `Perf PR-fast (windows-2022)` added
+> to `branch_protection.required_contexts` + applied (6b, user-confirmed).
+> Open follow-ups (filed in categories/): `p99Ms` missing from the emitter
+> (tooling P2); `mean_abs_ceiling_ms` value + perScenario overrides after
+> more observed runs; `calls=1` top-row filtering. Derived from
 > `build-quality-velocity-hardening.md` item **#8/#13** (2026-06-06).
 
 ## Implementation log
+
+**2026-06-07 — steps 7 + 6b (gate REQUIRED, branch `feat/perf-gate-required`):**
+
+- **Step 7 (always-report — Pattern C, not Pattern B):** removed the
+  workflow-level positive `paths:` filter from `perf-pr-fast.yml`; added a
+  fast `changes` detect job (fail-safe `perf=true` on uncertainty) gating the
+  measurement job via `if:` — a skipped required job counts as success, so
+  docs-only PRs never wedge. Pattern-B skip-companion rejected: GitHub
+  supports `!` negation only under `paths`, so the old filter's `!**/*.md`
+  has no `paths-ignore` inverse and a Source-markdown-only PR would trigger
+  neither half of the pair (deadlock).
+- **Step 6b (GitHub-required):** `Perf PR-fast (windows-2022)` appended to
+  `project.config.json` `branch_protection.required_contexts` +
+  `ci.required_checks`; applied to the live branch protection via
+  `setup-branch-protection.sh` after merge (user-confirmed 2026-06-07).
 
 **2026-06-07 — steps 4 + 6a (gate armed, branch `feat/perf-gate-baselines`):**
 
