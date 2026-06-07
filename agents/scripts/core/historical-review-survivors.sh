@@ -38,10 +38,12 @@ fi
 CONTEXT=0
 PR=""
 COMMITISH=""
+AGAINST=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --pr) PR="${2:-}"; shift 2 ;;
         --context) CONTEXT="${2:-0}"; shift 2 ;;
+        --against) AGAINST="${2:-}"; shift 2 ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         --*) echo "historical-review-survivors: unknown flag $1" >&2; exit 2 ;;
         *) COMMITISH="$1"; shift ;;
@@ -72,9 +74,39 @@ else
     exit 2
 fi
 
-# Must be an ancestor of HEAD (else "alive at HEAD" is meaningless).
-if ! git merge-base --is-ancestor "$SHA" HEAD 2>/dev/null; then
-    echo "historical-review-survivors: $LABEL ($SHA) is not an ancestor of HEAD — nothing to review against this tree" >&2
+# Resolve the "alive" reference. CRITICAL: review against the CANONICAL LATEST,
+# not a possibly-stale local HEAD — else a line a newer PR already fixed (absent
+# from a behind-by-N local checkout) reappears as a false survivor and gets
+# re-flagged, defeating the whole point. Default: fetch + use origin's default
+# branch (origin/develop). --against <ref> overrides; falls back to HEAD when no
+# remote exists (e.g. test sandboxes).
+REVIEW_REF="$AGAINST"
+STALE_NOTE=""
+if [ -z "$REVIEW_REF" ]; then
+    git fetch -q origin 2>/dev/null || true
+    DEFREF="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || true)"   # e.g. origin/develop
+    [ -z "$DEFREF" ] && git rev-parse --verify -q origin/develop >/dev/null 2>&1 && DEFREF="origin/develop"
+    if [ -n "$DEFREF" ] && git rev-parse --verify -q "$DEFREF" >/dev/null 2>&1; then
+        REVIEW_REF="$DEFREF"
+    else
+        REVIEW_REF="HEAD"
+    fi
+fi
+if ! git rev-parse --verify -q "${REVIEW_REF}^{commit}" >/dev/null 2>&1; then
+    echo "historical-review-survivors: review ref '$REVIEW_REF' does not resolve" >&2
+    exit 2
+fi
+# Warn if local HEAD trails the review ref — the operator's tree is behind the
+# baseline the survivors are computed against (informational; results are still
+# correct because we blame REVIEW_REF, not HEAD).
+if [ "$REVIEW_REF" != "HEAD" ]; then
+    behind="$(git rev-list --count "HEAD..${REVIEW_REF}" 2>/dev/null || echo 0)"
+    [ "${behind:-0}" -gt 0 ] && STALE_NOTE="# NOTE: local HEAD is $behind commit(s) behind $REVIEW_REF; survivors computed against $REVIEW_REF (canonical latest)."
+fi
+
+# Must be an ancestor of the review ref (else "alive at $REVIEW_REF" is meaningless).
+if ! git merge-base --is-ancestor "$SHA" "$REVIEW_REF" 2>/dev/null; then
+    echo "historical-review-survivors: $LABEL ($SHA) is not an ancestor of $REVIEW_REF — nothing to review against that tree" >&2
     exit 2
 fi
 
@@ -88,7 +120,9 @@ mapfile -t FILES < <(git diff-tree --no-commit-id --name-only -r --root "$SHA")
 emit_header() {
     echo "# Historical-review survivors — $LABEL ($SHORT)"
     echo "# Subject: $SUBJECT"
-    echo "# Lines this change introduced that are STILL ALIVE + UNTOUCHED at HEAD."
+    echo "# Reviewed against: $REVIEW_REF (the canonical-latest tree)."
+    [ -n "$STALE_NOTE" ] && echo "$STALE_NOTE"
+    echo "# Lines this change introduced that are STILL ALIVE + UNTOUCHED at $REVIEW_REF."
     echo "# Lines a later PR modified/fixed are EXCLUDED by construction (git blame"
     echo "# re-attributes them). Review ONLY the lines below; do not re-flag what is gone."
     echo "#"
@@ -108,6 +142,7 @@ try:
 except Exception:
     pass
 target, ctx, path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+ref = sys.argv[4] if len(sys.argv) > 4 else "HEAD"
 cur = None; final = None
 rows = {}            # final_lineno -> code (lines still blamed to target)
 for line in sys.stdin.buffer.read().split(b"\n"):
@@ -127,7 +162,7 @@ if not nums:
     sys.exit(0)
 full = []
 if ctx > 0:
-    full = subprocess.run(["git", "show", f"HEAD:{path}"],
+    full = subprocess.run(["git", "show", f"{ref}:{path}"],
                           capture_output=True).stdout.decode("utf-8", "replace").split("\n")
 ranges = []
 start = prev = nums[0]
@@ -153,15 +188,15 @@ total_alive=0
 files_with_survivors=0
 
 for f in "${FILES[@]}"; do
-    # Skip files that no longer exist at HEAD (deleted/renamed = "touched").
-    git cat-file -e "HEAD:$f" 2>/dev/null || continue
+    # Skip files that no longer exist at the review ref (deleted/renamed = "touched").
+    git cat-file -e "$REVIEW_REF:$f" 2>/dev/null || continue
 
     # Net lines this commit added to this file (for the supersede ratio).
     added="$(git log -1 --format= --numstat "$SHA" -- "$f" | awk 'NF>=3 && $1!="-"{s+=$1} END{print s+0}')"
     total_introduced=$((total_introduced + added))
 
-    # Surviving lines: blame HEAD, keep lines still attributed to $SHA.
-    surv="$(git blame --line-porcelain HEAD -- "$f" 2>/dev/null | $PY "$PARSER" "$SHA" "$CONTEXT" "$f")"
+    # Surviving lines: blame the review ref, keep lines still attributed to $SHA.
+    surv="$(git blame --line-porcelain "$REVIEW_REF" -- "$f" 2>/dev/null | $PY "$PARSER" "$SHA" "$CONTEXT" "$f" "$REVIEW_REF")"
 
     [ -z "$surv" ] && continue
     alive="$(printf '%s\n' "$surv" | sed -n 's/^__ALIVE__ //p')"
