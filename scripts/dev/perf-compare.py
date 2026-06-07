@@ -53,7 +53,7 @@ if isinstance(sys.stdout, io.TextIOWrapper):
 # about what the gate enforces.
 DEFAULT_POLICY: Dict[str, Any] = {
     "mean_delta_pct": 10.0,
-    "p99_abs_ceiling_ms": 16.67,
+    "p99_abs_ceiling_ms": 10.0,
     "max_abs_ceiling_ms": 50.0,
     "min_baseline_calls": 10,
     # Pillar 1 absolute mean budget (6.94 ms = 1000/144) gates on a row's
@@ -183,7 +183,7 @@ def evaluate(
     # the documented exit-2 input-error path. (CodeRabbit PR #322 #5.)
     min_calls = _to_int(policy.get("min_baseline_calls", 10), "policy.min_baseline_calls")
     mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
-    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 16.67), "policy.p99_abs_ceiling_ms") or 16.67
+    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 10.0), "policy.p99_abs_ceiling_ms") or 10.0
     max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
     # None ⇒ knob disabled (ships off until perf-gate-revival step-5 calibration).
     mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
@@ -224,7 +224,7 @@ def evaluate(
         # min_baseline_calls filter below exists for the noisy RELATIVE delta
         # comparison, never for hard Pillar-1 budgets. The once-per-frame
         # umbrella scope (SmatchetUI::Draw, calls=1) is exactly the row whose
-        # per-call p99 ≈ frame p99 that the 16.67 ms floor targets; filtering
+        # per-call p99 ≈ frame p99 that the 10.0 ms floor targets; filtering
         # it out made the p99/max ceilings structurally unable to fire
         # (code-review sweep CR-949-1, 2026-06-07).
         if f_p99 is not None and f_p99 > p99_cap:
@@ -290,7 +290,7 @@ def emit_markdown(
     # (evaluate() normalizes transiently via _to_float; mirror that here so a
     # malformed policy can't TypeError the report). (CodeRabbit PR #937 #1.)
     mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
-    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 16.67), "policy.p99_abs_ceiling_ms") or 16.67
+    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 10.0), "policy.p99_abs_ceiling_ms") or 10.0
     max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
     mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
     policy_line = (

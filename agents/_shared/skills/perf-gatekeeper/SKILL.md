@@ -65,5 +65,5 @@ End with `## Self-improvement` per AGENTS.md self-improvement loop.
 ## Delegates
 
 - Regression confirmed → `perf-detective`.
-- New p99 > 16.67 ms → `spike-hunter`.
+- New p99 > 10.0 ms → `spike-hunter`.
 - Diff→scenario map gap → `test-author`.

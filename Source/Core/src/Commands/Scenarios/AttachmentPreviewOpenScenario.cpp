@@ -7,7 +7,7 @@
 // observation — production UI files (`SmatchetAttachmentPreviewUi.cpp`,
 // `AppController*.cpp`) are out of scope for this PR. We run N frames as a
 // passive observer of the per-frame budget and assert no single frame's
-// dominant scope crossed the 16.67 ms (60 Hz floor) line. With the worker
+// dominant scope crossed the 10.0 ms (100 Hz floor) line. With the worker
 // dispatch in place this should be trivially true; if PR #191 is ever reverted
 // the inline cpr::Get would surface here as a one-frame spike.
 
@@ -65,8 +65,8 @@ class AttachmentPreviewOpenScenario : public IScenario {
         nlohmann::json out;
         out["frames"] = frames_;
         out["maxFrameTopMs"] = maxFrameTopMs_;
-        out["target_p99_ms"] = 16.67; // 60 Hz floor
-        out["ok_p99"] = maxFrameTopMs_ <= 16.67;
+        out["target_p99_ms"] = 10.0; // 100 Hz floor
+        out["ok_p99"] = maxFrameTopMs_ <= 10.0;
         out["rows"] = std::move(rowsJson);
         out["note"] = "Passive observer; no attachment opened by driver. "
                       "Real fixture flow requires a tracker-backed test exe. "

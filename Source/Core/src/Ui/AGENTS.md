@@ -21,7 +21,7 @@ Flag any of these when reachable from `SmatchetUI::Draw` or any ImGui render pat
 
 ## Steady-state perf (Pillar 1)
 
-- Steady-state UI work ≤ 6.94 ms (144 Hz); p99 ≤ 16.67 ms. Profile with `SMATCHET_UI_PERF_SCOPE` markers, not by eye.
+- Steady-state UI work ≤ 6.94 ms (144 Hz); p99 ≤ 10.0 ms. Profile with `SMATCHET_UI_PERF_SCOPE` markers, not by eye.
 
 ## Before you edit
 

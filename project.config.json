@@ -23,7 +23,7 @@
   },
   "perf": {
     "frame_budget_ms": 6.94,
-    "fps_floor_ms": 16.67,
+    "fps_floor_ms": 10.0,
     "freeze_ms": 100,
     "baselines_dir": "docs/perf/baselines",
     "policy": "docs/perf/regression-policy.json"

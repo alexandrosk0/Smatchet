@@ -42,7 +42,7 @@
     },
     "target": {
       "type": "object",
-      "description": "Aggregate frame-time targets for THIS scenario. Pillar 1 floor (6.94 ms mean) + 60 Hz floor (16.67 ms p99) apply by default unless overridden here.",
+      "description": "Aggregate frame-time targets for THIS scenario. Pillar 1 floor (6.94 ms mean) + 100 Hz floor (10.0 ms p99) apply by default unless overridden here.",
       "additionalProperties": false,
       "properties": {
         "meanMs": { "type": "number" },
