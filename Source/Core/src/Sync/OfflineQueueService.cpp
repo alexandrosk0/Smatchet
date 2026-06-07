@@ -709,7 +709,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.Reader()) {
+    if (!deps_.Cache() || !deps_.ReaderShared()) {
         return;
     }
     {
@@ -748,8 +748,12 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     }
 
     LocalCacheManager* cache = deps_.Cache();
-    ITrackerIssueReader* reader = deps_.Reader();
-    ITrackerIssueMutations* mutations = deps_.Mutations();
+    // LATCHED strong role handles (debt 2026-06-07): the shared_ptrs are captured into the
+    // background task below, so a live backend swap (or pane-context retirement, multi-grid
+    // Slice 3) mid-replay cannot dangle the subobject pointers — the replay completes
+    // against the latched backend.
+    std::shared_ptr<ITrackerIssueReader> reader = deps_.ReaderShared();
+    std::shared_ptr<ITrackerIssueMutations> mutations = deps_.MutationsShared();
     if (!reader || !mutations) {
         // Mirror the three early-returns above: release the in-flight latch before bailing.
         // Otherwise offlineFieldEditReplayInFlight_ stays true forever, every later tick
@@ -767,7 +771,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
             if (row.HasMergeConflict) {
                 continue;
             }
-            ReplayOneFieldEdit(row, cache, reader, mutations, depsRef, tally);
+            ReplayOneFieldEdit(row, cache, reader.get(), mutations.get(), depsRef, tally);
         }
 
         if (tally.Successes > 0) {
@@ -1256,7 +1260,7 @@ void OfflineQueueService::TickOfflineCreates() {
     if (ConfigManager::Load().ReadOnlyMode) {
         return;
     }
-    if (!deps_.Cache() || !deps_.Reader()) {
+    if (!deps_.Cache() || !deps_.ReaderShared()) {
         return;
     }
     {
@@ -1295,14 +1299,16 @@ void OfflineQueueService::TickOfflineCreates() {
     }
 
     auto catalogCopy = std::make_shared<std::vector<TrackerField>>(deps_.AvailableFields());
-    ITrackerIssueMutations* mutations2 = deps_.Mutations();
+    // LATCHED strong mutation handle (debt 2026-06-07): captured into the background task so
+    // a live backend swap / pane-context retirement mid-replay cannot dangle it.
+    std::shared_ptr<ITrackerIssueMutations> mutations2 = deps_.MutationsShared();
     LocalCacheManager* cache = deps_.Cache();
 
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask([this, &depsRef, pending, mutations2, cache, catalogCopy]() {
         CreateReplayTally tally;
         for (const auto& pc : pending) {
-            ReplayOneCreate(pc, cache, mutations2, *catalogCopy, depsRef, tally);
+            ReplayOneCreate(pc, cache, mutations2.get(), *catalogCopy, depsRef, tally);
         }
         if (tally.Successes > 0) {
             depsRef.RefreshLocalData();

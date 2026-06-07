@@ -65,14 +65,14 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
         focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
         /*legacyFallback*/ std::string());
-    return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
+    return IssueDraftHelpers::FromCachedTicket(lastTicket, fieldCatalog().AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
                                                cfg.DefaultIssueTypeName, inheritIds);
 }
 
 RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
                                                     const std::string& issueTypeName) const {
     RequiredFieldSet result;
-    for (const auto& entry : AvailableIssueTypeMeta) {
+    for (const auto& entry : fieldCatalog().AvailableIssueTypeMeta) {
         const bool projectMatch = entry.ProjectKey.empty() || projectKey.empty() || entry.ProjectKey == projectKey;
         if (!projectMatch) {
             continue;
@@ -94,7 +94,7 @@ RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKe
 
 std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft& draft) {
     // Snapshot state the worker needs up front so we don't race with UI edits.
-    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(AvailableFields);
+    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(fieldCatalog().AvailableFields);
     const RequiredFieldSet required = GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
     std::shared_ptr<std::promise<IssueCreateResult>> promise = std::make_shared<std::promise<IssueCreateResult>>();
     std::future<IssueCreateResult> future = promise->get_future();

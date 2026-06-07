@@ -54,8 +54,10 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     std::string CacheBackendKeyImpl{"Jira"};
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
-    ITrackerIssueReader* Reader() override { return BackendImpl.get(); }
-    ITrackerIssueMutations* Mutations() override { return BackendImpl.get(); }
+    /// Latched strong role handles (debt 2026-06-07): swap-during-replay tests reset
+    /// `BackendImpl` mid-replay — the handle a worker captured must keep the old fake alive.
+    std::shared_ptr<ITrackerIssueReader> ReaderShared() const override { return BackendImpl; }
+    std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override { return BackendImpl; }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }
     RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/, const std::string& /*issueTypeId*/,

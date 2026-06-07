@@ -9,16 +9,48 @@
 // load/store discipline below. The ADR-0012 retired-backend graveyard stays on AppController.
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "CachedTicketTypes.h"
+#include "TrackerFieldSchema.h"
 
 class ITrackerBackend;
 class TicketSyncService;
+
+/// Per-context in-memory field-catalog block (multi-grid Slice 3, plan item 17 +
+/// slice1-design § 3.1). Moved verbatim out of AppController: the block is mutex-guarded but
+/// SEMANTICALLY single-backend — two live different-backend panes sharing one copy would
+/// overwrite each other's catalog. Each GridLiveContext now owns its own. Member names are
+/// unchanged so the AppController call sites stay greppable against their history.
+struct GridContextFieldCatalog {
+    /// Bumped when the field catalog changes (fetch, error clear, etc.); UI sort caches key on it.
+    std::atomic<std::uint64_t> TrackerFieldCatalogRevision{0};
+    /// Guards every member below (same contract as the former AppController::availableFieldsMutex_).
+    mutable std::mutex availableFieldsMutex_;
+    std::vector<TrackerField> AvailableFields;
+    std::vector<TrackerComponent> AvailableComponents;
+    std::vector<TrackerIssueTypeCreateMeta> AvailableIssueTypeMeta;
+    /// Last-fetched user catalog (see AppController::GetAvailableUsers for semantics).
+    std::vector<TrackerUser> AvailableUsers;
+    std::string LastTrackerFieldCatalogError;
+    std::string LastTrackerFieldCatalogWarning;
+    bool fieldCatalogEverLoaded_ = false;
+    /// Project key for the most-recent in-flight catalog fetch (see SetCurrentCatalogProject).
+    std::string currentCatalogProjectKey_;
+    /// Per-project component option lists for cross-project grid views, keyed by project key.
+    std::unordered_map<std::string, std::vector<TrackerFieldOption>> projectComponentOptions_;
+    /// Project keys with an in-flight lazy component fetch (EnsureProjectComponentsLoaded).
+    std::unordered_set<std::string> projectComponentsInFlight_;
+    /// Per-project backoff after a FAILED component fetch (30 s relaunch guard).
+    mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> projectComponentsRetryAfter_;
+};
 
 struct GridLiveContext {
     // Ctor/dtor are out-of-line (GridLiveContext.cpp) so the sync-service member only needs
@@ -57,6 +89,22 @@ struct GridLiveContext {
     /// Resolved field-catalog cache key for this context (backend, endpoint, project).
     /// Declared in Slice 1a; consumed when the catalog moves per-context in Slice 3.
     std::string catalogKey;
+
+    /// Per-context in-memory field catalog (multi-grid Slice 3 — see struct doc above).
+    GridContextFieldCatalog fieldCatalog;
+
+    // --- Visibility lifecycle (multi-grid Slice 3, plan item 17) -----------------------
+    // UI-thread-only bookkeeping driven by AppController::NotifyPaneVisible /
+    // TickAllContexts: a pane that stops being drawn keeps its snapshot but no new syncs
+    // are kicked for it; after the hidden-grace window its context is retired (backend to
+    // the ADR-0012 graveyard) — EXCEPT the default pane's context, which is permanent
+    // (offlineQueue_ holds a reference chain through its deps adapter).
+    std::chrono::steady_clock::time_point lastVisibleAt{};
+    bool everVisible = false;
+    /// One-shot latch for AppController::EnsurePaneLiveSyncStarted (UI thread only):
+    /// a non-focused visible pane's first sync is kicked exactly once per context
+    /// generation (a retired-then-reshown pane gets a fresh context → fresh kick).
+    bool initialSyncKicked = false;
 
   private:
     /// Guarded by backendKeyMutex_ — see CacheBackendKeyCopy/SetCacheBackendKey above.

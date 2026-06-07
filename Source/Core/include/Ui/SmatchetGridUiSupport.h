@@ -13,6 +13,13 @@
 class AppController;
 class Views;
 
+/// Begin a new-issue draft seeded from the last visible ticket (defined in
+/// SmatchetGridHeaderUi.cpp). Exposed so the pane-window host can replay a DEFERRED
+/// "+ New Issue" click from a not-yet-focused pane after the focus/view switch lands
+/// (multi-grid Slice 3, plan item 19 — the {paneId, kind} action latch).
+void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
+                        const std::vector<CachedTicket>& tickets);
+
 void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::string& issueKey,
                                   const std::string& fieldId, const std::string& fieldLabel,
                                   const std::string& rawValue, const std::string& richValue, AppController* app,
@@ -44,48 +51,30 @@ void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore&
 
 bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d);
 
-void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d,
-                            const std::vector<TicketGridColumn>& columns,
-                            const TrackerConfig& cfg,
-                            const CachedTicket* lastVisibleTicket);
+void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
+                            const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket);
 
-void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
-                           ViewDefinition*& activeViewForGrid,
-                           const std::vector<TicketGridColumn>& columns,
-                           const std::vector<CachedTicket>& tickets,
-                           bool readOnlyMode,
-                           Views& viewState,
-                           const TrackerConnectivityBannerForUi& trackerBanner);
+void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
+                           const std::vector<TicketGridColumn>& columns, const std::vector<CachedTicket>& tickets,
+                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner);
 
 /// Enqueue half of the grid field-edit pipeline — called once per visible PANE per
 /// frame; folds the pane's freshly committed edits into the session queue
 /// (latest-per-cell). No dispatch / chip decay (review MEDIUM-1 split).
-void EnqueueGridFieldEdits(UiDrawSession& d,
-                           const std::vector<PendingFieldEdit>& pendingEdits,
-                           bool readOnlyMode);
+void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode);
 
 /// Pump half — called ONCE per frame by the pane-window host with the FOCUSED
 /// pane's live ticket snapshot: dispatches the next queued edit to a worker and
 /// decays success chips.
-void PumpGridFieldEdits(AppController& app, UiDrawSession& d,
-                        const std::vector<CachedTicket>& tickets,
+void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
                         bool readOnlyMode);
 
 /// Composed enqueue+pump for single-shot callers outside the pane-window loop
 /// (perf.grid_edit_pump command).
-void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
-                           const std::vector<CachedTicket>& tickets,
-                           const std::vector<PendingFieldEdit>& pendingEdits,
-                           bool readOnlyMode);
+void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
+                           const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode);
 
 void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession& d,
                                          const TrackerConnectivityBannerForUi& banner);
 
 void MaybeToastGridBannerFromSession(UiDrawSession& d);
-
-
-
-
-
-
-

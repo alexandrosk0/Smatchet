@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -34,11 +35,16 @@ class IOfflineQueueDeps {
     /// `RecreateLocalCacheDatabase` has torn it down. Callers must null-check.
     virtual LocalCacheManager* Cache() = 0;
 
-    /// Narrow read accessor — used by replay paths that need to fetch issue data.
-    virtual ITrackerIssueReader* Reader() = 0;
+    /// LATCHED narrow read accessor — a strong handle that keeps the owning backend alive
+    /// (production: aliasing shared_ptr onto the atomically-latched backend) so replay
+    /// workers that captured it survive a live tracker swap or a Slice-3 pane-context
+    /// retirement (debt 2026-06-07 — the raw-subobject-across-async use-after-free class).
+    /// May be null (no backend yet). Capture the shared_ptr itself into the worker.
+    virtual std::shared_ptr<ITrackerIssueReader> ReaderShared() const = 0;
 
-    /// Narrow mutation accessor — use instead of Backend() when only mutation operations are needed.
-    virtual ITrackerIssueMutations* Mutations() = 0;
+    /// LATCHED narrow mutation accessor — same lifetime contract as ReaderShared(). Null
+    /// when there is no backend or the backend's Mutations() is unsupported.
+    virtual std::shared_ptr<ITrackerIssueMutations> MutationsShared() const = 0;
 
     /// Backend-key namespace for LocalCacheManager ticket reads/writes done by replay
     /// (`IssueCreatePipeline::Run` seeds the cache after a successful create). Returns a copy —

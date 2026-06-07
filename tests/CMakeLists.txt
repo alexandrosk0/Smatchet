@@ -118,6 +118,10 @@ add_executable(SmatchetTests
     # matching (A-rows replay, B-rows stay queued), dead-letter key carry + restore. Links
     # the production LCM + OfflineQueueService TUs already pulled in below.
     Core/OfflineQueueBackendKey.test.cpp
+    # Multi-grid Slice 3 pre-staged debt (debt.md 2026-06-07) — replay workers latch STRONG
+    # role handles: swap-during-replay completes against the latched backend (create tick)
+    # and swap-to-null / context-retirement shape does not crash (field-edit tick).
+    Core/OfflineQueueBackendSwap.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).

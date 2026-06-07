@@ -6,10 +6,12 @@
 // members: ViewState, gridFrameCtx_, the re-entrant drawActiveProjectWindow).
 // This header exposes the deterministic, ImGui-free pane-management helpers so
 // bucket-A tests can cover bootstrap/persist/add/close without a UI loop.
-// SLICE-2 BOUNDARY (keep until Slice 3): ONE GridLiveContext is live. The
-// focused pane drives it; the host only switches WHICH pane is focused (and
-// routes the per-pane view/backend swap through the existing sync chokepoint).
-// No multi-context lifecycle lives here.
+// Slice 3 (plan item 17): EVERY VISIBLE pane is live — drawActiveProjectWindow
+// stamps visibility into AppController::EnsurePaneContextLive per pane per frame,
+// non-focused visible panes kick their own (config, views) sync, and hidden panes'
+// contexts retire after a grace window (AppController::TickAllContexts). The host
+// still routes the FOCUSED pane's view/backend swap through the existing sync
+// chokepoint (focused-context delegators, ADR-0018).
 
 #include "GridPane.h"
 

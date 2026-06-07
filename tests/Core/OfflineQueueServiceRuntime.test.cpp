@@ -94,13 +94,16 @@ void PrimeCreatePipelineHappy(FakeOfflineQueueDeps& deps) {
     deps.Fields = {MakeField("summary"), MakeField("priority")};
 }
 
-// Deps variant whose Mutations() role can be toggled null at runtime, leaving Cache()/Reader()
-// valid — exercises the `if (!reader || !mutations)` early-return inside TickOfflineFieldEdits
-// (both other roles must stay non-null to reach that guard). #16 regression fixture.
+// Deps variant whose MutationsShared() role can be toggled null at runtime, leaving
+// Cache()/ReaderShared() valid — exercises the `if (!reader || !mutations)` early-return
+// inside TickOfflineFieldEdits (both other roles must stay non-null to reach that guard).
+// #16 regression fixture; latched-handle form since the debt 2026-06-07 fix.
 class NullableMutationsDeps : public FakeOfflineQueueDeps {
   public:
     bool MutationsNull = false;
-    ITrackerIssueMutations* Mutations() override { return MutationsNull ? nullptr : FakeOfflineQueueDeps::Mutations(); }
+    std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override {
+        return MutationsNull ? nullptr : FakeOfflineQueueDeps::MutationsShared();
+    }
 };
 
 } // namespace

@@ -324,10 +324,10 @@ struct ActiveProjectDrawCtx {
 // Re-entrant per-pane grid window (multi-grid-tabs Slice 2, plan item 14). Called once
 // per visible GridPane per frame by drawGridPaneWindows (SmatchetGridPaneWindows.cpp),
 // which owns pane bootstrap / focus tracking / the min-1-pane close invariant and sets
-// d.activePaneForDraw around this call. SLICE-2 BOUNDARY: one live GridLiveContext —
-// the FOCUSED pane refreshes its snapshot from it; non-focused panes render their
-// cached snapshot, and all session-level mutation paths (view edits, new-issue draft,
-// modals, toasts) are gated on pane.focused.
+// d.activePaneForDraw around this call. Slice 3: EVERY visible pane is live — each
+// tracks its own GridLiveContext's published snapshot (the focused pane through the
+// focused-context delegators); session-level mutation paths (view edits, new-issue
+// draft, modals, toasts) stay gated on pane.focused.
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane,
                                          const TrackerConnectivityBannerForUi& TrackerBanner) {
     const bool wantFocus = pane.focused && d.requestActiveProjectFocus;
@@ -379,12 +379,38 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     const bool readOnlyMode =
         d.cfg.ReadOnlyMode || (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
 
-    // Snapshot policy (Slice-2): the focused pane tracks the live context every frame
-    // (cheap shared_ptr copy); a non-focused pane keeps its cached snapshot (seeded
-    // once if it never had one) until Slice 3 gives it a live context of its own.
-    if (pane.focused || !pane.ticketsSnapshot) {
+    // Visibility-driven context lifecycle (multi-grid Slice 3, plan item 17): this code
+    // runs only when ImGui::Begin returned true — i.e. the pane is VISIBLE (a docked-behind
+    // tab returns false and skips it, so its lastVisibleAt stops advancing and the context
+    // retires after the grace window in TickAllContexts). EnsurePaneContextLive is an O(map
+    // lookup) stamp per visible pane per frame — not per cell.
+    app.EnsurePaneContextLive(pane.id, pane.backendKey);
+    if (!pane.focused) {
+        // Non-focused visible pane is LIVE too: kick its first sync against its own
+        // (config, views) pair (one-shot per context generation; views-bucket load runs on
+        // a worker — Pillar 2). The focused pane syncs through the existing chokepoint.
+        TrackerConfig paneCfg = d.cfg;
+        if (!pane.backendKey.empty()) {
+            paneCfg.TrackerType = pane.backendKey;
+        }
+        app.EnsurePaneLiveSyncStarted(pane.id, paneCfg, pane.viewId);
+    }
+
+    // Snapshot policy (Slice 3): the focused pane tracks the focused live context every
+    // frame (cheap shared_ptr copy); a non-focused VISIBLE pane tracks its OWN context's
+    // published snapshot, falling back to its cached snapshot until the first sync lands.
+    if (pane.focused) {
         pane.ticketsSnapshot = app.GetActiveTicketsSnapshot();
         pane.snapshotRevision = app.GetActiveTicketsRevision();
+    } else {
+        std::shared_ptr<const std::vector<CachedTicket>> live = app.GetPaneTicketsSnapshot(pane.id);
+        if (live) {
+            pane.ticketsSnapshot = live;
+            pane.snapshotRevision = app.GetPaneTicketsRevision(pane.id);
+        } else if (!pane.ticketsSnapshot) {
+            pane.ticketsSnapshot = app.GetActiveTicketsSnapshot();
+            pane.snapshotRevision = app.GetActiveTicketsRevision();
+        }
     }
     const auto ticketsSnap = pane.ticketsSnapshot; // keep alive across the draw
     const auto& tickets = *ticketsSnap;
