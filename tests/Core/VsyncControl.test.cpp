@@ -6,7 +6,7 @@
 // boundary as SingleClickEditConfig.test.cpp); the table row + live-apply hook
 // are covered by the CLI smoke in the plan's verification instead.
 //
-// Plan: docs/plans/active/vsync-toggle.md
+// Plan: docs/plans/shipped/vsync-toggle.md
 
 #include "VsyncControl.h"
 

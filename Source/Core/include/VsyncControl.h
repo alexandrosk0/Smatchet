@@ -1,7 +1,6 @@
 #pragma once
 
 // VsyncControl — tiny GLFW-free live vsync hub (the runtime source of truth).
-//
 // The persisted TrackerConfig::VsyncEnabled is the durable source of truth that
 // seeds this hub at boot; every surface (Preferences checkbox, `config.set
 // vsync`, the --vsync/--no-vsync CLI flag, the SMATCHET_FPS_VSYNC env var)
@@ -9,8 +8,7 @@
 // frame and calls glfwSwapInterval only on change. No GLFW here — this header
 // compiles into SmatchetCore_DX12 too (the Unreal host owns its swapchain and
 // honours the intent where it can).
-//
-// Plan: docs/plans/active/vsync-toggle.md
+// Plan: docs/plans/shipped/vsync-toggle.md
 
 #include <atomic>
 #include <cstdlib>
