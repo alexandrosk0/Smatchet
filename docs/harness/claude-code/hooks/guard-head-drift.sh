@@ -87,6 +87,11 @@ drift_reason="HEAD moved under this session (started ${BASE_BRANCH}@${short_base
 TOOL="$(json_field '.tool_name' 'tool_name')"
 
 # Shared git-invocation grammar: `git [-C path|-c k=v|--flag]* <op>`.
+# Leading token accepts `git` and `git.exe` (PowerShell idiom), bare or as the
+# tail of a quoted/full path (`& "C:\...\git.exe" commit`), and the boundary
+# class includes `(` so subshell/substitution forms `(git …)` / `$(git …)`
+# can't slip past (CR-947 hardening — these previously failed OPEN).
+GIT_INVOKE_RE='(^|[;&|([:space:]"\\/])git(\.exe)?"?'
 GIT_OPTS_RE='([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*'
 
 # True (0) when EVERY git invocation in $CMD matching the op alternation carries
@@ -99,7 +104,7 @@ GIT_OPTS_RE='([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]
 all_git_ops_target_safe_worktree() { # $1 = op alternation, e.g. 'commit'
   local ops="$1" m tgt branch
   local matches
-  matches="$(printf '%s' "$CMD" | grep -oE "(^|[;&|[:space:]])git${GIT_OPTS_RE}[[:space:]]+(${ops})(\$|[;&|[:space:]])")"
+  matches="$(printf '%s' "$CMD" | grep -oE "${GIT_INVOKE_RE}${GIT_OPTS_RE}[[:space:]]+(${ops})(\$|[;&|)[:space:]])")"
   [ -n "$matches" ] || return 1
   while IFS= read -r m; do
     [ -n "$m" ] || continue
@@ -123,7 +128,7 @@ case "$TOOL" in
   Bash|PowerShell)
     CMD="$(json_field '.tool_input.command' 'command')"
     # git commit: `git [-C path|-c k=v|--flag]* commit`.
-    if printf '%s' "$CMD" | grep -qE "(^|[;&|[:space:]])git${GIT_OPTS_RE}[[:space:]]+commit(\$|[;&|[:space:]])"; then
+    if printf '%s' "$CMD" | grep -qE "${GIT_INVOKE_RE}${GIT_OPTS_RE}[[:space:]]+commit(\$|[;&|)[:space:]])"; then
       if [ "$IS_INTEGRATION" = "1" ] && { [ "$CUR_BRANCH" = "develop" ] || [ "$CUR_BRANCH" = "main" ]; } \
          && ! all_git_ops_target_safe_worktree 'commit'; then
         deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: pwsh scripts/dev/worktree.ps1 new <slug> — then commit with an explicit \`git -C <worktree-path> commit\` (allowed from here). Override: SMATCHET_ACK_BRANCH_DRIFT=1 (must be exported before session launch)."
@@ -133,7 +138,7 @@ case "$TOOL" in
     # re-baseline can never lock in an external drift (recover via resync first).
     # Ops explicitly -C-targeted at a linked worktree are exempt — they cannot
     # move THIS tree's HEAD, drifted or not.
-    if [ "$drifted" = "1" ] && printf '%s' "$CMD" | grep -qE "(^|[;&|[:space:]])git${GIT_OPTS_RE}[[:space:]]+(commit|pull|reset|merge|rebase|checkout|switch|cherry-pick|am|revert)(\$|[;&|[:space:]])" \
+    if [ "$drifted" = "1" ] && printf '%s' "$CMD" | grep -qE "${GIT_INVOKE_RE}${GIT_OPTS_RE}[[:space:]]+(commit|pull|reset|merge|rebase|checkout|switch|cherry-pick|am|revert)(\$|[;&|)[:space:]])" \
        && ! all_git_ops_target_safe_worktree 'commit|pull|reset|merge|rebase|checkout|switch|cherry-pick|am|revert'; then
       deny "$drift_reason"
     fi
