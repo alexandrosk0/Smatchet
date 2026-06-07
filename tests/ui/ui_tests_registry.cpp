@@ -23,6 +23,7 @@ extern "C" void SmatchetRegisterFuncSizeWindowRenderSmokeTests(ImGuiTestEngine* 
 extern "C" void SmatchetRegisterFuncSizePreferencesTabsTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeMainUiSmokeTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeGridRenderTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterGridPaneWindowsTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
@@ -54,6 +55,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterFuncSizePreferencesTabsTests(engine);
     SmatchetRegisterFuncSizeMainUiSmokeTests(engine);
     SmatchetRegisterFuncSizeGridRenderTests(engine);
+    SmatchetRegisterGridPaneWindowsTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);

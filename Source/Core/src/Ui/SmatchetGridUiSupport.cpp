@@ -108,7 +108,8 @@ static void DrawAnnotateFromCallstackMenuIfAny(AppController* app, UiDrawSession
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Annotate...")) {
-        OpenAnnotateAnalysisForGridIssue(*app, ui->showAnnotateAnalysis, ui->gridState, issueKey);
+        // pane(): the pane whose window hosts this right-click popup (Slice 2).
+        OpenAnnotateAnalysisForGridIssue(*app, ui->showAnnotateAnalysis, ui->pane().gridState, issueKey);
     }
 }
 

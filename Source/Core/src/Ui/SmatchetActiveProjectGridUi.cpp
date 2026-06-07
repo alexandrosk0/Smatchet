@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetInputModifierBridge.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
@@ -55,8 +56,8 @@ static bool IsPersistableSortDirection(ImGuiSortDirection dir) {
 }
 
 /** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll; first N wheel ticks at
- * each end ignored (configured by GridEndWheelSwallowsBeforeHorizontal). */
-static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table, UiDrawSession& d) {
+ * each end ignored (configured by GridEndWheelSwallowsBeforeHorizontal). Per-pane hysteresis (Slice 2). */
+static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table, UiDrawSession& d, GridPane& pane) {
     const int endWheelSwallowsBeforeHorizontal = (std::max)(0, d.cfg.GridEndWheelSwallowsBeforeHorizontal);
 
     if (!table) {
@@ -84,24 +85,24 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
     }
 
     if (!atBottom) {
-        d.gridBottomHorizontalWheelSwallowsRemaining = 0;
+        pane.gridBottomHorizontalWheelSwallowsRemaining = 0;
     }
     if (!atTop) {
-        d.gridTopHorizontalWheelSwallowsRemaining = 0;
+        pane.gridTopHorizontalWheelSwallowsRemaining = 0;
     }
 
     bool allowRoute = false;
     if (noVerticalScroll) {
         allowRoute = true;
     } else if (atBottom) {
-        if (d.gridBottomHorizontalWheelSwallowsRemaining < endWheelSwallowsBeforeHorizontal) {
-            ++d.gridBottomHorizontalWheelSwallowsRemaining;
+        if (pane.gridBottomHorizontalWheelSwallowsRemaining < endWheelSwallowsBeforeHorizontal) {
+            ++pane.gridBottomHorizontalWheelSwallowsRemaining;
             return;
         }
         allowRoute = true;
     } else if (atTop) {
-        if (d.gridTopHorizontalWheelSwallowsRemaining < endWheelSwallowsBeforeHorizontal) {
-            ++d.gridTopHorizontalWheelSwallowsRemaining;
+        if (pane.gridTopHorizontalWheelSwallowsRemaining < endWheelSwallowsBeforeHorizontal) {
+            ++pane.gridTopHorizontalWheelSwallowsRemaining;
             return;
         }
         allowRoute = true;
@@ -122,22 +123,22 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
     ImGui::SetScrollX(inner, targetX);
 }
 
-// Rebuild the cached sort-order + filter projection (`d.cachedSortedIndices` →
-// `d.filteredIndices`). Extracted from drawActiveProjectGridSort so that helper stays
+// Rebuild ONE PANE's cached sort-order + filter projection (`pane.cachedSortedIndices` →
+// `pane.filteredIndices`). Extracted from drawActiveProjectGridSort so that helper stays
 // under the function-size cap; runs only when the projection is dirty AND the streaming
-// debounce permits. Behaviour is byte-for-byte the former inline block.
-static void RebuildGridSortAndFilterProjection(UiDrawSession& d, ImGuiTableSortSpecs* sortSpecs,
+// debounce permits. Per-pane caches (Slice 2) keep a steady-state re-render an O(1) hit.
+static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpecs* sortSpecs,
                                                const std::vector<CachedTicket>& tickets,
                                                const std::vector<TicketGridColumn>& columns,
                                                const TrackerFieldCatalogIndex& catalogIndex,
                                                const std::string& fingerprint, std::uint64_t activeTicketsRevision,
                                                std::uint64_t catalogRevision, char* lastFilter, size_t lastFilterCap) {
-    d.lastGridSortAt = std::chrono::steady_clock::now();
+    pane.lastGridSortAt = std::chrono::steady_clock::now();
 
     // 1. Run Sort Spec / Order Indices
-    d.cachedSortedIndices.resize(tickets.size());
+    pane.cachedSortedIndices.resize(tickets.size());
     for (size_t i = 0; i < tickets.size(); ++i) {
-        d.cachedSortedIndices[i] = i;
+        pane.cachedSortedIndices[i] = i;
     }
 
     if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
@@ -163,59 +164,60 @@ static void RebuildGridSortAndFilterProjection(UiDrawSession& d, ImGuiTableSortS
             sortKeys.push_back(sk);
         }
         const std::vector<CachedTicket>* ticketsPtr = &tickets;
-        std::stable_sort(
-            d.cachedSortedIndices.begin(), d.cachedSortedIndices.end(), [ticketsPtr, &sortKeys](size_t ia, size_t ib) {
-                const auto& tix = *ticketsPtr;
-                for (const auto& sk : sortKeys) {
-                    if (sk.col->ColumnKind == TicketGridColumn::Kind::Id) {
-                        const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
-                        if (less)
-                            return sk.dir > 0;
-                        if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id))
-                            continue;
-                        return sk.dir < 0;
-                    }
-                    // Zero-copy refs (Phase 5 pull-forward): GetFieldValueRef avoids the two
-                    // std::string copies GetFieldValue made on every comparison inside stable_sort.
-                    const std::string& aVal = tix[ia].GetFieldValueRef(sk.col->FieldId);
-                    const std::string& bVal = tix[ib].GetFieldValueRef(sk.col->FieldId);
-                    const int cmp = CompareFieldValuesForSort(sk.col->FieldId, sk.fieldMeta, aVal, bVal, sk.dir);
-                    if (cmp != 0)
-                        return (cmp * sk.dir) < 0;
-                }
-                return ia < ib;
-            });
+        std::stable_sort(pane.cachedSortedIndices.begin(), pane.cachedSortedIndices.end(),
+                         [ticketsPtr, &sortKeys](size_t ia, size_t ib) {
+                             const auto& tix = *ticketsPtr;
+                             for (const auto& sk : sortKeys) {
+                                 if (sk.col->ColumnKind == TicketGridColumn::Kind::Id) {
+                                     const bool less = CompareIssueKeyNatural(tix[ia].id, tix[ib].id);
+                                     if (less)
+                                         return sk.dir > 0;
+                                     if (!CompareIssueKeyNatural(tix[ib].id, tix[ia].id))
+                                         continue;
+                                     return sk.dir < 0;
+                                 }
+                                 // Zero-copy refs (Phase 5 pull-forward): GetFieldValueRef avoids the two
+                                 // std::string copies GetFieldValue made on every comparison inside stable_sort.
+                                 const std::string& aVal = tix[ia].GetFieldValueRef(sk.col->FieldId);
+                                 const std::string& bVal = tix[ib].GetFieldValueRef(sk.col->FieldId);
+                                 const int cmp =
+                                     CompareFieldValuesForSort(sk.col->FieldId, sk.fieldMeta, aVal, bVal, sk.dir);
+                                 if (cmp != 0)
+                                     return (cmp * sk.dir) < 0;
+                             }
+                             return ia < ib;
+                         });
     }
 
-    d.cachedSortFingerprint = fingerprint;
-    d.cachedSortValid = true;
-    d.cachedSortTicketsRevision = activeTicketsRevision;
-    d.cachedSortCatalogRevision = catalogRevision;
+    pane.cachedSortFingerprint = fingerprint;
+    pane.cachedSortValid = true;
+    pane.cachedSortTicketsRevision = activeTicketsRevision;
+    pane.cachedSortCatalogRevision = catalogRevision;
 
-    // 2. Run Filter and rebuild d.filteredIndices
-    d.filteredIndices.clear();
+    // 2. Run Filter and rebuild pane.filteredIndices
+    pane.filteredIndices.clear();
     auto checkMatch = [&](size_t idx) {
         if (idx >= tickets.size())
             return false;
-        if (d.gridFilterBuf[0] == '\0')
+        if (pane.gridFilterBuf[0] == '\0')
             return true;
         const auto& t = tickets[idx];
-        if (ContainsCaseInsensitive(t.id, d.gridFilterBuf))
+        if (ContainsCaseInsensitive(t.id, pane.gridFilterBuf))
             return true;
-        if (ContainsCaseInsensitive(t.GetFieldValue("summary"), d.gridFilterBuf))
+        if (ContainsCaseInsensitive(t.GetFieldValue("summary"), pane.gridFilterBuf))
             return true;
         return false;
     };
 
-    for (size_t idx : d.cachedSortedIndices) {
+    for (size_t idx : pane.cachedSortedIndices) {
         if (checkMatch(idx)) {
-            d.filteredIndices.push_back(idx);
+            pane.filteredIndices.push_back(idx);
         }
     }
 
     // snprintf guarantees null-termination and avoids the strncpy
     // truncation warning when the source fills the buffer exactly.
-    std::snprintf(lastFilter, lastFilterCap, "%s", d.gridFilterBuf);
+    std::snprintf(lastFilter, lastFilterCap, "%s", pane.gridFilterBuf);
 }
 
 // Mirror header-click sort changes back onto the active view definition, marking it
@@ -261,18 +263,18 @@ static void SyncHeaderSortClicksToView(UiDrawSession& d, ImGuiTableSortSpecs* so
 // selection (added to whatever is already selected). Extracted from
 // drawActiveProjectGridRectSelKeys to keep that helper under the function-size cap.
 template <class RectSelT>
-static void PromoteActiveRowToSelection(UiDrawSession& d, RectSelT& sel, const std::vector<CachedTicket>& tickets,
+static void PromoteActiveRowToSelection(GridPane& pane, RectSelT& sel, const std::vector<CachedTicket>& tickets,
                                         std::uint64_t gridSortSig) {
     int activeRow = -1;
     if (sel.PrimaryRow >= 0) {
         activeRow = sel.PrimaryRow;
     } else if (sel.Active) {
         activeRow = sel.AnchorRow;
-    } else if (!d.gridState.ActiveIssueId.empty()) {
-        const auto& indices = d.filteredIndices;
+    } else if (!pane.gridState.ActiveIssueId.empty()) {
+        const auto& indices = pane.filteredIndices;
         for (size_t i = 0; i < indices.size(); ++i) {
             const size_t ti = indices[i];
-            if (ti < tickets.size() && tickets[ti].id == d.gridState.ActiveIssueId) {
+            if (ti < tickets.size() && tickets[ti].id == pane.gridState.ActiveIssueId) {
                 activeRow = static_cast<int>(i);
                 break;
             }
@@ -295,6 +297,11 @@ static void PromoteActiveRowToSelection(UiDrawSession& d, RectSelT& sel, const s
 struct ActiveProjectDrawCtx {
     AppController& app;
     UiDrawSession& d;
+    /// The pane this window renders — resolved ONCE per window (never per cell).
+    /// All per-pane grid state (sort/filter caches, selection, filter buffer)
+    /// routes through this reference; `pane.focused` gates the session-level
+    /// mutation paths (view edits, new-issue draft, modals, toasts).
+    GridPane& pane;
     const std::vector<CachedTicket>& tickets;
     const TrackerFieldCatalogIndex& catalogIndex;
     const std::vector<TicketGridColumn>& columns;
@@ -313,11 +320,32 @@ struct ActiveProjectDrawCtx {
     std::uint64_t& gridSortSig;
 };
 
-void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
-    const bool wantFocus = d.requestActiveProjectFocus;
+// Re-entrant per-pane grid window (multi-grid-tabs Slice 2, plan item 14). Called once
+// per visible GridPane per frame by drawGridPaneWindows (SmatchetGridPaneWindows.cpp),
+// which owns pane bootstrap / focus tracking / the min-1-pane close invariant and sets
+// d.activePaneForDraw around this call. SLICE-2 BOUNDARY: one live GridLiveContext —
+// the FOCUSED pane refreshes its snapshot from it; non-focused panes render their
+// cached snapshot, and all session-level mutation paths (view edits, new-issue draft,
+// modals, toasts) are gated on pane.focused.
+void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane) {
+    const bool wantFocus = pane.focused && d.requestActiveProjectFocus;
     prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
-    if (!ImGui::Begin("Smatchet - Active Project", nullptr,
-                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
+    // The bootstrap pane keeps the legacy window name so existing imgui.ini dock
+    // geometry and the default-layout ini keep applying; extra panes carry their
+    // title with a stable ###GridPane:<id> settings id (cached — no per-frame build).
+    if (pane.cachedWindowName.empty() || pane.cachedWindowNameTitle != pane.title) {
+        pane.cachedWindowNameTitle = pane.title;
+        pane.cachedWindowName =
+            (pane.id == "main") ? std::string("Smatchet - Active Project") : pane.title + "###GridPane:" + pane.id;
+    }
+    // Close button only when another pane remains (min-1-pane invariant; the host
+    // applies the actual close after the pane loop).
+    bool* paneOpen = (d.gridPanes.size() > 1) ? &pane.open : nullptr;
+    ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoCollapse;
+    if (pane.id == "main") {
+        paneFlags |= ImGuiWindowFlags_NoTitleBar;
+    }
+    if (!ImGui::Begin(pane.cachedWindowName.c_str(), paneOpen, paneFlags)) {
         ImGui::End();
         return;
     }
@@ -326,20 +354,42 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
         ImGui::SetWindowFocus();
         d.requestActiveProjectFocus = false;
     }
+    // Report window focus to the pane host (consumed after the pane loop). Focus is
+    // what flips which pane drives the single Slice-2 live context.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        d.paneWindowFocusedThisFrame = pane.id;
+    }
+    // Pane strip: "+" opens a new pane window duplicating this one (Slice 2 — same
+    // (backend, view); cross-backend panes arrive with Slice 3's concurrent contexts).
+    // The host applies the request after the loop; close rides the window's tab X.
+    if (ImGui::SmallButton("+##PaneAdd")) {
+        d.paneAddRequestSourceId = pane.id;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.add.tooltip",
+                                                        "New grid pane (duplicates this pane; dock it as a tab or "
+                                                        "drag its tab to an edge for a side-by-side split)"));
+    }
     const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
-    MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
+    if (pane.focused) {
+        MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
+    }
     const bool readOnlyMode =
         d.cfg.ReadOnlyMode || (TrackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
 
-    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    // Snapshot policy (Slice-2): the focused pane tracks the live context every frame
+    // (cheap shared_ptr copy); a non-focused pane keeps its cached snapshot (seeded
+    // once if it never had one) until Slice 3 gives it a live context of its own.
+    if (pane.focused || !pane.ticketsSnapshot) {
+        pane.ticketsSnapshot = app.GetActiveTicketsSnapshot();
+        pane.snapshotRevision = app.GetActiveTicketsRevision();
+    }
+    const auto ticketsSnap = pane.ticketsSnapshot; // keep alive across the draw
     const auto& tickets = *ticketsSnap;
 
-    ViewDefinition* activeViewForGrid = ViewState.GetActiveViewMutable();
+    ViewDefinition* activeViewForGrid = resolvePaneView(pane);
     const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
-    const std::vector<TicketGridColumn>& columns = gridFrameCtx_.columns;
-
-    annotateAnalysisUi_.SetAnnotatePanelOpen(d.showAnnotateAnalysis);
-    annotateAnalysisUi_.ServiceBackground();
+    const std::vector<TicketGridColumn>& columns = resolvePaneColumns(pane, catalogIndex, activeViewForGrid);
 
     // Orchestrator-owned cross-section state (was function-local in the monolith). These
     // outlive every section helper and are bound by reference into the DrawCtx below.
@@ -351,6 +401,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
     ActiveProjectDrawCtx ctx{app,
                              d,
+                             pane,
                              tickets,
                              catalogIndex,
                              columns,
@@ -369,8 +420,11 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
     // Unsaved-layout strip + offline-queues panel (the unscoped "above the table"
     // header UI). All BeginChild/EndChild + BeginPopupModal/EndPopup pairs stay inside
-    // the helper — never split across this boundary.
-    drawActiveProjectUnsavedStrip(ctx);
+    // the helper — never split across this boundary. Focused pane only (session-level
+    // view-edit state + global offline queues).
+    if (pane.focused) {
+        drawActiveProjectUnsavedStrip(ctx);
+    }
 
     drawActiveProjectTable(ctx);
 
@@ -381,12 +435,51 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 
     // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
     // of view. Edits accepted in the modal are appended to `pendingEdits` and flow through the same
-    // ProcessGridFieldEdits path below.
-    TicketFieldEditor::RenderLongTextModal(pendingEdits);
+    // ProcessGridFieldEdits path below. The popup stack is global — render once, from the focused pane.
+    if (pane.focused) {
+        TicketFieldEditor::RenderLongTextModal(pendingEdits);
+    }
 
     ProcessGridFieldEdits(app, d, tickets, pendingEdits, readOnlyMode);
-    MaybeToastGridBannerFromSession(d);
+    if (pane.focused) {
+        MaybeToastGridBannerFromSession(d);
+    }
     ImGui::End();
+}
+
+// Resolve the pane's view inside the (focused-backend) views bucket. A pane referencing
+// a deleted/unknown view falls back to the ACTIVE view and self-repairs its viewId
+// (Pillar 3 — never dangle). Returns null only when the bucket has no views at all.
+ViewDefinition* SmatchetUI::resolvePaneView(GridPane& pane) {
+    ViewsStore& store = ViewState.GetStoreMutable();
+    for (auto& view : store.Views) {
+        if (view.Id == pane.viewId) {
+            return &view;
+        }
+    }
+    ViewDefinition* active = ViewState.GetActiveViewMutable();
+    pane.viewId = active ? active->Id : std::string();
+    return active;
+}
+
+// Column set for a pane: the shared per-frame GridFrameContext when the pane renders the
+// active view (the common case — zero copies), otherwise a PER-PANE cached build keyed on
+// catalog/views revisions + viewId (rebuilt on revision change only, never per frame).
+const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pane,
+                                                                    const TrackerFieldCatalogIndex& catalogIndex,
+                                                                    const ViewDefinition* paneView) {
+    if (!paneView || paneView->Id == gridFrameCtx_.activeViewId) {
+        return gridFrameCtx_.columns;
+    }
+    if (!pane.cachedColumnsValid || pane.cachedColumnsCatalogRevision != gridFrameCtx_.catalogRevision ||
+        pane.cachedColumnsViewsRevision != gridFrameCtx_.viewsRevision || pane.cachedColumnsViewId != paneView->Id) {
+        pane.cachedColumns = TicketGridColumnsBuilder::Build(*paneView, catalogIndex);
+        pane.cachedColumnsCatalogRevision = gridFrameCtx_.catalogRevision;
+        pane.cachedColumnsViewsRevision = gridFrameCtx_.viewsRevision;
+        pane.cachedColumnsViewId = paneView->Id;
+        pane.cachedColumnsValid = true;
+    }
+    return pane.cachedColumns;
 }
 
 // View-switch + grid-context-change bookkeeping. Split out of drawActiveProjectWindow under the
@@ -394,31 +487,37 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d) {
 // back through the ctx reference instead of the former orchestrator local).
 void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
-    const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != d.lastGridActiveViewId);
+    const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != pane.lastGridActiveViewId);
     if (viewChanged && activeViewForGrid) {
-        d.lastGridActiveViewId = activeViewForGrid->Id;
-        d.viewSortDirty = false;
-        // Active view switched — abandon unsaved edits that belonged to the old
-        // view (no confirmation in the grid path; Views editor has its own modal).
-        d.viewsDirty = false;
-        d.viewsHasOriginalSnapshot = false;
+        pane.lastGridActiveViewId = activeViewForGrid->Id;
+        // Session-level unsaved-edit state belongs to the focused pane's view only.
+        if (pane.focused) {
+            d.viewSortDirty = false;
+            // Active view switched — abandon unsaved edits that belonged to the old
+            // view (no confirmation in the grid path; Views editor has its own modal).
+            d.viewsDirty = false;
+            d.viewsHasOriginalSnapshot = false;
+        }
     }
     if (!activeViewForGrid) {
-        d.lastGridActiveViewId.clear();
-        d.viewSortDirty = false;
-        d.viewsDirty = false;
-        d.viewsHasOriginalSnapshot = false;
+        pane.lastGridActiveViewId.clear();
+        if (pane.focused) {
+            d.viewSortDirty = false;
+            d.viewsDirty = false;
+            d.viewsHasOriginalSnapshot = false;
+        }
     }
 
     const std::string gridContextSignature = BuildGridContextSignature(activeViewForGrid, d.cfg.JqlQuery);
     const bool gridContextChanged =
-        !d.lastGridContextSignature.empty() && gridContextSignature != d.lastGridContextSignature;
-    if (gridContextChanged) {
+        !pane.lastGridContextSignature.empty() && gridContextSignature != pane.lastGridContextSignature;
+    if (gridContextChanged && pane.focused) {
         CancelUnfinishedNewIssueForGridChange(d);
     }
-    d.lastGridContextSignature = gridContextSignature;
+    pane.lastGridContextSignature = gridContextSignature;
 
     ctx.gridSortEnvironmentChanged = viewChanged || gridContextChanged;
 }
@@ -440,8 +539,9 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
         // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
-        // tests can drive the grid position without human input.
-        if (d.scenarioScrollActive && d.scenarioScrollTarget >= 0) {
+        // tests can drive the grid position without human input. Scenarios address "the
+        // grid" — the focused pane.
+        if (d.scenarioScrollActive && d.scenarioScrollTarget >= 0 && ctx.pane.focused) {
             ImGui::SetScrollY(static_cast<float>(d.scenarioScrollTarget));
         }
         drawActiveProjectGridSetup(ctx);
@@ -650,7 +750,6 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
 }
 
 void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
-    UiDrawSession& d = ctx.d;
     const std::vector<TicketGridColumn>& columns = ctx.columns;
     const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
@@ -692,7 +791,7 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     if (activeViewForGrid) {
         ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
         const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
-        const bool shouldApplyPersistedSort = specs && (gridSortEnvironmentChanged || d.forceApplySortSpecs);
+        const bool shouldApplyPersistedSort = specs && (gridSortEnvironmentChanged || ctx.pane.forceApplySortSpecs);
         if (shouldApplyPersistedSort) {
             // Re-applying whenever ImGui briefly reports zero specs can override a header click that is
             // cycling through tri-state sort directions.
@@ -724,35 +823,39 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
 void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     const std::vector<CachedTicket>& tickets = ctx.tickets;
     const std::vector<TicketGridColumn>& columns = ctx.columns;
     const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
     const bool gridSortEnvironmentChanged = ctx.gridSortEnvironmentChanged;
-    char* lastFilter = activeProjectState_.lastFilterBuf; // hoisted from `static thread_local char lastFilter[128]`
+    char* lastFilter = pane.lastFilterBuf; // per-pane (was a SmatchetUI member; the filter is per-pane now)
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
     ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
-    if (gridSortEnvironmentChanged || d.forceApplySortSpecs) {
-        d.cachedSortValid = false;
-        d.forceApplySortSpecs = false;
+    if (gridSortEnvironmentChanged || pane.forceApplySortSpecs) {
+        pane.cachedSortValid = false;
+        pane.forceApplySortSpecs = false;
     }
     if (sortSpecs && sortSpecs->SpecsDirty) {
-        d.cachedSortValid = false;
+        pane.cachedSortValid = false;
         sortSpecs->SpecsDirty = false;
 
-        // Sync header clicks back to View definition
-        if (activeViewForGrid) {
+        // Sync header clicks back to View definition (focused pane only — the
+        // view-definition mirror is session-level unsaved-edit state).
+        if (activeViewForGrid && pane.focused) {
             SyncHeaderSortClicksToView(d, sortSpecs, columns, *activeViewForGrid);
         }
     }
-    const std::uint64_t activeTicketsRevision = app.GetActiveTicketsRevision();
-    if (activeTicketsRevision != d.cachedSortTicketsRevision) {
-        d.cachedSortValid = false;
+    // Keyed on the PANE's snapshot revision (not the live revision) so a non-focused
+    // pane's frozen snapshot doesn't re-sort on every background sync tick.
+    const std::uint64_t activeTicketsRevision = pane.snapshotRevision;
+    if (activeTicketsRevision != pane.cachedSortTicketsRevision) {
+        pane.cachedSortValid = false;
     }
     const std::uint64_t catalogRevision = app.GetFieldCatalogRevision();
-    if (catalogRevision != d.cachedSortCatalogRevision) {
-        d.cachedSortValid = false;
+    if (catalogRevision != pane.cachedSortCatalogRevision) {
+        pane.cachedSortValid = false;
     }
 
     std::string fingerprint;
@@ -771,17 +874,17 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
         }
     }
 
-    bool filterChanged = (std::strcmp(lastFilter, d.gridFilterBuf) != 0);
+    bool filterChanged = (std::strcmp(lastFilter, pane.gridFilterBuf) != 0);
     if (filterChanged) {
-        d.gridState.RectSel.ClearAll();
+        pane.gridState.RectSel.ClearAll();
     }
 
     // Treat sort+filter as one cached projection with a dirty flag and refresh it at a bounded interval (500ms)
     // during streaming
     bool needsProjectionRefresh = false;
-    if (!d.cachedSortValid || d.cachedSortFingerprint != fingerprint ||
-        d.cachedSortedIndices.size() != tickets.size() || activeTicketsRevision != d.cachedSortTicketsRevision ||
-        catalogRevision != d.cachedSortCatalogRevision || filterChanged) {
+    if (!pane.cachedSortValid || pane.cachedSortFingerprint != fingerprint ||
+        pane.cachedSortedIndices.size() != tickets.size() || activeTicketsRevision != pane.cachedSortTicketsRevision ||
+        catalogRevision != pane.cachedSortCatalogRevision || filterChanged) {
         needsProjectionRefresh = true;
     }
 
@@ -790,24 +893,24 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
         // Debounce cheap reshuffles while tickets stream, but never delay a user-driven sort change:
         // header/persist fingerprint differs from last applied projection → apply immediately (fixes header
         // clicks feeling stuck while Sort By still worked due to slower interaction pacing).
-        const bool sortKeyChanged = (fingerprint != d.cachedSortFingerprint);
+        const bool sortKeyChanged = (fingerprint != pane.cachedSortFingerprint);
         auto now = std::chrono::steady_clock::now();
-        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - d.lastGridSortAt).count();
+        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - pane.lastGridSortAt).count();
         if (!sortKeyChanged && elapsedMs < 500) {
             okToRefreshProjection = false;
         }
     }
 
     if (needsProjectionRefresh && okToRefreshProjection) {
-        RebuildGridSortAndFilterProjection(d, sortSpecs, tickets, columns, catalogIndex, fingerprint,
+        RebuildGridSortAndFilterProjection(pane, sortSpecs, tickets, columns, catalogIndex, fingerprint,
                                            activeTicketsRevision, catalogRevision, lastFilter,
-                                           sizeof(activeProjectState_.lastFilterBuf));
+                                           sizeof(pane.lastFilterBuf));
     }
 }
 
 void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     AppController& app = ctx.app;
-    UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     const std::vector<CachedTicket>& tickets = ctx.tickets;
     const std::vector<TicketGridColumn>& columns = ctx.columns;
     const bool readOnlyMode = ctx.readOnlyMode;
@@ -816,20 +919,20 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     // Rectangular selection invalidation: anchor/extent are expressed in
     // current sort-order row indices, so any change to sort order or ticket
     // set must clear the selection to avoid nonsense highlights / copies.
-    gridSortSig = ComputeGridSortSignature(d.cachedSortFingerprint, app.GetActiveTicketsRevision(), tickets.size());
-    if (d.gridState.RectSel.HasAnySelection() && d.gridState.RectSel.SortSignature != gridSortSig) {
-        d.gridState.RectSel.ClearAll();
+    gridSortSig = ComputeGridSortSignature(pane.cachedSortFingerprint, pane.snapshotRevision, tickets.size());
+    if (pane.gridState.RectSel.HasAnySelection() && pane.gridState.RectSel.SortSignature != gridSortSig) {
+        pane.gridState.RectSel.ClearAll();
     }
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
-    const size_t oldFilteredCount = d.filteredIndices.size();
-    d.filteredIndices.erase(std::remove_if(d.filteredIndices.begin(), d.filteredIndices.end(),
-                                           [&](size_t idx) { return idx >= tickets.size(); }),
-                            d.filteredIndices.end());
-    if (d.filteredIndices.size() != oldFilteredCount) {
-        d.gridState.RectSel.ClearAll();
+    const size_t oldFilteredCount = pane.filteredIndices.size();
+    pane.filteredIndices.erase(std::remove_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
+                                              [&](size_t idx) { return idx >= tickets.size(); }),
+                               pane.filteredIndices.end());
+    if (pane.filteredIndices.size() != oldFilteredCount) {
+        pane.gridState.RectSel.ClearAll();
     }
-    const std::vector<size_t>& indicesToUse = d.filteredIndices;
+    const std::vector<size_t>& indicesToUse = pane.filteredIndices;
 
     // Per-frame cache: raw status string → highlight color. Avoids ToLowerAsciiCopy +
     // 4 find() per visible row — each unique status value is lowercased only once.
@@ -862,8 +965,8 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
             if (ticketIndex >= tickets.size())
                 continue;
             const CachedTicket& ticket = tickets[ticketIndex];
-            bool isActiveIssue = (d.gridState.ActiveIssueId == ticket.id);
-            const bool idKeySelectableSelected = d.gridState.RectSel.RowSelected(clippedRow);
+            bool isActiveIssue = (pane.gridState.ActiveIssueId == ticket.id);
+            const bool idKeySelectableSelected = pane.gridState.RectSel.RowSelected(clippedRow);
             const bool activeIssueWasThisRow = isActiveIssue;
             if (isActiveIssue && !readOnlyMode) {
                 app.WarmIssueEditMetaAsync(ticket.id);
@@ -903,10 +1006,11 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
                                            bool idKeySelectableSelected, bool activeIssueWasThisRow, float rowHeight) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     const bool readOnlyMode = ctx.readOnlyMode;
 
     if (!ImGui::TableSetColumnIndex(colIndex)) {
-        if (!d.gridState.IsEditingField(ticket.id, column.FieldId)) {
+        if (!pane.gridState.IsEditingField(ticket.id, column.FieldId)) {
             // Horizontally clipped columns must still contribute layout height or row height
             // tracks only visible cells (ImGui::TableSetColumnIndex doc).
             ImGui::Dummy(ImVec2(1.0f, rowHeight));
@@ -926,7 +1030,7 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
         ImGui::BeginGroup();
         if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
             if (!ImGuiEffectiveKeyCtrl()) {
-                d.gridState.SetActiveIssue(ticket.id);
+                pane.gridState.SetActiveIssue(ticket.id);
             }
             if (ImGui::IsMouseDoubleClicked(0)) {
                 const std::string url = app.BuildIssueBrowseUrl(d.cfg, ticket.id);
@@ -1015,7 +1119,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
                                        app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
         ImGui::BeginGroup();
         TicketFieldEditor::RenderFieldCell(app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
-                                           d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, d.gridState,
+                                           d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, ctx.pane.gridState,
                                            pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
                                            d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells);
         ImGui::EndGroup();
@@ -1047,7 +1151,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
 void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx, float cellOriginX,
                                                 float cellWidth, float groupMinY, float groupMaxY, bool isIdCol,
                                                 const std::string& issueId, bool activeIssueWasThisRow) {
-    UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     bool& rectCellClickedThisFrame = ctx.rectCellClickedThisFrame;
     const std::uint64_t gridSortSig = ctx.gridSortSig;
 
@@ -1055,7 +1159,7 @@ void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int r
     const bool ctrlHeld = ImGuiEffectiveKeyCtrl();
     const ImVec2 hitMin(cellOriginX, groupMinY);
     const ImVec2 hitMax(cellOriginX + cellWidth, groupMaxY);
-    auto& sel = d.gridState.RectSel;
+    auto& sel = pane.gridState.RectSel;
     const bool hovering = ImGui::IsMouseHoveringRect(hitMin, hitMax, false);
     const bool mouseClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
 
@@ -1065,7 +1169,7 @@ void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int r
 
     if (hovering && mouseClick) {
         if (!issueId.empty()) {
-            d.gridState.SetActiveIssue(issueId);
+            pane.gridState.SetActiveIssue(issueId);
         }
         if (isIdCol) {
             // Row-header gestures on the key column.
@@ -1090,7 +1194,7 @@ void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int r
                 } else {
                     sel.Rows.erase(it);
                     if (activeIssueWasThisRow) {
-                        d.gridState.ActiveIssueId.clear();
+                        pane.gridState.ActiveIssueId.clear();
                     }
                 }
                 sel.PrimaryRow = rowIdx;
@@ -1144,13 +1248,14 @@ void SmatchetUI::drawActiveProjectGridNewIssue(ActiveProjectDrawCtx& ctx) {
     const std::vector<TicketGridColumn>& columns = ctx.columns;
     const bool readOnlyMode = ctx.readOnlyMode;
 
-    if (!readOnlyMode) {
+    // The new-issue draft is session-level state (one draft) — focused pane only.
+    if (!readOnlyMode && ctx.pane.focused) {
         SMATCHET_UI_PERF_SCOPE("activeProject:grid.newIssue");
         const CachedTicket* lastVisibleTicket = nullptr;
         if (!tickets.empty()) {
             size_t lastIndex = tickets.size() - 1;
-            if (!d.filteredIndices.empty()) {
-                lastIndex = d.filteredIndices.back();
+            if (!ctx.pane.filteredIndices.empty()) {
+                lastIndex = ctx.pane.filteredIndices.back();
             }
             if (lastIndex < tickets.size()) {
                 lastVisibleTicket = &tickets[lastIndex];
@@ -1166,13 +1271,14 @@ void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
-    RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d);
+    RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d, ctx.pane);
 
     // Capture column widths and sort specs into the active view IN MEMORY so the
     // grid renders the user's drag/sort immediately. The unsaved-layout strip gates
     // these changes behind Save / Discard; the snapshot on first mutation lets Discard
-    // revert.
-    if (activeViewForGrid) {
+    // revert. Focused pane only — these mutate the session view-edit state, and
+    // resizing a non-focused pane's table first click-focuses it anyway.
+    if (activeViewForGrid && ctx.pane.focused) {
         ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
         if (mutableActive) {
             bool metaChanged = false;
@@ -1256,7 +1362,7 @@ void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
 }
 
 void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
-    UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     const std::vector<CachedTicket>& tickets = ctx.tickets;
     const std::vector<TicketGridColumn>& columns = ctx.columns;
     const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
@@ -1266,7 +1372,7 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
 
     if (!columns.empty()) {
         SMATCHET_UI_PERF_SCOPE("activeProject:grid.rectSel.keys");
-        auto& sel = d.gridState.RectSel;
+        auto& sel = pane.gridState.RectSel;
         if (sel.Dragging && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             sel.Dragging = false;
             sel.DragRowMode = false;
@@ -1286,16 +1392,16 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
         // preserves it for range extension. Skip when text input elsewhere is
         // claiming the click — typing into the AI assistant / palette / filter
         // bar must not nuke the grid selection.
-        if ((sel.HasAnySelection() || !d.gridState.ActiveIssueId.empty()) && !effShift && !effCtrl && windowHovered &&
-            !io.WantTextInput && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !rectCellClickedThisFrame &&
-            !ticketGridLeftClickInsideTableHit) {
+        if ((sel.HasAnySelection() || !pane.gridState.ActiveIssueId.empty()) && !effShift && !effCtrl &&
+            windowHovered && !io.WantTextInput && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            !rectCellClickedThisFrame && !ticketGridLeftClickInsideTableHit) {
             sel.ClearAll();
-            d.gridState.ActiveIssueId.clear();
+            pane.gridState.ActiveIssueId.clear();
         }
         const bool windowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         if (windowFocused && sel.HasAnySelection()) {
             if (!io.WantTextInput && effCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-                CopyGridRectAsTsv(tickets, d.filteredIndices, columns, catalogIndex, sel);
+                CopyGridRectAsTsv(tickets, pane.filteredIndices, columns, catalogIndex, sel);
             }
             if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                 sel.ClearAll();
@@ -1304,7 +1410,7 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
         // Shift+Space: promote the row containing the active cell to a whole-
         // row selection (in addition to whatever is already selected).
         if (windowFocused && !io.WantTextInput && effShift && !effCtrl && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-            PromoteActiveRowToSelection(d, sel, tickets, gridSortSig);
+            PromoteActiveRowToSelection(pane, sel, tickets, gridSortSig);
         }
     }
 }

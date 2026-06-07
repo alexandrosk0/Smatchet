@@ -444,9 +444,12 @@ void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName
                 for (const auto& t : tickets) {
                     ticketIds.push_back(t.id);
                 }
+                // Lua scripts run on the FOCUSED pane's selection (ADR-0018 focused-pane semantics).
+                const GridPane& focusedPane = g_ui.focusedPane();
                 const std::vector<std::string> selectedIds = lua_console_detail::CollectSelectedTicketIds(
-                    g_ui.gridState.RectSel.Rows, g_ui.gridState.RectSel.Active, g_ui.gridState.RectSel.MinRow(),
-                    g_ui.gridState.RectSel.MaxRow(), g_ui.cachedSortedIndices, ticketIds);
+                    focusedPane.gridState.RectSel.Rows, focusedPane.gridState.RectSel.Active,
+                    focusedPane.gridState.RectSel.MinRow(), focusedPane.gridState.RectSel.MaxRow(),
+                    focusedPane.cachedSortedIndices, ticketIds);
                 LOG_TRACE("LuaConsole: Run %s on %zu selected issue(s)", curName.c_str(), selectedIds.size());
                 app.RunAutoScript(curName, selectedIds);
                 ClearErrorMarkers();

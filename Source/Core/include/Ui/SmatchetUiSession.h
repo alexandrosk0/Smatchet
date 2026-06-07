@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "GridPane.h"
 #include "SmatchetDefaults.h"
 
 #include <nlohmann/json.hpp>
@@ -290,8 +291,6 @@ struct UiDrawSession {
     std::string fieldCatalogWarning;
 
     bool appliedInitialView = false;
-    /** Last `ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType)` applied to views + initial sync. */
-    std::string lastViewsBackendKey;
     /** First JQL fetch runs async so the UI thread is not blocked for multi-second Jira searches. */
     bool initialTicketSyncStarted = false;
     bool initialTicketSyncLoading = false;
@@ -421,7 +420,69 @@ struct UiDrawSession {
     bool viewsHasOriginalSnapshot = false;
     ViewDefinition viewsOriginalSnapshot;
 
-    SpreadsheetState gridState;
+    // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
+    // The per-pane grid runtime that used to live here as singleton fields
+    // (gridState / gridFilterBuf / sort+filter caches / lastViewsBackendKey /
+    // lastGridActiveViewId / lastGridContextSignature / wheel hysteresis /
+    // forceApplySortSpecs) migrated into GridPane. Bootstrapped from
+    // smatchet_panes.json by the pane-window host (SmatchetGridPaneWindows).
+    std::vector<GridPane> gridPanes;
+    std::string focusedPaneId;
+    bool gridPanesLoaded = false;
+    /// Debounced smatchet_panes.json save latch (mirrors prefsDirty).
+    bool gridPanesDirty = false;
+    std::chrono::steady_clock::time_point gridPanesSaveDueAt{};
+    /// Transient (one frame): pane id whose window reported ImGui focus this frame.
+    /// Written inside the pane window's Begin/End scope, consumed by the host loop
+    /// to detect focus switches (drives the Slice-2 focused-pane live-context swap).
+    std::string paneWindowFocusedThisFrame;
+    /// Transient (one frame): the "+" button in a pane window requests a new pane
+    /// duplicating this source pane. Applied by the host AFTER the pane loop so the
+    /// gridPanes vector never mutates mid-iteration.
+    std::string paneAddRequestSourceId;
+    /// Set by the pane-window host (RAII) to the pane currently being drawn so
+    /// shared grid helpers (header toolbar, cell support, new-issue draft) reach
+    /// the CURRENT pane through `pane()` without signature churn. Null outside
+    /// the pane render loop — `pane()` then resolves to the focused pane, which
+    /// is the permanent semantics for global actions (command palette, menus,
+    /// MCP/Lua) per ADR-0018.
+    GridPane* activePaneForDraw = nullptr;
+
+    /// Focused pane (never null): resolves focusedPaneId, falls back to the first
+    /// pane, and self-heals an empty vector with a default pane so pre-bootstrap
+    /// reads (frame 1) and a corrupt panes file can never crash (Pillar 3).
+    GridPane& focusedPane() {
+        if (gridPanes.empty()) {
+            GridPane fallback;
+            fallback.id = "main";
+            fallback.title = "Grid";
+            gridPanes.push_back(fallback);
+            focusedPaneId = "main";
+        }
+        if (GridPane* byId = FindGridPaneById(gridPanes, focusedPaneId)) {
+            return *byId;
+        }
+        focusedPaneId = gridPanes.front().id;
+        return gridPanes.front();
+    }
+
+    /// Read-only focused pane for const consumers (AI context build, exports). Cannot
+    /// self-heal — returns a static empty pane when the vector is empty (pre-bootstrap).
+    const GridPane& focusedPane() const {
+        static const GridPane kEmptyPane;
+        if (gridPanes.empty()) {
+            return kEmptyPane;
+        }
+        if (const GridPane* byId = FindGridPaneById(gridPanes, focusedPaneId)) {
+            return *byId;
+        }
+        return gridPanes.front();
+    }
+
+    /// The pane the current draw call targets: the pane being rendered inside the
+    /// pane-window loop, the focused pane everywhere else. See activePaneForDraw.
+    GridPane& pane() { return activePaneForDraw ? *activePaneForDraw : focusedPane(); }
+
     std::string gridEditError;
     std::string gridEditSuccess;
     /** Edge-trigger dedupe for tracker connectivity toasts (Active Project window). */
@@ -456,23 +517,9 @@ struct UiDrawSession {
     int inFlightDelayFrames = 0;
     std::unordered_map<std::string, CellWriteFeedback> cellFeedbackByKey;
 
-    char gridFilterBuf[128]{};
-    std::string lastGridActiveViewId;
-    std::string lastGridContextSignature;
     bool newIssueDiscardAsyncCreateResult = false;
-    std::vector<size_t> cachedSortedIndices;
-    std::vector<size_t> filteredIndices;
-    std::string cachedSortFingerprint;
-    std::uint64_t cachedSortTicketsRevision = 0;
-    std::uint64_t cachedSortCatalogRevision = 0;
-    bool cachedSortValid = false;
     bool viewSortDirty = false;
-    bool forceApplySortSpecs = false;
-    std::chrono::steady_clock::time_point lastGridSortAt{};
     bool logAutoScroll = true;
-
-    int gridBottomHorizontalWheelSwallowsRemaining = 0;
-    int gridTopHorizontalWheelSwallowsRemaining = 0;
 
     bool appUpdateStartupCheckStarted = false;
     bool appUpdateCheckInFlight = false;

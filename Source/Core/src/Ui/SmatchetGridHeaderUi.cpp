@@ -150,7 +150,7 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
 
     if (sortChanged) {
         d.viewSortDirty = true;
-        d.forceApplySortSpecs = true;
+        d.pane().forceApplySortSpecs = true; // per-pane since Slice 2
         d.viewsDirty = true;
     }
 }
@@ -199,16 +199,17 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
             ImGui::SetTooltip("Re-run this view's query and refresh the grid.");
     }
 
-    // Quick Filter UI
+    // Quick Filter UI — per-pane buffer (Slice 2): each pane window filters alone.
+    GridPane& pane = d.pane();
     ImGui::SameLine(0, 30.0f);
     ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::InputTextWithHint("##GridFilter", "Filter...", d.gridFilterBuf, sizeof(d.gridFilterBuf))) {
+    if (ImGui::InputTextWithHint("##GridFilter", "Filter...", pane.gridFilterBuf, sizeof(pane.gridFilterBuf))) {
         // Filter changed
     }
-    if (d.gridFilterBuf[0] != '\0') {
+    if (pane.gridFilterBuf[0] != '\0') {
         ImGui::SameLine();
         if (ImGui::Button("Clear")) {
-            d.gridFilterBuf[0] = '\0';
+            pane.gridFilterBuf[0] = '\0';
         }
     }
 
@@ -396,8 +397,8 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
         const CachedTicket* lastVisibleTicket = nullptr;
         if (!tickets.empty()) {
             size_t lastIndex = tickets.size() - 1;
-            if (!d.filteredIndices.empty()) {
-                lastIndex = d.filteredIndices.back();
+            if (!d.pane().filteredIndices.empty()) {
+                lastIndex = d.pane().filteredIndices.back();
             }
             if (lastIndex < tickets.size()) {
                 lastVisibleTicket = &tickets[lastIndex];

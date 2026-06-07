@@ -476,7 +476,9 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
         ViewState.EnsureLoaded(g_ui.cfg);
         const std::string bk = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-        if (!d.lastViewsBackendKey.empty() && d.lastViewsBackendKey != bk) {
+        // Per-pane since Slice 2 — the FOCUSED pane tracks the live backend bucket.
+        std::string& lastViewsBackendKey = d.focusedPane().lastViewsBackendKey;
+        if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
             d.appliedInitialView = false;
             d.initialTicketSyncStarted = false;
             d.initialTicketSyncLoading = false;
@@ -487,7 +489,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             d.triggerCatalogRefetch = true;
             d.editingViewId.clear();
         }
-        d.lastViewsBackendKey = bk;
+        lastViewsBackendKey = bk;
     }
     // Register view.* commands once ViewState is loaded (idempotent — skips on 2nd+ call).
     smatchet::cmd::RegisterViewCommands(app, ViewState);
@@ -767,7 +769,7 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
         }
     }
     if (g_ui.showAnnotateAnalysis) {
-        annotateAnalysisUi_.DrawWindow(app, &g_ui.showAnnotateAnalysis, g_ui.gridState.ActiveIssueId);
+        annotateAnalysisUi_.DrawWindow(app, &g_ui.showAnnotateAnalysis, g_ui.focusedPane().gridState.ActiveIssueId);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
@@ -782,7 +784,9 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawActiveProjectWindow");
-        drawActiveProjectWindow(app, d);
+        // Slice 2 (multi-grid-tabs): one dockable window PER GridPane; the host loops
+        // the re-entrant drawActiveProjectWindow over d.gridPanes.
+        drawGridPaneWindows(app, d);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawAttachmentPreviewWindow");

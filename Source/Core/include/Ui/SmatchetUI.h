@@ -18,6 +18,7 @@
 class AppController; // Forward declaration
 struct UiDrawSession;
 struct CachedTicket;
+struct GridPane; // Source/Core/include/GridPane.h — per-pane dockable grid unit (ADR-0018)
 
 /// Shared per-frame state for the section helpers that decompose
 /// SmatchetUI::drawActiveProjectWindow. Defined at namespace scope in
@@ -271,7 +272,26 @@ class SmatchetUI {
     void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);
     void drawViewsConnectivityBanner(AppController& app, UiDrawSession& d);
     void handleViewsDashboardShortcuts(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
-    void drawActiveProjectWindow(AppController& app, UiDrawSession& d);
+    // Pane-window host (multi-grid-tabs Slice 2): bootstraps d.gridPanes from
+    // smatchet_panes.json, draws one dockable window per pane via the re-entrant
+    // drawActiveProjectWindow below, tracks focus, applies pane add/close after the
+    // loop (min 1 pane survives), and debounce-saves the panes file. Defined in
+    // SmatchetGridPaneWindows.cpp.
+    void drawGridPaneWindows(AppController& app, UiDrawSession& d);
+    // Per-frame steady-state sync for the focused pane: follows the active view
+    // (viewId/title), and on a focus SWITCH activates the pane's view + lets the
+    // sync path swap the backend (Slice-2: one live context, focused pane drives it).
+    void syncFocusedPaneWithActiveView(AppController& app, UiDrawSession& d, GridPane& pane, bool focusSwitched);
+    // Re-entrant per-pane grid window (Slice 2): renders ONE GridPane, using the
+    // pane's own snapshot + sort/filter caches. Called once per visible pane per frame.
+    void drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane);
+    // Pane-view resolution helpers (Slice 2). resolvePaneView falls back to the active
+    // view (self-repairing pane.viewId) when the pane's view was deleted; resolvePane-
+    // Columns reuses the shared GridFrameContext for the active view and a per-pane
+    // revision-keyed cache otherwise.
+    ViewDefinition* resolvePaneView(GridPane& pane);
+    const std::vector<TicketGridColumn>& resolvePaneColumns(GridPane& pane, const TrackerFieldCatalogIndex& catalogIndex,
+                                                            const ViewDefinition* paneView);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
     // the pre-existing SMATCHET_UI_PERF_SCOPE seams VERBATIM. Positional-ImGui Begin/End
     // pairs that span the table body stay in the orchestrator; these helpers run inside
@@ -316,7 +336,7 @@ class SmatchetUI {
     /// promoting to members removes the statics so the section helpers stay reentrant-safe.
     struct ActiveProjectWindowState {
         char newViewNameBuf[128] = {}; // was `static char s_newViewName[128]`
-        char lastFilterBuf[128] = {};  // was `static thread_local char lastFilter[128]`
+        // lastFilterBuf moved into GridPane (Slice 2) — the filter is per-pane state.
     };
     ActiveProjectWindowState activeProjectState_;
     void drawAttachmentPreviewWindow(AppController& app, UiDrawSession& d);

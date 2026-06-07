@@ -409,6 +409,12 @@ const TranslationEntry kEntries[] = {
     {"draft.project.loading", "Loading...", u8"Chargement..."},
     {"draft.project.submit_disabled_tooltip", "Pick a project", u8"Choisir un projet"},
 
+    // multi-grid-tabs Slice 2: dockable grid panes.
+    {"pane.add.tooltip",
+     "New grid pane (duplicates this pane; dock it as a tab or drag its tab to an edge for a side-by-side split)",
+     u8"Nouveau panneau de grille (duplique ce panneau ; ancrez-le comme onglet ou faites glisser son onglet vers un "
+     u8"bord pour une vue côte à côte)"},
+
     // PR 4b: active-view JQL bar project pill (Jira only).
     {"view.projectPill.single", "Project: %s", u8"Projet : %s"},
     {"view.projectPill.multi", "Project: multi", u8"Projet : multiple"},
