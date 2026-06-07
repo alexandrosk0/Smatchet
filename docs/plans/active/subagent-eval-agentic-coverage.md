@@ -69,7 +69,7 @@ Grouped by phase; each group is one PR. `path` links point at the existing files
 18. [`docs/agent-rules/subagent-eval.md`](../../agent-rules/subagent-eval.md) — document the harvest → curate → promote flywheel + the curation gate.
 
 **Phase 3 — Gap-2 autonomy horizon:**
-19. [`docs/agent-eval/case-schema.json`](../../agent-eval/case-schema.json) — add `evalKind` (`single-shot` default | `trajectory`); trajectory cases declare `expectedSteps` bounds, `requiredRecovery[]`, `forbiddenLoops[]`.
+19. [`docs/agent-eval/case-schema.json`](../../agent-eval/case-schema.json) — add `evalKind` (`single-shot` default | `trajectory`); trajectory cases declare `expectedSteps` bounds, `requiredRecovery[]`, `forbiddenLoops[]`. **Schema wrinkle (grill-verified):** `referenceOutcome.expectedFindingCount` is currently `required` — a trajectory case scores steps, not findings, so it has none. Make the requirement conditional via an `if evalKind=trajectory then {required: [<trajectory ref fields>]} else {required: [expectedFindingCount]}` branch (the validator already resolves `if`/`then`), so a single-shot case still mandates `expectedFindingCount` while a trajectory case mandates its own reference shape (e.g. `expectedTerminalState`).
 20. [`docs/agent-eval/result-schema.json`](../../agent-eval/result-schema.json) — add `trajectory[]` (ordered steps: `index`, `action`, `tool`, `observation`, `onTask`, `gateOutcome`); a trajectory result scores steps, not findings.
 21. [`scripts/dev/agent-eval-score.py`](../../../scripts/dev/agent-eval-score.py) — trajectory objective checks `step_budget` / `gate_recovery` / `no_repair_loop` + a judge `goal_adherence` over the trajectory.
 22. [`scripts/dev/agent-eval-run.sh`](../../../scripts/dev/agent-eval-run.sh) — trajectory runner mode: drive the orchestrator through a multi-step scenario, capture the step trajectory via the adapter seam.
@@ -83,19 +83,20 @@ Grouped by phase; each group is one PR. `path` links point at the existing files
 28. `tests/agent-eval/orchestrator/*.json` (edit + **new**) — multi-agent + injected-fault cases.
 29. `tests/bats/agent_eval_run.bats` (edit) — fault-injection + delegation-capture assertions with the fake runner.
 
-**Cross-cutting (in the Phase-0 PR — the absorb):**
-30. `docs/plans/active/subagent-eval-flywheel.md` — set `Status` to `deferred — superseded by subagent-eval-agentic-coverage`; add a one-line redirect banner. (Folded, not cancelled — its content lives in Phase 2 here.)
-31. [`AGENTS.md`](../../../AGENTS.md) — one-line pointer update under § Project rules' subagent-eval reference (the harness now spans the three gap dimensions + calibration); navigation-only, no new rule body.
+**Cross-cutting (done in THIS plan-doc PR — the absorb; the rest land per-phase above):**
+30. `docs/plans/active/subagent-eval-flywheel.md` — set `Status` to `deferred — superseded by subagent-eval-agentic-coverage`; add a one-line redirect banner. (Folded, not cancelled — its content lives in Phase 2 here.) **Done in this PR.**
+31. [`docs/agent-rules/subagent-eval.md`](../../agent-rules/subagent-eval.md) line 5 — repoint the forward-roadmap pointer from the standalone flywheel plan to this unified plan (tier-less). **Done in this PR.** (AGENTS.md needs no edit: it references subagent-eval only via the `cpp-rules.md` keyword row — the nav chain is `AGENTS.md` → `cpp-rules.md` → `subagent-eval.md`, and the load-bearing pointer is the one in `subagent-eval.md`.) The deeper Phase-0 doc edit — documenting the calibration loop + WARN→BLOCK criteria — is item #7 above and lands with Phase 0.
+32. `docs/self-improvement/categories/tooling.md` (2026-05-31 P2 residue) — repoint its item-(3) flywheel reference to this unified plan; entry stays **open** until Phase 0 actually ships (then partly retire it). **Done in this PR.**
 
 ## Existing utilities reused
 
 - `scripts/dev/agent-eval-score.py` — the shipped pure-stdlib scorer + external-judge seam + 0/1/2 exit contract; every new dimension/check extends it, doesn't fork it.
 - `scripts/dev/agent-eval-run.sh` — the shipped runner + `--prompt-root` before/after seam + `--fake-runner` no-token path + harness-adapter seam; trajectory + fault modes are new run-modes behind the same seams.
-- `docs/agent-eval/{case,result}-schema.json` — extended (new enums / optional fields), version-bumped only on a breaking shape change (both are `schemaVersion: 1` today).
+- `docs/agent-eval/{case,result}-schema.json` — extended (new enums / optional fields), version-bumped only on a breaking shape change (both are `schemaVersion: 1` today). **Gotcha (grill-verified):** the case schema sets `additionalProperties: false` on the case object, every `dimension`, and `referenceOutcome` — so each new field (Phase 1's `expectsEscalation` / `rubric` / …, Phase 3's `evalKind` / trajectory bounds, Phase 4's `toolFaults[]` / `coordination`) **must be added to the schema**, not merely emitted; an un-declared key fails validation. The `check` enum (currently `cited_file_line` / `severity_enum` / `finding_count`) likewise must be widened in-place per phase.
 - `docs/agent-eval/scoring-policy.json` `default` + `perDimension` precedence — the `block` flag + `calibration` provenance slot into the existing override structure.
 - `tests/agent-eval/validate_schema.py` — the shipped stdlib draft-07-subset validator (resolves `$ref` / `allOf` / `if`/`then`); validates the extended schemas + new case files; no third-party validator.
 - `perf-compare.py` skeleton — the calibration report emitter mirrors its `evaluate` / `emit_markdown` shape one more level up.
-- Trace sources for the flywheel — `.session-context.archive/` (via the `scratchpad-recall` skill), `.claude/.agent-tokens.jsonl` (via the `agent-tokens` skill), session transcripts.
+- Trace sources for the flywheel (storage-substrate-verified against the main integration tree, 2026-06-07) — `.session-context.archive/` (dated scratchpad-archive `.md` files; the `scratchpad-recall` skill reads them), `.claude/.agent-tokens.jsonl` (per-agent token log written/queried by the `agents/_shared/token-tracking/` module — `agent-token-log.py` + `agents/scripts/core/agent-tokens-report.py`; tells which agent ran), and session transcripts under `~/.claude/projects/<slug>/`. All three are gitignored / session-local — present in an active tree, **absent in a fresh worktree** (the harvester must tolerate a missing source, not assume it).
 - `agents/scripts/core/test-shell-lint.sh` — gates `agent-eval-harvest.sh` + the runner edits.
 - `agents/scripts/core/setup-harness.sh` + `AGENTS.md` § Harness adapter — harvester + trajectory capture are per-harness; emitted formats stay portable.
 - `tests/bats/merge_gates.bats` + the two shipped `agent_eval_*.bats` — bats prior art for the new suites.
