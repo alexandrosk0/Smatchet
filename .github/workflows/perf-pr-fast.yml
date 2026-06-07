@@ -150,7 +150,7 @@ jobs:
       # to reach ImGui_ImplOpenGL3_CreateDeviceObjects — without it the
       # --spawn child dies before MCP comes up and every scenario.run is a
       # run_failure. Keep MESA_VERSION + cache key in lockstep with
-      # build-and-test.yml. docs/plans/active/perf-gate-revival.md step 1.
+      # build-and-test.yml. docs/plans/perf-gate-revival.md step 1.
       - name: Cache Mesa software-GL DLLs
         uses: actions/cache@v4
         with:
