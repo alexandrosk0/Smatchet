@@ -16,7 +16,7 @@
 - 2026-06-07 · orchestrator · [tooling] · P2 — `scenario.run` rows emit no `p99Ms` → the Pillar-1 `p99_abs_ceiling_ms` policy check is structurally inert
   Details: Confirmed live during perf-gate-revival step 3 (CI run 27080545207 + local runs): snapshot rows carry `avgPerCallMs`/`emaAvgMs`/`lastTotalMs`/`maxMs`/`calls` only. `perf-compare.py` enforces `p99_abs_ceiling_ms=16.67` against a field that never exists, so the 60 Hz-floor half of Pillar 1 is unenforced (the `maxMs` ceiling is the only outlier guard). Also noted for step-5 calibration: top scopes are `calls=1` per snapshot, filtered by `min_baseline_calls=10`.
   Concrete next action: extend the perf-monitor snapshot emitter (C++, `Source/Core` perf scope accumulator) to track a per-scope p99 (ring buffer or P² estimator) and emit `p99Ms`; then verify a CI run shows the field and the ceiling can fire (route via `perf-detective`/`grid-engine` owner of the perf monitor). Est ~2-3 h.
-  Status: open
+  Status: resolved — PR `feat/perf-p99-emitter`: per-scope 256-sample ring in `UiPerfMonitor` (`PerfSampleRing.h`), `p99Ms` computed at snapshot time and emitted by `perf.snapshot`/`perf.dump` + all 14 scenario serializers; committed baselines gain p99 on their next bump (archive post-merge)
   Last-reviewed: 2026-06-07
 
 - 2026-06-06 · test-author · [tooling] · P3 — bucket-E inline-panel smoke recipe missing for New Issue Draft row and Offline Queue panel (plan #12 batch 2)

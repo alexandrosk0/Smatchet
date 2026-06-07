@@ -45,7 +45,8 @@ namespace {
 void RegisterPerfSnapshotCommand(CommandRegistry& reg) {
     Command c = MakeCommand("perf.snapshot", "Per-scope UI perf rows from the last drawn frame.",
                             [](const nlohmann::json&, const CommandContext&) {
-                                std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+                                std::vector<UiPerfRow> rows =
+                                    UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
                                 nlohmann::json arr = nlohmann::json::array();
                                 for (const UiPerfRow& r : rows) {
                                     nlohmann::json one;
@@ -56,14 +57,15 @@ void RegisterPerfSnapshotCommand(CommandRegistry& reg) {
                                     one["calls"] = r.calls;
                                     one["lifetimeHits"] = r.lifetimeHits;
                                     one["emaAvgMs"] = r.emaAvgMs;
+                                    one["p99Ms"] = r.p99Ms;
                                     arr.push_back(std::move(one));
                                 }
                                 nlohmann::json out;
                                 out["rows"] = std::move(arr);
                                 return CommandResult::Success(std::move(out));
                             });
-    c.Description =
-        "Returns array of UI perf rows ({name, lastTotalMs, avgPerCallMs, maxMs, calls, lifetimeHits, emaAvgMs}).";
+    c.Description = "Returns array of UI perf rows ({name, lastTotalMs, avgPerCallMs, maxMs, calls, lifetimeHits, "
+                    "emaAvgMs, p99Ms}).";
     reg.Register(std::move(c));
 }
 
@@ -131,7 +133,7 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                             std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", std::localtime(&t));
                             outPath = userDataDir + "perf-snapshot-" + ts + ".json";
                         }
-                        std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+                        std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
                         nlohmann::json doc = nlohmann::json::array();
                         std::transform(rows.begin(), rows.end(), std::back_inserter(doc), [](const UiPerfRow& r) {
                             return nlohmann::json{{"name", r.name},
@@ -139,7 +141,8 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                                                   {"avgPerCallMs", r.avgPerCallMs},
                                                   {"maxMs", r.maxMs},
                                                   {"calls", r.calls},
-                                                  {"emaAvgMs", r.emaAvgMs}};
+                                                  {"emaAvgMs", r.emaAvgMs},
+                                                  {"p99Ms", r.p99Ms}};
                         });
                         // Serialise before opening the file so a throw (bad_alloc, JSON error)
                         // cannot leak an open FILE* handle.

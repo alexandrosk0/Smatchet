@@ -116,7 +116,7 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
     nlohmann::json OnFinish(AppController& /*app*/) override {
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
             nlohmann::json rj;
@@ -126,6 +126,7 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
             rj["maxMs"] = r.maxMs;
             rj["calls"] = r.calls;
             rj["emaAvgMs"] = r.emaAvgMs;
+            rj["p99Ms"] = r.p99Ms;
             rowsJson.push_back(std::move(rj));
         }
         nlohmann::json out;

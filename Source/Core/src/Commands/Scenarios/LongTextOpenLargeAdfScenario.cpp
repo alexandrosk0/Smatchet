@@ -95,7 +95,7 @@ class LongTextOpenLargeAdfScenario : public IScenario {
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
     nlohmann::json OnFinish(AppController& /*app*/) override {
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         double topMs = 0.0;
         std::string topName;
         for (const UiPerfRow& r : rows) {
@@ -114,6 +114,7 @@ class LongTextOpenLargeAdfScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             });
         }
 

@@ -60,7 +60,7 @@ class PriorityGridScrollScenario : public IScenario {
             app.ScenarioUnregisterLuaCachedProvider(luaProviderField_);
             registeredLuaPriority_ = false;
         }
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
             rowsJson.push_back({
@@ -70,6 +70,7 @@ class PriorityGridScrollScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             });
         }
         nlohmann::json out;

@@ -36,7 +36,7 @@ class AttachmentPreviewOpenScenario : public IScenario {
         // captured. GetLastFrameRows is updated by UiPerfMonitor::BeginFrame
         // (called from SmatchetUI::Draw); reading it here gives us the prior
         // frame's totals, which is exactly the cadence we want.
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         double topMs = 0.0;
         for (const UiPerfRow& r : rows) {
             if (r.lastTotalMs > topMs)
@@ -49,7 +49,7 @@ class AttachmentPreviewOpenScenario : public IScenario {
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
     nlohmann::json OnFinish(AppController& /*app*/) override {
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
             rowsJson.push_back({
@@ -59,6 +59,7 @@ class AttachmentPreviewOpenScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             });
         }
         nlohmann::json out;
