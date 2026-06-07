@@ -74,6 +74,26 @@
         ]
       },
       {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/clear-tree-dirty.sh\"",
+            "timeout": 2000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-head-drift.sh\"",
+            "timeout": 3000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-shared-tree.sh\"",
+            "timeout": 3000
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
@@ -107,6 +127,22 @@
       },
       {
         "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/autoregister-pr.sh\"",
+            "timeout": 30000,
+            "statusMessage": "Registering new PR with merge-watcher..."
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/resync-head-baseline.sh\"",
+            "timeout": 3000
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
         "hooks": [
           {
             "type": "command",
