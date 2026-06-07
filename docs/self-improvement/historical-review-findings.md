@@ -13,6 +13,35 @@
 
 <!-- Batches appended at the top. -->
 
+## Batch 4 — PRs #708–808 (100-PR workflow sweep, 2026-06-07)
+
+Coverage: **100 reviewed — 14 with findings, 75 clean, 11 fully superseded.** Net: **1 CRITICAL, 4 HIGH, 5 MEDIUM, 12 LOW.**
+
+### CRITICAL
+- **#761 (8b5a39f1) · `Source/Core/src/Ui/AnnotateAnalysisUi_Window.cpp:191`** — `DrawCallstackProcessControls` (on the render path) synchronously runs `p4 changes -r -m 1 -s submitted //...@start,end` via the blocking `P4RunCommand` subprocess on the UI thread, no cue, when the "or day" date picker is confirmed. Server-wide depot range round-trip can exceed 100 ms → freeze (Pillar-2; checklist explicitly names p4 as must-be-off-thread). Lone on-thread blocking call in a file that offloads everything else; relocated verbatim by #761's decomposition, still alive. **→ Issue candidate.** Fix: `LaunchBackgroundTask` + `PostToMainThread`, "Resolving CL…" status.
+
+### HIGH
+- **#732 (02eb69c8) · `SmatchetPreferencesUi_Templates.cpp:78`** (+90,102,127,167,179,191,216) — duration-suggestion & work-log-template sub-tabs call `SaveDurationSuggestions`/`SaveCommentTemplates` → `ConfigManager::Save` (full read-modify-write + DPAPI encrypt + disk write under 2 mutexes) **synchronously on every reorder/delete/add click** on the render thread. Sibling sub-tabs already use deferred `MarkPrefsDirty(d)`; these two are the survivors on the sync path. Fix: mutate `d.cfg.*` + `MarkPrefsDirty(d)` (or `ConfigSaveWorker`).
+- **#784 (0c62b21c) · `agents/scripts/core/postmortem-owed.sh:54`** — `has_entry()` dedup regex requires the `PR ` prefix, so it matches only the FIRST PR in a multi-PR ledger entry (`## … PR #N, #M …`); comma-joined trailers (`#906/#907/#908`, `#774/#776/#778` …) are re-flagged "postmortem owed" every SessionStart despite an existing entry. **This is the source of the recurring postmortem-owed nudges.** Fix: match a bare `#N` token regardless of `PR ` prefix.
+- **#789 (6987b7d5) · `scripts/dev/pre-ship.sh:126`** — markdown-lint step hardcodes `python3` (bypasses the repo's `resolve_python()`), so on Windows local the store-stub `python3` (exit 49) makes `pre-ship` print "FAIL — fix the markdown findings" even when docs are clean. Defeats the local half of the gate. Fix: resolve a working interpreter (`python3`/`python`/`py`) and fail loudly only if none runs.
+- **#807 (fe06fa23) · `README.md:62,91,96`** — onboarding "one-command build" `scripts/dev/build_and_run.ps1` was relocated to `scripts/dev/local/` (file not found at origin/develop) AND the README claims it auto-bootstraps vcvars ("no Developer Prompt needed") but the chain never invokes `with-msvc.ps1`/vcvars → `cl.exe not found` from a plain shell. Fix: correct the path + the bootstrap claim (or wire the bootstrap). (2 MEDIUM, grouped.)
+
+### MEDIUM
+- **#767 (802402c3) · `SmatchetViewsDashboardUi_widgets.cpp:276`** — `ListCachedProjects()` (ifstream + JSON parse + v3 migrate + sort under global mutex) called **every frame** the project-pill popup is open. Sub-frame today (16-entry cap) + matches the accepted sibling convention (`SmatchetProjectPicker`, `SmatchetPreferencesUi` — see #892), so MEDIUM. Fix: snapshot on popup-open into `UiDrawSession`.
+- **#746 (4d166612) · `scripts/dev/pre-ship.sh:93`** — comment claims "(staged, unstaged, committed)" but the bare `git diff` captures unstaged only; a staged-never-committed-no-further-edit file is clang-format/lint-skipped (silent false-pass). Fix: `git diff HEAD` or add a `--cached` pass.
+- **#719 (78e19958) · `scripts/dev/test-ui-funcsize-window-render-smoke.sh:69`** — a run with `passed=0 failed=0` (filter matches nothing after a rename) exits 0 green; only `FAILED!=0` is checked. Zero-coverage green on a no-visual-validation gate. Fix: require positive count.
+
+### LOW (12)
+- **#788 (19779297)** `test-backlog-counts.sh:53` redundant `|| echo 0` double-emits for empty categories; `:61` regression-guard regex omits `debt`; `AGENT_SELF_IMPROVEMENT.md:149` § Index table omits the `debt` row.
+- **#789** `md_lint.py:38` MD028 no fence tracking (latent false-positive on a fenced blockquote example); `:27` `git ls-files` returncode unchecked → silent clean from a non-repo dir.
+- **#759 (0268a29b)** `with-msvc.ps1:85` when the pinned toolset isn't installed, falls back to first install but still forces `-vcvars_ver=<pin>` → vcvars fails silently, build runs in non-MSVC env (opaque `cl.exe not found`); contradicts the "exit 2" contract. (Related to the toolset-pin friction in this very session.)
+- **#755 (1d88d25c)** `test-rig.md:55` names `AppControllerDepsAdapter.cpp` (renamed to `GridContextDepsAdapter.cpp` by #945).
+- **#747 (ec0d1770)** `agent-kit-productization.md:5` cross-links 5 AGENTS.md subsections that no longer exist (restructured to nav-only).
+- **#722 (6990b8bf)** `docs/CONTEXT.md:13,14` broken header paths — missing `Tracker/` subdir (`LabelEditDiffPure.h`, `GitHubClientHelpers.h`).
+- **#709 (777dc48d)** `SubprocessCapture.cpp:475` iterator-pair `std::string(char*, const char*)` is a hard compile error on the non-glibc/BSD fallback path (unreachable on Win/Linux glibc matrix, but malformed C++); `:540` POSIX pump FD_SETs an EOF'd fd forever → 100% CPU spin if a child closes one pipe but keeps running (test-only POSIX path).
+
+**Cluster:** Pillar-2 **sync-I/O-on-render-thread survived decompositions** — #761 (p4, CRITICAL), #732 (config save, HIGH), #767 + batch-3 #892 (cache read, MEDIUM). Worth a targeted audit + the accepted `MarkPrefsDirty`/`LaunchBackgroundTask`/snapshot-on-open patterns. Also a **gate-fails-open / false-pass** recurrence (#719/#746/#789/#788) consistent with batch 3's #834/#918.
+
 ## Batch 3 — PRs #809–925 (100-PR workflow sweep, 2026-06-07)
 
 Ran via the `historical-review-sweep` workflow (100 code-review agents, concurrency-capped, structured output). Coverage: **100 reviewed — 20 with findings, 65 clean, 15 fully superseded.** Net: **5 HIGH, 4 MEDIUM, 14 LOW.**
