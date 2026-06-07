@@ -180,3 +180,134 @@ TEST_CASE("Slice 1 V1.1 — FakeGitHubFixture wires tickets into a scripted Fake
     CHECK(fetched.size() == 3);
     CHECK(client->FetchIssuesCallCount() == 1);
 }
+
+// --- Slice 0 WS2 of multi-grid-tabs — null / missing-relation / empty-optional
+// mapping edges on the REST-shape mapper + the PR enrichment + the commit mapper.
+// Characterization only: these pin CURRENT behaviour ahead of the multi-pane
+// refactor; a surprising result here is documented, not "fixed".
+
+TEST_CASE("WS2 edge — explicit-null assignee/user/body map to empty strings") {
+    nlohmann::json issue;
+    issue["number"] = 41;
+    issue["title"] = "Null relations";
+    issue["state"] = "open";
+    issue["assignee"] = nullptr;
+    issue["user"] = nullptr;
+    issue["body"] = nullptr;
+
+    const CachedTicket t = smatchet::github::MapIssueOrPullRequestJsonToCachedTicket(issue, "owner", "repo");
+    CHECK(t.id == "owner/repo#41");
+    CHECK(GetField(t, "assignee").empty());
+    CHECK(GetField(t, "reporter").empty());
+    CHECK(GetField(t, "author").empty());
+    CHECK(GetField(t, "description").empty());
+}
+
+TEST_CASE("WS2 edge — null milestone leaves the key ABSENT while null assignee writes empty (characterized)") {
+    // CHARACTERIZATION: the mapper is asymmetric — `assignee` is always written
+    // (empty string on null) but `milestone` is only written when the relation is
+    // a present object, so a null milestone leaves fieldValues without the key.
+    // Grid code must treat absent-key and empty-string as equivalent. Pinned.
+    nlohmann::json issue;
+    issue["number"] = 42;
+    issue["title"] = "Milestone asymmetry";
+    issue["state"] = "open";
+    issue["assignee"] = nullptr;
+    issue["milestone"] = nullptr;
+
+    const CachedTicket t = smatchet::github::MapIssueOrPullRequestJsonToCachedTicket(issue, "owner", "repo");
+    CHECK(t.fieldValues.count("assignee") == 1);
+    CHECK(t.fieldValues.count("milestone") == 0);
+}
+
+TEST_CASE("WS2 edge — label entries that are null or nameless are skipped without separator artifacts") {
+    nlohmann::json issue;
+    issue["number"] = 43;
+    issue["title"] = "Label holes";
+    issue["state"] = "open";
+    issue["labels"] = nlohmann::json::array({nullptr, {{"color", "red"}}, {{"name", "bug"}}, {{"name", "ui"}}});
+
+    const CachedTicket t = smatchet::github::MapIssueOrPullRequestJsonToCachedTicket(issue, "owner", "repo");
+    CHECK(GetField(t, "labels") == "bug, ui");
+}
+
+TEST_CASE("WS2 edge — PR enrichment: null mergeable → 'computing', missing draft → empty") {
+    nlohmann::json issue;
+    issue["number"] = 44;
+    issue["title"] = "PR nulls";
+    issue["state"] = "open";
+    issue["pull_request"] = nlohmann::json::object();
+
+    CachedTicket t = smatchet::github::MapIssueOrPullRequestJsonToCachedTicket(issue, "owner", "repo");
+
+    nlohmann::json prDetail;
+    prDetail["head"] = nullptr; // missing-relation branch refs
+    prDetail["base"] = {{"ref", "develop"}};
+    prDetail["mergeable"] = nullptr; // GitHub still computing
+    // no "draft" key at all
+    smatchet::github::EnrichPullRequestFieldsFromJson(t, prDetail);
+
+    CHECK(GetField(t, "pr.head").empty());
+    CHECK(GetField(t, "pr.base") == "develop");
+    CHECK(GetField(t, "pr.mergeable") == "computing");
+    CHECK(GetField(t, "pr.draft").empty());
+}
+
+TEST_CASE("WS2 edge — PR enrichment with a non-object payload writes no pr.* keys at all") {
+    nlohmann::json issue;
+    issue["number"] = 45;
+    issue["title"] = "PR no detail";
+    issue["state"] = "open";
+    issue["pull_request"] = nlohmann::json::object();
+
+    CachedTicket t = smatchet::github::MapIssueOrPullRequestJsonToCachedTicket(issue, "owner", "repo");
+    smatchet::github::EnrichPullRequestFieldsFromJson(t, nlohmann::json()); // null payload
+
+    CHECK(t.fieldValues.count("pr.head") == 0);
+    CHECK(t.fieldValues.count("pr.base") == 0);
+    CHECK(t.fieldValues.count("pr.mergeable") == 0);
+    CHECK(t.fieldValues.count("pr.draft") == 0);
+}
+
+TEST_CASE("WS2 edge — commit mapper tolerates a missing nested commit object") {
+    nlohmann::json commit;
+    commit["sha"] = "abcdef1234567890";
+    // no nested "commit", no author/committer/parents/verification
+
+    const CachedTicket t = smatchet::github::MapCommitJsonToCachedTicket(commit, "owner", "repo");
+    CHECK(t.id == "owner/repo@abcdef1234567890");
+    CHECK(GetField(t, "github.kind") == "commit");
+    CHECK(GetField(t, "status") == "commit");
+    CHECK(GetField(t, "summary") == "[commit abcdef1] "); // empty subject — characterized
+    CHECK(GetField(t, "author").empty());
+    CHECK(GetField(t, "commit.parents").empty());
+    CHECK(GetField(t, "commit.verified").empty());
+}
+
+TEST_CASE("WS2 edge — commit mapper: null top-level author falls back to the git author name") {
+    nlohmann::json commit;
+    commit["sha"] = "1234567deadbeef";
+    commit["author"] = nullptr; // GitHub couldn't resolve the email to an account
+    commit["commit"] = {{"message", "fix: a thing\n\nbody"},
+                        {"author", {{"name", "Git Author"}, {"date", "2026-06-01T00:00:00Z"}}}};
+
+    const CachedTicket t = smatchet::github::MapCommitJsonToCachedTicket(commit, "owner", "repo");
+    CHECK(GetField(t, "author") == "Git Author");
+    CHECK(GetField(t, "reporter") == "Git Author");
+    CHECK(GetField(t, "summary") == "[commit 1234567] fix: a thing");
+    CHECK(GetField(t, "created") == "2026-06-01T00:00:00Z");
+}
+
+TEST_CASE("WS2 edge — GraphQL node with empty assignees.nodes maps to an empty assignee") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    node["number"] = 46;
+    node["title"] = "No assignees";
+    node["state"] = "OPEN";
+    node["assignees"] = {{"nodes", nlohmann::json::array()}};
+
+    const auto tickets =
+        smatchet::github::MapGraphQlNodesToTickets(nlohmann::json::array({node}), "owner", "repo", true);
+    REQUIRE(tickets.size() == 1);
+    CHECK(GetField(tickets[0], "assignee").empty());
+}

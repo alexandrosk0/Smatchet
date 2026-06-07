@@ -306,3 +306,104 @@ TEST_CASE("NextPaginationCursor — pagination boundary cases") {
         CHECK(NextPaginationCursor(p).empty());
     }
 }
+
+// --- Slice 0 WS2 of multi-grid-tabs — null / missing-relation / empty-optional
+// mapping edges. Characterization only: these pin CURRENT behaviour ahead of the
+// multi-pane refactor; a surprising result here is documented, not "fixed".
+
+TEST_CASE("WS2 edge — explicit-null state_detail falls through to the state object") {
+    nlohmann::json issue;
+    issue["id"] = "uuid-ws2-1";
+    issue["sequence_id"] = 11;
+    issue["state_detail"] = nullptr; // present-but-null relation
+    issue["state"] = {{"id", "state-from-base"}};
+
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {});
+    CHECK(GetField(t, "status") == "state-from-base");
+}
+
+TEST_CASE("WS2 edge — all-null scalar optionals map to empty strings") {
+    nlohmann::json issue;
+    issue["id"] = "uuid-ws2-2";
+    issue["sequence_id"] = 12;
+    issue["priority"] = nullptr;
+    issue["created_at"] = nullptr;
+    issue["updated_at"] = nullptr;
+    issue["description_stripped"] = nullptr;
+    issue["labels"] = nullptr;
+    issue["state"] = nullptr;
+
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {});
+    CHECK(t.id == "SMT-12");
+    CHECK(GetField(t, "priority").empty());
+    CHECK(GetField(t, "created").empty());
+    CHECK(GetField(t, "updated").empty());
+    CHECK(GetField(t, "description").empty());
+    CHECK(GetField(t, "labels").empty());
+    CHECK(GetField(t, "status").empty());
+}
+
+TEST_CASE("WS2 edge — assignees array holding a null entry maps to an empty assignee") {
+    nlohmann::json issue;
+    issue["id"] = "uuid-ws2-3";
+    issue["sequence_id"] = 13;
+    issue["assignees"] = nlohmann::json::array({nullptr});
+
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {});
+    CHECK(GetField(t, "assignee").empty());
+}
+
+TEST_CASE("WS2 edge — assignee_details entry without display_name keeps the raw id passthrough") {
+    nlohmann::json issue;
+    issue["id"] = "uuid-ws2-4";
+    issue["sequence_id"] = 14;
+    issue["assignees"] = nlohmann::json::array({{{"id", "user-77"}}});
+    issue["assignee_details"] = nlohmann::json::array({{{"avatar", "x.png"}}}); // no display_name
+
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {});
+    CHECK(GetField(t, "assignee") == "user-77");
+}
+
+TEST_CASE("WS2 edge — label_details entries missing both name and id leave separator artifacts (characterized)") {
+    // CHARACTERIZATION: an empty label entry after a named one still appends the
+    // ", " separator before its (empty) name — the joined string ends "x, ".
+    // Pinned, not endorsed.
+    nlohmann::json issue;
+    issue["id"] = "uuid-ws2-5";
+    issue["sequence_id"] = 15;
+    issue["label_details"] = nlohmann::json::array({{{"name", "x"}}, nlohmann::json::object()});
+
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {});
+    CHECK(GetField(t, "labels") == "x, ");
+}
+
+TEST_CASE("WS2 edge — explicit-null description_html stores no rich value") {
+    nlohmann::json issue;
+    issue["id"] = "uuid-ws2-6";
+    issue["sequence_id"] = 16;
+    issue["description_stripped"] = "plain";
+    issue["description_html"] = nullptr;
+
+    const CachedTicket t = MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {});
+    CHECK(GetField(t, "description") == "plain");
+    CHECK(GetRichField(t, "description").empty());
+    CHECK(t.fieldRichValues.count("description") == 0);
+}
+
+TEST_CASE("WS2 edge — null entries inside the results array are skipped by the batch mapper") {
+    nlohmann::json results = nlohmann::json::array();
+    results.push_back(nullptr);
+    nlohmann::json good;
+    good["id"] = "uuid-ws2-7";
+    good["sequence_id"] = 17;
+    results.push_back(good);
+
+    std::unordered_map<std::string, std::string> keyToId;
+    const auto tickets = MapPlaneWorkItemsArrayToCachedTickets(results, "SMT", {}, &keyToId);
+
+    // The null entry maps to a ticket whose uuid + sequence are empty → id falls
+    // back to the empty uuid → empty id → skipped by the batch guard.
+    REQUIRE(tickets.size() == 1);
+    CHECK(tickets[0].id == "SMT-17");
+    CHECK(keyToId.count("SMT-17") == 1);
+}

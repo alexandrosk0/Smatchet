@@ -202,6 +202,8 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- `e221f99c` · Slice 0 WS2 (PR B) — real Jira catalog-BUILD fixture (`tests/support/JiraCatalogHttpFixture.h` + `tests/Core/TrackerCatalogBuild.test.cpp`, 11 cases) + 22 null/missing-relation/empty-optional mapping edges across `{Jira,Plane,GitHub}IssueMappingPure.test.cpp`; closes the `test.md` P2 (2026-06-01) catalog-build blind spot. Test-only.
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
