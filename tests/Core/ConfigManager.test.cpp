@@ -320,6 +320,7 @@ TrackerConfig MakeNonDefaultConfig() {
     c.ShowViewsDashboardWindow = false;
     c.ShowPerformanceWindow = true;
     c.ShowLogWindow = true;
+    c.VsyncEnabled = false; // default true — flip to prove the round-trip
     c.LogMinLevel = "debug";
     c.LogTrackerHttpBodies = true;
     c.LogP4Io = true;
@@ -463,6 +464,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.ShowViewsDashboardWindow == in.ShowViewsDashboardWindow);
     CHECK(out.ShowPerformanceWindow == in.ShowPerformanceWindow);
     CHECK(out.ShowLogWindow == in.ShowLogWindow);
+    CHECK(out.VsyncEnabled == in.VsyncEnabled);
     CHECK(out.LogTrackerHttpBodies == in.LogTrackerHttpBodies);
     CHECK(out.LogP4Io == in.LogP4Io);
     CHECK(out.McpEnabled == in.McpEnabled);

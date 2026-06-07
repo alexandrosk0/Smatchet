@@ -146,6 +146,9 @@ add_executable(SmatchetTests
     # policy (OfflineFieldConflictPolicy.h), zero banned includes; no extra .cpp link.
     Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
+    # vsync-toggle plan — header-only live vsync hub (VsyncControl.h): Set/Get +
+    # boot precedence (env > CLI flag > config). Pure C++14, no GLFW, no extra .cpp.
+    Core/VsyncControl.test.cpp
     Core/ConfigMigration.test.cpp
     Core/ToolbarConfig.test.cpp
     # Pure helpers extracted from SmatchetToolbarUi::RenderEditor during the

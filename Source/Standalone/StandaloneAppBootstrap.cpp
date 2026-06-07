@@ -24,6 +24,7 @@
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
+#include "VsyncControl.h"
 
 #include "Logger.h"
 #include "imgui.h"
@@ -340,6 +341,7 @@ bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli)
                                  "  -b, --backend-type <type>    Tracker type ('Jira' or 'Plane')\n"
                                  "  -p, --mcp-port <port>        MCP server port number\n"
                                  "      --mcp-allow-remote       Allow remote connections to MCP server\n"
+                                 "      --vsync | --no-vsync     Force vsync on/off for this launch (not persisted)\n"
                                  "  -h, --help                   Show help message\n");
             return false;
         }
@@ -364,6 +366,16 @@ bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli)
         if (arg == "--mcp-allow-remote") {
             cli.HasMcpAllowRemote = true;
             cli.McpAllowRemote = true;
+            continue;
+        }
+        if (arg == "--vsync") {
+            cli.HasVsync = true;
+            cli.Vsync = true;
+            continue;
+        }
+        if (arg == "--no-vsync") {
+            cli.HasVsync = true;
+            cli.Vsync = false;
             continue;
         }
     }
@@ -465,7 +477,13 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     }
 
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
+    // Ephemeral/hidden-window path: no --vsync/--no-vsync here (CLI is the
+    // command runner's), so precedence is env SMATCHET_FPS_VSYNC > config.
+    {
+        const char* vsyncSource = smatchet::vsync::SeedFromBootSources(windowStateCfg.VsyncEnabled, false, true);
+        LOG_INFO("Vsync %s at boot (source: %s)", smatchet::vsync::Enabled() ? "enabled" : "disabled", vsyncSource);
+    }
+    glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();

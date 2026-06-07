@@ -6,6 +6,7 @@
 #include "Commands/CommandRegistry.h"
 
 #include "ConfigManager.h"
+#include "VsyncControl.h"
 
 #include <string>
 #include <utility>
@@ -53,6 +54,7 @@ void RegisterConfigGetCommand(CommandRegistry& reg) {
                                     all["mcpAllowRemote"] = cfg.McpAllowRemote;
                                     all["mcpAllowLuaExecution"] = cfg.McpAllowLuaExecution;
                                     all["readOnlyMode"] = cfg.ReadOnlyMode;
+                                    all["vsync"] = cfg.VsyncEnabled;
                                     all["defaultLongTextEditorPreview"] = cfg.DefaultLongTextEditorPreview;
                                     all["logMinLevel"] = cfg.LogMinLevel;
                                     all["logTrackerHttpBodies"] = cfg.LogTrackerHttpBodies;
@@ -107,6 +109,7 @@ const CfgKey* ConfigSetKeyTable() {
         {"showPerformance", "show_performance_window", ""},
         {"showLogWindow", "show_log_window", ""},
         {"enableFieldOverflowTooltips", "field_overflow_tooltips", ""},
+        {"vsync", "vsync_enabled", "applies immediately"},
         {"singleClickToEditGridCells", "single_click_to_edit_grid_cells", ""},
         {"defaultLongTextEditorPreview", "default_long_text_editor_preview", ""},
         {"jqlQuery", "jql", "takes effect on next sync"},
@@ -155,6 +158,25 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
         return CommandResult::Failure(ErrorCode::ValidationError,
                                       "Key '" + key + "' is not in the config.set allowlist.", "Allowed: " + allowed);
     }
+    // vsync convenience: accept on/off (and 1/0 after the JSON parse above) in
+    // addition to true/false, normalised to a bool so the kBoolFields round-trip
+    // and the live hub both see a real boolean.
+    if (key == "vsync") {
+        if (val.is_string()) {
+            const std::string& s = val.get_ref<const std::string&>();
+            if (s == "on") {
+                val = true;
+            } else if (s == "off") {
+                val = false;
+            }
+        } else if (val.is_number_integer()) {
+            val = (val.get<int>() != 0);
+        }
+        if (!val.is_boolean()) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "Value for 'vsync' must be a boolean.",
+                                          "Use: on, off, true, false, 1, 0");
+        }
+    }
     if (ctx.DryRun) {
         return CommandResult::Success({{"wouldDo", {{"cmdKey", key}, {"jsonKey", found->json}, {"value", val}}}});
     }
@@ -163,6 +185,11 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
     ConfigManager::WriteConfigJson(cfgJson);
     // Invalidate the Load() cache so next call picks up the new value.
     ConfigManager::InvalidateCache();
+    // Live apply: a running instance flips its swapchain on the next frame —
+    // the file write above covers the next launch.
+    if (key == "vsync") {
+        smatchet::vsync::SetEnabled(val.get<bool>());
+    }
     nlohmann::json out;
     out["key"] = key;
     out["jsonKey"] = found->json;
