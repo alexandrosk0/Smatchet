@@ -482,6 +482,22 @@ lighter, already-shipped half-measure — making doc-validation **required** (th
 [`docs/self-improvement/categories/infra.md`](categories/infra.md) — 2026-06-03
 infra "require-branches-up-to-date (concurrent-PR gate gap)".
 
+> **SUPERSEDED 2026-06-07 (#920 decision, #950 config, CR-sweep CR-950-1/-2).**
+> The preventing gate above (`strict: true`) was deliberately turned OFF by the
+> merge-throughput decision (AGENTS.md § Merge gates: merge on own-head green;
+> GitHub merge queue unavailable on a user-owned repo) — #950 aligned the config
+> after #946's protection re-apply made the stale `strict:true` value live and
+> immediately produced the BEHIND/update-branch dance the decision retired.
+> **Accepted residual risk**: the concurrent-PR class this entry documents
+> (gate-in-PR-A + violation-in-PR-B, both green alone) is REOPENED and has no
+> structural mitigation — post-merge CI goes red on develop but blocks nothing
+> (proven by this very incident). Accepted because: solo-dev cadence makes the
+> A/B window small, the class has recurred once in ~3 weeks, and the structural
+> fixes (strict rebasing every PR, or a merge queue) cost more than the class
+> burns today. Revisit trigger: a second occurrence of this class, or the repo
+> moving under an org (merge queue becomes available). Watch entry:
+> `categories/infra.md` 2026-06-07 "strict-off residual".
+
 ## 2026-05-23 · commit 831d0342 (revert of c78ad386) · direct-push to develop, self-reverted
 
 > Backfilled 2026-06-04 while sweeping stale `postmortem-owed.sh` hits. Recorded for
