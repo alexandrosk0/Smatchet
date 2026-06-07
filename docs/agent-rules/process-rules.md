@@ -163,6 +163,20 @@ The harness maintains a `.claude/.tree-dirty` sentinel file written by `.claude/
 
 The deferred lint pipeline (`.claude/hooks/lint-cpp.sh` PostToolUse → `.claude/hooks/lint-cpp-drain.sh` Stop) follows the same principle for `cppcheck` / `clang-tidy` / dual-target syntax: heavy passes drain once at end-of-turn against the dedup'd set of edited files, not after each Edit/Write. `clang-format -i` still runs inline. Escape hatches: `SMATCHET_LINT_INLINE=1` reverts to per-edit, `bash agents/scripts/core/lint-flush.sh` drains explicitly mid-turn. The trivial-visual-only envelope above is a special case of this rule.
 
+## Context compaction
+
+**Target ~80% of the context window** — compact / summarise the conversation when it reaches ≈80% of the active harness's context window, preserving headroom for the in-flight turn rather than waiting for the hard limit. This is a **harness-agnostic operating convention**, not a portable config key: compaction is a runtime feature of the harness, not agent-controllable, so each harness enforces the target through its own mechanism (or, where it exposes no knob, the operator applies it by hand).
+
+| Harness | Mechanism for the ~80% target |
+|---|---|
+| Claude Code | `autoCompactEnabled: true` + `autoCompactWindow: <≈0.8 × window>` in `settings.json` (e.g. `160000` for a 200K window). Personal preference → user `~/.claude/settings.json`, never team-committed `.claude/settings.json`. |
+| Codex / OpenAI Agents | Built-in auto-summarisation; threshold not user-tunable — convention is advisory. |
+| Cursor | Built-in auto-summarise; not tunable — convention is advisory. |
+| Aider | Manual (`/tokens`, `/clear`) — operator applies the 80% target by hand. |
+| Generic CLI / script | Operator or wrapper trims / summarises history at ≈80% of the model's window. |
+
+Where the harness offers no threshold setting, treat this as a documented operating convention, not an enforced gate. Per-harness tool/equivalent table: [`docs/harness/capability-adapter.md`](../harness/capability-adapter.md).
+
 ## Triggered follow-ups
 
 Some backlog entries are **deferred follow-ups gated on a future condition** ("re-measure after ~10 PRs", "after ~20 PRs flip the gate", "once plan X ships"). Rather than relying on manual triage to remember the condition, an entry in `docs/self-improvement/categories/*.md` can carry an optional, grep-parseable `Triggered-follow-up:` line; [`followup-due-nudge.sh`](../../agents/scripts/core/followup-due-nudge.sh) (a SessionStart nudge + a `git-janitor` closeout step) fires it automatically when the condition is met. Grammar + the four `when=` kinds (`pr-count` / `date` / `plan-shipped` / `file-age`): [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) § Format.
