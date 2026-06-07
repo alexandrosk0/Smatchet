@@ -27,6 +27,46 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-07 · PR #963 · perf-out-of-band override merged the 100 Hz floor past a red required Perf PR-fast check
+
+### What escaped
+PR #963 (raise the Pillar-1 floor 60 Hz → 100 Hz; p99 ceiling 16.67 → 10.0 ms)
+was merged with the `perf-out-of-band` label, which downgraded a RED required
+check (`Perf PR-fast (windows-2022)`) to WARN. The check failed on
+`SmatchetUI::Draw` p99 **43.1 ms** and `drawEnsureCatalogAndInitialSync`
+**41.4 ms** — both far over the new 10.0 ms ceiling AND over the prior 16.67 ms
+floor. Merging past a required check via a documented override label is a
+gate-escape class per AGENTS.md (override-label use owes a postmortem).
+
+### Root cause
+Blameless — two gate holes, not a person:
+1. **The p99 ceiling is warmup-dominated.** Each PR-fast scenario's p99 is taken
+   over a short frame window that includes cold-start frames (font-atlas build,
+   first-frame layout, initial catalog sync). Those one-time spikes (40+ ms on a
+   software-GL CI runner) dominate the 99th percentile, so the umbrella
+   per-frame scope `SmatchetUI::Draw` reports a p99 that reflects warmup, not
+   steady state. The ceiling therefore fires on every perf-relevant PR
+   regardless of the cap value — it would have fired at 16.67 ms too; it was
+   silent only because the ceiling was structurally inert until CR-949-1 made it
+   live.
+2. **No steady-state isolation in the gate.** `perf-compare.py` compares fresh
+   p99 against the absolute ceiling with no warmup-frame exclusion, so a gate
+   meant to protect steady-state framerate is gated on cold-start outliers.
+
+### Preventing gate
+Add **warmup-frame exclusion** to the p99 path: drop the first N frames (or
+first M ms) of each scenario before the ring feeds `ComputeP99`, so the absolute
+p99 ceiling measures steady-state work, not cold-start. The 10.0 ms (100 Hz)
+ceiling then becomes enforceable for real and perf-relevant PRs stop needing
+`perf-out-of-band`. This is the substance of the parked perf-gate-revival work
+(`docs/plans/active/build-quality-velocity-hardening.md` #8/#13); the #963
+override is the forcing signal to unpark it. Until it lands, perf-relevant PRs
+that trip the umbrella warmup spike legitimately use `perf-out-of-band` (WARN),
+and a RUN failure (build/exe/plumbing) still hard-blocks regardless of the label.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` 2026-06-07 `p99-gate-warmup-frame-exclusion` (P1).
+
 ## 2026-06-07 · PR-less direct push 93c63d0f · code-review model change shipped to develop bypassing the PR flow + 6 required checks
 
 ### What escaped
