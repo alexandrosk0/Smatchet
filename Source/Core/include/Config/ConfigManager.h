@@ -464,6 +464,23 @@ struct PersistentViewsFile {
     std::unordered_map<std::string, ViewWorkspaceState> Backends;
 };
 
+/** One grid pane's persisted identity (multi-grid-tabs Slice 2, ADR-0018). The UI
+ *  runtime half of a pane lives in GridPane (Source/Core/include/GridPane.h);
+ *  only identity is durable. Dock geometry rides ImGui's .ini, not this file. */
+struct GridPaneDescriptor {
+    std::string Id;
+    std::string Title;
+    std::string BackendKey; ///< NormalizeViewsBackendKey output (forward-compat to <type>:<profileId>).
+    std::string ViewId;     ///< Saved-view id inside that backend's views bucket.
+};
+
+/** Full smatchet_panes.json on disk: ordered pane list + the focused pane id. */
+struct PersistentPanesFile {
+    int Version = 1;
+    std::vector<GridPaneDescriptor> Panes;
+    std::string FocusedPaneId;
+};
+
 // Note: the previous public `SmatchetViewsDiskDetail::*` namespace (Parse / Serialize / default
 // view helpers) was moved into the anonymous namespace of ConfigManager.cpp. They had exactly one
 // caller (ConfigManager.cpp itself); leaving them inline in the header forced every consumer to
@@ -655,6 +672,15 @@ class ConfigManager {
 
     /** Load+bootstrap active backend slice (used when no in-memory Views wrapper is available). */
     static ViewsStore LoadViewsOrBootstrap(const TrackerConfig& cfg);
+
+    // --- Grid panes (smatchet_panes.json — multi-grid-tabs Slice 2, ADR-0018) ---
+    static std::string GetPanesPath();
+    static PersistentPanesFile LoadPanesFromDisk();
+    static void SavePanesToDisk(const PersistentPanesFile& disk);
+    /** Load smatchet_panes.json; when empty/absent, default-bootstrap exactly ONE pane
+     *  from cfg.TrackerType + that backend's active view (zero-migration for existing
+     *  single-grid installs) and persist it. Never returns an empty pane list. */
+    static PersistentPanesFile LoadPanesOrBootstrap(const TrackerConfig& cfg);
 
     // Crash-safe write: writes to <path>.tmp then atomically renames onto <path>. Used by
     // FieldCatalogCache as well as the internal Write* helpers, so it stays in the public API.

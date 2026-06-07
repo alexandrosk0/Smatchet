@@ -518,7 +518,7 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
                  smatchet::logging::pure::MaskEmailForLog(d.cfg.Email).c_str());
     }
     d.triggerCatalogRefetch = true;
-    const std::string oldBackend = d.lastViewsBackendKey;
+    const std::string oldBackend = d.lastViewsBackendKey; // session-level (review HIGH-4)
     ViewState.EnsureLoaded(d.cfg);
     const std::string newBackend = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     if (oldBackend != newBackend) {

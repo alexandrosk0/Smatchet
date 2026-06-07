@@ -6,7 +6,7 @@
 > vendored `ThirdParty/` excluded. Slice 4 of
 > `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
-Last regenerated at: 2026-05-20T16:10:55Z
+Last regenerated at: 2026-06-07T16:44:02Z
 
 ## Committed markers
 
@@ -16,78 +16,81 @@ Production scopes that ship in every build. Names are stable contract surface â€
 
 | location | scope name |
 |---|---|
-| `Source/Core/src/Commands/Scenarios/PreferencesSliderDragScenario.cpp:7` | `ConfigManager::Save (prefs-debounced)` |
+| `Source/Core/src/Commands/Scenarios/PreferencesSliderDragScenario.cpp:6` | `ConfigManager::Save (prefs-debounced)` |
 
 ### Source/Core / Grid
 
 | location | scope name |
 |---|---|
-| `Source/Core/src/SmatchetGridFieldEditPipeline.cpp:150` | `grid.cell_commit_pump` |
-| `Source/Core/src/TrackerGridFieldDisplay.cpp:590` | `TryRenderProgressJsonField` |
-| `Source/Core/src/TrackerGridFieldDisplay.cpp:626` | `TryRenderIssueRestrictionField` |
-| `Source/Core/src/TrackerGridFieldDisplay.cpp:639` | `RenderAttachmentsField` |
-| `Source/Core/src/TrackerGridFieldDisplay.cpp:669` | `RenderWatchersField` |
-| `Source/Core/src/TrackerGridFieldDisplay.cpp:720` | `RenderVotesField` |
-| `Source/Core/src/TrackerGridFieldDisplay.cpp:773` | `RenderWorklogField` |
+| `Source/Core/src/SmatchetGridFieldEditPipeline.cpp:147` | `grid.cell_commit_pump` |
+| `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:593` | `TryRenderProgressJsonField` |
+| `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:629` | `TryRenderIssueRestrictionField` |
+| `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:642` | `RenderAttachmentsField` |
+| `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:672` | `RenderWatchersField` |
+| `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:755` | `RenderVotesField` |
+| `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:808` | `RenderWorklogField` |
 
 ### Source/Core / UI
 
 | location | scope name |
 |---|---|
-| `Source/Core/src/SmatchetActiveProjectGridUi.cpp:1083` | `activeProject:grid.rectSel.keys` |
-| `Source/Core/src/SmatchetActiveProjectGridUi.cpp:193` | `activeProject:header` |
-| `Source/Core/src/SmatchetActiveProjectGridUi.cpp:392` | `activeProject:grid.setup` |
-| `Source/Core/src/SmatchetActiveProjectGridUi.cpp:458` | `activeProject:grid.sort` |
-| `Source/Core/src/SmatchetActiveProjectGridUi.cpp:751` | `activeProject:grid.rows` |
-| `Source/Core/src/SmatchetActiveProjectGridUi.cpp:955` | `activeProject:grid.newIssue` |
-| `Source/Core/src/SmatchetActiveProjectGridUi.cpp:970` | `activeProject:grid.post` |
+| `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:1253` | `activeProject:grid.newIssue` |
+| `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:1273` | `activeProject:grid.post` |
+| `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:1374` | `activeProject:grid.rectSel.keys` |
+| `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:588` | `activeProject:header` |
+| `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:758` | `activeProject:grid.setup` |
+| `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:834` | `activeProject:grid.sort` |
+| `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:927` | `activeProject:grid.rows` |
+| `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:323` | `ai_chat.history.pin_strip` |
+| `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:553` | `ai_chat.history.render_turn` |
+| `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:662` | `ai_chat.history.draw` |
+| `Source/Core/src/Ui/SmatchetGridPaneWindows.cpp:167` | `pane.render` |
+| `Source/Core/src/Ui/SmatchetGridPaneWindows.cpp:183` | `pane.switch` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:270` | `SmatchetUI::Draw` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:476` | `ViewState::EnsureLoaded` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:497` | `TickTrackerConnectivityMonitor` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:529` | `MainThreadDispatcher::Drain` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:533` | `drawEnsureCatalogAndInitialSync` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:561` | `drawMainMenuBar` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:565` | `SmatchetToolbarUi::Draw` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:574` | `SmatchetWhisperSetupBanner::Render` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:583` | `SmatchetWhisperOverlayUi::Render` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:741` | `drawLegacyStartupBanner` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:755` | `SmatchetPerfUi::DrawWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:775` | `drawPreferencesWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:779` | `drawViewsDashboardWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:786` | `drawActiveProjectWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:792` | `drawAttachmentPreviewWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:796` | `drawBulkImportWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:800` | `drawBulkExportWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:804` | `DrawPlanDocViewer` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:814` | `SmatchetToastManager::Render` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:819` | `drawAuditWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:824` | `drawAiAssistantPanel` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:829` | `TrackerGridFieldDisplay::DrawWatchersListWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:833` | `TrackerGridFieldDisplay::DrawVotesListWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:838` | `SmatchetDrawMcpServerWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:843` | `drawLogWindow` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:914` | `ViewState::SaveDebounced` |
+| `Source/Core/src/Ui/SmatchetUI.cpp:931` | `ConfigManager::Save (prefs-debounced)` |
 
 ### Source/Core / headers
 
 | location | scope name |
 |---|---|
-| `Source/Core/include/MainThreadDispatcher.h:58` | `dispatcher.drain` |
-| `Source/Core/include/MainThreadDispatcher.h:63` | `dispatcher.drain` |
+| `Source/Core/include/MainThreadDispatcher.h:66` | `dispatcher.drain` |
+| `Source/Core/include/MainThreadDispatcher.h:71` | `dispatcher.drain` |
 
 ### Source/Core / other
 
 | location | scope name |
 |---|---|
-| `Source/Core/src/AppController_LuaBindings.cpp:1725` | `LuaDrawList::Replay` |
-| `Source/Core/src/AppController_LuaBindings.cpp:1892` | `LuaDrawList::Record` |
-| `Source/Core/src/AppController_LuaBindings.cpp:2438` | `LuaWindow::Record` |
-| `Source/Core/src/AppController_LuaBindings.cpp:2489` | `LuaWindow::Replay` |
-| `Source/Core/src/CompactDateFormat.cpp:288` | `FormatCompactJiraDateForDisplay` |
-| `Source/Core/src/SmatchetUI.cpp:421` | `SmatchetUI::Draw` |
-| `Source/Core/src/SmatchetUI.cpp:423` | `ViewState::EnsureLoaded` |
-| `Source/Core/src/SmatchetUI.cpp:442` | `TickTrackerConnectivityMonitor` |
-| `Source/Core/src/SmatchetUI.cpp:474` | `MainThreadDispatcher::Drain` |
-| `Source/Core/src/SmatchetUI.cpp:482` | `AgenticPoll::JoinDetached` |
-| `Source/Core/src/SmatchetUI.cpp:487` | `drawEnsureCatalogAndInitialSync` |
-| `Source/Core/src/SmatchetUI.cpp:509` | `drawMainMenuBar` |
-| `Source/Core/src/SmatchetUI.cpp:518` | `SmatchetWhisperSetupBanner::Render` |
-| `Source/Core/src/SmatchetUI.cpp:527` | `SmatchetWhisperOverlayUi::Render` |
-| `Source/Core/src/SmatchetUI.cpp:641` | `drawLegacyStartupBanner` |
-| `Source/Core/src/SmatchetUI.cpp:655` | `SmatchetPerfUi::DrawWindow` |
-| `Source/Core/src/SmatchetUI.cpp:662` | `drawPreferencesWindow` |
-| `Source/Core/src/SmatchetUI.cpp:666` | `drawViewsDashboardWindow` |
-| `Source/Core/src/SmatchetUI.cpp:673` | `drawActiveProjectWindow` |
-| `Source/Core/src/SmatchetUI.cpp:677` | `drawAttachmentPreviewWindow` |
-| `Source/Core/src/SmatchetUI.cpp:681` | `drawBulkImportWindow` |
-| `Source/Core/src/SmatchetUI.cpp:685` | `drawBulkExportWindow` |
-| `Source/Core/src/SmatchetUI.cpp:689` | `DrawPlanDocViewer` |
-| `Source/Core/src/SmatchetUI.cpp:693` | `SmatchetToastManager::Render` |
-| `Source/Core/src/SmatchetUI.cpp:698` | `drawAuditWindow` |
-| `Source/Core/src/SmatchetUI.cpp:703` | `drawAiAssistantPanel` |
-| `Source/Core/src/SmatchetUI.cpp:709` | `SmatchetAgentProposalsUi::Render` |
-| `Source/Core/src/SmatchetUI.cpp:713` | `SmatchetAgentHandoffUi::Render` |
-| `Source/Core/src/SmatchetUI.cpp:718` | `TrackerGridFieldDisplay::DrawWatchersListWindow` |
-| `Source/Core/src/SmatchetUI.cpp:722` | `TrackerGridFieldDisplay::DrawVotesListWindow` |
-| `Source/Core/src/SmatchetUI.cpp:727` | `SmatchetDrawMcpServerWindow` |
-| `Source/Core/src/SmatchetUI.cpp:732` | `drawLogWindow` |
-| `Source/Core/src/SmatchetUI.cpp:795` | `ViewState::SaveDebounced` |
-| `Source/Core/src/SmatchetUI.cpp:812` | `ConfigManager::Save (prefs-debounced)` |
-| `Source/Core/src/TicketFieldEditor.cpp:872` | `RenderFieldCell` |
+| `Source/Core/src/AppController_LuaBindings_Draw.cpp:1102` | `LuaWindow::Record` |
+| `Source/Core/src/AppController_LuaBindings_Draw.cpp:1169` | `LuaWindow::Replay` |
+| `Source/Core/src/AppController_LuaBindings_Draw.cpp:446` | `LuaDrawList::Replay` |
+| `Source/Core/src/AppController_LuaBindings_Draw.cpp:562` | `LuaDrawList::Record` |
+| `Source/Core/src/CompactDateFormat.cpp:398` | `FormatCompactJiraDateForDisplay` |
+| `Source/Core/src/TicketFieldEditor.cpp:1302` | `RenderFieldCell` |
 
 ## In-flight `perf_temp:*` markers
 
