@@ -28,6 +28,19 @@ Round-2 corrected two would-be-wasted Sprint-2 efforts (the `json_fwd` swap is i
 
 ### Sprint 1 — stop false-green / fail-open (all S-effort)
 
+> **Status: Sprint 1 FULLY SHIPPED (verified against the tree 2026-06-07).** Every bullet
+> below is DONE — per-item commits/PRs in § Implementation log. Highlights: #16 → #905
+> (latch release at `OfflineQueueService.cpp:752-759` + pinning runtime test
+> `OfflineQueueServiceRuntime.test.cpp:721-749`), #37 → #906 (`PlaneIssueMutation.cpp:327`
+> `LOG_WARN` handlers), #23 → #907 (`SmatchetImGuiFonts.cpp:24`), #3/#5/#6 → #915
+> (include gone from `AppController.h`; glob-vs-list assert `tests/CMakeLists.txt:603`;
+> `scripts/dev/is-exe-fresh.sh`), #4/#15/#24 → #911 (`project.config.json:93` +
+> `test-config-globs.sh`; `function_size_audit.py --assert-absent`;
+> `no-glfw-in-core-headers` in `test-lint-rules.sh:270`), #33 → #909
+> (`build.md:49` § Stale-PCH recovery (C2859)), #38 → `6537dc3` (remaining
+> `ninja-iter-msys2` mentions are intentional: migration notes in BUILD.md/README.md +
+> the rejection regression test `scripts/dev/local/test-build-wrapper.ps1`). Do not re-do.
+
 - **[#1] `smatchet_patch_or_die`** — route all vendored-source patches (sol2 metatable token, cpr, sqlitecpp, ghc, luaconf) through one helper that `string(FIND)`s its target and `FATAL_ERROR`s if absent, then SHA-pin cpr/sqlitecpp/sol2. Today the sol2 patch's only guard is a change-detector (`CMakeLists.txt:609`); a dep bump silently no-ops it → heap corruption returns. **Top recommendation — do first.**
 - **[#16] OfflineQueue latch reset** — `OfflineQueueService.cpp:666-668` returns on null `Mutations()` without releasing the in-flight latch the other three early-returns release → field-edit replay wedges permanently → offline edits silently lost.
 - **[#23] ImWchar `static_assert`** — emit `static_assert(sizeof(ImWchar)==4)` from a DX12 host TU; WCHAR32 parity is hand-synced across three points (`SmatchetImConfig.h:15`, `Build.cs:12`, packaged `imconfig.h:70` commented out) with no compile-time guard → silent ABI/text-memory corruption.
@@ -155,7 +168,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - The 4 developer-owned `SmatchetPreferencesUi*` / UI WIP files — untouched.
 
 ## Implementation log
-*Sprint 1 shipped; Sprint 2 (partial) + hygiene #3/#5/#6 remain → plan stays `active` (not archived).*
+*Sprint 1 FULLY shipped (incl. hygiene #3/#5/#6 via #915); Sprint 2 partial → plan stays `active` (not archived).*
 
 - `4cc7c4a6` (#905) · #16 OfflineQueue: reset the in-flight latch on the null-`Mutations()` early-return (mirror the 3 sibling returns) + a discriminating runtime test (count 0→1 across the reset).
 - `57789552` (#906) · #37 Plane `CreateIssue`: `LOG_WARN` instead of an empty `catch(...){}` on response-parse (Network/API tier) + `catch-all-ok` markers on the 2 sibling parse-fallbacks.
@@ -173,6 +186,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
 - `ea4017fa` (#927) · coverage fast-follow: `coverage.sh --no-breaks`. OpenCppCoverage attaches as a debugger, so doctest broke into it on #923's intentional WARN-on-false → `0x80000003` (all tests passed; the process crashed at teardown). `--no-breaks` disables only the break; real failures still fail. Fixes a latent coverage-job fragility. (Required because #923 auto-merged past the resulting red **non-required** Coverage check — gate-escape postmortem `postmortems.md` 2026-06-06 "#923".)
 - `9f5e56a6` (#929) · #8/#13 **PARKED**: `docs/plans/perf-gate-revival.md` — full investigation + 8-step playbook. The gate is a guaranteed-pass no-op today (zero `ci-windows-latest` baselines; perf workflows provision no Mesa software-GL so the headless `--spawn` launch is unproven; 6.94 ms is not encoded in `perf-compare.py`/`regression-policy.json`). SAFE-NOW steps (Mesa wiring, scenario-set fix, mean-ceiling code) + PARKED steps (live CI run → human-approved golden baselines → flake calibration → required-wiring) split in the doc; blocked on human baseline approval + multi-run flake calibration.
 - (#937 + baselines PR) · #8/#13 **UN-PARKED → GATE ARMED** (2026-06-07): Mesa software-GL fixed end-to-end (root cause: Mesa ≥ 22 thin-loader split — `opengl32.dll` alone dies at process start; same bug was live-but-masked in bucket-C/E, postmortem owed), `command-palette-fuzzy` dropped from the PR-fast set, `mean_abs_ceiling_ms` knob landed (null until calibration), `perf-run.sh` result-file-authoritative fix, headless launch **proven on the runner** (4/4 scenarios, `run_failure_count=0`), 4 human-approved `ci-windows-latest` baselines committed, `Perf PR-fast` added to the merge-gates meant-to-block allow-list (+ bats). Remaining in `perf-gate-revival.md`: 5-calibration, skip-companion (7), GitHub-required flip (6b, user-gated). Found: `scenario.run` emits no `p99Ms` — p99 ceiling inert until the emitter adds it.
+- (2026-06-07, quick-batch audit) · A batch re-execution of #16/#37/#3/#23/#4/#6/#15/#38 found **all eight already shipped** (commits above); re-verified each against the tree at `c742847d`: latch release + `[high-risk]` pinning test present (#16), no bare `catch(...){}` remains in `PlaneIssueMutation.cpp` (#37), zero `JiraClient` includes in `AppController.h` (#3), `static_assert(sizeof(ImWchar) == 4)` at `SmatchetImGuiFonts.cpp:24` (#23), Locales glob repointed + `test-config-globs.sh` zero-match selftest (#4), `is-exe-fresh.sh` present (#6), `--assert-absent` mode + selftest in `function_size_audit.py` (#15), and #38's residual `ninja-iter-msys2` grep hits are all intentional (migration notes + the preset-rejection regression test) — no debris remains. Outcome of the batch: this audit note + the Sprint-1 SHIPPED banner (resume-accuracy), no code change needed.
 
 ## Deviations from plan (Sprint 2 additions)
 - **#37**: planned shorthand was "add the `// catch-all-ok:` marker"; upgraded to a policy-mandated `LOG_WARN` (`exception-handling-policy.md` Network/API tier — a 2xx-response parse failure is not an escape-hatch case).
