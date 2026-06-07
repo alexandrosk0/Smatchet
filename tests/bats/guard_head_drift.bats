@@ -138,6 +138,28 @@ assert_allowed() {
     assert_denied
 }
 
+@test "PowerShell: git.exe commit is denied (CR-953 review — previously failed open)" {
+    run invoke_hook PowerShell "git.exe commit -m x"
+    assert_denied
+}
+
+@test "PowerShell: quoted full-path git.exe via call operator is denied (CR-953 review)" {
+    run invoke_hook PowerShell "& \"C:\\Program Files\\Git\\bin\\git.exe\" commit -m x"
+    assert_denied
+}
+
+@test "Bash: subshell-wrapped commit is denied (CR-953 review — previously failed open)" {
+    run invoke_hook Bash "(git commit -m x)"
+    assert_denied
+    run invoke_hook Bash "echo \$(git commit -m x)"
+    assert_denied
+}
+
+@test "Bash: git.exe -C <worktree> commit is still allowed (exemption survives the .exe form)" {
+    run invoke_hook Bash "git.exe -C $WT commit -m x"
+    assert_allowed
+}
+
 @test "Bash: drifted HEAD still allows a -C-worktree-targeted commit" {
     git -C "$MAIN" -c user.email=t@t -c user.name=t commit --allow-empty --quiet -m drift
     run invoke_hook Bash "git -C $WT commit -m x"

@@ -75,6 +75,11 @@ mapfile -t untracked < <(git ls-files --others --exclude-standard)
 if [ "${#untracked[@]}" -gt 0 ]; then
     echo "pre-ship: git add --intent-to-add ${#untracked[@]} untracked file(s) so gates can see them"
     git add --intent-to-add -- "${untracked[@]}"
+    # Undo the ita registrations on EVERY exit (pass or fail) — leaving them
+    # would make scratch files commit-eligible via a later `git commit -a` and
+    # flip their `git status` bucket from untracked to modified (CR-964 review).
+    # shellcheck disable=SC2064  # expand ${untracked[@]} NOW, not at trap time
+    trap "git restore --staged -- $(printf '%q ' "${untracked[@]}") 2>/dev/null || true" EXIT
 fi
 
 # First-party C++ changed vs the merge-base with <base-ref> (staged, unstaged, and
