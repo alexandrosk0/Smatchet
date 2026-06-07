@@ -101,7 +101,7 @@ Touches `Source/Core/`. **PR-fast CI**: `app-cold-start` (boot seeds VsyncContro
 - DX12/Unreal swapchain present-interval control — host-owned; only intent is exposed.
 
 ## Implementation log
-- `<PR sha>` · full vsync toggle in one slice: `VsyncControl.h` hub + `vsync_enabled`
+- `6f76e7c2` · full vsync toggle in one slice: `VsyncControl.h` hub + `vsync_enabled`
   config field + `config.set/get vsync` (live apply) + Preferences "Display →
   Enable vsync" checkbox + `--vsync`/`--no-vsync` flags + env precedence +
   `RunFrameLoop` live apply + both boot paths seeded via `SeedFromBootSources`.
