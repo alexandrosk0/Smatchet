@@ -99,5 +99,5 @@ End every response with `## Outcome: <state>` (one of `applied | halted | failed
 ## Delegates / handoffs
 
 - If a regression is confirmed → hand off to `perf-detective` for the diagnose loop.
-- If a NEW p99 outlier > 16.67 ms appears → hand off to `spike-hunter`.
+- If a NEW p99 outlier > 10.0 ms appears → hand off to `spike-hunter`.
 - If the diff→scenario map has a hole (touched file with no scenario coverage) → flag to `test-author` for scenario coverage extension.

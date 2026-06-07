@@ -1,5 +1,5 @@
 // PerfSampleRing + ComputeP99 — the pure seam behind UiPerfMonitor's
-// snapshot-time `p99Ms` row field (arms Quality Pillar 1's p99 <= 16.67 ms
+// snapshot-time `p99Ms` row field (arms Quality Pillar 1's p99 <= 10.0 ms
 // ceiling read by scripts/dev/perf-compare.py). Header-only; no monitor or
 // ImGui dependency.
 

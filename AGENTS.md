@@ -22,7 +22,7 @@ Five north-star invariants:
 
 | # | Group | Pillar | Hard invariant | Primary owner |
 |---|---|---|---|---|
-| 1 | UX | Performance | Steady-state UI work ≤ **6.94 ms** (144 Hz); p99 ≤ 16.67 ms (60 Hz floor) | `perf-detective` (sustained), `spike-hunter` (p99) |
+| 1 | UX | Performance | Steady-state UI work ≤ **6.94 ms** (144 Hz); p99 ≤ 10.0 ms (100 Hz floor) | `perf-detective` (sustained), `spike-hunter` (p99) |
 | 2 | UX | UI never freezes | No UI-thread block > 100 ms without visible cue; sync I/O on UI thread = code-review CRITICAL | `code-review`, `spike-hunter` |
 | 3 | UX | Never crash | Sanitizer build clean; RAII + bounds-checked + no silent UB; graceful degradation in ship builds | `debug-detective`, `code-review`, `build-doctor` |
 | 4 | UX | Accessibility | Keyboard nav, font scaling, WCAG AA contrast — flagged in backlog (no auto-fail yet) | none today (backlogged) |

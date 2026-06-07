@@ -7,7 +7,7 @@
 
 /// Fixed-capacity ring of recent per-call durations (in ms) for one perf scope.
 /// Backs the snapshot-time `p99Ms` row field that arms Quality Pillar 1's
-/// p99 <= 16.67 ms ceiling (`scripts/dev/perf-compare.py p99_abs_ceiling_ms`).
+/// p99 <= 10.0 ms ceiling (`scripts/dev/perf-compare.py p99_abs_ceiling_ms`).
 /// Hot-path contract: `Push` is one array store + one index increment — zero
 /// steady-state allocation, no sorting, no branching beyond the wrap check.
 /// The percentile itself is computed only at snapshot time (cold path) via

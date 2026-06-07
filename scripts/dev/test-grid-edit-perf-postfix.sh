@@ -3,7 +3,7 @@
 #
 # Drives N synthetic cell commits through ProcessGridFieldEdits and asserts the
 # UI-thread cost stays inside pillar-1 (144 Hz, 6.94 ms mean) and pillar-2
-# (no UI hitch > 16.67 ms / 60 Hz floor) budgets. See:
+# (no UI hitch > 10.0 ms / 100 Hz floor) budgets. See:
 #   docs/plans/shipped/grid-cell-edit-perf.md
 #   AGENTS.md § UX Pillars
 #
@@ -11,7 +11,7 @@
 # worker spawn + dispatcher post-back should be sub-millisecond per cell.
 #
 # Exit codes:
-#   0 — mean ≤ 6.94 ms AND p99 ≤ 16.67 ms
+#   0 — mean ≤ 6.94 ms AND p99 ≤ 10.0 ms
 #   1 — at least one threshold exceeded
 #   2 — exe missing OR Smatchet did not return a parseable JSON envelope
 
@@ -46,7 +46,7 @@ ITERS="$(echo "$JSON_LINE" | "$PY" -c "import sys,json; d=json.load(sys.stdin); 
 
 echo
 echo "Result: iterations=$ITERS mean=${MEAN}ms p99=${P99}ms max=${MAXMS}ms"
-echo "Targets: mean ≤ 6.94 ms (Pillar 1)  p99 ≤ 16.67 ms (60 Hz floor)"
+echo "Targets: mean ≤ 6.94 ms (Pillar 1)  p99 ≤ 10.0 ms (100 Hz floor)"
 
 if [ "$MEAN" = "-1" ] || [ "$P99" = "-1" ]; then
     echo "Passed: 0  Failed: 1"
@@ -54,7 +54,7 @@ if [ "$MEAN" = "-1" ] || [ "$P99" = "-1" ]; then
 fi
 
 OK_MEAN="$("$PY" -c "import sys; print('1' if float('$MEAN') <= 6.94 else '0')")"
-OK_P99="$("$PY" -c "import sys; print('1' if float('$P99') <= 16.67 else '0')")"
+OK_P99="$("$PY" -c "import sys; print('1' if float('$P99') <= 10.0 else '0')")"
 
 FAILED=0
 PASSED=0
@@ -67,10 +67,10 @@ else
 fi
 if [ "$OK_P99" = "1" ]; then
     PASSED=$((PASSED + 1))
-    echo "PASS: p99=${P99}ms ≤ 16.67 ms"
+    echo "PASS: p99=${P99}ms ≤ 10.0 ms"
 else
     FAILED=$((FAILED + 1))
-    echo "FAIL: p99=${P99}ms > 16.67 ms (60 Hz floor)"
+    echo "FAIL: p99=${P99}ms > 10.0 ms (100 Hz floor)"
 fi
 
 echo "Passed: $PASSED  Failed: $FAILED"

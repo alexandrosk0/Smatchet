@@ -132,7 +132,7 @@ Measurement: actual per-ticket bytes + resident total validated via `perf.memory
 
 ## Performance
 
-Steady-state budget **6.94 ms** (144 Hz); p99 ≤ 16.67 ms (60 Hz floor) per `AGENTS.md` § Quality Pillars. The headline change vs the single-grid app: **N visible grids render per frame** and **N sync workers run concurrently** — both must stay within the SHARED budget.
+Steady-state budget **6.94 ms** (144 Hz); p99 ≤ 10.0 ms (100 Hz floor) per `AGENTS.md` § Quality Pillars. The headline change vs the single-grid app: **N visible grids render per frame** and **N sync workers run concurrently** — both must stay within the SHARED budget.
 
 **Hidden panes cost zero per frame** — not rendered, not sorting, not syncing.
 

@@ -286,9 +286,9 @@ CommandResult RunGridEditBurstOnUi(AppController& app, int count, const std::str
     out["per_event_p99_ms"] = pct(0.99);
     out["per_event_max_ms"] = sorted.empty() ? 0.0 : sorted.back();
     out["target_mean_ms"] = 6.94;
-    out["target_p99_ms"] = 16.67;
+    out["target_p99_ms"] = 10.0;
     out["ok_mean"] = mean <= 6.94;
-    out["ok_p99"] = pct(0.99) <= 16.67;
+    out["ok_p99"] = pct(0.99) <= 10.0;
     return CommandResult::Success(std::move(out));
 }
 
