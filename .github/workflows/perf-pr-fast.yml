@@ -116,11 +116,11 @@ jobs:
       # --spawn child dies before MCP comes up and every scenario.run is a
       # run_failure. Keep MESA_VERSION + cache key in lockstep with
       # build-and-test.yml. docs/plans/active/perf-gate-revival.md step 1.
-      - name: Cache Mesa opengl32.dll
+      - name: Cache Mesa software-GL DLLs
         uses: actions/cache@v4
         with:
           path: mesa-cache
-          key: mesa-opengl32-24.2.5
+          key: mesa-dlls-24.2.5-v2
 
       - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
         shell: bash
@@ -128,20 +128,33 @@ jobs:
           MESA_VERSION: "24.2.5"
         run: |
           set -euo pipefail
-          if [ ! -f mesa-cache/opengl32.dll ]; then
+          # Mesa >= 22 splits the GL driver: opengl32.dll is only a thin loader
+          # that hard-requires libgallium_wgl.dll (the actual ~53 MB driver) +
+          # libglapi.dll beside it. Copying opengl32.dll alone makes EVERY exe
+          # in the target dir die at process start (STATUS_DLL_NOT_FOUND,
+          # silent) — exactly how the bucket-C/E + perf headless runs were
+          # broken-but-masked until the perf-gate-revival step-3 investigation
+          # (2026-06-06; reproduced + fixed locally against Smatchet.exe).
+          need_fetch=0
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            if [ ! -f "mesa-cache/$d" ]; then need_fetch=1; fi
+          done
+          if [ "$need_fetch" = "1" ]; then
             mkdir -p mesa-tmp mesa-cache
             cd mesa-tmp
             curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
             7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
-            if [ -f extracted/x64/opengl32.dll ]; then
-              cp extracted/x64/opengl32.dll ../mesa-cache/opengl32.dll
-            fi
+            for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+              if [ -f "extracted/x64/$d" ]; then cp "extracted/x64/$d" "../mesa-cache/$d"; fi
+            done
             cd ..
             rm -rf mesa-tmp
           fi
-          if [ -f mesa-cache/opengl32.dll ]; then
-            cp mesa-cache/opengl32.dll build/ninja-iter-msvc/opengl32.dll
-          fi
+          # Strict copy — a missing DLL here must fail LOUDLY, not reproduce
+          # the silent-loader-death class this block exists to prevent.
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            cp "mesa-cache/$d" "build/ninja-iter-msvc/$d"
+          done
 
       - name: Run PR-fast scenarios + compare against baselines
         id: perf

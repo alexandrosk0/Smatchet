@@ -33,6 +33,25 @@
   `avgPerCallMs … exceeds Pillar 1 mean budget` + exit 1 only on rows meeting
   `min_baseline_calls` (calls ≥ 10).
 
+**2026-06-06 — step-3 live run + root-cause round 2 (same PR):**
+
+- First live `Perf PR-fast` run with the Mesa step: **all 4 scenarios still
+  failed** (~250 ms each, zero output, WARN-downgraded). Root cause found and
+  **reproduced locally**: Mesa ≥ 22 splits the driver — `opengl32.dll` is a
+  137 KB thin loader hard-requiring `libgallium_wgl.dll` (53 MB driver) +
+  `libglapi.dll`; copying the loader alone makes the exe die at process start
+  (`STATUS_DLL_NOT_FOUND`, silent). Local proof: loader-only → instant abort;
+  all three DLLs → `perf-run.sh idle` runs 600 frames headless, `ok:true`.
+- **Same bug is live in bucket-C/E** (`build-and-test.yml`) and masked by
+  `continue-on-error: true` — bucket-C on this PR ran `Passed: 0  Failed: 3`,
+  exit 1, check green. **Gate-escape postmortem owed** (bucket-C/E green-but-
+  broken). Fixed all 4 Mesa blocks (3-DLL copy, strict final cp, cache key →
+  `mesa-dlls-24.2.5-v2`).
+- **p99 finding (was "unverified")**: now confirmed — `scenario.run` rows
+  carry NO `p99Ms` (`avgPerCallMs`/`emaAvgMs`/`lastTotalMs`/`maxMs`/`calls`
+  only). The `p99_abs_ceiling_ms` policy check is structurally inert until the
+  C++ perf-snapshot emitter adds p99 — follow-up item, not this PR.
+
 ## Why this exists
 
 Quality **Pillar 1** (steady-state UI work ≤ **6.94 ms** / 144 Hz; p99 ≤ **16.67 ms** /
