@@ -178,7 +178,7 @@ Per `AGENTS.md` § Verification automation. Not C++ — Buckets A/E N/A. Everyth
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. In the SAME PR that populates the three sections above (once ALL five phases have shipped and every cited PR is merged) —*
 1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/subagent-eval-agentic-coverage.md docs/plans/shipped/subagent-eval-agentic-coverage.md`,*
+2. *`git mv docs/plans/active/subagent-eval-agentic-coverage.md docs/plans/shipped/` (move into the shipped tier),*
 3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
 
 *References use the tier-less form `docs/plans/<slug>.md` so the move can't break them. Write new references tier-less. Delete this `## Archive` block as part of step 2.*
