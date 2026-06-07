@@ -120,6 +120,24 @@ assert_allowed() {
     assert_denied
 }
 
+@test "Bash: drifted HEAD denies an op terminated by a separator, not a space (CR-947-1)" {
+    # `git pull;x`, `git pull&`, `git pull|cat` — the op token's trailing
+    # boundary must accept the same separator class as the leading one, or
+    # the drift guard is defeated by simply omitting the space.
+    git -C "$MAIN" -c user.email=t@t -c user.name=t commit --allow-empty --quiet -m drift
+    run invoke_hook Bash "git pull;true"
+    assert_denied
+    run invoke_hook Bash "git pull&"
+    assert_denied
+    run invoke_hook Bash "git pull|cat"
+    assert_denied
+}
+
+@test "Bash: no-drift direct-commit guard also catches separator-terminated commit (CR-947-1)" {
+    run invoke_hook Bash "git commit;true"
+    assert_denied
+}
+
 @test "Bash: drifted HEAD still allows a -C-worktree-targeted commit" {
     git -C "$MAIN" -c user.email=t@t -c user.name=t commit --allow-empty --quiet -m drift
     run invoke_hook Bash "git -C $WT commit -m x"
