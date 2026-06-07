@@ -1,12 +1,13 @@
 {
   "schemaVersion": 1,
-  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D2 for rationale. mean_abs_ceiling_ms (Pillar 1 absolute mean budget on avgPerCallMs, target 6.94 = 1000/144) ships null/DISABLED until the perf-gate-revival step-5 calibration pass — set it (plus perScenario overrides for legitimately-heavy scopes like SmatchetUI::Draw) only after observing real ci-windows-latest runs.",
+  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D2 for rationale. mean_abs_ceiling_ms (Pillar 1 absolute mean budget on avgPerCallMs, target 6.94 = 1000/144) ships null/DISABLED until the perf-gate-revival step-5 calibration pass — set it (plus perScenario overrides for legitimately-heavy scopes like SmatchetUI::Draw) only after observing real ci-windows-latest runs. mean_min_abs_delta_ms is the noise floor for the relative lastTotalMs gate: a relative regression only fires when the absolute delta also exceeds it — calibrated 2026-06-07 from the first armed CI run, where ai_chat.history.render_turn flagged +12.0% on 0.023 -> 0.026 ms (3 µs of single-frame sampling noise); 0.05 ms = 0.7% of the 6.94 ms frame budget.",
   "default": {
     "mean_delta_pct": 10.0,
     "p99_abs_ceiling_ms": 16.67,
     "max_abs_ceiling_ms": 50.0,
     "min_baseline_calls": 10,
-    "mean_abs_ceiling_ms": null
+    "mean_abs_ceiling_ms": null,
+    "mean_min_abs_delta_ms": 0.05
   },
   "perScenario": {
     "comment": "Override the default for a specific scenarioId. Empty means inherit default. Tune ONLY when a real-world signal (CI false-positives, scenario noise) justifies it; document the rationale in the override entry."

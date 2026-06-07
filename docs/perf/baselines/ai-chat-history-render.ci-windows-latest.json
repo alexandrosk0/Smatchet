@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "ai-chat-history-render",
+  "captureCommit": "37ca9d6c62c386404345b193d36f11407d8687fe",
+  "captureDate": "2026-06-07T02:45:00Z",
+  "captureHost": "ci-windows-latest",
+  "captureRunnerOs": "windows-msys2-ucrt64",
+  "rows": [
+    {
+      "avgPerCallMs": 0.424,
+      "calls": 1,
+      "emaAvgMs": 0.41734700976770467,
+      "lastTotalMs": 0.424,
+      "maxMs": 0.424,
+      "name": "SmatchetUI::Draw"
+    },
+    {
+      "avgPerCallMs": 0.1366,
+      "calls": 1,
+      "emaAvgMs": 0.1343359384373538,
+      "lastTotalMs": 0.1366,
+      "maxMs": 0.1366,
+      "name": "drawActiveProjectWindow"
+    },
+    {
+      "avgPerCallMs": 0.1241,
+      "calls": 1,
+      "emaAvgMs": 0.12184672401089294,
+      "lastTotalMs": 0.1241,
+      "maxMs": 0.1241,
+      "name": "drawPreferencesWindow"
+    },
+    {
+      "avgPerCallMs": 0.0749,
+      "calls": 1,
+      "emaAvgMs": 0.07332127410990961,
+      "lastTotalMs": 0.0749,
+      "maxMs": 0.0749,
+      "name": "drawAiAssistantPanel"
+    },
+    {
+      "avgPerCallMs": 0.0492,
+      "calls": 1,
+      "emaAvgMs": 0.0478062186216394,
+      "lastTotalMs": 0.0492,
+      "maxMs": 0.0492,
+      "name": "ai_chat.history.draw"
+    },
+    {
+      "avgPerCallMs": 0.000468,
+      "calls": 50,
+      "emaAvgMs": 0.0004388792302649472,
+      "lastTotalMs": 0.0234,
+      "maxMs": 0.0079,
+      "name": "ai_chat.history.render_turn"
+    },
+    {
+      "avgPerCallMs": 0.0186,
+      "calls": 1,
+      "emaAvgMs": 0.018729285746269697,
+      "lastTotalMs": 0.0186,
+      "maxMs": 0.0186,
+      "name": "drawMainMenuBar"
+    },
+    {
+      "avgPerCallMs": 0.0134,
+      "calls": 1,
+      "emaAvgMs": 0.013035958956355042,
+      "lastTotalMs": 0.0134,
+      "maxMs": 0.0134,
+      "name": "SmatchetWhisperSetupBanner::Render"
+    },
+    {
+      "avgPerCallMs": 0.013,
+      "calls": 1,
+      "emaAvgMs": 0.012804285872991884,
+      "lastTotalMs": 0.013,
+      "maxMs": 0.013,
+      "name": "SmatchetToolbarUi::Draw"
+    },
+    {
+      "avgPerCallMs": 0.0097,
+      "calls": 1,
+      "emaAvgMs": 0.009710383398592554,
+      "lastTotalMs": 0.0097,
+      "maxMs": 0.0097,
+      "name": "activeProject:grid.setup"
+    },
+    {
+      "avgPerCallMs": 0.0089,
+      "calls": 1,
+      "emaAvgMs": 0.008734348369952433,
+      "lastTotalMs": 0.0089,
+      "maxMs": 0.0089,
+      "name": "ai_chat.history.pin_strip"
+    },
+    {
+      "avgPerCallMs": 0.0077,
+      "calls": 1,
+      "emaAvgMs": 0.007319076810109127,
+      "lastTotalMs": 0.0077,
+      "maxMs": 0.0077,
+      "name": "activeProject:header"
+    },
+    {
+      "avgPerCallMs": 0.0061,
+      "calls": 1,
+      "emaAvgMs": 0.005503876298692695,
+      "lastTotalMs": 0.0061,
+      "maxMs": 0.0061,
+      "name": "activeProject:grid.rectSel.keys"
+    },
+    {
+      "avgPerCallMs": 0.0014,
+      "calls": 2,
+      "emaAvgMs": 0.0008998706051366659,
+      "lastTotalMs": 0.0028,
+      "maxMs": 0.0026,
+      "name": "dispatcher.drain"
+    },
+    {
+      "avgPerCallMs": 0.0018,
+      "calls": 1,
+      "emaAvgMs": 0.0016268248622243848,
+      "lastTotalMs": 0.0018,
+      "maxMs": 0.0018,
+      "name": "activeProject:grid.rows"
+    },
+    {
+      "avgPerCallMs": 0.0017,
+      "calls": 1,
+      "emaAvgMs": 0.001669565206776131,
+      "lastTotalMs": 0.0017,
+      "maxMs": 0.0017,
+      "name": "activeProject:grid.post"
+    },
+    {
+      "avgPerCallMs": 0.0014,
+      "calls": 1,
+      "emaAvgMs": 0.0015805479273467932,
+      "lastTotalMs": 0.0014,
+      "maxMs": 0.0014,
+      "name": "drawAttachmentPreviewWindow"
+    },
+    {
+      "avgPerCallMs": 0.0012,
+      "calls": 1,
+      "emaAvgMs": 0.001363844222802666,
+      "lastTotalMs": 0.0012,
+      "maxMs": 0.0012,
+      "name": "ViewState::EnsureLoaded"
+    },
+    {
+      "avgPerCallMs": 0.0005,
+      "calls": 1,
+      "emaAvgMs": 0.0006248678655098759,
+      "lastTotalMs": 0.0005,
+      "maxMs": 0.0005,
+      "name": "activeProject:grid.sort"
+    },
+    {
+      "avgPerCallMs": 0.0004,
+      "calls": 1,
+      "emaAvgMs": 0.0004212490443806106,
+      "lastTotalMs": 0.0004,
+      "maxMs": 0.0004,
+      "name": "MainThreadDispatcher::Drain"
+    },
+    {
+      "avgPerCallMs": 0.0004,
+      "calls": 1,
+      "emaAvgMs": 0.0002509911578354369,
+      "lastTotalMs": 0.0004,
+      "maxMs": 0.0004,
+      "name": "drawEnsureCatalogAndInitialSync"
+    },
+    {
+      "avgPerCallMs": 0.0004,
+      "calls": 1,
+      "emaAvgMs": 0.00028775639663653185,
+      "lastTotalMs": 0.0004,
+      "maxMs": 0.0004,
+      "name": "SmatchetToastManager::Render"
+    },
+    {
+      "avgPerCallMs": 0.0003,
+      "calls": 1,
+      "emaAvgMs": 0.00015969625056695436,
+      "lastTotalMs": 0.0003,
+      "maxMs": 0.0003,
+      "name": "drawBulkExportWindow"
+    },
+    {
+      "avgPerCallMs": 0.0003,
+      "calls": 1,
+      "emaAvgMs": 0.00021343254670021645,
+      "lastTotalMs": 0.0003,
+      "maxMs": 0.0003,
+      "name": "drawBulkImportWindow"
+    },
+    {
+      "avgPerCallMs": 0.0003,
+      "calls": 1,
+      "emaAvgMs": 0.000407399181889791,
+      "lastTotalMs": 0.0003,
+      "maxMs": 0.0003,
+      "name": "drawAuditWindow"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00019741646386099837,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "TrackerGridFieldDisplay::DrawVotesListWindow"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00025216321433494326,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "TickTrackerConnectivityMonitor"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00030038169585779804,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "TrackerGridFieldDisplay::DrawWatchersListWindow"
+    },
+    {
+      "avgPerCallMs": 0.0002,
+      "calls": 1,
+      "emaAvgMs": 0.00016293812537563655,
+      "lastTotalMs": 0.0002,
+      "maxMs": 0.0002,
+      "name": "SmatchetDrawMcpServerWindow"
+    },
+    {
+      "avgPerCallMs": 0.0001,
+      "calls": 1,
+      "emaAvgMs": 0.00024087792962043105,
+      "lastTotalMs": 0.0001,
+      "maxMs": 0.0001,
+      "name": "grid.cell_commit_pump"
+    },
+    {
+      "avgPerCallMs": 0.0001,
+      "calls": 1,
+      "emaAvgMs": 0.00015536645505255303,
+      "lastTotalMs": 0.0001,
+      "maxMs": 0.0001,
+      "name": "DrawPlanDocViewer"
+    },
+    {
+      "avgPerCallMs": 0.0001,
+      "calls": 1,
+      "emaAvgMs": 0.00010258065204544787,
+      "lastTotalMs": 0.0001,
+      "maxMs": 0.0001,
+      "name": "SmatchetWhisperOverlayUi::Render"
+    },
+    {
+      "avgPerCallMs": 0.0,
+      "calls": 1,
+      "emaAvgMs": 4.5426987878293296e-05,
+      "lastTotalMs": 0.0,
+      "maxMs": 0.0,
+      "name": "drawViewsDashboardWindow"
+    },
+    {
+      "avgPerCallMs": 0.0,
+      "calls": 1,
+      "emaAvgMs": 4.783211488616429e-05,
+      "lastTotalMs": 0.0,
+      "maxMs": 0.0,
+      "name": "SmatchetPerfUi::DrawWindow"
+    }
+  ],
+  "hardwareNote": "GitHub Actions windows-2022 shared runner",
+  "perScenarioPolicyOverride": null
+}

@@ -63,6 +63,13 @@ DEFAULT_POLICY: Dict[str, Any] = {
     # (e.g. SmatchetUI::Draw) on CI hardware; enable via regression-policy.json
     # default + perScenario overrides once baselines exist.
     "mean_abs_ceiling_ms": None,
+    # Noise floor for the RELATIVE lastTotalMs gate: a relative regression only
+    # fires when the absolute delta also exceeds this. Calibrated from the
+    # first armed CI run (2026-06-07): ai_chat.history.render_turn flagged
+    # +12.0% on 0.023 → 0.026 ms — 3 µs of single-frame sampling noise on a
+    # microsecond-scale scope. 0.05 ms = 0.7 % of the 6.94 ms frame budget;
+    # a regression that matters moves a scope by more than that.
+    "mean_min_abs_delta_ms": 0.05,
 }
 
 
@@ -180,6 +187,9 @@ def evaluate(
     max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
     # None ⇒ knob disabled (ships off until perf-gate-revival step-5 calibration).
     mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
+    min_abs_delta = _to_float(
+        policy.get("mean_min_abs_delta_ms", 0.05), "policy.mean_min_abs_delta_ms"
+    ) or 0.0
 
     for name in all_names:
         b = base_idx.get(name)
@@ -212,10 +222,18 @@ def evaluate(
 
         if b_total is not None and f_total is not None:
             d = pct_delta(b_total, f_total)
-            if d is not None and d > mean_pct:
+            # Relative gate + absolute noise floor: a +12 % swing on a
+            # microsecond-scale scope is sampling noise, not a regression
+            # (first armed-run calibration, perf-gate-revival step 5).
+            if (
+                d is not None
+                and d > mean_pct
+                and (f_total - b_total) > min_abs_delta
+            ):
                 regressions.append(
                     f"{name}: lastTotalMs regressed {d:+.1f}% "
-                    f"(baseline {b_total:.3f} → fresh {f_total:.3f}, policy {mean_pct:+.1f}%)"
+                    f"(baseline {b_total:.3f} → fresh {f_total:.3f}, policy {mean_pct:+.1f}% "
+                    f"and Δ > {min_abs_delta:.3f} ms)"
                 )
 
         if f_p99 is not None and f_p99 > p99_cap:
