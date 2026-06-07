@@ -43,6 +43,11 @@ Round-2 corrected two would-be-wasted Sprint-2 efforts (the `json_fwd` swap is i
 
 ### Sprint 2 — structural (estimates use the round-2-corrected numbers)
 
+> **Resuming?** This is the original roadmap (historical). For the CURRENT state —
+> what's shipped / parked / remaining 🟢 / escalated 🔴 — read **§ Verification
+> (actual) → "Sprint-2 status"** below; it is authoritative. Don't re-do items the
+> status block marks shipped.
+
 Root multiplier A — the `json.hpp` / sol2 / `AppController` header choke:
 
 - ~~**[#2]** `json_fwd` swap of the 3 named headers~~ — **NO-GO in isolation** (round-2): relieves only 4 of 298 json-pulling TUs because `Commands/Command.h` (201 TUs) + `AppController.h` (185 TUs, `parametersSchema`) hold `nlohmann::json` **by value** → can't forward. Unblock via #19 first.
@@ -190,7 +195,7 @@ Sprint 2 file set (interface headers, `AppController.{h,cpp}`, the PCH headers +
   - **Parked (human-gated):** #8/#13 (#929 revival playbook — golden-baseline approval + flake calibration).
   - **Remaining 🟢:** #20/#28 (Core_DX12 json-PCH trial — deferred; needs a quiet build for a clean before/after timing measurement), #12 batch-2 (3 inline windows: Attachment Preview, New Issue Draft row, Offline Queue panel).
   - **Escalated 🔴 (await user):** #19 (pImpl `AppController`), #21 (`Optional<T>`/`Result`). #10 (TSan) remains NO-GO-in-place (needs a Linux Clang preset).
-- **Open decision (filed `infra.md` P1):** merge-gates "never merge past ANY red" (AGENTS.md) ⇄ "non-required → pass" (tested impl) contradiction — surfaced after #923; awaiting an A/B/C choice.
+- **Merge-gates decision — RESOLVED (option B, #933):** the "never merge past ANY red" (AGENTS.md) ⇄ "non-required → pass" (tested impl) contradiction surfaced after #923 is fixed — `merge-gates.sh` now blocks on non-required reds that match a curated allow-list (`Coverage|Sanitizer|Bucket-`, non-advisory); other non-required reds still pass. Postmortem: `postmortems.md` 2026-06-06 "#923"; filed `infra.md` P1 → applied.
 - Sprint 2 #9/#18 (partial) — fixed wrong FetchContent cache paths in `perf-pr-fast.yml`, `perf-full.yml`, and `coverage.yml` (all three cached `build/<preset>/_deps`, which is the subbuild CMakeCache dir, not the downloaded sources at `.fetchcontent-src`). Added sccache cross-job restore-key fallback in `perf-pr-fast.yml`. #29 skipped (justified below in Deviations).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)

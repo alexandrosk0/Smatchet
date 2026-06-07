@@ -81,9 +81,12 @@ session), one of:**
 - **(C)** Accept Coverage as advisory — rename the step to drop "blocking" and
   document that only required checks gate merges. (Cheapest; weakens Pillar-1/3 coverage
   enforcement.)
-Filed to `infra.md` (P1, decision-pending). Until resolved, the orchestrator merges
-via the strict finisher (`build/finish-pr.sh`, which blocks on ANY non-Test-delta
-red) and unregisters at-risk PRs from the watcher.
+Filed to `infra.md` (P1). **RESOLVED — maintainer chose (B), shipped in PR #933:**
+`merge-gates.sh` `$failing` now computes over all `$ctx` and blocks a failing check
+when it is required OR (non-required AND name matches `Coverage|Sanitizer|Bucket-`
+AND not "advisory"); non-allow-listed non-required reds still pass (contract
+preserved — verified by a direct jq test + a new `merge_gates.bats` case). The
+allow-list regex is the single extension point to gate more checks later.
 
 ### Filed as
 `docs/self-improvement/categories/infra.md` — *merge-gates non-required-red policy
