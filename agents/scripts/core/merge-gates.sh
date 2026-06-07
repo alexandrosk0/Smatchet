@@ -342,9 +342,23 @@ poll_merge_gates() {
 | (__REQUIRED_CONTEXTS__) as $reqNames
 | ([$ctx[] | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)]) as $ctxNames
 | ([$reqNames[] | select(. as $n | ($ctxNames | any(. == $n)) | not)]) as $reqAbsent
-| ([$req[] | select(
-      (.__typename == "CheckRun" and .status == "COMPLETED" and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))) or
-      (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR"))))]) as $failing
+| ([$ctx[] | select(
+      ((.__typename == "CheckRun" and .status == "COMPLETED" and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))) or
+       (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR"))))
+      and
+      # A failing check blocks if it is REQUIRED (unchanged), OR it is a
+      # non-required check that is meant-to-block: its name matches the curated
+      # allow-list AND is not explicitly "advisory". This closes the gate-escape
+      # where the watcher auto-merged #923 past a RED non-required "Coverage"
+      # check (postmortems.md 2026-06-06 "#923", option B). The allow-list is
+      # deliberately tight (Coverage / Sanitizer / Bucket-*) — a non-allow-listed
+      # non-required red (e.g. the `non-required-fail` test fixture, or
+      # "Duplication scanner (advisory)") still passes, preserving the prior
+      # "non-required → pass" contract. Extend the regex to gate more checks.
+      ((.isRequired == true)
+       or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
+           | (test("Coverage|Sanitizer|Bucket-"; "i")
+              and (ascii_downcase | contains("advisory") | not)))))]) as $failing
 | ([$failing[] | select(
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
       ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))))]) as $downgraded
