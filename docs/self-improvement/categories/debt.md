@@ -11,6 +11,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-07 · orchestrator · [debt] · P2 — `NormalizeViewsBackendKey` catch-all defaults every unknown tracker to "Jira" — now load-bearing for tickets_v2/queue cache isolation; the Linear backend would silently share Jira's namespace
+  Details: `Source/Core/src/Config/ConfigManager_Views.cpp:235` maps only `plane`/`github`; anything else collapses to the default "Jira" bucket. Pre-multi-grid that was a cosmetic views-bucket choice; post-#948/#951 the same function keys `tickets_v2` and the pending queues, so an unmapped 4th backend (the planned Linear) lands its rows in Jira's namespace — the exact cross-backend collision Slice 1 exists to prevent. (CR sweep CR-948-4.)
+  Concrete next action: extend the map for each new tracker as part of its backend bring-up checklist AND add a guard so the catch-all cannot silently absorb a new type (e.g. LOG_WARN + a doctest case asserting every `TrackerKind` enum value has an explicit mapping — the test fails when a backend is added without updating the map). Wire into `linear-tracker-backend.md` § prerequisites. Est ~30 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · grid-engine (via orchestrator) · [debt] · P2 — `OfflineQueueService` replay workers capture raw `deps_.Reader()`/`Mutations()` pointers across async (same use-after-free class fixed twice on PR #945)
   Details: The #945 ADR-0012 audit fixed two raw-backend-pointer-across-async instances in AppController and found this third, PRE-EXISTING one at `Source/Core/src/Sync/OfflineQueueService.cpp:680/:1212`: replay workers capture raw `ITrackerIssueReader*`/`ITrackerIssueMutations*` (subobjects of the swappable backend) into background tasks. A backend swap mid-replay dangles them — Pillar-3 class. Out of #945's and 1c's scope because the sound fix changes `IOfflineQueueDeps` (latched `shared_ptr` accessors instead of raw subobject getters). Multi-grid Slice 3 (N live contexts, per-context swap) RAISES the likelihood — fix before or with S3.
   Concrete next action: widen `IOfflineQueueDeps` to expose a latched `std::shared_ptr<ITrackerBackend>` (or latched reader/mutations handles), derive subobjects inside the worker from the strong handle; mirror in `FakeOfflineQueueDeps.h`; bucket-A test: swap-during-replay does not crash + replay either completes against the latched backend or no-matches. Est ~1-2 h. Owner: offline-sync.

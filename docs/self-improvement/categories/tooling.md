@@ -182,6 +182,18 @@
 
 <!-- Latest first within Parked. -->
 
+- 2026-06-07 · orchestrator · [tooling] · P3 — guard-head-drift `-C` path matcher stops at the first space → a space-containing worktree path bypasses the no-direct-commit guard
+  Details: `docs/harness/claude-code/hooks/guard-head-drift.sh` matches `-C[[:space:]]+[^[:space:]]+`, so `git -C "C:/my path/wt" commit` is not detected (falls through to ALLOW). Harmless for the default trees (`C:\Dev	rees\<slug>`, no spaces). (CR sweep CR-947-2; the separator-boundary HIGH sibling CR-947-1 is fixed.)
+  Concrete next action: quote-aware tokenizing of the `-C` argument (or a documented "no spaces in worktree paths" invariant + a guard in `worktree.ps1 new`). Only worth doing if spaced repo paths ever enter scope. Est ~45 min incl. bats.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · orchestrator · [tooling] · P3 — orphaned perf baselines with no scenario emitter (`agent-handoff-roundtrip`, `agent-triage-roundtrip`)
+  Details: `docs/perf/baselines/agent-handoff-roundtrip.dev.json` + `agent-triage-roundtrip.dev.json` reference scenarios with no registered IScenario (the agentic-flow C++ runtime they measured was deleted 2026-05-21, see applied.md banner) — they will never gain `p99Ms` and never be compared again. (CR sweep CR-949-4; pre-existing, not introduced by #949.)
+  Concrete next action: delete the two orphans in a baseline-janitor sweep (or fold into the next perf-baseline bump PR); optionally teach `perf-baseline.sh` to flag baselines whose scenarioId is absent from `scenario.list`. Est ~15 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [tooling] · P3 — `test-shell-lint.sh` SIGPIPE flake: CI job died exit 141 with zero findings (PR #938), green on plain rerun
   Details: The shell-lint job failed with exit 141 (= 128+SIGPIPE) printing no rule output — almost certainly a `head`/`grep -m`-style early-exit closing a pipe the script writes to under `set -o pipefail`. Cost a full gate round-trip on #938.
   Concrete next action: audit `agents/scripts/core/test-shell-lint.sh` for pipelines into `head`/early-exit consumers; guard with `|| [ $? -eq 141 ]`, restructure to `awk 'NR<=N'`, or drop pipefail around the known-benign pipes. Est ~30 min.
