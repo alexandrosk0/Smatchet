@@ -286,6 +286,18 @@ bool FromJson(const std::string& json, IssueDraft& outDraft, std::string& outErr
     }
 }
 
+std::string ScrubFreshCreatePayload(const std::string& payload, std::string& outParseError) {
+    outParseError.clear();
+    IssueDraft draft;
+    if (!FromJson(payload, draft, outParseError)) {
+        return payload; // verbatim — replay tick terminally dead-letters real garbage
+    }
+    draft.ExistingIssueKey.clear();
+    draft.FieldValues.erase("issuekey");
+    draft.FieldValues.erase("key");
+    return ToJson(draft);
+}
+
 namespace {
 
 std::string TrimForDiff(const std::string& s) {

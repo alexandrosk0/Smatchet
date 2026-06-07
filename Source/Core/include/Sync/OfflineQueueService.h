@@ -86,7 +86,8 @@ class OfflineQueueService {
     /// Move selected dead-letter rows back to the active offline queue (attempts reset to 0).
     /// Each row keeps its ORIGINAL `backend_key` (multi-grid Slice 1c) — never the focused
     /// context's key — and is re-queued as a fresh create (`ExistingIssueKey` + issuekey/key
-    /// field values scrubbed, the dead-letter restore UI contract).
+    /// field values scrubbed, the dead-letter restore UI contract; the scrub itself runs
+    /// inside `LocalCacheManager::RestoreDeadPendingCreate`'s transaction, CR-959).
     AppController::DeadLetterRestoreSummary RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds);
 
     /// Field-edit twin of `RestoreDeadPendingCreates`: move selected dead-letter field-edit

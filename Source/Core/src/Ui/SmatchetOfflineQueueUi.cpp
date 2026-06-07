@@ -853,7 +853,7 @@ static void OnContextRestoreDeadCreates(OfflineDrawCtx& ctx, const std::vector<U
     // Key-preserving restore (CR-951-1): route through AppController::RestoreDeadPendingCreates
     // so the row keeps its ORIGINAL backend_key — re-queueing via QueueCreateOffline would
     // re-stamp the focused context's key. The fresh-create scrub (ExistingIssueKey + issuekey/
-    // key field values) lives in OfflineQueueService::RestoreDeadPendingCreates.
+    // key field values) lives inside LocalCacheManager::RestoreDeadPendingCreate's transaction.
     std::vector<std::int64_t> originalIds;
     for (const auto& p : picks) {
         if (p.kind != UnifiedOfflineKind::DeadCreate) {

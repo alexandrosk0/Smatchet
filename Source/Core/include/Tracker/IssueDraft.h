@@ -85,6 +85,13 @@ std::vector<std::string> MissingRequiredFields(const IssueDraft& draft, const Re
 std::string ToJson(const IssueDraft& draft);
 bool FromJson(const std::string& json, IssueDraft& outDraft, std::string& outError);
 
+/** Fresh-create scrub for a queued create payload (dead-letter restore contract, CR-951-1):
+ * clears `ExistingIssueKey` + erases the issuekey/key field values so a restored row never
+ * replays as an update of a stale key. Pure. An unparseable payload is returned VERBATIM
+ * with `outParseError` set — the replay tick's own parse-failure path terminally
+ * dead-letters real garbage, so a verbatim restore cannot loop. */
+std::string ScrubFreshCreatePayload(const std::string& payload, std::string& outParseError);
+
 /** Per-field diff between a draft and an existing cached ticket (for update preview). */
 struct FieldChange {
     std::string FieldId;
@@ -114,15 +121,8 @@ void PruneUnchangedFields(IssueDraft& draft, const CachedTicket& existing);
  * and look up other field names in the catalog.
  */
 std::vector<std::string> MapFieldIdsToNames(const std::vector<std::string>& ids,
-                                           const std::vector<TrackerField>& catalog);
+                                            const std::vector<TrackerField>& catalog);
 
 } // namespace IssueDraftHelpers
 
 #endif
-
-
-
-
-
-
-

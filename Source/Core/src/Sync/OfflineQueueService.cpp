@@ -368,47 +368,13 @@ OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& 
     if (!deps_.Cache() || originalIds.empty()) {
         return summary;
     }
-    // Restored creates are re-queued as FRESH creates: scrub `ExistingIssueKey` + the
-    // issuekey/key field values so a restored row never replays as an update of a stale key
-    // (the UI restore handler historically did this scrub; it lives here now so the
-    // key-preserving cache restore keeps it — CR-951-1). The dead rows are loaded once so the
-    // scrubbed payload can be handed to `RestoreDeadPendingCreate` inside its transaction.
-    std::vector<DeadPendingCreate> deadRows;
-    try {
-        deadRows = deps_.Cache()->LoadDeadPendingCreates();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("OfflineQueueService::RestoreDeadPendingCreates load failed: %s", ex.what());
-    }
+    // Restored creates are re-queued as FRESH creates: the cache restore applies the
+    // `ExistingIssueKey` + issuekey/key scrub (`IssueDraftHelpers::ScrubFreshCreatePayload`)
+    // INSIDE its own transaction (CR-951-1, CR-959) — atomic with the restore, no full
+    // dead-table pre-load, and no exception path that can skip the scrub.
     for (const std::int64_t id : originalIds) {
-        // Latest archive for this original id = max dead_id (matches the cache restore's pick).
-        const DeadPendingCreate* dead = nullptr;
-        for (const DeadPendingCreate& row : deadRows) {
-            if (row.OriginalId == id && (dead == nullptr || row.DeadId > dead->DeadId)) {
-                dead = &row;
-            }
-        }
-        std::string scrubbedPayload;
-        const std::string* payloadOverride = nullptr;
-        if (dead != nullptr) {
-            IssueDraft draft;
-            std::string parseErr;
-            if (IssueDraftHelpers::FromJson(dead->Payload, draft, parseErr)) {
-                draft.ExistingIssueKey.clear();
-                draft.FieldValues.erase("issuekey");
-                draft.FieldValues.erase("key");
-                scrubbedPayload = IssueDraftHelpers::ToJson(draft);
-                payloadOverride = &scrubbedPayload;
-            } else {
-                // Unparseable payload: restore it verbatim (key-preserving) rather than drop
-                // the row — the replay tick's own parse failure path dead-letters it with a
-                // proper terminal reason if it really is garbage.
-                LOG_WARN("OfflineQueueService::RestoreDeadPendingCreates id=%lld payload parse failed (%s) — "
-                         "restoring verbatim",
-                         static_cast<long long>(id), parseErr.c_str());
-            }
-        }
         try {
-            if (deps_.Cache()->RestoreDeadPendingCreate(id, payloadOverride)) {
+            if (deps_.Cache()->RestoreDeadPendingCreate(id)) {
                 ++summary.Restored;
                 BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
                                                 true, std::string(),

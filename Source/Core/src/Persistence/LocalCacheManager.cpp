@@ -1,4 +1,6 @@
 #include "LocalCacheManager.h"
+
+#include "IssueDraft.h"
 #include "Logger.h"
 
 #include <chrono>
@@ -799,8 +801,7 @@ size_t LocalCacheManager::RunOneTimePendingQueueBackendKeyStamp(const std::strin
     }
 }
 
-bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPendingId,
-                                                 const std::string* payloadOverride) {
+bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPendingId) {
     try {
         SQLite::Transaction transaction(db);
         SQLite::Statement sel(db, "SELECT dead_id, payload, backend_key FROM pending_creates_dead "
@@ -811,10 +812,19 @@ bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPend
             return false;
         }
         const std::int64_t deadId = sel.getColumn(0).getInt64();
-        const std::string payload =
-            payloadOverride != nullptr
-                ? *payloadOverride
-                : (sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText()));
+        const std::string archivedPayload =
+            sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
+        // Fresh-create scrub applied to the archived payload INSIDE this transaction (the
+        // service used to pre-load + scrub outside it — an exception there could skip the
+        // scrub and restore a stale ExistingIssueKey verbatim). Unparseable payloads restore
+        // verbatim; the replay tick's parse path terminally dead-letters real garbage.
+        std::string parseErr;
+        const std::string payload = IssueDraftHelpers::ScrubFreshCreatePayload(archivedPayload, parseErr);
+        if (!parseErr.empty()) {
+            LOG_WARN("LocalCacheManager::RestoreDeadPendingCreate original_id=%lld payload parse failed (%s) — "
+                     "restoring verbatim",
+                     static_cast<long long>(originalPendingId), parseErr.c_str());
+        }
         // Restore re-queues under the SAME backend the row was originally queued against
         // (multi-grid Slice 1c) — never the currently-focused context's key.
         const std::string backendKey =
