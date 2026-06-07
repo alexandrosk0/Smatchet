@@ -59,9 +59,46 @@ jobs:
       - name: Build SmatchetStandalone
         run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
+      # Mesa software-GL parity with bucket-C/E (build-and-test.yml). The
+      # hidden-GLFW-window "headless" run still needs a working opengl32 ICD;
+      # without it every --spawn child fails device-object creation and all
+      # scenarios are run_failures. Keep MESA_VERSION + cache key in lockstep
+      # with build-and-test.yml. docs/plans/active/perf-gate-revival.md step 1.
+      - name: Cache Mesa opengl32.dll
+        uses: actions/cache@v4
+        with:
+          path: mesa-cache
+          key: mesa-opengl32-24.2.5
+
+      - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+        shell: bash
+        env:
+          MESA_VERSION: "24.2.5"
+        run: |
+          set -euo pipefail
+          if [ ! -f mesa-cache/opengl32.dll ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            if [ -f extracted/x64/opengl32.dll ]; then
+              cp extracted/x64/opengl32.dll ../mesa-cache/opengl32.dll
+            fi
+            cd ..
+            rm -rf mesa-tmp
+          fi
+          if [ -f mesa-cache/opengl32.dll ]; then
+            cp mesa-cache/opengl32.dll build/ninja-iter-msvc/opengl32.dll
+          fi
+
       - name: Discover scenarios from scenario.list
         id: scenarios
         shell: bash
+        env:
+          # scenario.list --spawn also launches the exe — it needs the Mesa
+          # ICD env just like the measurement step below.
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           set -e
           # The full suite is whatever scenario.list reports — keeps the
@@ -83,6 +120,11 @@ jobs:
       - name: Run full suite + compare against baselines
         id: perf
         shell: bash
+        env:
+          # Route the hidden-window GL context through Mesa llvmpipe — the
+          # --spawn child inherits this step env via CreateProcessA.
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           set +e
           mkdir -p build/perf-runs

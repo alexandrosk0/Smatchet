@@ -56,6 +56,13 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "p99_abs_ceiling_ms": 16.67,
     "max_abs_ceiling_ms": 50.0,
     "min_baseline_calls": 10,
+    # Pillar 1 absolute mean budget (6.94 ms = 1000/144) gates on a row's
+    # avgPerCallMs when set. Ships DISABLED (None) until the calibration pass
+    # of docs/plans/active/perf-gate-revival.md step 5 observes real CI runs —
+    # a blanket 6.94 would be perpetually red for legitimately-heavy scopes
+    # (e.g. SmatchetUI::Draw) on CI hardware; enable via regression-policy.json
+    # default + perScenario overrides once baselines exist.
+    "mean_abs_ceiling_ms": None,
 }
 
 
@@ -171,6 +178,8 @@ def evaluate(
     mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
     p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 16.67), "policy.p99_abs_ceiling_ms") or 16.67
     max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
+    # None ⇒ knob disabled (ships off until perf-gate-revival step-5 calibration).
+    mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
 
     for name in all_names:
         b = base_idx.get(name)
@@ -181,12 +190,15 @@ def evaluate(
         f_p99 = _to_float(f.get("p99Ms"), f"fresh.{name}.p99Ms") if f else None
         b_max = _to_float(b.get("maxMs"), f"baseline.{name}.maxMs") if b else None
         f_max = _to_float(f.get("maxMs"), f"fresh.{name}.maxMs") if f else None
+        b_avg = _to_float(b.get("avgPerCallMs"), f"baseline.{name}.avgPerCallMs") if b else None
+        f_avg = _to_float(f.get("avgPerCallMs"), f"fresh.{name}.avgPerCallMs") if f else None
         b_calls = _to_int(b.get("calls"), f"baseline.{name}.calls") if b else 0
 
         rows.append(
             {
                 "name": name,
                 "lastTotalMs": format_delta(b_total, f_total),
+                "avgPerCallMs": format_delta(b_avg, f_avg),
                 "p99Ms": format_delta(b_p99, f_p99),
                 "maxMs": format_delta(b_max, f_max),
                 "baselineCalls": b_calls,
@@ -209,6 +221,14 @@ def evaluate(
         if f_p99 is not None and f_p99 > p99_cap:
             regressions.append(
                 f"{name}: p99Ms {f_p99:.3f} exceeds Pillar 1 ceiling {p99_cap:.3f}"
+            )
+
+        # Pillar 1 absolute mean budget (perf-gate-revival step 5). Disabled
+        # while mean_abs_ceiling_ms is null — enabled per-policy after the
+        # baseline-calibration pass.
+        if mean_cap is not None and f_avg is not None and f_avg > mean_cap:
+            regressions.append(
+                f"{name}: avgPerCallMs {f_avg:.3f} exceeds Pillar 1 mean budget {mean_cap:.3f}"
             )
 
         if f_max is not None and f_max > max_cap:
@@ -236,20 +256,23 @@ def emit_markdown(
     lines.append(
         f"- baseline: `{base_commit}` ({base_host}, captured {base_date})"
     )
-    lines.append(
+    policy_line = (
         f"- policy: mean Δ ≤ {policy['mean_delta_pct']:.1f} % · p99 ≤ "
         f"{policy['p99_abs_ceiling_ms']:.2f} ms · max ≤ "
         f"{policy['max_abs_ceiling_ms']:.2f} ms"
     )
+    if policy.get("mean_abs_ceiling_ms") is not None:
+        policy_line += f" · mean ≤ {float(policy['mean_abs_ceiling_ms']):.2f} ms"
+    lines.append(policy_line)
     lines.append("")
 
     if rows:
-        lines.append("| scope | lastTotalMs | p99Ms | maxMs | baseline calls |")
-        lines.append("|---|---|---|---|---:|")
+        lines.append("| scope | lastTotalMs | avgPerCallMs | p99Ms | maxMs | baseline calls |")
+        lines.append("|---|---|---|---|---|---:|")
         for r in rows:
             lines.append(
-                f"| `{r['name']}` | {r['lastTotalMs']} | {r['p99Ms']} | {r['maxMs']} | "
-                f"{r['baselineCalls']} |"
+                f"| `{r['name']}` | {r['lastTotalMs']} | {r['avgPerCallMs']} | {r['p99Ms']} | "
+                f"{r['maxMs']} | {r['baselineCalls']} |"
             )
     else:
         lines.append("(no rows in either baseline or fresh snapshot)")

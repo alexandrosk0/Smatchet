@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
-  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D2 for rationale.",
+  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D2 for rationale. mean_abs_ceiling_ms (Pillar 1 absolute mean budget on avgPerCallMs, target 6.94 = 1000/144) ships null/DISABLED until the perf-gate-revival step-5 calibration pass — set it (plus perScenario overrides for legitimately-heavy scopes like SmatchetUI::Draw) only after observing real ci-windows-latest runs.",
   "default": {
     "mean_delta_pct": 10.0,
     "p99_abs_ceiling_ms": 16.67,
     "max_abs_ceiling_ms": 50.0,
-    "min_baseline_calls": 10
+    "min_baseline_calls": 10,
+    "mean_abs_ceiling_ms": null
   },
   "perScenario": {
     "comment": "Override the default for a specific scenarioId. Empty means inherit default. Tune ONLY when a real-world signal (CI false-positives, scenario noise) justifies it; document the rationale in the override entry."

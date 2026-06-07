@@ -1,10 +1,37 @@
 # Perf-gate revival (Pillar 1) — execution playbook
 
-> **STATUS: PARKED.** Investigation + staged plan complete. Implementation is
-> gated on **human golden-baseline approval** + **multi-run CI flake calibration**
-> — neither can be done autonomously, so the remaining steps are a handoff for a
-> later session. Derived from `build-quality-velocity-hardening.md` item **#8/#13**
-> via a 5-reader investigation (2026-06-06).
+> **STATUS: UN-PARKED — SAFE-NOW steps shipped (2026-06-06).** Steps 1, 2 and
+> 5-code landed (see § Implementation log). Remaining: step 3 (live-CI proof —
+> expected on this PR's own perf-pr-fast run), step 4 (baseline capture →
+> **human approval** → commit), step 5-calibration, 6a, 7, 6b, 8 — per
+> § Parked-state handoff. Derived from `build-quality-velocity-hardening.md`
+> item **#8/#13** via a 5-reader investigation (2026-06-06).
+
+## Implementation log
+
+**2026-06-06 — steps 1 + 2 + 5-code (SAFE-NOW batch, branch `feat/perf-gate-revival`):**
+
+- **Step 1 (Mesa software-GL):** copied the bucket-C `Cache Mesa opengl32.dll`
+  + `Install Mesa software OpenGL ICD` steps (pal1000/mesa-dist-win **24.2.5**,
+  cache key `mesa-opengl32-24.2.5`, lockstep with `build-and-test.yml`) into
+  `perf-pr-fast.yml` + `perf-full.yml`; set `GALLIUM_DRIVER=llvmpipe` +
+  `LIBGL_ALWAYS_SOFTWARE=1` on every step that spawns the exe — including
+  perf-full's `Discover scenarios from scenario.list` step (it runs
+  `scenario.list --spawn`, which the plan's original step list missed).
+- **Step 2 (scenario set):** removed `command-palette-fuzzy` from
+  `perf-pr-fast-set.json` (bucket-C-only, hard-requires `--screenshotPath`);
+  kept `idle`, `priority-grid-scroll`, `cell-edit-burst`,
+  `ai-chat-history-render`; fixed the stale "Five scenarios" description.
+- **Step 5-code (mean budget knob):** added `mean_abs_ceiling_ms` to
+  `DEFAULT_POLICY` (`perf-compare.py`) + `regression-policy.json` default,
+  shipped **null/disabled** pending step-5 calibration. Gates on
+  `avgPerCallMs` (the snapshot rows' mean field — `lastTotalMs` is a single
+  frame's total, not a mean) beside the p99 branch, honouring
+  `min_baseline_calls`. `avgPerCallMs` delta column added to the markdown
+  table; policy line shows `mean ≤ X ms` only when enabled.
+- **Verified:** self-compare exits 0 with knob null; forced ceiling fires
+  `avgPerCallMs … exceeds Pillar 1 mean budget` + exit 1 only on rows meeting
+  `min_baseline_calls` (calls ≥ 10).
 
 ## Why this exists
 
