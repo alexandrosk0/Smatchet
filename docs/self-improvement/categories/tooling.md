@@ -7,6 +7,12 @@
 
 ## Triage log
 
+- 2026-06-07 · orchestrator · [tooling] · P2 — `perf-pr-fast.yml` reads override labels from the frozen event payload — label-then-rerun cannot downgrade (PR #966)
+  Details: The Gate-decision step parses `github.event.pull_request.labels`, which is snapshotted at the triggering `pull_request` event. Applying `perf-out-of-band` AFTER a red run and re-running replays the old payload → `override=false` → still red; the only way through is an empty commit to mint a fresh event (done on #966). `coverage-gate.yml` doesn't have this trap (its label check queries live data), so the two named-downgrade gates behave inconsistently for the exact same operator flow.
+  Concrete next action: in `perf-pr-fast.yml` Gate decision, replace the event-payload parse with a live API query (`gh api repos/$R/issues/$PR/labels --jq '.[].name'`), mirroring coverage-gate; one-line behavioural note in `merge-gates.md` § labels. Est ~20 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · test-author (Slice-2 agent) · [tooling] · P2 — bucket-E failures are blind: spawned-child stdout is reliably 0 bytes on Windows, so a failing UI test reports nothing
   Details: When a bucket-E run fails under the spawned-child runner on Windows, the child's stdout reliably comes back 0 bytes — the test engine's per-test log (which names the failing step/assertion) never reaches the caller, so every failure triage starts blind. The per-test output already exists in memory in the engine (`ctx->Test->Output.Log`); it just has no file egress. The `ui_test.run` command (`Source/Core/src/Commands/Builtin/BuiltinCommands_UiTest.cpp:27`) currently exposes no output-log parameter.
   Concrete next action: add a `ui_test.run --outLog=<path>` parameter that dumps `ctx->Test->Output.Log` per test to the given file, so a failed bucket-E run leaves a readable per-test log regardless of spawned-child stdout loss; wire the bucket-E bash drivers to pass it and cat it on failure. Est ~1-2 h.
