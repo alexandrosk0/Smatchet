@@ -1,8 +1,8 @@
 # Historical code-review findings
 
 > Findings from sweeping **already-merged** PRs with the
-> [`historical-code-review`](../../agents/_shared/skills/historical-code-review/SKILL.md)
-> skill + `agents/scripts/core/historical-review-survivors.sh`. Each PR is
+> `historical-code-review` skill (`agents/_shared/skills/historical-code-review/`)
+> + `agents/scripts/core/historical-review-survivors.sh`. Each PR is
 > reviewed for **only the lines it introduced that are still alive and untouched
 > at `origin/develop`** — code a newer PR already changed/fixed is excluded by
 > construction, so nothing here is already-resolved.
