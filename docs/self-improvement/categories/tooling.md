@@ -7,6 +7,12 @@
 
 ## Triage log
 
+- 2026-06-07 · orchestrator · [tooling] · P2 — `perf-pr-fast.yml` reads override labels from the frozen event payload — label-then-rerun cannot downgrade (PR #966)
+  Details: The Gate-decision step parses `github.event.pull_request.labels`, which is snapshotted at the triggering `pull_request` event. Applying `perf-out-of-band` AFTER a red run and re-running replays the old payload → `override=false` → still red; the only way through is an empty commit to mint a fresh event (done on #966). `coverage-gate.yml` doesn't have this trap (its label check queries live data), so the two named-downgrade gates behave inconsistently for the exact same operator flow.
+  Concrete next action: in `perf-pr-fast.yml` Gate decision, replace the event-payload parse with a live API query (`gh api repos/$R/issues/$PR/labels --jq '.[].name'`), mirroring coverage-gate; one-line behavioural note in `merge-gates.md` § labels. Est ~20 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [tooling] · P2 — `test-plan-index.sh --fix` silently emits `—` for every date when python is off PATH, poisoning the committed INDEX
   Details: PR #953 hit two consecutive "Doc anchors + agent contract" / "Auto-sync plan INDEX" failures. Failure 1 = the known merge-ref race (develop gained shipped plans after the branch's regen; now self-healing via the `PLAN_INDEX_PAT` secret, added 2026-06-07). Failure 2 was self-inflicted by the remedy: the re-regen ran `bash agents/scripts/core/test-plan-index.sh --fix` WITHOUT python on PATH, and the script silently wrote `—` in the Approx.-date column for all 102 rows — locally it "passed" (`Passed: 1 Failed: 0`), CI regenerated with real dates and flagged 204-line drift. Classic prose-promise: the date extraction degrades silently instead of failing the run.
   Concrete next action: in `test-plan-index.sh`, when the date-extraction helper (python) is unavailable, either (a) hard-fail with a "python not on PATH — install or prefix PATH" message (preferred — matches gate-don't-trust), or (b) keep going but exit non-zero + print a WARN naming every row that got `—`. Plus a selftest case asserting the no-python path fails. Est ~30 min.
