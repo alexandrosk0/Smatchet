@@ -262,14 +262,46 @@ jobs:
             build/perf-runs/*.json
             docs/perf/baselines/*.ci-windows-latest.json
 
-      - name: Comment perf report on PR
+      # Anti-spam comment policy (user-mandated 2026-06-07): the full delta
+      # table ALWAYS lands in the run's Step Summary; the PR thread gets a
+      # comment ONLY on a notable outcome (regression / run failure / baseline
+      # bootstrap) — a clean pass is already communicated by the green required
+      # check. The comment is single + updated-in-place via a hidden marker, so
+      # reruns and follow-up pushes never stack duplicates; if a prior notable
+      # comment exists and the run is now clean, it is updated to say so
+      # (never left stale-red).
+      - name: Publish perf report (step summary + conditional PR comment)
         if: always() && github.event_name == 'pull_request'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REGRESSION_COUNT: ${{ steps.perf.outputs.regression_count }}
+          RUN_FAILURE_COUNT: ${{ steps.perf.outputs.run_failure_count }}
+          MISSING_COUNT: ${{ steps.perf.outputs.missing_baseline_count }}
         run: |
-          if [ -s /tmp/perf-report.md ]; then
-            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/perf-report.md || true
+          MARKER='<!-- perf-pr-fast-report -->'
+          [ -s /tmp/perf-report.md ] || exit 0
+          # 1. Always: full table to the run's Step Summary.
+          cat /tmp/perf-report.md >> "$GITHUB_STEP_SUMMARY"
+          # 2. Find a prior marker comment (update target), if any.
+          existing_id=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --paginate \
+            -q ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -1) || existing_id=""
+          notable=$(( ${REGRESSION_COUNT:-0} + ${RUN_FAILURE_COUNT:-0} + ${MISSING_COUNT:-0} ))
+          if [ "$notable" -gt 0 ]; then
+            { echo "$MARKER"; cat /tmp/perf-report.md; } > /tmp/perf-comment.md
+            if [ -n "$existing_id" ]; then
+              gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${existing_id}" \
+                -F body=@/tmp/perf-comment.md >/dev/null || true
+            else
+              gh pr comment "$PR" --body-file /tmp/perf-comment.md || true
+            fi
+          elif [ -n "$existing_id" ]; then
+            # Clean run after a prior notable comment — update it, don't leave stale red.
+            printf '%s\n## Perf delta — PR-fast subset\n\nAll scenarios within policy on the latest run (run %s). Full table: job Step Summary.\n' \
+              "$MARKER" "${{ github.run_id }}" > /tmp/perf-comment.md
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${existing_id}" \
+              -F body=@/tmp/perf-comment.md >/dev/null || true
           fi
 
       - name: Gate decision
