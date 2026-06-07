@@ -245,7 +245,8 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vecto
     return t;
 }
 
-IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheManager* cache, const IssueDraft& draft,
+IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheManager* cache,
+                                    const std::string& cacheBackendKey, const IssueDraft& draft,
                                     const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
     std::string issueKey = TrackerFieldPayload::ExtractIssueKey(draft.ExistingIssueKey);
@@ -285,12 +286,12 @@ IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheMa
     if (cache) {
         try {
             CachedTicket existing;
-            if (cache->TryGetTicket(issueKey, existing)) {
+            if (cache->TryGetTicket(cacheBackendKey, issueKey, existing)) {
                 result.SeededTicket =
                     IssueCreatePipelineHelpers::MergeDraftIntoCachedTicketForUpdate(existing, draft, issueKey, fields);
             }
             MergePostStepDraftIntoCachedTicket(result.SeededTicket, draft, catalog, postOutcome);
-            cache->SaveTicket(result.SeededTicket);
+            cache->SaveTicket(cacheBackendKey, result.SeededTicket);
         } catch (const std::exception& ex) {
             LOG_WARN("IssueCreatePipeline: cache update after PUT failed issue=%s err=%s", issueKey.c_str(), ex.what());
         }
@@ -300,8 +301,9 @@ IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheMa
     return result;
 }
 
-IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const IssueDraft& draft,
-                      const RequiredFieldSet& required, const std::vector<TrackerField>& catalog) {
+IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const std::string& cacheBackendKey,
+                      const IssueDraft& draft, const RequiredFieldSet& required,
+                      const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
 
     IssueDraft work = draft;
@@ -313,7 +315,7 @@ IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, 
         }
     }
     if (!work.ExistingIssueKey.empty()) {
-        return RunUpdateExisting(client, cache, work, catalog);
+        return RunUpdateExisting(client, cache, cacheBackendKey, work, catalog);
     }
 
     result.MissingFieldIds = IssueDraftHelpers::MissingRequiredFields(work, required);
@@ -351,7 +353,7 @@ IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, 
     result.SeededTicket = SeedCachedTicketFromDraft(work, catalog, issueKey);
     MergePostStepDraftIntoCachedTicket(result.SeededTicket, work, catalog, postOutcome);
     if (cache) {
-        cache->SaveTicket(result.SeededTicket);
+        cache->SaveTicket(cacheBackendKey, result.SeededTicket);
     }
     return result;
 }

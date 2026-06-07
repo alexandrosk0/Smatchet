@@ -64,9 +64,9 @@ template <typename Pred> bool SpinUntil(TicketSyncService& svc, Pred pred, int m
 
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack partial-fetch leaves rows outside the fetched set untouched") {
     FakeTicketSyncDeps deps;
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-1", "first"));
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-2", "second"));
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-3", "third"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-1", "first"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-2", "second"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-3", "third"));
     TicketSyncService svc(deps);
 
     TrackerIssueFetchPack pack;
@@ -74,15 +74,15 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack partial-fetch leaves rows outs
     pack.FullSyncCompleted = false; // partial fetch — must not delete unmentioned rows
     svc.ApplyIssueFetchPack(pack);
 
-    std::vector<CachedTicket> all = deps.CacheImpl->GetAllTickets();
+    std::vector<CachedTicket> all = deps.CacheImpl->GetAllTickets("Jira");
     CHECK(all.size() == 3);
 
     CachedTicket got;
-    REQUIRE(deps.CacheImpl->TryGetTicket("ABC-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
     CHECK(got.fieldValues["summary"] == "first-refreshed");
-    REQUIRE(deps.CacheImpl->TryGetTicket("ABC-2", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-2", got));
     CHECK(got.fieldValues["summary"] == "second");
-    REQUIRE(deps.CacheImpl->TryGetTicket("ABC-3", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-3", got));
     CHECK(got.fieldValues["summary"] == "third");
 
     CHECK(deps.PendingLuaWindowBumpImpl == true);
@@ -92,10 +92,10 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack partial-fetch leaves rows outs
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync deletes stale rows outside the fetched set" *
           doctest::test_suite("[high-risk]")) {
     FakeTicketSyncDeps deps;
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-1"));
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-2"));
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-3"));
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-4"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-2"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-3"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-4"));
     TicketSyncService svc(deps);
 
     TrackerIssueFetchPack pack;
@@ -104,15 +104,15 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync deletes stale rows o
     pack.FullSyncCompleted = true;
     svc.ApplyIssueFetchPack(pack);
 
-    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds();
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
     std::sort(ids.begin(), ids.end());
     REQUIRE(ids.size() == 2);
     CHECK(ids[0] == "ABC-1");
     CHECK(ids[1] == "ABC-2");
 
     CachedTicket got;
-    CHECK_FALSE(deps.CacheImpl->TryGetTicket("ABC-3", got));
-    CHECK_FALSE(deps.CacheImpl->TryGetTicket("ABC-4", got));
+    CHECK_FALSE(deps.CacheImpl->TryGetTicket("Jira", "ABC-3", got));
+    CHECK_FALSE(deps.CacheImpl->TryGetTicket("Jira", "ABC-4", got));
 
     CHECK(deps.PendingLuaWindowBumpImpl == true);
     CHECK(deps.DeferredLiveNotifyCalls == 1);
@@ -125,8 +125,8 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync empty pack rejects s
     // body network glitch (or a transient backend bug) must NOT silently wipe every cached
     // row. Genuinely-empty projects re-converge on the next non-empty fetch.
     FakeTicketSyncDeps deps;
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-1"));
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-2"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-2"));
     TicketSyncService svc(deps);
 
     TrackerIssueFetchPack pack;
@@ -134,7 +134,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync empty pack rejects s
     pack.FullSyncCompleted = true;
     svc.ApplyIssueFetchPack(pack);
 
-    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds();
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
     std::sort(ids.begin(), ids.end());
     REQUIRE(ids.size() == 2);
     CHECK(ids[0] == "ABC-1");
@@ -145,8 +145,8 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync empty pack rejects s
 
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack partial empty pack is a no-op for cache state") {
     FakeTicketSyncDeps deps;
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-1"));
-    deps.CacheImpl->SaveTicket(MakeTicket("ABC-2"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-2"));
     TicketSyncService svc(deps);
 
     TrackerIssueFetchPack pack;
@@ -154,7 +154,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack partial empty pack is a no-op 
     pack.FullSyncCompleted = false;
     svc.ApplyIssueFetchPack(pack);
 
-    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds();
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
     std::sort(ids.begin(), ids.end());
     REQUIRE(ids.size() == 2);
     CHECK(ids[0] == "ABC-1");
@@ -168,7 +168,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack replaces existing row's field 
     CachedTicket initial = MakeTicket("ABC-1", "old summary");
     initial.fieldValues["priority"] = "Low";
     initial.fieldValues["assignee"] = "alice";
-    deps.CacheImpl->SaveTicket(initial);
+    deps.CacheImpl->SaveTicket("Jira", initial);
     TicketSyncService svc(deps);
 
     TrackerIssueFetchPack pack;
@@ -183,7 +183,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack replaces existing row's field 
     svc.ApplyIssueFetchPack(pack);
 
     CachedTicket got;
-    REQUIRE(deps.CacheImpl->TryGetTicket("ABC-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
     CHECK(got.fieldValues["summary"] == "new summary");
     CHECK(got.fieldValues["priority"] == "High");
     CHECK(got.fieldValues.count("assignee") == 0);
@@ -192,7 +192,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack replaces existing row's field 
 
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack inserts brand-new row when id absent from cache") {
     FakeTicketSyncDeps deps;
-    deps.CacheImpl->SaveTicket(MakeTicket("EXISTING-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("EXISTING-1"));
     TicketSyncService svc(deps);
 
     TrackerIssueFetchPack pack;
@@ -201,14 +201,14 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack inserts brand-new row when id 
     svc.ApplyIssueFetchPack(pack);
 
     CachedTicket got;
-    REQUIRE(deps.CacheImpl->TryGetTicket("NEW-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "NEW-1", got));
     CHECK(got.fieldValues["summary"] == "fresh");
     CHECK(got.fieldValues["status"] == "Open");
     // Existing row untouched.
-    REQUIRE(deps.CacheImpl->TryGetTicket("EXISTING-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "EXISTING-1", got));
     CHECK(got.fieldValues["summary"] == "summary");
 
-    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds();
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
     CHECK(ids.size() == 2);
 }
 
@@ -255,9 +255,9 @@ TEST_CASE("TicketSyncService::SyncWithBackend end-to-end populates cache + activ
     CHECK(deps.DeferredLiveNotifyCalls >= 1);
 
     CachedTicket got;
-    REQUIRE(deps.CacheImpl->TryGetTicket("STREAM-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "STREAM-1", got));
     CHECK(got.fieldValues["summary"] == "alpha");
-    REQUIRE(deps.CacheImpl->TryGetTicket("STREAM-2", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "STREAM-2", got));
     CHECK(got.fieldValues["summary"] == "beta");
 
     // Cancel + join before fixture destruction — defensive even though the worker is already
@@ -283,7 +283,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack with non-transport FetchError 
     svc.ApplyIssueFetchPack(pack);
 
     CachedTicket got;
-    REQUIRE(deps.CacheImpl->TryGetTicket("ERR-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ERR-1", got));
     CHECK(got.fieldValues["summary"] == "summary");
 
     CHECK(deps.PushOutageCalls == 0);
@@ -318,7 +318,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack success path posts deferred-li
 
 TEST_CASE("TicketSyncService::TickStreamingApply repeated idle calls produce no spurious state mutations") {
     FakeTicketSyncDeps deps;
-    deps.CacheImpl->SaveTicket(MakeTicket("IDLE-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("IDLE-1"));
     TicketSyncService svc(deps);
 
     for (int i = 0; i < 20; ++i) {
@@ -333,7 +333,7 @@ TEST_CASE("TicketSyncService::TickStreamingApply repeated idle calls produce no 
     CHECK_FALSE(deps.PendingLuaWindowBumpImpl);
     // Cache row from setup must survive.
     CachedTicket got;
-    REQUIRE(deps.CacheImpl->TryGetTicket("IDLE-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "IDLE-1", got));
     CHECK(got.fieldValues["summary"] == "summary");
 }
 
@@ -353,7 +353,7 @@ TEST_CASE("TicketSyncService back-to-back ApplyIssueFetchPack invocations stay c
         svc.TickStreamingApply();
     }
 
-    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds();
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
     std::sort(ids.begin(), ids.end());
     REQUIRE(ids.size() == 3);
     CHECK(ids[0] == "BATCH-0");
@@ -361,9 +361,9 @@ TEST_CASE("TicketSyncService back-to-back ApplyIssueFetchPack invocations stay c
     CHECK(ids[2] == "BATCH-2");
 
     CachedTicket got;
-    REQUIRE(deps.CacheImpl->TryGetTicket("BATCH-0", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "BATCH-0", got));
     CHECK(got.fieldValues["summary"] == "v0");
-    REQUIRE(deps.CacheImpl->TryGetTicket("BATCH-2", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "BATCH-2", got));
     CHECK(got.fieldValues["summary"] == "v2");
 
     CHECK(deps.DeferredLiveNotifyCalls == 3);
@@ -479,8 +479,8 @@ TEST_CASE("TicketSyncService kind change clears in-memory active tickets and pub
     deps.ActiveTicketsImpl.push_back(MakeTicket("OLD-1"));
     deps.ActiveTicketsImpl.push_back(MakeTicket("OLD-2"));
     // Cache rows must SURVIVE the swap (cache hydrate repopulates on switch-back).
-    deps.CacheImpl->SaveTicket(MakeTicket("OLD-1"));
-    deps.CacheImpl->SaveTicket(MakeTicket("OLD-2"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("OLD-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("OLD-2"));
     TicketSyncService svc(deps);
 
     TrackerConfig cfg;
@@ -497,8 +497,8 @@ TEST_CASE("TicketSyncService kind change clears in-memory active tickets and pub
     CHECK(deps.PendingLuaWindowBumpImpl == true);
     // SQLite rows are untouched by the in-memory clear.
     CachedTicket got;
-    CHECK(deps.CacheImpl->TryGetTicket("OLD-1", got));
-    CHECK(deps.CacheImpl->TryGetTicket("OLD-2", got));
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "OLD-1", got));
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "OLD-2", got));
 
     svc.CancelAndJoinActiveStreamingSync();
 }

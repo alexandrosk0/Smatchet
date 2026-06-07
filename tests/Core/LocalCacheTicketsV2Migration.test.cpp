@@ -1,0 +1,246 @@
+// tickets_v2 backend-key namespacing — multi-grid Slice 1b (ADR-0018 decision 4,
+// docs/plans/active/multi-grid-tabs-slice1-design.md § 3.5).
+//
+// Covers the three bucket-A cases the design mandates:
+//   * One-time copy migration round-trip on a PRE-migration fixture DB: legacy v1 rows
+//     (written by a raw SQLite connection, exactly as a pre-1b build left them) are copied
+//     into the v2 family stamped with the configured backend's key, read back equal, and the
+//     legacy tables remain present on disk (Persistence additive-only invariant).
+//   * Namespaced disjointness: two backend keys' rows do not collide on the same numeric id
+//     (the GitHub `#123` vs Plane collision class from the design § 3.4).
+//   * Migration idempotence: the cache_meta flag prevents a double copy.
+//
+// The migration cases need a FILE-backed DB (two connections must see the same data: the raw
+// legacy writer, then LocalCacheManager); `:memory:` is per-connection, so a unique temp file
+// is created per case and removed (with its WAL/SHM siblings) on scope exit.
+
+#include "../support/SqliteMemFixture.h"
+
+#include "LocalCacheManager.h"
+
+#include <SQLiteCpp/SQLiteCpp.h>
+#include <doctest/doctest.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
+#include <string>
+
+using smatchet_tests::SqliteMemFixture;
+
+namespace {
+
+// RAII temp-file DB path: unique per instance, removes the SQLite file family on destruction.
+class TempDbFile {
+  public:
+    TempDbFile() {
+        static std::atomic<int> counter{0};
+        const char* base = std::getenv("TEMP");
+        if (!base) {
+            base = std::getenv("TMPDIR");
+        }
+        const long long stamp = static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count());
+        path_ = std::string(base ? base : ".") + "/smatchet_tickets_v2_mig_" + std::to_string(stamp) + "_" +
+                std::to_string(counter.fetch_add(1)) + ".db";
+    }
+    ~TempDbFile() {
+        std::remove(path_.c_str());
+        std::remove((path_ + "-wal").c_str());
+        std::remove((path_ + "-shm").c_str());
+    }
+    const std::string& Path() const { return path_; }
+
+  private:
+    std::string path_;
+};
+
+// Write legacy v1 rows with a raw connection — byte-for-byte what a pre-1b build persisted.
+void SeedLegacyTicket(SQLite::Database& db, const std::string& id, const std::string& summary,
+                      const std::string& rich = std::string()) {
+    {
+        SQLite::Statement ins(db, "INSERT OR REPLACE INTO tickets (id) VALUES (?)");
+        ins.bind(1, id);
+        ins.exec();
+    }
+    {
+        SQLite::Statement ins(db, "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) "
+                                  "VALUES (?, 'summary', ?)");
+        ins.bind(1, id);
+        ins.bind(2, summary);
+        ins.exec();
+    }
+    if (!rich.empty()) {
+        SQLite::Statement ins(db, "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) "
+                                  "VALUES (?, 'description', ?)");
+        ins.bind(1, id);
+        ins.bind(2, rich);
+        ins.exec();
+    }
+}
+
+void CreateLegacySchema(SQLite::Database& db) {
+    db.exec("CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY)");
+    db.exec("CREATE TABLE IF NOT EXISTS ticket_field_values ("
+            "ticket_id TEXT NOT NULL, field_key TEXT NOT NULL, field_value TEXT, "
+            "PRIMARY KEY(ticket_id, field_key))");
+    db.exec("CREATE TABLE IF NOT EXISTS ticket_field_rich_values ("
+            "ticket_id TEXT NOT NULL, field_key TEXT NOT NULL, field_value TEXT, "
+            "PRIMARY KEY(ticket_id, field_key))");
+}
+
+int CountRows(SQLite::Database& db, const char* table) {
+    const std::string sql = std::string("SELECT COUNT(*) FROM ") + table;
+    SQLite::Statement q(db, sql);
+    REQUIRE(q.executeStep());
+    return q.getColumn(0).getInt();
+}
+
+} // namespace
+
+TEST_CASE("tickets_v2 migration: legacy rows copy into v2 stamped with the configured backend key, read-back equal, "
+          "legacy tables retained" *
+          doctest::test_suite("[high-risk]")) {
+    TempDbFile tmp;
+    {
+        // Pre-migration fixture: ONLY the legacy schema + rows, exactly as a pre-1b build left it.
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        CreateLegacySchema(raw);
+        SeedLegacyTicket(raw, "ABC-1", "first summary", "{\"version\":1,\"type\":\"doc\"}");
+        SeedLegacyTicket(raw, "ABC-2", "second summary");
+    }
+
+    LocalCacheManager mgr(tmp.Path());
+    const size_t copied = mgr.RunOneTimeTicketsV2CopyMigration("Jira");
+    CHECK(copied == 2);
+
+    // Read-back equality through the v2-backed read paths.
+    CachedTicket got;
+    REQUIRE(mgr.TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "first summary");
+    CHECK(got.fieldRichValues["description"] == "{\"version\":1,\"type\":\"doc\"}");
+    REQUIRE(mgr.TryGetTicket("Jira", "ABC-2", got));
+    CHECK(got.fieldValues["summary"] == "second summary");
+    CHECK(got.fieldRichValues.empty());
+    CHECK(mgr.GetAllTicketIds("Jira").size() == 2);
+    CHECK(mgr.GetAllTickets("Jira").size() == 2);
+
+    // Rows are namespaced — a different backend key sees nothing.
+    CHECK_FALSE(mgr.TryGetTicket("Plane", "ABC-1", got));
+    CHECK(mgr.GetAllTicketIds("Plane").empty());
+
+    // Legacy v1 tables are still present and untouched (additive-only invariant — no DROP).
+    {
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READONLY);
+        CHECK(CountRows(raw, "tickets") == 2);
+        CHECK(CountRows(raw, "ticket_field_values") == 2);
+        CHECK(CountRows(raw, "ticket_field_rich_values") == 1);
+    }
+}
+
+TEST_CASE("tickets_v2 migration: cache_meta flag makes the copy idempotent (no double-copy)" *
+          doctest::test_suite("[high-risk]")) {
+    TempDbFile tmp;
+    {
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        CreateLegacySchema(raw);
+        SeedLegacyTicket(raw, "ABC-1", "original");
+    }
+
+    {
+        LocalCacheManager mgr(tmp.Path());
+        CHECK(mgr.RunOneTimeTicketsV2CopyMigration("Jira") == 1);
+        // Same-process re-run: flag short-circuits.
+        CHECK(mgr.RunOneTimeTicketsV2CopyMigration("Jira") == 0);
+    }
+
+    // A legacy row written AFTER the migration (e.g. hand-edited DB) must NOT be swept in by a
+    // later run — the flag persists across reopen.
+    {
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE);
+        SeedLegacyTicket(raw, "LATE-1", "late row");
+    }
+    {
+        LocalCacheManager mgr(tmp.Path());
+        CHECK(mgr.RunOneTimeTicketsV2CopyMigration("Jira") == 0);
+        CachedTicket got;
+        CHECK_FALSE(mgr.TryGetTicket("Jira", "LATE-1", got));
+        REQUIRE(mgr.TryGetTicket("Jira", "ABC-1", got));
+        CHECK(got.fieldValues["summary"] == "original");
+    }
+}
+
+TEST_CASE("tickets_v2 migration: empty backend key skips without consuming the one-time flag") {
+    TempDbFile tmp;
+    {
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        CreateLegacySchema(raw);
+        SeedLegacyTicket(raw, "ABC-1", "kept");
+    }
+    LocalCacheManager mgr(tmp.Path());
+    CHECK(mgr.RunOneTimeTicketsV2CopyMigration(std::string()) == 0);
+    // The guard left the flag unset — a later properly-keyed call still migrates.
+    CHECK(mgr.RunOneTimeTicketsV2CopyMigration("GitHub") == 1);
+    CachedTicket got;
+    REQUIRE(mgr.TryGetTicket("GitHub", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "kept");
+}
+
+TEST_CASE("tickets_v2 namespacing: same numeric id under two backend keys stays disjoint "
+          "(GitHub #123 vs Plane 123 collision class)" *
+          doctest::test_suite("[high-risk]")) {
+    SqliteMemFixture fix;
+
+    CachedTicket gh;
+    gh.id = "123";
+    gh.fieldValues["summary"] = "github issue";
+    gh.fieldRichValues["description"] = "<p>gh</p>";
+    CachedTicket plane;
+    plane.id = "123";
+    plane.fieldValues["summary"] = "plane work item";
+
+    fix.Ref().SaveTicket("GitHub", gh);
+    fix.Ref().SaveTicket("Plane", plane);
+
+    // Same id, two namespaces, two independent rows.
+    CachedTicket got;
+    REQUIRE(fix.Ref().TryGetTicket("GitHub", "123", got));
+    CHECK(got.fieldValues["summary"] == "github issue");
+    CHECK(got.fieldRichValues["description"] == "<p>gh</p>");
+    REQUIRE(fix.Ref().TryGetTicket("Plane", "123", got));
+    CHECK(got.fieldValues["summary"] == "plane work item");
+    CHECK(got.fieldRichValues.empty());
+
+    CHECK(fix.Ref().GetAllTicketIds("GitHub").size() == 1);
+    CHECK(fix.Ref().GetAllTicketIds("Plane").size() == 1);
+
+    // A re-save under one key must not clobber the other's field snapshot.
+    CachedTicket ghRevised;
+    ghRevised.id = "123";
+    ghRevised.fieldValues["summary"] = "github revised";
+    fix.Ref().SaveTicket("GitHub", ghRevised);
+    REQUIRE(fix.Ref().TryGetTicket("Plane", "123", got));
+    CHECK(got.fieldValues["summary"] == "plane work item");
+
+    // The stale-deletion hazard from the design § 3.4: pane A deleting "123" must not delete
+    // pane B's row.
+    fix.Ref().DeleteTicket("GitHub", "123");
+    CHECK_FALSE(fix.Ref().TryGetTicket("GitHub", "123", got));
+    REQUIRE(fix.Ref().TryGetTicket("Plane", "123", got));
+    CHECK(got.fieldValues["summary"] == "plane work item");
+
+    // Scoped streaming read sees only its own namespace.
+    int planeCount = 0;
+    fix.Ref().ForEachTicket("Plane", [&](CachedTicket&& t) {
+        ++planeCount;
+        CHECK(t.id == "123");
+    });
+    CHECK(planeCount == 1);
+    int ghCount = 0;
+    fix.Ref().ForEachTicket("GitHub", [&](CachedTicket&& t) {
+        (void)t;
+        ++ghCount;
+    });
+    CHECK(ghCount == 0);
+}

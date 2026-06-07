@@ -58,6 +58,13 @@ class ITicketSyncDeps {
     /// Factory for creating fresh `ITrackerBackend` instances when the tracker type changes.
     /// May be null if `Initialize` has not yet wired the default factory.
     virtual ITrackerBackendFactory* BackendFactory() = 0;
+    /// Backend-key namespace for every LocalCacheManager ticket read/write (multi-grid Slice 1b,
+    /// ADR-0018 decision 4). Returns a copy — callable from worker threads while the UI thread
+    /// rewrites the key on a tracker swap. Shared (same override) with `IOfflineQueueDeps`.
+    virtual std::string CacheBackendKey() const = 0;
+    /// Re-stamp the namespace after a backend-kind swap (`SwapBackendIfTrackerChanged`). The
+    /// value MUST be `ConfigManager::NormalizeViewsBackendKey` output.
+    virtual void SetCacheBackendKey(const std::string& key) = 0;
 
     // ---- Connectivity + sync-warning banner -------------------------------------------
     virtual void SetLastTrackerTicketSyncWarning(const std::string& message) = 0;

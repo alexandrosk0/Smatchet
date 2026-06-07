@@ -87,6 +87,30 @@ void InitFieldEditQueueSchema(SQLite::Database& db) {
             "ON pending_field_edits_dead(archived_at DESC)");
 }
 
+// Creates the backend-key-namespaced ticket table family (multi-grid Slice 1b, ADR-0018
+// decision 4). The PK change (id → (backend_key, id)) cannot be done additively in place, so
+// the v2 tables are a versioned step; the legacy `tickets` / `ticket_field_values` /
+// `ticket_field_rich_values` tables are retained on disk unused (Persistence additive-only
+// invariant — no DROP/RENAME). The PK prefix covers all per-backend lookups — no extra indices.
+void InitTicketsV2Schema(SQLite::Database& db) {
+    db.exec("CREATE TABLE IF NOT EXISTS tickets_v2 ("
+            "backend_key TEXT NOT NULL, "
+            "id TEXT NOT NULL, "
+            "PRIMARY KEY(backend_key, id))");
+    db.exec("CREATE TABLE IF NOT EXISTS ticket_field_values_v2 ("
+            "backend_key TEXT NOT NULL, "
+            "ticket_id TEXT NOT NULL, "
+            "field_key TEXT NOT NULL, "
+            "field_value TEXT, "
+            "PRIMARY KEY(backend_key, ticket_id, field_key))");
+    db.exec("CREATE TABLE IF NOT EXISTS ticket_field_rich_values_v2 ("
+            "backend_key TEXT NOT NULL, "
+            "ticket_id TEXT NOT NULL, "
+            "field_key TEXT NOT NULL, "
+            "field_value TEXT, "
+            "PRIMARY KEY(backend_key, ticket_id, field_key))");
+}
+
 } // namespace
 
 LocalCacheManager::LocalCacheManager(const std::string& dbPath)
@@ -101,6 +125,9 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager: failed to set WAL pragmas: %s", ex.what());
     }
+    // Legacy v1 ticket tables — created for back-compat with the one-time v2 copy migration
+    // (RunOneTimeTicketsV2CopyMigration reads them) and retained on disk unused afterwards
+    // (Persistence additive-only invariant). All live reads/writes target the v2 family below.
     db.exec("CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY)");
     db.exec("CREATE TABLE IF NOT EXISTS ticket_field_values ("
             "ticket_id TEXT NOT NULL, "
@@ -115,6 +142,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "field_key TEXT NOT NULL, "
             "field_value TEXT, "
             "PRIMARY KEY(ticket_id, field_key))");
+    InitTicketsV2Schema(db);
     db.exec("CREATE TABLE IF NOT EXISTS pending_creates ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "payload TEXT NOT NULL, "
@@ -171,59 +199,67 @@ SQLite::Statement& LocalCacheManager::stmt(std::unique_ptr<SQLite::Statement>& s
 // AND an enclosing SQLite::Transaction is active (SaveTicket / SaveTickets own the txn). Each
 // single-bind statement is reset()+clearBindings() after exec so it can be rebound for the next
 // ticket when called in a batch loop (SaveTickets).
-void LocalCacheManager::writeTicketRows_(const CachedTicket& ticket) {
-    auto& ticketUpsert = stmt(stmt_save_upsert_ticket_, "INSERT OR REPLACE INTO tickets (id) VALUES (?)");
-    ticketUpsert.bind(1, ticket.id);
+void LocalCacheManager::writeTicketRows_(const std::string& backendKey, const CachedTicket& ticket) {
+    auto& ticketUpsert =
+        stmt(stmt_save_upsert_ticket_, "INSERT OR REPLACE INTO tickets_v2 (backend_key, id) VALUES (?, ?)");
+    ticketUpsert.bind(1, backendKey);
+    ticketUpsert.bind(2, ticket.id);
     ticketUpsert.exec();
     ticketUpsert.reset();
     ticketUpsert.clearBindings();
 
     // Keep selected field cache rows in sync with latest snapshot for this ticket.
-    auto& deleteFields = stmt(stmt_save_delete_fields_, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
-    deleteFields.bind(1, ticket.id);
+    auto& deleteFields =
+        stmt(stmt_save_delete_fields_, "DELETE FROM ticket_field_values_v2 WHERE backend_key = ? AND ticket_id = ?");
+    deleteFields.bind(1, backendKey);
+    deleteFields.bind(2, ticket.id);
     deleteFields.exec();
     deleteFields.reset();
     deleteFields.clearBindings();
 
-    auto& fieldUpsert =
-        stmt(stmt_save_insert_field_,
-             "INSERT OR REPLACE INTO ticket_field_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+    auto& fieldUpsert = stmt(stmt_save_insert_field_,
+                             "INSERT OR REPLACE INTO ticket_field_values_v2 (backend_key, ticket_id, field_key, "
+                             "field_value) VALUES (?, ?, ?, ?)");
     for (const auto& kv : ticket.fieldValues) {
-        fieldUpsert.bind(1, ticket.id);
-        fieldUpsert.bind(2, kv.first);
-        fieldUpsert.bind(3, kv.second);
+        fieldUpsert.bind(1, backendKey);
+        fieldUpsert.bind(2, ticket.id);
+        fieldUpsert.bind(3, kv.first);
+        fieldUpsert.bind(4, kv.second);
         fieldUpsert.exec();
         fieldUpsert.reset();
         fieldUpsert.clearBindings();
     }
 
     // Mirror the rich-value table.
-    auto& deleteRich = stmt(stmt_save_delete_rich_, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
-    deleteRich.bind(1, ticket.id);
+    auto& deleteRich =
+        stmt(stmt_save_delete_rich_, "DELETE FROM ticket_field_rich_values_v2 WHERE backend_key = ? AND ticket_id = ?");
+    deleteRich.bind(1, backendKey);
+    deleteRich.bind(2, ticket.id);
     deleteRich.exec();
     deleteRich.reset();
     deleteRich.clearBindings();
 
-    auto& richUpsert =
-        stmt(stmt_save_insert_rich_,
-             "INSERT OR REPLACE INTO ticket_field_rich_values (ticket_id, field_key, field_value) VALUES (?, ?, ?)");
+    auto& richUpsert = stmt(stmt_save_insert_rich_,
+                            "INSERT OR REPLACE INTO ticket_field_rich_values_v2 (backend_key, ticket_id, field_key, "
+                            "field_value) VALUES (?, ?, ?, ?)");
     for (const auto& kv : ticket.fieldRichValues) {
         if (kv.second.empty())
             continue;
-        richUpsert.bind(1, ticket.id);
-        richUpsert.bind(2, kv.first);
-        richUpsert.bind(3, kv.second);
+        richUpsert.bind(1, backendKey);
+        richUpsert.bind(2, ticket.id);
+        richUpsert.bind(3, kv.first);
+        richUpsert.bind(4, kv.second);
         richUpsert.exec();
         richUpsert.reset();
         richUpsert.clearBindings();
     }
 }
 
-void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
+void LocalCacheManager::SaveTicket(const std::string& backendKey, const CachedTicket& ticket) {
     std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
     try {
         SQLite::Transaction transaction(db);
-        writeTicketRows_(ticket);
+        writeTicketRows_(backendKey, ticket);
         transaction.commit();
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::SaveTicket failed ticket=%s err=%s", ticket.id.c_str(), ex.what());
@@ -235,7 +271,7 @@ void LocalCacheManager::SaveTicket(const CachedTicket& ticket) {
 // of tickets in ONE transaction (the streaming-sync apply loop used to open a separate
 // SQLite::Transaction per ticket — up to 20 commits/frame on the UI thread). Reuses the cached
 // prepared statements across the batch.
-void LocalCacheManager::SaveTickets(const std::vector<CachedTicket>& tickets) {
+void LocalCacheManager::SaveTickets(const std::string& backendKey, const std::vector<CachedTicket>& tickets) {
     if (tickets.empty()) {
         return;
     }
@@ -243,7 +279,7 @@ void LocalCacheManager::SaveTickets(const std::vector<CachedTicket>& tickets) {
     try {
         SQLite::Transaction transaction(db);
         for (const auto& ticket : tickets) {
-            writeTicketRows_(ticket);
+            writeTicketRows_(backendKey, ticket);
         }
         transaction.commit();
     } catch (const std::exception& ex) {
@@ -252,27 +288,30 @@ void LocalCacheManager::SaveTickets(const std::vector<CachedTicket>& tickets) {
     }
 }
 
-bool LocalCacheManager::TryGetTicket(const std::string& ticketId, CachedTicket& out) {
+bool LocalCacheManager::TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) {
     std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
     out = CachedTicket{};
     out.id = ticketId;
     try {
-        auto& exists = stmt(stmt_get_exists_, "SELECT 1 FROM tickets WHERE id = ? LIMIT 1");
-        exists.bind(1, ticketId);
+        auto& exists = stmt(stmt_get_exists_, "SELECT 1 FROM tickets_v2 WHERE backend_key = ? AND id = ? LIMIT 1");
+        exists.bind(1, backendKey);
+        exists.bind(2, ticketId);
         if (!exists.executeStep()) {
             return false;
         }
-        auto& fieldQuery =
-            stmt(stmt_get_fields_, "SELECT field_key, field_value FROM ticket_field_values WHERE ticket_id = ?");
-        fieldQuery.bind(1, ticketId);
+        auto& fieldQuery = stmt(stmt_get_fields_, "SELECT field_key, field_value FROM ticket_field_values_v2 "
+                                                  "WHERE backend_key = ? AND ticket_id = ?");
+        fieldQuery.bind(1, backendKey);
+        fieldQuery.bind(2, ticketId);
         while (fieldQuery.executeStep()) {
             const std::string fieldKey = fieldQuery.getColumn(0).getText();
             out.fieldValues[fieldKey] =
                 fieldQuery.getColumn(1).isNull() ? std::string() : std::string(fieldQuery.getColumn(1).getText());
         }
-        auto& richQuery =
-            stmt(stmt_get_rich_, "SELECT field_key, field_value FROM ticket_field_rich_values WHERE ticket_id = ?");
-        richQuery.bind(1, ticketId);
+        auto& richQuery = stmt(stmt_get_rich_, "SELECT field_key, field_value FROM ticket_field_rich_values_v2 "
+                                               "WHERE backend_key = ? AND ticket_id = ?");
+        richQuery.bind(1, backendKey);
+        richQuery.bind(2, ticketId);
         while (richQuery.executeStep()) {
             const std::string fieldKey = richQuery.getColumn(0).getText();
             out.fieldRichValues[fieldKey] =
@@ -285,17 +324,22 @@ bool LocalCacheManager::TryGetTicket(const std::string& ticketId, CachedTicket& 
     }
 }
 
-void LocalCacheManager::DeleteTicket(const std::string& ticketId) {
+void LocalCacheManager::DeleteTicket(const std::string& backendKey, const std::string& ticketId) {
     try {
         SQLite::Transaction transaction(db);
-        SQLite::Statement deleteFields(db, "DELETE FROM ticket_field_values WHERE ticket_id = ?");
-        deleteFields.bind(1, ticketId);
+        SQLite::Statement deleteFields(db,
+                                       "DELETE FROM ticket_field_values_v2 WHERE backend_key = ? AND ticket_id = ?");
+        deleteFields.bind(1, backendKey);
+        deleteFields.bind(2, ticketId);
         deleteFields.exec();
-        SQLite::Statement deleteRichFields(db, "DELETE FROM ticket_field_rich_values WHERE ticket_id = ?");
-        deleteRichFields.bind(1, ticketId);
+        SQLite::Statement deleteRichFields(
+            db, "DELETE FROM ticket_field_rich_values_v2 WHERE backend_key = ? AND ticket_id = ?");
+        deleteRichFields.bind(1, backendKey);
+        deleteRichFields.bind(2, ticketId);
         deleteRichFields.exec();
-        SQLite::Statement deleteTicket(db, "DELETE FROM tickets WHERE id = ?");
-        deleteTicket.bind(1, ticketId);
+        SQLite::Statement deleteTicket(db, "DELETE FROM tickets_v2 WHERE backend_key = ? AND id = ?");
+        deleteTicket.bind(1, backendKey);
+        deleteTicket.bind(2, ticketId);
         deleteTicket.exec();
         transaction.commit();
     } catch (const std::exception& ex) {
@@ -304,10 +348,11 @@ void LocalCacheManager::DeleteTicket(const std::string& ticketId) {
     }
 }
 
-std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
+std::vector<CachedTicket> LocalCacheManager::GetAllTickets(const std::string& backendKey) {
     try {
         std::vector<CachedTicket> results;
-        SQLite::Statement query(db, "SELECT id FROM tickets");
+        SQLite::Statement query(db, "SELECT id FROM tickets_v2 WHERE backend_key = ?");
+        query.bind(1, backendKey);
         while (query.executeStep()) {
             CachedTicket ticket;
             ticket.id = query.getColumn(0).getText();
@@ -320,7 +365,9 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
         }
 
         size_t orphanRows = 0;
-        SQLite::Statement fieldQuery(db, "SELECT ticket_id, field_key, field_value FROM ticket_field_values");
+        SQLite::Statement fieldQuery(
+            db, "SELECT ticket_id, field_key, field_value FROM ticket_field_values_v2 WHERE backend_key = ?");
+        fieldQuery.bind(1, backendKey);
         while (fieldQuery.executeStep()) {
             const std::string ticketId = fieldQuery.getColumn(0).getText();
             const auto it = indexById.find(ticketId);
@@ -338,7 +385,9 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
             LOG_WARN("LocalCacheManager::GetAllTickets ignored orphan field rows=%zu", orphanRows);
         }
 
-        SQLite::Statement richQuery(db, "SELECT ticket_id, field_key, field_value FROM ticket_field_rich_values");
+        SQLite::Statement richQuery(
+            db, "SELECT ticket_id, field_key, field_value FROM ticket_field_rich_values_v2 WHERE backend_key = ?");
+        richQuery.bind(1, backendKey);
         while (richQuery.executeStep()) {
             const std::string ticketId = richQuery.getColumn(0).getText();
             const auto it = indexById.find(ticketId);
@@ -356,16 +405,20 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets() {
     }
 }
 
-void LocalCacheManager::ForEachTicket(const std::function<void(CachedTicket&&)>& fn) {
+void LocalCacheManager::ForEachTicket(const std::string& backendKey, const std::function<void(CachedTicket&&)>& fn) {
     try {
         // Join tickets with their field values and rich values in one pass per ticket to avoid
         // materialising the entire result set into memory (§4.3).
-        SQLite::Statement q(
-            db, "SELECT t.id, fv.field_key, fv.field_value, rv.field_key, rv.field_value "
-                "FROM tickets t "
-                "LEFT JOIN ticket_field_values fv ON fv.ticket_id = t.id "
-                "LEFT JOIN ticket_field_rich_values rv ON rv.ticket_id = t.id AND rv.field_key = fv.field_key "
-                "ORDER BY t.id");
+        SQLite::Statement q(db, "SELECT t.id, fv.field_key, fv.field_value, rv.field_key, rv.field_value "
+                                "FROM tickets_v2 t "
+                                "LEFT JOIN ticket_field_values_v2 fv "
+                                "  ON fv.backend_key = t.backend_key AND fv.ticket_id = t.id "
+                                "LEFT JOIN ticket_field_rich_values_v2 rv "
+                                "  ON rv.backend_key = t.backend_key AND rv.ticket_id = t.id "
+                                "  AND rv.field_key = fv.field_key "
+                                "WHERE t.backend_key = ? "
+                                "ORDER BY t.id");
+        q.bind(1, backendKey);
         CachedTicket cur;
         while (q.executeStep()) {
             const std::string id = q.getColumn(0).getText();
@@ -391,16 +444,66 @@ void LocalCacheManager::ForEachTicket(const std::function<void(CachedTicket&&)>&
     }
 }
 
-std::vector<std::string> LocalCacheManager::GetAllTicketIds() {
+std::vector<std::string> LocalCacheManager::GetAllTicketIds(const std::string& backendKey) {
     try {
         std::vector<std::string> results;
-        SQLite::Statement query(db, "SELECT id FROM tickets");
+        SQLite::Statement query(db, "SELECT id FROM tickets_v2 WHERE backend_key = ?");
+        query.bind(1, backendKey);
         while (query.executeStep()) {
             results.push_back(query.getColumn(0).getText());
         }
         return results;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::GetAllTicketIds failed err=%s", ex.what());
+        throw;
+    }
+}
+
+size_t LocalCacheManager::RunOneTimeTicketsV2CopyMigration(const std::string& backendKey) {
+    // Corrupt/unwired-key guard: never stamp rows with an empty namespace — leave the flag
+    // unset so a later call with a real key still migrates.
+    if (backendKey.empty()) {
+        LOG_WARN("LocalCacheManager::RunOneTimeTicketsV2CopyMigration skipped: empty backendKey");
+        return 0;
+    }
+    try {
+        constexpr const char* kKey = "tickets_v2_copy_migration_v1";
+        SQLite::Transaction transaction(db);
+        SQLite::Statement probe(db, "SELECT 1 FROM cache_meta WHERE key = ? LIMIT 1");
+        probe.bind(1, kKey);
+        if (probe.executeStep()) {
+            transaction.commit();
+            return 0;
+        }
+        // INSERT OR IGNORE keeps the copy idempotent against a partially-written v2 state
+        // (e.g. a crash between copy and flag-set on a previous run).
+        SQLite::Statement copyTickets(db, "INSERT OR IGNORE INTO tickets_v2 (backend_key, id) "
+                                          "SELECT ?, id FROM tickets");
+        copyTickets.bind(1, backendKey);
+        copyTickets.exec();
+        const int copied = db.getChanges();
+        SQLite::Statement copyFields(db, "INSERT OR IGNORE INTO ticket_field_values_v2 "
+                                         "(backend_key, ticket_id, field_key, field_value) "
+                                         "SELECT ?, ticket_id, field_key, field_value FROM ticket_field_values");
+        copyFields.bind(1, backendKey);
+        copyFields.exec();
+        SQLite::Statement copyRich(db, "INSERT OR IGNORE INTO ticket_field_rich_values_v2 "
+                                       "(backend_key, ticket_id, field_key, field_value) "
+                                       "SELECT ?, ticket_id, field_key, field_value FROM ticket_field_rich_values");
+        copyRich.bind(1, backendKey);
+        copyRich.exec();
+        SQLite::Statement ins(db, "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, '1')");
+        ins.bind(1, kKey);
+        ins.exec();
+        transaction.commit();
+        if (copied > 0) {
+            LOG_INFO("LocalCacheManager::RunOneTimeTicketsV2CopyMigration copied rows=%d backend_key=%s", copied,
+                     backendKey.c_str());
+        }
+        return copied > 0 ? static_cast<size_t>(copied) : 0u;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::RunOneTimeTicketsV2CopyMigration failed backend_key=%s err=%s",
+                  backendKey.c_str(), ex.what());
         throw;
     }
 }

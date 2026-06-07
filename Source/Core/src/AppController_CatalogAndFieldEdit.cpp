@@ -53,8 +53,8 @@ bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
 
 void AppController::RefreshLocalData() {
     if (Cache) {
-        auto latestTickets = Cache->GetAllTickets();
         GridLiveContext& ctx = focusedContext();
+        auto latestTickets = Cache->GetAllTickets(ctx.CacheBackendKeyCopy());
         {
             std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
             ctx.ActiveTickets = std::move(latestTickets);
@@ -82,7 +82,7 @@ void AppController::RefreshLocalDataAndWarmIssueTypeMeta() {
 
 void AppController::UpdateTicket(const CachedTicket& ticket) {
     if (Cache) {
-        Cache->SaveTicket(ticket);
+        Cache->SaveTicket(focusedContext().CacheBackendKeyCopy(), ticket);
         RefreshLocalData(); // Push changes back to ActiveTickets vector
     }
 }

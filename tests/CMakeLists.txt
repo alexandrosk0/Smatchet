@@ -104,6 +104,11 @@ add_executable(SmatchetTests
     Core/CppSyntaxLex.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxLex.cpp"
     Core/LocalCacheManager.test.cpp
+    # Multi-grid Slice 1b (ADR-0018) — tickets_v2 backend-key namespacing: one-time copy
+    # migration round-trip on a pre-migration fixture DB, idempotence via cache_meta flag,
+    # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
+    # already pulled in below.
+    Core/LocalCacheTicketsV2Migration.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).

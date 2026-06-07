@@ -50,9 +50,13 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
             t();
     };
 
+    /// Cache namespace handed to ticket-cache reads/writes during replay (multi-grid Slice 1b).
+    std::string CacheBackendKeyImpl{"Jira"};
+
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
     ITrackerIssueReader* Reader() override { return BackendImpl.get(); }
     ITrackerIssueMutations* Mutations() override { return BackendImpl.get(); }
+    std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }
     RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/, const std::string& /*issueTypeId*/,
                                          const std::string& /*issueTypeName*/) const override {

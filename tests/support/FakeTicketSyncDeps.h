@@ -59,6 +59,10 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     int WarmIssueTypeEditMetaCalls = 0;
     int NotifyLuaCalls = 0;
     bool PendingLuaWindowBumpImpl = false;
+    /// Cache namespace handed to every LocalCacheManager ticket call (multi-grid Slice 1b).
+    /// Default matches the Jira FakeTrackerClient so SwapBackendIfTrackerChanged's re-stamp
+    /// (NormalizeViewsBackendKey) is a no-op for single-backend tests.
+    std::string CacheBackendKeyImpl{"Jira"};
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
     ITrackerIssueReader* Backend() override { return BackendImpl ? &BackendImpl->Reader() : nullptr; }
@@ -67,6 +71,8 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     }
     void SetBackend(std::unique_ptr<ITrackerBackend> backend) override { BackendImpl = std::move(backend); }
     ITrackerBackendFactory* BackendFactory() override { return Factory.get(); }
+    std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
+    void SetCacheBackendKey(const std::string& key) override { CacheBackendKeyImpl = key; }
 
     void SetLastTrackerTicketSyncWarning(const std::string& message) override {
         LastTrackerTicketSyncWarning = message;

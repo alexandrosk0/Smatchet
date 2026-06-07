@@ -1113,7 +1113,10 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, LocalCacheMan
     const RequiredFieldSet required =
         depsRef.GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
     tally.RanCreate = true;
-    IssueCreateResult result = IssueCreatePipeline::Run(*mutations, cache, draft, required, catalog);
+    // The deps backend-key getter hands back a mutex-guarded copy — safe from this replay
+    // background task; it scopes only the ticket-cache seeding (queue rows are Slice 1c).
+    IssueCreateResult result =
+        IssueCreatePipeline::Run(*mutations, cache, depsRef.CacheBackendKey(), draft, required, catalog);
     if (result.Ok) {
         if (RunCreateCacheMutation(
                 "delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); }, tally)) {

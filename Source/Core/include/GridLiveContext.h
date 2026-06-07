@@ -41,13 +41,29 @@ struct GridLiveContext {
     /// AppController::activeTicketsMutex_).
     mutable std::mutex activeTicketsMutex_;
 
-    /// Cache/queue namespacing key (NormalizeViewsBackendKey output). Declared in Slice 1a;
-    /// populated and consumed by Slices 1b and 1c. Empty until then.
-    std::string backendKey;
+    /// Cache/queue namespacing key (NormalizeViewsBackendKey output). Wired in Slice 1b:
+    /// set from the resolved tracker type at backend init and on every backend-kind swap;
+    /// every LocalCacheManager ticket call scopes its rows with it. Reads cross threads
+    /// (Lua automation worker, streaming-sync worker) while the UI thread may rewrite it on
+    /// a tracker swap — access ONLY via the mutex-guarded accessors below.
+    std::string CacheBackendKeyCopy() const {
+        std::lock_guard<std::mutex> lk(backendKeyMutex_);
+        return backendKey;
+    }
+    void SetCacheBackendKey(const std::string& key) {
+        std::lock_guard<std::mutex> lk(backendKeyMutex_);
+        backendKey = key;
+    }
     /// Resolved field-catalog cache key for this context (backend, endpoint, project).
     /// Declared in Slice 1a; consumed when the catalog moves per-context in Slice 3.
     std::string catalogKey;
 
+  private:
+    /// Guarded by backendKeyMutex_ — see CacheBackendKeyCopy/SetCacheBackendKey above.
+    std::string backendKey;
+    mutable std::mutex backendKeyMutex_;
+
+  public:
     /// Owns the streaming-sync FSM (worker thread, batch queue, supersede/cancel) and applies
     /// fetched batches to the cache. Declared LAST so it is destroyed FIRST: teardown joins
     /// the sync worker while Backend and the active-ticket state above are still alive.
