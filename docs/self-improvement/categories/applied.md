@@ -9,6 +9,11 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-06-07 · orchestrator · [tooling] · P2 — `scenario.run` rows emit no `p99Ms` → the Pillar-1 `p99_abs_ceiling_ms` policy check is structurally inert
+  Resolution: **applied by PR #949** (merged 2026-06-07) — per-scope 256-sample ring (`PerfSampleRing.h`) in `UiPerfMonitor`; `p99Ms` computed at snapshot time (cold path, `nth_element`) and emitted by `perf.snapshot`/`perf.dump` + all 14 scenario serializers (per-frame samplers stay on the cheap path per CR #949 #1). Live probe: 33/33 idle rows carry p99; `perf-compare.py` one-sided compare proven exit 0. Committed baselines gain p99 on their next bump.
+  Status: applied
+  Last-reviewed: 2026-06-07
+
 - 2026-06-06 · orchestrator · [tooling] · P2 — `guard-head-drift.sh` blocks an integration-tree-rooted session from committing into a worktree it created (no clean mid-session override); PowerShell tool bypassed the guard entirely
   Resolution: **applied 2026-06-07** (option (a) + the PowerShell gap, branch `feat/guard-head-drift-fix`) — `docs/harness/claude-code/hooks/guard-head-drift.sh` gained `all_git_ops_target_safe_worktree()`: a `git -C <path> commit` (and, when drifted, any -C-targeted HEAD-moving op) is ALLOWED when every matched invocation's `-C` target is a linked worktree (`.git` is a file) on a non-protected branch; -C-less / integration-target / protected-branch / mixed compounds stay denied. The hook's case now matches `Bash|PowerShell`, and `settings.json.tmpl` adds `PowerShell` matcher groups (separate groups, not a `Bash|PowerShell` rename — the additive `sync-settings-hooks.sh` keys on the matcher string and a rename would double-fire deployed files) for guard-head-drift + guard-shared-tree + clear-tree-dirty (PreToolUse) and autoregister-pr + resync-head-baseline (PostToolUse). Regression suite: `tests/bats/guard_head_drift.bats` (14 cases) + `agents/scripts/core/test-guard-head-drift-bats.sh` wrapper (test-all auto-enrolled). Option (c) note: relaunching via `nsc <slug>` remains the preferred flow; this fix removes the false-block when the orchestrator legitimately ships from a worktree it created mid-session. Cross-ref: PR #916, PR #936.
   Status: applied

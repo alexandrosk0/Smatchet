@@ -1226,6 +1226,16 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
         // so the next launch retries; the session continues with whatever v2 already holds.
         LOG_ERROR("AppController::InitConfig tickets_v2 copy migration failed: %s", ex.what());
     }
+    // Multi-grid Slice 1c (ADR-0018 decision 4): backfill the pending-queue backend_key columns
+    // once — legacy queue rows were necessarily queued against the then-only configured backend.
+    // Runs BEFORE any replay tick so replay matching never sees an un-stamped legacy row.
+    try {
+        (void)Cache->RunOneTimePendingQueueBackendKeyStamp(cacheBackendKey);
+    } catch (const std::exception& ex) {
+        // Same graceful-degradation contract as the copy migration above: the transactional
+        // stamp leaves the flag unset on failure, so the next launch retries.
+        LOG_ERROR("AppController::InitConfig pending-queue backend_key stamp failed: %s", ex.what());
+    }
 
 #if defined(SMATCHET_WITH_AI)
     // Phase 3 of ai-chat-claude-desktop-parity. Start the single coalescing
@@ -2109,6 +2119,9 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
         // Fresh DB — nothing to copy, but stamp the tickets_v2 migration flag so the one-time
         // sweep never runs against rows written after this point (multi-grid Slice 1b).
         (void)Cache->RunOneTimeTicketsV2CopyMigration(focusedContext().CacheBackendKeyCopy());
+        // Same for the pending-queue backend_key stamp (Slice 1c) — fresh DB, nothing to stamp,
+        // but consume the one-time flag so it never runs against rows written after this point.
+        (void)Cache->RunOneTimePendingQueueBackendKeyStamp(focusedContext().CacheBackendKeyCopy());
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::RecreateLocalCacheDatabase legacy cleanup: %s", ex.what());
     } catch (...) {

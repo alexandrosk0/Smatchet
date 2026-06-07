@@ -51,6 +51,11 @@ struct CachedTicket {
 struct PendingCreate {
     std::int64_t Id = 0;
     std::string Payload;
+    /// Backend namespace this create was queued against (NormalizeViewsBackendKey output —
+    /// multi-grid Slice 1c, ADR-0018 decision 4). Stamped at enqueue from the queuing context;
+    /// replay is strict equality against the replaying context's key. Empty only on a
+    /// corrupt/hand-edited DB (the one-time stamp migration backfills legacy rows).
+    std::string BackendKey;
     int Attempts = 0;
     std::string LastError;
     std::int64_t CreatedAtEpochSec = 0;
@@ -65,6 +70,10 @@ struct PendingFieldEditRecord {
     std::string IssueKey;
     std::string FieldId;
     std::string FieldsPayloadJson;
+    /// Backend namespace this edit was queued against (multi-grid Slice 1c, ADR-0018 decision
+    /// 4). Same contract as PendingCreate::BackendKey: stamped at enqueue, strict-equality
+    /// replay match, legacy rows backfilled by the one-time stamp migration.
+    std::string BackendKey;
     /// Original rich-content payload (ADF JSON or HTML) at edit-open time. Used by
     /// `TickOfflineFieldEdits` to perform a 3-way merge with the current server content
     /// before replaying (base=this, mine=FieldsPayloadJson, theirs=server). Empty for
@@ -101,6 +110,9 @@ struct DeadPendingFieldEdit {
     std::string IssueKey;
     std::string FieldId;
     std::string FieldsPayloadJson;
+    /// Backend namespace carried over from the archived pending row (multi-grid Slice 1c) so
+    /// the dead-letter UI can attribute the row and a restore re-queues under the same backend.
+    std::string BackendKey;
     int Attempts = 0;
     std::string LastError;
     std::int64_t CreatedAtEpochSec = 0;
@@ -113,6 +125,9 @@ struct DeadPendingCreate {
     std::int64_t DeadId = 0;
     std::int64_t OriginalId = 0;
     std::string Payload;
+    /// Backend namespace carried over from the archived pending row (multi-grid Slice 1c) so
+    /// the dead-letter UI can attribute the row and a restore re-queues under the same backend.
+    std::string BackendKey;
     int Attempts = 0;
     std::string LastError;
     std::int64_t CreatedAtEpochSec = 0;
