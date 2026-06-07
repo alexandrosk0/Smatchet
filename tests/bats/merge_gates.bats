@@ -194,6 +194,23 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "non-required allow-listed Coverage FAILURE blocks (gate-escape #923 fix)" {
+    # A non-required check whose name matches the meant-to-block allow-list
+    # (Coverage / Sanitizer / Bucket-*) must BLOCK even though it is not in
+    # branch_protection.required_contexts. (The "all gates pass" test above keeps
+    # the converse contract: a non-required check NOT on the allow-list still
+    # passes.) Required check kept green so coverage is the sole failure.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Coverage (windows-2022 + OpenCppCoverage)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
 @test "CI pending IN_PROGRESS → return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_pending.json"
     run poll_merge_gates org repo 1
