@@ -1,5 +1,6 @@
 ---
 name: historical-code-review
+version: 1
 description: Review an OLD PR/commit's code, but only the lines it introduced that are STILL ALIVE and UNTOUCHED at HEAD — so re-reviewing history never re-flags code a newer PR already changed or fixed. Use to audit historical product code for surviving bugs/debt without noise from superseded lines. Pairs the deterministic survivor-extractor (agents/scripts/core/historical-review-survivors.sh) with a code-review pass over only the surviving hunks.
 ---
 
@@ -54,7 +55,7 @@ list, no risk of re-flagging fixed code.
 
 ## Routing findings
 
-Per [ADR-0014](../../../docs/adr/0014-github-issues-canonical-for-product-bugs.md):
+Per [ADR-0014](../../../../docs/adr/0014-github-issues-canonical-for-product-bugs.md):
 user-visible product defect / correctness / safety → **GitHub Issue**;
 internal maintainability with no observable defect → **`docs/self-improvement/categories/debt.md`**.
 When sweeping many PRs, batch the log (e.g. all of one 5-PR batch into one

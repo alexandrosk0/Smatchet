@@ -42,8 +42,11 @@ AGAINST=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --pr) PR="${2:-}"; shift 2 ;;
+        --pr=*) PR="${1#*=}"; shift ;;
         --context) CONTEXT="${2:-0}"; shift 2 ;;
+        --context=*) CONTEXT="${1#*=}"; shift ;;
         --against) AGAINST="${2:-}"; shift 2 ;;
+        --against=*) AGAINST="${1#*=}"; shift ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         --*) echo "historical-review-survivors: unknown flag $1" >&2; exit 2 ;;
         *) COMMITISH="$1"; shift ;;
