@@ -73,6 +73,18 @@ size_t FirstNonWhitespace(const std::string& s) {
 // (both carry `Id` + `BackendKey`).
 template <typename RowT>
 void FilterRowsToReplayBackendKey(std::vector<RowT>& rows, const std::string& replayBackendKey, const char* tickName) {
+    if (replayBackendKey.empty()) {
+        // Tick fired before the backend resolved its cache key (CR-951-2). Stay-queued is the
+        // safe outcome — but make the skip visible (once per tick, not per row) instead of
+        // silently dropping every keyed row from the replay set.
+        if (!rows.empty()) {
+            LOG_WARN("OfflineQueueService::%s: replay backend key is empty (tick before backend init?) — "
+                     "%zu queued row(s) skipped this pass, left queued",
+                     tickName, rows.size());
+        }
+        rows.clear();
+        return;
+    }
     std::vector<RowT> matched;
     matched.reserve(rows.size());
     for (auto& row : rows) {
@@ -356,6 +368,10 @@ OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& 
     if (!deps_.Cache() || originalIds.empty()) {
         return summary;
     }
+    // Restored creates are re-queued as FRESH creates: the cache restore applies the
+    // `ExistingIssueKey` + issuekey/key scrub (`IssueDraftHelpers::ScrubFreshCreatePayload`)
+    // INSIDE its own transaction (CR-951-1, CR-959) — atomic with the restore, no full
+    // dead-table pre-load, and no exception path that can skip the scrub.
     for (const std::int64_t id : originalIds) {
         try {
             if (deps_.Cache()->RestoreDeadPendingCreate(id)) {
@@ -382,6 +398,44 @@ OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& 
             BackendAuditTrail::AppendResult("offline_dead_letter_restore", "ui", std::string(), std::to_string(id),
                                             false, "Unknown exception.",
                                             nlohmann::json{{"original_pending_create_id", id}});
+        }
+    }
+    return summary;
+}
+
+AppController::DeadFieldEditRestoreSummary
+OfflineQueueService::RestoreDeadPendingFieldEdits(const std::vector<std::int64_t>& originalIds) {
+    AppController::DeadFieldEditRestoreSummary summary;
+    if (!deps_.Cache() || originalIds.empty()) {
+        return summary;
+    }
+    for (const std::int64_t id : originalIds) {
+        try {
+            if (deps_.Cache()->RestoreDeadPendingFieldEdit(id)) {
+                ++summary.Restored;
+                BackendAuditTrail::AppendResult("offline_dead_letter_restore_field_edit", "ui", std::string(),
+                                                std::to_string(id), true, std::string(),
+                                                nlohmann::json{{"original_pending_field_edit_id", id}});
+            } else {
+                ++summary.Failed;
+                BackendAuditTrail::AppendResult("offline_dead_letter_restore_field_edit", "ui", std::string(),
+                                                std::to_string(id), false, "Row not found.",
+                                                nlohmann::json{{"original_pending_field_edit_id", id}});
+            }
+        } catch (const std::exception& ex) {
+            LOG_ERROR("OfflineQueueService::RestoreDeadPendingFieldEdits id=%lld err=%s", static_cast<long long>(id),
+                      ex.what());
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_letter_restore_field_edit", "ui", std::string(),
+                                            std::to_string(id), false, ex.what(),
+                                            nlohmann::json{{"original_pending_field_edit_id", id}});
+        } catch (...) {
+            LOG_ERROR("OfflineQueueService::RestoreDeadPendingFieldEdits id=%lld unknown exception",
+                      static_cast<long long>(id));
+            ++summary.Failed;
+            BackendAuditTrail::AppendResult("offline_dead_letter_restore_field_edit", "ui", std::string(),
+                                            std::to_string(id), false, "Unknown exception.",
+                                            nlohmann::json{{"original_pending_field_edit_id", id}});
         }
     }
     return summary;
