@@ -16,7 +16,7 @@
 #endif
 
 #include "AppController.h"
-#include "AppControllerDepsAdapter.h"
+#include "GridContextDepsAdapter.h"
 
 #include <algorithm>
 #include <array>
@@ -290,6 +290,9 @@ void LogProcessCwdForScriptsDiagnostics() {
 #endif
 }
 
+// Only referenced from the SMATCHET_WITH_LUA_AUTOMATION init path — guard the
+// definition too, or Lua-off configs (UBSan clang job) fail -Werror,-Wunused-function.
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
 void LogLuaScriptFileProbe(const char* label, const std::string& path) {
 
     if (path.empty()) {
@@ -309,6 +312,7 @@ void LogLuaScriptFileProbe(const char* label, const std::string& path) {
 
              reg ? "yes" : "no", ec ? ec.message().c_str() : "none");
 }
+#endif // SMATCHET_WITH_LUA_AUTOMATION
 
 } // namespace
 
@@ -396,6 +400,17 @@ void AppController::SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> fa
     backendFactory_ = std::move(factory);
 }
 
+// Out-of-line definition: map<int,...>::find binds kDefaultPaneId to a const int&
+// (ODR-use), so the in-class declaration alone is not enough in C++14.
+const int AppController::kDefaultPaneId = 0;
+
+AppController::AppController() {
+    // Multi-grid Slice 1 (ADR-0018): exactly one live context. Created here — not lazily —
+    // so focusedContext() is valid for the controller's entire lifetime (delegators, the
+    // deps adapter, and the destructor all assume the entry exists).
+    gridContexts_[kDefaultPaneId] = std::make_unique<GridLiveContext>();
+}
+
 AppController::~AppController() {
 
     // Shutdown ordering matters here — every background thread that can post to mainThreadDispatcher
@@ -469,26 +484,30 @@ AppController::~AppController() {
 
 std::shared_ptr<const std::vector<CachedTicket>> AppController::GetActiveTicketsSnapshot() const {
 
-    std::lock_guard<std::mutex> lock(activeTicketsMutex_);
+    const GridLiveContext& ctx = focusedContext();
 
-    if (!activeTicketsPublished_) {
+    std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
 
-        activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
+    if (!ctx.activeTicketsPublished_) {
+
+        ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
     }
 
-    return activeTicketsPublished_;
+    return ctx.activeTicketsPublished_;
 }
 
 std::vector<CachedTicket> AppController::GetActiveTickets() const {
 
-    std::lock_guard<std::mutex> lock(activeTicketsMutex_);
+    const GridLiveContext& ctx = focusedContext();
 
-    if (!activeTicketsPublished_) {
+    std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
 
-        activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
+    if (!ctx.activeTicketsPublished_) {
+
+        ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
     }
 
-    return *activeTicketsPublished_;
+    return *ctx.activeTicketsPublished_;
 }
 
 void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive) {
@@ -546,7 +565,7 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
     // Latch a strong handle via atomic_load: this worker reads Backend off the UI thread,
     // which would race a live SetBackend swap on a plain .get(). The shared_ptr also keeps
     // the backend alive for the FetchIssuesForKeys call (ADR 0012).
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
 
     if (!backend) {
 
@@ -1211,7 +1230,7 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // streaming-sync worker via `CancelAndJoinActiveStreamingSync` before any member is
     // destroyed, so the adapter is live for every `deps_.X` call).
     if (!depsAdapter_) {
-        depsAdapter_ = std::make_unique<AppControllerDepsAdapter>(*this);
+        depsAdapter_ = std::make_unique<GridContextDepsAdapter>(*this, focusedContext());
     }
     // Construct OfflineQueueService eagerly so the legacy-pending startup migration below
     // can write to `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).
@@ -1221,8 +1240,8 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // Construct TicketSyncService alongside — its `CancelAndJoinActiveStreamingSync` is called
     // by `RecreateLocalCacheDatabase` (which the legacy-pending cleanup below may trigger),
     // so the service must exist before that path runs (item 11 extraction).
-    if (!ticketSync_) {
-        ticketSync_ = std::make_unique<TicketSyncService>(*depsAdapter_);
+    if (!focusedContext().ticketSync_) {
+        focusedContext().ticketSync_ = std::make_unique<TicketSyncService>(*depsAdapter_);
     }
     // Construct LuaAutomationHost so `AddAutomationLogSink` calls from plugins'
     // OnEarlyInit have a target (item 14 extraction, Phase 1A).
@@ -1304,14 +1323,15 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     }
     // atomic_store: off-thread workers read Backend via std::atomic_load (ADR 0012); a plain
     // assignment would data-race those reads on the shared_ptr instance (C++14).
-    std::atomic_store(&Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
-    if (!Backend) {
+    GridLiveContext& ctx = focusedContext();
+    std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
+    if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {
-        LOG_INFO("AppController: %s backend initialized.", Backend->Connectivity().GetTrackerType().c_str());
+        LOG_INFO("AppController: %s backend initialized.", ctx.Backend->Connectivity().GetTrackerType().c_str());
     }
 
-    const std::string activeTrackerType = Backend ? Backend->Connectivity().GetTrackerType() : "Unknown";
+    const std::string activeTrackerType = ctx.Backend ? ctx.Backend->Connectivity().GetTrackerType() : "Unknown";
 
     RunLegacyStartupSweeps(activeTrackerType);
 
@@ -1389,7 +1409,7 @@ void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType)
             LOG_ERROR("AppController::Initialize legacy-project offline sweep failed: %s", ex.what());
         }
     }
-    if (Backend && Cache && activeTrackerType == "Plane") {
+    if (focusedContext().Backend && Cache && activeTrackerType == "Plane") {
         try {
             static const std::string kPlaneSweepFlag = "legacy_plane_view_swept_v1";
             if (!Cache->HasCacheMetaFlag(kPlaneSweepFlag)) {
@@ -1400,7 +1420,8 @@ void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType)
                 auto bucketIt = disk.Backends.find(backendKey);
                 if (bucketIt != disk.Backends.end()) {
                     for (const ViewDefinition& view : bucketIt->second.Views) {
-                        const std::string extracted = Backend->Connectivity().ExtractProjectFromQuery(view.Jql);
+                        const std::string extracted =
+                            focusedContext().Backend->Connectivity().ExtractProjectFromQuery(view.Jql);
                         if (!extracted.empty()) {
                             continue;
                         }
@@ -1483,7 +1504,7 @@ std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::stri
     // unscoped ("") key when no project resolves (filter-id / cross-project / non-`project=`
     // JQL). Mirrors the grid's StartFieldCatalogFetchAsync scoping so the two key spaces agree.
     std::string projectKeyForCache;
-    if (!Backend) {
+    if (!focusedContext().Backend) {
         return projectKeyForCache;
     }
     try {
@@ -1503,7 +1524,7 @@ std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::stri
                 activeView = &bucket.Views.front();
             }
             if (activeView != nullptr) {
-                projectKeyForCache = Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
+                projectKeyForCache = focusedContext().Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
             }
         }
     } catch (const std::exception& ex) {
@@ -2034,9 +2055,9 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     // 11 extraction: the cancel-and-join clears PendingBatches / BackgroundStaleIds /
     // FetchError / Warning / KeepIds; ResetStaleDeletionState clears the stale-delete
     // counters. Both are no-ops if the service was never `Initialize`d.
-    if (ticketSync_) {
-        ticketSync_->CancelAndJoinActiveStreamingSync();
-        ticketSync_->ResetStaleDeletionState();
+    if (focusedContext().ticketSync_) {
+        focusedContext().ticketSync_->CancelAndJoinActiveStreamingSync();
+        focusedContext().ticketSync_->ResetStaleDeletionState();
     }
 
     Cache.reset();
@@ -2087,7 +2108,7 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
     // Latch via atomic_load: command handlers (MCP / Lua) can call this off the UI thread, so a
     // plain Backend read would race a live SetBackend swap. The shared_ptr also keeps the backend
     // alive across the blocking FetchIssues call (ADR 0012).
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
     if (!backend || !Cache) {
 
         return pack;
@@ -2105,27 +2126,29 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 // Phase 1A of the item 11 extraction. Thin delegators below.
 
 void AppController::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
-    if (ticketSync_) {
-        ticketSync_->ApplyIssueFetchPack(std::move(pack));
+    if (focusedContext().ticketSync_) {
+        focusedContext().ticketSync_->ApplyIssueFetchPack(std::move(pack));
     }
 }
 
 void AppController::CancelAndJoinActiveStreamingSync() {
-    if (ticketSync_) {
-        ticketSync_->CancelAndJoinActiveStreamingSync();
+    if (focusedContext().ticketSync_) {
+        focusedContext().ticketSync_->CancelAndJoinActiveStreamingSync();
     }
 }
 
 void AppController::TickStreamingApply() {
-    if (ticketSync_) {
-        ticketSync_->TickStreamingApply();
+    if (focusedContext().ticketSync_) {
+        focusedContext().ticketSync_->TickStreamingApply();
     }
 }
 
 void AppController::SyncWithBackend(const TrackerConfig* configOverride, const ViewsStore* viewsOverride) {
-    if (ticketSync_) {
-        ticketSync_->SyncWithBackend(configOverride, viewsOverride);
+    if (focusedContext().ticketSync_) {
+        focusedContext().ticketSync_->SyncWithBackend(configOverride, viewsOverride);
     }
 }
 
-bool AppController::IsStreamingSyncActive() const { return ticketSync_ && ticketSync_->IsActive(); }
+bool AppController::IsStreamingSyncActive() const {
+    return focusedContext().ticketSync_ && focusedContext().ticketSync_->IsActive();
+}

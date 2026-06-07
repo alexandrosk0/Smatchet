@@ -398,6 +398,11 @@ add_executable(SmatchetTests
     # and Ui/Views.cpp are already linked above; no new production TUs.
     Core/ConfigManagerViews.test.cpp
     Core/ViewsClass.test.cpp
+    # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
+    # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
+    # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.
+    Core/GridLiveContext.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
 )
 
 # Whisper dictation router — link the production TU that matches the parent

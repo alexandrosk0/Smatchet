@@ -24,7 +24,7 @@ class ITicketSyncDeps;
 
 /// Lifetime contract mirrors `OfflineQueueService`: AppController owns the service via
 /// `std::unique_ptr` and outlives it. The constructor stores an `ITicketSyncDeps&` reference
-/// (typically backed by `AppControllerDepsAdapter`); methods reach AppController-side state
+/// (typically backed by `GridContextDepsAdapter`); methods reach AppController-side state
 /// (`Cache`, `Backend`, `ActiveTickets`, edit-meta caches, connectivity-probe state) through
 /// that interface. Tests pass a `FakeTicketSyncDeps` so the service is exercisable in
 /// pure-logic doctest builds.

@@ -54,13 +54,14 @@ bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
 void AppController::RefreshLocalData() {
     if (Cache) {
         auto latestTickets = Cache->GetAllTickets();
+        GridLiveContext& ctx = focusedContext();
         {
-            std::lock_guard<std::mutex> lock(activeTicketsMutex_);
-            ActiveTickets = std::move(latestTickets);
-            activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
+            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+            ctx.ActiveTickets = std::move(latestTickets);
+            ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
         }
         PruneEditMetaCacheToActiveTickets();
-        ActiveTicketsRevision.fetch_add(1);
+        ctx.ActiveTicketsRevision.fetch_add(1);
         // Single hook site for Lua window dirty-bump on ticket data change. UpdateTicket
         // already chains here through `RefreshLocalData()` at the end of its body, so a
         // duplicate bump from UpdateTicket would double-fire per single edit. Stub build
@@ -71,7 +72,8 @@ void AppController::RefreshLocalData() {
 
 void AppController::RefreshLocalDataAndWarmIssueTypeMeta() {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     RefreshLocalData();
     if (backend) {
         WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
@@ -93,7 +95,7 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     // (SetBackend on the UI thread) would otherwise free `Backend` mid-FetchFieldCatalog — the
     // FieldCatalog object dereferenced below lives inside it. The shared_ptr copy keeps the old
     // backend alive until this call returns, even after app_.Backend is swapped (ADR 0012).
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&Backend);
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
     if (!backend) {
         {
             std::lock_guard<std::mutex> lk(availableFieldsMutex_);
@@ -124,7 +126,8 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
 bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCatalogResult& outCatalog,
                                       std::string& outError) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outCatalog = TrackerFieldCatalogResult{};
     outError.clear();
     if (!backend) {
@@ -141,7 +144,8 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCata
 bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
                                       TrackerFieldCatalogResult& outCatalog, std::string& outError) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outCatalog = TrackerFieldCatalogResult{};
     outError.clear();
     if (!backend) {
@@ -154,14 +158,16 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::strin
 
 std::string AppController::BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     return backend ? backend->Reader().BuildBrowseUrl(cfg, issueKey) : std::string();
 }
 
 std::string AppController::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                                const std::string& value) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend) {
         return value;
     }
@@ -394,7 +400,8 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
     const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
     std::unordered_map<std::string, std::string>& outDisplayValues, std::string& outError) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     (void)originalEstimateSnapshot;
     (void)remainingEstimateSnapshot;
     outError.clear();
@@ -466,7 +473,8 @@ std::string AppController::ResolveIssueTypeKeyForIssue(const std::string& issueI
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend) {
         return;
     }
@@ -594,7 +602,8 @@ void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
         return;
     }
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend) {
         return;
     }
@@ -654,7 +663,8 @@ void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
 bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::string& fieldId,
                                          const TrackerField* fieldMeta, const std::string* issueTypeKeyOverride) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend || issueId.empty() || fieldId.empty()) {
         return true;
     }
@@ -712,7 +722,8 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
                                               const std::string* issueTypeKeyOverride,
                                               const TrackerConfig* configSnapshot) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (outError) {
         outError->clear();
     }
@@ -833,7 +844,8 @@ void AppController::PruneEditMetaCacheToActiveTickets() {
 
 void AppController::WarmIssueEditMetaAsync(const std::string& issueId) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend || issueId.empty()) {
         return;
     }
@@ -1102,7 +1114,8 @@ bool AppController::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::s
 bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues, std::string& outError) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1167,7 +1180,8 @@ bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const
                                                const std::string& remainingEstimateSnapshot,
                                                const std::string& issueTypeKeySnapshot, FieldEditResult& outResult) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outResult = FieldEditResult{};
     LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu", FieldEditAuditSource::Current(),
               issueId.c_str(), field.Id.c_str(), rawValues.size());
@@ -1413,7 +1427,8 @@ bool AppController::ApplyFieldEditResult(const std::string& issueId, const Field
 bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                                        std::string& outError) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outWatchers.clear();
     outError.clear();
     if (!backend) {
@@ -1436,7 +1451,8 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
 
 bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& outError) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1465,7 +1481,8 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
                                     std::string& outError, int* outVoteCount, bool* outHasVoted,
                                     bool* outVotersInResponse) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outVoters.clear();
     outError.clear();
     if (!backend) {
@@ -1490,7 +1507,8 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
 bool AppController::SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
                                        std::string& outError) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outUsers.clear();
     outError.clear();
     if (!backend) {
@@ -1515,7 +1533,8 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
 bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                          std::string& outError) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1545,7 +1564,8 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
                                   const std::string& workDescription, const std::string& startedDate,
                                   std::string& outError) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1578,7 +1598,8 @@ bool AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, 
                                                    const std::string& date, const bool approximated,
                                                    const std::string& codeSnippet, std::string& outError) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -1609,7 +1630,8 @@ bool AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, 
 bool AppController::FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                                         std::string& outError) const {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outGroupNames.clear();
     outError.clear();
     if (!backend) {

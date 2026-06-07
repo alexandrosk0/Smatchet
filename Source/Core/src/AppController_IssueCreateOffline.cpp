@@ -63,7 +63,8 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
         (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
     // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-        Backend ? &Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id, /*legacyFallback*/ std::string());
+        focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
+        /*legacyFallback*/ std::string());
     return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
                                                cfg.DefaultIssueTypeName, inheritIds);
 }
@@ -105,7 +106,10 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         return future;
     }
 
-    if (!Backend) {
+    // Latch a strong handle for the worker: a live tracker swap (SetBackend) while the create
+    // runs would otherwise free the backend under the `mutations` pointer below (ADR 0012).
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
+    if (!backend) {
         IssueCreateResult err;
         err.Error = "Tracker backend is not initialized.";
         promise->set_value(std::move(err));
@@ -129,7 +133,7 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         }
     }
 
-    ITrackerIssueMutations* const mutations = Backend->Mutations();
+    ITrackerIssueMutations* const mutations = backend->Mutations();
     if (!mutations) {
         IssueCreateResult err;
         err.Error = "Tracker backend does not support issue mutations.";
@@ -137,7 +141,9 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         return future;
     }
 
-    LaunchBackgroundTask([this, promise, mutations, cache, draftCopy, catalogCopy, required]() {
+    // `backend` is captured to keep the latched backend (and thus `mutations`) alive for the
+    // duration of the worker, per ADR 0012.
+    LaunchBackgroundTask([this, promise, backend, mutations, cache, draftCopy, catalogCopy, required]() {
         IssueCreateResult result = IssueCreatePipeline::Run(*mutations, cache, draftCopy, required, *catalogCopy);
         if (result.Ok) {
             RefreshLocalData();

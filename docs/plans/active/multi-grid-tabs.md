@@ -203,6 +203,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
 - `e221f99c` · Slice 0 WS2 (PR B) — real Jira catalog-BUILD fixture (`tests/support/JiraCatalogHttpFixture.h` + `tests/Core/TrackerCatalogBuild.test.cpp`, 11 cases) + 22 null/missing-relation/empty-optional mapping edges across `{Jira,Plane,GitHub}IssueMappingPure.test.cpp`; closes the `test.md` P2 (2026-06-01) catalog-build blind spot. Test-only.
+- `feat/mgt-s1a-context` · Slice 1a — `GridLiveContext` extraction (`Backend` / `ticketSync_` / `ActiveTickets` + published snapshot + revision + mutex moved verbatim out of AppController; new `GridLiveContext.{h,cpp}`); `AppControllerDepsAdapter` → per-context `GridContextDepsAdapter(AppController&, GridLiveContext&)` (the design-addendum § 3.2 chokepoint — `ITicketSyncDeps` and the Slice-0 net unmodified); AppController owns `map<int, unique_ptr<GridLiveContext>>` with a single `kDefaultPaneId` entry and public methods as `focusedContext()` delegators. Behaviour-identical; field-catalog block, `tickets_v2`, and queue `BackendKey` deferred to S3/1b/1c as designed (ADR-0018).
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
