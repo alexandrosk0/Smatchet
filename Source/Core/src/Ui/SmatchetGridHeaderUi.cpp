@@ -406,10 +406,10 @@ void UpdateMcpChip(AppController& app, UiDrawSession& d, const TrackerConnectivi
 #endif
 
 } // namespace
-// the pane-window host replays a deferred "+ New Issue" from a not-yet-focused pane after the
-// focus/view switch lands (multi-grid Slice 3, plan item 19).
 
-// Begin a new-issue draft seeded from the last visible ticket (or last-ticket fallback).
+// Begin a new-issue draft seeded from the last visible ticket (or last-ticket fallback). Also
+// the entry point through which the pane-window host replays a deferred "+ New Issue" from a
+// not-yet-focused pane after the focus/view switch lands (multi-grid Slice 3, plan item 19).
 void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
                         const std::vector<CachedTicket>& tickets) {
     if (!d.newIssueDraftActive) {

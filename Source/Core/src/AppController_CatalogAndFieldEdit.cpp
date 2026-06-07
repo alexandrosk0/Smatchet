@@ -96,18 +96,23 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     // FieldCatalog object dereferenced below lives inside it. The shared_ptr copy keeps the old
     // backend alive until this call returns, even after app_.Backend is swapped (ADR 0012).
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call, so a
+    // focus switch between two calls inside one locked/compound region would lock context A's
+    // mutex while mutating context B (UB, Pillar 3). The retired-context husk graveyard keeps
+    // the latched reference valid for the life of this call.
+    GridContextFieldCatalog& cat = fieldCatalog();
     if (!backend) {
         {
-            std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-            fieldCatalog().currentCatalogProjectKey_ = projectKey;
+            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+            cat.currentCatalogProjectKey_ = projectKey;
         }
         SetFieldCatalog({}, {}, "Tracker backend is not initialized.");
         return false;
     }
 
     {
-        std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-        fieldCatalog().currentCatalogProjectKey_ = projectKey;
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        cat.currentCatalogProjectKey_ = projectKey;
     }
     TrackerFieldCatalogResult catalog;
     std::string error;
@@ -187,30 +192,37 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
 }
 
 void AppController::SetCurrentCatalogProject(const std::string& projectKey) {
-    std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-    fieldCatalog().currentCatalogProjectKey_ = projectKey;
+    GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+    cat.currentCatalogProjectKey_ = projectKey;
 }
 
 void AppController::SetAvailableUsers(std::vector<TrackerUser> users) {
-    std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-    fieldCatalog().AvailableUsers = std::move(users);
+    GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+    cat.AvailableUsers = std::move(users);
 }
 
 void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error) {
     const TrackerConfig cfgSnap = ConfigManager::Load();
     const bool catalogPlane = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType) == "Plane";
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
+    // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
+    GridContextFieldCatalog& cat = fieldCatalog();
     // PR 6: legacy global project fields removed. Saves under the unscoped ("") cache key when
     // the caller hasn't pinned a project via SetCurrentCatalogProject(). Per-project refetches
     // (driven by the new-issue draft / picker UI) set that hint so the snapshot lands under
     // the right per-project entry. PR 7 will replace this with a parameter on the call chain.
-    // Read fieldCatalog().currentCatalogProjectKey_ under the lock into a local — SetCurrentCatalogProject /
-    // RefreshFieldCatalog write it under fieldCatalog().availableFieldsMutex_ from other threads, so an unlocked
+    // Read cat.currentCatalogProjectKey_ under the lock into a local — SetCurrentCatalogProject /
+    // RefreshFieldCatalog write it under cat.availableFieldsMutex_ from other threads, so an unlocked
     // read of the std::string here is a data race.
     std::string projectKeyForCache;
     {
-        std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-        projectKeyForCache = fieldCatalog().currentCatalogProjectKey_;
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        projectKeyForCache = cat.currentCatalogProjectKey_;
     }
     const std::string catalogCacheKey = FieldCatalogCache::BuildFieldCatalogCacheKey(cfgSnap, projectKeyForCache);
     (void)catalogPlane;
@@ -221,28 +233,28 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     }
 
     {
-        std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-        fieldCatalog().AvailableFields = std::move(fields);
-        fieldCatalog().AvailableComponents = std::move(components);
-        fieldCatalog().AvailableIssueTypeMeta = std::move(issueTypeMeta);
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        cat.AvailableFields = std::move(fields);
+        cat.AvailableComponents = std::move(components);
+        cat.AvailableIssueTypeMeta = std::move(issueTypeMeta);
     }
-    fieldCatalog().LastTrackerFieldCatalogError.clear();
-    fieldCatalog().LastTrackerFieldCatalogWarning.clear();
-    fieldCatalog().fieldCatalogEverLoaded_ = true;
+    cat.LastTrackerFieldCatalogError.clear();
+    cat.LastTrackerFieldCatalogWarning.clear();
+    cat.fieldCatalogEverLoaded_ = true;
     requestDeferredLiveTrackerBackendSuccessNotify_();
     {
         std::string snapErr;
         const std::string saveBackend = catalogPlane ? std::string("Plane") : std::string("Jira");
         const std::string saveEndpoint =
             catalogPlane ? (cfgSnap.PlaneUrl + std::string("|") + cfgSnap.PlaneWorkspaceSlug) : cfgSnap.Domain;
-        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(catalogCacheKey, saveBackend, saveEndpoint, projectKeyForCache,
-                                                         cfgSnap.FieldCatalogCacheMaxProjects, fieldCatalog().AvailableFields,
-                                                         fieldCatalog().AvailableComponents, fieldCatalog().AvailableIssueTypeMeta, snapErr)) {
+        if (!FieldCatalogCache::SaveFieldCatalogSnapshot(
+                catalogCacheKey, saveBackend, saveEndpoint, projectKeyForCache, cfgSnap.FieldCatalogCacheMaxProjects,
+                cat.AvailableFields, cat.AvailableComponents, cat.AvailableIssueTypeMeta, snapErr)) {
             LOG_WARN("AppController::SetFieldCatalog: snapshot save failed: %s", snapErr.c_str());
         }
     }
     if (!catalogPlane) {
-        for (auto& field : fieldCatalog().AvailableFields) {
+        for (auto& field : cat.AvailableFields) {
             if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
                 field.ReadOnly = true;
             }
@@ -250,38 +262,41 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
         EnsureCatalogHistoryField();
     }
 
-    fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+    cat.TrackerFieldCatalogRevision.fetch_add(1);
 }
 
 void AppController::HandleFieldCatalogError(const std::string& error, const std::string& catalogCacheKey,
                                             bool catalogPlane) {
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
+    // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
+    GridContextFieldCatalog& cat = fieldCatalog();
     if (!IsTrackerTransportErrorText(error)) {
         {
-            std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-            fieldCatalog().AvailableFields.clear();
-            fieldCatalog().AvailableComponents.clear();
-            fieldCatalog().AvailableIssueTypeMeta.clear();
+            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+            cat.AvailableFields.clear();
+            cat.AvailableComponents.clear();
+            cat.AvailableIssueTypeMeta.clear();
         }
-        fieldCatalog().fieldCatalogEverLoaded_ = false;
-        fieldCatalog().LastTrackerFieldCatalogWarning.clear();
-        fieldCatalog().LastTrackerFieldCatalogError = error;
-        fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+        cat.fieldCatalogEverLoaded_ = false;
+        cat.LastTrackerFieldCatalogWarning.clear();
+        cat.LastTrackerFieldCatalogError = error;
+        cat.TrackerFieldCatalogRevision.fetch_add(1);
         LOG_ERROR("AppController::SetFieldCatalog error: %s", error.c_str());
         return;
     }
 
     bool catalogHasFields;
     {
-        std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-        catalogHasFields = !fieldCatalog().AvailableFields.empty();
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        catalogHasFields = !cat.AvailableFields.empty();
     }
     if (catalogHasFields) {
-        fieldCatalog().LastTrackerFieldCatalogError.clear();
+        cat.LastTrackerFieldCatalogError.clear();
         const std::string nextWarning = std::string("Offline: using cached ") + (catalogPlane ? "Plane" : "Jira") +
                                         " field catalog. Last fetch failed: " + error;
-        if (nextWarning != fieldCatalog().LastTrackerFieldCatalogWarning) {
-            fieldCatalog().LastTrackerFieldCatalogWarning = nextWarning;
-            fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+        if (nextWarning != cat.LastTrackerFieldCatalogWarning) {
+            cat.LastTrackerFieldCatalogWarning = nextWarning;
+            cat.TrackerFieldCatalogRevision.fetch_add(1);
         }
         LOG_WARN("AppController::SetFieldCatalog transport failure (catalog preserved): %s", error.c_str());
         return;
@@ -294,80 +309,84 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
     if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents, snapIssueTypeMeta,
                                                        snapErr)) {
         {
-            std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-            fieldCatalog().AvailableFields = std::move(snapFields);
-            fieldCatalog().AvailableComponents = std::move(snapComponents);
-            fieldCatalog().AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+            cat.AvailableFields = std::move(snapFields);
+            cat.AvailableComponents = std::move(snapComponents);
+            cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
             if (!catalogPlane) {
-                for (auto& field : fieldCatalog().AvailableFields) {
+                for (auto& field : cat.AvailableFields) {
                     if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
                         field.ReadOnly = true;
                     }
                 }
             }
         }
-        fieldCatalog().fieldCatalogEverLoaded_ = true;
-        fieldCatalog().LastTrackerFieldCatalogError.clear();
-        fieldCatalog().LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
-                                         " field catalog from local snapshot. Last fetch failed: " + error;
+        cat.fieldCatalogEverLoaded_ = true;
+        cat.LastTrackerFieldCatalogError.clear();
+        cat.LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
+                                             " field catalog from local snapshot. Last fetch failed: " + error;
         if (!catalogPlane) {
             EnsureCatalogHistoryField();
         }
-        fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+        cat.TrackerFieldCatalogRevision.fetch_add(1);
         LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
         return;
     }
 
-    if (fieldCatalog().fieldCatalogEverLoaded_) {
-        fieldCatalog().LastTrackerFieldCatalogError.clear();
-        fieldCatalog().LastTrackerFieldCatalogWarning =
+    if (cat.fieldCatalogEverLoaded_) {
+        cat.LastTrackerFieldCatalogError.clear();
+        cat.LastTrackerFieldCatalogWarning =
             "Offline: no field catalog snapshot could be loaded for this tracker context. Last fetch failed: " + error;
-        fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+        cat.TrackerFieldCatalogRevision.fetch_add(1);
         LOG_WARN("AppController::SetFieldCatalog transport failure; no snapshot (session had catalog): %s",
                  error.c_str());
         return;
     }
 
     {
-        std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-        fieldCatalog().AvailableFields.clear();
-        fieldCatalog().AvailableComponents.clear();
-        fieldCatalog().AvailableIssueTypeMeta.clear();
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        cat.AvailableFields.clear();
+        cat.AvailableComponents.clear();
+        cat.AvailableIssueTypeMeta.clear();
     }
-    fieldCatalog().fieldCatalogEverLoaded_ = false;
-    fieldCatalog().LastTrackerFieldCatalogWarning.clear();
-    fieldCatalog().LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
-                                   " field catalog available. " +
-                                   (error.empty() ? std::string("Last fetch failed.") : error);
-    fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+    cat.fieldCatalogEverLoaded_ = false;
+    cat.LastTrackerFieldCatalogWarning.clear();
+    cat.LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
+                                       " field catalog available. " +
+                                       (error.empty() ? std::string("Last fetch failed.") : error);
+    cat.TrackerFieldCatalogRevision.fetch_add(1);
     LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
 }
 
 const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {
-    std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-    const auto it = std::find_if(fieldCatalog().AvailableFields.begin(), fieldCatalog().AvailableFields.end(),
+    const GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+    const auto it = std::find_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
                                  [&](const TrackerField& field) { return field.Id == fieldId; });
-    return it == fieldCatalog().AvailableFields.end() ? nullptr : &(*it);
+    return it == cat.AvailableFields.end() ? nullptr : &(*it);
 }
 
 void AppController::EnsureCatalogHistoryField() {
     // Atomic check-then-insert under the catalog lock (#823). The existence
     // check is done INLINE (not via FindFieldById, which locks the same
-    // non-recursive fieldCatalog().availableFieldsMutex_ → would self-deadlock) so the lookup
+    // non-recursive availableFieldsMutex_ → would self-deadlock) so the lookup
     // and the push_back can't race a concurrent catalog read/write. Safe to
     // lock here: the prior FindFieldById call already implied no caller holds
     // the mutex across this method.
-    std::lock_guard<std::mutex> lk(fieldCatalog().availableFieldsMutex_);
-    const auto it = std::find_if(fieldCatalog().AvailableFields.begin(), fieldCatalog().AvailableFields.end(),
+    GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+    const auto it = std::find_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
                                  [](const TrackerField& field) { return field.Id == "history"; });
-    if (it != fieldCatalog().AvailableFields.end()) {
+    if (it != cat.AvailableFields.end()) {
         return;
     }
     TrackerField historyField;
     historyField.Id = "history";
     historyField.Name = "History";
     historyField.ReadOnly = true;
-    fieldCatalog().AvailableFields.push_back(std::move(historyField));
+    cat.AvailableFields.push_back(std::move(historyField));
 }
 
 bool AppController::FieldEditSupportsOfflineQueue(const TrackerField& field) {
@@ -538,30 +557,36 @@ void AppController::WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std:
     if (catalog == nullptr) {
         return;
     }
+    // Latch the catalog once for the whole worker run: fieldCatalog() re-resolves
+    // focusedContextPtr_ per call, and this loop runs on a background worker — a focus switch
+    // mid-loop would lock context A's mutex while mutating context B (Pillar 3). The
+    // retired-context husk graveyard keeps the latched reference valid.
+    GridContextFieldCatalog& cat = fieldCatalog();
     for (const auto& projectKey : componentProjectKeys) {
         if (shuttingDown_.load()) {
             break;
         }
         {
-            std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-            if (fieldCatalog().projectComponentOptions_.find(projectKey) != fieldCatalog().projectComponentOptions_.end()) {
+            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+            if (cat.projectComponentOptions_.find(projectKey) != cat.projectComponentOptions_.end()) {
                 continue; // already warmed
             }
             // Respect a backoff recorded by a previous failed fetch (lazy or warm).
-            const auto retryIt = fieldCatalog().projectComponentsRetryAfter_.find(projectKey);
-            if (retryIt != fieldCatalog().projectComponentsRetryAfter_.end() && std::chrono::steady_clock::now() < retryIt->second) {
+            const auto retryIt = cat.projectComponentsRetryAfter_.find(projectKey);
+            if (retryIt != cat.projectComponentsRetryAfter_.end() &&
+                std::chrono::steady_clock::now() < retryIt->second) {
                 continue;
             }
             // Join the in-flight set so a concurrent lazy EnsureProjectComponentsLoaded for the
             // same project skips its own fetch (and vice-versa). Marker erased on EVERY exit
             // below (shutdown, fetch-fail, success), mirroring the lazy path's discipline.
-            if (!fieldCatalog().projectComponentsInFlight_.insert(projectKey).second) {
+            if (!cat.projectComponentsInFlight_.insert(projectKey).second) {
                 continue; // a lazy fetch for this project is already running
             }
         }
         if (shuttingDown_.load()) {
-            std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-            fieldCatalog().projectComponentsInFlight_.erase(projectKey);
+            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+            cat.projectComponentsInFlight_.erase(projectKey);
             break;
         }
         std::vector<TrackerComponent> comps;
@@ -570,31 +595,35 @@ void AppController::WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std:
         // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
         if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
             LOG_DEBUG("AppController: per-project component warm skipped for %s: %s", projectKey.c_str(), err.c_str());
-            std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
+            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
             // Same backoff as the lazy path so a later open doesn't immediately re-hammer.
-            fieldCatalog().projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-            fieldCatalog().projectComponentsInFlight_.erase(projectKey); // allow a later lazy open to retry
+            cat.projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            cat.projectComponentsInFlight_.erase(projectKey); // allow a later lazy open to retry
             continue;
         }
-        std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-        fieldCatalog().projectComponentOptions_[projectKey] = std::move(opts);
-        fieldCatalog().projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
-        fieldCatalog().projectComponentsInFlight_.erase(projectKey);
+        std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+        cat.projectComponentOptions_[projectKey] = std::move(opts);
+        cat.projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
+        cat.projectComponentsInFlight_.erase(projectKey);
     }
 }
 
 std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(const std::string& projectKey) const {
-    std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-    const auto it = fieldCatalog().projectComponentOptions_.find(projectKey);
-    if (it == fieldCatalog().projectComponentOptions_.end()) {
+    const GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+    const auto it = cat.projectComponentOptions_.find(projectKey);
+    if (it == cat.projectComponentOptions_.end()) {
         return std::vector<TrackerFieldOption>();
     }
     return it->second;
 }
 
 bool AppController::IsProjectComponentsLoaded(const std::string& projectKey) const {
-    std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-    return fieldCatalog().projectComponentOptions_.find(projectKey) != fieldCatalog().projectComponentOptions_.end();
+    const GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+    return cat.projectComponentOptions_.find(projectKey) != cat.projectComponentOptions_.end();
 }
 
 void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey) {
@@ -607,34 +636,40 @@ void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
     if (!backend) {
         return;
     }
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
+    // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
+    GridContextFieldCatalog& cat = fieldCatalog();
     {
-        std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-        if (fieldCatalog().projectComponentOptions_.find(projectKey) != fieldCatalog().projectComponentOptions_.end()) {
+        std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+        if (cat.projectComponentOptions_.find(projectKey) != cat.projectComponentOptions_.end()) {
             return; // already warmed
         }
-        if (!fieldCatalog().projectComponentsInFlight_.insert(projectKey).second) {
+        if (!cat.projectComponentsInFlight_.insert(projectKey).second) {
             return; // a fetch for this project is already running
         }
         // Failure backoff: a previous fetch failed and recorded a retry deadline. Skip relaunch
         // (and undo the in-flight marker we just took) until that deadline passes — otherwise the
         // every-frame paint-path call would hammer the backend after each failure.
-        const auto retryIt = fieldCatalog().projectComponentsRetryAfter_.find(projectKey);
-        if (retryIt != fieldCatalog().projectComponentsRetryAfter_.end() && std::chrono::steady_clock::now() < retryIt->second) {
-            fieldCatalog().projectComponentsInFlight_.erase(projectKey);
+        const auto retryIt = cat.projectComponentsRetryAfter_.find(projectKey);
+        if (retryIt != cat.projectComponentsRetryAfter_.end() && std::chrono::steady_clock::now() < retryIt->second) {
+            cat.projectComponentsInFlight_.erase(projectKey);
             return;
         }
     }
     TrackerConfig trackerCfgForWorker = ConfigManager::Load();
     LaunchBackgroundTask([this, projectKey, backend, trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
+        // Worker-side latch: this lambda runs later on a background thread — latch once at
+        // entry so every locked region below locks and mutates the SAME context (Pillar 3).
+        GridContextFieldCatalog& cat = fieldCatalog();
         if (shuttingDown_.load()) {
-            std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-            fieldCatalog().projectComponentsInFlight_.erase(projectKey);
+            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+            cat.projectComponentsInFlight_.erase(projectKey);
             return;
         }
         ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
         if (catalog == nullptr) {
-            std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
-            fieldCatalog().projectComponentsInFlight_.erase(projectKey);
+            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+            cat.projectComponentsInFlight_.erase(projectKey);
             return;
         }
         std::vector<TrackerComponent> comps;
@@ -644,19 +679,19 @@ void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
         if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
             LOG_DEBUG("AppController: lazy per-project component load failed for %s: %s", projectKey.c_str(),
                       err.c_str());
-            std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
+            std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
             // Record a backoff deadline so the every-frame paint path stops relaunching until it
             // passes (~once / 30s per failing project instead of every frame).
-            fieldCatalog().projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-            fieldCatalog().projectComponentsInFlight_.erase(projectKey);
+            cat.projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            cat.projectComponentsInFlight_.erase(projectKey);
             return;
         }
-        std::lock_guard<std::mutex> lock(fieldCatalog().availableFieldsMutex_);
+        std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
         // Insert the key on success regardless of count — presence == loaded, so a genuinely empty
         // project settles to "(no options)" instead of showing "Loading components…" forever.
-        fieldCatalog().projectComponentOptions_[projectKey] = std::move(opts);
-        fieldCatalog().projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
-        fieldCatalog().projectComponentsInFlight_.erase(projectKey);
+        cat.projectComponentOptions_[projectKey] = std::move(opts);
+        cat.projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
+        cat.projectComponentsInFlight_.erase(projectKey);
     });
 }
 

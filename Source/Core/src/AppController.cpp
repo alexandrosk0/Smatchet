@@ -576,6 +576,18 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
             std::vector<CachedTicket>().swap(ctx.ActiveTickets);
             ctx.activeTicketsPublished_.reset();
         }
+        {
+            // Husk hygiene: the retired context stays alive for latched readers (graveyard
+            // below), but must not retain a fully-populated field catalog — that would grow
+            // unboundedly over show/hide cycles. Clear under the catalog mutex so a worker
+            // that latched this context's catalog sees empty (not freed) containers.
+            std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
+            std::vector<TrackerField>().swap(ctx.fieldCatalog.AvailableFields);
+            std::vector<TrackerComponent>().swap(ctx.fieldCatalog.AvailableComponents);
+            std::vector<TrackerIssueTypeCreateMeta>().swap(ctx.fieldCatalog.AvailableIssueTypeMeta);
+            std::vector<TrackerUser>().swap(ctx.fieldCatalog.AvailableUsers);
+            ctx.fieldCatalog.projectComponentOptions_.clear();
+        }
         // Defer-free husk: a worker may have latched a pointer to this context (it was the
         // focused context once) — keep the now-tiny object alive until ~AppController, the
         // ADR-0012 graveyard pattern applied to contexts.
@@ -1756,22 +1768,25 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
                                                      std::vector<TrackerComponent> snapComponents,
                                                      std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                                      const std::string& activeTrackerType) {
-    fieldCatalog().AvailableFields = std::move(snapFields);
-    fieldCatalog().AvailableComponents = std::move(snapComponents);
-    fieldCatalog().AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-    fieldCatalog().fieldCatalogEverLoaded_ = true;
-    fieldCatalog().LastTrackerFieldCatalogError.clear();
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
+    // switch between two calls would split this compound write across two contexts (Pillar 3).
+    GridContextFieldCatalog& cat = fieldCatalog();
+    cat.AvailableFields = std::move(snapFields);
+    cat.AvailableComponents = std::move(snapComponents);
+    cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+    cat.fieldCatalogEverLoaded_ = true;
+    cat.LastTrackerFieldCatalogError.clear();
 
     if (activeTrackerType == "Plane") {
-        fieldCatalog().LastTrackerFieldCatalogWarning =
+        cat.LastTrackerFieldCatalogWarning =
             "Working offline: Plane field catalog loaded from local snapshot until a live refresh succeeds.";
     } else {
-        fieldCatalog().LastTrackerFieldCatalogWarning =
+        cat.LastTrackerFieldCatalogWarning =
             "Working offline: tracker field catalog loaded from local snapshot until a live refresh succeeds.";
     }
 
     if (activeTrackerType == "Jira") {
-        for (auto& field : fieldCatalog().AvailableFields) {
+        for (auto& field : cat.AvailableFields) {
             if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
                 field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
                 field.ReadOnly = true;
@@ -1780,9 +1795,9 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
         EnsureCatalogHistoryField();
     }
 
-    fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+    cat.TrackerFieldCatalogRevision.fetch_add(1);
     LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)",
-             fieldCatalog().AvailableFields.size());
+             cat.AvailableFields.size());
 }
 
 void AppController::InitPlugins(const std::string& activeTrackerType) {

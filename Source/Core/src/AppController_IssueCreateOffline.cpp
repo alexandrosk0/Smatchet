@@ -65,8 +65,8 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
         focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
         /*legacyFallback*/ std::string());
-    return IssueDraftHelpers::FromCachedTicket(lastTicket, fieldCatalog().AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
-                                               cfg.DefaultIssueTypeName, inheritIds);
+    return IssueDraftHelpers::FromCachedTicket(lastTicket, fieldCatalog().AvailableFields, resolvedProject,
+                                               cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
 }
 
 RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,

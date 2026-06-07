@@ -193,9 +193,12 @@ void AppController::applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_()
     }
     lastTrackerConnectivityState_ = TrackerConnectivityState::AuthenticatedReachable;
     LastTrackerTicketSyncWarning.clear();
-    if (!fieldCatalog().LastTrackerFieldCatalogWarning.empty()) {
-        fieldCatalog().LastTrackerFieldCatalogWarning.clear();
-        fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
+    // switch between two calls would split the check/clear across two contexts (Pillar 3).
+    GridContextFieldCatalog& cat = fieldCatalog();
+    if (!cat.LastTrackerFieldCatalogWarning.empty()) {
+        cat.LastTrackerFieldCatalogWarning.clear();
+        cat.TrackerFieldCatalogRevision.fetch_add(1);
         fieldCatalogRefetchAfterLiveTicketSyncPending_.store(true, std::memory_order_release);
     }
 }
@@ -279,8 +282,10 @@ void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessi
 TrackerConnectivityBannerForUi
 AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote) const {
     TrackerConnectivityBannerForUi out;
-    const std::string& ce = fieldCatalog().LastTrackerFieldCatalogError;
-    const std::string& cw = fieldCatalog().LastTrackerFieldCatalogWarning;
+    // Latch the catalog once: both refs below must come from the SAME context (Pillar 3).
+    const GridContextFieldCatalog& cat = fieldCatalog();
+    const std::string& ce = cat.LastTrackerFieldCatalogError;
+    const std::string& cw = cat.LastTrackerFieldCatalogWarning;
     const std::string& tw = LastTrackerTicketSyncWarning;
     const bool haveSession = sessionCatalogNote && !sessionCatalogNote->empty();
     const bool haveCw = !cw.empty();
