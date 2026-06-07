@@ -123,10 +123,37 @@ rm -f "$ABS_OUT"
 # perf.reset clears the perf monitor's accumulators before the scenario runs;
 # scenario.run --outPath ensures the result JSON lands at our path.
 "$EXE" cmd perf.reset --spawn --yes >/dev/null 2>&1 || true
-"$EXE" cmd scenario.run --name="$SCENARIO_ID" --frames="$FRAMES" --outPath="$ABS_OUT" --spawn --yes
+# The result FILE is the authoritative outcome, not the CLI exit code: on the
+# CI runner the post-scenario app.quit handshake can flake non-zero AFTER the
+# scenario completed and the child already wrote $ABS_OUT (observed on the
+# perf-gate-revival step-3 run: all 4 scenarios printed ok:true JSON + wrote
+# their files, then set -e killed this script on the CLI's exit code and the
+# workflow counted them as run_failures). Tolerate rc!=0 iff the file exists.
+rc=0
+"$EXE" cmd scenario.run --name="$SCENARIO_ID" --frames="$FRAMES" --outPath="$ABS_OUT" --spawn --yes || rc=$?
 
 if [[ ! -f "$ABS_OUT" ]]; then
-    echo "FAIL: scenario.run reported success but $ABS_OUT does not exist." >&2
+    echo "FAIL: scenario.run did not write $ABS_OUT (exit=$rc)." >&2
+    exit 1
+fi
+if [[ "$rc" -ne 0 ]]; then
+    echo "[perf-run] WARN: scenario.run exited rc=$rc but the result file exists (quit-handshake flake) — continuing." >&2
+fi
+# Guard against a torn/empty write: the file must parse as JSON with rows.
+# Mirrors extract_rows() in perf-compare.py: when `data` exists and carries
+# `rows`, that IS the row set — an empty data.rows must FAIL, never fall back
+# to a top-level `rows`. (CodeRabbit PR #937 #2.)
+if ! python -c "
+import json, sys
+d = json.load(open(sys.argv[1], encoding='utf-8'))
+data = d.get('data')
+if isinstance(data, dict) and 'rows' in data:
+    rows = data.get('rows')
+else:
+    rows = d.get('rows')
+sys.exit(0 if isinstance(rows, list) and rows else 1)
+" "$ABS_OUT"; then
+    echo "FAIL: $ABS_OUT exists but is not valid JSON with non-empty rows (exit=$rc)." >&2
     exit 1
 fi
 
