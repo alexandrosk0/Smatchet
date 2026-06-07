@@ -4,6 +4,23 @@ Stub in [`AGENTS.md`](../../AGENTS.md) § Project rules § Golden-image approval
 
 Any agent that writes or regenerates a checked-in reference artefact a regression gate diffs against — `tests/golden/*.png`, JSON snapshots, deterministic byte streams — MUST treat the bootstrap as a UI-tuning-equivalent change. The visual-validation exception applies.
 
+## Theme rule — goldens use the DEFAULT ImGui style (user-mandated 2026-06-07)
+
+Every golden image / screenshot capture runs under the **stock ImGui style**
+(`ImGui::StyleColorsDark()`), never `SmatchetTheme::ApplyStyle`. Rationale: the
+custom theme is retuned frequently (the trivial-visual envelope exists exactly
+because palette changes are cheap and common) — a golden pinned to it is
+invalidated by every retune, turning theme work into golden-churn. Stock style
+is stable upstream, so goldens only change when the UNDER-TEST surface changes.
+Mechanically: capture paths opt out of the theme at bootstrap via the
+test-driver env knob (`SMATCHET_TEST_DEFAULT_IMGUI_THEME=1`; introduced with
+multi-grid Slice 2 — the knob's call site is beside `ApplyStyle`). Theme
+correctness itself is covered by the dual-capture-no-golden pattern below, not
+by goldens. Existing goldens captured under the custom theme are recaptured
+under default style on their next touch (the bucket-C lane was dead-but-green
+until 2026-06-07 — postmortems.md — so pre-existing goldens were unverified
+anyway).
+
 ## Recipe
 
 1. **Build** the change that produces the artefact.
