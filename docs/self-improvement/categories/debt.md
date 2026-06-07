@@ -11,6 +11,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-07 · code-review (via orchestrator) · [debt] · P2 — multi-grid Slice-3 catalog WRITE-target contamination on focus-switch-during-fetch (PR #975)
+  Details: Surfaced by the PR #975 pre-merge review. Per-context field-catalog workers (per-project catalog refetch, component warm/lazy fetchers in `AppController_CatalogAndFieldEdit.cpp`) resolve `fieldCatalog()` (→ `focusedContextPtr_`) at COMPLETION time, so a focus switch during the fetch lands the write in whichever context is focused when the worker finishes — not the context the fetch was kicked for. The latch-once fix shipped on #975 makes this mutex-correct (lock and object always resolve to the same context — no UB / Pillar-3 race), but the write target can still be semantically wrong. Bounded blast radius: a stale/foreign catalog snapshot in one context, self-healing on that context's next own fetch.
+  Concrete next action: capture the kick-time `GridLiveContext*` (or backend key) into each catalog worker and write through THAT context (validating it is not retired), instead of re-resolving focus at completion — Slice 4 work, alongside the per-pane catalog READ routing already deferred there (see `docs/plans/multi-grid-tabs.md` § Deviations).
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [debt] · P2 — `NormalizeViewsBackendKey` catch-all defaults every unknown tracker to "Jira" — now load-bearing for tickets_v2/queue cache isolation; the Linear backend would silently share Jira's namespace
   Details: `Source/Core/src/Config/ConfigManager_Views.cpp:235` maps only `plane`/`github`; anything else collapses to the default "Jira" bucket. Pre-multi-grid that was a cosmetic views-bucket choice; post-#948/#951 the same function keys `tickets_v2` and the pending queues, so an unmapped 4th backend (the planned Linear) lands its rows in Jira's namespace — the exact cross-backend collision Slice 1 exists to prevent. (CR sweep CR-948-4.)
   Concrete next action: extend the map for each new tracker as part of its backend bring-up checklist AND add a guard so the catch-all cannot silently absorb a new type (e.g. LOG_WARN + a doctest case asserting every `TrackerKind` enum value has an explicit mapping — the test fails when a backend is added without updating the map). Wire into `linear-tracker-backend.md` § prerequisites. Est ~30 min.

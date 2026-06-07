@@ -145,9 +145,10 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         drawActiveProjectWindow(app, d, pane, trackerBanner);
     }
 
-    // Focus switch: the pane whose window holds ImGui focus becomes the focused pane
-    // and takes over the single Slice-2 live context (Slice 3 makes every visible
-    // pane live and deletes this hand-over). A host-side reassignment from last
+    // Focus switch: the pane whose window holds ImGui focus becomes the focused pane —
+    // global actions + the AppController focused-context delegators follow it (every
+    // visible pane is live since Slice 3; focus only selects the delegator target).
+    // A host-side reassignment from last
     // frame (focused-pane close / "+" duplicate / bootstrap restore) replays as a
     // real switch via d.gridPaneFocusReassigned so the new focused pane's saved
     // view gets activated (review HIGH-2 / MEDIUM-3 — without it, focusSwitched
@@ -162,24 +163,36 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         d.focusedPaneId = d.paneWindowFocusedThisFrame;
         SmatchetGridPaneWindows::MarkPanesDirty(d);
     }
+    // Multi-grid Slice 3: AppController's focused-context delegators follow the UI's
+    // focused pane (cheap early-out when unchanged). Must land BEFORE the focus-switch
+    // sync below so SyncWithCurrentView targets the newly focused pane's OWN context.
+    app.SetFocusedPane(d.focusedPaneId);
     if (GridPane* focused = FindGridPaneById(d.gridPanes, d.focusedPaneId)) {
         syncFocusedPaneWithActiveView(app, d, *focused, focusSwitched);
     }
 
-    // Deferred toolbar refresh (review MEDIUM-2): a "Refresh View" click in a
-    // not-yet-focused pane is applied HERE, after the focus/view switch above
-    // landed, so the re-run targets the clicked pane's view — not the previously
-    // focused pane's live context. Consume-once: a request whose pane did not gain
-    // focus is dropped, never replayed.
-    if (!d.paneDeferredRefreshPaneId.empty()) {
-        if (d.paneDeferredRefreshPaneId == d.focusedPaneId) {
+    // Deferred toolbar actions ({paneId, kind} latch — review MEDIUM-2, extended to
+    // "+ New Issue" by plan item 19): a click in a not-yet-focused pane is applied
+    // HERE, after the focus/view switch above landed, so the action targets the
+    // clicked pane's view/context — not the previously focused pane's. Consume-once:
+    // a request whose pane did not gain focus is dropped, never replayed.
+    if (!d.paneDeferredActionPaneId.empty()) {
+        if (d.paneDeferredActionPaneId == d.focusedPaneId) {
             if (const ViewDefinition* active = ViewState.GetActiveView()) {
-                d.cfg.JqlQuery = active->Jql;
-                d.cfg.SelectedFields = active->Fields;
-                SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+                if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::RefreshView) {
+                    d.cfg.JqlQuery = active->Jql;
+                    d.cfg.SelectedFields = active->Fields;
+                    SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+                } else if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::NewIssueDraft) {
+                    static const std::vector<CachedTicket> kNoTickets;
+                    const GridPane& focusedPane = d.focusedPane();
+                    StartNewIssueDraft(app, d, ViewState.GetActiveViewMutable(),
+                                       focusedPane.ticketsSnapshot ? *focusedPane.ticketsSnapshot : kNoTickets);
+                }
             }
         }
-        d.paneDeferredRefreshPaneId.clear();
+        d.paneDeferredActionPaneId.clear();
+        d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::None;
     }
 
     // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes

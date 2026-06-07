@@ -207,7 +207,8 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                 // query against the still-focused pane's live context. Defer — the
                 // host consumes this after applying the focus/view switch this click
                 // triggered (drawGridPaneWindows; consume-once).
-                d.paneDeferredRefreshPaneId = pane.id;
+                d.paneDeferredActionPaneId = pane.id;
+                d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::RefreshView;
             }
         }
         if (ImGui::IsItemHovered())
@@ -404,7 +405,11 @@ void UpdateMcpChip(AppController& app, UiDrawSession& d, const TrackerConnectivi
 }
 #endif
 
-// Begin a new-issue draft seeded from the last visible ticket (or last-ticket fallback).
+} // namespace
+
+// Begin a new-issue draft seeded from the last visible ticket (or last-ticket fallback). Also
+// the entry point through which the pane-window host replays a deferred "+ New Issue" from a
+// not-yet-focused pane after the focus/view switch lands (multi-grid Slice 3, plan item 19).
 void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
                         const std::vector<CachedTicket>& tickets) {
     if (!d.newIssueDraftActive) {
@@ -447,6 +452,8 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
     d.newIssueScrollDraftRowIntoViewPending = true;
     d.newIssueFocusSummaryPending = true;
 }
+
+namespace { // reopened — see the external-linkage note above StartNewIssueDraft
 
 // Right-aligned cluster: tracker chip, READ ONLY chip, MCP chip, "+ New Issue" button.
 void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
@@ -521,7 +528,17 @@ void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* 
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.58f, 0.98f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.38f, 0.78f, 1.0f));
         if (ImGui::Button("+ New Issue")) {
-            StartNewIssueDraft(app, d, activeViewForGrid, tickets);
+            const GridPane& clickPane = d.pane();
+            if (clickPane.focused) {
+                StartNewIssueDraft(app, d, activeViewForGrid, tickets);
+            } else {
+                // Not-yet-focused pane (multi-grid Slice 3, plan item 19 — same shape as
+                // the deferred Refresh View above): drafting NOW would seed from the
+                // still-focused pane's active view/backend. Defer to the host, which
+                // applies it after the focus/view switch this click triggered.
+                d.paneDeferredActionPaneId = clickPane.id;
+                d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::NewIssueDraft;
+            }
         }
         ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered()) {

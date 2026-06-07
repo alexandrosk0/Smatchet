@@ -24,16 +24,23 @@ GridContextDepsAdapter::GridContextDepsAdapter(AppController& app, GridLiveConte
 LocalCacheManager* GridContextDepsAdapter::Cache() { return app_.Cache.get(); }
 
 // Backend reads go through std::atomic_load so the shared_ptr-instance read can't race the
-// live swap — atomic_store/atomic_exchange in SetBackend — and the returned raw subobject
-// pointer stays valid because the swapped-out backend is retired via defer-free, not freed (ADR 0012).
-ITrackerIssueReader* GridContextDepsAdapter::Reader() {
-    auto b = std::atomic_load(&ctx_.Backend);
-    return b ? &b->Reader() : nullptr;
+// live swap (atomic_store/atomic_exchange in SetBackend). The ALIASING shared_ptr keeps the
+// whole backend alive for as long as the caller holds the role handle — stronger than the
+// ADR-0012 graveyard alone, which only covers swaps, not Slice-3 context retirement.
+std::shared_ptr<ITrackerIssueReader> GridContextDepsAdapter::ReaderShared() const {
+    std::shared_ptr<ITrackerBackend> b = std::atomic_load(&ctx_.Backend);
+    if (!b) {
+        return nullptr;
+    }
+    return std::shared_ptr<ITrackerIssueReader>(b, &b->Reader());
 }
 
-ITrackerIssueMutations* GridContextDepsAdapter::Mutations() {
-    auto b = std::atomic_load(&ctx_.Backend);
-    return b ? b->Mutations() : nullptr;
+std::shared_ptr<ITrackerIssueMutations> GridContextDepsAdapter::MutationsShared() const {
+    std::shared_ptr<ITrackerBackend> b = std::atomic_load(&ctx_.Backend);
+    if (!b || b->Mutations() == nullptr) {
+        return nullptr;
+    }
+    return std::shared_ptr<ITrackerIssueMutations>(b, b->Mutations());
 }
 
 ITrackerConnectivity* GridContextDepsAdapter::BackendConnectivity() {
@@ -41,7 +48,11 @@ ITrackerConnectivity* GridContextDepsAdapter::BackendConnectivity() {
     return b ? &b->Connectivity() : nullptr;
 }
 
-const std::vector<TrackerField>& GridContextDepsAdapter::AvailableFields() const { return app_.AvailableFields; }
+// Per-context (multi-grid Slice 3): the catalog moved into GridLiveContext, so replay /
+// sync paths read THIS context's catalog — not whichever pane happens to be focused.
+const std::vector<TrackerField>& GridContextDepsAdapter::AvailableFields() const {
+    return ctx_.fieldCatalog.AvailableFields;
+}
 
 RequiredFieldSet GridContextDepsAdapter::GetRequiredFieldSet(const std::string& projectKey,
                                                              const std::string& issueTypeId,

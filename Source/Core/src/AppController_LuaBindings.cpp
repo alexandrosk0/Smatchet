@@ -774,7 +774,7 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::stat
     }
     const bool offline = LuaTruthy(offlineObj);
 
-    LuaMergeIssueCreateSpec(draft, std::move(spec), AvailableFields);
+    LuaMergeIssueCreateSpec(draft, std::move(spec), fieldCatalog().AvailableFields);
 
     sol::table result = sv.create_table();
 

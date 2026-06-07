@@ -466,11 +466,15 @@ struct UiDrawSession {
     /// steady-state pane↔view sync rebound the survivor to the CLOSED pane's view
     /// and persisted the loss (review HIGH-2 / MEDIUM-3).
     bool gridPaneFocusReassigned = false;
-    /// One-frame deferred "Refresh View" from a not-yet-focused pane's toolbar
-    /// (review MEDIUM-2): acting on the click frame would re-run a query against the
-    /// still-focused pane's live context. The host consumes this AFTER applying the
-    /// focus/view switch; consume-once (a request whose pane didn't gain focus drops).
-    std::string paneDeferredRefreshPaneId;
+    /// Kinds for the one-frame deferred pane action latch below (multi-grid Slice 3,
+    /// plan item 19 — extends Slice 2's refresh-only latch, review MEDIUM-2).
+    enum class PaneDeferredActionKind { None, RefreshView, NewIssueDraft };
+    /// One-frame deferred toolbar action from a not-yet-focused pane ({paneId, kind}):
+    /// acting on the click frame would target the still-focused pane's live context /
+    /// active view. The host consumes this AFTER applying the focus/view switch;
+    /// consume-once (a request whose pane didn't gain focus drops).
+    std::string paneDeferredActionPaneId;
+    PaneDeferredActionKind paneDeferredActionKind = PaneDeferredActionKind::None;
     std::string focusedPaneId;
     bool gridPanesLoaded = false;
     /// Debounced smatchet_panes.json save latch (mirrors prefsDirty).

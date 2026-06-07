@@ -62,7 +62,7 @@ bool AppController::IsConnectivityDegradedForProbeInterval(TrackerConnectivitySt
     if (!LastTrackerTicketSyncWarning.empty() && IsTrackerTransportErrorText(LastTrackerTicketSyncWarning)) {
         return true;
     }
-    const std::string& catalogErr = LastTrackerFieldCatalogError;
+    const std::string& catalogErr = fieldCatalog().LastTrackerFieldCatalogError;
     if (!catalogErr.empty() && IsTrackerTransportErrorText(catalogErr)) {
         return true;
     }
@@ -96,7 +96,7 @@ void AppController::ApplyTrackerConnectivityProbeResult(const std::chrono::stead
     // First successful probe after startup can be Unknown -> AuthenticatedReachable while we still show
     // an offline/snapshot catalog banner from cache or a failed fetch; nudge a live catalog refresh.
     const bool coldStartCatalogBanner = (prev == TrackerConnectivityState::Unknown && nowAuthenticatedReachable &&
-                                         !LastTrackerFieldCatalogWarning.empty());
+                                         !fieldCatalog().LastTrackerFieldCatalogWarning.empty());
     if (nowAuthenticatedReachable && (wasConnectivityDegraded || coldStartCatalogBanner)) {
         if (!trackerConnectivityRecoveryPending_) {
             trackerConnectivityRecoveryPending_ = true;
@@ -193,9 +193,12 @@ void AppController::applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_()
     }
     lastTrackerConnectivityState_ = TrackerConnectivityState::AuthenticatedReachable;
     LastTrackerTicketSyncWarning.clear();
-    if (!LastTrackerFieldCatalogWarning.empty()) {
-        LastTrackerFieldCatalogWarning.clear();
-        TrackerFieldCatalogRevision.fetch_add(1);
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
+    // switch between two calls would split the check/clear across two contexts (Pillar 3).
+    GridContextFieldCatalog& cat = fieldCatalog();
+    if (!cat.LastTrackerFieldCatalogWarning.empty()) {
+        cat.LastTrackerFieldCatalogWarning.clear();
+        cat.TrackerFieldCatalogRevision.fetch_add(1);
         fieldCatalogRefetchAfterLiveTicketSyncPending_.store(true, std::memory_order_release);
     }
 }
@@ -279,8 +282,10 @@ void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessi
 TrackerConnectivityBannerForUi
 AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote) const {
     TrackerConnectivityBannerForUi out;
-    const std::string& ce = LastTrackerFieldCatalogError;
-    const std::string& cw = LastTrackerFieldCatalogWarning;
+    // Latch the catalog once: both refs below must come from the SAME context (Pillar 3).
+    const GridContextFieldCatalog& cat = fieldCatalog();
+    const std::string& ce = cat.LastTrackerFieldCatalogError;
+    const std::string& cw = cat.LastTrackerFieldCatalogWarning;
     const std::string& tw = LastTrackerTicketSyncWarning;
     const bool haveSession = sessionCatalogNote && !sessionCatalogNote->empty();
     const bool haveCw = !cw.empty();
@@ -354,7 +359,7 @@ bool AppController::ConsumeTrackerConnectivityRecovery() {
     }
     trackerConnectivityRecoveryPending_ = false;
     LastTrackerTicketSyncWarning.clear();
-    LastTrackerFieldCatalogWarning.clear();
+    fieldCatalog().LastTrackerFieldCatalogWarning.clear();
     const auto now = std::chrono::steady_clock::now();
     if (offlineQueue_) {
         offlineQueue_->RestartReplayTimersNow(now);

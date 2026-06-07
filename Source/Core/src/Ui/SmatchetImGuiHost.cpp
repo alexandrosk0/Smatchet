@@ -960,7 +960,7 @@ void SmatchetImGuiHost::TickApplicationWork() {
     DrainCommandQueue(kMaxCommandsPerHostTick);
     ImplData->App.TickOfflineCreates();
     ImplData->App.TickOfflineFieldEdits();
-    ImplData->App.TickStreamingApply();
+    ImplData->App.TickAllContexts(); // all live pane contexts (multi-grid Slice 3)
 }
 
 std::uint64_t SmatchetImGuiHost::EnqueueCommand(const std::string& commandName, const std::string& argsJson,
