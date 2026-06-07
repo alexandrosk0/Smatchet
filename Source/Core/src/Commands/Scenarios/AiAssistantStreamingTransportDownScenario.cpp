@@ -152,7 +152,7 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
         const long long elapsedMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(errorAt_ - startedAt_).count();
 
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
             nlohmann::json rj;
@@ -162,6 +162,7 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
             rj["maxMs"] = r.maxMs;
             rj["calls"] = r.calls;
             rj["emaAvgMs"] = r.emaAvgMs;
+            rj["p99Ms"] = r.p99Ms;
             rowsJson.push_back(std::move(rj));
         }
 

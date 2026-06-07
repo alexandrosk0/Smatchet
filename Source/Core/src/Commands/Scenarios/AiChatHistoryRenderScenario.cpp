@@ -118,7 +118,7 @@ class AiChatHistoryRenderScenario : public IScenario {
     void OnCancel(AppController& /*app*/) override { Restore(); }
 
     nlohmann::json OnFinish(AppController& /*app*/) override {
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         // std::transform satisfies cppcheck `useStlAlgorithm` over the raw
         // push_back loop; functionally identical (back_inserter appends one
@@ -133,6 +133,7 @@ class AiChatHistoryRenderScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             };
         });
         nlohmann::json out;

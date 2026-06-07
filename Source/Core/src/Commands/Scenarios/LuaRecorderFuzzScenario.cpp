@@ -64,7 +64,7 @@ class LuaRecorderFuzzScenario : public IScenario {
             app.ScenarioUnregisterLuaCachedProvider(boundField_);
             boundField_.clear();
         }
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
             rowsJson.push_back({
@@ -74,6 +74,7 @@ class LuaRecorderFuzzScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             });
         }
         nlohmann::json out;

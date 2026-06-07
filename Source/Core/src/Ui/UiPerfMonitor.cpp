@@ -17,27 +17,19 @@ UiPerfMonitor& UiPerfMonitor::Instance() {
 void UiPerfMonitor::BeginFrame() {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    std::unordered_map<std::string, Agg> map;
-    map.reserve(working_.size());
-    for (const auto& p : working_) {
-        auto& a = map[p.first];
-        a.totalNs += p.second.totalNs;
-        a.calls += p.second.calls;
-        a.maxNs = std::max(a.maxNs, p.second.maxNs);
-    }
-    working_.clear();
-
     lastFrame_.clear();
-    lastFrame_.reserve(map.size());
 
-    for (auto& kv : map) {
+    for (ScopeRecord& s : scopes_) {
+        if (s.frame.calls == 0) {
+            continue; // not hit this frame — keep ring/EMA history, emit no row
+        }
+        const Agg& a = s.frame;
         UiPerfRow row;
-        row.name = std::move(kv.first);
-        const Agg& a = kv.second;
+        row.name = s.name;
         row.calls = a.calls;
         row.maxMs = static_cast<double>(a.maxNs) / 1e6;
         row.lastTotalMs = static_cast<double>(a.totalNs) / 1e6;
-        row.avgPerCallMs = a.calls > 0 ? row.lastTotalMs / static_cast<double>(a.calls) : 0.0;
+        row.avgPerCallMs = row.lastTotalMs / static_cast<double>(a.calls);
         std::uint64_t& life = lifetimeHits_[row.name];
         life += static_cast<std::uint64_t>(row.calls);
         row.lifetimeHits = life;
@@ -50,6 +42,7 @@ void UiPerfMonitor::BeginFrame() {
             emaIt->second = kEmaAlpha * row.avgPerCallMs + (1.0 - kEmaAlpha) * emaIt->second;
             row.emaAvgMs = emaIt->second;
         }
+        s.frame = Agg();
         lastFrame_.push_back(std::move(row));
     }
 
@@ -63,26 +56,47 @@ void UiPerfMonitor::Record(const char* name, std::chrono::nanoseconds duration) 
     }
     const std::uint64_t ns = static_cast<std::uint64_t>(duration.count());
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = std::find_if(working_.begin(), working_.end(), [&](const auto& p) {
-        return p.first == name;
-    });
-    if (it != working_.end()) {
-        it->second.totalNs += ns;
-        it->second.calls += 1;
-        it->second.maxNs = std::max(it->second.maxNs, ns);
-        return;
+    auto it = std::find_if(scopes_.begin(), scopes_.end(), [&](const ScopeRecord& s) { return s.name == name; });
+    if (it == scopes_.end()) {
+        // First sighting of this scope name: one-time registration allocation
+        // (name string + the 2 KB ring inside the vector slot). The steady
+        // state never reaches here — every later call is the branch below.
+        scopes_.push_back(ScopeRecord());
+        it = scopes_.end() - 1;
+        it->name = name;
     }
-    working_.push_back({std::string(name), Agg{ns, 1u, ns}});
+    it->frame.totalNs += ns;
+    it->frame.calls += 1;
+    it->frame.maxNs = std::max(it->frame.maxNs, ns);
+    it->ring.Push(static_cast<double>(ns) / 1e6);
 }
 
-std::vector<UiPerfRow> UiPerfMonitor::GetLastFrameRows() const {
+std::vector<UiPerfRow> UiPerfMonitor::GetLastFrameRows(bool includeP99) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return lastFrame_;
+    std::vector<UiPerfRow> rows = lastFrame_;
+    if (includeP99) {
+        // Cold path (CLI perf.snapshot / scenario finish serialization): copy
+        // each scope's ring and run one nth_element. The per-frame UI panel
+        // passes false and never pays this.
+        std::vector<double> scratch;
+        scratch.reserve(PerfSampleRing::kCapacity);
+        for (UiPerfRow& row : rows) {
+            const auto sIt =
+                std::find_if(scopes_.begin(), scopes_.end(), [&](const ScopeRecord& s) { return s.name == row.name; });
+            if (sIt == scopes_.end()) {
+                continue; // Reset raced between BeginFrame and snapshot — leave 0.0
+            }
+            scratch.clear();
+            sIt->ring.AppendSamples(scratch);
+            row.p99Ms = ComputeP99(scratch);
+        }
+    }
+    return rows;
 }
 
 void UiPerfMonitor::Reset() {
     std::lock_guard<std::mutex> lock(mutex_);
-    working_.clear();
+    scopes_.clear();
     lastFrame_.clear();
     emaByName_.clear();
     lifetimeHits_.clear();
@@ -98,9 +112,3 @@ UiPerfScope::~UiPerfScope() {
     const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0_);
     UiPerfMonitor::Instance().Record(name_, dt);
 }
-
-
-
-
-
-

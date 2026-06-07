@@ -35,7 +35,7 @@ class IdleScenario : public IScenario {
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
     nlohmann::json OnFinish(AppController& /*app*/) override {
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         // Find the dominant UI-thread row (SmatchetUI::Draw is the canonical
         // umbrella scope) so the baseline is comparable across scenarios.
         double topMs = 0.0;
@@ -56,6 +56,7 @@ class IdleScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             });
         }
         nlohmann::json out;

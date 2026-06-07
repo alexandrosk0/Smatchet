@@ -22,6 +22,10 @@ add_executable(SmatchetTests
     Core/CacheEvictionPolicy.test.cpp
     Core/MemoryTelemetry.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/MemoryTelemetry.cpp"
+    # perf-p99-emitter — pure ring-buffer + percentile seam behind UiPerfMonitor's
+    # snapshot-time p99Ms row field (Pillar-1 p99 ceiling). Header-only
+    # (Source/Core/include/Ui/PerfSampleRing.h); no production .cpp to link.
+    Core/PerfSampleRing.test.cpp
     Core/BackgroundWorkerReap.test.cpp
     Core/JqlProjectScope.test.cpp
     # Per-project Jira component dropdowns (PR #672) — pure coverage of issue-key-prefix

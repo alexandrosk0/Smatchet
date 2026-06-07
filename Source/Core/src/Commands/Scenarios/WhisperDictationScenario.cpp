@@ -161,7 +161,7 @@ class WhisperDictationScenario : public IScenario {
         // captures a baseline (per the 8-of-15 retrofit in
         // docs/self-improvement/categories/tooling.md). Pattern mirrors
         // PriorityGridScrollScenario::OnFinish.
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
             return nlohmann::json{
@@ -171,6 +171,7 @@ class WhisperDictationScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             };
         });
         out["rows"] = std::move(rowsJson);

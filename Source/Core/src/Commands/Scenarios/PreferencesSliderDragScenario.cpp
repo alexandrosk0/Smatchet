@@ -51,7 +51,7 @@ class PreferencesSliderDragScenario : public IScenario {
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
     nlohmann::json OnFinish(AppController& /*app*/) override {
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
+        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
 
         // Find the prefs-debounced save row (if present) and total it across
         // the run. `lifetimeHits` would be ideal but `GetLastFrameRows` only
@@ -78,6 +78,7 @@ class PreferencesSliderDragScenario : public IScenario {
                 {"maxMs", r.maxMs},
                 {"calls", r.calls},
                 {"emaAvgMs", r.emaAvgMs},
+                {"p99Ms", r.p99Ms},
             });
         }
 
