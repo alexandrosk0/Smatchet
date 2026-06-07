@@ -7,6 +7,24 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-07 · debug-detective · [infra] · P3 — `SmatchetCrashHandler` terminate-path dumps carry no ExceptionStream (`TerminateHandler` passes `exPtrs=nullptr` to MiniDumpWriteDump)
+  Details: `Source/Standalone/SmatchetCrashHandler.cpp:56-62` — `TerminateHandler()` calls `WriteMiniDump(nullptr)`, and `WriteMiniDump` (`:25-42`) only attaches a `MINIDUMP_EXCEPTION_INFORMATION` when `exPtrs != nullptr`. So a dump written on the `std::terminate` path (unhandled C++ exception) has no ExceptionStream — `!analyze`-style triage can't see the faulting context, and this session's terminate-path dump triage had to reconstruct the failure from the marker string alone. The SEH path (`TopLevelExceptionFilter`, `:48`) is fine.
+  Concrete next action: capture exception pointers via a vectored-exception-handler stash — a first-chance VEH records the most recent `EXCEPTION_POINTERS` (thread-local or atomic) and `TerminateHandler` passes the stashed pointers to `WriteMiniDump` when available — so the next terminate-path dump is self-describing. Est ~1-2 h incl. a forced-terminate smoke.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · test-author (Slice-2 agent) · [infra] · P3 — local Mesa parity broken: d3d12 gallium driver crashes any Smatchet build at boot on this box; llvmpipe boots but click-driven bucket-E fails under it
+  Details: Attempting to reproduce the CI Mesa lane locally: the d3d12 gallium driver crashes every Smatchet build at process boot on this dev box; falling back to llvmpipe boots fine, but click-driven bucket-E tests fail under llvmpipe at develop tip (clicks don't land / items not hit). Net: there is no working local software-GL path that mirrors the CI bucket-E lane, so Mesa-lane failures can't be reproduced locally and native-GL is the only locally-working bucket-E path.
+  Concrete next action: either document native-GL as the supported local bucket-E path (a line in `docs/agent-rules/build.md` or the test-authoring skill: "local bucket-E runs use the native GPU; Mesa/llvmpipe is CI-only") or root-cause the llvmpipe click failures (hit-testing under software raster) so local Mesa parity exists. Est ~30 min for the doc path.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · build-fix agent (Slice-2) · [infra] · P3 — parallel preset builds collide on shared `.fetchcontent-*/curl-build` PDB paths → C1041
+  Details: Two presets building in parallel (after deps are already fetched) collided with `C1041` (cannot open program database) on the shared FetchContent curl build dir — the `.fetchcontent-*` base dir is shared across presets, so two MSVC compilations of the same dep TU race on one PDB. `docs/agent-rules/build.md` (Fresh-worktree pitfalls #4) already mandates serial *configures* and asserts "once the dep sources exist, parallel builds are fine" — this session's C1041 shows the build-phase collision also exists, so that line under-promises.
+  Concrete next action: either extend the build.md rule to "serialize preset *builds* too when they share `.fetchcontent-*` build dirs", or pass `/FS` (force-synchronous PDB writes) to the dep builds so parallel preset builds stop racing. Est ~30 min (doc) / ~1 h (`/FS` plumbing + verify).
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [infra] · P1 — `bucket-lane-launch-smoke`: advisory (continue-on-error) exe-running CI lanes cannot distinguish dead-harness from flaky-tests (preventing gate from postmortems.md 2026-06-07 bucket-C/E)
   Details: bucket-C ran `Passed: 0  Failed: 3` / exit 1 with a green check for 2 weeks (#441 → #937) because Mesa provisioning copied only the thin `opengl32.dll` loader; every exe died at process start, and `continue-on-error: true` swallowed total harness death exactly like a flaky test. The lanes' entire purpose (visual/UI regression coverage) was silently void.
   Concrete next action: (1) add a NON-continue-on-error launch-smoke step after Mesa install and before each advisory bucket step in `build-and-test.yml` — run the freshly-provisioned exe once (`Smatchet.exe cmd app.version --spawn --yes`, ≤10 s) so "exe cannot start" hard-fails the job; (2) inside `test-screenshot-diff.sh` / the bucket-E driver, hard-exit when `Passed == 0 && Failed > 0` (a lane that passes nothing is broken, not flaky). Est ~45 min (two workflow steps + one bash guard + verify on a code PR).
