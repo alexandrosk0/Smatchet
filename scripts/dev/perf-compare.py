@@ -256,13 +256,20 @@ def emit_markdown(
     lines.append(
         f"- baseline: `{base_commit}` ({base_host}, captured {base_date})"
     )
+    # Render from normalized values — raw policy entries may be null/strings
+    # (evaluate() normalizes transiently via _to_float; mirror that here so a
+    # malformed policy can't TypeError the report). (CodeRabbit PR #937 #1.)
+    mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
+    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 16.67), "policy.p99_abs_ceiling_ms") or 16.67
+    max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
+    mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
     policy_line = (
-        f"- policy: mean Δ ≤ {policy['mean_delta_pct']:.1f} % · p99 ≤ "
-        f"{policy['p99_abs_ceiling_ms']:.2f} ms · max ≤ "
-        f"{policy['max_abs_ceiling_ms']:.2f} ms"
+        f"- policy: mean Δ ≤ {mean_pct:.1f} % · p99 ≤ "
+        f"{p99_cap:.2f} ms · max ≤ "
+        f"{max_cap:.2f} ms"
     )
-    if policy.get("mean_abs_ceiling_ms") is not None:
-        policy_line += f" · mean ≤ {float(policy['mean_abs_ceiling_ms']):.2f} ms"
+    if mean_cap is not None:
+        policy_line += f" · mean ≤ {mean_cap:.2f} ms"
     lines.append(policy_line)
     lines.append("")
 

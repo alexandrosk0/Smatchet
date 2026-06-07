@@ -140,7 +140,19 @@ if [[ "$rc" -ne 0 ]]; then
     echo "[perf-run] WARN: scenario.run exited rc=$rc but the result file exists (quit-handshake flake) — continuing." >&2
 fi
 # Guard against a torn/empty write: the file must parse as JSON with rows.
-if ! python -c "import json,sys; d=json.load(open(sys.argv[1], encoding='utf-8')); rows=(d.get('data') or {}).get('rows') or d.get('rows') or []; sys.exit(0 if rows else 1)" "$ABS_OUT"; then
+# Mirrors extract_rows() in perf-compare.py: when `data` exists and carries
+# `rows`, that IS the row set — an empty data.rows must FAIL, never fall back
+# to a top-level `rows`. (CodeRabbit PR #937 #2.)
+if ! python -c "
+import json, sys
+d = json.load(open(sys.argv[1], encoding='utf-8'))
+data = d.get('data')
+if isinstance(data, dict) and 'rows' in data:
+    rows = data.get('rows')
+else:
+    rows = d.get('rows')
+sys.exit(0 if isinstance(rows, list) and rows else 1)
+" "$ABS_OUT"; then
     echo "FAIL: $ABS_OUT exists but is not valid JSON with non-empty rows (exit=$rc)." >&2
     exit 1
 fi
