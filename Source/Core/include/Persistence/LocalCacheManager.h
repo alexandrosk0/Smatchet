@@ -59,14 +59,28 @@ class LocalCacheManager {
      */
     size_t RunOneTimeTicketsV2CopyMigration(const std::string& backendKey);
 
+    // Pending-queue rows are namespaced by `backendKey` like the ticket tables (multi-grid
+    // Slice 1c, ADR-0018 decision 4): enqueues stamp the queuing context's key; replay is
+    // strict equality against the replaying context's key (rows whose backend has no live
+    // context stay queued). The column is an additive `ALTER TABLE ... ADD COLUMN backend_key
+    // TEXT NOT NULL DEFAULT ''`; legacy rows are backfilled once by
+    // `RunOneTimePendingQueueBackendKeyStamp`.
     /** @return generated row id. */
-    std::int64_t EnqueuePendingCreate(const std::string& payload);
+    std::int64_t EnqueuePendingCreate(const std::string& backendKey, const std::string& payload);
     std::vector<PendingCreate> LoadPendingCreates();
     void UpdatePendingCreate(std::int64_t id, int attempts, const std::string& lastError);
     void DeletePendingCreate(std::int64_t id);
     void ArchivePendingCreate(std::int64_t id, const std::string& terminalReason, const std::string& terminalError);
     /** PR 5 legacy-project sweep: replace the stored `payload` JSON for an active pending row. */
     void UpdatePendingCreatePayload(std::int64_t id, const std::string& payload);
+
+    /** One-time stamp migration for the pending-queue `backend_key` columns (multi-grid
+     * Slice 1c): `UPDATE ... SET backend_key = backendKey WHERE backend_key = ''` across
+     * `pending_creates`, `pending_field_edits` and both dead-letter twins — legacy rows were
+     * necessarily queued against the then-only configured backend. Gated on a `cache_meta`
+     * flag so it runs at most once per database file; no-op (flag untouched) when
+     * `backendKey` is empty. @return total number of rows stamped. */
+    size_t RunOneTimePendingQueueBackendKeyStamp(const std::string& backendKey);
 
     /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
     bool HasCacheMetaFlag(const std::string& key);
@@ -86,8 +100,8 @@ class LocalCacheManager {
     /** Permanently remove a dead-letter row (user discard). */
     void DeleteDeadPendingCreate(std::int64_t deadId);
 
-    std::int64_t EnqueuePendingFieldEdit(const std::string& issueKey, const std::string& fieldId,
-                                         const std::string& fieldsPayloadJson,
+    std::int64_t EnqueuePendingFieldEdit(const std::string& backendKey, const std::string& issueKey,
+                                         const std::string& fieldId, const std::string& fieldsPayloadJson,
                                          const std::string& originalRichValue = std::string(),
                                          const std::string& originalValue = std::string(),
                                          bool hasOriginalValue = false);

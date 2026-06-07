@@ -285,6 +285,10 @@ struct UnifiedOfflineRow {
     std::string payload;
     bool hasMergeConflict = false;
     std::string conflictContextJson;
+    /// Backend namespace the row was queued against (multi-grid Slice 1c). Flows from the
+    /// PendingCreate / PendingFieldEditRecord / Dead* structs; rows whose backend has no live
+    /// context stay queued and this tag attributes them.
+    std::string backendKey;
 };
 
 static std::string MakeUnifiedOfflineRowKey(UnifiedOfflineKind kind, std::int64_t dbId) {
@@ -321,6 +325,7 @@ static std::vector<UnifiedOfflineRow> BuildUnifiedOfflineRows(const std::vector<
         u.createdEpoch = row.CreatedAtEpochSec;
         u.archivedEpoch = 0;
         u.payload = row.Payload;
+        u.backendKey = row.BackendKey;
         rows.push_back(std::move(u));
     }
     for (const DeadPendingCreate& row : deadCreates) {
@@ -337,6 +342,7 @@ static std::vector<UnifiedOfflineRow> BuildUnifiedOfflineRows(const std::vector<
         u.createdEpoch = row.CreatedAtEpochSec;
         u.archivedEpoch = row.ArchivedAtEpochSec;
         u.payload = row.Payload;
+        u.backendKey = row.BackendKey;
         rows.push_back(std::move(u));
     }
     for (const PendingFieldEditRecord& row : pendingEdits) {
@@ -356,6 +362,7 @@ static std::vector<UnifiedOfflineRow> BuildUnifiedOfflineRows(const std::vector<
         u.payload = row.FieldsPayloadJson;
         u.hasMergeConflict = row.HasMergeConflict;
         u.conflictContextJson = row.ConflictContextJson;
+        u.backendKey = row.BackendKey;
         if (row.HasMergeConflict) {
             u.state = "Conflict";
         }
@@ -377,6 +384,7 @@ static std::vector<UnifiedOfflineRow> BuildUnifiedOfflineRows(const std::vector<
         u.createdEpoch = row.CreatedAtEpochSec;
         u.archivedEpoch = row.ArchivedAtEpochSec;
         u.payload = row.FieldsPayloadJson;
+        u.backendKey = row.BackendKey;
         rows.push_back(std::move(u));
     }
 
