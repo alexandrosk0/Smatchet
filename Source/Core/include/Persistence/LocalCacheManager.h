@@ -94,8 +94,17 @@ class LocalCacheManager {
      */
     size_t RunOneTimeLegacyDropPendingAtMaxAttempts();
 
-    /** Restore latest dead-letter row for this original pending id back to active queue (attempts=0). */
-    bool RestoreDeadPendingCreate(std::int64_t originalPendingId);
+    /** Restore latest dead-letter row for this original pending id back to active queue
+     * (attempts=0), preserving the row's original `backend_key` — never a focused context's
+     * key. When `payloadOverride` is non-null the re-queued row stores that payload instead of
+     * the archived one (caller-side scrub, e.g. OfflineQueueService's restored-create
+     * ExistingIssueKey scrub) — still inside the single restore transaction. */
+    bool RestoreDeadPendingCreate(std::int64_t originalPendingId, const std::string* payloadOverride = nullptr);
+
+    /** Restore latest dead-letter field-edit row for this original pending id back to the
+     * active queue (attempts=0), preserving `backend_key` and both merge bases. Mirrors
+     * `RestoreDeadPendingCreate`. */
+    bool RestoreDeadPendingFieldEdit(std::int64_t originalPendingId);
 
     /** Permanently remove a dead-letter row (user discard). */
     void DeleteDeadPendingCreate(std::int64_t deadId);

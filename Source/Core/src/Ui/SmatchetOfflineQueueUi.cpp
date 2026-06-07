@@ -850,52 +850,41 @@ static void OnContextDiscard(OfflineDrawCtx& ctx, const std::vector<UnifiedOffli
 }
 
 static void OnContextRestoreDeadCreates(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
-    int del = 0;
-    int failed = 0;
+    // Key-preserving restore (CR-951-1): route through AppController::RestoreDeadPendingCreates
+    // so the row keeps its ORIGINAL backend_key — re-queueing via QueueCreateOffline would
+    // re-stamp the focused context's key. The fresh-create scrub (ExistingIssueKey + issuekey/
+    // key field values) lives in OfflineQueueService::RestoreDeadPendingCreates.
+    std::vector<std::int64_t> originalIds;
     for (const auto& p : picks) {
         if (p.kind != UnifiedOfflineKind::DeadCreate) {
             continue;
         }
-        std::string qerr;
-        IssueDraft draft;
-        if (IssueDraftHelpers::FromJson(p.payload, draft, qerr)) {
-            draft.ExistingIssueKey.clear();
-            draft.FieldValues.erase("issuekey");
-            draft.FieldValues.erase("key");
-            if (ctx.app.QueueCreateOffline(draft) > 0) {
-                (void)ctx.app.DeleteDeadPendingCreates({p.dbId});
-                ++del;
-            } else {
-                ++failed;
-            }
-        } else {
-            ++failed;
-        }
+        originalIds.push_back(p.originalId);
         g_selectedOfflineRowKeys.erase(p.key);
     }
+    const AppController::DeadLetterRestoreSummary summary = ctx.app.RestoreDeadPendingCreates(originalIds);
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "Restored dead creates to offline queue: %d retrying, %d failed.", del, failed);
+    std::snprintf(buf, sizeof(buf), "Restored dead creates to offline queue: %d retrying, %d failed.", summary.Restored,
+                  summary.Failed);
     ArmOfflineQueuePanelStatus(ctx.d, buf);
 }
 
 static void OnContextRestoreDeadEdits(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
-    int del = 0;
-    int failed = 0;
+    // Key-preserving restore (CR-951-1): the field-edit twin — QueueFieldEditOffline would
+    // re-stamp the focused context's key AND drop the merge bases; the dedicated restore
+    // keeps both.
+    std::vector<std::int64_t> originalIds;
     for (const auto& p : picks) {
         if (p.kind != UnifiedOfflineKind::DeadFieldEdit) {
             continue;
         }
-        std::string qerr;
-        if (ctx.app.QueueFieldEditOffline(p.issue, p.field, p.payload, qerr) > 0) {
-            (void)ctx.app.DeleteDeadPendingFieldEdits({p.dbId});
-            ++del;
-        } else {
-            ++failed;
-        }
+        originalIds.push_back(p.originalId);
         g_selectedOfflineRowKeys.erase(p.key);
     }
+    const AppController::DeadFieldEditRestoreSummary summary = ctx.app.RestoreDeadPendingFieldEdits(originalIds);
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "Restored dead edits to offline queue: %d retrying, %d failed.", del, failed);
+    std::snprintf(buf, sizeof(buf), "Restored dead edits to offline queue: %d retrying, %d failed.", summary.Restored,
+                  summary.Failed);
     ArmOfflineQueuePanelStatus(ctx.d, buf);
 }
 

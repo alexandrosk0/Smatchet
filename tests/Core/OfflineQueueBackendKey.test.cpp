@@ -268,10 +268,79 @@ TEST_CASE("queue backend_key: dead-letter rows carry the key and restore re-queu
     CHECK(active.front().BackendKey == "Plane"); // original key, NOT any focused context's key
     CHECK(active.front().Attempts == 0);
 
-    // Field-edit path: archive carries the key.
-    const std::int64_t editId = fix.Ref().EnqueuePendingFieldEdit("GitHub", "OWN/REPO#7", "summary", "{}");
+    // Field-edit path: archive carries the key; restore brings it back (bases included).
+    const std::int64_t editId =
+        fix.Ref().EnqueuePendingFieldEdit("GitHub", "OWN/REPO#7", "summary", "{}", "rich base", "scalar base", true);
     fix.Ref().ArchivePendingFieldEdit(editId, "replay_rejected", "terminal");
     auto deadEdits = fix.Ref().LoadDeadPendingFieldEdits();
     REQUIRE(deadEdits.size() == 1);
     CHECK(deadEdits.front().BackendKey == "GitHub");
+    REQUIRE(fix.Ref().RestoreDeadPendingFieldEdit(editId));
+    CHECK(fix.Ref().LoadDeadPendingFieldEdits().empty());
+    const auto activeEdits = fix.Ref().LoadPendingFieldEdits();
+    REQUIRE(activeEdits.size() == 1);
+    CHECK(activeEdits.front().BackendKey == "GitHub"); // original key, NOT any focused context's key
+    CHECK(activeEdits.front().IssueKey == "OWN/REPO#7");
+    CHECK(activeEdits.front().FieldId == "summary");
+    CHECK(activeEdits.front().Attempts == 0);
+    CHECK(activeEdits.front().OriginalRichValue == "rich base");
+    CHECK(activeEdits.front().OriginalValue == "scalar base");
+    CHECK(activeEdits.front().HasOriginalValue);
+}
+
+TEST_CASE("dead-letter restore via the SERVICE preserves the original backend key when the focused key differs "
+          "(CR-951-1) and re-queues restored creates as fresh creates" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps; // focused-context key is "Jira" — every dead row below is NOT Jira
+    OfflineQueueService svc(deps);
+
+    // Dead CREATE queued under "Plane", payload carrying a stale update identity.
+    IssueDraft draft = MakeDraft("plane create");
+    draft.ExistingIssueKey = "PLANE-9";
+    draft.FieldValues["issuekey"] = "PLANE-9";
+    draft.FieldValues["key"] = "PLANE-9";
+    const std::int64_t createId = deps.CacheImpl->EnqueuePendingCreate("Plane", IssueDraftHelpers::ToJson(draft));
+    deps.CacheImpl->ArchivePendingCreate(createId, "max_attempts", "terminal");
+    REQUIRE(deps.CacheImpl->LoadPendingCreates().empty());
+
+    const auto createSummary = svc.RestoreDeadPendingCreates({createId});
+    CHECK(createSummary.Restored == 1);
+    CHECK(createSummary.Failed == 0);
+    CHECK(deps.CacheImpl->LoadDeadPendingCreates().empty());
+    const auto restoredCreates = deps.CacheImpl->LoadPendingCreates();
+    REQUIRE(restoredCreates.size() == 1);
+    CHECK(restoredCreates.front().BackendKey == "Plane"); // NOT the deps' focused "Jira"
+    CHECK(restoredCreates.front().Attempts == 0);
+    // Fresh-create scrub preserved from the UI restore contract.
+    IssueDraft restoredDraft;
+    std::string parseErr;
+    REQUIRE(IssueDraftHelpers::FromJson(restoredCreates.front().Payload, restoredDraft, parseErr));
+    CHECK(restoredDraft.ExistingIssueKey.empty());
+    CHECK(restoredDraft.FieldValues.count("issuekey") == 0);
+    CHECK(restoredDraft.FieldValues.count("key") == 0);
+    CHECK(restoredDraft.FieldValues.at("summary") == "plane create");
+
+    // Dead FIELD EDIT queued under "GitHub" — the new key-preserving twin.
+    const std::int64_t editId = deps.CacheImpl->EnqueuePendingFieldEdit(
+        "GitHub", "OWN/REPO#7", "summary", "{\"summary\":\"v\"}", "rich base", "scalar base", true);
+    deps.CacheImpl->ArchivePendingFieldEdit(editId, "replay_rejected", "terminal");
+    REQUIRE(deps.CacheImpl->LoadPendingFieldEdits().empty());
+
+    const auto editSummary = svc.RestoreDeadPendingFieldEdits({editId});
+    CHECK(editSummary.Restored == 1);
+    CHECK(editSummary.Failed == 0);
+    CHECK(deps.CacheImpl->LoadDeadPendingFieldEdits().empty());
+    const auto restoredEdits = deps.CacheImpl->LoadPendingFieldEdits();
+    REQUIRE(restoredEdits.size() == 1);
+    CHECK(restoredEdits.front().BackendKey == "GitHub"); // NOT the deps' focused "Jira"
+    CHECK(restoredEdits.front().Attempts == 0);
+    CHECK(restoredEdits.front().OriginalRichValue == "rich base");
+    CHECK(restoredEdits.front().OriginalValue == "scalar base");
+    CHECK(restoredEdits.front().HasOriginalValue);
+
+    // Missing original id: counted Failed, nothing mutated.
+    const auto missSummary = svc.RestoreDeadPendingFieldEdits({987654});
+    CHECK(missSummary.Restored == 0);
+    CHECK(missSummary.Failed == 1);
 }
