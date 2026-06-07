@@ -11,6 +11,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-07 · grid-engine (via orchestrator) · [debt] · P2 — `OfflineQueueService` replay workers capture raw `deps_.Reader()`/`Mutations()` pointers across async (same use-after-free class fixed twice on PR #945)
+  Details: The #945 ADR-0012 audit fixed two raw-backend-pointer-across-async instances in AppController and found this third, PRE-EXISTING one at `Source/Core/src/Sync/OfflineQueueService.cpp:680/:1212`: replay workers capture raw `ITrackerIssueReader*`/`ITrackerIssueMutations*` (subobjects of the swappable backend) into background tasks. A backend swap mid-replay dangles them — Pillar-3 class. Out of #945's and 1c's scope because the sound fix changes `IOfflineQueueDeps` (latched `shared_ptr` accessors instead of raw subobject getters). Multi-grid Slice 3 (N live contexts, per-context swap) RAISES the likelihood — fix before or with S3.
+  Concrete next action: widen `IOfflineQueueDeps` to expose a latched `std::shared_ptr<ITrackerBackend>` (or latched reader/mutations handles), derive subobjects inside the worker from the strong handle; mirror in `FakeOfflineQueueDeps.h`; bucket-A test: swap-during-replay does not crash + replay either completes against the latched backend or no-matches. Est ~1-2 h. Owner: offline-sync.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [debt] · P2 — `backend-impl-coverage-recovery`: `JiraClient` impl TUs entered the coverage denominator largely uncovered (70% → 64%); raise backend-impl coverage so the `coverage-out-of-band` label class shrinks
   Details: PR #939 linked 5 real `JiraClient` implementation TUs into `SmatchetTests` (vtable requirement for the catalog-build fixture) — absolute coverage rose, but the line-rate dropped below the 65% floor and needed the freshly-implemented `coverage-out-of-band` label (#941, postmortems.md 2026-06-07). The newly-measured backend-impl surface is real product code with thin direct coverage: the catalog fixture exercises catalog endpoints only.
   Concrete next action: extend the scripted-HTTP fixture (`JiraCatalogHttpFixture.h`) pattern to the search/mutation/user-meta paths of `JiraClient` (and later Plane/GitHub when their impl TUs get linked) until the measured rate clears 65% with headroom; then remove the label from the class. Pairs with multi-grid Slice-0 WS2's pinned mapping-edge findings. Est ~3-4 h across 2-3 sittings.

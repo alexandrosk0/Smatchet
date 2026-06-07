@@ -7,6 +7,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-07 · orchestrator · [process] · P2 — gate/test output must be grepped for FAIL, never `tail`-truncated: a truncated tail hid a red doc-validation sub-test and shipped it to a PR (cost one full CI round-trip on #946)
+  Details: The orchestrator ran `test-docs.sh ... | tail -2`, saw the LAST sub-test's "Passed: 1 Failed: 0" + an unrecognized "Fix locally (many auto-fix)" hint line, and committed — but two earlier sub-tests (plan-index drift + a dangling tier-ful plan ref from a `git mv` active→shipped) were red. CI caught it ("Auto-sync plan INDEX" + "Doc anchors + agent contract" both failed on #946). Same mistake pattern nearly recurred minutes later on the fix commit itself. The summary line `test-docs — Passed: N Failed: M` exists and is grep-able; the failure mode is purely how the output was consumed.
+  Concrete next action: (1) discipline line in `docs/agent-rules/process-rules.md` § Cadence + verification: consume gate output via `grep -E "FAIL|Failed: [1-9]"` or the suite's summary line, never bare `tail -N`; (2) optional hardening: make `test-docs.sh` exit-code-first in orchestrator recipes (`bash scripts/dev/test-docs.sh && git commit ...`) so truncated reading can't matter. Also fold in the PowerShell commit-message note from Slice 1c: messages containing double quotes break `git commit -m` under PowerShell 5.1 native-arg re-quoting — use `git commit -F <file>` for multiline/quoted messages.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-05 · orchestrator · [process] · P2 — `agent-size-reduction` is unblocked (its #868 gate merged) but tracked only as an `active/` plan stub — the exact "trigger dies in a plan" loss the triggered-follow-up field fixes
   Details: `docs/plans/shipped/agent-size-reduction.md` shrinks `debug-detective` (418→316, stays grandfathered) / `test-author` (268→130) / `coderabbit-triage` (214→183) via skill extraction (new `test-authoring` + `coderabbit-handoff` skills). Its trigger fired the SessionStart nudge, which surfaced the unblocked work — this entry is now stamped `fired=` (dogfooding `triggered-followup-tracking` Decision 4 end-to-end: trigger authored → fired → acted → stamped).
   Concrete next action: DONE — test-author + coderabbit-triage under cap; debug-detective at its irreducible judgment floor (316, grandfathered; a deeper `debug-reporting` split is the only path lower, deliberately not taken). `agent-size-baseline.md` regenerated (test-author dropped off; debug-detective 733→316).

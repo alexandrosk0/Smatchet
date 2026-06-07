@@ -124,7 +124,9 @@ docs/agent-rules/build.md	SmatchetStandalone
 docs/agent-rules/build.md	Source/Core
 docs/agent-rules/build.md	Source/UnrealPlugins
 docs/agent-rules/build.md	ninja-iter-msvc
+docs/agent-rules/build.md	ninja-msvc-asan
 docs/agent-rules/build.md	ninja-publish-msvc
+docs/agent-rules/build.md	ninja-test-msvc
 docs/agent-rules/ci-required-check-pattern.md	Smatchet
 docs/agent-rules/ci-required-check-pattern.md	Source/Core
 docs/agent-rules/ci-required-check-pattern.md	Source/Standalone
@@ -149,6 +151,8 @@ docs/agent-rules/delegation.md	Source/UnrealPlugins
 docs/agent-rules/delegation.md	ninja-iter-msvc
 docs/agent-rules/delegation.md	ninja-msvc-asan
 docs/agent-rules/delegation.md	ninja-test-msvc
+docs/agent-rules/golden-image-approval.md	SMATCHET
+docs/agent-rules/golden-image-approval.md	Smatchet
 docs/agent-rules/process-rules.md	SMATCHET
 docs/agent-rules/process-rules.md	Smatchet
 docs/agent-rules/process-rules.md	SmatchetStandalone
