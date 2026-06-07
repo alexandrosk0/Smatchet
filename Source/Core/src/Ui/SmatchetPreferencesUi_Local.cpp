@@ -31,6 +31,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
+#include "VsyncControl.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -344,6 +345,21 @@ void DrawAppearanceDateSection(UiDrawSession& d) {
     }
 }
 
+// "Display" block — render/swapchain toggles. The vsync checkbox applies live
+// via the smatchet::vsync hub (render loop picks it up next frame) and persists
+// with the prefs Save like the sibling Appearance toggles.
+void DrawAppearanceDisplaySection(UiDrawSession& d) {
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Display");
+    ImGui::Separator();
+    if (ImGui::Checkbox("Enable vsync", &d.cfg.VsyncEnabled)) {
+        smatchet::vsync::SetEnabled(d.cfg.VsyncEnabled);
+        MarkPrefsDirty(d);
+    }
+    ImGui::SetItemTooltip("Synchronize rendering with the monitor refresh rate. "
+                          "Disabling uncaps the frame rate (higher CPU/GPU usage).");
+}
+
 // Updates section of the Appearance tab: auto-check + prerelease toggles, manual check, skip-version.
 // Extracted from DrawAppearanceTab during the over-100-line decomposition; behaviour-identical.
 void DrawAppearanceUpdatesSection(AppController& app, UiDrawSession& d) {
@@ -387,6 +403,7 @@ void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
         DrawAppearanceTypographySection(d);
         DrawAppearanceGridTextSection(d);
         DrawAppearanceDateSection(d);
+        DrawAppearanceDisplaySection(d);
         DrawAppearanceUpdatesSection(app, d);
         ImGui::EndTabItem();
     }

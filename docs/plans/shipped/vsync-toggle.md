@@ -1,5 +1,7 @@
 # Plan — Full vsync toggle (config · command · CLI · preference · env · live)
 
+> **Status**: `shipped`
+>
 > **Slug**: `vsync-toggle` (matches this file's basename without `.md`).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
@@ -99,10 +101,45 @@ Touches `Source/Core/`. **PR-fast CI**: `app-cold-start` (boot seeds VsyncContro
 - DX12/Unreal swapchain present-interval control — host-owned; only intent is exposed.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `<PR sha>` · full vsync toggle in one slice: `VsyncControl.h` hub + `vsync_enabled`
+  config field + `config.set/get vsync` (live apply) + Preferences "Display →
+  Enable vsync" checkbox + `--vsync`/`--no-vsync` flags + env precedence +
+  `RunFrameLoop` live apply + both boot paths seeded via `SeedFromBootSources`.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **No `ConfigManager::Load`-side seeding** (plan §Files-to-modify item 3 said
+  "seed `vsync::SetEnabled(cfg.VsyncEnabled)` at end of `Load`"): `Load()` runs
+  on every sync and after any `config.set` cache invalidation, so a Load-side
+  seed would stomp a live-but-unsaved Preferences toggle back to the on-disk
+  value. Both standalone boot paths seed explicitly once instead
+  (`SeedFromBootSources` in `BootApplication` + the bootstrap `Initialize`).
+- **`config.set vsync` Bucket-A test dropped** — command-path coverage needs the
+  full CommandRegistry harness, the same boundary `SingleClickEditConfig.test.cpp`
+  documents as out of bounds for the pure-logic rig. Covered by the CLI smoke
+  (`--spawn` round-trip) instead; on/off normalisation + live-apply hook verified there.
+- **`config.get` exposure added** (plan omission): the get-side projection is a
+  separate table from the set-side `CfgKey` list; without a `vsync` row,
+  `config.get --key=vsync` returned not-found. One line added.
+- **Boot-path note**: the visible-window boot creates its GLFW context before
+  CLI parse + config Load, so `BootInitGlfwAndWindow` keeps an initial
+  `glfwSwapInterval(1)` and `BootApplication` re-applies the resolved value
+  immediately after `Load(cli)`.
 
 ## Verification (actual)
-*(populated post-ship)*
+- **Bucket A**: `tests/Core/VsyncControl.test.cpp` (4 cases / 15 asserts — hub
+  round-trip + all three precedence sources) + `ConfigManager` round-trip
+  extended with `VsyncEnabled` (110 asserts green). Full `ctest` suite: 2/2 pass.
+- **Build gate**: dual-target `SmatchetStandalone` + `SmatchetCore_DX12` green
+  (warnings-as-errors).
+- **Lint gate**: `test-lint-rules.sh --diff origin/develop` all PASS (strict
+  Config/ + Commands/ zones included).
+- **CLI smoke**: `cmd config.set --key=vsync --value=off|on --spawn` →
+  `written:true, hint:"applies immediately"`; `--value=banana` →
+  validation-error; `config.get --key=vsync` round-trips; `vsync_enabled`
+  persisted in `smatchet_config.json`.
+- **Live smoke** (FPS measure, 144 Hz display): env `SMATCHET_FPS_VSYNC=0` →
+  262 fps avg (uncapped, source logged `env SMATCHET_FPS_VSYNC`); `--no-vsync`
+  → 197 fps (source `CLI flag`); default → 129 fps ≈ refresh-capped (source
+  `persisted config`). Boot LOG line confirmed for all three sources.
+- **Manual residue**: Preferences-checkbox live flip is visual-validation
+  (Pillar-4 exception) — verified interactively at ship time.

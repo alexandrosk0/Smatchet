@@ -144,6 +144,9 @@ struct TrackerConfig {
     bool ShowPerformanceWindow = false;
     // Restores Inspect -> Runtime Log window visibility on launch.
     bool ShowLogWindow = false;
+    // Vsync on the standalone GL swapchain, applied live via the smatchet::vsync
+    // hub. Boot precedence: SMATCHET_FPS_VSYNC env, then the launch flag, then this.
+    bool VsyncEnabled = true;
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     // Restores Automation -> Scripts & Actions window visibility on launch.
     bool ShowLuaAutomationWindow = false;
@@ -565,10 +568,14 @@ class ConfigManager {
         int McpPort;
         bool HasMcpAllowRemote;
         bool McpAllowRemote;
+        // --vsync / --no-vsync launch override (not persisted; seeds the
+        // smatchet::vsync hub at boot, below env, above persisted config).
+        bool HasVsync;
+        bool Vsync;
 
         CliOverrides()
             : HasDbPath(false), DbPath(), HasBackendType(false), BackendType(), HasMcpPort(false), McpPort(0),
-              HasMcpAllowRemote(false), McpAllowRemote(false) {}
+              HasMcpAllowRemote(false), McpAllowRemote(false), HasVsync(false), Vsync(true) {}
     };
 
     // Legacy compatibility entrypoint: use the same base for both runtime assets and writable files.

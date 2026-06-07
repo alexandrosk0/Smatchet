@@ -243,6 +243,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"show_views_dashboard_window", &TrackerConfig::ShowViewsDashboardWindow},
     {"show_performance_window", &TrackerConfig::ShowPerformanceWindow},
     {"show_log_window", &TrackerConfig::ShowLogWindow},
+    {"vsync_enabled", &TrackerConfig::VsyncEnabled},
     {"log_p4_io", &TrackerConfig::LogP4Io},
     {"mcp_enabled", &TrackerConfig::McpEnabled},
     {"mcp_allow_remote", &TrackerConfig::McpAllowRemote},

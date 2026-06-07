@@ -91,6 +91,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 
 // Smatchet Core Headers (Safe C++14 includes)
 #include "ConfigManager.h"
+#include "VsyncControl.h"
 #include "AppController.h"
 #include "CliCommandRunner.h"
 #include "StandaloneAppBootstrap.h"
@@ -506,7 +507,9 @@ static GLFWwindow* BootInitGlfwAndWindow(MainBootState& boot, const char*& outGl
 
     glfwMakeContextCurrent(window);
 
-    glfwSwapInterval(1); // Enable vsync
+    // Initial vsync-on; BootApplication re-applies the resolved value (env >
+    // CLI flag > persisted config) right after ConfigManager::Load(cli).
+    glfwSwapInterval(1);
 
     return window;
 }
@@ -586,6 +589,14 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
     }
 
     const TrackerConfig cfg = ConfigManager::Load(cli);
+
+    // Seed the live vsync hub with the documented boot precedence and apply it
+    // to the (current) GL context now; RunFrameLoop live-applies later changes.
+    {
+        const char* vsyncSource = smatchet::vsync::SeedFromBootSources(cfg.VsyncEnabled, cli.HasVsync, cli.Vsync);
+        LOG_INFO("Vsync %s at boot (source: %s)", smatchet::vsync::Enabled() ? "enabled" : "disabled", vsyncSource);
+        glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
+    }
 
     BootstrapContext& bootCtx = boot.bootCtx;
     bootCtx.window = window;
@@ -841,11 +852,9 @@ struct FpsMeasure {
         }
         const char* w = std::getenv("SMATCHET_FPS_WARMUP_SECONDS");
         warmupSecs = w ? std::atof(w) : 0.5;
-        const char* v = std::getenv("SMATCHET_FPS_VSYNC");
-        vsyncOff = (v != nullptr && v[0] == '0');
-        if (vsyncOff) {
-            glfwSwapInterval(0);
-        }
+        // SMATCHET_FPS_VSYNC is applied at boot via vsync::SeedFromBootSources
+        // (highest precedence) — read the hub here only for the report label.
+        vsyncOff = !smatchet::vsync::Enabled();
         startT = glfwGetTime();
         lastT = startT;
     }
@@ -916,7 +925,18 @@ static int RunFrameLoop(MainBootState& boot) {
         FpsMeasure fpsMeasure;
         fpsMeasure.Begin(window);
 
+        // Live vsync apply — mirrors the SmatchetUI lastAppliedTheme_ pattern:
+        // one atomic load + compare per frame; glfwSwapInterval only on change
+        // (Preferences checkbox / config.set vsync flip the hub at runtime).
+        bool lastAppliedVsync = smatchet::vsync::Enabled();
+
         while (!glfwWindowShouldClose(window)) {
+            const bool liveVsync = smatchet::vsync::Enabled();
+            if (liveVsync != lastAppliedVsync) {
+                glfwSwapInterval(liveVsync ? 1 : 0);
+                lastAppliedVsync = liveVsync;
+            }
+
             const bool redactThisFrame = RenderOneFrame(window, mainWindow, smatchetApp, pluginHost, clear_color);
 
             fpsMeasure.Sample(window);
