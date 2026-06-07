@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# guard-head-drift.sh — PreToolUse(Edit|Write|Bash) HEAD-drift guard.
+# guard-head-drift.sh — PreToolUse(Edit|Write|Bash|PowerShell) HEAD-drift guard.
 #
 # THE primary fix for the concurrent-session "wrong-branch commit" incident: when
 # another actor (a sibling session, the user's terminal, a janitor) moves the
@@ -86,18 +86,55 @@ drift_reason="HEAD moved under this session (started ${BASE_BRANCH}@${short_base
 
 TOOL="$(json_field '.tool_name' 'tool_name')"
 
+# Shared git-invocation grammar: `git [-C path|-c k=v|--flag]* <op>`.
+GIT_OPTS_RE='([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*'
+
+# True (0) when EVERY git invocation in $CMD matching the op alternation carries
+# a `-C <path>` whose target is a linked worktree (.git is a FILE pointer, never
+# the integration tree's .git directory) on a non-protected branch. Such an op
+# never touches this session's tree, so the denies below don't apply — this is
+# what lets an integration-tree-rooted session ship from a worktree it created
+# (tooling.md P2; the PR #916/#936 friction). Any -C-less invocation, integration
+# -C target, or protected-branch target keeps the deny (conservative).
+all_git_ops_target_safe_worktree() { # $1 = op alternation, e.g. 'commit'
+  local ops="$1" m tgt branch
+  local matches
+  matches="$(printf '%s' "$CMD" | grep -oE "(^|[;&|[:space:]])git${GIT_OPTS_RE}[[:space:]]+(${ops})(\$|[[:space:]])")"
+  [ -n "$matches" ] || return 1
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    # Last -C wins (matches git's own behaviour for repeated -C... close enough:
+    # git actually chains relative -C, but absolute-path duplicates are the only
+    # realistic agent shape and the LAST one is the effective base there).
+    tgt="$(printf '%s' "$m" | sed -nE 's/.*-C[[:space:]]+([^[:space:]]+).*/\1/p')"
+    tgt="${tgt%\"}"; tgt="${tgt#\"}"; tgt="${tgt%\'}"; tgt="${tgt#\'}"
+    [ -n "$tgt" ] || return 1                       # no -C → targets this tree
+    case "$tgt" in [A-Za-z]:*|/*|\\\\*) ;; *) tgt="$PROJ/$tgt" ;; esac
+    [ -f "$tgt/.git" ] || return 1                  # not a linked worktree
+    branch="$(git -C "$tgt" symbolic-ref --short HEAD 2>/dev/null)" || return 1
+    case "$branch" in develop|main|"") return 1 ;; esac
+  done <<MATCHES
+$matches
+MATCHES
+  return 0
+}
+
 case "$TOOL" in
-  Bash)
+  Bash|PowerShell)
     CMD="$(json_field '.tool_input.command' 'command')"
     # git commit: `git [-C path|-c k=v|--flag]* commit`.
-    if printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*[[:space:]]+commit($|[[:space:]])'; then
-      if [ "$IS_INTEGRATION" = "1" ] && { [ "$CUR_BRANCH" = "develop" ] || [ "$CUR_BRANCH" = "main" ]; }; then
-        deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. Override: SMATCHET_ACK_BRANCH_DRIFT=1."
+    if printf '%s' "$CMD" | grep -qE "(^|[;&|[:space:]])git${GIT_OPTS_RE}[[:space:]]+commit(\$|[[:space:]])"; then
+      if [ "$IS_INTEGRATION" = "1" ] && { [ "$CUR_BRANCH" = "develop" ] || [ "$CUR_BRANCH" = "main" ]; } \
+         && ! all_git_ops_target_safe_worktree 'commit'; then
+        deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: pwsh scripts/dev/worktree.ps1 new <slug> — then commit with an explicit \`git -C <worktree-path> commit\` (allowed from here). Override: SMATCHET_ACK_BRANCH_DRIFT=1 (must be exported before session launch)."
       fi
     fi
     # When already drifted, deny any further HEAD-moving git op so the PostToolUse
     # re-baseline can never lock in an external drift (recover via resync first).
-    if [ "$drifted" = "1" ] && printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*[[:space:]]+(commit|pull|reset|merge|rebase|checkout|switch|cherry-pick|am|revert)($|[[:space:]])'; then
+    # Ops explicitly -C-targeted at a linked worktree are exempt — they cannot
+    # move THIS tree's HEAD, drifted or not.
+    if [ "$drifted" = "1" ] && printf '%s' "$CMD" | grep -qE "(^|[;&|[:space:]])git${GIT_OPTS_RE}[[:space:]]+(commit|pull|reset|merge|rebase|checkout|switch|cherry-pick|am|revert)(\$|[[:space:]])" \
+       && ! all_git_ops_target_safe_worktree 'commit|pull|reset|merge|rebase|checkout|switch|cherry-pick|am|revert'; then
       deny "$drift_reason"
     fi
     exit 0
