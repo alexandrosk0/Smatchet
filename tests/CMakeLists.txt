@@ -374,6 +374,21 @@ add_executable(SmatchetTests
     # of IssueTableSerializer. No cpr/AppController/ImGui dep — pure stdlib + nlohmann.
     Core/IssueTableSerializer.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueTableSerializer.cpp"
+    # Slice 0 WS2 of docs/plans/active/multi-grid-tabs.md — real catalog-BUILD
+    # coverage closing the test.md P2 (2026-06-01): JiraFakeTrackerFixture injects a
+    # pre-built catalog and bypasses FetchFieldCatalog assembly, so the PR #672
+    # "components rendered as text" bug class was fixture-invisible. The test drives
+    # a real JiraClient at an in-process httplib::Server (loopback, scripted JSON)
+    # via tests/support/JiraCatalogHttpFixture.h. Instantiating JiraClient needs the
+    # full vtable, so all five Jira implementation TUs link here; their deps (cpr,
+    # TrackerHttpUtils, TrackerFieldCatalogPure, TrackerFieldPayload, OfflineQueue,
+    # BackendAuditTrail, ghc_filesystem) are already in the rig.
+    Core/TrackerCatalogBuild.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueSearch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMutation.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraUserAndMeta.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalog.cpp"
     # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
     # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.
@@ -502,6 +517,10 @@ target_link_libraries(SmatchetTests PRIVATE
     md4c
     cpr::cpr
     ghc_filesystem
+    # Slice 0 WS2 of multi-grid-tabs — JiraCatalogHttpFixture.h serves scripted
+    # Jira REST JSON from an in-process loopback server (header-only interface
+    # target; same pin the production target links).
+    httplib::httplib
 )
 
 # ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.

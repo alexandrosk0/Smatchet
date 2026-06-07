@@ -372,3 +372,124 @@ TEST_CASE("BuildFetchFieldListsFromView — duplicate fields in view not duplica
             ++count;
     CHECK(count == 1);
 }
+
+// --- Slice 0 WS2 of multi-grid-tabs — null / missing-relation / empty-optional
+// mapping edges. Characterization only: these pin CURRENT behaviour ahead of the
+// multi-pane refactor; a surprising result here is documented, not "fixed".
+
+TEST_CASE("WS2 edge — explicit-null fields map to empty strings without throwing") {
+    nlohmann::json fields;
+    fields["summary"] = nullptr;
+    fields["assignee"] = nullptr;
+    fields["priority"] = nullptr;
+
+    const nlohmann::json issue = MakeIssue("SMAT-N1", fields);
+    const std::vector<std::string> selected = {"summary", "assignee", "priority"};
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "summary").empty());
+    CHECK(GetField(results[0], "assignee").empty());
+    CHECK(GetField(results[0], "priority").empty());
+}
+
+TEST_CASE("WS2 edge — explicit-null comment field maps to empty string (no lazy fetch)") {
+    nlohmann::json fields;
+    fields["comment"] = nullptr;
+
+    const nlohmann::json issue = MakeIssue("SMAT-N2", fields);
+    const std::vector<std::string> selected = {"comment"};
+
+    bool fetchCalled = false;
+    auto trackingFetch = [&](const std::string&, nlohmann::json&) -> bool {
+        fetchCalled = true;
+        return false;
+    };
+
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, trackingFetch, results);
+
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "comment").empty());
+    CHECK_FALSE(fetchCalled); // null short-circuits before the comments-object branch
+}
+
+TEST_CASE("WS2 edge — comment object missing the comments array bypasses the comment resolver") {
+    // {"total": 2} without "comments" fails the `contains("comments")` guard and
+    // falls into the generic object stringifier — the mapper must not throw.
+    nlohmann::json fields;
+    fields["comment"] = {{"total", 2}};
+
+    const nlohmann::json issue = MakeIssue("SMAT-N3", fields);
+    const std::vector<std::string> selected = {"comment"};
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].fieldValues.count("comment") == 1);
+}
+
+TEST_CASE("WS2 edge — null duration-seconds field formats to empty (not '0h')") {
+    nlohmann::json fields;
+    fields["timespent"] = nullptr;
+
+    const nlohmann::json issue = MakeIssue("SMAT-N4", fields);
+    const std::vector<std::string> selected = {"timespent"};
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "timespent").empty());
+}
+
+TEST_CASE("WS2 edge — missing issue key yields a ticket with an empty id (characterized)") {
+    // CHARACTERIZATION: the mapper does not reject keyless issues — it appends a
+    // ticket with id == "" and returns true. Downstream consumers must tolerate it.
+    nlohmann::json issue;
+    issue["fields"] = {{"summary", "No key"}};
+
+    const std::vector<std::string> selected = {"summary"};
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].id.empty());
+    CHECK(GetField(results[0], "summary") == "No key");
+}
+
+TEST_CASE("WS2 edge — explicit-null changelog with history selected fails the whole issue (characterized)") {
+    // CHARACTERIZATION: `issue.value("changelog", object())` returns the present
+    // null, and `.value()` on a null json throws — so ONE malformed issue drops
+    // the entire row (mapper returns false) instead of degrading the history
+    // column. Pinned, not endorsed.
+    nlohmann::json fields;
+    fields["summary"] = "Null changelog";
+
+    nlohmann::json issue = MakeIssue("SMAT-N5", fields);
+    issue["changelog"] = nullptr;
+
+    const std::vector<std::string> selected = {"summary", "history"};
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    CHECK_FALSE(ok);
+    CHECK(results.empty());
+}
+
+TEST_CASE("WS2 edge — array field of nulls collapses to empty string") {
+    nlohmann::json fields;
+    fields["labels"] = nlohmann::json::array({nullptr, nullptr});
+
+    const nlohmann::json issue = MakeIssue("SMAT-N6", fields);
+    const std::vector<std::string> selected = {"labels"};
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "labels").empty());
+}
