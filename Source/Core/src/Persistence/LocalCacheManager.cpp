@@ -33,6 +33,7 @@ void InitFieldEditQueueSchema(SQLite::Database& db) {
             "original_rich_value TEXT, "
             "original_value TEXT, "
             "has_original_value INTEGER NOT NULL DEFAULT 0, "
+            "backend_key TEXT NOT NULL DEFAULT '', "
             "attempts INTEGER NOT NULL DEFAULT 0, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL)");
@@ -55,6 +56,11 @@ void InitFieldEditQueueSchema(SQLite::Database& db) {
     if (!SqliteTableHasColumn(db, "pending_field_edits", "conflict_context_json")) {
         db.exec("ALTER TABLE pending_field_edits ADD COLUMN conflict_context_json TEXT");
     }
+    // Multi-grid Slice 1c (ADR-0018 decision 4): additive backend namespace for queue rows.
+    // Legacy rows land as '' and are backfilled once by RunOneTimePendingQueueBackendKeyStamp.
+    if (!SqliteTableHasColumn(db, "pending_field_edits", "backend_key")) {
+        db.exec("ALTER TABLE pending_field_edits ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
+    }
     db.exec("CREATE TABLE IF NOT EXISTS pending_field_edits_dead ("
             "dead_id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "original_id INTEGER NOT NULL, "
@@ -64,6 +70,7 @@ void InitFieldEditQueueSchema(SQLite::Database& db) {
             "original_rich_value TEXT, "
             "original_value TEXT, "
             "has_original_value INTEGER NOT NULL DEFAULT 0, "
+            "backend_key TEXT NOT NULL DEFAULT '', "
             "attempts INTEGER NOT NULL, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL, "
@@ -82,6 +89,11 @@ void InitFieldEditQueueSchema(SQLite::Database& db) {
     }
     if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "archived_at")) {
         db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0");
+    }
+    // Multi-grid Slice 1c: backend-namespace twin on the dead-letter table (carried over on
+    // archive so the UI can attribute the row and a restore re-queues under the same backend).
+    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "backend_key")) {
+        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_pending_field_edits_dead_archived_at "
             "ON pending_field_edits_dead(archived_at DESC)");
@@ -146,13 +158,20 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     db.exec("CREATE TABLE IF NOT EXISTS pending_creates ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "payload TEXT NOT NULL, "
+            "backend_key TEXT NOT NULL DEFAULT '', "
             "attempts INTEGER NOT NULL DEFAULT 0, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL)");
+    // Multi-grid Slice 1c (ADR-0018 decision 4): additive backend namespace for queue rows.
+    // Legacy rows land as '' and are backfilled once by RunOneTimePendingQueueBackendKeyStamp.
+    if (!SqliteTableHasColumn(db, "pending_creates", "backend_key")) {
+        db.exec("ALTER TABLE pending_creates ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
+    }
     db.exec("CREATE TABLE IF NOT EXISTS pending_creates_dead ("
             "dead_id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "original_id INTEGER NOT NULL, "
             "payload TEXT NOT NULL, "
+            "backend_key TEXT NOT NULL DEFAULT '', "
             "attempts INTEGER NOT NULL, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL, "
@@ -162,6 +181,10 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     // Use PRAGMA table_info so we never issue a duplicate ADD COLUMN (SQLiteCpp throws on duplicate).
     if (!SqliteTableHasColumn(db, "pending_creates_dead", "archived_at")) {
         db.exec("ALTER TABLE pending_creates_dead ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0");
+    }
+    // Multi-grid Slice 1c: backend-namespace twin on the dead-letter table.
+    if (!SqliteTableHasColumn(db, "pending_creates_dead", "backend_key")) {
+        db.exec("ALTER TABLE pending_creates_dead ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_pending_creates_dead_archived_at "
             "ON pending_creates_dead(archived_at DESC)");
@@ -508,14 +531,15 @@ size_t LocalCacheManager::RunOneTimeTicketsV2CopyMigration(const std::string& ba
     }
 }
 
-std::int64_t LocalCacheManager::EnqueuePendingCreate(const std::string& payload) {
+std::int64_t LocalCacheManager::EnqueuePendingCreate(const std::string& backendKey, const std::string& payload) {
     try {
         const auto now = std::chrono::system_clock::now();
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-        SQLite::Statement insert(
-            db, "INSERT INTO pending_creates (payload, attempts, last_error, created_at) VALUES (?, 0, '', ?)");
+        SQLite::Statement insert(db, "INSERT INTO pending_creates (payload, backend_key, attempts, last_error, "
+                                     "created_at) VALUES (?, ?, 0, '', ?)");
         insert.bind(1, payload);
-        insert.bind(2, epoch);
+        insert.bind(2, backendKey);
+        insert.bind(3, epoch);
         insert.exec();
         return db.getLastInsertRowid();
     } catch (const std::exception& ex) {
@@ -527,8 +551,8 @@ std::int64_t LocalCacheManager::EnqueuePendingCreate(const std::string& payload)
 std::vector<PendingCreate> LocalCacheManager::LoadPendingCreates() {
     try {
         std::vector<PendingCreate> results;
-        SQLite::Statement query(
-            db, "SELECT id, payload, attempts, last_error, created_at FROM pending_creates ORDER BY id ASC");
+        SQLite::Statement query(db, "SELECT id, payload, attempts, last_error, created_at, backend_key "
+                                    "FROM pending_creates ORDER BY id ASC");
         while (query.executeStep()) {
             PendingCreate pc;
             pc.Id = query.getColumn(0).getInt64();
@@ -536,6 +560,7 @@ std::vector<PendingCreate> LocalCacheManager::LoadPendingCreates() {
             pc.Attempts = query.getColumn(2).getInt();
             pc.LastError = query.getColumn(3).isNull() ? std::string() : query.getColumn(3).getText();
             pc.CreatedAtEpochSec = query.getColumn(4).getInt64();
+            pc.BackendKey = query.getColumn(5).isNull() ? std::string() : query.getColumn(5).getText();
             results.push_back(std::move(pc));
         }
         return results;
@@ -610,8 +635,8 @@ void LocalCacheManager::ArchivePendingCreate(std::int64_t id, const std::string&
                                              const std::string& terminalError) {
     try {
         SQLite::Transaction transaction(db);
-        SQLite::Statement select(db,
-                                 "SELECT payload, attempts, last_error, created_at FROM pending_creates WHERE id = ?");
+        SQLite::Statement select(
+            db, "SELECT payload, attempts, last_error, created_at, backend_key FROM pending_creates WHERE id = ?");
         select.bind(1, id);
         if (!select.executeStep()) {
             throw std::runtime_error("pending_create row not found");
@@ -624,21 +649,24 @@ void LocalCacheManager::ArchivePendingCreate(std::int64_t id, const std::string&
                 ? terminalError
                 : (select.getColumn(2).isNull() ? std::string() : std::string(select.getColumn(2).getText()));
         const std::int64_t createdAtEpochSec = select.getColumn(3).getInt64();
+        const std::string backendKey =
+            select.getColumn(4).isNull() ? std::string() : std::string(select.getColumn(4).getText());
         const std::int64_t archivedAtEpochSec =
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
                 .count();
 
         SQLite::Statement insert(
             db, "INSERT INTO pending_creates_dead "
-                "(original_id, payload, attempts, last_error, created_at, archived_at, terminal_reason) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)");
+                "(original_id, payload, backend_key, attempts, last_error, created_at, archived_at, terminal_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
         insert.bind(1, id);
         insert.bind(2, payload);
-        insert.bind(3, attempts);
-        insert.bind(4, lastError);
-        insert.bind(5, createdAtEpochSec);
-        insert.bind(6, archivedAtEpochSec);
-        insert.bind(7, terminalReason);
+        insert.bind(3, backendKey);
+        insert.bind(4, attempts);
+        insert.bind(5, lastError);
+        insert.bind(6, createdAtEpochSec);
+        insert.bind(7, archivedAtEpochSec);
+        insert.bind(8, terminalReason);
         insert.exec();
 
         SQLite::Statement del(db, "DELETE FROM pending_creates WHERE id = ?");
@@ -655,9 +683,10 @@ void LocalCacheManager::ArchivePendingCreate(std::int64_t id, const std::string&
 std::vector<DeadPendingCreate> LocalCacheManager::LoadDeadPendingCreates() {
     try {
         std::vector<DeadPendingCreate> results;
-        SQLite::Statement query(
-            db, "SELECT dead_id, original_id, payload, attempts, last_error, created_at, archived_at, terminal_reason "
-                "FROM pending_creates_dead ORDER BY archived_at DESC, dead_id DESC");
+        SQLite::Statement query(db,
+                                "SELECT dead_id, original_id, payload, attempts, last_error, created_at, archived_at, "
+                                "terminal_reason, backend_key "
+                                "FROM pending_creates_dead ORDER BY archived_at DESC, dead_id DESC");
         while (query.executeStep()) {
             DeadPendingCreate row;
             row.DeadId = query.getColumn(0).getInt64();
@@ -669,6 +698,7 @@ std::vector<DeadPendingCreate> LocalCacheManager::LoadDeadPendingCreates() {
             row.ArchivedAtEpochSec = query.getColumn(6).getInt64();
             row.TerminalReason =
                 query.getColumn(7).isNull() ? std::string() : std::string(query.getColumn(7).getText());
+            row.BackendKey = query.getColumn(8).isNull() ? std::string() : std::string(query.getColumn(8).getText());
             results.push_back(std::move(row));
         }
         return results;
@@ -720,11 +750,56 @@ size_t LocalCacheManager::RunOneTimeLegacyDropPendingAtMaxAttempts() {
     }
 }
 
+size_t LocalCacheManager::RunOneTimePendingQueueBackendKeyStamp(const std::string& backendKey) {
+    // Corrupt/unwired-key guard: never stamp rows with an empty namespace — leave the flag
+    // unset so a later call with a real key still migrates. Mirrors the tickets_v2 copy guard.
+    if (backendKey.empty()) {
+        LOG_WARN("LocalCacheManager::RunOneTimePendingQueueBackendKeyStamp skipped: empty backendKey");
+        return 0;
+    }
+    try {
+        constexpr const char* kKey = "pending_queue_backend_key_stamp_v1";
+        SQLite::Transaction transaction(db);
+        SQLite::Statement probe(db, "SELECT 1 FROM cache_meta WHERE key = ? LIMIT 1");
+        probe.bind(1, kKey);
+        if (probe.executeStep()) {
+            transaction.commit();
+            return 0;
+        }
+        // Legacy rows were necessarily queued against the then-only configured backend, so
+        // every un-stamped row ('' default from the additive ADD COLUMN) takes its key.
+        static const char* const kTables[] = {"pending_creates", "pending_creates_dead", "pending_field_edits",
+                                              "pending_field_edits_dead"};
+        size_t stamped = 0;
+        for (const char* table : kTables) {
+            const std::string sql = std::string("UPDATE ") + table + " SET backend_key = ? WHERE backend_key = ''";
+            SQLite::Statement upd(db, sql);
+            upd.bind(1, backendKey);
+            upd.exec();
+            const int changed = db.getChanges();
+            stamped += changed > 0 ? static_cast<size_t>(changed) : 0u;
+        }
+        SQLite::Statement ins(db, "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, '1')");
+        ins.bind(1, kKey);
+        ins.exec();
+        transaction.commit();
+        if (stamped > 0) {
+            LOG_INFO("LocalCacheManager::RunOneTimePendingQueueBackendKeyStamp stamped rows=%zu backend_key=%s",
+                     stamped, backendKey.c_str());
+        }
+        return stamped;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::RunOneTimePendingQueueBackendKeyStamp failed backend_key=%s err=%s",
+                  backendKey.c_str(), ex.what());
+        throw;
+    }
+}
+
 bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPendingId) {
     try {
         SQLite::Transaction transaction(db);
-        SQLite::Statement sel(db, "SELECT dead_id, payload FROM pending_creates_dead WHERE original_id = ? "
-                                  "ORDER BY dead_id DESC LIMIT 1");
+        SQLite::Statement sel(db, "SELECT dead_id, payload, backend_key FROM pending_creates_dead "
+                                  "WHERE original_id = ? ORDER BY dead_id DESC LIMIT 1");
         sel.bind(1, originalPendingId);
         if (!sel.executeStep()) {
             transaction.commit();
@@ -732,12 +807,17 @@ bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPend
         }
         const std::int64_t deadId = sel.getColumn(0).getInt64();
         const std::string payload = sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
+        // Restore re-queues under the SAME backend the row was originally queued against
+        // (multi-grid Slice 1c) — never the currently-focused context's key.
+        const std::string backendKey =
+            sel.getColumn(2).isNull() ? std::string() : std::string(sel.getColumn(2).getText());
         const auto now = std::chrono::system_clock::now();
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-        SQLite::Statement ins(
-            db, "INSERT INTO pending_creates (payload, attempts, last_error, created_at) VALUES (?, 0, '', ?)");
+        SQLite::Statement ins(db, "INSERT INTO pending_creates (payload, backend_key, attempts, last_error, "
+                                  "created_at) VALUES (?, ?, 0, '', ?)");
         ins.bind(1, payload);
-        ins.bind(2, epoch);
+        ins.bind(2, backendKey);
+        ins.bind(3, epoch);
         ins.exec();
         SQLite::Statement delDead(db, "DELETE FROM pending_creates_dead WHERE dead_id = ?");
         delDead.bind(1, deadId);
@@ -769,7 +849,8 @@ void LocalCacheManager::DeleteDeadPendingCreate(const std::int64_t deadId) {
     }
 }
 
-std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& issueKey, const std::string& fieldId,
+std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& backendKey, const std::string& issueKey,
+                                                        const std::string& fieldId,
                                                         const std::string& fieldsPayloadJson,
                                                         const std::string& originalRichValue,
                                                         const std::string& originalValue, bool hasOriginalValue) {
@@ -777,8 +858,8 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& issue
         const auto now = std::chrono::system_clock::now();
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
         SQLite::Statement insert(db, "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
-                                     "original_rich_value, original_value, has_original_value, attempts, last_error, "
-                                     "created_at) VALUES (?, ?, ?, ?, ?, ?, 0, '', ?)");
+                                     "original_rich_value, original_value, has_original_value, backend_key, attempts, "
+                                     "last_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', ?)");
         insert.bind(1, issueKey);
         insert.bind(2, fieldId);
         insert.bind(3, fieldsPayloadJson);
@@ -793,7 +874,8 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& issue
         else
             insert.bind(5, originalValue);
         insert.bind(6, hasOriginalValue ? 1 : 0);
-        insert.bind(7, epoch);
+        insert.bind(7, backendKey);
+        insert.bind(8, epoch);
         insert.exec();
         return db.getLastInsertRowid();
     } catch (const std::exception& ex) {
@@ -809,7 +891,7 @@ std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
                                     "COALESCE(original_rich_value, ''), "
                                     "COALESCE(has_merge_conflict, 0), COALESCE(conflict_context_json, ''), "
                                     "attempts, last_error, created_at, COALESCE(original_value, ''), "
-                                    "COALESCE(has_original_value, 0) "
+                                    "COALESCE(has_original_value, 0), COALESCE(backend_key, '') "
                                     "FROM pending_field_edits ORDER BY id ASC");
         while (query.executeStep()) {
             PendingFieldEditRecord row;
@@ -829,6 +911,7 @@ std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
             row.OriginalValue =
                 query.getColumn(10).isNull() ? std::string() : std::string(query.getColumn(10).getText());
             row.HasOriginalValue = query.getColumn(11).getInt() != 0;
+            row.BackendKey = query.getColumn(12).isNull() ? std::string() : std::string(query.getColumn(12).getText());
             results.push_back(std::move(row));
         }
         return results;
@@ -899,7 +982,8 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
         SQLite::Transaction transaction(db);
         SQLite::Statement select(db, "SELECT issue_key, field_id, fields_payload_json, "
                                      "COALESCE(original_rich_value,''), attempts, last_error, created_at, "
-                                     "COALESCE(original_value,''), COALESCE(has_original_value, 0) FROM "
+                                     "COALESCE(original_value,''), COALESCE(has_original_value, 0), "
+                                     "COALESCE(backend_key, '') FROM "
                                      "pending_field_edits WHERE id = ?");
         select.bind(1, id);
         if (!select.executeStep()) {
@@ -922,6 +1006,8 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
         const std::string originalValue =
             select.getColumn(7).isNull() ? std::string() : std::string(select.getColumn(7).getText());
         const bool hasOriginalValue = select.getColumn(8).getInt() != 0;
+        const std::string backendKey =
+            select.getColumn(9).isNull() ? std::string() : std::string(select.getColumn(9).getText());
         const std::int64_t archivedAtEpochSec =
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
                 .count();
@@ -929,8 +1015,8 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
         SQLite::Statement insert(db,
                                  "INSERT INTO pending_field_edits_dead "
                                  "(original_id, issue_key, field_id, fields_payload_json, original_rich_value, "
-                                 "original_value, has_original_value, attempts, last_error, created_at, archived_at, "
-                                 "terminal_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                                 "original_value, has_original_value, backend_key, attempts, last_error, created_at, "
+                                 "archived_at, terminal_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         insert.bind(1, id);
         insert.bind(2, issueKey);
         insert.bind(3, fieldId);
@@ -944,11 +1030,12 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
         else
             insert.bind(6, originalValue);
         insert.bind(7, hasOriginalValue ? 1 : 0);
-        insert.bind(8, attempts);
-        insert.bind(9, lastError);
-        insert.bind(10, createdAtEpochSec);
-        insert.bind(11, archivedAtEpochSec);
-        insert.bind(12, terminalReason);
+        insert.bind(8, backendKey);
+        insert.bind(9, attempts);
+        insert.bind(10, lastError);
+        insert.bind(11, createdAtEpochSec);
+        insert.bind(12, archivedAtEpochSec);
+        insert.bind(13, terminalReason);
         insert.exec();
 
         SQLite::Statement del(db, "DELETE FROM pending_field_edits WHERE id = ?");
@@ -967,7 +1054,7 @@ std::vector<DeadPendingFieldEdit> LocalCacheManager::LoadDeadPendingFieldEdits()
         std::vector<DeadPendingFieldEdit> results;
         SQLite::Statement query(
             db, "SELECT dead_id, original_id, issue_key, field_id, fields_payload_json, attempts, last_error, "
-                "created_at, archived_at, terminal_reason "
+                "created_at, archived_at, terminal_reason, COALESCE(backend_key, '') "
                 "FROM pending_field_edits_dead ORDER BY archived_at DESC, dead_id DESC");
         while (query.executeStep()) {
             DeadPendingFieldEdit row;
@@ -983,6 +1070,7 @@ std::vector<DeadPendingFieldEdit> LocalCacheManager::LoadDeadPendingFieldEdits()
             row.ArchivedAtEpochSec = query.getColumn(8).getInt64();
             row.TerminalReason =
                 query.getColumn(9).isNull() ? std::string() : std::string(query.getColumn(9).getText());
+            row.BackendKey = query.getColumn(10).isNull() ? std::string() : std::string(query.getColumn(10).getText());
             results.push_back(std::move(row));
         }
         return results;

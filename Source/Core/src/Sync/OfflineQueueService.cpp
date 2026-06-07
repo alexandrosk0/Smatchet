@@ -64,6 +64,28 @@ size_t FirstNonWhitespace(const std::string& s) {
         ++i;
     return i;
 }
+
+// Multi-grid Slice 1c replay-matching rule (ADR-0018 decision 4): a context's replay tick
+// processes ONLY rows whose `backend_key` strictly equals the replaying context's key. Rows
+// whose backend has no live context simply stay queued — never replayed against a wrong
+// backend, never dropped. Post-stamp an empty key cannot occur; if encountered (corrupt or
+// hand-edited DB) treat as no-match + WARN. `RowT` is PendingCreate / PendingFieldEditRecord
+// (both carry `Id` + `BackendKey`).
+template <typename RowT>
+void FilterRowsToReplayBackendKey(std::vector<RowT>& rows, const std::string& replayBackendKey, const char* tickName) {
+    std::vector<RowT> matched;
+    matched.reserve(rows.size());
+    for (auto& row : rows) {
+        if (row.BackendKey == replayBackendKey) {
+            matched.push_back(std::move(row));
+        } else if (row.BackendKey.empty()) {
+            LOG_WARN("OfflineQueueService::%s: row id=%lld has empty backend_key (corrupt/hand-edited DB) — "
+                     "treated as no-match, left queued",
+                     tickName, static_cast<long long>(row.Id));
+        }
+    }
+    rows.swap(matched);
+}
 } // namespace
 
 namespace OfflineFieldEditMergeDetail {
@@ -311,7 +333,9 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
     }
     const std::string payload = IssueDraftHelpers::ToJson(draft);
     try {
-        const std::int64_t id = deps_.Cache()->EnqueuePendingCreate(payload);
+        // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — replay
+        // strictly matches this key, so a create queued under Jira never replays against Plane.
+        const std::int64_t id = deps_.Cache()->EnqueuePendingCreate(deps_.CacheBackendKey(), payload);
         LOG_INFO("OfflineQueueService: queued offline create id=%lld", static_cast<long long>(id));
         BackendAuditTrail::AppendResult(
             "offline_queue_create", "ui", std::string(), std::to_string(id), true, std::string(),
@@ -441,8 +465,11 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         return 0;
     }
     try {
-        const std::int64_t id = deps_.Cache()->EnqueuePendingFieldEdit(
-            issueKey, fieldId, fieldsPayloadJson, originalRichValue, originalValue, hasOriginalValue);
+        // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — see
+        // QueueCreateOffline.
+        const std::int64_t id =
+            deps_.Cache()->EnqueuePendingFieldEdit(deps_.CacheBackendKey(), issueKey, fieldId, fieldsPayloadJson,
+                                                   originalRichValue, originalValue, hasOriginalValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
                  issueKey.c_str(), fieldId.c_str());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
@@ -657,6 +684,9 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         offlineFieldEditReplayInFlight_ = false;
         return;
     }
+    // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
+    // backend are replayed; other backends' rows stay queued for their own context.
+    FilterRowsToReplayBackendKey(pending, deps_.CacheBackendKey(), "TickOfflineFieldEdits");
     if (pending.empty()) {
         std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
         offlineFieldEditReplayInFlight_ = false;
@@ -1201,6 +1231,9 @@ void OfflineQueueService::TickOfflineCreates() {
         offlineReplayInFlight_ = false;
         return;
     }
+    // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
+    // backend are replayed; other backends' rows stay queued for their own context.
+    FilterRowsToReplayBackendKey(pending, deps_.CacheBackendKey(), "TickOfflineCreates");
     if (pending.empty()) {
         std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
         offlineReplayInFlight_ = false;

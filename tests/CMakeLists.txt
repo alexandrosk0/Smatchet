@@ -113,6 +113,11 @@ add_executable(SmatchetTests
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
     # already pulled in below.
     Core/LocalCacheTicketsV2Migration.test.cpp
+    # Multi-grid Slice 1c (ADR-0018) — pending-queue backend_key: ADD-COLUMN migration
+    # idempotence on a pre-1c fixture DB, one-time stamp migration, backend-scoped replay
+    # matching (A-rows replay, B-rows stay queued), dead-letter key carry + restore. Links
+    # the production LCM + OfflineQueueService TUs already pulled in below.
+    Core/OfflineQueueBackendKey.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).

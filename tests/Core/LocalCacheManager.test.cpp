@@ -174,8 +174,8 @@ TEST_CASE("LocalCacheManager: cache_meta flag round-trip") {
 
 TEST_CASE("LocalCacheManager: EnqueuePendingCreate + LoadPendingCreates round-trip") {
     SqliteMemFixture fix;
-    const std::int64_t id1 = fix.Ref().EnqueuePendingCreate("{\"summary\":\"first\"}");
-    const std::int64_t id2 = fix.Ref().EnqueuePendingCreate("{\"summary\":\"second\"}");
+    const std::int64_t id1 = fix.Ref().EnqueuePendingCreate("Jira", "{\"summary\":\"first\"}");
+    const std::int64_t id2 = fix.Ref().EnqueuePendingCreate("Jira", "{\"summary\":\"second\"}");
     CHECK(id1 > 0);
     CHECK(id2 > id1);
 
@@ -192,7 +192,7 @@ TEST_CASE("LocalCacheManager: EnqueuePendingCreate + LoadPendingCreates round-tr
 
 TEST_CASE("LocalCacheManager: UpdatePendingCreate bumps attempts + last_error") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingCreate("{}");
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "{}");
     fix.Ref().UpdatePendingCreate(id, 3, "HTTP 500");
     auto rows = fix.Ref().LoadPendingCreates();
     REQUIRE(rows.size() == 1);
@@ -202,7 +202,7 @@ TEST_CASE("LocalCacheManager: UpdatePendingCreate bumps attempts + last_error") 
 
 TEST_CASE("LocalCacheManager: UpdatePendingCreatePayload replaces payload only") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingCreate("{\"old\":1}");
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "{\"old\":1}");
     fix.Ref().UpdatePendingCreate(id, 2, "transient");
     fix.Ref().UpdatePendingCreatePayload(id, "{\"new\":1}");
     auto rows = fix.Ref().LoadPendingCreates();
@@ -215,7 +215,7 @@ TEST_CASE("LocalCacheManager: UpdatePendingCreatePayload replaces payload only")
 TEST_CASE("LocalCacheManager: ArchivePendingCreate moves row to dead-letter with metadata" *
           doctest::test_suite("[high-risk]")) {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingCreate("{\"payload\":\"data\"}");
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "{\"payload\":\"data\"}");
     fix.Ref().UpdatePendingCreate(id, 5, "tracker error");
 
     fix.Ref().ArchivePendingCreate(id, "max_attempts", "final tracker error");
@@ -235,7 +235,7 @@ TEST_CASE("LocalCacheManager: ArchivePendingCreate moves row to dead-letter with
 
 TEST_CASE("LocalCacheManager: ArchivePendingCreate keeps last_error when terminalError is empty") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingCreate("{\"k\":1}");
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "{\"k\":1}");
     fix.Ref().UpdatePendingCreate(id, 5, "earlier tracker err");
     fix.Ref().ArchivePendingCreate(id, "max_attempts", "");
 
@@ -246,7 +246,7 @@ TEST_CASE("LocalCacheManager: ArchivePendingCreate keeps last_error when termina
 
 TEST_CASE("LocalCacheManager: RestoreDeadPendingCreate moves back to active with attempts=0") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingCreate("{\"k\":1}");
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "{\"k\":1}");
     fix.Ref().UpdatePendingCreate(id, 5, "err");
     fix.Ref().ArchivePendingCreate(id, "max_attempts", "");
 
@@ -267,11 +267,11 @@ TEST_CASE("LocalCacheManager: RestoreDeadPendingCreate returns false when no arc
 
 TEST_CASE("LocalCacheManager: DeletePendingCreate / DeleteDeadPendingCreate remove rows") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingCreate("{}");
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "{}");
     fix.Ref().DeletePendingCreate(id);
     CHECK(fix.Ref().LoadPendingCreates().empty());
 
-    const std::int64_t id2 = fix.Ref().EnqueuePendingCreate("{}");
+    const std::int64_t id2 = fix.Ref().EnqueuePendingCreate("Jira", "{}");
     fix.Ref().ArchivePendingCreate(id2, "test", "");
     auto dead = fix.Ref().LoadDeadPendingCreates();
     REQUIRE(dead.size() == 1);
@@ -281,8 +281,8 @@ TEST_CASE("LocalCacheManager: DeletePendingCreate / DeleteDeadPendingCreate remo
 
 TEST_CASE("LocalCacheManager: RunOneTimeLegacyDropPendingAtMaxAttempts is idempotent + flag-gated") {
     SqliteMemFixture fix;
-    const std::int64_t under = fix.Ref().EnqueuePendingCreate("{}");
-    const std::int64_t atMax = fix.Ref().EnqueuePendingCreate("{}");
+    const std::int64_t under = fix.Ref().EnqueuePendingCreate("Jira", "{}");
+    const std::int64_t atMax = fix.Ref().EnqueuePendingCreate("Jira", "{}");
     fix.Ref().UpdatePendingCreate(under, OfflineCreateQueue::kMaxReplayAttempts - 1, "");
     fix.Ref().UpdatePendingCreate(atMax, OfflineCreateQueue::kMaxReplayAttempts, "max-attempts");
 
@@ -291,7 +291,7 @@ TEST_CASE("LocalCacheManager: RunOneTimeLegacyDropPendingAtMaxAttempts is idempo
     CHECK(fix.Ref().LoadPendingCreates().size() == 1);
 
     // Subsequent call is a no-op because cache_meta flag is set.
-    const std::int64_t atMax2 = fix.Ref().EnqueuePendingCreate("{}");
+    const std::int64_t atMax2 = fix.Ref().EnqueuePendingCreate("Jira", "{}");
     fix.Ref().UpdatePendingCreate(atMax2, OfflineCreateQueue::kMaxReplayAttempts, "");
     const size_t secondDropped = fix.Ref().RunOneTimeLegacyDropPendingAtMaxAttempts();
     CHECK(secondDropped == 0);
@@ -302,7 +302,7 @@ TEST_CASE("LocalCacheManager: RunOneTimeLegacyDropPendingAtMaxAttempts is idempo
 
 TEST_CASE("LocalCacheManager: EnqueuePendingFieldEdit + LoadPendingFieldEdits round-trip") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("ABC-1", "summary", "{\"summary\":\"new\"}", "");
+    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "summary", "{\"summary\":\"new\"}", "");
     CHECK(id > 0);
     auto rows = fix.Ref().LoadPendingFieldEdits();
     REQUIRE(rows.size() == 1);
@@ -318,7 +318,7 @@ TEST_CASE("LocalCacheManager: EnqueuePendingFieldEdit + LoadPendingFieldEdits ro
 
 TEST_CASE("LocalCacheManager: EnqueuePendingFieldEdit stores original rich value") {
     SqliteMemFixture fix;
-    fix.Ref().EnqueuePendingFieldEdit("ABC-1", "description", "{\"description\":\"new\"}",
+    fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "description", "{\"description\":\"new\"}",
                                       "{\"version\":1,\"type\":\"doc\"}");
     auto rows = fix.Ref().LoadPendingFieldEdits();
     REQUIRE(rows.size() == 1);
@@ -328,7 +328,7 @@ TEST_CASE("LocalCacheManager: EnqueuePendingFieldEdit stores original rich value
 TEST_CASE("LocalCacheManager: MarkFieldEditConflict + ResolveFieldEditConflict flow" *
           doctest::test_suite("[high-risk]")) {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("ABC-1", "description", "{\"d\":\"mine\"}", "");
+    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "description", "{\"d\":\"mine\"}", "");
 
     fix.Ref().MarkFieldEditConflict(id, "{\"base\":\"\",\"mine\":\"a\",\"theirs\":\"b\"}");
     auto rows = fix.Ref().LoadPendingFieldEdits();
@@ -348,7 +348,7 @@ TEST_CASE("LocalCacheManager: ResolveFieldEditConflict clears original_rich_valu
           doctest::test_suite("[high-risk]")) {
     SqliteMemFixture fix;
     const std::int64_t id =
-        fix.Ref().EnqueuePendingFieldEdit("ABC-1", "description", "{\"d\":\"mine\"}", "{\"type\":\"doc\"}");
+        fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "description", "{\"d\":\"mine\"}", "{\"type\":\"doc\"}");
 
     fix.Ref().MarkFieldEditConflict(id, "{\"base\":\"b\",\"mine\":\"m\",\"theirs\":\"t\"}");
     fix.Ref().ResolveFieldEditConflict(id, "{\"d\":\"resolved\"}");
@@ -362,7 +362,7 @@ TEST_CASE("LocalCacheManager: ResolveFieldEditConflict clears original_rich_valu
 
 TEST_CASE("LocalCacheManager: UpdatePendingFieldEdit bumps attempts + last_error") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("ABC-1", "summary", "{}", "");
+    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "summary", "{}", "");
     fix.Ref().UpdatePendingFieldEdit(id, 4, "500 server error");
     auto rows = fix.Ref().LoadPendingFieldEdits();
     REQUIRE(rows.size() == 1);
@@ -372,7 +372,8 @@ TEST_CASE("LocalCacheManager: UpdatePendingFieldEdit bumps attempts + last_error
 
 TEST_CASE("LocalCacheManager: ArchivePendingFieldEdit moves row to dead-letter") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("ABC-1", "summary", "{\"summary\":\"x\"}", "rich-orig");
+    const std::int64_t id =
+        fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "summary", "{\"summary\":\"x\"}", "rich-orig");
     fix.Ref().UpdatePendingFieldEdit(id, 5, "tracker err");
 
     fix.Ref().ArchivePendingFieldEdit(id, "max_attempts", "terminal err");
@@ -391,14 +392,14 @@ TEST_CASE("LocalCacheManager: ArchivePendingFieldEdit moves row to dead-letter")
 
 TEST_CASE("LocalCacheManager: DeletePendingFieldEdit removes row by id") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("ABC-1", "summary", "{}", "");
+    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "summary", "{}", "");
     fix.Ref().DeletePendingFieldEdit(id);
     CHECK(fix.Ref().LoadPendingFieldEdits().empty());
 }
 
 TEST_CASE("LocalCacheManager: DeleteDeadPendingFieldEdit removes archive by dead_id") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("ABC-1", "summary", "{}", "");
+    const std::int64_t id = fix.Ref().EnqueuePendingFieldEdit("Jira", "ABC-1", "summary", "{}", "");
     fix.Ref().ArchivePendingFieldEdit(id, "test", "");
     auto dead = fix.Ref().LoadDeadPendingFieldEdits();
     REQUIRE(dead.size() == 1);
