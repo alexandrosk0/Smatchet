@@ -9,6 +9,11 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-06-06 · orchestrator · [tooling] · P2 — `guard-head-drift.sh` blocks an integration-tree-rooted session from committing into a worktree it created (no clean mid-session override); PowerShell tool bypassed the guard entirely
+  Resolution: **applied 2026-06-07** (option (a) + the PowerShell gap, branch `feat/guard-head-drift-fix`) — `docs/harness/claude-code/hooks/guard-head-drift.sh` gained `all_git_ops_target_safe_worktree()`: a `git -C <path> commit` (and, when drifted, any -C-targeted HEAD-moving op) is ALLOWED when every matched invocation's `-C` target is a linked worktree (`.git` is a file) on a non-protected branch; -C-less / integration-target / protected-branch / mixed compounds stay denied. The hook's case now matches `Bash|PowerShell`, and `settings.json.tmpl` adds `PowerShell` matcher groups (separate groups, not a `Bash|PowerShell` rename — the additive `sync-settings-hooks.sh` keys on the matcher string and a rename would double-fire deployed files) for guard-head-drift + guard-shared-tree + clear-tree-dirty (PreToolUse) and autoregister-pr + resync-head-baseline (PostToolUse). Regression suite: `tests/bats/guard_head_drift.bats` (14 cases) + `agents/scripts/core/test-guard-head-drift-bats.sh` wrapper (test-all auto-enrolled). Option (c) note: relaunching via `nsc <slug>` remains the preferred flow; this fix removes the false-block when the orchestrator legitimately ships from a worktree it created mid-session. Cross-ref: PR #916, PR #936.
+  Status: applied
+  Last-reviewed: 2026-06-07
+
 > **Backlog-campaign B8 phase-0 (2026-06-02)** — 8 stale/moot bucket-E entries archived after verifying against current develop. The infra 'keystone' was already unblocked (warmup gate + file-result + /EHsc default all shipped); most coverage dependents are shipped or moot (AgentProposalStore / Agentic-tab / react-loop removed).
 
 - 2026-06-01 · orchestrator · [test] · P2 — `JiraFakeTrackerFixture` injects a pre-built catalog and bypasses `FetchFieldCatalog`, so field-classification / enrichment bugs have zero fixture coverage

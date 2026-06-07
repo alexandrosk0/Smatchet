@@ -1,18 +1,36 @@
 # Perf-gate revival (Pillar 1) — execution playbook
 
-> **STATUS: GATE ARMED (2026-06-07).** Steps 1–4 + 5-code + 6a complete: the
-> headless launch is proven on CI, the 4 human-approved `ci-windows-latest`
-> baselines are committed, and `Perf PR-fast` joined the merge-gates
-> meant-to-block allow-list. Remaining: step 5-calibration (set
-> `mean_abs_ceiling_ms` + perScenario overrides after observing CI noise),
-> step 7 (skip-companion) + step 6b (GitHub-required — **user confirm**),
-> step 8 partially done (hardening-plan impl-log updated; final closeout with
-> 6b). Follow-ups discovered: `scenario.run` emits no `p99Ms` (p99 ceiling
-> inert until the C++ emitter adds it); `calls=1` top rows are filtered by
-> `min_baseline_calls=10` (calibration topic). Derived from
+> **STATUS: COMPLETE — GATE REQUIRED (2026-06-07).** All steps done: headless
+> launch proven on CI (steps 1–3), 4 human-approved `ci-windows-latest`
+> baselines committed (step 4), `mean_min_abs_delta_ms=0.05` noise floor
+> calibrated from the first armed run (step 5 round 1; `mean_abs_ceiling_ms`
+> itself stays null pending more CI observations), merge-gates allow-list
+> (6a), Pattern-C always-report shape (step 7 — **deviation**: Pattern C
+> instead of the planned Pattern-B skip-companion, because the old filter's
+> `!**/*.md` negation has no `paths-ignore` inverse — a Source-markdown-only
+> PR would wedge a Pattern-B pair), and `Perf PR-fast (windows-2022)` added
+> to `branch_protection.required_contexts` + applied (6b, user-confirmed).
+> Open follow-ups (filed in categories/): `p99Ms` missing from the emitter
+> (tooling P2); `mean_abs_ceiling_ms` value + perScenario overrides after
+> more observed runs; `calls=1` top-row filtering. Derived from
 > `build-quality-velocity-hardening.md` item **#8/#13** (2026-06-06).
 
 ## Implementation log
+
+**2026-06-07 — steps 7 + 6b (gate REQUIRED, branch `feat/perf-gate-required`):**
+
+- **Step 7 (always-report — Pattern C, not Pattern B):** removed the
+  workflow-level positive `paths:` filter from `perf-pr-fast.yml`; added a
+  fast `changes` detect job (fail-safe `perf=true` on uncertainty) gating the
+  measurement job via `if:` — a skipped required job counts as success, so
+  docs-only PRs never wedge. Pattern-B skip-companion rejected: GitHub
+  supports `!` negation only under `paths`, so the old filter's `!**/*.md`
+  has no `paths-ignore` inverse and a Source-markdown-only PR would trigger
+  neither half of the pair (deadlock).
+- **Step 6b (GitHub-required):** `Perf PR-fast (windows-2022)` appended to
+  `project.config.json` `branch_protection.required_contexts` +
+  `ci.required_checks`; applied to the live branch protection via
+  `setup-branch-protection.sh` after merge (user-confirmed 2026-06-07).
 
 **2026-06-07 — steps 4 + 6a (gate armed, branch `feat/perf-gate-baselines`):**
 
@@ -75,6 +93,25 @@
   only). The `p99_abs_ceiling_ms` policy check is structurally inert until the
   C++ perf-snapshot emitter adds p99 — follow-up item, not this PR.
 
+## Deviations from plan
+
+- **Step 7 shipped as Pattern C, not Pattern B**: the planned `perf-pr-fast-skip.yml` companion cannot express the inverse of the old filter's `!**/*.md` negation (`paths-ignore` accepts no `!`), so a Source-markdown-only PR would have triggered neither workflow (wedged required check). Pattern C (always-trigger + fail-safe `changes` detect job + `if:`-skip) has no such hole and matches `build-and-test.yml` precedent.
+- **Step 1 needed a round 2 the plan didn't anticipate**: Mesa >= 22 splits the driver — copying `opengl32.dll` alone (the bucket-C recipe the plan said to copy) is itself broken; `libgallium_wgl.dll` + `libglapi.dll` must ship beside it. The same bug was live-but-masked in bucket-C/E (postmortems.md 2026-06-07; preventing gate `bucket-lane-launch-smoke`, infra P1).
+- **A third launch blocker surfaced**: `perf-run.sh` treated the CLI exit code as authoritative; the runner's post-scenario `app.quit` handshake flakes non-zero AFTER the result file is written. The result file (+ JSON/rows parse guard) is now the outcome contract.
+- **Step 5 split**: `mean_min_abs_delta_ms=0.05` noise floor landed from first-armed-run data (a +12% / 3 µs false positive); `mean_abs_ceiling_ms` itself remains null pending more observed runs (open calibration follow-up).
+- **p99 half of Pillar 1 found structurally inert**: `scenario.run` rows carry no `p99Ms`; filed tooling P2 (emitter change) — not fixed in this plan's scope.
+
+## Verification (actual)
+
+- Headless launch: two-phase local repro (loader-only -> instant `STATUS_DLL_NOT_FOUND` death; 3 DLLs -> 600-frame headless run `ok:true`) + live CI proof (run `27080545207`: 4/4 scenarios, `run_failure_count=0`) — PASSED.
+- Baselines: 4 `ci-windows-latest` files validated (schema fields, host, 31–34 rows, sane numbers) + explicit human approval (golden gate) — PASSED.
+- Armed compare: first armed run flagged a 3 µs false positive (caught by design); post-floor run: 4/4 "No regressions", "All scenarios within policy" — PASSED.
+- `mean_abs_ceiling_ms` knob: self-compare exit 0 disabled; forced ceiling fires + respects `min_baseline_calls`; all-null policy renders without TypeError — PASSED.
+- `perf-run.sh` guards: shellcheck clean; empty-`data.rows`-with-top-level-`rows` correctly FAILS; observed-flake JSON passes — PASSED.
+- Merge-gates 6a: `merge_gates.bats` 113 ok / 0 fail incl. the new non-required-Perf-PR-fast-blocks case — PASSED.
+- Pattern C live proof: PR #946's own `Perf PR-fast` run executes the new detect->measure shape against committed baselines — observed on the PR.
+- Post-merge residue: `setup-branch-protection.sh` applied from updated develop; next docs-only PR must show the required check reporting as skipped-success (ci-required-check-pattern.md § Invariant check).
+
 ## Why this exists
 
 Quality **Pillar 1** (steady-state UI work ≤ **6.94 ms** / 144 Hz; p99 ≤ **16.67 ms** /
@@ -82,7 +119,7 @@ Quality **Pillar 1** (steady-state UI work ≤ **6.94 ms** / 144 Hz; p99 ≤ **1
 (job **`Perf PR-fast (windows-2022)`**) + the scheduled `perf-full.yml`. It is
 **not.** The gate exists and parses but is a **guaranteed-pass no-op** today.
 
-## The 5 compounding reasons the gate is a no-op
+## The 5 compounding reasons the gate WAS a no-op *(historical analysis, 2026-06-06 — every item below is fixed; see § Implementation log)*
 
 1. **Zero `ci-windows-latest` baselines exist.** Both workflows compare against
    `docs/perf/baselines/<scen>.ci-windows-latest.json` (`perf-pr-fast.yml:137`,
@@ -144,7 +181,7 @@ both perf workflows and set step-level `GALLIUM_DRIVER=llvmpipe` +
 step env via `CreateProcessA`. **Do not** build a true offscreen/no-GL harness — that
 is a `StandaloneAppBootstrap.cpp` refactor far larger than the Mesa-parity fix.
 
-## Staged revival (each step tagged SAFE-NOW / PARKED)
+## Staged revival *(historical SAFE-NOW / PARKED tags as written at park time — ALL steps complete as of 2026-06-07; step 7 shipped as Pattern C, not the Pattern-B skip-companion described below — see § Deviations)*
 
 1. **[SAFE-NOW] Mesa software-GL wiring** in `perf-pr-fast.yml` + `perf-full.yml`
    (the headless fix above). Inert/non-blocking until baselines exist (WARN
@@ -212,7 +249,7 @@ is a `StandaloneAppBootstrap.cpp` refactor far larger than the Mesa-parity fix.
 - Confirm the sccache + FetchContent cache fix (#9/#18, commit `fd4b37e8`) is
   hitting so build cost does not bleed into measurement.
 
-## Blockers (why this parks)
+## Blockers (why this parked) *(historical — all resolved 2026-06-07: launch proven on CI, baselines human-approved + committed, first-run noise observed + floor calibrated)*
 
 - **Cannot capture `ci-windows-latest` baselines locally** — must be produced on the
   GH `windows-2022` runner under Mesa (cross-host forbidden by D1). Needs ≥1 real CI
@@ -225,7 +262,7 @@ is a `StandaloneAppBootstrap.cpp` refactor far larger than the Mesa-parity fix.
 - **p99 enforcement is unverified** until a CI run confirms `scenario.run` emits
   `p99Ms`.
 
-## Parked-state handoff (what "later" picks up)
+## Parked-state handoff *(superseded — executed in full 2026-06-06/07; kept for the record)*
 
 **Safe to do in the un-park session, in order:** steps 1, 2, 5-code (mean ceiling,
 defaulted-not-required) — all merge-safe because the WARN-on-no-baseline /
