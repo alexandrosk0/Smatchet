@@ -106,7 +106,22 @@ jobs:
 
       - name: Capture coverage (blocking; --threshold 65)
         shell: bash
-        run: bash scripts/dev/coverage.sh --xml-only --threshold 65
+        env:
+          # The label escape documented in this file's header was prose-only
+          # until 2026-06-06 (discovered on PR #939: a structural measured-set
+          # expansion — newly-linked backend impl TUs entering the denominator
+          # — dropped the rate below threshold while absolute coverage rose).
+          # Labels come from the event payload, so apply the label THEN re-run.
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          oob=$(printf '%s' "${PR_LABELS:-[]}" | python -c "import json,sys; d=json.load(sys.stdin) or []; print(int(any(l.get('name')=='coverage-out-of-band' for l in d)))")
+          if [ "$oob" = "1" ]; then
+            if ! bash scripts/dev/coverage.sh --xml-only --threshold 65; then
+              echo "::warning::line coverage below threshold — downgraded to WARN by the coverage-out-of-band label. Queue the coverage-recovery follow-up before removing the label."
+            fi
+          else
+            bash scripts/dev/coverage.sh --xml-only --threshold 65
+          fi
 
       - name: Upload coverage.xml artifact
         if: always()
