@@ -67,6 +67,11 @@ PersistentPanesFile ConfigManager::LoadPanesFromDisk() {
             return disk;
         }
         disk.Version = j.value("version", 1);
+        if (disk.Version > 1) {
+            LOG_WARN("ConfigManager: panes file '%s' has version %d (this build writes 1) — fields a newer "
+                     "build wrote may be dropped on the next save",
+                     panesPath.c_str(), disk.Version);
+        }
         disk.FocusedPaneId = j.value("focused_pane_id", std::string());
         if (j.contains("panes") && j["panes"].is_array()) {
             for (const auto& paneJson : j["panes"]) {

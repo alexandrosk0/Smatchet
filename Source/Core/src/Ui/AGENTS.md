@@ -27,3 +27,4 @@ Flag any of these when reachable from `SmatchetUI::Draw` or any ImGui render pat
 
 - A `Draw*` / `Render*` function approaching 200 lines uses the section-helper pattern (`DrawCtx` + `DrawHeader`/`DrawBody`/`DrawFooter`/`DrawModals`/`HandleHotkeys`) per [`docs/guides/imgui-draw-pattern.md`](../../../../docs/guides/imgui-draw-pattern.md). Existing monoliths are ride-along only.
 - Any new sync-stall path > 100 ms needs a visible cue (spinner/disabled state) and bucket-E coverage.
+- Gate per-window mutations on live `IsWindowFocused`/this-frame focus, never a previous-frame flag — same-frame mouse-down focus races stale flags (PR #962 review: 3 of 4 HIGHs were this one pattern).

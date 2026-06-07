@@ -56,6 +56,11 @@ void EnsurePanesLoaded(UiDrawSession& d) {
         d.focusedPaneId = d.gridPanes.front().id;
     }
     d.gridPanesLoaded = true;
+    // Bootstrap restore is a host-side focus assignment: replay it as a real focus
+    // switch so the restored focused pane's saved viewId is ACTIVATED on frame 1
+    // (review MEDIUM-3 — without this, startup rendered whatever view happened to
+    // be active and the steady-state sync rebound the pane to it).
+    d.gridPaneFocusReassigned = true;
     LOG_INFO("GridPaneWindows: loaded %zu pane(s), focused='%s'", d.gridPanes.size(), d.focusedPaneId.c_str());
 }
 
@@ -88,69 +93,34 @@ void DrainPanesSaveIfDue(UiDrawSession& d) {
     }
 }
 
-std::string GenerateUniquePaneId(const std::vector<GridPane>& panes) {
-    for (int n = 2;; ++n) {
-        const std::string candidate = "pane-" + std::to_string(n);
-        bool taken = false;
-        for (const auto& pane : panes) {
-            if (pane.id == candidate) {
-                taken = true;
-                break;
-            }
-        }
-        if (!taken) {
-            return candidate;
-        }
-    }
-}
-
 bool ApplyPaneAddAndCloseRequests(UiDrawSession& d) {
-    bool changed = false;
-
-    // Close sweep — windows whose tab X was clicked wrote pane.open = false.
-    // Min-1 invariant: never let the sweep empty the vector.
-    for (size_t i = 0; i < d.gridPanes.size();) {
-        if (!d.gridPanes[i].open && d.gridPanes.size() > 1) {
-            const bool wasFocused = (d.gridPanes[i].id == d.focusedPaneId);
-            d.gridPanes.erase(d.gridPanes.begin() + static_cast<std::ptrdiff_t>(i));
-            if (wasFocused) {
-                d.focusedPaneId = d.gridPanes.front().id;
-            }
-            changed = true;
-        } else {
-            d.gridPanes[i].open = true; // re-arm the survivor (covers the last-pane case)
-            ++i;
-        }
+    // Pure core (SmatchetGridPaneWindows_detail.cpp — bucket-A covered); the wrapper
+    // only forwards the focus-reassignment report into the session latch the host
+    // consumes next frame as a real focus switch (review HIGH-2).
+    const detail::PaneRequestApplyOutcome outcome =
+        detail::ApplyPaneAddAndCloseRequestsCore(d.gridPanes, d.focusedPaneId, d.paneAddRequestSourceId);
+    if (outcome.FocusReassigned) {
+        d.gridPaneFocusReassigned = true;
     }
-
-    // "+" request — duplicate the source pane (same backend + view; the new pane
-    // shares the source's snapshot pointer, so opening costs no ticket copy).
-    if (!d.paneAddRequestSourceId.empty()) {
-        const GridPane* src = FindGridPaneById(d.gridPanes, d.paneAddRequestSourceId);
-        if (src == nullptr) {
-            src = &d.gridPanes.front();
-        }
-        GridPane dup;
-        dup.id = GenerateUniquePaneId(d.gridPanes);
-        dup.title = src->title;
-        dup.backendKey = src->backendKey;
-        dup.viewId = src->viewId;
-        dup.ticketsSnapshot = src->ticketsSnapshot;
-        dup.snapshotRevision = src->snapshotRevision;
-        d.gridPanes.push_back(dup); // invalidates `src` — done reading it above
-        d.focusedPaneId = d.gridPanes.back().id;
-        d.paneAddRequestSourceId.clear();
-        changed = true;
-    }
-
-    return changed;
+    return outcome.Changed;
 }
 
 } // namespace SmatchetGridPaneWindows
 
-// ---------------------------------------------------------------------------
-// SmatchetUI members — need ViewState / gridFrameCtx_ / drawActiveProjectWindow.
-// ---------------------------------------------------------------------------
+// SmatchetUI members below — need ViewState / gridFrameCtx_ / drawActiveProjectWindow.
+
+namespace {
+
+/// RAII: routes shared grid helpers (header toolbar, cell support, new-issue
+/// draft) to THIS pane via UiDrawSession::pane() for the duration of one
+/// drawActiveProjectWindow call; resets on every exit path.
+struct ScopedActivePaneForDraw {
+    UiDrawSession& d;
+    ScopedActivePaneForDraw(UiDrawSession& session, GridPane& pane) : d(session) { d.activePaneForDraw = &pane; }
+    ~ScopedActivePaneForDraw() { d.activePaneForDraw = nullptr; }
+};
+
+} // namespace
 
 void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     SmatchetGridPaneWindows::EnsurePanesLoaded(d);
@@ -160,6 +130,10 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     annotateAnalysisUi_.SetAnnotatePanelOpen(d.showAnnotateAnalysis);
     annotateAnalysisUi_.ServiceBackground();
 
+    // Connectivity banner resolved ONCE per frame for every pane + the edit pump
+    // below (was per pane — N visible panes paid N probes per frame).
+    const TrackerConnectivityBannerForUi trackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+
     // One dockable window per pane. The vector is stable across the loop — add/close
     // requests are deferred to ApplyPaneAddAndCloseRequests below.
     d.paneWindowFocusedThisFrame.clear();
@@ -167,24 +141,59 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         SMATCHET_UI_PERF_SCOPE("pane.render");
         GridPane& pane = d.gridPanes[i];
         pane.focused = (pane.id == d.focusedPaneId);
-        // RAII-light: activePaneForDraw routes shared grid helpers (header toolbar,
-        // cell support, new-issue draft) to THIS pane for the duration of the call.
-        d.activePaneForDraw = &pane;
-        drawActiveProjectWindow(app, d, pane);
-        d.activePaneForDraw = nullptr;
+        ScopedActivePaneForDraw activePane(d, pane);
+        drawActiveProjectWindow(app, d, pane, trackerBanner);
     }
 
     // Focus switch: the pane whose window holds ImGui focus becomes the focused pane
     // and takes over the single Slice-2 live context (Slice 3 makes every visible
-    // pane live and deletes this hand-over).
-    const bool focusSwitched = !d.paneWindowFocusedThisFrame.empty() && d.paneWindowFocusedThisFrame != d.focusedPaneId;
-    if (focusSwitched) {
+    // pane live and deletes this hand-over). A host-side reassignment from last
+    // frame (focused-pane close / "+" duplicate / bootstrap restore) replays as a
+    // real switch via d.gridPaneFocusReassigned so the new focused pane's saved
+    // view gets activated (review HIGH-2 / MEDIUM-3 — without it, focusSwitched
+    // stayed false and the steady-state sync rebound the survivor to the CLOSED
+    // pane's still-active view, then persisted the loss).
+    const bool windowFocusMoved =
+        !d.paneWindowFocusedThisFrame.empty() && d.paneWindowFocusedThisFrame != d.focusedPaneId;
+    const bool focusSwitched = windowFocusMoved || d.gridPaneFocusReassigned;
+    d.gridPaneFocusReassigned = false; // consume-once
+    if (windowFocusMoved) {
         SMATCHET_UI_PERF_SCOPE("pane.switch");
         d.focusedPaneId = d.paneWindowFocusedThisFrame;
         SmatchetGridPaneWindows::MarkPanesDirty(d);
     }
     if (GridPane* focused = FindGridPaneById(d.gridPanes, d.focusedPaneId)) {
         syncFocusedPaneWithActiveView(app, d, *focused, focusSwitched);
+    }
+
+    // Deferred toolbar refresh (review MEDIUM-2): a "Refresh View" click in a
+    // not-yet-focused pane is applied HERE, after the focus/view switch above
+    // landed, so the re-run targets the clicked pane's view — not the previously
+    // focused pane's live context. Consume-once: a request whose pane did not gain
+    // focus is dropped, never replayed.
+    if (!d.paneDeferredRefreshPaneId.empty()) {
+        if (d.paneDeferredRefreshPaneId == d.focusedPaneId) {
+            if (const ViewDefinition* active = ViewState.GetActiveView()) {
+                d.cfg.JqlQuery = active->Jql;
+                d.cfg.SelectedFields = active->Fields;
+                SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+            }
+        }
+        d.paneDeferredRefreshPaneId.clear();
+    }
+
+    // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes
+    // only ENQUEUE (EnqueueGridFieldEdits). A per-pane pump faded success chips N×
+    // faster and could dequeue an edit during a non-focused pane's call, snapshotting
+    // estimate bases from that pane's FROZEN ticket snapshot. The pump reads the
+    // focused pane's live snapshot.
+    {
+        const bool readOnlyMode =
+            d.cfg.ReadOnlyMode || (trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+        static const std::vector<CachedTicket> kNoTickets;
+        const GridPane& focused = d.focusedPane();
+        const std::vector<CachedTicket>& pumpTickets = focused.ticketsSnapshot ? *focused.ticketsSnapshot : kNoTickets;
+        PumpGridFieldEdits(app, d, pumpTickets, readOnlyMode);
     }
 
     if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(d)) {
@@ -207,9 +216,9 @@ void SmatchetUI::syncFocusedPaneWithActiveView(AppController& app, UiDrawSession
         const std::string cfgKey = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
         if (!pane.backendKey.empty() && pane.backendKey != cfgKey) {
             // SLICE-2 BOUNDARY: one live GridLiveContext. Re-point the config at the
-            // pane's backend; the per-pane lastViewsBackendKey delta (consumed in
-            // drawViewStateAndConnectivity) resets catalog + initial sync next frame,
-            // and the sync path performs the actual client swap.
+            // pane's backend; the SESSION-level lastViewsBackendKey delta (consumed
+            // in drawViewStateAndConnectivity — review HIGH-4) resets catalog +
+            // initial sync next frame, and the sync path performs the actual swap.
             d.cfg.TrackerType = pane.backendKey;
             ConfigManager::Save(d.cfg);
             ViewState.EnsureLoaded(d.cfg);

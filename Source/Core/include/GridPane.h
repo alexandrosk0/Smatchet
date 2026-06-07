@@ -10,7 +10,6 @@
 // once per visible pane window per frame, each pane reusing ITS OWN sort/filter
 // cache (a steady-state re-render is an O(1) cache hit; a shared/global cache
 // would thrash across panes — rejected, see plan § Performance).
-//
 // SLICE-2 BOUNDARY (ADR-0018): exactly ONE GridLiveContext is live. The FOCUSED
 // pane drives it (sync, edits, catalog); non-focused panes render from their
 // cached `ticketsSnapshot` until Slice 3 attaches a live context to every
@@ -52,7 +51,9 @@ struct GridPane {
     std::chrono::steady_clock::time_point lastGridSortAt{};
 
     // View-switch / grid-context-change bookkeeping (formerly UiDrawSession fields).
-    std::string lastViewsBackendKey;
+    // NOTE: lastViewsBackendKey stayed SESSION-level (UiDrawSession) — the backend-change
+    // session reset guards session-scoped state (catalog, initial sync, live context),
+    // so a per-pane delta goes blind on A→B→A pane-focus hops (review HIGH-4).
     std::string lastGridActiveViewId;
     std::string lastGridContextSignature;
 

@@ -476,8 +476,13 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
         ViewState.EnsureLoaded(g_ui.cfg);
         const std::string bk = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-        // Per-pane since Slice 2 — the FOCUSED pane tracks the live backend bucket.
-        std::string& lastViewsBackendKey = d.focusedPane().lastViewsBackendKey;
+        // SESSION-level backend-change detector (review HIGH-4): the state this reset
+        // guards (catalog, initial sync, live context, view-editor buffers) is
+        // session-scoped, so the delta must be too. Per-pane tracking went blind on
+        // A→B→A pane-focus hops — the returning pane's own key never changed — and
+        // the reset never fired. A pane focus switch re-points cfg.TrackerType, so
+        // this fires on host focus switches as well.
+        std::string& lastViewsBackendKey = d.lastViewsBackendKey;
         if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
             d.appliedInitialView = false;
             d.initialTicketSyncStarted = false;

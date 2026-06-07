@@ -127,6 +127,7 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
 
         // 2. SPLIT — drag pane 2 to the RIGHT of the primary window; both grids must
         // then be visible (Active) in the same frame: two re-entrant renders/frame.
+        bool splitDone = false;
         if (paneTwoLive) {
             // Absolute "//" refs — the test is under SetRef(kPrimary), and DockInto
             // resolves bare names relative to that (which dangles for window names).
@@ -136,7 +137,36 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
             const bool bothVisible =
                 YieldUntil(ctx, [&] { return WindowIsLive(kPrimary) && WindowIsLive(paneTwoName.c_str()); });
             IM_CHECK_NO_RET(bothVisible);
+            splitDone = bothVisible;
         }
+
+        // 3b. SORT-CLICK INTO A NOT-YET-FOCUSED PANE (PR #962 review HIGH-3) — a
+        // header sort click lands on the SAME frame ImGui moves window focus; the
+        // view mirror must run off the live focus report, not last frame's
+        // pane.focused. Focus the PRIMARY pane first, then click pane 2's "ID"
+        // header and require the session view-sort dirty flags to flip (the mirror
+        // marks dirty only when the view's sort rules actually changed).
+        if (splitDone) {
+            // Programmatic window focus — the requestActiveProjectFocus latch only
+            // applies to the session-FOCUSED pane, which is pane 2 right now.
+            ctx->WindowFocus("//Smatchet - Active Project");
+            const bool primaryRefocused = YieldUntil(ctx, [&] { return g_ui.focusedPaneId == "main"; });
+            IM_CHECK_NO_RET(primaryRefocused);
+            if (primaryRefocused) {
+                g_ui.viewSortDirty = false;
+                g_ui.viewsDirty = false;
+                const std::string paneTwoTableRef = std::string("//") + paneTwoName + "/TicketGrid";
+                ctx->TableClickHeader(paneTwoTableRef.c_str(), "ID");
+                const bool sortMirrored = YieldUntil(ctx, [&] { return g_ui.viewSortDirty && g_ui.viewsDirty; });
+                IM_CHECK_NO_RET(sortMirrored); // HIGH-3: mirror survives the focus-click frame
+                const bool focusFollowedClick = YieldUntil(ctx, [&] { return g_ui.focusedPaneId == paneTwoId; });
+                IM_CHECK_NO_RET(focusFollowedClick);
+            }
+        }
+
+        // Record the survivor's saved view BEFORE the close so we can assert the
+        // focused-close hand-over never rebinds it (PR #962 review HIGH-2).
+        const std::string survivorViewIdBeforeClose = g_ui.gridPanes.front().viewId;
 
         // 4. CLOSE — flip the pane's open flag exactly as the tab X writes it (the X
         // is stock ImGui; ImGuiTestContext::WindowClose can't reach a docked tab's
@@ -151,6 +181,13 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
             IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().open, true);
             const bool focusFellBack = YieldUntil(ctx, [&] { return g_ui.focusedPaneId == g_ui.gridPanes.front().id; });
             IM_CHECK_NO_RET(focusFellBack);
+            // HIGH-2: the survivor keeps ITS OWN saved view across the host focus
+            // reassignment + the following frames' steady-state sync (the bug rebound
+            // it to the closed pane's still-active view and persisted the loss).
+            ctx->Yield();
+            ctx->Yield();
+            ctx->Yield();
+            IM_CHECK_STR_EQ_NO_RET(g_ui.gridPanes.front().viewId.c_str(), survivorViewIdBeforeClose.c_str());
         }
     };
 }

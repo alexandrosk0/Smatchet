@@ -417,6 +417,11 @@ add_executable(SmatchetTests
     # (plan items 7/10). ConfigManager_Panes.cpp is the new production TU.
     Core/ConfigManagerPanes.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Panes.cpp"
+    # PR #962 review fixes — pure pane-request core (close sweep focus-reassignment
+    # report, min-1 invariant, "+" duplicate, cross-backend view self-repair gate).
+    # The _detail TU is ImGui-free (mirrors SmatchetGridHeaderUi_detail.cpp).
+    Core/GridPaneRequests.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.

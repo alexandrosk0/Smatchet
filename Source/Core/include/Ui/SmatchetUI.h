@@ -19,6 +19,7 @@ class AppController; // Forward declaration
 struct UiDrawSession;
 struct CachedTicket;
 struct GridPane; // Source/Core/include/GridPane.h — per-pane dockable grid unit (ADR-0018)
+struct TrackerConnectivityBannerForUi; // AppController.h — host-resolved once per frame
 
 /// Shared per-frame state for the section helpers that decompose
 /// SmatchetUI::drawActiveProjectWindow. Defined at namespace scope in
@@ -284,12 +285,16 @@ class SmatchetUI {
     void syncFocusedPaneWithActiveView(AppController& app, UiDrawSession& d, GridPane& pane, bool focusSwitched);
     // Re-entrant per-pane grid window (Slice 2): renders ONE GridPane, using the
     // pane's own snapshot + sort/filter caches. Called once per visible pane per frame.
-    void drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane);
+    // The connectivity banner is resolved ONCE per frame by the host and passed in.
+    void drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane,
+                                 const TrackerConnectivityBannerForUi& trackerBanner);
     // Pane-view resolution helpers (Slice 2). resolvePaneView falls back to the active
-    // view (self-repairing pane.viewId) when the pane's view was deleted; resolvePane-
-    // Columns reuses the shared GridFrameContext for the active view and a per-pane
-    // revision-keyed cache otherwise.
-    ViewDefinition* resolvePaneView(GridPane& pane);
+    // view when the pane's view is absent from the loaded bucket — self-repairing
+    // pane.viewId ONLY when the pane belongs to the focused backend's bucket (a
+    // cross-backend pane's viewId is valid in its own bucket and must survive —
+    // review HIGH-1); resolvePaneColumns reuses the shared GridFrameContext for the
+    // active view and a per-pane revision-keyed cache otherwise.
+    ViewDefinition* resolvePaneView(UiDrawSession& d, GridPane& pane);
     const std::vector<TicketGridColumn>& resolvePaneColumns(GridPane& pane, const TrackerFieldCatalogIndex& catalogIndex,
                                                             const ViewDefinition* paneView);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of

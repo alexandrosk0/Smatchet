@@ -1,4 +1,5 @@
 #include "SmatchetUI.h"
+#include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (review HIGH-1)
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 
@@ -327,7 +328,8 @@ struct ActiveProjectDrawCtx {
 // the FOCUSED pane refreshes its snapshot from it; non-focused panes render their
 // cached snapshot, and all session-level mutation paths (view edits, new-issue draft,
 // modals, toasts) are gated on pane.focused.
-void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane) {
+void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane,
+                                         const TrackerConnectivityBannerForUi& TrackerBanner) {
     const bool wantFocus = pane.focused && d.requestActiveProjectFocus;
     prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
     // The bootstrap pane keeps the legacy window name so existing imgui.ini dock
@@ -370,7 +372,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
                                                         "New grid pane (duplicates this pane; dock it as a tab or "
                                                         "drag its tab to an edge for a side-by-side split)"));
     }
-    const TrackerConnectivityBannerForUi TrackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+    // Banner resolved once per frame by the pane-window host and passed in.
     if (pane.focused) {
         MaybeToastTrackerConnectivityBanner(app, d, TrackerBanner);
     }
@@ -387,7 +389,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     const auto ticketsSnap = pane.ticketsSnapshot; // keep alive across the draw
     const auto& tickets = *ticketsSnap;
 
-    ViewDefinition* activeViewForGrid = resolvePaneView(pane);
+    ViewDefinition* activeViewForGrid = resolvePaneView(d, pane);
     const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
     const std::vector<TicketGridColumn>& columns = resolvePaneColumns(pane, catalogIndex, activeViewForGrid);
 
@@ -435,22 +437,32 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
 
     // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
     // of view. Edits accepted in the modal are appended to `pendingEdits` and flow through the same
-    // ProcessGridFieldEdits path below. The popup stack is global — render once, from the focused pane.
+    // EnqueueGridFieldEdits path below (host pumps once per frame). The popup stack is global —
+    // render once, from the focused pane.
     if (pane.focused) {
         TicketFieldEditor::RenderLongTextModal(pendingEdits);
     }
 
-    ProcessGridFieldEdits(app, d, tickets, pendingEdits, readOnlyMode);
+    // Enqueue only — the pane-window host runs the dispatch pump + chip decay ONCE
+    // per frame against the focused pane's live snapshot (review MEDIUM-1: a per-pane
+    // pump faded chips N× faster and could snapshot estimate bases from a non-focused
+    // pane's frozen snapshot).
+    EnqueueGridFieldEdits(d, pendingEdits, readOnlyMode);
     if (pane.focused) {
         MaybeToastGridBannerFromSession(d);
     }
     ImGui::End();
 }
 
-// Resolve the pane's view inside the (focused-backend) views bucket. A pane referencing
-// a deleted/unknown view falls back to the ACTIVE view and self-repairs its viewId
-// (Pillar 3 — never dangle). Returns null only when the bucket has no views at all.
-ViewDefinition* SmatchetUI::resolvePaneView(GridPane& pane) {
+// Resolve the pane's view inside the (focused-backend) views bucket. A SAME-backend
+// pane referencing a deleted/unknown view falls back to the ACTIVE view and
+// self-repairs its viewId (Pillar 3 — never dangle). A CROSS-backend pane's viewId
+// lives in ITS OWN backend's bucket — the loaded slice simply can't see it — so it
+// renders the active-view fallback WITHOUT any identity write (review HIGH-1: the
+// unconditional repair rebound such panes to the focused view every frame, and the
+// debounced PersistPanes made the loss durable). Returns null only when the loaded
+// bucket has no views at all.
+ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
     ViewsStore& store = ViewState.GetStoreMutable();
     for (auto& view : store.Views) {
         if (view.Id == pane.viewId) {
@@ -458,7 +470,10 @@ ViewDefinition* SmatchetUI::resolvePaneView(GridPane& pane) {
         }
     }
     ViewDefinition* active = ViewState.GetActiveViewMutable();
-    pane.viewId = active ? active->Id : std::string();
+    if (SmatchetGridPaneWindows::detail::PaneViewSelfRepairAllowed(
+            pane.backendKey, ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType))) {
+        pane.viewId = active ? active->Id : std::string();
+    }
     return active;
 }
 
@@ -842,8 +857,14 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
         sortSpecs->SpecsDirty = false;
 
         // Sync header clicks back to View definition (focused pane only — the
-        // view-definition mirror is session-level unsaved-edit state).
-        if (activeViewForGrid && pane.focused) {
+        // view-definition mirror is session-level unsaved-edit state). Gate on LIVE
+        // focus — this frame's window-focus report — not last frame's pane.focused:
+        // a sort click into a not-yet-focused pane processes on the SAME frame ImGui
+        // moves focus, and the stale flag dropped the mirror while SpecsDirty was
+        // already cleared above, so the sort applied visually but never reached the
+        // view (review HIGH-3).
+        const bool paneLiveFocused = pane.focused || d.paneWindowFocusedThisFrame == pane.id;
+        if (activeViewForGrid && paneLiveFocused) {
             SyncHeaderSortClicksToView(d, sortSpecs, columns, *activeViewForGrid);
         }
     }

@@ -142,10 +142,10 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit
 
 } // namespace
 
-void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
-                           const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode) {
-    SMATCHET_UI_PERF_SCOPE("grid.cell_commit_pump");
-
+// Enqueue half (called once per visible PANE per frame — review MEDIUM-1 split):
+// folds this pane's freshly committed edits into the session queue. No dispatch,
+// no chip decay — those run ONCE per frame in PumpGridFieldEdits (host-driven).
+void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode) {
     {
         // Keep queued edits latest-per-cell (drop older queued item for same cell).
         if (!readOnlyMode) {
@@ -169,6 +169,21 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vect
             d.queuedFieldEdits.clear();
         }
     }
+
+    // Behaviour-preserving move from the former ProcessGridFieldEdits tail: a frame
+    // that produced edits clears the stale error banner.
+    if (!pendingEdits.empty()) {
+        d.gridEditError.clear();
+    }
+}
+
+// Pump half (called ONCE per frame by the pane-window host with the FOCUSED pane's
+// live snapshot — review MEDIUM-1): dispatches the next queued edit to a worker and
+// decays success chips. Running this per visible pane faded chips N× faster and
+// could snapshot estimate bases from a non-focused pane's frozen ticket snapshot.
+void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
+                        bool readOnlyMode) {
+    SMATCHET_UI_PERF_SCOPE("grid.cell_commit_pump");
 
     // Dispatch the next queued edit to a worker thread. Only one in flight
     // at a time so the offline-queue ordering matches user intent and the
@@ -232,8 +247,12 @@ void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vect
             }
         }
     }
+}
 
-    if (!pendingEdits.empty()) {
-        d.gridEditError.clear();
-    }
+// Composed enqueue+pump kept for single-shot callers outside the pane-window loop
+// (the perf.grid_edit_pump command in BuiltinCommands_Perf.cpp).
+void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
+                           const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode) {
+    EnqueueGridFieldEdits(d, pendingEdits, readOnlyMode);
+    PumpGridFieldEdits(app, d, tickets, readOnlyMode);
 }

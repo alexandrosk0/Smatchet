@@ -422,11 +422,30 @@ struct UiDrawSession {
 
     // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
     // The per-pane grid runtime that used to live here as singleton fields
-    // (gridState / gridFilterBuf / sort+filter caches / lastViewsBackendKey /
-    // lastGridActiveViewId / lastGridContextSignature / wheel hysteresis /
-    // forceApplySortSpecs) migrated into GridPane. Bootstrapped from
-    // smatchet_panes.json by the pane-window host (SmatchetGridPaneWindows).
+    // (gridState / gridFilterBuf / sort+filter caches / lastGridActiveViewId /
+    // lastGridContextSignature / wheel hysteresis / forceApplySortSpecs) migrated
+    // into GridPane. Bootstrapped from smatchet_panes.json by the pane-window host
+    // (SmatchetGridPaneWindows).
     std::vector<GridPane> gridPanes;
+    /// SESSION-level backend bucket the views/catalog/initial-sync state was last
+    /// loaded for. Deliberately NOT per-pane: the live context is session-scoped, so
+    /// the backend-change session reset (drawViewStateAndConnectivity) must key on a
+    /// session delta — per-pane tracking went blind on A→B→A pane-focus hops because
+    /// the returning pane's own key never changed (review HIGH-4). Fires on host pane
+    /// focus switches too, since a switch re-points cfg.TrackerType.
+    std::string lastViewsBackendKey;
+    /// One-frame latch: the HOST reassigned focusedPaneId outside the normal
+    /// window-focus path (focused-pane close, "+" duplicate, bootstrap restore).
+    /// Consumed by drawGridPaneWindows, which treats it as a real focus switch so
+    /// the newly focused pane's saved viewId is activated — without it the
+    /// steady-state pane↔view sync rebound the survivor to the CLOSED pane's view
+    /// and persisted the loss (review HIGH-2 / MEDIUM-3).
+    bool gridPaneFocusReassigned = false;
+    /// One-frame deferred "Refresh View" from a not-yet-focused pane's toolbar
+    /// (review MEDIUM-2): acting on the click frame would re-run a query against the
+    /// still-focused pane's live context. The host consumes this AFTER applying the
+    /// focus/view switch; consume-once (a request whose pane didn't gain focus drops).
+    std::string paneDeferredRefreshPaneId;
     std::string focusedPaneId;
     bool gridPanesLoaded = false;
     /// Debounced smatchet_panes.json save latch (mirrors prefsDirty).

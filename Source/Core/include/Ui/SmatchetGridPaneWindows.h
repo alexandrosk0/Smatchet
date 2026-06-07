@@ -6,7 +6,6 @@
 // members: ViewState, gridFrameCtx_, the re-entrant drawActiveProjectWindow).
 // This header exposes the deterministic, ImGui-free pane-management helpers so
 // bucket-A tests can cover bootstrap/persist/add/close without a UI loop.
-//
 // SLICE-2 BOUNDARY (keep until Slice 3): ONE GridLiveContext is live. The
 // focused pane drives it; the host only switches WHICH pane is focused (and
 // routes the per-pane view/backend swap through the existing sync chokepoint).
@@ -39,7 +38,35 @@ std::string GenerateUniquePaneId(const std::vector<GridPane>& panes);
 
 /// Apply the deferred "+" (duplicate source pane) and close-X requests AFTER the
 /// window loop — never mutates gridPanes mid-iteration; at least one pane always
-/// survives a close sweep. Returns true when the pane set changed.
+/// survives a close sweep. Returns true when the pane set changed. Sets
+/// d.gridPaneFocusReassigned when it moved focusedPaneId (review HIGH-2: the host
+/// must replay the reassignment as a real focus switch next frame so the new
+/// focused pane's saved view gets activated).
 bool ApplyPaneAddAndCloseRequests(UiDrawSession& d);
+
+// Pure, ImGui-free request-application core (SmatchetGridPaneWindows_detail.cpp)
+// so bucket-A tests cover the close/add/focus-reassignment invariants without a
+// UI loop (mirrors the SmatchetGridHeaderUi_detail pattern).
+namespace detail {
+
+struct PaneRequestApplyOutcome {
+    bool Changed = false;         ///< Pane set mutated (close applied or pane added).
+    bool FocusReassigned = false; ///< focusedPaneId moved by the host (not by window focus).
+};
+
+/// The body of ApplyPaneAddAndCloseRequests on bare data: close sweep (min-1
+/// invariant, survivor keeps ITS OWN identity — the focus hand-over is reported,
+/// never resolved here) + the "+" duplicate request (consumes addRequestSourceId).
+PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId,
+                                                         std::string& addRequestSourceId);
+
+/// True when a dangling pane.viewId may be self-repaired to the active view: only
+/// when the pane belongs to the currently-loaded (focused) backend bucket. A
+/// cross-backend pane's viewId is valid in its OWN bucket and must never be
+/// rebound while another backend is focused (review HIGH-1). Empty pane key =
+/// pre-bootstrap placeholder — repair allowed (Pillar 3).
+bool PaneViewSelfRepairAllowed(const std::string& paneBackendKey, const std::string& cfgBackendKey);
+
+} // namespace detail
 
 } // namespace SmatchetGridPaneWindows
