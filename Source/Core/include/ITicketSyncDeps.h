@@ -4,11 +4,11 @@
 // TicketSyncService reaches into during streaming-sync, batch apply, and stale-deletion.
 // Background: TicketSyncService was extracted from AppController via `friend` access during
 // the item 11 migration (see TicketSyncService.h header comment). This interface removes the
-// `friend` seam: AppController constructs `AppControllerDepsAdapter` (which implements this
+// `friend` seam: AppController constructs `GridContextDepsAdapter` (which implements this
 // interface alongside `IOfflineQueueDeps`) and hands it to `TicketSyncService`. The service no
 // longer holds an `AppController&` reference and therefore no longer needs trusted-friendship
 // access.
-// Lifetime contract mirrors `IOfflineQueueDeps`: the implementer (AppControllerDepsAdapter) is
+// Lifetime contract mirrors `IOfflineQueueDeps`: the implementer (GridContextDepsAdapter) is
 // owned by AppController and outlives the TicketSyncService. The streaming-sync worker thread
 // joins inside `TicketSyncService::CancelAndJoinActiveStreamingSync`, which `~AppController`
 // invokes before the adapter is destroyed.
@@ -34,7 +34,7 @@ class ITicketSyncDeps {
   public:
     /// Mirrors `AppController::TrackerConnectivityState`. Declared here so the deps interface
     /// does not pull AppController.h. The integer values must stay in lockstep with the
-    /// AppController enum — `AppControllerDepsAdapter::SetLastTrackerConnectivityState` casts
+    /// AppController enum — `GridContextDepsAdapter::SetLastTrackerConnectivityState` casts
     /// between them. The corresponding doctest fixture exercises the same enum.
     enum class ConnectivityState {
         Unknown = 0,

@@ -11,7 +11,7 @@
 #include "StandaloneAppBootstrap.h"
 
 #include "AppController.h"
-#include "AppControllerDepsAdapter.h"
+#include "GridContextDepsAdapter.h"
 #include "Commands/CommandRegistry.h"
 #include "ConfigManager.h"
 #include "ITrackerBackendFactory.h"

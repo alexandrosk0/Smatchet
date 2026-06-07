@@ -1,10 +1,18 @@
 #pragma once
 
-// AppControllerDepsAdapter — concrete implementation of `IOfflineQueueDeps` and
-// `ITicketSyncDeps` that forwards every method to a live `AppController&`. Owned by
-// AppController via `std::unique_ptr`; constructed in `AppController::Initialize` and
-// destroyed before any AppController member it forwards to.
-// Why two interfaces, one adapter: both interfaces surface overlapping AppController state
+// GridContextDepsAdapter — concrete implementation of `IOfflineQueueDeps` and
+// `ITicketSyncDeps` that forwards per-context methods (`Backend`/`SetBackend`/`ActiveTickets*`)
+// to a `GridLiveContext&` and global methods (`Cache`, connectivity banner, offline-replay
+// timers, Lua notify) to a live `AppController&`. Split from the former
+// AppControllerDepsAdapter in multi-grid Slice 1 (ADR-0018): the adapter is the chokepoint
+// that lets `ITicketSyncDeps` — and therefore TicketSyncService, its tests, and every
+// external call site — stay unchanged while the engine state de-singletons.
+// Owned by AppController via `std::unique_ptr`; constructed in `AppController::Initialize`
+// and destroyed before any AppController member it forwards to (the GridLiveContext it
+// references is declared after it in AppController, so the context dies first — the adapter
+// never dereferences `ctx_` after that because the context's TicketSyncService, the only
+// caller, dies with it).
+// Why two interfaces, one adapter: both interfaces surface overlapping state
 // (`Cache`, `Backend`, the connectivity-banner / deferred-notify pair). Implementing both on a
 // single adapter keeps the wiring trivial — AppController owns one adapter, passes the same
 // pointer to both services via a different interface upcast. Tests substitute two independent
@@ -29,11 +37,12 @@ class ITrackerConnectivity;
 class ITrackerIssueMutations;
 class ITrackerIssueReader;
 class ITrackerBackendFactory;
+struct GridLiveContext;
 struct TrackerConfig;
 
-class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps {
+class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps {
   public:
-    explicit AppControllerDepsAdapter(AppController& app);
+    GridContextDepsAdapter(AppController& app, GridLiveContext& ctx);
 
     // ---- IOfflineQueueDeps ------------------------------------------------------------
     LocalCacheManager* Cache() override;
@@ -67,5 +76,6 @@ class AppControllerDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDep
     void SetPendingLuaWindowBump(bool value) override;
 
   private:
-    AppController& app_;
+    AppController& app_;   ///< Shared/global state (cache, connectivity, catalog, Lua).
+    GridLiveContext& ctx_; ///< Per-context state (backend slot, active-ticket snapshot).
 };

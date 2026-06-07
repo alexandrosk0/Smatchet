@@ -63,7 +63,8 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
         (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
     // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
-        Backend ? &Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id, /*legacyFallback*/ std::string());
+        focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
+        /*legacyFallback*/ std::string());
     return IssueDraftHelpers::FromCachedTicket(lastTicket, AvailableFields, resolvedProject, cfg.DefaultIssueTypeId,
                                                cfg.DefaultIssueTypeName, inheritIds);
 }
@@ -105,7 +106,7 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         return future;
     }
 
-    if (!Backend) {
+    if (!focusedContext().Backend) {
         IssueCreateResult err;
         err.Error = "Tracker backend is not initialized.";
         promise->set_value(std::move(err));
@@ -129,7 +130,7 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         }
     }
 
-    ITrackerIssueMutations* const mutations = Backend->Mutations();
+    ITrackerIssueMutations* const mutations = focusedContext().Backend->Mutations();
     if (!mutations) {
         IssueCreateResult err;
         err.Error = "Tracker backend does not support issue mutations.";

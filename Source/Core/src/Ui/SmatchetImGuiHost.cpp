@@ -33,7 +33,7 @@
 
 // Smatchet core components (needed for the pImpl state).
 #include "AppController.h"
-#include "AppControllerDepsAdapter.h"
+#include "GridContextDepsAdapter.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "ConfigManager.h"

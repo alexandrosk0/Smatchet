@@ -12,7 +12,7 @@
 //   1D — field-edit equivalents (`ResolveFieldEditConflict`, `Tick…FieldEdits`).
 // Phase 2 (this PR) replaces the `friend class OfflineQueueService;` access with a small
 // `IOfflineQueueDeps` interface bundle (see IOfflineQueueDeps.h). AppController hands a
-// concrete `AppControllerDepsAdapter` to the service; tests substitute `FakeOfflineQueueDeps`
+// concrete `GridContextDepsAdapter` to the service; tests substitute `FakeOfflineQueueDeps`
 // so they can exercise the service without constructing an AppController.
 
 #include <chrono>
@@ -61,7 +61,7 @@ struct DeadPendingFieldEdit;
 
 /// Lifetime contract: AppController owns the service via `std::unique_ptr` and outlives it.
 /// The constructor stores an `IOfflineQueueDeps&` reference (typically backed by
-/// `AppControllerDepsAdapter`); methods reach AppController-side state (`Cache`, `Backend`,
+/// `GridContextDepsAdapter`); methods reach AppController-side state (`Cache`, `Backend`,
 /// audit trail, mutexes) through that interface. Tests pass a `FakeOfflineQueueDeps` so the
 /// service is exercisable in pure-logic doctest builds.
 class OfflineQueueService {

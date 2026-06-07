@@ -31,6 +31,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <future>
+#include <map>
+#include "GridLiveContext.h"
 #include "LocalCacheManager.h"
 #include "ITrackerBackend.h"
 #include "MainThreadDispatcher.h"
@@ -99,7 +101,7 @@ struct AppUpdateInfo {
 };
 
 class ITrackerBackendFactory;
-class AppControllerDepsAdapter;
+class GridContextDepsAdapter;
 class OfflineQueueService;
 class TicketSyncService;
 class LuaAutomationHost;
@@ -120,17 +122,21 @@ class AppController
     : public ILuaBindingHost
 #endif
 {
-    /// `AppControllerDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
-    /// this AppController and forwards every method to AppController-private state (`Cache`,
-    /// `Backend`, `AvailableFields`, the connectivity probe state, etc.). The previous
+    /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
+    /// this AppController + one `GridLiveContext` and forwards every method either to the
+    /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
+    /// (`Cache`, `AvailableFields`, the connectivity probe state, etc.). The previous
     /// `friend class OfflineQueueService;` + `friend class TicketSyncService;` declarations
     /// were replaced by this single friend during the item 11 / 12 Phase 2 extraction —
     /// the services now hold an `IOfflineQueueDeps& / ITicketSyncDeps&` reference and never
     /// touch AppController internals directly. Tests substitute `FakeOfflineQueueDeps` /
     /// `FakeTicketSyncDeps` so they can exercise the services without an AppController.
-    friend class AppControllerDepsAdapter;
+    friend class GridContextDepsAdapter;
 
   public:
+    /// Creates the default (kDefaultPaneId) GridLiveContext so `focusedContext()` is valid
+    /// from construction onward (multi-grid Slice 1, ADR-0018).
+    AppController();
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     ~AppController() override;
 #else
@@ -609,7 +615,7 @@ class AppController
     std::vector<CachedTicket> GetActiveTickets() const;
     /** Cheap read: shared_ptr to last published ticket list (thread-safe with MCP / workers). */
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
-    std::uint64_t GetActiveTicketsRevision() const { return ActiveTicketsRevision.load(); }
+    std::uint64_t GetActiveTicketsRevision() const { return focusedContext().ActiveTicketsRevision.load(); }
     /// De-inlined as of item 11 Phase 1C: the streaming-sync state lives on TicketSyncService.
     /// Defined in AppController.cpp where TicketSyncService.h is included; delegates to
     /// `ticketSync_->IsActive()`.
@@ -720,17 +726,17 @@ class AppController
     // All reads of the `Backend` member go through std::atomic_load and all writes through
     // std::atomic_store (ADR 0012): the slot is reassigned live on a tracker swap, and a
     // shared_ptr *instance* is not itself thread-safe to copy/assign concurrently (C++14).
-    const ITrackerBackend* GetTrackerBackend() const { return std::atomic_load(&Backend).get(); }
+    const ITrackerBackend* GetTrackerBackend() const { return std::atomic_load(&focusedContext().Backend).get(); }
     // PR 4b: non-const accessor for callers that invoke mutating client methods (e.g.
     // ListProjects() which populates a per-client in-memory cache).
-    ITrackerBackend* GetTrackerBackendMutable() { return std::atomic_load(&Backend).get(); }
+    ITrackerBackend* GetTrackerBackendMutable() { return std::atomic_load(&focusedContext().Backend).get(); }
     /** Strong (shared) handle to the active backend, for OFF-THREAD work that must
      *  outlive a live tracker swap. `Backend` is reassigned live on a tracker change
      *  (`SyncWithBackend`→`SetBackend`), which frees the old object; a worker that
      *  captured only a raw pointer would dangle. Capture this `shared_ptr` instead so
      *  the old backend stays alive until the worker drops it. Atomic-loaded so the
      *  snapshot itself can't race the swap. See ADR 0012. */
-    std::shared_ptr<ITrackerBackend> BackendShared() const { return std::atomic_load(&Backend); }
+    std::shared_ptr<ITrackerBackend> BackendShared() const { return std::atomic_load(&focusedContext().Backend); }
 
     // ---- Create issue flow -------------------------------------------------
 
@@ -963,11 +969,8 @@ class AppController
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory>
         backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
-    /// Shared (not unique) so off-thread workers can capture a strong handle that
-    /// survives a live tracker swap freeing this slot. All reads go through
-    /// `std::atomic_load`, all writes through `std::atomic_store`/`atomic_exchange`
-    /// (a shared_ptr instance is not concurrently copy/assign-safe in C++14). See ADR 0012.
-    std::shared_ptr<ITrackerBackend> Backend;
+    // `Backend` moved into GridLiveContext (multi-grid Slice 1, ADR-0018) — access via
+    // `focusedContext().Backend`, keeping the ADR-0012 atomic_load/atomic_store discipline.
     /// Defer-free graveyard (ADR 0012): a live tracker swap retires the OLD backend here
     /// instead of freeing it, so raw subobject pointers (Reader/Mutations/Connectivity)
     /// captured by in-flight workers before the swap stay valid. Drained only in
@@ -978,26 +981,39 @@ class AppController
 
   public:
     /// Retire a swapped-out backend into the defer-free graveyard (see `retiredBackends_`).
-    /// Called by `AppControllerDepsAdapter::SetBackend`. Thread-safe.
+    /// Called by `GridContextDepsAdapter::SetBackend`. Thread-safe.
     void RetireBackend(std::shared_ptr<ITrackerBackend> old);
 
   private:
     /// Implements `IOfflineQueueDeps` + `ITicketSyncDeps`. Constructed eagerly in `Initialize`
-    /// before `offlineQueue_` / `ticketSync_` so they can capture an interface reference at
-    /// construction time. The adapter never outlives this AppController (owned by it), so the
-    /// `AppController&` member it stores is trivially valid for the adapter's full lifetime.
-    std::unique_ptr<AppControllerDepsAdapter> depsAdapter_;
+    /// before `offlineQueue_` / the context's `ticketSync_` so they can capture an interface
+    /// reference at construction time. The adapter never outlives this AppController (owned by
+    /// it), and the `GridLiveContext&` it stores refers to the default context created in the
+    /// constructor and destroyed only by ~AppController (declared below the adapter, so the
+    /// context — and its TicketSyncService — is destroyed first).
+    std::unique_ptr<GridContextDepsAdapter> depsAdapter_;
     /// Owns the offline-create / offline-field-edit replay queues and their dead-letter management.
     /// Constructed lazily in `Initialize`. Public AppController methods (`QueueCreateOffline`,
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
     /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
     std::unique_ptr<OfflineQueueService> offlineQueue_;
-    /// Owns the streaming-sync FSM (worker thread, batch queue, supersede/cancel transitions)
-    /// and applies fetched batches to the cache. Constructed eagerly in `Initialize` alongside
-    /// `offlineQueue_`. Public AppController methods (`ApplyIssueFetchPack`,
-    /// `CancelAndJoinActiveStreamingSync`, etc.) are thin delegators that forward here. See
-    /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 11.
-    std::unique_ptr<TicketSyncService> ticketSync_;
+    /// Default pane id — Slice 1 of the multi-grid foundation (ADR-0018) runs exactly one
+    /// GridLiveContext under this key; later slices add per-pane entries.
+    static const int kDefaultPaneId;
+    /// Per-pane live engine bundles (backend + TicketSyncService + ActiveTickets snapshot —
+    /// the former singleton members, moved verbatim; see GridLiveContext.h). Declared AFTER
+    /// `depsAdapter_` so every context (and its TicketSyncService, whose teardown joins the
+    /// sync worker) is destroyed BEFORE the adapter it captured a reference to — the same
+    /// ordering the old inline `ticketSync_` member had. Slice 1: exactly one entry
+    /// (kDefaultPaneId), created in the constructor, behaviour-identical to the singleton.
+    std::map<int, std::unique_ptr<GridLiveContext>> gridContexts_;
+
+    /// The context global actions target (permanent focused-pane semantics, ADR-0018).
+    /// Slice 1: the lone kDefaultPaneId entry — created in the constructor and destroyed
+    /// only with this AppController, so the reference never dangles. Slice 3 must define
+    /// the fallback before per-pane teardown exists (design addendum § 6.2).
+    GridLiveContext& focusedContext() { return *gridContexts_.find(kDefaultPaneId)->second; }
+    const GridLiveContext& focusedContext() const { return *gridContexts_.find(kDefaultPaneId)->second; }
     /// Owns the Lua sandbox + automation worker + Lua bindings. Phase 1A of the item 14
     /// extraction only routes log-sink methods through it; later phases migrate the Lua
     /// state and worker thread. Constructed eagerly in `Initialize` to keep the
@@ -1008,9 +1024,9 @@ class AppController
     /// backend so handlers can capture `*this` and safely call AppController methods.
     std::unique_ptr<smatchet::cmd::CommandRegistry> commandRegistry_;
     std::unique_ptr<smatchet::cmd::ScenarioRunner> scenarioRunner_;
-    std::vector<CachedTicket> ActiveTickets;
-    mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
-    std::atomic<std::uint64_t> ActiveTicketsRevision{0};
+    // ActiveTickets + activeTicketsPublished_ + ActiveTicketsRevision (and their
+    // activeTicketsMutex_) moved into GridLiveContext (multi-grid Slice 1, ADR-0018) —
+    // access via `focusedContext()`.
     std::atomic<std::uint64_t> TrackerFieldCatalogRevision{0};
     mutable std::mutex availableFieldsMutex_; ///< Guards AvailableFields writes (UI) vs. FindFieldById reads (workers).
     std::vector<TrackerField> AvailableFields;
@@ -1265,7 +1281,6 @@ class AppController
     std::atomic<bool> fieldCatalogRefetchAfterLiveTicketSyncPending_{false};
     mutable std::atomic<bool> deferredLiveTrackerBackendSuccessNotify_{false};
 
-    mutable std::mutex activeTicketsMutex_;
     std::atomic<bool> shuttingDown_{false};
     /// One tracked background worker. `done` flips true when the task returns, so the pool can
     /// reap finished threads mid-session (a finished thread's join() is instant) instead of

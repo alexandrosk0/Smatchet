@@ -124,7 +124,7 @@ void AppController::ApplyTrackerConnectivityProbeResult(const std::chrono::stead
 }
 
 void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
-    if (!Backend || shuttingDown_.load()) {
+    if (!focusedContext().Backend || shuttingDown_.load()) {
         return;
     }
     const auto now = std::chrono::steady_clock::now();
@@ -156,7 +156,7 @@ void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
     // No explicit auth check here; each backend handles its own config validation in ProbeReachability.
 
     try {
-        ITrackerBackend* backend = Backend.get();
+        ITrackerBackend* backend = focusedContext().Backend.get();
         trackerConnectivityProbeFuture_ =
             std::async(std::launch::async, [backend, cfg]() { return backend->Connectivity().ProbeReachability(cfg); });
         trackerConnectivityProbeInFlight_ = true;
@@ -174,14 +174,14 @@ bool AppController::ConsumeFieldCatalogRefetchAfterLiveTicketSync() {
 }
 
 void AppController::requestDeferredLiveTrackerBackendSuccessNotify_() const {
-    if (!Backend) {
+    if (!focusedContext().Backend) {
         return;
     }
     deferredLiveTrackerBackendSuccessNotify_.store(true, std::memory_order_release);
 }
 
 void AppController::applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_() {
-    if (!Backend) {
+    if (!focusedContext().Backend) {
         return;
     }
     lastTrackerConnectivityState_ = TrackerConnectivityState::AuthenticatedReachable;
