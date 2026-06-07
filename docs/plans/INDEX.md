@@ -22,108 +22,108 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 
 | Plan (slug) | Approx. date | One-line summary |
 |---|---|---|
-| [`rich-text-editing-v2-remaining`](shipped/rich-text-editing-v2-remaining.md) | 2026-05-09 | Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. |
-| [`command-system-plan`](shipped/command-system-plan.md) | 2026-05-11 | Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. |
-| [`remove-global-project-key`](shipped/remove-global-project-key.md) | 2026-05-12 | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
-| [`vs-style-view-menu`](shipped/vs-style-view-menu.md) | 2026-05-12 | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |
-| [`lua-recorded-cmd-list`](shipped/lua-recorded-cmd-list.md) | 2026-05-14 | Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). |
-| [`lua-recorded-cmd-list-v2`](shipped/lua-recorded-cmd-list-v2.md) | 2026-05-14 | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
-| [`agent-ecosystem-gap-fill`](shipped/agent-ecosystem-gap-fill.md) | 2026-05-15 | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
-| [`first-time-setup-hardening`](shipped/first-time-setup-hardening.md) | 2026-05-15 | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
-| [`imgui-test-engine-bucket-e`](shipped/imgui-test-engine-bucket-e.md) | 2026-05-15 | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
-| [`imgui-test-engine-bucket-e-execution`](shipped/imgui-test-engine-bucket-e-execution.md) | 2026-05-15 | Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. |
-| [`open-backlog-sweep`](shipped/open-backlog-sweep.md) | 2026-05-15 | Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. |
-| [`test-rig-agent`](shipped/test-rig-agent.md) | 2026-05-15 | Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. |
-| [`theme-driven-cpp-syntax-highlight`](shipped/theme-driven-cpp-syntax-highlight.md) | 2026-05-15 | Per-theme C++ syntax palette extracted from `BlameUiThemeColors`; generic `CppSyntaxHighlight` TU shared by blame + markdown + field renderers. Fully shipped (see plan § Shipped PRs). |
-| [`agent-contract-alignment`](shipped/agent-contract-alignment.md) | 2026-05-16 | Agent contract alignment |
-| [`ai-assistant-side-panel`](shipped/ai-assistant-side-panel.md) | 2026-05-16 | AI Assistant — Right-Docked Side Panel + agents.md Harness |
-| [`git-to-perforce-migration`](shipped/git-to-perforce-migration.md) | 2026-05-16 | Plan — Perforce as local agent VCS (dual with git) |
-| [`large-files-and-phase-2`](shipped/large-files-and-phase-2.md) | 2026-05-16 | Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. |
-| [`lint-hook-deferred-drain`](shipped/lint-hook-deferred-drain.md) | 2026-05-16 | Reduce build / cppcheck / test invocations during multi-edit changes |
-| [`lua-host-friend-drop`](shipped/lua-host-friend-drop.md) | 2026-05-16 | Lua-host friend drop — re-scope of Track B / B3 post-PR #144 |
-| [`test-suite-expansion`](shipped/test-suite-expansion.md) | 2026-05-16 | Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. |
-| [`test-suite-expansion-completion`](shipped/test-suite-expansion-completion.md) | 2026-05-16 | Test suite expansion — completion plan (Phases 4-9 + carry-overs) |
-| [`git-ref-plan-locks`](shipped/git-ref-plan-locks.md) | 2026-05-17 | git-ref plan-locks — atomic remote-agent coordination |
-| [`grid-cell-edit-perf`](shipped/grid-cell-edit-perf.md) | 2026-05-17 | grid-cell-edit-perf — async cell-edit commit (pillar 1 + 2 restoration) |
-| [`pillar-1-2-audit-2026-05-17`](shipped/pillar-1-2-audit-2026-05-17.md) | 2026-05-17 | Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). |
-| [`whisper-dictation`](shipped/whisper-dictation.md) | 2026-05-17 | whisper-dictation — push-to-talk dictation with local + cloud transcription |
-| [`agent-docs-improvements`](shipped/agent-docs-improvements.md) | 2026-05-18 | Agent docs improvements — 5-action P2/P3 backlog clearance |
-| [`ai-assistant-bucket-e-tus`](shipped/ai-assistant-bucket-e-tus.md) | 2026-05-18 | AI Assistant bucket-E TUs — execution plan |
-| [`ai-client-test-override`](shipped/ai-client-test-override.md) | 2026-05-18 | `AiClientFactory::SetTestOverride` + `AiPrefsTestConnection` extraction |
-| [`coderabbit-react-loop`](shipped/coderabbit-react-loop.md) | 2026-05-18 | PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`) |
-| [`agents-skill-conversion`](shipped/agents-skill-conversion.md) | 2026-05-19 | Evaluate current agents — skill conversion candidates (v3, conservative-only, dual-publish) |
-| [`ai-chat-textedit-markdown`](shipped/ai-chat-textedit-markdown.md) | 2026-05-19 | AI chat — TextEditor-backed selectable markdown render |
-| [`deepseek-provider`](shipped/deepseek-provider.md) | 2026-05-19 | DeepSeek first-class provider + auto-clear chat on model change |
-| [`markdown-language-definition-for-textedit`](shipped/markdown-language-definition-for-textedit.md) | 2026-05-19 | Extend ImGuiColorTextEdit — `LanguageDefinition::Markdown()` + 3 consumers |
-| [`merge-gates-ci-coderabbit-comments`](shipped/merge-gates-ci-coderabbit-comments.md) | 2026-05-19 | Plan: Merge Gates — CI green + CodeRabbit + user comments before merge |
-| [`process-backlog-tighten-1-2-3-9-11-12`](shipped/process-backlog-tighten-1-2-3-9-11-12.md) | 2026-05-19 | Tighten 6 process-backlog rules (items 1, 2, 3, 9, 11, 12) |
-| [`unblock-external-blockers-2-3-4`](shipped/unblock-external-blockers-2-3-4.md) | 2026-05-19 | Unblock external blockers 2 / 3 / 4 |
-| [`ai-chat-claude-desktop-parity`](shipped/ai-chat-claude-desktop-parity.md) | 2026-05-20 | AI chat — Claude-Desktop-style hover actions, pin, visible user bubbles, persisted history |
-| [`pillar-1-2-perf-review-system`](shipped/pillar-1-2-perf-review-system.md) | 2026-05-20 | Repeatable Pillar 1 + Pillar 2 performance review — Smatchet |
-| [`single-click-grid-edit-toggle`](shipped/single-click-grid-edit-toggle.md) | 2026-05-20 | Plan — single-click / double-click toggle for grid cell edit |
-| [`agentic-ripout-doc-cleanup-v2`](shipped/agentic-ripout-doc-cleanup-v2.md) | 2026-05-21 | Plan — Agentic ripout doc cleanup (v2 follow-up to `github-tracker-backend`) |
-| [`code-syntax-coloring-and-tooltips`](shipped/code-syntax-coloring-and-tooltips.md) | 2026-05-21 | Code syntax coloring (multi-language) + tooltips |
-| [`github-tracker-backend`](shipped/github-tracker-backend.md) | 2026-05-21 | Plan — Rip out C++ agentic code + add GitHub as third tracker |
-| [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | 2026-05-21 | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
-| [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | 2026-05-22 | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
-| [`agents-md-reduction`](shipped/agents-md-reduction.md) | 2026-05-23 | Plan — AGENTS.md size reduction via topical extraction |
-| [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | 2026-05-23 | Plan — description-field tooltip consolidation |
-| [`deterministic-jira-test-backend`](shipped/deterministic-jira-test-backend.md) | 2026-05-23 | Plan - Deterministic Jira test backend and frontend tests |
-| [`p4-gated-ship-loop`](shipped/p4-gated-ship-loop.md) | 2026-05-23 | Plan — P4-gated ship-loop |
-| [`autonomous-debugging-no-creds`](shipped/autonomous-debugging-no-creds.md) | 2026-05-24 | Plan — Fully autonomous debugging without credentials or user input |
-| [`light-release-unreal-default`](shipped/light-release-unreal-default.md) | 2026-05-25 | Plan - Lua-Capable Light Release and Unreal Default |
-| [`unreal-command-bridge`](shipped/unreal-command-bridge.md) | 2026-05-25 | Plan - Unreal Async Command Bridge |
-| [`unreal-console-command-bridge`](shipped/unreal-console-command-bridge.md) | 2026-05-25 | Plan - Unreal Console Command Bridge |
-| [`generic-cmake-cross-platform`](shipped/generic-cmake-cross-platform.md) | 2026-05-26 | Plan — Generic Cross-Platform CMake |
-| [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
-| [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
-| [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
-| [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | 2026-05-28 | Plan — Decompose Top-20 Monolith Functions |
-| [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | 2026-05-28 | Plan — Gate enforcement hardening (agent → GitHub promotion) |
-| [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | 2026-05-28 | Plan - GitHub commit tracker rows |
-| [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | 2026-05-28 | Plan — High-Integrity C++ Enforcement (slim profile) |
-| [`mcp-lua-fresh-state-race`](shipped/mcp-lua-fresh-state-race.md) | 2026-05-28 | Plan — MCP Lua execution: fresh per-call `sol::state` (cross-thread race fix) |
-| [`merge-watcher-triage-recovery`](shipped/merge-watcher-triage-recovery.md) | 2026-05-28 | Plan — merge-watcher triage-budget recovery + CR-thread resolution |
-| [`msvc-build-onboarding-hardening`](shipped/msvc-build-onboarding-hardening.md) | 2026-05-28 | Plan - MSVC build onboarding hardening |
-| [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | 2026-05-28 | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
-| [`session-friction-fixes`](shipped/session-friction-fixes.md) | 2026-05-28 | Plan — Session-friction fixes (post-backlog-sweep session retro) |
-| [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | 2026-05-28 | Plan — Shell-script self-review lint |
-| [`source-core-dir-reorg`](shipped/source-core-dir-reorg.md) | 2026-05-28 | Plan — Source_Core directory reorganization (precursor to high-integrity-cpp-enforcement) |
-| [`agentic-layer-project-independence`](shipped/agentic-layer-project-independence.md) | 2026-05-29 | Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards |
-| [`source-root-consolidation`](shipped/source-root-consolidation.md) | 2026-05-29 | Plan — consolidate all C++ under a single `Source/` root |
-| [`annotate-async-config-hydrate`](shipped/annotate-async-config-hydrate.md) | 2026-05-30 | Plan — Move Annotate config I/O off the UI thread |
-| [`config-io-safe-coalesced-writes`](shipped/config-io-safe-coalesced-writes.md) | 2026-05-30 | Plan — ConfigManager: safe + coalesced config writes |
-| [`customizable-icon-toolbar`](shipped/customizable-icon-toolbar.md) | 2026-05-30 | Plan — Customizable icon toolbar (Total-Commander-style button bar) |
-| [`log-a-bug-github`](shipped/log-a-bug-github.md) | 2026-05-30 | Debugging features — "Log a bug" hotkey → fixed GitHub dev repo (+ phase-2 crash reporter) |
-| [`merge-watcher-nudge-persistence`](shipped/merge-watcher-nudge-persistence.md) | 2026-05-30 | Plan — Persist cross-poll gate state (CR-nudge guard + STALE streak) across watcher poll cycles |
-| [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | 2026-05-30 | Plan — Reduce source-comment bloat across first-party C++ |
-| [`split-scripts-build-vs-agentic`](shipped/split-scripts-build-vs-agentic.md) | 2026-05-30 | Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. |
-| [`subagent-eval-harness`](shipped/subagent-eval-harness.md) | 2026-05-30 | Plan — Subagent eval harness (eval-driven development for the dev-agent fleet) |
-| [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | 2026-05-31 | Plan — Memory budget & lifetime hardening |
-| [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
-| [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | 2026-06-02 | Plan — Agent charter altitude (operating-principle preamble + context budget) |
-| [`b10-docs-forcing-rules`](shipped/b10-docs-forcing-rules.md) | 2026-06-02 | Plan — B10: encode deferred process forcing-rules into the docs |
-| [`coverage-threshold-graduation`](shipped/coverage-threshold-graduation.md) | 2026-06-02 | Plan — Coverage threshold graduation (advisory → blocking) |
-| [`full-function-size-compliance`](shipped/full-function-size-compliance.md) | 2026-06-02 | Plan — Full Function-Size Compliance (zero grandfathered monoliths) |
-| [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | 2026-06-02 | Plan — Gate-escape postmortem (incident → new gate) |
-| [`internal-procedure-skills`](shipped/internal-procedure-skills.md) | 2026-06-02 | Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc) |
-| [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | 2026-06-02 | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
-| [`solo-merge-review-gate`](shipped/solo-merge-review-gate.md) | 2026-06-02 | Plan — Solo-workflow review gate (drop required approval, codify protection) |
-| [`ai-control-policy`](shipped/ai-control-policy.md) | 2026-06-03 | Plan — AI control policy (human authority, loop modes, escalate-don't-assume) |
-| [`ci-build-time-reduction`](shipped/ci-build-time-reduction.md) | 2026-06-03 | Plan — CI build-time reduction (sccache + build-reuse + matrix rebalance) |
-| [`dry-pillar-dup-gate`](shipped/dry-pillar-dup-gate.md) | 2026-06-03 | Plan — DRY Quality Pillar + duplication delta-gate |
-| [`issue-triage-protocol`](shipped/issue-triage-protocol.md) | 2026-06-03 | Plan — GitHub Issue triage protocol (Issues-canonical for product bugs) |
-| [`offline-conflict-ask-all-fields`](shipped/offline-conflict-ask-all-fields.md) | 2026-06-04 | Plan — Ask the user on offline-replay conflict for all field edits |
-| [`reduce-agent-prompt-bloat`](shipped/reduce-agent-prompt-bloat.md) | 2026-06-04 | Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate) |
-| [`adopt-workflow-orchestration`](shipped/adopt-workflow-orchestration.md) | 2026-06-05 | Plan — Adopt Workflow multi-agent orchestration into the agentic infra |
-| [`agent-audit-remediation`](shipped/agent-audit-remediation.md) | 2026-06-05 | Plan — Agent-audit remediation (portfolio eval + infra-feedback fixes) |
-| [`agent-size-reduction`](shipped/agent-size-reduction.md) | 2026-06-05 | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
-| [`merge-snapshot-ledger`](shipped/merge-snapshot-ledger.md) | 2026-06-05 | Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection) |
-| [`reduce-coderabbit-review-spend`](shipped/reduce-coderabbit-review-spend.md) | 2026-06-05 | Plan — Reduce CodeRabbit review spend |
-| [`triggered-followup-tracking`](shipped/triggered-followup-tracking.md) | 2026-06-05 | Plan — Triggered follow-up tracking (machine-checkable deferred follow-ups) |
-| [`perf-gate-revival`](shipped/perf-gate-revival.md) | 2026-06-06 | Perf-gate revival (Pillar 1) — execution playbook |
-| [`shrink-over-100-line-functions`](shipped/shrink-over-100-line-functions.md) | 2026-06-06 | Decompose all 68 functions over the 100-line soft-warn tier (UI + non-UI) under 100 lines, ideally 40-80. Follow-up to decompose-top-20-monoliths (which cleared the hard cap). |
+| [`adopt-workflow-orchestration`](shipped/adopt-workflow-orchestration.md) | — | Plan — Adopt Workflow multi-agent orchestration into the agentic infra |
+| [`agent-audit-remediation`](shipped/agent-audit-remediation.md) | — | Plan — Agent-audit remediation (portfolio eval + infra-feedback fixes) |
+| [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | — | Plan — Agent charter altitude (operating-principle preamble + context budget) |
+| [`agent-contract-alignment`](shipped/agent-contract-alignment.md) | — | Agent contract alignment |
+| [`agent-docs-improvements`](shipped/agent-docs-improvements.md) | — | Agent docs improvements — 5-action P2/P3 backlog clearance |
+| [`agent-ecosystem-gap-fill`](shipped/agent-ecosystem-gap-fill.md) | — | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
+| [`agent-size-reduction`](shipped/agent-size-reduction.md) | — | Plan — Agent size reduction (shrink the 3 over-cap agents under 250) |
+| [`agentic-layer-project-independence`](shipped/agentic-layer-project-independence.md) | — | Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards |
+| [`agentic-ripout-doc-cleanup-v2`](shipped/agentic-ripout-doc-cleanup-v2.md) | — | Plan — Agentic ripout doc cleanup (v2 follow-up to `github-tracker-backend`) |
+| [`agents-md-reduction`](shipped/agents-md-reduction.md) | — | Plan — AGENTS.md size reduction via topical extraction |
+| [`agents-skill-conversion`](shipped/agents-skill-conversion.md) | — | Evaluate current agents — skill conversion candidates (v3, conservative-only, dual-publish) |
+| [`ai-assistant-bucket-e-tus`](shipped/ai-assistant-bucket-e-tus.md) | — | AI Assistant bucket-E TUs — execution plan |
+| [`ai-assistant-side-panel`](shipped/ai-assistant-side-panel.md) | — | AI Assistant — Right-Docked Side Panel + agents.md Harness |
+| [`ai-chat-claude-desktop-parity`](shipped/ai-chat-claude-desktop-parity.md) | — | AI chat — Claude-Desktop-style hover actions, pin, visible user bubbles, persisted history |
+| [`ai-chat-textedit-markdown`](shipped/ai-chat-textedit-markdown.md) | — | AI chat — TextEditor-backed selectable markdown render |
+| [`ai-client-test-override`](shipped/ai-client-test-override.md) | — | `AiClientFactory::SetTestOverride` + `AiPrefsTestConnection` extraction |
+| [`ai-control-policy`](shipped/ai-control-policy.md) | — | Plan — AI control policy (human authority, loop modes, escalate-don't-assume) |
+| [`annotate-async-config-hydrate`](shipped/annotate-async-config-hydrate.md) | — | Plan — Move Annotate config I/O off the UI thread |
+| [`autonomous-debugging-no-creds`](shipped/autonomous-debugging-no-creds.md) | — | Plan — Fully autonomous debugging without credentials or user input |
+| [`b10-docs-forcing-rules`](shipped/b10-docs-forcing-rules.md) | — | Plan — B10: encode deferred process forcing-rules into the docs |
+| [`ci-build-time-reduction`](shipped/ci-build-time-reduction.md) | — | Plan — CI build-time reduction (sccache + build-reuse + matrix rebalance) |
+| [`code-syntax-coloring-and-tooltips`](shipped/code-syntax-coloring-and-tooltips.md) | — | Code syntax coloring (multi-language) + tooltips |
+| [`coderabbit-react-loop`](shipped/coderabbit-react-loop.md) | — | PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`) |
+| [`command-system-plan`](shipped/command-system-plan.md) | — | Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. |
+| [`config-io-safe-coalesced-writes`](shipped/config-io-safe-coalesced-writes.md) | — | Plan — ConfigManager: safe + coalesced config writes |
+| [`coverage-threshold-graduation`](shipped/coverage-threshold-graduation.md) | — | Plan — Coverage threshold graduation (advisory → blocking) |
+| [`customizable-icon-toolbar`](shipped/customizable-icon-toolbar.md) | — | Plan — Customizable icon toolbar (Total-Commander-style button bar) |
+| [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | — | Plan — Decompose Top-20 Monolith Functions |
+| [`deepseek-provider`](shipped/deepseek-provider.md) | — | DeepSeek first-class provider + auto-clear chat on model change |
+| [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | — | Plan — description-field tooltip consolidation |
+| [`deterministic-jira-test-backend`](shipped/deterministic-jira-test-backend.md) | — | Plan - Deterministic Jira test backend and frontend tests |
+| [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | — | Plan: Enforce dock-slot-only windows (no free-floating) |
+| [`dry-pillar-dup-gate`](shipped/dry-pillar-dup-gate.md) | — | Plan — DRY Quality Pillar + duplication delta-gate |
+| [`first-time-setup-hardening`](shipped/first-time-setup-hardening.md) | — | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
+| [`full-function-size-compliance`](shipped/full-function-size-compliance.md) | — | Plan — Full Function-Size Compliance (zero grandfathered monoliths) |
+| [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | — | Plan — Gate enforcement hardening (agent → GitHub promotion) |
+| [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | — | Plan — Gate-escape postmortem (incident → new gate) |
+| [`generic-cmake-cross-platform`](shipped/generic-cmake-cross-platform.md) | — | Plan — Generic Cross-Platform CMake |
+| [`git-ref-plan-locks`](shipped/git-ref-plan-locks.md) | — | git-ref plan-locks — atomic remote-agent coordination |
+| [`git-to-perforce-migration`](shipped/git-to-perforce-migration.md) | — | Plan — Perforce as local agent VCS (dual with git) |
+| [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | — | Plan - GitHub commit tracker rows |
+| [`github-tracker-backend`](shipped/github-tracker-backend.md) | — | Plan — Rip out C++ agentic code + add GitHub as third tracker |
+| [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | — | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
+| [`grid-cell-edit-perf`](shipped/grid-cell-edit-perf.md) | — | grid-cell-edit-perf — async cell-edit commit (pillar 1 + 2 restoration) |
+| [`high-integrity-cpp-enforcement`](shipped/high-integrity-cpp-enforcement.md) | — | Plan — High-Integrity C++ Enforcement (slim profile) |
+| [`imgui-test-engine-bucket-e`](shipped/imgui-test-engine-bucket-e.md) | — | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
+| [`imgui-test-engine-bucket-e-execution`](shipped/imgui-test-engine-bucket-e-execution.md) | — | Execution plan — wires ImGui Test Engine end-to-end against the Views → Columns drag-reorder flake. Phase 1 (infra) applied; Phase 2 (diagnose) + Phase 3 (fix) deferred — see plan § Implementation log. |
+| [`internal-procedure-skills`](shipped/internal-procedure-skills.md) | — | Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc) |
+| [`issue-triage-protocol`](shipped/issue-triage-protocol.md) | — | Plan — GitHub Issue triage protocol (Issues-canonical for product bugs) |
+| [`large-files-and-phase-2`](shipped/large-files-and-phase-2.md) | — | Large-file split (Track A) + service-extraction Phase 1 (Track B). Track A fully shipped; Track B Phase 1A-1D shipped, Phase 2 interface bundles deferred — see plan § Implementation log. |
+| [`light-release-unreal-default`](shipped/light-release-unreal-default.md) | — | Plan - Lua-Capable Light Release and Unreal Default |
+| [`lint-hook-deferred-drain`](shipped/lint-hook-deferred-drain.md) | — | Reduce build / cppcheck / test invocations during multi-edit changes |
+| [`log-a-bug-github`](shipped/log-a-bug-github.md) | — | Debugging features — "Log a bug" hotkey → fixed GitHub dev repo (+ phase-2 crash reporter) |
+| [`lua-host-friend-drop`](shipped/lua-host-friend-drop.md) | — | Lua-host friend drop — re-scope of Track B / B3 post-PR #144 |
+| [`lua-recorded-cmd-list`](shipped/lua-recorded-cmd-list.md) | — | Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). |
+| [`lua-recorded-cmd-list-v2`](shipped/lua-recorded-cmd-list-v2.md) | — | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
+| [`markdown-language-definition-for-textedit`](shipped/markdown-language-definition-for-textedit.md) | — | Extend ImGuiColorTextEdit — `LanguageDefinition::Markdown()` + 3 consumers |
+| [`mcp-lua-fresh-state-race`](shipped/mcp-lua-fresh-state-race.md) | — | Plan — MCP Lua execution: fresh per-call `sol::state` (cross-thread race fix) |
+| [`memory-budget-and-lifetime-hardening`](shipped/memory-budget-and-lifetime-hardening.md) | — | Plan — Memory budget & lifetime hardening |
+| [`merge-gates-ci-coderabbit-comments`](shipped/merge-gates-ci-coderabbit-comments.md) | — | Plan: Merge Gates — CI green + CodeRabbit + user comments before merge |
+| [`merge-snapshot-ledger`](shipped/merge-snapshot-ledger.md) | — | Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection) |
+| [`merge-watcher-nudge-persistence`](shipped/merge-watcher-nudge-persistence.md) | — | Plan — Persist cross-poll gate state (CR-nudge guard + STALE streak) across watcher poll cycles |
+| [`merge-watcher-triage-recovery`](shipped/merge-watcher-triage-recovery.md) | — | Plan — merge-watcher triage-budget recovery + CR-thread resolution |
+| [`msvc-build-onboarding-hardening`](shipped/msvc-build-onboarding-hardening.md) | — | Plan - MSVC build onboarding hardening |
+| [`offline-conflict-ask-all-fields`](shipped/offline-conflict-ask-all-fields.md) | — | Plan — Ask the user on offline-replay conflict for all field edits |
+| [`open-backlog-sweep`](shipped/open-backlog-sweep.md) | — | Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. |
+| [`p4-gated-ship-loop`](shipped/p4-gated-ship-loop.md) | — | Plan — P4-gated ship-loop |
+| [`per-subsystem-agent-docs`](shipped/per-subsystem-agent-docs.md) | — | Plan — Per-subsystem agent docs (rules + glossary + orientation) |
+| [`perf-gate-revival`](shipped/perf-gate-revival.md) | — | Perf-gate revival (Pillar 1) — execution playbook |
+| [`pillar-1-2-audit-2026-05-17`](shipped/pillar-1-2-audit-2026-05-17.md) | — | Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). |
+| [`pillar-1-2-perf-review-system`](shipped/pillar-1-2-perf-review-system.md) | — | Repeatable Pillar 1 + Pillar 2 performance review — Smatchet |
+| [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | — | Plan: Tighten catch-all exception handling policy |
+| [`policy-tighten-logging-raii`](shipped/policy-tighten-logging-raii.md) | — | Plan — Tighten Logging and RAII Policy: Named Escape Hatches |
+| [`process-backlog-tighten-1-2-3-9-11-12`](shipped/process-backlog-tighten-1-2-3-9-11-12.md) | — | Tighten 6 process-backlog rules (items 1, 2, 3, 9, 11, 12) |
+| [`reduce-agent-prompt-bloat`](shipped/reduce-agent-prompt-bloat.md) | — | Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate) |
+| [`reduce-coderabbit-review-spend`](shipped/reduce-coderabbit-review-spend.md) | — | Plan — Reduce CodeRabbit review spend |
+| [`reduce-source-comment-bloat`](shipped/reduce-source-comment-bloat.md) | — | Plan — Reduce source-comment bloat across first-party C++ |
+| [`remove-global-project-key`](shipped/remove-global-project-key.md) | — | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
+| [`rich-text-editing-v2-remaining`](shipped/rich-text-editing-v2-remaining.md) | — | Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. |
+| [`session-friction-fixes`](shipped/session-friction-fixes.md) | — | Plan — Session-friction fixes (post-backlog-sweep session retro) |
+| [`shell-script-self-review-lint`](shipped/shell-script-self-review-lint.md) | — | Plan — Shell-script self-review lint |
+| [`shrink-over-100-line-functions`](shipped/shrink-over-100-line-functions.md) | — | Decompose all 68 functions over the 100-line soft-warn tier (UI + non-UI) under 100 lines, ideally 40-80. Follow-up to decompose-top-20-monoliths (which cleared the hard cap). |
+| [`single-click-grid-edit-toggle`](shipped/single-click-grid-edit-toggle.md) | — | Plan — single-click / double-click toggle for grid cell edit |
+| [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | — | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
+| [`solo-merge-review-gate`](shipped/solo-merge-review-gate.md) | — | Plan — Solo-workflow review gate (drop required approval, codify protection) |
+| [`source-core-dir-reorg`](shipped/source-core-dir-reorg.md) | — | Plan — Source_Core directory reorganization (precursor to high-integrity-cpp-enforcement) |
+| [`source-root-consolidation`](shipped/source-root-consolidation.md) | — | Plan — consolidate all C++ under a single `Source/` root |
+| [`split-scripts-build-vs-agentic`](shipped/split-scripts-build-vs-agentic.md) | — | Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. |
+| [`subagent-eval-harness`](shipped/subagent-eval-harness.md) | — | Plan — Subagent eval harness (eval-driven development for the dev-agent fleet) |
+| [`test-rig-agent`](shipped/test-rig-agent.md) | — | Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. |
+| [`test-suite-expansion`](shipped/test-suite-expansion.md) | — | Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. |
+| [`test-suite-expansion-completion`](shipped/test-suite-expansion-completion.md) | — | Test suite expansion — completion plan (Phases 4-9 + carry-overs) |
+| [`theme-driven-cpp-syntax-highlight`](shipped/theme-driven-cpp-syntax-highlight.md) | — | Per-theme C++ syntax palette extracted from `BlameUiThemeColors`; generic `CppSyntaxHighlight` TU shared by blame + markdown + field renderers. Fully shipped (see plan § Shipped PRs). |
+| [`tracker-context-docs`](shipped/tracker-context-docs.md) | — | Plan — Tracker subsystem context docs + multi-context scaffold |
+| [`tracker-interface-split`](shipped/tracker-interface-split.md) | — | Plan — ITrackerClient Interface Split |
+| [`triggered-followup-tracking`](shipped/triggered-followup-tracking.md) | — | Plan — Triggered follow-up tracking (machine-checkable deferred follow-ups) |
+| [`unblock-external-blockers-2-3-4`](shipped/unblock-external-blockers-2-3-4.md) | — | Unblock external blockers 2 / 3 / 4 |
+| [`unreal-command-bridge`](shipped/unreal-command-bridge.md) | — | Plan - Unreal Async Command Bridge |
+| [`unreal-console-command-bridge`](shipped/unreal-console-command-bridge.md) | — | Plan - Unreal Console Command Bridge |
+| [`vs-style-view-menu`](shipped/vs-style-view-menu.md) | — | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |
 | [`vsync-toggle`](shipped/vsync-toggle.md) | — | Full vsync toggle exposed across persisted config, the config.set command (CLI/MCP/Lua/palette), a --no-vsync CLI flag, a Preferences checkbox, the SMATCHET_FPS_VSYNC env var, applied live via a Core VsyncControl hub. |
+| [`whisper-dictation`](shipped/whisper-dictation.md) | — | whisper-dictation — push-to-talk dictation with local + cloud transcription |
 <!-- END auto-plan-index -->
 
 ### Notes
