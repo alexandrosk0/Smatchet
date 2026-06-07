@@ -41,10 +41,11 @@ list, no risk of re-flagging fixed code.
    - You MAY open the file at HEAD for fuller context (surrounding code may have
      changed since the PR), but never flag a line outside the surviving set —
      it's either someone else's code or already gone.
-   - Apply the Smatchet checklist: C++14 (no `string_view`/`optional`/`variant`/
-     structured-bindings/`if constexpr`), `LOG_*` not `printf`/`cerr`, RAII (no
-     raw `new`/`delete`), no empty `catch(...)`, UI-thread non-blocking, no silent
-     UB, no GLFW/OpenGL in `Source/Core` headers.
+   - Apply the project's standard code-review checklist — the `code-review` agent
+     already encodes it (language-standard compliance, logging convention, RAII /
+     ownership, no empty `catch`, UI-thread non-blocking, no silent UB, and any
+     project-specific header/include rules). Defer to the project's contract
+     (`AGENTS.md` / `docs/agent-rules/`); don't restate the rules here.
    - Because already-fixed lines are excluded by construction, **assume nothing
      here is "already known/fixed"** — a surviving line is live debt.
 
