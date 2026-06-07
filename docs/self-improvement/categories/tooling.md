@@ -19,12 +19,6 @@
   Status: open
   Last-reviewed: 2026-06-07
 
-- 2026-06-07 · orchestrator · [tooling] · P3 — `test-shell-lint.sh` SIGPIPE flake: CI job died exit 141 with zero findings (PR #938), green on plain rerun
-  Details: The shell-lint job failed with exit 141 (= 128+SIGPIPE) printing no rule output — almost certainly a `head`/`grep -m`-style early-exit closing a pipe the script writes to under `set -o pipefail`. Cost a full gate round-trip on #938.
-  Concrete next action: audit `agents/scripts/core/test-shell-lint.sh` for pipelines into `head`/early-exit consumers; guard with `|| [ $? -eq 141 ]`, restructure to `awk 'NR<=N'`, or drop pipefail around the known-benign pipes. Est ~30 min.
-  Status: open
-  Last-reviewed: 2026-06-07
-
 - 2026-06-06 · test-author · [tooling] · P3 — bucket-E inline-panel smoke recipe missing for New Issue Draft row and Offline Queue panel (plan #12 batch 2)
   Details: Two of the 8 data-dependent windows targeted by plan #12 (`SmatchetNewIssueDraftUi` inline row and Offline Queue panel) are not top-level `ImGui::Begin` windows — embedded inside `drawActiveProjectWindow` / `drawSecondaryWindowsTail`. The current bucket-E smoke pattern (`YieldUntil(WindowIsLive(...))`) cannot drive them without: (a) activating the fixture backend so tickets load, (b) setting `g_ui.newIssueDraftActive = true` + seeding `newIssueDraft`, (c) waiting until a draft-row item renders via `ctx->ItemExists`. The Attachment Preview (window 6) needs a helper to push a synthetic `AttachmentCollectionRequest` into `g_ui.attachmentCollectionQueue` before the window guard passes.
   Concrete next action: batch-2 PR on branch `test/bucket-e-data-dependent-windows-batch2` — fixture-coupled smoke that (1) boots with `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`, (2) syncs, (3) sets `g_ui.newIssueDraftActive = true`, (4) waits for `"##newIssueSummary"` in the active-project window item tree. Est ~2-3 h. Cross-ref: plan `build-quality-velocity-hardening.md` #12 §Deviations; PR #926.
@@ -200,6 +194,12 @@
 > P3 entries with no immediate owner. Reassess when adjacent feature lands or when a P2 promotion is justified.
 
 <!-- Latest first within Parked. -->
+
+- 2026-06-07 · orchestrator · [tooling] · P3 — `test-shell-lint.sh` SIGPIPE flake: CI job died exit 141 with zero findings (PR #938), green on plain rerun
+  Details: The shell-lint job failed with exit 141 (= 128+SIGPIPE) printing no rule output — almost certainly a `head`/`grep -m`-style early-exit closing a pipe the script writes to under `set -o pipefail`. Cost a full gate round-trip on #938.
+  Concrete next action: audit `agents/scripts/core/test-shell-lint.sh` for pipelines into `head`/early-exit consumers; guard with `|| [ $? -eq 141 ]`, restructure to `awk 'NR<=N'`, or drop pipefail around the known-benign pipes. Est ~30 min.
+  Status: open
+  Last-reviewed: 2026-06-07
 
 - 2026-06-04 · offline-sync · [tooling] · P3 — no bucket-E ImGui-Test coverage for the offline-conflict modal's scalar / unverified panes (ADR-0016)
   Details: `feat(offline): ask the user on offline-replay conflict for all field edits` added two new conflict-modal branches in `DrawOfflineConflictModal` (`SmatchetOfflineQueueUi.cpp`) — `DrawConflictPaneScalar` (Use Mine / Use Theirs / editable value) and `DrawConflictPaneUnverified` (Force Mine / Discard). The kind-dispatch + resolve plumbing is covered by bucket-A runtime tests (`OfflineQueueServiceRuntime.test.cpp`: scalar suspends, permanent/transient fetch-fail → unverified, discard hard-deletes + audits, resolve clears both bases) and the pure classifier (`OfflineFieldConflictPolicy.test.cpp`). What's NOT automated is the widget-level assertion that each pane renders the right buttons and each button routes to the correct `ResolveFieldEditConflict(kind=...)` / `DeletePendingFieldEdits` call — the plan's bucket-E item. Deferred this round: no existing ImGui-Test-Engine harness drives `DrawOfflineConflictModal`, so wiring one is net-new scaffolding beyond this feature's scope.
