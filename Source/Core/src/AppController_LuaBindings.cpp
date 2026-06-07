@@ -738,7 +738,9 @@ std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(sol::state_
     // cross-thread lua_State access + a cross-state sol::object return. See
     // docs/plans/shipped/mcp-lua-fresh-state-race.md.
     CachedTicket ticket;
-    if (Cache->TryGetTicket(issueId, ticket)) {
+    // CacheBackendKeyCopy is mutex-guarded — this bind runs on the Lua automation / MCP
+    // worker thread while the UI thread may re-stamp the key on a tracker swap (Slice 1b).
+    if (Cache->TryGetTicket(focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
         return {sol::make_object(sv, ticket), ""};
     }
     return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};

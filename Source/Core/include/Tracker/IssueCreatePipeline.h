@@ -52,12 +52,15 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vecto
                                        const std::string& issueKey);
 
 /**
- * Execute the full flow. `cache` may be null (no seeding). Attachment failures
- * do NOT flip `Ok` to false when the issue was created - they are reported in
- * `AttachmentFailures` so callers can choose to retry or warn.
+ * Execute the full flow. `cache` may be null (no seeding). `cacheBackendKey` is the
+ * backend-key namespace every cache read/write is scoped to (multi-grid Slice 1b —
+ * `ConfigManager::NormalizeViewsBackendKey` output; ignored when `cache` is null).
+ * Attachment failures do NOT flip `Ok` to false when the issue was created - they are
+ * reported in `AttachmentFailures` so callers can choose to retry or warn.
  */
-IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const IssueDraft& draft,
-                      const RequiredFieldSet& required, const std::vector<TrackerField>& catalog);
+IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const std::string& cacheBackendKey,
+                      const IssueDraft& draft, const RequiredFieldSet& required,
+                      const std::vector<TrackerField>& catalog);
 
 } // namespace IssueCreatePipeline
 

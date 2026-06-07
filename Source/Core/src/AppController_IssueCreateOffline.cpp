@@ -141,21 +141,27 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
         return future;
     }
 
+    // Snapshot the cache namespace on the UI thread — the worker must write the new ticket
+    // under the backend that produced it, even if a tracker swap lands mid-create (Slice 1b).
+    const std::string cacheBackendKey = focusedContext().CacheBackendKeyCopy();
+
     // `backend` is captured to keep the latched backend (and thus `mutations`) alive for the
     // duration of the worker, per ADR 0012.
-    LaunchBackgroundTask([this, promise, backend, mutations, cache, draftCopy, catalogCopy, required]() {
-        IssueCreateResult result = IssueCreatePipeline::Run(*mutations, cache, draftCopy, required, *catalogCopy);
-        if (result.Ok) {
-            RefreshLocalData();
-            requestDeferredLiveTrackerBackendSuccessNotify_();
-            // Same hydration as the grid after Create: fetch server-truth fields and merge into SQLite.
-            const std::string key = result.IssueKey;
-            if (!key.empty()) {
-                PrefetchIssueTicketsForKeys({key}, true);
+    LaunchBackgroundTask(
+        [this, promise, backend, mutations, cache, cacheBackendKey, draftCopy, catalogCopy, required]() {
+            IssueCreateResult result =
+                IssueCreatePipeline::Run(*mutations, cache, cacheBackendKey, draftCopy, required, *catalogCopy);
+            if (result.Ok) {
+                RefreshLocalData();
+                requestDeferredLiveTrackerBackendSuccessNotify_();
+                // Same hydration as the grid after Create: fetch server-truth fields and merge into SQLite.
+                const std::string key = result.IssueKey;
+                if (!key.empty()) {
+                    PrefetchIssueTicketsForKeys({key}, true);
+                }
             }
-        }
-        promise->set_value(std::move(result));
-    });
+            promise->set_value(std::move(result));
+        });
     return future;
 }
 

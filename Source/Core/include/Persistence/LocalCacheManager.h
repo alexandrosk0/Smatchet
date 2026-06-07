@@ -32,19 +32,32 @@ class LocalCacheManager {
   public:
     explicit LocalCacheManager(const std::string& dbPath);
 
-    void SaveTicket(const CachedTicket& ticket);
+    // Ticket storage is namespaced by `backendKey` (the NormalizeViewsBackendKey output for the
+    // owning backend — multi-grid Slice 1b, ADR-0018 decision 4). All ticket methods read/write
+    // the `tickets_v2` table family whose PK is (backend_key, id); the legacy v1 tables are
+    // retained on disk unused (Persistence additive-only invariant — no DROP/RENAME).
+    void SaveTicket(const std::string& backendKey, const CachedTicket& ticket);
     /** Persist a batch of tickets in a SINGLE transaction (vs one per ticket). Used by the
      *  streaming-sync apply loop to coalesce up to 20 per-frame commits into one. See
      *  docs/plans/shipped/memory-budget-and-lifetime-hardening.md § Phase 3(a). */
-    void SaveTickets(const std::vector<CachedTicket>& tickets);
-    /** @return false if `ticketId` is not present in `tickets`. */
-    bool TryGetTicket(const std::string& ticketId, CachedTicket& out);
-    void DeleteTicket(const std::string& ticketId);
-    std::vector<CachedTicket> GetAllTickets();
+    void SaveTickets(const std::string& backendKey, const std::vector<CachedTicket>& tickets);
+    /** @return false if `ticketId` is not present under `backendKey` in `tickets_v2`. */
+    bool TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out);
+    void DeleteTicket(const std::string& backendKey, const std::string& ticketId);
+    std::vector<CachedTicket> GetAllTickets(const std::string& backendKey);
     /** Streaming overload — calls `fn` once per fully-populated ticket instead of materialising the
      *  entire result set. Avoids the O(N) in-memory join for bulk-sync paths (§4.3). */
-    void ForEachTicket(const std::function<void(CachedTicket&&)>& fn);
-    std::vector<std::string> GetAllTicketIds();
+    void ForEachTicket(const std::string& backendKey, const std::function<void(CachedTicket&&)>& fn);
+    std::vector<std::string> GetAllTicketIds(const std::string& backendKey);
+
+    /** One-time copy migration of the legacy un-namespaced ticket tables (`tickets`,
+     * `ticket_field_values`, `ticket_field_rich_values`) into the `*_v2` family, stamping
+     * every copied row with `backendKey` (legacy rows were necessarily cached against the
+     * then-only configured backend). Gated on a `cache_meta` flag so it runs at most once per
+     * database file; legacy tables are retained on disk unused (additive-only invariant).
+     * No-op (flag untouched) when `backendKey` is empty. @return number of ticket rows copied.
+     */
+    size_t RunOneTimeTicketsV2CopyMigration(const std::string& backendKey);
 
     /** @return generated row id. */
     std::int64_t EnqueuePendingCreate(const std::string& payload);
@@ -113,7 +126,7 @@ class LocalCacheManager {
   private:
     /// Write one ticket's rows via the cached prepared statements. Caller holds `stmtMutex_`
     /// and owns the enclosing SQLite::Transaction (SaveTicket / SaveTickets). See the .cpp.
-    void writeTicketRows_(const CachedTicket& ticket);
+    void writeTicketRows_(const std::string& backendKey, const CachedTicket& ticket);
 
     SQLite::Database db;
 

@@ -70,7 +70,7 @@ TEST_CASE("IssueCreatePipeline: Run create path posts payload, seeds cache, retu
 
     SqliteMemFixture fix;
     const auto draft = MakeBasicCreateDraft();
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
 
     CHECK(result.Ok);
     CHECK(result.Error.empty());
@@ -81,7 +81,7 @@ TEST_CASE("IssueCreatePipeline: Run create path posts payload, seeds cache, retu
 
     // Cache seeded with the new row + draft field values.
     CachedTicket cached;
-    REQUIRE(fix.Ref().TryGetTicket("PROJ-42", cached));
+    REQUIRE(fix.Ref().TryGetTicket("Jira", "PROJ-42", cached));
     CHECK(cached.fieldValues["summary"] == "Test summary");
     CHECK(cached.fieldValues["priority"] == "High");
 }
@@ -91,7 +91,8 @@ TEST_CASE("IssueCreatePipeline: Run create path with null cache still returns Ok
     client.SetBuildCreatePayloadResult(true, nlohmann::json::object());
     client.EnqueueCreateIssueSuccess("PROJ-1");
 
-    auto result = IssueCreatePipeline::Run(client, nullptr, MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, nullptr, std::string(), MakeBasicCreateDraft(), EmptyRequired(),
+                                           BasicCatalog());
     CHECK(result.Ok);
     CHECK(result.IssueKey == "PROJ-1");
     CHECK(result.SeededTicket.id == "PROJ-1");
@@ -111,7 +112,7 @@ TEST_CASE("IssueCreatePipeline: Run reports missing required field ids and does 
     required.FieldIds.insert("summary");
     required.RequiresIssueType = true;
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, required, BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, required, BasicCatalog());
     CHECK_FALSE(result.Ok);
     CHECK(result.Error.find("Missing required") != std::string::npos);
     REQUIRE(result.MissingFieldIds.size() == 3);
@@ -129,13 +130,14 @@ TEST_CASE("IssueCreatePipeline: Run propagates CreateIssue failure as result.Err
     client.EnqueueCreateIssueFailure("HTTP 500: server unavailable");
 
     SqliteMemFixture fix;
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
+    auto result =
+        IssueCreatePipeline::Run(client, fix.Get(), "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
     CHECK_FALSE(result.Ok);
     CHECK(result.Error == "HTTP 500: server unavailable");
     CHECK(result.IssueKey.empty());
     CHECK(client.CreateIssueCallCount() == 1);
     // Nothing seeded in cache.
-    CHECK(fix.Ref().GetAllTicketIds().empty());
+    CHECK(fix.Ref().GetAllTicketIds("Jira").empty());
 }
 
 TEST_CASE("IssueCreatePipeline: Run propagates BuildCreatePayload failure as result.Error") {
@@ -143,7 +145,8 @@ TEST_CASE("IssueCreatePipeline: Run propagates BuildCreatePayload failure as res
     client.SetBuildCreatePayloadResult(false, nlohmann::json::object(), "Unknown field 'foo'");
 
     SqliteMemFixture fix;
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
+    auto result =
+        IssueCreatePipeline::Run(client, fix.Get(), "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
     CHECK_FALSE(result.Ok);
     CHECK(result.Error == "Unknown field 'foo'");
     CHECK(client.CreateIssueCallCount() == 0);
@@ -159,13 +162,13 @@ TEST_CASE("IssueCreatePipeline: Run dispatches to update path when ExistingIssue
     existing.id = "PROJ-99";
     existing.fieldValues["summary"] = "Original";
     existing.fieldValues["priority"] = "Low";
-    fix.Ref().SaveTicket(existing);
+    fix.Ref().SaveTicket("Jira", existing);
 
     IssueDraft draft = MakeBasicCreateDraft();
     draft.ExistingIssueKey = "PROJ-99";
     draft.FieldValues["summary"] = "Updated";
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
     CHECK(result.Ok);
     CHECK(result.IssueKey == "PROJ-99");
     CHECK(client.CreateIssueCallCount() == 0); // NOT a create
@@ -175,7 +178,7 @@ TEST_CASE("IssueCreatePipeline: Run dispatches to update path when ExistingIssue
     // Cache row should reflect the PUT — only "summary" was in the update payload, so
     // MergeDraftIntoCachedTicketForUpdate should overlay only that.
     CachedTicket cached;
-    REQUIRE(fix.Ref().TryGetTicket("PROJ-99", cached));
+    REQUIRE(fix.Ref().TryGetTicket("Jira", "PROJ-99", cached));
     CHECK(cached.fieldValues["summary"] == "Updated");
     CHECK(cached.fieldValues["priority"] == "Low"); // preserved from existing — not in put-fields
 }
@@ -190,20 +193,20 @@ TEST_CASE("IssueCreatePipeline: Update path propagates UpdateIssueFields failure
     CachedTicket existing;
     existing.id = "PROJ-50";
     existing.fieldValues["summary"] = "Original";
-    fix.Ref().SaveTicket(existing);
+    fix.Ref().SaveTicket("Jira", existing);
 
     IssueDraft draft;
     draft.ExistingIssueKey = "PROJ-50";
     draft.FieldValues["summary"] = "Updated";
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
     CHECK_FALSE(result.Ok);
     CHECK(result.Error == "HTTP 500: cannot reach issue server");
     CHECK(client.UpdateIssueFieldsCallCount() == 1);
 
     // Cache row must remain at original — failed PUT cannot have corrupted local state.
     CachedTicket cached;
-    REQUIRE(fix.Ref().TryGetTicket("PROJ-50", cached));
+    REQUIRE(fix.Ref().TryGetTicket("Jira", "PROJ-50", cached));
     CHECK(cached.fieldValues["summary"] == "Original");
 }
 
@@ -218,12 +221,12 @@ TEST_CASE("IssueCreatePipeline: Update path with empty fields payload skips PUT 
     CachedTicket existing;
     existing.id = "PROJ-101";
     existing.fieldValues["summary"] = "Same";
-    fix.Ref().SaveTicket(existing);
+    fix.Ref().SaveTicket("Jira", existing);
 
     IssueDraft draft;
     draft.ExistingIssueKey = "PROJ-101";
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
     CHECK(result.Ok);
     CHECK(result.IssueKey == "PROJ-101");
     CHECK(client.UpdateIssueFieldsCallCount() == 0);
@@ -246,7 +249,7 @@ TEST_CASE("IssueCreatePipeline: Create path with attachment failures returns Ok 
     draft.StagedAttachments.push_back(a);
     draft.StagedAttachments.push_back(b);
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
     CHECK(result.Ok);
     CHECK(result.IssueKey == "PROJ-7");
     CHECK(result.AttachmentFailures.size() == 2);
@@ -266,14 +269,14 @@ TEST_CASE("IssueCreatePipeline: create path applies status post-step and merges 
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["status"] = "Done";
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
     CHECK(result.Ok);
     CHECK(result.IssueKey == "PROJ-50");
     // One UpdateIssueFields call for the status transition (create path makes no other PUT).
     CHECK(client.UpdateIssueFieldsCallCount() == 1);
 
     CachedTicket cached;
-    REQUIRE(fix.Ref().TryGetTicket("PROJ-50", cached));
+    REQUIRE(fix.Ref().TryGetTicket("Jira", "PROJ-50", cached));
     CHECK(cached.fieldValues["status"] == "Done");
 }
 
@@ -292,7 +295,7 @@ TEST_CASE("IssueCreatePipeline: create path adds issue to each resolved sprint s
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["sprint"] = "101, 202";
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), catalog);
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), catalog);
     CHECK(result.Ok);
     CHECK(result.IssueKey == "PROJ-60");
     REQUIRE(client.AddIssueToSprintCallCount() == 2);
@@ -314,7 +317,7 @@ TEST_CASE("IssueCreatePipeline: duplicate sprint ids are de-duplicated to a sing
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["sprint"] = "303, 303";
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), catalog);
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), catalog);
     CHECK(result.Ok);
     CHECK(client.AddIssueToSprintCallCount() == 1);
     CHECK(client.AddIssueToSprintCalls()[0].SprintId == "303");
@@ -331,7 +334,7 @@ TEST_CASE("IssueCreatePipeline: Run dispatches to update via legacy FieldValues[
     draft.FieldValues["key"] = "PROJ-300";
     draft.FieldValues["summary"] = "X";
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
     CHECK(result.Ok);
     CHECK(result.IssueKey == "PROJ-300");
     CHECK(client.UpdateIssueFieldsCallCount() == 1);
@@ -347,7 +350,7 @@ TEST_CASE("IssueCreatePipeline: empty ExistingIssueKey falls through to create e
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["key"] = "   "; // whitespace-only should not look like an existing key
 
-    auto result = IssueCreatePipeline::Run(client, fix.Get(), draft, EmptyRequired(), BasicCatalog());
+    auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
     CHECK(result.Ok);
     CHECK(client.CreateIssueCallCount() == 1);
     CHECK(client.UpdateIssueFieldsCallCount() == 0);

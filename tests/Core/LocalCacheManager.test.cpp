@@ -15,6 +15,10 @@ using smatchet_tests::SqliteMemFixture;
 
 namespace {
 
+// Backend-key namespace for the ticket tables (multi-grid Slice 1b). Single-backend tests
+// pin one key; the disjointness cases live in LocalCacheTicketsV2Migration.test.cpp.
+constexpr const char* kBk = "Jira";
+
 CachedTicket MakeTicket(const std::string& id) {
     CachedTicket t;
     t.id = id;
@@ -29,10 +33,10 @@ TEST_CASE("LocalCacheManager: SaveTicket round-trips field values via TryGetTick
     SqliteMemFixture fix;
     CachedTicket t = MakeTicket("ABC-1");
     t.fieldValues["assignee"] = "alice";
-    fix.Ref().SaveTicket(t);
+    fix.Ref().SaveTicket(kBk, t);
 
     CachedTicket got;
-    REQUIRE(fix.Ref().TryGetTicket("ABC-1", got));
+    REQUIRE(fix.Ref().TryGetTicket(kBk, "ABC-1", got));
     CHECK(got.id == "ABC-1");
     CHECK(got.fieldValues["summary"] == "summary for ABC-1");
     CHECK(got.fieldValues["status"] == "Open");
@@ -42,7 +46,7 @@ TEST_CASE("LocalCacheManager: SaveTicket round-trips field values via TryGetTick
 TEST_CASE("LocalCacheManager: TryGetTicket returns false for missing id") {
     SqliteMemFixture fix;
     CachedTicket got;
-    CHECK_FALSE(fix.Ref().TryGetTicket("does-not-exist", got));
+    CHECK_FALSE(fix.Ref().TryGetTicket(kBk, "does-not-exist", got));
     CHECK(got.id == "does-not-exist"); // function does stamp the queried id onto out
     CHECK(got.fieldValues.empty());
 }
@@ -53,7 +57,7 @@ TEST_CASE("LocalCacheManager: SaveTicket replaces the full field-value snapshot 
     CachedTicket initial = MakeTicket("ABC-1");
     initial.fieldValues["priority"] = "High";
     initial.fieldValues["labels"] = "alpha,beta";
-    fix.Ref().SaveTicket(initial);
+    fix.Ref().SaveTicket(kBk, initial);
 
     // Second save with disjoint keys — old keys must vanish, not coexist.
     CachedTicket revised;
@@ -61,10 +65,10 @@ TEST_CASE("LocalCacheManager: SaveTicket replaces the full field-value snapshot 
     revised.fieldValues["summary"] = "revised";
     revised.fieldValues["assignee"] = "bob";
 
-    fix.Ref().SaveTicket(revised);
+    fix.Ref().SaveTicket(kBk, revised);
 
     CachedTicket got;
-    REQUIRE(fix.Ref().TryGetTicket("ABC-1", got));
+    REQUIRE(fix.Ref().TryGetTicket(kBk, "ABC-1", got));
     CHECK(got.fieldValues.size() == 2);
     CHECK(got.fieldValues.count("priority") == 0);
     CHECK(got.fieldValues.count("labels") == 0);
@@ -76,10 +80,10 @@ TEST_CASE("LocalCacheManager: SaveTicket stores rich values in parallel table") 
     SqliteMemFixture fix;
     CachedTicket t = MakeTicket("ABC-1");
     t.fieldRichValues["description"] = "{\"version\":1,\"type\":\"doc\"}";
-    fix.Ref().SaveTicket(t);
+    fix.Ref().SaveTicket(kBk, t);
 
     CachedTicket got;
-    REQUIRE(fix.Ref().TryGetTicket("ABC-1", got));
+    REQUIRE(fix.Ref().TryGetTicket(kBk, "ABC-1", got));
     CHECK(got.fieldRichValues["description"] == "{\"version\":1,\"type\":\"doc\"}");
 }
 
@@ -88,10 +92,10 @@ TEST_CASE("LocalCacheManager: SaveTicket skips empty rich values") {
     CachedTicket t = MakeTicket("ABC-1");
     t.fieldRichValues["description"] = ""; // empty rich payload: production code skips it
     t.fieldRichValues["body"] = "{\"v\":1}";
-    fix.Ref().SaveTicket(t);
+    fix.Ref().SaveTicket(kBk, t);
 
     CachedTicket got;
-    REQUIRE(fix.Ref().TryGetTicket("ABC-1", got));
+    REQUIRE(fix.Ref().TryGetTicket(kBk, "ABC-1", got));
     CHECK(got.fieldRichValues.count("description") == 0); // empty skipped on insert
     CHECK(got.fieldRichValues["body"] == "{\"v\":1}");
 }
@@ -103,32 +107,32 @@ TEST_CASE("LocalCacheManager: prepared statements survive repeated SaveTicket ca
     for (int i = 0; i < 25; ++i) {
         CachedTicket t = MakeTicket("ABC-" + std::to_string(i));
         t.fieldValues["iter"] = std::to_string(i);
-        fix.Ref().SaveTicket(t);
+        fix.Ref().SaveTicket(kBk, t);
     }
-    CHECK(fix.Ref().GetAllTicketIds().size() == 25);
+    CHECK(fix.Ref().GetAllTicketIds(kBk).size() == 25);
     CachedTicket got;
-    REQUIRE(fix.Ref().TryGetTicket("ABC-7", got));
+    REQUIRE(fix.Ref().TryGetTicket(kBk, "ABC-7", got));
     CHECK(got.fieldValues["iter"] == "7");
 }
 
 TEST_CASE("LocalCacheManager: DeleteTicket removes ticket + field rows") {
     SqliteMemFixture fix;
-    fix.Ref().SaveTicket(MakeTicket("ABC-1"));
-    fix.Ref().SaveTicket(MakeTicket("ABC-2"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-1"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-2"));
 
-    fix.Ref().DeleteTicket("ABC-1");
+    fix.Ref().DeleteTicket(kBk, "ABC-1");
 
     CachedTicket got;
-    CHECK_FALSE(fix.Ref().TryGetTicket("ABC-1", got));
-    CHECK(fix.Ref().TryGetTicket("ABC-2", got));
+    CHECK_FALSE(fix.Ref().TryGetTicket(kBk, "ABC-1", got));
+    CHECK(fix.Ref().TryGetTicket(kBk, "ABC-2", got));
 }
 
 TEST_CASE("LocalCacheManager: GetAllTickets returns all rows joined with their field values") {
     SqliteMemFixture fix;
-    fix.Ref().SaveTicket(MakeTicket("ABC-1"));
-    fix.Ref().SaveTicket(MakeTicket("ABC-2"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-1"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-2"));
 
-    auto all = fix.Ref().GetAllTickets();
+    auto all = fix.Ref().GetAllTickets(kBk);
     REQUIRE(all.size() == 2);
     std::vector<std::string> ids{all[0].id, all[1].id};
     std::sort(ids.begin(), ids.end());
@@ -141,13 +145,13 @@ TEST_CASE("LocalCacheManager: GetAllTickets returns all rows joined with their f
 
 TEST_CASE("LocalCacheManager: ForEachTicket streams each ticket once") {
     SqliteMemFixture fix;
-    fix.Ref().SaveTicket(MakeTicket("ABC-1"));
-    fix.Ref().SaveTicket(MakeTicket("ABC-2"));
-    fix.Ref().SaveTicket(MakeTicket("ABC-3"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-1"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-2"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-3"));
 
     int count = 0;
     std::vector<std::string> seenIds;
-    fix.Ref().ForEachTicket([&](CachedTicket&& t) {
+    fix.Ref().ForEachTicket(kBk, [&](CachedTicket&& t) {
         ++count;
         seenIds.push_back(t.id);
         CHECK(t.fieldValues.count("summary") == 1);
@@ -406,25 +410,26 @@ TEST_CASE("LocalCacheManager: DeleteDeadPendingFieldEdit removes archive by dead
 
 TEST_CASE("LocalCacheManager: Reopening on a fresh :memory: is consistent (idempotent init)") {
     SqliteMemFixture fix;
-    fix.Ref().SaveTicket(MakeTicket("ABC-1"));
+    fix.Ref().SaveTicket(kBk, MakeTicket("ABC-1"));
     fix.Reopen();
     // Fresh in-memory DB — no state expected. Sanity: schema init didn't throw + tables exist.
-    CHECK(fix.Ref().GetAllTicketIds().empty());
+    CHECK(fix.Ref().GetAllTicketIds(kBk).empty());
     CHECK(fix.Ref().LoadPendingCreates().empty());
     CHECK(fix.Ref().LoadPendingFieldEdits().empty());
     CHECK(fix.Ref().LoadDeadPendingCreates().empty());
     CHECK(fix.Ref().LoadDeadPendingFieldEdits().empty());
 }
 
-// --- Phase 3(a): batched SaveTickets (one transaction) — docs/plans/shipped/memory-budget-and-lifetime-hardening.md ---
+// --- Phase 3(a): batched SaveTickets (one transaction) — docs/plans/shipped/memory-budget-and-lifetime-hardening.md
+// ---
 
 TEST_CASE("LocalCacheManager: SaveTickets persists every ticket in the batch") {
     SqliteMemFixture fix;
     std::vector<CachedTicket> batch = {MakeTicket("BATCH-1"), MakeTicket("BATCH-2"), MakeTicket("BATCH-3")};
-    fix.Ref().SaveTickets(batch);
+    fix.Ref().SaveTickets(kBk, batch);
     for (const std::string id : {std::string("BATCH-1"), std::string("BATCH-2"), std::string("BATCH-3")}) {
         CachedTicket got;
-        REQUIRE(fix.Ref().TryGetTicket(id, got));
+        REQUIRE(fix.Ref().TryGetTicket(kBk, id, got));
         CHECK(got.GetFieldValue("summary") == "summary for " + id);
         CHECK(got.GetFieldValue("status") == "Open");
     }
@@ -434,15 +439,15 @@ TEST_CASE("LocalCacheManager: SaveTickets is equivalent to per-ticket SaveTicket
     SqliteMemFixture viaBatch;
     SqliteMemFixture viaLoop;
     std::vector<CachedTicket> batch = {MakeTicket("EQ-1"), MakeTicket("EQ-2")};
-    viaBatch.Ref().SaveTickets(batch);
+    viaBatch.Ref().SaveTickets(kBk, batch);
     for (const auto& t : batch) {
-        viaLoop.Ref().SaveTicket(t);
+        viaLoop.Ref().SaveTicket(kBk, t);
     }
     for (const auto& t : batch) {
         CachedTicket a;
         CachedTicket b;
-        REQUIRE(viaBatch.Ref().TryGetTicket(t.id, a));
-        REQUIRE(viaLoop.Ref().TryGetTicket(t.id, b));
+        REQUIRE(viaBatch.Ref().TryGetTicket(kBk, t.id, a));
+        REQUIRE(viaLoop.Ref().TryGetTicket(kBk, t.id, b));
         CHECK(a.fieldValues == b.fieldValues);
         CHECK(a.fieldRichValues == b.fieldRichValues);
     }
@@ -452,25 +457,25 @@ TEST_CASE("LocalCacheManager: SaveTickets re-save replaces the field snapshot (p
     SqliteMemFixture fix;
     CachedTicket t = MakeTicket("RS-1");
     t.fieldValues["extra"] = "first";
-    fix.Ref().SaveTickets({t});
+    fix.Ref().SaveTickets(kBk, {t});
     // Re-save the same id in a new batch with a different field set — the delete+insert must
     // re-run correctly across the reused (reset) prepared statements.
     CachedTicket revised;
     revised.id = "RS-1";
     revised.fieldValues["summary"] = "revised";
-    fix.Ref().SaveTickets({revised, MakeTicket("RS-2")});
+    fix.Ref().SaveTickets(kBk, {revised, MakeTicket("RS-2")});
     CachedTicket got;
-    REQUIRE(fix.Ref().TryGetTicket("RS-1", got));
+    REQUIRE(fix.Ref().TryGetTicket(kBk, "RS-1", got));
     CHECK(got.GetFieldValue("summary") == "revised");
     CHECK(got.GetFieldValue("extra").empty()); // old field gone
     CHECK(got.fieldValues.size() == 1);
     CachedTicket got2;
-    REQUIRE(fix.Ref().TryGetTicket("RS-2", got2)); // second ticket in the same batch also landed
+    REQUIRE(fix.Ref().TryGetTicket(kBk, "RS-2", got2)); // second ticket in the same batch also landed
 }
 
 TEST_CASE("LocalCacheManager: SaveTickets on an empty batch is a no-op") {
     SqliteMemFixture fix;
-    fix.Ref().SaveTickets({});
+    fix.Ref().SaveTickets(kBk, {});
     CachedTicket got;
-    CHECK_FALSE(fix.Ref().TryGetTicket("anything", got));
+    CHECK_FALSE(fix.Ref().TryGetTicket(kBk, "anything", got));
 }

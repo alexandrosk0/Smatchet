@@ -72,9 +72,12 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
         deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
     }
 
+    // Latch the namespace once per apply — the key only changes on a backend swap, which
+    // happens on this (UI) thread between sessions (multi-grid Slice 1b).
+    const std::string backendKey = deps_.CacheBackendKey();
     size_t saved = 0;
     for (const auto& t : freshTickets) {
-        deps_.Cache()->SaveTicket(t);
+        deps_.Cache()->SaveTicket(backendKey, t);
         ++saved;
     }
 
@@ -96,10 +99,10 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
                 keepIds.insert(t.id);
             }
         }
-        std::vector<CachedTicket> existing = deps_.Cache()->GetAllTickets();
+        std::vector<CachedTicket> existing = deps_.Cache()->GetAllTickets(backendKey);
         for (const auto& row : existing) {
             if (keepIds.find(row.id) == keepIds.end()) {
-                deps_.Cache()->DeleteTicket(row.id);
+                deps_.Cache()->DeleteTicket(backendKey, row.id);
                 ++deleted;
             }
         }
@@ -208,13 +211,14 @@ bool TicketSyncService::DrainStaleDeletionBudget() {
     auto start = std::chrono::high_resolution_clock::now();
     size_t deletedThisFrame = 0;
     bool inMemoryChanged = false;
+    const std::string backendKey = deps_.CacheBackendKey();
 
     while (!staleIdsToDelete_.empty()) {
         std::string id = std::move(staleIdsToDelete_.back());
         staleIdsToDelete_.pop_back();
 
         if (deps_.Cache()) {
-            deps_.Cache()->DeleteTicket(id);
+            deps_.Cache()->DeleteTicket(backendKey, id);
         }
         {
             std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
@@ -300,7 +304,7 @@ void TicketSyncService::DrainPendingStreamingBatches() {
         // (docs/plans/shipped/memory-budget-and-lifetime-hardening.md § Phase 3a). KeepIds + the
         // per-frame counter stay a separate cheap loop.
         if (deps_.Cache()) {
-            deps_.Cache()->SaveTickets(batchToProcess);
+            deps_.Cache()->SaveTickets(deps_.CacheBackendKey(), batchToProcess);
         }
         for (const auto& t : batchToProcess) {
             if (!t.id.empty()) {
@@ -500,6 +504,11 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
         backendSwapped = true;
     }
 
+    // Re-stamp the cache namespace to match the requested tracker (multi-grid Slice 1b).
+    // Unconditional + idempotent: also covers a context whose key was never wired (e.g. a
+    // test fixture) so the first sync writes under the right namespace, not under "".
+    deps_.SetCacheBackendKey(ConfigManager::NormalizeViewsBackendKey(newTracker));
+
     // Backend-kind switch: clear in-memory tickets so the old backend's items don't
     // linger in the grid while the new backend's first fetch is in flight. Without this,
     // switching Jira → GitHub (or any cross-kind swap) leaves stale tickets visible and
@@ -584,7 +593,10 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::vector<std::string> localStaleIds;
             if (summary.FullSyncCompleted && deps_.Cache()) {
-                std::vector<std::string> existingIds = deps_.Cache()->GetAllTicketIds();
+                // The deps getter hands back a mutex-guarded key copy — safe from this worker
+                // thread; the key cannot change mid-session (swaps happen in StartStreamingSync,
+                // which joins the previous worker first).
+                std::vector<std::string> existingIds = deps_.Cache()->GetAllTicketIds(deps_.CacheBackendKey());
                 std::copy_if(
                     existingIds.begin(), existingIds.end(), std::back_inserter(localStaleIds),
                     [&workerKeepIds](const std::string& id) { return workerKeepIds.find(id) == workerKeepIds.end(); });

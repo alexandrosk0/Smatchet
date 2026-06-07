@@ -613,9 +613,13 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
         return;
     }
 
+    // Mutex-guarded copy — this runs on a background worker while the UI thread may swap
+    // the tracker (and re-stamp the key) concurrently (multi-grid Slice 1b).
+    const std::string cacheBackendKey = focusedContext().CacheBackendKeyCopy();
+
     for (const auto& t : tickets) {
 
-        Cache->SaveTicket(t);
+        Cache->SaveTicket(cacheBackendKey, t);
     }
 
     RefreshLocalData();
@@ -1207,6 +1211,22 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
 
     Cache = std::make_unique<LocalCacheManager>(dbPath);
 
+    // Multi-grid Slice 1b (ADR-0018 decision 4): seed the default context's cache namespace
+    // from the configured tracker and run the one-time legacy→v2 ticket copy BEFORE any read
+    // path (RefreshLocalData / sync) touches the cache. Legacy rows were necessarily cached
+    // against the then-only configured backend, so they are stamped with its normalized key.
+    // InitBackends re-stamps the key after env-hook resolution (fixture factories use fresh
+    // DBs, so the migration stamp staying on the configured type is correct for user data).
+    const std::string cacheBackendKey = ConfigManager::NormalizeViewsBackendKey(backendType);
+    focusedContext().SetCacheBackendKey(cacheBackendKey);
+    try {
+        (void)Cache->RunOneTimeTicketsV2CopyMigration(cacheBackendKey);
+    } catch (const std::exception& ex) {
+        // Pillar 3 graceful degradation — a failed copy leaves the flag unset (transactional),
+        // so the next launch retries; the session continues with whatever v2 already holds.
+        LOG_ERROR("AppController::InitConfig tickets_v2 copy migration failed: %s", ex.what());
+    }
+
 #if defined(SMATCHET_WITH_AI)
     // Phase 3 of ai-chat-claude-desktop-parity. Start the single coalescing
     // chat-persist worker now that the LCM is live; Stop() runs in ~AppController
@@ -1324,6 +1344,9 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     // atomic_store: off-thread workers read Backend via std::atomic_load (ADR 0012); a plain
     // assignment would data-race those reads on the shared_ptr instance (C++14).
     GridLiveContext& ctx = focusedContext();
+    // Re-stamp the cache namespace with the RESOLVED tracker — an env fixture hook above may
+    // have overridden the configured type (multi-grid Slice 1b).
+    ctx.SetCacheBackendKey(ConfigManager::NormalizeViewsBackendKey(activeTracker));
     std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
     if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
@@ -2083,6 +2106,9 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
 
     try {
         (void)Cache->RunOneTimeLegacyDropPendingAtMaxAttempts();
+        // Fresh DB — nothing to copy, but stamp the tickets_v2 migration flag so the one-time
+        // sweep never runs against rows written after this point (multi-grid Slice 1b).
+        (void)Cache->RunOneTimeTicketsV2CopyMigration(focusedContext().CacheBackendKeyCopy());
     } catch (const std::exception& ex) {
         LOG_WARN("AppController::RecreateLocalCacheDatabase legacy cleanup: %s", ex.what());
     } catch (...) {

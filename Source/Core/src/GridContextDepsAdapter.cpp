@@ -59,6 +59,9 @@ void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() {
     app_.requestDeferredLiveTrackerBackendSuccessNotify_();
 }
 
+// Declared in both IOfflineQueueDeps and ITicketSyncDeps; this single override satisfies both.
+std::string GridContextDepsAdapter::CacheBackendKey() const { return ctx_.CacheBackendKeyCopy(); }
+
 // ---- ITicketSyncDeps ------------------------------------------------------------------
 
 ITrackerIssueReader* GridContextDepsAdapter::Backend() {
@@ -79,6 +82,8 @@ void GridContextDepsAdapter::SetBackend(std::unique_ptr<ITrackerBackend> backend
 }
 
 ITrackerBackendFactory* GridContextDepsAdapter::BackendFactory() { return app_.backendFactory_.get(); }
+
+void GridContextDepsAdapter::SetCacheBackendKey(const std::string& key) { ctx_.SetCacheBackendKey(key); }
 
 void GridContextDepsAdapter::SetLastTrackerTicketSyncWarning(const std::string& message) {
     app_.LastTrackerTicketSyncWarning = message;

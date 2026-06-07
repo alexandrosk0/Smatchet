@@ -54,12 +54,17 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps 
     void LaunchBackgroundTask(std::function<void()> task) override;
     void RefreshLocalData() override;
     void RequestDeferredLiveTrackerBackendSuccessNotify() override;
+    // Declared in BOTH interfaces (same signature) — this single override satisfies both,
+    // like RequestDeferredLiveTrackerBackendSuccessNotify above. Forwards to the context's
+    // mutex-guarded key (multi-grid Slice 1b).
+    std::string CacheBackendKey() const override;
 
     // ---- ITicketSyncDeps --------------------------------------------------------------
     ITrackerIssueReader* Backend() override;
     ITrackerConnectivity* BackendConnectivity() override;
     void SetBackend(std::unique_ptr<ITrackerBackend> backend) override;
     ITrackerBackendFactory* BackendFactory() override;
+    void SetCacheBackendKey(const std::string& key) override;
     void SetLastTrackerTicketSyncWarning(const std::string& message) override;
     void SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) override;
     void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override;

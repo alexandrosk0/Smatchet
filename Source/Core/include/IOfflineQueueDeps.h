@@ -40,6 +40,12 @@ class IOfflineQueueDeps {
     /// Narrow mutation accessor — use instead of Backend() when only mutation operations are needed.
     virtual ITrackerIssueMutations* Mutations() = 0;
 
+    /// Backend-key namespace for LocalCacheManager ticket reads/writes done by replay
+    /// (`IssueCreatePipeline::Run` seeds the cache after a successful create). Returns a copy —
+    /// callable from the replay background task. Shared (same override) with `ITicketSyncDeps`.
+    /// Queue-row namespacing itself is Slice 1c — this getter only scopes the ticket tables.
+    virtual std::string CacheBackendKey() const = 0;
+
     /// Catalog of tracker fields used by `TickOfflineCreates` to build `IssueCreatePipeline`
     /// input. Returned by const-ref so the caller can snapshot via `std::make_shared<...>`
     /// before spawning the background worker.

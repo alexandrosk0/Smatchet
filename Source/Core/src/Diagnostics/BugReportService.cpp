@@ -546,7 +546,8 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
     RequiredFieldSet required;          // GitHub has no issue type; do NOT read the active backend's metadata.
     required.RequiresIssueType = false; // FieldIds intentionally empty.
 
-    const IssueCreateResult created = IssueCreatePipeline::Run(devClient, /*cache*/ nullptr, draft, required, {});
+    const IssueCreateResult created =
+        IssueCreatePipeline::Run(devClient, /*cache*/ nullptr, /*cacheBackendKey*/ std::string(), draft, required, {});
     if (!created.Ok) {
         result.Error = created.Error.empty() ? "Bug report submit failed" : created.Error;
         return result;

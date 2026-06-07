@@ -33,9 +33,17 @@ TEST_CASE("GridLiveContext default construction matches the old singleton boot s
     CHECK(ctx.ActiveTickets.empty());
     CHECK(ctx.activeTicketsPublished_ == nullptr);
     CHECK(ctx.ActiveTicketsRevision.load() == 0u);
-    CHECK(ctx.backendKey.empty()); // populated by Slice 1b/1c
-    CHECK(ctx.catalogKey.empty()); // populated by Slice 3
+    CHECK(ctx.CacheBackendKeyCopy().empty()); // wired by AppController init (Slice 1b)
+    CHECK(ctx.catalogKey.empty());            // populated by Slice 3
     CHECK(ctx.ticketSync_ == nullptr);
+}
+
+TEST_CASE("cache backend key: guarded set/copy round-trip (Slice 1b)") {
+    GridLiveContext ctx;
+    ctx.SetCacheBackendKey("GitHub");
+    CHECK(ctx.CacheBackendKeyCopy() == "GitHub");
+    ctx.SetCacheBackendKey("Plane"); // re-stamp on tracker swap
+    CHECK(ctx.CacheBackendKeyCopy() == "Plane");
 }
 
 TEST_CASE("Backend slot honours the ADR-0012 atomic store/load discipline") {
