@@ -30,8 +30,12 @@ Quality **Pillar 1** (steady-state UI work ≤ **6.94 ms** / 144 Hz; p99 ≤ **1
 4. **`Perf PR-fast (windows-2022)` is not a required check.**
    `project.config.json` `branch_protection.required_contexts` = `[Test-delta gate,
    Windows + MSVC, Windows + MSVC (light), Shell lint (shellcheck), Doc anchors +
-   agent contract]`. A non-required red perf check does **not** block a squash-merge
-   (`merge-gates.sh` only blocks `isRequired==true` contexts).
+   agent contract]`. A non-required red perf check does **not** block a squash-merge.
+   *(Updated post-#933:)* `merge-gates.sh` now blocks a FAILING check when it is
+   required **or** its name matches the curated non-required allow-list regex
+   `Coverage|Sanitizer|Bucket-` (case-insensitive, "advisory" excluded) — but
+   **`Perf PR-fast` is not in that allow-list**, so a red perf check still passes
+   the poller today. The regex is the designed extension point (see step 6a).
 5. **No skip-companion workflow.** Making the check required without a
    `perf-pr-fast-skip.yml` (per `ci-required-check-pattern.md` Pattern B) would
    **deadlock every docs-only PR** (the path-filtered-required-check deadlock).
@@ -102,11 +106,23 @@ is a `StandaloneAppBootstrap.cpp` refactor far larger than the Mesa-parity fix.
    need per-scenario `perScenario` overrides for legitimately-heavy scopes (e.g.
    `SmatchetUI::Draw`) so the gate is not perpetually red on CI hardware — set the
    value/overrides only after observing real runs (step 4).
-6. **[PARKED — branch-protection change, escalate] Make it required:** add
-   `Perf PR-fast (windows-2022)` to `project.config.json`
-   `branch_protection.required_contexts` + `ci.required_checks`, apply via
-   `setup-branch-protection.sh`. **Confirm with the user** before wedging merge flow.
-7. **[PARKED — do before/with step 6] Skip-companion:** add
+6. **Make it blocking — two rungs, escalating:**
+   - **6a. [PARKED — do with/after step 4] Poller allow-list:** extend the
+     `merge-gates.sh` non-required allow-list regex (`Coverage|Sanitizer|Bucket-`,
+     added by #933 — comment there marks it the extension point) to include
+     `Perf PR-fast`, + a `merge_gates.bats` case. Blocks watcher/poller merges on a
+     red perf check **without** GitHub branch protection — no skip-companion needed
+     (the poller only sees checks that actually ran). The `perf-out-of-band`
+     downgrade for `Perf PR-fast*` already exists in `merge-gates.sh` as the
+     override hatch. Does NOT cover a raw `gh api .../merge` — that's what 6b adds.
+     Only safe once baselines exist (before that the check is a guaranteed-pass
+     no-op anyway, so the rung is inert-but-harmless if merged early).
+   - **6b. [PARKED — branch-protection change, escalate] GitHub-required:** add
+     `Perf PR-fast (windows-2022)` to `project.config.json`
+     `branch_protection.required_contexts` + `ci.required_checks`, apply via
+     `setup-branch-protection.sh`. Needs the step-7 skip-companion first.
+     **Confirm with the user** before wedging merge flow.
+7. **[PARKED — do before/with step 6b; not needed for 6a] Skip-companion:** add
    `.github/workflows/perf-pr-fast-skip.yml` (Pattern B) emitting the exact job name
    for non-perf-path PRs, else docs-only PRs deadlock.
 8. **[PARKED — closeout] Update** `build-quality-velocity-hardening.md` #8/#13
@@ -147,7 +163,8 @@ defaulted-not-required) — all merge-safe because the WARN-on-no-baseline /
 WARN-on-run-failure downgrades (`perf-pr-fast.yml:219-228`) stay IN PLACE as the
 safety net that keeps the unfinished gate from false-blocking.
 **Then the human gates:** step 3 (live CI run) → step 4 (capture → **human approval**
-→ commit baselines) → step 5-calibration → step 7 (skip-companion) → step 6 (flip
+→ commit baselines) → step 5-calibration → step 6a (poller allow-list — cheap,
+no branch-protection change) → step 7 (skip-companion) → step 6b (flip
 required — **confirm with user**) → step 8 (closeout).
 
 ## Files in play
@@ -157,4 +174,5 @@ required — **confirm with user**) → step 8 (closeout).
 `scripts/dev/perf-compare.py`, `docs/perf/regression-policy.json`,
 `docs/perf/baselines/{idle,priority-grid-scroll,cell-edit-burst,ai-chat-history-render}.ci-windows-latest.json`
 (new, GOLDEN), `project.config.json`, `scripts/dev/perf-run.sh` (optional N-run
-median / direct in-process scenario.run), `build-quality-velocity-hardening.md`.
+median / direct in-process scenario.run), `agents/scripts/core/merge-gates.sh` +
+`tests/bats/merge_gates.bats` (step 6a allow-list), `build-quality-velocity-hardening.md`.
