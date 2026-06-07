@@ -16,6 +16,7 @@
 
 #include "../support/FakeTicketSyncDeps.h"
 #include "../support/FakeTrackerClient.h"
+#include "../support/ScriptedTrackerBackendFactory.h"
 
 #include "AppController.h" // for TrackerIssueFetchPack
 #include "CachedTicketTypes.h"
@@ -33,6 +34,8 @@
 
 using smatchet_tests::FakeTicketSyncDeps;
 using smatchet_tests::FakeTrackerClient;
+using smatchet_tests::JiraFakeTrackerFixture;
+using smatchet_tests::ScriptedTrackerBackendFactory;
 
 namespace {
 
@@ -366,4 +369,196 @@ TEST_CASE("TicketSyncService back-to-back ApplyIssueFetchPack invocations stay c
     CHECK(deps.DeferredLiveNotifyCalls == 3);
     CHECK(deps.PushOutageCalls == 0);
     CHECK_FALSE(svc.IsActive());
+}
+
+// ---------------------------------------------------------------------------
+// Backend swap matrix — Slice 0 Workstream 1 of docs/plans/active/multi-grid-tabs.md
+// (characterize-existing regression net). Pins SwapBackendIfTrackerChanged's
+// CURRENT single-active-backend semantics before the multi-pane refactor:
+// the swap happens synchronously inside SyncWithBackend -> StartStreamingSync
+// (before the worker spawns), so the new backend kind is observable the moment
+// SyncWithBackend returns.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// FakeTicketSyncDeps wired with a ScriptedTrackerBackendFactory so that
+/// BackendFactory()->Create(kind) returns clients whose GetTrackerType()
+/// reports the requested kind ("Jira" via the fixture, "Plane"/"GitHub" as
+/// plain FakeTrackerClient(kind)). The stock FakeTrackerBackendFactory
+/// ignores the kind argument, which would make swap assertions vacuous.
+void UseScriptedFactory(FakeTicketSyncDeps& deps) {
+    deps.Factory.reset(new ScriptedTrackerBackendFactory(JiraFakeTrackerFixture::LoadFromString("{}")));
+}
+
+std::string CurrentBackendType(FakeTicketSyncDeps& deps) {
+    return deps.BackendConnectivity() ? deps.BackendConnectivity()->GetTrackerType() : std::string();
+}
+
+} // namespace
+
+TEST_CASE("TicketSyncService swap matrix: Jira -> Plane -> GitHub -> Jira creates the right client per kind" *
+          doctest::test_suite("[high-risk]")) {
+    FakeTicketSyncDeps deps;
+    UseScriptedFactory(deps);
+    TicketSyncService svc(deps);
+
+    // Initial backend is the stock FakeTrackerClient ("fake").
+    CHECK(CurrentBackendType(deps) == "fake");
+
+    TrackerConfig cfg;
+    ViewsStore views;
+
+    cfg.TrackerType = "Plane";
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(CurrentBackendType(deps) == "Plane");
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    cfg.TrackerType = "GitHub";
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(CurrentBackendType(deps) == "GitHub");
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    cfg.TrackerType = "Jira";
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(CurrentBackendType(deps) == "Jira");
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    // Mixed/lowercase kind still routes correctly (GitHubClient reports "github").
+    cfg.TrackerType = "plane";
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(CurrentBackendType(deps) == "Plane");
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService swap matrix: empty tracker type defaults to Jira") {
+    FakeTicketSyncDeps deps;
+    UseScriptedFactory(deps);
+    TicketSyncService svc(deps);
+
+    TrackerConfig cfg;
+    cfg.TrackerType = ""; // empty -> treated as "Jira"
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    CHECK(CurrentBackendType(deps) == "Jira");
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService same-kind config change performs no backend swap and keeps active tickets") {
+    FakeTicketSyncDeps deps;
+    UseScriptedFactory(deps);
+    deps.SetBackend(std::unique_ptr<ITrackerBackend>(new FakeTrackerClient("Jira")));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("KEEP-1"));
+    TicketSyncService svc(deps);
+
+    ITrackerConnectivity* before = deps.BackendConnectivity();
+    REQUIRE(before != nullptr);
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "Jira"; // same kind, different JQL — config change without kind change
+    cfg.JqlQuery = "project = OTHER";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    // Identical connectivity pointer == the backend instance was NOT recreated.
+    CHECK(deps.BackendConnectivity() == before);
+    // In-memory active tickets survive a same-kind sync start.
+    CHECK(deps.ActiveTicketsImpl.size() == 1);
+    CHECK(deps.ActiveTicketsRevisionImpl == 0);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService kind change clears in-memory active tickets and publishes an empty snapshot" *
+          doctest::test_suite("[high-risk]")) {
+    FakeTicketSyncDeps deps;
+    UseScriptedFactory(deps);
+    deps.SetBackend(std::unique_ptr<ITrackerBackend>(new FakeTrackerClient("Jira")));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("OLD-1"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("OLD-2"));
+    // Cache rows must SURVIVE the swap (cache hydrate repopulates on switch-back).
+    deps.CacheImpl->SaveTicket(MakeTicket("OLD-1"));
+    deps.CacheImpl->SaveTicket(MakeTicket("OLD-2"));
+    TicketSyncService svc(deps);
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "Plane";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    CHECK(CurrentBackendType(deps) == "Plane");
+    CHECK(deps.ActiveTicketsImpl.empty());
+    REQUIRE(deps.ActiveTicketsPublishedImpl != nullptr);
+    CHECK(deps.ActiveTicketsPublishedImpl->empty());
+    CHECK(deps.ActiveTicketsRevisionImpl == 1);
+    // Every ActiveTickets-mutating path flips the Lua window bump (PR #386 invariant).
+    CHECK(deps.PendingLuaWindowBumpImpl == true);
+    // SQLite rows are untouched by the in-memory clear.
+    CachedTicket got;
+    CHECK(deps.CacheImpl->TryGetTicket("OLD-1", got));
+    CHECK(deps.CacheImpl->TryGetTicket("OLD-2", got));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService::SyncWithBackend while busy defers via pendingConfig_ and supersedes the old session" *
+          doctest::test_suite("[high-risk]")) {
+    FakeTicketSyncDeps deps;
+    UseScriptedFactory(deps);
+    TicketSyncService svc(deps);
+
+    TrackerConfig jiraCfg;
+    jiraCfg.TrackerType = "Jira";
+    ViewsStore views;
+    svc.SyncWithBackend(&jiraCfg, &views);
+    // Session is running until a TickStreamingApply finalizes it — we have not ticked,
+    // so the service is deterministically busy regardless of worker speed.
+    REQUIRE(svc.IsActive());
+    CHECK(CurrentBackendType(deps) == "Jira");
+
+    // Second request while busy: deferred (Cancelled/Superseded set, pendingConfig_
+    // captured) — the backend must NOT swap yet.
+    TrackerConfig planeCfg;
+    planeCfg.TrackerType = "Plane";
+    svc.SyncWithBackend(&planeCfg, &views);
+    CHECK(CurrentBackendType(deps) == "Jira"); // swap deferred with the request
+    CHECK(svc.IsActive());
+
+    // Draining ticks discards the superseded session and starts the pending request
+    // with the SECOND config — the backend kind flips to Plane.
+    REQUIRE(SpinUntil(svc, [&]() { return CurrentBackendType(deps) == "Plane"; }));
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    CHECK(CurrentBackendType(deps) == "Plane");
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService busy-defer keeps only the LAST pending request (latest config wins)") {
+    FakeTicketSyncDeps deps;
+    UseScriptedFactory(deps);
+    TicketSyncService svc(deps);
+
+    TrackerConfig jiraCfg;
+    jiraCfg.TrackerType = "Jira";
+    ViewsStore views;
+    svc.SyncWithBackend(&jiraCfg, &views);
+    REQUIRE(svc.IsActive());
+
+    // Two deferred requests in a row: pendingConfig_ is overwritten — only the
+    // GitHub one materializes once the busy session is discarded.
+    TrackerConfig planeCfg;
+    planeCfg.TrackerType = "Plane";
+    svc.SyncWithBackend(&planeCfg, &views);
+    TrackerConfig githubCfg;
+    githubCfg.TrackerType = "GitHub";
+    svc.SyncWithBackend(&githubCfg, &views);
+    CHECK(CurrentBackendType(deps) == "Jira"); // still no swap before drain
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    // The deferred restart applied the LAST config; "Plane" was never created.
+    CHECK(CurrentBackendType(deps) == "GitHub");
+
+    svc.CancelAndJoinActiveStreamingSync();
 }

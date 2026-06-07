@@ -378,6 +378,11 @@ add_executable(SmatchetTests
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
     # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.
     Core/FlakySelfTest.test.cpp
+    # multi-grid-tabs.md Slice 0 WS1 — characterize-existing seam net pinning
+    # single-grid behaviour before the multi-pane refactor. ConfigManager_Views.cpp
+    # and Ui/Views.cpp are already linked above; no new production TUs.
+    Core/ConfigManagerViews.test.cpp
+    Core/ViewsClass.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent
