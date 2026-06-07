@@ -263,6 +263,14 @@ void SmatchetUI::Draw(AppController& app) {
     drawInitConfigOnce(app, d);
     drawApplyAppearanceSettings(d);
     drawPerFrameTicksAndHandlers(app, d);
+    // Deferred view-create/-delete latches (Pillar 3 crash fix — see
+    // UiDrawSession::viewsPendingCreate / viewsPendingDeleteActive): the store
+    // mutations run HERE, before any ViewDefinition* is resolved for the frame, so
+    // they can never invalidate a live pointer held by the dashboard / pane draw
+    // contexts. Every Views store mutation that resizes the vector MUST go through
+    // one of these latches — never mid-frame from a click handler.
+    applyPendingViewCreate(d);
+    applyPendingViewDelete(app, d);
     UiPerfMonitor::Instance().BeginFrame();
     SmatchetImageTextureCache::TickPendingDestroys();
     drawPreWindowOverlays(app, d);

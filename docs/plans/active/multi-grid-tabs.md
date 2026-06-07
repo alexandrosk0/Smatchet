@@ -200,6 +200,19 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - **Concurrency design depth** — the AppController→N-context redesign + shared-singleton thread-safety audit warrants an `architect` design pass (and possibly an ADR) before Slice 1 implementation; flagged, not designed here.
 
 ## Implementation log
+
+**2026-06-07 — Slice 2 hardening round (same PR #962):** user visual pass caught a
+Pillar-3 crash (create-View): `Views::Create` mid-frame reallocates `store.Views`,
+dangling every frame-resolved `ViewDefinition*` (3 click sites; minidump RCA by
+debug-detective). Fixed via top-of-`Draw` deferred-create latch
+(`applyPendingViewCreate` + pure `ApplyPendingViewCreateCore` seam + bucket-A TU);
+the pre-merge delta review then flagged `DeleteActive` as the same class
+(safe-by-draw-order-accident) — delete latch twin added (`applyPendingViewDelete`).
+Review chain on this PR: round-1 (4 HIGH stale-focus class) → fix → delta review
+(1 HIGH second-order fallback-view write) → fix → crash RCA → crash-fix review
+(1 HIGH delete twin) → fix. Three new Ui-leaf invariants codified from it.
+User visual pass (panes, split, sort, close, restart, create/duplicate/save-as-new/
+delete view): approved 2026-06-07.
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
 - `e221f99c` · Slice 0 WS2 (PR B) — real Jira catalog-BUILD fixture (`tests/support/JiraCatalogHttpFixture.h` + `tests/Core/TrackerCatalogBuild.test.cpp`, 11 cases) + 22 null/missing-relation/empty-optional mapping edges across `{Jira,Plane,GitHub}IssueMappingPure.test.cpp`; closes the `test.md` P2 (2026-06-01) catalog-build blind spot. Test-only.

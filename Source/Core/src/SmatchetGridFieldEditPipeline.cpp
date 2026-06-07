@@ -170,9 +170,17 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
         }
     }
 
-    // Behaviour-preserving move from the former ProcessGridFieldEdits tail: a frame
-    // that produced edits clears the stale error banner.
-    if (!pendingEdits.empty()) {
+    // Moved from the former ProcessGridFieldEdits tail — behaviour-preserving for
+    // the error banner: the worker-completion fold (ApplyCommitResultOnUiThread,
+    // which sets gridEditError) runs from MainThreadDispatcher::Drain at the TOP
+    // of the frame, before the pane loop, so it precedes this clear in BOTH the
+    // old (post-pump) and new (pre-pump) positions. The delta-review concern (an
+    // in-flight failure folded the same frame the user produces fresh edits gets
+    // wiped) therefore exists in both positions and remains OPEN — tracked for
+    // Slice 3's per-pane cue work. readOnlyMode guard: the read-only branch above
+    // SETS gridEditError for these same pendingEdits; clearing it three lines
+    // later self-wiped the banner before anything rendered it (review M).
+    if (!readOnlyMode && !pendingEdits.empty()) {
         d.gridEditError.clear();
     }
 }

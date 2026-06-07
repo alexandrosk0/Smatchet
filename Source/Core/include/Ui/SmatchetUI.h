@@ -18,7 +18,7 @@
 class AppController; // Forward declaration
 struct UiDrawSession;
 struct CachedTicket;
-struct GridPane; // Source/Core/include/GridPane.h — per-pane dockable grid unit (ADR-0018)
+struct GridPane;                       // Source/Core/include/GridPane.h — per-pane dockable grid unit (ADR-0018)
 struct TrackerConnectivityBannerForUi; // AppController.h — host-resolved once per frame
 
 /// Shared per-frame state for the section helpers that decompose
@@ -271,6 +271,14 @@ class SmatchetUI {
     void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               const std::string& id);
     void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);
+    /// Consumes the one-frame deferred view-create latch (UiDrawSession::viewsPendingCreate —
+    /// Pillar 3 crash fix: a mid-frame Views::Create reallocates store.Views and dangles every
+    /// ViewDefinition* resolved earlier in the frame). Called at the top of Draw, BEFORE any
+    /// view pointer is resolved for the frame. Defined in SmatchetViewsDashboardUi.cpp.
+    void applyPendingViewCreate(UiDrawSession& d);
+    /// Delete twin of applyPendingViewCreate — Views::DeleteActive erases from the same
+    /// vector (same invalidation class). Defined in SmatchetViewsDashboardUi.cpp.
+    void applyPendingViewDelete(AppController& app, UiDrawSession& d);
     void drawViewsConnectivityBanner(AppController& app, UiDrawSession& d);
     void handleViewsDashboardShortcuts(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
     // Pane-window host (multi-grid-tabs Slice 2): bootstraps d.gridPanes from
@@ -295,8 +303,8 @@ class SmatchetUI {
     // review HIGH-1); resolvePaneColumns reuses the shared GridFrameContext for the
     // active view and a per-pane revision-keyed cache otherwise.
     ViewDefinition* resolvePaneView(UiDrawSession& d, GridPane& pane);
-    const std::vector<TicketGridColumn>& resolvePaneColumns(GridPane& pane, const TrackerFieldCatalogIndex& catalogIndex,
-                                                            const ViewDefinition* paneView);
+    const std::vector<TicketGridColumn>&
+    resolvePaneColumns(GridPane& pane, const TrackerFieldCatalogIndex& catalogIndex, const ViewDefinition* paneView);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
     // the pre-existing SMATCHET_UI_PERF_SCOPE seams VERBATIM. Positional-ImGui Begin/End
     // pairs that span the table body stay in the orchestrator; these helpers run inside

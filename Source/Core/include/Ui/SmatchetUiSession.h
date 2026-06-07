@@ -419,6 +419,31 @@ struct UiDrawSession {
     // column order / name / JQL / fields back to the on-disk state. Captured lazily.
     bool viewsHasOriginalSnapshot = false;
     ViewDefinition viewsOriginalSnapshot;
+    /// One-frame deferred view-create latch (Pillar 3 — crash fix). Views::Create
+    /// push_backs into store.Views: a mid-frame create from a click handler
+    /// ("+ New" / Ctrl+N / "Duplicate" / the grid "Save as new" modal) reallocates
+    /// the vector and dangles every ViewDefinition* resolved earlier in the frame
+    /// (the dashboard's ctx.activeView, each pane's ActiveProjectDrawCtx
+    /// .activeViewForGrid); the remainder of the frame then reads freed memory
+    /// (observed crash: unhandled C++ exception -> std::terminate minidump).
+    /// Click sites copy a full payload while their pointers are still valid and
+    /// latch it here; SmatchetUI::Draw consumes the latch (applyPendingViewCreate)
+    /// at the TOP of the next frame, BEFORE any view pointer is resolved.
+    /// Consume-once; SINGLE-SLOT, LAST-WINS (a second latch in the same frame
+    /// overwrites the first — reachable only by Ctrl+N + a same-frame click,
+    /// where both payloads are identical anyway).
+    bool viewsPendingCreate = false;
+    ViewDefinition viewsPendingCreatePayload;
+    std::string viewsPendingCreateToastTitle;
+    int viewsPendingCreateToastMs = 1800;
+    /// Grid "Save as new" also adopts the created view's Jql/fields into cfg + saves.
+    bool viewsPendingCreateAdoptCfg = false;
+    /// Same deferral for DELETE: Views::DeleteActive erases from the same vector
+    /// (same invalidation class as Create — it was safe pre-latch only because the
+    /// delete modal happened to be the frame's last view-pointer reader). Consumed
+    /// by SmatchetUI::applyPendingViewDelete, immediately after the create latch.
+    bool viewsPendingDeleteActive = false;
+    std::string viewsPendingDeleteToastName;
 
     // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
     // The per-pane grid runtime that used to live here as singleton fields

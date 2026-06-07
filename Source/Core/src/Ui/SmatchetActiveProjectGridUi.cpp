@@ -727,6 +727,12 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
             ImGui::CloseCurrentPopup();
         }
         if (saveClicked && !disabled) {
+            // DEFERRED create (Pillar 3 crash fix): ViewState.Create here would reallocate
+            // store.Views mid-frame, dangling ctx.activeViewForGrid for every section drawn
+            // after this strip (table, sort block, post block) — the June 2026 view-create
+            // crash. Copy the payload while the pointer is valid; applyPendingViewCreate
+            // consumes the latch at the top of next frame (AdoptCfg reloads buffers + adopts
+            // Jql/fields into cfg + saves, replacing the former inline post-create block).
             ViewDefinition created = *activeViewForGrid;
             created.Name = s_newViewName;
             created.Id.clear();
@@ -740,21 +746,11 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
             if (d.viewJqlBuf[0]) {
                 created.Jql = d.viewJqlBuf;
             }
-            ViewState.Create(created);
-            const ViewDefinition* nowActive = ViewState.GetActiveView();
-            if (nowActive) {
-                d.editingViewId = nowActive->Id;
-                d.lastSyncedColumnOrder = nowActive->ColumnOrder;
-                SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, nowActive->Name);
-                SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, nowActive->Jql);
-                const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(nowActive->Fields);
-                SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
-                d.editingColumnOrder = nowActive->ColumnOrder;
-                d.cfg.JqlQuery = nowActive->Jql;
-                d.cfg.SelectedFields = nowActive->Fields;
-                ConfigManager::Save(d.cfg);
-                SmatchetToastManager::Instance().Push("View created", nowActive->Name, ToastType::Success, 1500);
-            }
+            d.viewsPendingCreate = true;
+            d.viewsPendingCreatePayload = std::move(created);
+            d.viewsPendingCreateToastTitle = "View created";
+            d.viewsPendingCreateToastMs = 1500;
+            d.viewsPendingCreateAdoptCfg = true;
             d.viewsDirty = false;
             d.viewsHasOriginalSnapshot = false;
             d.pendingViewStateSave = false;
@@ -862,9 +858,20 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
         // a sort click into a not-yet-focused pane processes on the SAME frame ImGui
         // moves focus, and the stale flag dropped the mirror while SpecsDirty was
         // already cleared above, so the sort applied visually but never reached the
-        // view (review HIGH-3).
+        // view (review HIGH-3). The mirror must ALSO target the pane's OWN view:
+        // on that same focus-click frame a cross-backend pane renders the
+        // fallback-resolved view (the other backend's active view — HIGH-1 refuses
+        // the identity write but still returns the fallback), and mirroring into it
+        // would durably misdirect the sort into the other pane's view definition
+        // (delta-review HIGH, second-order of the live-focus widening). The strict
+        // Id equality is sufficient on its own: resolvePaneView's self-repair runs
+        // earlier in this same draw and rewrites every repair-eligible pane's
+        // viewId to the rendered view's Id, so any pane still mismatching here is
+        // exactly a repair-refused cross-backend pane (including the empty-viewId
+        // one persisted from an empty bucket) — the states that must not mirror.
         const bool paneLiveFocused = pane.focused || d.paneWindowFocusedThisFrame == pane.id;
-        if (activeViewForGrid && paneLiveFocused) {
+        const bool viewIsPanesOwn = activeViewForGrid && activeViewForGrid->Id == pane.viewId;
+        if (paneLiveFocused && viewIsPanesOwn) {
             SyncHeaderSortClicksToView(d, sortSpecs, columns, *activeViewForGrid);
         }
     }
