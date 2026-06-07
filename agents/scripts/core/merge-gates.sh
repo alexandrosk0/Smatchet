@@ -5,7 +5,9 @@
 #
 # Polls three conditions on a PR via one `gh api graphql` call:
 #   1. CI — every required check passes (CheckRun terminal SUCCESS/NEUTRAL/SKIPPED;
-#      StatusContext state == SUCCESS)
+#      StatusContext state == SUCCESS) PLUS any non-required check on the
+#      meant-to-block allow-list (name ~ Coverage|Sanitizer|Bucket-, non-advisory)
+#      — see $failing below + postmortems.md 2026-06-06 "#923".
 #   2. CodeRabbit — latest review on current headRefOid is not CHANGES_REQUESTED;
 #      zero unresolved non-outdated review threads contain a CodeRabbit comment
 #   3. User comments — zero unresolved non-outdated review threads with any
