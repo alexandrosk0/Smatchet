@@ -11,6 +11,11 @@
 
 > **Backlog-campaign B8 phase-0 (2026-06-02)** — 8 stale/moot bucket-E entries archived after verifying against current develop. The infra 'keystone' was already unblocked (warmup gate + file-result + /EHsc default all shipped); most coverage dependents are shipped or moot (AgentProposalStore / Agentic-tab / react-loop removed).
 
+- 2026-06-01 · orchestrator · [test] · P2 — `JiraFakeTrackerFixture` injects a pre-built catalog and bypasses `FetchFieldCatalog`, so field-classification / enrichment bugs have zero fixture coverage
+  Resolution: **applied by PR #939** (multi-grid Slice 0 WS2, 2026-06-07) — `tests/support/JiraCatalogHttpFixture.h` drives the real `FetchFieldCatalog` / `MergeProjectComponentsFromEndpoint` over scripted loopback HTTP (in-process httplib server + real cpr); `tests/Core/TrackerCatalogBuild.test.cpp` (11 cases / 95 assertions) covers every next-action item: unscoped fetch leaves `components` dropdown-eligible, scoped fetch populates per-project options (incl. pagination + sort), `customfield_*` arrays classify per schema.
+  Status: applied
+  Last-reviewed: 2026-06-07
+
 - 2026-05-17 · test-author · [infra] · P2 — Bucket-E `--spawn` ephemeral runner flakes intermittently (pre-existing)
   Resolution: STALE — deterministic spawn-warmup gate shipped (slice 9, autonomous-debugging-no-creds): tests/ui/spawn_warmup_deterministic_gate.test.cpp + runner ('Closes infra.md P2 line 16'). (B8 phase-0).
 

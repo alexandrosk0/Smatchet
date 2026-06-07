@@ -27,6 +27,98 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-07 · PR #441 (escape origin), fixed by PR #937 · bucket-C/E green-but-broken for 2 weeks (continue-on-error masked total harness death)
+
+### What escaped
+The bucket-C screenshot-diff and bucket-E ImGui-Test-Engine jobs (the
+"headless GL" validation lanes added by #441, 2026-05-24) showed **green on
+every run while zero tests ever executed successfully on CI**. Observed
+directly on #937's bucket-C run: `Passed: 0  Failed: 3`, step exit 1, job
+green. Every visual/UI regression those lanes exist to catch was unguarded
+for the whole period.
+
+### Root cause
+Two stacked holes, neither an agent/person:
+1. **Incomplete Mesa provisioning**: the #441 install step copied only
+   `opengl32.dll` from mesa-dist-win. Mesa ≥ 22 splits the driver —
+   `opengl32.dll` is a 137 KB thin loader hard-requiring `libgallium_wgl.dll`
+   (53 MB) + `libglapi.dll` beside it — so every exe in the build dir died at
+   process start (`STATUS_DLL_NOT_FOUND`), before any test logic. Silent: the
+   Windows loader writes nothing to the console.
+2. **`continue-on-error: true` masks *total* harness death the same as
+   *partial* flakiness**: the advisory lane was designed to tolerate flaky
+   individual tests, but it equally swallows "the harness never ran at all" —
+   `Passed: 0` and `Passed: 47, Failed: 1` look identical from outside
+   (both green). No signal distinguishes an advisory lane that is degraded
+   from one that is dead.
+
+Fixed (the Mesa half) by PR #937: 3-DLL copy, strict final `cp` (fail loudly),
+cache key bumped `mesa-dlls-24.2.5-v2`, verified by local two-phase repro +
+a live CI run (`run_failure_count=0`).
+
+### Preventing gate
+A **launch-smoke hard step** in front of every advisory exe-running lane:
+a NON-`continue-on-error` step that runs the freshly-provisioned exe once
+(`Smatchet.exe cmd app.version --spawn --yes` or equivalent ≤ 10 s probe)
+after Mesa install and before the advisory bucket step. "The exe cannot even
+start" then fails the job hard regardless of how flaky the tests behind it
+are — separating *dead harness* (hard fail) from *flaky tests* (advisory).
+Plus, inside the advisory steps: treat `Passed: 0` with `Failed: > 0` as a
+hard exit (a lane that passes nothing is not flaky, it is broken).
+
+### Filed as
+`docs/self-improvement/categories/infra.md` 2026-06-07 `bucket-lane-launch-smoke` (P1).
+
+## 2026-06-07 · coverage.yml (since #834 graduation), fixed by PR #941 · documented `coverage-out-of-band` escape was implemented nowhere (prose-promise gate)
+
+### What escaped
+`coverage.yml`'s header has documented "Below-threshold PRs escape with the
+`coverage-out-of-band` label" since the gate graduated to blocking
+(#834, 2026-06-04) — but no code read the label: not the workflow, not
+`merge-gates.sh`. The first PR that legitimately needed the hatch (#939,
+structural measured-set expansion 70% → 64% while absolute coverage rose)
+found it didn't exist; the merge path was blocked until the escape was
+implemented mid-flight (#941).
+
+### Root cause
+The escape was specified in prose at graduation time and never wired —
+exactly the "prose promise, no gate" class AGENTS.md § Merge gates warns
+about, inverted: here the *escape* (not the gate) was prose-only. Nothing
+validates that a documented override label has a reader.
+
+### Preventing gate
+A self-test-style lint: every `*-out-of-band` label string mentioned in
+`.github/workflows/*.yml` comments or `AGENTS.md` § Merge gates must be
+grep-matched by an implementation site (a `labels`-reading step in a
+workflow, or a `merge-gates.sh` downgrade branch). Cheapest form: a case in
+`agents/scripts/project/test-lint-rules.sh` (or `test-docs.sh`) that extracts
+documented label names and asserts each appears in at least one non-comment
+code line. Catches the class for all future labels.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` 2026-06-07 `oob-label-implementation-lint` (P2).
+
+## 2026-06-07 · PR #939 · `coverage-out-of-band` override used (legitimate)
+
+### What escaped
+Nothing defective: #939 (multi-grid Slice 0 WS2) linked 5 real `JiraClient`
+impl TUs into `SmatchetTests` for the catalog-build fixture, structurally
+expanding the coverage denominator (70% → 64%) while **absolute covered lines
+rose** (33 new test cases / 157 assertions; full rig 13,683 assertions green).
+
+### Root cause
+The line-rate threshold measures a ratio; adding production code to the
+measured binary for legitimate fixture reasons dilutes the ratio without any
+testing regression. This is the documented use case for the label.
+
+### Preventing gate
+none — override legitimate (structural measured-set expansion, absolute
+coverage increased; the real follow-up — raising backend-impl coverage so the
+class shrinks — is filed as a debt entry, `categories/debt.md` 2026-06-07).
+
+### Filed as
+`docs/self-improvement/categories/debt.md` 2026-06-07 `backend-impl-coverage-recovery` (P2).
+
 ## 2026-06-06 · PR #923 · auto-merged past a RED non-required "Coverage" check (spec inconsistency)
 
 > Self-reported. The `smatchet-merge-watcher` auto-merged #923 (via
