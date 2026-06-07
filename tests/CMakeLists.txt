@@ -415,6 +415,21 @@ add_executable(SmatchetTests
     # and Ui/Views.cpp are already linked above; no new production TUs.
     Core/ConfigManagerViews.test.cpp
     Core/ViewsClass.test.cpp
+    # June 2026 view-create crash fix (Pillar 3) — deferred view-create latch core
+    # (ApplyPendingViewCreateCore, inline in SmatchetViewsDashboardUi_detail.h):
+    # consume-once apply, unset-latch no-mutation, duplicate-path source survival.
+    # Views.cpp / ConfigManager_Views.cpp already linked above; no new production TUs.
+    Core/ViewsPendingCreate.test.cpp
+    # multi-grid-tabs.md Slice 2 — smatchet_panes.json round-trip + zero-migration
+    # default-pane bootstrap (plan item 13) + GridPane per-pane sort-cache isolation
+    # (plan items 7/10). ConfigManager_Panes.cpp is the new production TU.
+    Core/ConfigManagerPanes.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Panes.cpp"
+    # PR #962 review fixes — pure pane-request core (close sweep focus-reassignment
+    # report, min-1 invariant, "+" duplicate, cross-backend view self-repair gate).
+    # The _detail TU is ImGui-free (mirrors SmatchetGridHeaderUi_detail.cpp).
+    Core/GridPaneRequests.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.
