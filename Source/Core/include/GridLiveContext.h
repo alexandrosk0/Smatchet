@@ -1,16 +1,12 @@
 #pragma once
 
-// GridLiveContext — the per-pane live engine bundle (multi-grid foundation, ADR-0018;
-// docs/plans/multi-grid-tabs.md Slice 1a). Holds everything one grid pane needs to be
-// "live": its tracker backend, its streaming-sync service, and its in-memory active-ticket
-// cache + published snapshot. Members moved VERBATIM from AppController (which now owns a
-// `map<paneId, unique_ptr<GridLiveContext>>` — a single entry in Slice 1, so behaviour is
-// identical to the old singleton members).
-//
-// Ownership / lifetime: owned by AppController via `std::unique_ptr` (the context holds
-// atomics + a mutex, so it is non-movable — heap allocation keeps `&Backend` address-stable
-// for the `std::atomic_load`/`atomic_store` discipline below). The retired-backend graveyard
-// (ADR-0012) intentionally stays on AppController, shared by all contexts.
+// GridLiveContext is the per-pane live engine bundle of the multi-grid foundation
+// (ADR-0018, plan multi-grid-tabs Slice 1a): one grid pane's tracker backend, streaming-sync
+// service, and in-memory active-ticket cache plus published snapshot, moved verbatim from
+// AppController, which now owns a map from pane id to heap-owned context (one entry in
+// Slice 1, so behaviour is unchanged). The struct holds atomics and a mutex, so it is
+// non-movable; heap ownership keeps the Backend slot address-stable for the atomic
+// load/store discipline below. The ADR-0012 retired-backend graveyard stays on AppController.
 
 #include <atomic>
 #include <cstdint>
@@ -25,19 +21,17 @@ class ITrackerBackend;
 class TicketSyncService;
 
 struct GridLiveContext {
-    // Ctor/dtor are out-of-line (GridLiveContext.cpp) so the `unique_ptr<TicketSyncService>`
-    // member only needs the forward declaration here — AppController.h includes this header
-    // for its context map, and pulling the full TicketSyncService.h into AppController.h's
-    // ~105 includers would regress their compile cost for nothing.
+    // Ctor/dtor are out-of-line (GridLiveContext.cpp) so the sync-service member only needs
+    // a forward declaration here; pulling the full TicketSyncService header into
+    // AppController.h would regress the compile cost of its roughly 105 includers.
     GridLiveContext();
     ~GridLiveContext();
     GridLiveContext(const GridLiveContext&) = delete;
     GridLiveContext& operator=(const GridLiveContext&) = delete;
 
-    /// Shared (not unique) so off-thread workers can capture a strong handle that
-    /// survives a live tracker swap freeing this slot. All reads go through
-    /// `std::atomic_load`, all writes through `std::atomic_store`/`atomic_exchange`
-    /// (a shared_ptr instance is not concurrently copy/assign-safe in C++14). See ADR 0012.
+    /// Shared (not unique) so off-thread workers can capture a strong handle that survives
+    /// a live tracker swap freeing this slot. All reads latch via atomic load, all writes go
+    /// through atomic store/exchange — shared_ptr is not concurrently copy-safe. See ADR 0012.
     std::shared_ptr<ITrackerBackend> Backend;
 
     std::vector<CachedTicket> ActiveTickets;
@@ -47,18 +41,15 @@ struct GridLiveContext {
     /// AppController::activeTicketsMutex_).
     mutable std::mutex activeTicketsMutex_;
 
-    /// Cache/queue namespacing key (= ConfigManager::NormalizeViewsBackendKey output).
-    /// Declared in Slice 1a; populated + consumed by Slice 1b (tickets_v2 namespacing)
-    /// and Slice 1c (offline-queue BackendKey). Empty until then.
+    /// Cache/queue namespacing key (NormalizeViewsBackendKey output). Declared in Slice 1a;
+    /// populated and consumed by Slices 1b and 1c. Empty until then.
     std::string backendKey;
-    /// Resolved FieldCatalogCache key for this context (backend|endpoint|project).
-    /// Declared in Slice 1a; the in-memory field-catalog block moves per-context in
-    /// Slice 3 (design addendum § 3.1). Empty until then.
+    /// Resolved field-catalog cache key for this context (backend, endpoint, project).
+    /// Declared in Slice 1a; consumed when the catalog moves per-context in Slice 3.
     std::string catalogKey;
 
-    /// Owns the streaming-sync FSM (worker thread, batch queue, supersede/cancel
-    /// transitions) and applies fetched batches to the cache. One sync FSM per context.
-    /// Declared LAST so it is destroyed FIRST: its teardown joins the sync worker while
-    /// Backend and the active-ticket state above are still alive.
+    /// Owns the streaming-sync FSM (worker thread, batch queue, supersede/cancel) and applies
+    /// fetched batches to the cache. Declared LAST so it is destroyed FIRST: teardown joins
+    /// the sync worker while Backend and the active-ticket state above are still alive.
     std::unique_ptr<TicketSyncService> ticketSync_;
 };

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -156,7 +157,13 @@ void AppController::TickTrackerConnectivityMonitor(const TrackerConfig& cfg) {
     // No explicit auth check here; each backend handles its own config validation in ProbeReachability.
 
     try {
-        ITrackerBackend* backend = focusedContext().Backend.get();
+        // Latch a strong handle before dispatching: a live tracker swap (SetBackend) while the
+        // probe runs would otherwise free the backend under the async worker (ADR 0012).
+        std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
+        if (!backend) {
+            nextTrackerConnectivityProbeAt_ = now + kTrackerConnectivityProbeAggressiveInterval;
+            return;
+        }
         trackerConnectivityProbeFuture_ =
             std::async(std::launch::async, [backend, cfg]() { return backend->Connectivity().ProbeReachability(cfg); });
         trackerConnectivityProbeInFlight_ = true;
