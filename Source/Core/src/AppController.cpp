@@ -290,6 +290,9 @@ void LogProcessCwdForScriptsDiagnostics() {
 #endif
 }
 
+// Only referenced from the SMATCHET_WITH_LUA_AUTOMATION init path — guard the
+// definition too, or Lua-off configs (UBSan clang job) fail -Werror,-Wunused-function.
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
 void LogLuaScriptFileProbe(const char* label, const std::string& path) {
 
     if (path.empty()) {
@@ -309,6 +312,7 @@ void LogLuaScriptFileProbe(const char* label, const std::string& path) {
 
              reg ? "yes" : "no", ec ? ec.message().c_str() : "none");
 }
+#endif // SMATCHET_WITH_LUA_AUTOMATION
 
 } // namespace
 
