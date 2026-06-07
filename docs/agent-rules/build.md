@@ -30,7 +30,21 @@ Build from bash through the wrapper — it sources `vcvars64` with the pinned to
 
 (PowerShell equivalents: `scripts/dev/with-msvc.ps1`, `scripts/dev/build_and_run.ps1`.) Without a wrapper, a bare `cmake --build` from bash fails with `Cannot open include file: 'stdio.h'` (no `INCLUDE`).
 
-The toolset pin is `build.msvc_toolset_pin` in `project.config.json` (currently `14.38`; override with `$SMATCHET_VCVARS_VER`). It matters on a multi-VS box: an **unpinned** `vcvars64` selects the *newest* installed toolset, whose STL headers reject the cached older `cl.exe` with **`error STL1001`** — which can cascade to `C2801`/`C2333` inside `<memory>`/`<vector>`/`<thread>` (the C++23 `static operator()` STL under `/std:c++14`). The wrappers pass `-vcvars_ver=<pin>`; if you call `vcvars64.bat` by hand, pass the same `-vcvars_ver` (the configured toolset is in `build/<preset>/CMakeCache.txt`).
+The toolset pin is `build.msvc_toolset_pin` in `project.config.json` (currently `14.38`; override with `$SMATCHET_VCVARS_VER`). It matters on a multi-VS box: an **unpinned** `vcvars64` selects the *newest* installed toolset, whose STL headers reject the cached older `cl.exe` with **`error STL1001`** — which can cascade to `C2801`/`C2333` inside `<memory>`/`<vector>`/`<thread>` (the C++23 `static operator()` STL under `/std:c++14`). The wrappers pass `-vcvars_ver=<pin>`; if you call `vcvars64.bat` by hand, pass the same `-vcvars_ver` (the configured toolset is in `build/<preset>/CMakeCache.txt`). On a VS-18 box the working manual invocation is `"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 -vcvars_ver=14.38.33130` (locate via vswhere; the default 14.50 toolset fails in STL headers against the cached configure).
+
+## Fresh-worktree configure pitfalls (CMake 4.x + FetchContent)
+
+All four bit multiple agents during the multi-grid Slice-0/1 + perf-gate-revival sessions (2026-06-06/07):
+
+1. **CMake 4.x drops the default MSVC `/EHsc` + `/DWIN32 /D_WINDOWS` flags on a FRESH configure** — the whole tree builds with exceptions off; doctest TUs fail `C2338: Exceptions are disabled!` and product TUs fail `C4530 + /WX → C2220`. Long-lived build dirs only work because their caches predate the CMake upgrade. Until the presets bake the flags, configure fresh worktrees with them explicit:
+   `cmake --preset ninja-test-msvc "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc" "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS"` (same for the iter presets).
+2. **A FAILED first configure poisons the cache silently** — `CMakeCache.txt` is left with empty `CMAKE_CXX_FLAGS`, and a later *successful* configure reuses it. If doctest TUs fail "Exceptions are disabled" in a tree that "configured fine", check for `CMAKE_CXX_FLAGS:STRING=` empty in the cache → wipe the build dir and reconfigure with explicit flags.
+3. **Never configure under bash+vcvars** — cpr's FetchContent `git submodule` step dies with `git-sh-setup: file not found` under that env combo. Configure PowerShell-side (`with-msvc.ps1` / `VsDevCmd` + `cmake` in cmd/PowerShell).
+4. **Configure presets serially on a fresh worktree** — `FETCHCONTENT_BASE_DIR` is the shared `.fetchcontent-src/`, so two first-time configures/builds in parallel collide (`ninja: failed recompaction: Permission denied`, `LNK1104` on `glfw3.lib`). Once the dep sources exist, parallel builds are fine.
+
+## ASan over the test rig
+
+The `ninja-msvc-asan` preset does not enable tests; to run the doctest rig under ASan, override at configure: `cmake --preset ninja-msvc-asan -DSMATCHET_BUILD_TESTS=ON`. (Known full-suite caveat: the `CallstackParser` ReDoS *timing* sentinel can exceed its 2000 ms wall-clock cap under ASan slowdown — a timing artifact, not a memory error.)
 
 ## Stale-PCH recovery (C2859)
 
