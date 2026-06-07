@@ -7,6 +7,12 @@
 
 ## Triage log
 
+- 2026-06-07 · orchestrator · [tooling] · P2 — `postmortem-owed-direct-push-blindspot`: `postmortem-owed.sh` can't see PR-less direct pushes to develop (preventing gate from postmortems.md 2026-06-07 direct-push 93c63d0f)
+  Details: The escape detector's three triggers all key on a merged PR (non-SUCCESS check on a merged head, override label, `Revert`) or the pr+mergeCommit snapshot ledger. A commit pushed straight to develop via admin bypass (e.g. `93c63d0f`, code-review `opus/high`) creates no PR + writes no `merge-snapshots.jsonl` line → structurally invisible to the nudge, even though a direct push skips review AND all 6 required CI checks (the highest-trust escape). The local guard hooks that should stop it (`guard-head-drift`, `guard-shared-tree`) are env-overridable (`SMATCHET_ACK_BRANCH_DRIFT` / `SMATCHET_ALLOW_SHARED_SWITCH`) with no audit trail.
+  Concrete next action: add a 4th trigger to `postmortem-owed.sh` — in the develop window, flag any non-merge commit whose subject lacks `(#N)` AND that `gh pr list --search <sha> --state merged` does not back → "PR-less direct push, owes postmortem", deduped by SHA. The subject-suffix half works offline (`git log`) so the detector degrades gracefully when `gh` is down. Optional hook-side: `guard-head-drift`/`guard-shared-tree` append `{sha, override, branch}` to a committed audit log when an override fires, giving a second source. Est ~1h incl. a bats case in `tests/bats/`.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [tooling] · P2 — `oob-label-implementation-lint`: nothing validates that a documented `*-out-of-band` escape label has an implementation (preventing gate from postmortems.md 2026-06-07 coverage prose-promise)
   Details: `coverage.yml` documented the `coverage-out-of-band` escape since the gate graduated to blocking (#834) but no code read the label — discovered only when #939 first needed it (unblocked mid-flight by #941). The class: an escape hatch specified in prose at gate-graduation time, never wired, never tested.
   Concrete next action: a self-test-style case (in `test-lint-rules.sh` or `test-docs.sh`) that extracts every `*-out-of-band` label name documented in `.github/workflows/*.yml` comments + `AGENTS.md` § Merge gates, and asserts each is matched by a non-comment implementation line (a `labels`-reading workflow step or a `merge-gates.sh` downgrade branch). Est ~45 min incl. fixtures.

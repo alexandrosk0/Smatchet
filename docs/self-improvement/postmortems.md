@@ -27,6 +27,50 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-07 · PR-less direct push 93c63d0f · code-review model change shipped to develop bypassing the PR flow + 6 required checks
+
+### What escaped
+Commit `93c63d0f` (code-review agent `sonnet/high` → `opus/high`) landed on
+`origin/develop` via a **direct push**, bypassing branch protection ("Changes
+must be made through a pull request" + "6 of 6 required status checks") through
+the repo-admin bypass — no PR, no CI, no `merge-snapshots.jsonl` line. The change
+itself was trivial + explicitly user-directed; the escape is that **the escape
+detector never saw it**. `postmortem-owed.sh`'s three triggers all key on a
+merged PR (non-SUCCESS check on a merged head, override label on a merged PR,
+a `Revert` commit) or the pr+mergeCommit-keyed snapshot ledger. A PR-less direct
+push produces none of those, so the class is structurally invisible to the
+SessionStart nudge — it owed a postmortem only because a human noticed in-session.
+
+### Root cause
+Two stacked holes, neither an agent/person:
+1. **`postmortem-owed.sh` is PR-centric.** Every trigger derives from a merged PR
+   or the pr-keyed snapshot ledger. A commit pushed straight to develop (admin
+   bypass) never appears in `gh pr list` and writes no ledger line, so the
+   detector is blind to direct-push escapes — the *highest-trust* escape (no
+   review, no CI at all) is the one it cannot see.
+2. **Local guard hooks are env-overridable with no audit trail.**
+   `guard-head-drift.sh` (no direct commit to develop) and `guard-shared-tree.sh`
+   (no HEAD mutation under a concurrent session) are defeated by
+   `SMATCHET_ACK_BRANCH_DRIFT=1` / `SMATCHET_ALLOW_SHARED_SWITCH=1`. Legitimate
+   escape hatches, but they leave no record that an override fired — so even the
+   hook side offers the detector nothing to key on.
+
+### Preventing gate
+Add a **fourth trigger to `postmortem-owed.sh`**: in the develop scan window,
+flag any non-merge commit on develop with **no backing PR** — its subject lacks
+the `(#N)` squash-merge suffix AND `gh pr list --search <sha> --state merged`
+returns nothing → "PR-less direct push, owes a postmortem", deduped by commit
+SHA (as the PR triggers dedupe by `#N`). The subject-suffix half works offline
+via `git log`, so the detector degrades gracefully when `gh` is down (it was
+unauthenticated during this very incident). Secondary (optional): have the
+override hooks append a one-line `{sha, override-name, branch}` record to a
+committed audit log when an override fires, giving the detector a second,
+hook-side source. Bats coverage: a direct-push fixture commit must produce a
+`postmortem owed` line.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` 2026-06-07 `postmortem-owed-direct-push-blindspot` (P2).
+
 ## 2026-06-07 · PR #441 (escape origin), fixed by PR #937 · bucket-C/E green-but-broken for 2 weeks (continue-on-error masked total harness death)
 
 ### What escaped
