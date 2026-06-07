@@ -16,6 +16,7 @@
 
 #include "../support/SqliteMemFixture.h"
 
+#include "ConfigManager.h"
 #include "LocalCacheManager.h"
 
 #include <SQLiteCpp/SQLiteCpp.h>
@@ -185,6 +186,64 @@ TEST_CASE("tickets_v2 migration: empty backend key skips without consuming the o
     CachedTicket got;
     REQUIRE(mgr.TryGetTicket("GitHub", "ABC-1", got));
     CHECK(got.fieldValues["summary"] == "kept");
+}
+
+TEST_CASE("tickets_v2 migration: stamps the RESOLVED config key, not a diverging Initialize parameter "
+          "(CR-948-1 divergence: param 'Jira', cfg 'github')" *
+          doctest::test_suite("[high-risk]")) {
+    // AppController::Initialize(dbPath, backendType) can be called with a backendType parameter
+    // that diverges from the config the live path resolves (embedded host ignores
+    // options.BackendType in InitBackends; standalone Load(cli) vs Load()). The fix runs the
+    // migration in InitBackends with the cfg-resolved key, so legacy rows land under the key
+    // the live read path queries. AppController itself has no bucket-A seam (it drags the
+    // UI/Lua/MCP link — see GridLiveContext.test.cpp), so this pins the contract at the
+    // LocalCacheManager + NormalizeViewsBackendKey level: migrating with the RESOLVED key makes
+    // rows visible to the live path's queries and invisible under the divergent parameter key.
+    TempDbFile tmp;
+    {
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        CreateLegacySchema(raw);
+        SeedLegacyTicket(raw, "ABC-1", "divergence row");
+    }
+
+    // The divergence: Initialize param "Jira" vs cfg.TrackerType "github".
+    const std::string paramKey = ConfigManager::NormalizeViewsBackendKey("Jira");      // pre-fix stamp
+    const std::string resolvedKey = ConfigManager::NormalizeViewsBackendKey("github"); // live path's key
+    REQUIRE(paramKey != resolvedKey);
+
+    LocalCacheManager mgr(tmp.Path());
+    // Post-fix InitBackends passes the resolved key (focusedContext().CacheBackendKeyCopy()).
+    CHECK(mgr.RunOneTimeTicketsV2CopyMigration(resolvedKey) == 1);
+
+    // Migrated rows are exactly where the live path looks — and NOT under the parameter key.
+    CachedTicket got;
+    REQUIRE(mgr.TryGetTicket(resolvedKey, "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "divergence row");
+    CHECK_FALSE(mgr.TryGetTicket(paramKey, "ABC-1", got));
+    CHECK(mgr.GetAllTicketIds(paramKey).empty());
+}
+
+TEST_CASE("tickets_v2 migration: partial re-run still copies field/rich rows when ticket rows already exist "
+          "(CR-948-5 per-table counts)") {
+    // Simulate a crash between the tickets copy and the flag-set on a previous run: the ticket
+    // row already exists in v2 (INSERT OR IGNORE copies 0 tickets) but its field/rich rows do
+    // not. The migration must still copy them (return value stays "ticket rows copied" = 0).
+    TempDbFile tmp;
+    {
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        CreateLegacySchema(raw);
+        SeedLegacyTicket(raw, "ABC-1", "partial rerun", "{\"version\":1,\"type\":\"doc\"}");
+    }
+    LocalCacheManager mgr(tmp.Path()); // ctor creates the v2 tables
+    {
+        SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE);
+        raw.exec("INSERT INTO tickets_v2 (backend_key, id) VALUES ('Jira', 'ABC-1')");
+    }
+    CHECK(mgr.RunOneTimeTicketsV2CopyMigration("Jira") == 0); // 0 TICKET rows copied this pass
+    CachedTicket got;
+    REQUIRE(mgr.TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "partial rerun"); // field row copied despite ticket pre-existing
+    CHECK(got.fieldRichValues["description"] == "{\"version\":1,\"type\":\"doc\"}");
 }
 
 TEST_CASE("tickets_v2 namespacing: same numeric id under two backend keys stays disjoint "

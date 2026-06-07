@@ -842,6 +842,15 @@ class AppController
     };
     DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
 
+    struct DeadFieldEditRestoreSummary {
+        int Restored = 0;
+        int Failed = 0;
+    };
+    /** Move selected dead-letter field-edit rows back to the active queue (attempts reset to
+     * 0), each keeping its ORIGINAL `backend_key` — the field-edit twin of
+     * `RestoreDeadPendingCreates`. */
+    DeadFieldEditRestoreSummary RestoreDeadPendingFieldEdits(const std::vector<std::int64_t>& originalIds);
+
     /**
      * Background-fetch issues by key (Jira search) and merge into the local cache.
      * Used so bulk-import update rows can show field diffs when keys are outside the current JQL.

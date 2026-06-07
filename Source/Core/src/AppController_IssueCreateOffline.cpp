@@ -247,6 +247,12 @@ AppController::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& dead
                          : AppController::DeadFieldEditDeleteSummary{};
 }
 
+AppController::DeadFieldEditRestoreSummary
+AppController::RestoreDeadPendingFieldEdits(const std::vector<std::int64_t>& originalIds) {
+    return offlineQueue_ ? offlineQueue_->RestoreDeadPendingFieldEdits(originalIds)
+                         : AppController::DeadFieldEditRestoreSummary{};
+}
+
 // TickOfflineCreates / TickOfflineFieldEdits: moved to OfflineQueueService in Phase 1C of the
 // item 12 extraction. The replay-timer state members + their mutex live in the service too.
 

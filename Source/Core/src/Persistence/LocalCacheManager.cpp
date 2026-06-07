@@ -1,4 +1,6 @@
 #include "LocalCacheManager.h"
+
+#include "IssueDraft.h"
 #include "Logger.h"
 
 #include <chrono>
@@ -500,30 +502,34 @@ size_t LocalCacheManager::RunOneTimeTicketsV2CopyMigration(const std::string& ba
         }
         // INSERT OR IGNORE keeps the copy idempotent against a partially-written v2 state
         // (e.g. a crash between copy and flag-set on a previous run).
+        // Per-table change counts (CR-948-5): `SQLite::Statement::exec()` returns the rows the
+        // statement itself modified, so a partial re-run (e.g. ticket rows already copied by a
+        // crashed earlier pass, field/rich rows not) still logs what THIS pass copied per table
+        // instead of a misleading 0 from a single trailing `getChanges()`.
         SQLite::Statement copyTickets(db, "INSERT OR IGNORE INTO tickets_v2 (backend_key, id) "
                                           "SELECT ?, id FROM tickets");
         copyTickets.bind(1, backendKey);
-        copyTickets.exec();
-        const int copied = db.getChanges();
+        const int copiedTickets = copyTickets.exec();
         SQLite::Statement copyFields(db, "INSERT OR IGNORE INTO ticket_field_values_v2 "
                                          "(backend_key, ticket_id, field_key, field_value) "
                                          "SELECT ?, ticket_id, field_key, field_value FROM ticket_field_values");
         copyFields.bind(1, backendKey);
-        copyFields.exec();
+        const int copiedFields = copyFields.exec();
         SQLite::Statement copyRich(db, "INSERT OR IGNORE INTO ticket_field_rich_values_v2 "
                                        "(backend_key, ticket_id, field_key, field_value) "
                                        "SELECT ?, ticket_id, field_key, field_value FROM ticket_field_rich_values");
         copyRich.bind(1, backendKey);
-        copyRich.exec();
+        const int copiedRich = copyRich.exec();
         SQLite::Statement ins(db, "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, '1')");
         ins.bind(1, kKey);
         ins.exec();
         transaction.commit();
-        if (copied > 0) {
-            LOG_INFO("LocalCacheManager::RunOneTimeTicketsV2CopyMigration copied rows=%d backend_key=%s", copied,
-                     backendKey.c_str());
+        if (copiedTickets > 0 || copiedFields > 0 || copiedRich > 0) {
+            LOG_INFO("LocalCacheManager::RunOneTimeTicketsV2CopyMigration copied tickets=%d field_rows=%d "
+                     "rich_rows=%d backend_key=%s",
+                     copiedTickets, copiedFields, copiedRich, backendKey.c_str());
         }
-        return copied > 0 ? static_cast<size_t>(copied) : 0u;
+        return copiedTickets > 0 ? static_cast<size_t>(copiedTickets) : 0u;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::RunOneTimeTicketsV2CopyMigration failed backend_key=%s err=%s",
                   backendKey.c_str(), ex.what());
@@ -806,7 +812,19 @@ bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPend
             return false;
         }
         const std::int64_t deadId = sel.getColumn(0).getInt64();
-        const std::string payload = sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
+        const std::string archivedPayload =
+            sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
+        // Fresh-create scrub applied to the archived payload INSIDE this transaction (the
+        // service used to pre-load + scrub outside it — an exception there could skip the
+        // scrub and restore a stale ExistingIssueKey verbatim). Unparseable payloads restore
+        // verbatim; the replay tick's parse path terminally dead-letters real garbage.
+        std::string parseErr;
+        const std::string payload = IssueDraftHelpers::ScrubFreshCreatePayload(archivedPayload, parseErr);
+        if (!parseErr.empty()) {
+            LOG_WARN("LocalCacheManager::RestoreDeadPendingCreate original_id=%lld payload parse failed (%s) — "
+                     "restoring verbatim",
+                     static_cast<long long>(originalPendingId), parseErr.c_str());
+        }
         // Restore re-queues under the SAME backend the row was originally queued against
         // (multi-grid Slice 1c) — never the currently-focused context's key.
         const std::string backendKey =
@@ -1076,6 +1094,66 @@ std::vector<DeadPendingFieldEdit> LocalCacheManager::LoadDeadPendingFieldEdits()
         return results;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::LoadDeadPendingFieldEdits failed err=%s", ex.what());
+        throw;
+    }
+}
+
+bool LocalCacheManager::RestoreDeadPendingFieldEdit(const std::int64_t originalPendingId) {
+    try {
+        SQLite::Transaction transaction(db);
+        SQLite::Statement sel(db, "SELECT dead_id, issue_key, field_id, fields_payload_json, original_rich_value, "
+                                  "original_value, COALESCE(has_original_value, 0), COALESCE(backend_key, '') "
+                                  "FROM pending_field_edits_dead WHERE original_id = ? "
+                                  "ORDER BY dead_id DESC LIMIT 1");
+        sel.bind(1, originalPendingId);
+        if (!sel.executeStep()) {
+            transaction.commit();
+            return false;
+        }
+        const std::int64_t deadId = sel.getColumn(0).getInt64();
+        const std::string issueKey =
+            sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
+        const std::string fieldId = sel.getColumn(2).isNull() ? std::string() : std::string(sel.getColumn(2).getText());
+        const std::string payload = sel.getColumn(3).isNull() ? std::string() : std::string(sel.getColumn(3).getText());
+        const bool richIsNull = sel.getColumn(4).isNull();
+        const std::string originalRichValue = richIsNull ? std::string() : std::string(sel.getColumn(4).getText());
+        const bool valueIsNull = sel.getColumn(5).isNull();
+        const std::string originalValue = valueIsNull ? std::string() : std::string(sel.getColumn(5).getText());
+        const bool hasOriginalValue = sel.getColumn(6).getInt() != 0;
+        // Restore re-queues under the SAME backend the row was originally queued against
+        // (multi-grid Slice 1c) — never the currently-focused context's key.
+        const std::string backendKey =
+            sel.getColumn(7).isNull() ? std::string() : std::string(sel.getColumn(7).getText());
+        const auto now = std::chrono::system_clock::now();
+        const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+        SQLite::Statement ins(db, "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
+                                  "original_rich_value, original_value, has_original_value, backend_key, attempts, "
+                                  "last_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', ?)");
+        ins.bind(1, issueKey);
+        ins.bind(2, fieldId);
+        ins.bind(3, payload);
+        if (richIsNull)
+            ins.bind(4); // NULL
+        else
+            ins.bind(4, originalRichValue);
+        if (valueIsNull)
+            ins.bind(5); // NULL
+        else
+            ins.bind(5, originalValue);
+        ins.bind(6, hasOriginalValue ? 1 : 0);
+        ins.bind(7, backendKey);
+        ins.bind(8, epoch);
+        ins.exec();
+        SQLite::Statement delDead(db, "DELETE FROM pending_field_edits_dead WHERE dead_id = ?");
+        delDead.bind(1, deadId);
+        delDead.exec();
+        transaction.commit();
+        LOG_INFO("LocalCacheManager::RestoreDeadPendingFieldEdit original_id=%lld dead_id=%lld",
+                 static_cast<long long>(originalPendingId), static_cast<long long>(deadId));
+        return true;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("LocalCacheManager::RestoreDeadPendingFieldEdit failed original_id=%lld err=%s",
+                  static_cast<long long>(originalPendingId), ex.what());
         throw;
     }
 }

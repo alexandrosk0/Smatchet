@@ -11,6 +11,7 @@
 
 - 2026-06-07 · orchestrator · [tooling] · P2 — `scenario.run` rows emit no `p99Ms` → the Pillar-1 `p99_abs_ceiling_ms` policy check is structurally inert
   Resolution: **applied by PR #949** (merged 2026-06-07) — per-scope 256-sample ring (`PerfSampleRing.h`) in `UiPerfMonitor`; `p99Ms` computed at snapshot time (cold path, `nth_element`) and emitted by `perf.snapshot`/`perf.dump` + all 14 scenario serializers (per-frame samplers stay on the cheap path per CR #949 #1). Live probe: 33/33 idle rows carry p99; `perf-compare.py` one-sided compare proven exit 0. Committed baselines gain p99 on their next bump.
+  Amendment (2026-06-07, CR sweep CR-949-1/-2): #949 alone did NOT meet the entry's "verify the ceiling can fire" criterion — `evaluate()`'s `min_baseline_calls` filter excluded the calls=1 umbrella scope (`SmatchetUI::Draw`), the only row whose per-call p99 ≈ the frame p99 the 16.67 ms floor targets, so the ceiling remained inert. Completed by the CR-sweep perf PR: absolute ceilings (p99/mean-abs/max) now bypass the call-count filter (it guards only the relative-%% gate); forced-spike proof = exit 1 on `SmatchetUI::Draw p99Ms 20.0`.
   Status: applied
   Last-reviewed: 2026-06-07
 

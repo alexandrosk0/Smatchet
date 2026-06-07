@@ -17,7 +17,10 @@ class PerfSampleRing {
     /// Ring capacity: 256 recent samples = 2 KB of doubles per scope. Large
     /// enough for a stable p99 (the rank-254 order statistic of a full ring)
     /// yet small enough that ~40 live scopes cost ~80 KB total.
-    static const std::size_t kCapacity = 256;
+    /// Enum (not `static const std::size_t`) so doctest CHECK macros — which
+    /// bind operands by const reference — never ODR-use a member that has no
+    /// out-of-line definition (IFNDR in C++14; CR-949-3).
+    enum : std::size_t { kCapacity = 256 };
 
     /// Record one per-call duration. Overwrites the oldest sample once full.
     void Push(double ms) {

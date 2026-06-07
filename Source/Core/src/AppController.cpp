@@ -1212,30 +1212,15 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     Cache = std::make_unique<LocalCacheManager>(dbPath);
 
     // Multi-grid Slice 1b (ADR-0018 decision 4): seed the default context's cache namespace
-    // from the configured tracker and run the one-time legacy→v2 ticket copy BEFORE any read
-    // path (RefreshLocalData / sync) touches the cache. Legacy rows were necessarily cached
-    // against the then-only configured backend, so they are stamped with its normalized key.
-    // InitBackends re-stamps the key after env-hook resolution (fixture factories use fresh
-    // DBs, so the migration stamp staying on the configured type is correct for user data).
-    const std::string cacheBackendKey = ConfigManager::NormalizeViewsBackendKey(backendType);
-    focusedContext().SetCacheBackendKey(cacheBackendKey);
-    try {
-        (void)Cache->RunOneTimeTicketsV2CopyMigration(cacheBackendKey);
-    } catch (const std::exception& ex) {
-        // Pillar 3 graceful degradation — a failed copy leaves the flag unset (transactional),
-        // so the next launch retries; the session continues with whatever v2 already holds.
-        LOG_ERROR("AppController::InitConfig tickets_v2 copy migration failed: %s", ex.what());
-    }
-    // Multi-grid Slice 1c (ADR-0018 decision 4): backfill the pending-queue backend_key columns
-    // once — legacy queue rows were necessarily queued against the then-only configured backend.
-    // Runs BEFORE any replay tick so replay matching never sees an un-stamped legacy row.
-    try {
-        (void)Cache->RunOneTimePendingQueueBackendKeyStamp(cacheBackendKey);
-    } catch (const std::exception& ex) {
-        // Same graceful-degradation contract as the copy migration above: the transactional
-        // stamp leaves the flag unset on failure, so the next launch retries.
-        LOG_ERROR("AppController::InitConfig pending-queue backend_key stamp failed: %s", ex.what());
-    }
+    // from the Initialize parameter so nothing observes an empty key during this phase.
+    // The one-time legacy→v2 ticket copy + pending-queue key stamp run in InitBackends AFTER
+    // the authoritative key is resolved from cfg.TrackerType + env hooks (CR-948-1: the
+    // Initialize parameter can diverge from the live key — embedded host / standalone CLI —
+    // and stamping legacy rows with the parameter's key would orphan them from every read
+    // the live path performs). Nothing reads the ticket tables before InitBackends (first
+    // ticket read is RefreshLocalData in InitFieldCatalog) and no replay tick runs yet, so
+    // deferring the migrations to the resolved key is safe.
+    focusedContext().SetCacheBackendKey(ConfigManager::NormalizeViewsBackendKey(backendType));
 
 #if defined(SMATCHET_WITH_AI)
     // Phase 3 of ai-chat-claude-desktop-parity. Start the single coalescing
@@ -1357,6 +1342,32 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     // Re-stamp the cache namespace with the RESOLVED tracker — an env fixture hook above may
     // have overridden the configured type (multi-grid Slice 1b).
     ctx.SetCacheBackendKey(ConfigManager::NormalizeViewsBackendKey(activeTracker));
+    // One-time legacy migrations run HERE, against the authoritative resolved key (CR-948-1):
+    // this is the same key every live read/write path queries (mirrors what
+    // RecreateLocalCacheDatabase already does). Must stay BEFORE RunLegacyStartupSweeps (which
+    // archives pending rows — archived rows must carry stamped keys) and BEFORE the first
+    // ticket read (RefreshLocalData in InitFieldCatalog) / any replay tick.
+    if (Cache) {
+        const std::string resolvedCacheKey = ctx.CacheBackendKeyCopy();
+        try {
+            // Legacy rows were necessarily cached against the then-only configured backend.
+            (void)Cache->RunOneTimeTicketsV2CopyMigration(resolvedCacheKey);
+        } catch (const std::exception& ex) {
+            // Pillar 3 graceful degradation — a failed copy leaves the flag unset
+            // (transactional), so the next launch retries; the session continues with
+            // whatever v2 already holds.
+            LOG_ERROR("AppController::InitBackends tickets_v2 copy migration failed: %s", ex.what());
+        }
+        // Multi-grid Slice 1c: backfill the pending-queue backend_key columns once — legacy
+        // queue rows were necessarily queued against the then-only configured backend.
+        try {
+            (void)Cache->RunOneTimePendingQueueBackendKeyStamp(resolvedCacheKey);
+        } catch (const std::exception& ex) {
+            // Same graceful-degradation contract as the copy migration above: the
+            // transactional stamp leaves the flag unset on failure, so the next launch retries.
+            LOG_ERROR("AppController::InitBackends pending-queue backend_key stamp failed: %s", ex.what());
+        }
+    }
     std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
     if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());

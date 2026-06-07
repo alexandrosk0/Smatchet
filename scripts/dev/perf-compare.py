@@ -215,27 +215,18 @@ def evaluate(
             }
         )
 
-        # Regression checks only fire for rows that exist in BOTH and meet min
-        # call-count — single-call rows are too noisy to gate on.
-        if b is None or f is None or b_calls < min_calls:
+        # Regression checks only fire for rows that exist in BOTH snapshots
+        # (fresh-only rows skip gating to keep scope-bootstrap PRs quiet).
+        if b is None or f is None:
             continue
 
-        if b_total is not None and f_total is not None:
-            d = pct_delta(b_total, f_total)
-            # Relative gate + absolute noise floor: a +12 % swing on a
-            # microsecond-scale scope is sampling noise, not a regression
-            # (first armed-run calibration, perf-gate-revival step 5).
-            if (
-                d is not None
-                and d > mean_pct
-                and (f_total - b_total) > min_abs_delta
-            ):
-                regressions.append(
-                    f"{name}: lastTotalMs regressed {d:+.1f}% "
-                    f"(baseline {b_total:.3f} → fresh {f_total:.3f}, policy {mean_pct:+.1f}% "
-                    f"and Δ > {min_abs_delta:.3f} ms)"
-                )
-
+        # ABSOLUTE ceilings fire regardless of baseline call count — the
+        # min_baseline_calls filter below exists for the noisy RELATIVE delta
+        # comparison, never for hard Pillar-1 budgets. The once-per-frame
+        # umbrella scope (SmatchetUI::Draw, calls=1) is exactly the row whose
+        # per-call p99 ≈ frame p99 that the 16.67 ms floor targets; filtering
+        # it out made the p99/max ceilings structurally unable to fire
+        # (code-review sweep CR-949-1, 2026-06-07).
         if f_p99 is not None and f_p99 > p99_cap:
             regressions.append(
                 f"{name}: p99Ms {f_p99:.3f} exceeds Pillar 1 ceiling {p99_cap:.3f}"
@@ -253,6 +244,27 @@ def evaluate(
             regressions.append(
                 f"{name}: maxMs {f_max:.3f} exceeds policy ceiling {max_cap:.3f}"
             )
+
+        # RELATIVE gate keeps the call-count floor — single-call rows are too
+        # noisy for a percentage comparison.
+        if b_calls < min_calls:
+            continue
+
+        if b_total is not None and f_total is not None:
+            d = pct_delta(b_total, f_total)
+            # Relative gate + absolute noise floor: a +12 % swing on a
+            # microsecond-scale scope is sampling noise, not a regression
+            # (first armed-run calibration, perf-gate-revival step 5).
+            if (
+                d is not None
+                and d > mean_pct
+                and (f_total - b_total) > min_abs_delta
+            ):
+                regressions.append(
+                    f"{name}: lastTotalMs regressed {d:+.1f}% "
+                    f"(baseline {b_total:.3f} → fresh {f_total:.3f}, policy {mean_pct:+.1f}% "
+                    f"and Δ > {min_abs_delta:.3f} ms)"
+                )
 
     return rows, regressions
 

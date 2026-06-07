@@ -12,8 +12,10 @@
 # caught locally, not three minutes later in CI.
 #
 # Steps, over the first-party C++ files changed vs the base ref:
+#   0. git add --intent-to-add untracked files   (so diff/grep gates see them)
 #   1. clang-format -i   (apply formatting in place)
 #   2. test-lint-rules.sh --diff <base>   (comment-noise + function-size + strict-zone)
+#   3. md_lint / test-list consistency / test-docs.sh (doc-validation CI mirror)
 #
 # It deliberately does NOT build or run tests — that is the caller's job and is
 # already covered once-per-slice. This is purely the lint half that CI gates on
@@ -61,6 +63,18 @@ cd "$repo_root"
 if ! command -v clang-format >/dev/null 2>&1; then
     echo "pre-ship: clang-format not found on PATH" >&2
     exit 2
+fi
+
+# Untracked files are INVISIBLE to every git-diff- and git-grep-based gate below
+# (`git diff <base>` skips them; `git grep` scans tracked only). Running pre-ship
+# before the first `git add` therefore false-passed comment-noise and
+# plan-ref-integrity on brand-new files (PR #953 — two CI-only failures). Intent-
+# to-add registers them in the index (content stays unstaged) so the gates see
+# exactly what CI will see.
+mapfile -t untracked < <(git ls-files --others --exclude-standard)
+if [ "${#untracked[@]}" -gt 0 ]; then
+    echo "pre-ship: git add --intent-to-add ${#untracked[@]} untracked file(s) so gates can see them"
+    git add --intent-to-add -- "${untracked[@]}"
 fi
 
 # First-party C++ changed vs the merge-base with <base-ref> (staged, unstaged, and
@@ -119,5 +133,15 @@ if ! bash agents/scripts/core/check-test-list.sh --check; then
     exit 1
 fi
 
-echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list clean. Safe to push."
+# Doc-validation mirror — the "Doc anchors + agent contract" CI check (plan-ref
+# integrity, plan index, doc anchors, markdown links, …). Cheap (~10 s) and the
+# only local stage that catches a docs/plans git-mv leaving stale refs in source
+# comments (PR #953). Runs the same suite CI runs.
+echo "pre-ship: running doc-validation suite (test-docs.sh)"
+if ! bash scripts/dev/test-docs.sh; then
+    echo "pre-ship: FAIL — fix the doc-validation findings above before pushing." >&2
+    exit 1
+fi
+
+echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite clean. Safe to push."
 exit 0

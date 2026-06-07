@@ -94,8 +94,19 @@ class LocalCacheManager {
      */
     size_t RunOneTimeLegacyDropPendingAtMaxAttempts();
 
-    /** Restore latest dead-letter row for this original pending id back to active queue (attempts=0). */
+    /** Restore latest dead-letter row for this original pending id back to active queue
+     * (attempts=0), preserving the row's original `backend_key` — never a focused context's
+     * key. The fresh-create scrub (`IssueDraftHelpers::ScrubFreshCreatePayload`: clear
+     * `ExistingIssueKey` + erase issuekey/key field values) is applied to the archived
+     * payload INSIDE the single restore transaction, so a restored row can never replay as
+     * an update of a stale key; an unparseable payload restores verbatim (the replay tick
+     * terminally dead-letters real garbage). */
     bool RestoreDeadPendingCreate(std::int64_t originalPendingId);
+
+    /** Restore latest dead-letter field-edit row for this original pending id back to the
+     * active queue (attempts=0), preserving `backend_key` and both merge bases. Mirrors
+     * `RestoreDeadPendingCreate`. */
+    bool RestoreDeadPendingFieldEdit(std::int64_t originalPendingId);
 
     /** Permanently remove a dead-letter row (user discard). */
     void DeleteDeadPendingCreate(std::int64_t deadId);

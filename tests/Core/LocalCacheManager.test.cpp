@@ -4,12 +4,15 @@
 
 #include "../support/SqliteMemFixture.h"
 
+#include "IssueDraft.h"
 #include "LocalCacheManager.h"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
+#include <type_traits>
 
 using smatchet_tests::SqliteMemFixture;
 
@@ -244,9 +247,10 @@ TEST_CASE("LocalCacheManager: ArchivePendingCreate keeps last_error when termina
     CHECK(dead[0].LastError == "earlier tracker err");
 }
 
-TEST_CASE("LocalCacheManager: RestoreDeadPendingCreate moves back to active with attempts=0") {
+TEST_CASE("LocalCacheManager: RestoreDeadPendingCreate moves back to active with attempts=0; "
+          "unparseable payload restores VERBATIM (replay tick terminally dead-letters real garbage)") {
     SqliteMemFixture fix;
-    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "{\"k\":1}");
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Jira", "not-a-draft {{{");
     fix.Ref().UpdatePendingCreate(id, 5, "err");
     fix.Ref().ArchivePendingCreate(id, "max_attempts", "");
 
@@ -254,9 +258,49 @@ TEST_CASE("LocalCacheManager: RestoreDeadPendingCreate moves back to active with
 
     auto active = fix.Ref().LoadPendingCreates();
     REQUIRE(active.size() == 1);
-    CHECK(active[0].Payload == "{\"k\":1}");
+    CHECK(active[0].Payload == "not-a-draft {{{"); // verbatim — never dropped, never half-scrubbed
     CHECK(active[0].Attempts == 0);
     CHECK(active[0].LastError.empty());
+    CHECK(fix.Ref().GetDeadPendingCreateCount() == 0);
+}
+
+// CR-959: the fresh-create scrub lives INSIDE the cache restore transaction. The old design
+// (service pre-loads the dead table, scrubs, hands a `payloadOverride` pointer down) had an
+// exception path — pre-load throws → override nullptr → VERBATIM restore keeping a stale
+// `ExistingIssueKey`. That path is now structurally impossible: pin the API shape (no override
+// parameter exists to skip).
+static_assert(std::is_same<decltype(&LocalCacheManager::RestoreDeadPendingCreate),
+                           bool (LocalCacheManager::*)(std::int64_t)>::value,
+              "RestoreDeadPendingCreate must take only the original pending id — a payload-override "
+              "parameter would reopen the skipped-scrub exception path (CR-959)");
+
+TEST_CASE("LocalCacheManager: RestoreDeadPendingCreate applies the fresh-create scrub inside its own "
+          "transaction (ExistingIssueKey cleared, issuekey/key field values erased)") {
+    SqliteMemFixture fix;
+    IssueDraft draft;
+    draft.ProjectKey = "PLANE";
+    draft.ExistingIssueKey = "PLANE-9";
+    draft.FieldValues["issuekey"] = "PLANE-9";
+    draft.FieldValues["key"] = "PLANE-9";
+    draft.FieldValues["summary"] = "stale-key restore";
+    const std::int64_t id = fix.Ref().EnqueuePendingCreate("Plane", IssueDraftHelpers::ToJson(draft));
+    fix.Ref().ArchivePendingCreate(id, "max_attempts", "terminal");
+
+    // Direct cache-layer restore — no service pre-load involved at all; the scrub must
+    // still land because it is part of the restore transaction itself.
+    REQUIRE(fix.Ref().RestoreDeadPendingCreate(id));
+
+    auto active = fix.Ref().LoadPendingCreates();
+    REQUIRE(active.size() == 1);
+    CHECK(active[0].Attempts == 0);
+    CHECK(active[0].BackendKey == "Plane");
+    IssueDraft restored;
+    std::string parseErr;
+    REQUIRE(IssueDraftHelpers::FromJson(active[0].Payload, restored, parseErr));
+    CHECK(restored.ExistingIssueKey.empty());
+    CHECK(restored.FieldValues.count("issuekey") == 0);
+    CHECK(restored.FieldValues.count("key") == 0);
+    CHECK(restored.FieldValues.at("summary") == "stale-key restore");
     CHECK(fix.Ref().GetDeadPendingCreateCount() == 0);
 }
 
