@@ -159,6 +159,21 @@ inline std::vector<std::string> ToSortedVector(const std::unordered_set<std::str
     return result;
 }
 
+/// Consume-once apply of a deferred view-create latch onto the views store
+/// (UiDrawSession::viewsPendingCreate — see the latch docs there; Pillar 3 crash
+/// fix). Creates + activates the payload view and resets the latch. Returns the
+/// new active view, or null when the latch was not set. Pure with respect to
+/// ImGui / session state — bucket-A testable (tests/Core/ViewsPendingCreate.test.cpp).
+inline const ViewDefinition* ApplyPendingViewCreateCore(Views& viewState, bool& requested, ViewDefinition& payload) {
+    if (!requested) {
+        return nullptr;
+    }
+    requested = false;
+    viewState.Create(payload);
+    payload = ViewDefinition();
+    return viewState.GetActiveView();
+}
+
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory);
 
 /// Snapshot the active view's full ViewDefinition into UiDrawSession on the

@@ -585,7 +585,9 @@ std::string BuildBulkExportText(AppController& app, UiDrawSession& d) {
     if (snap) {
         // Match grid copy behavior: union rectangle rows and key-column row picks.
         // Export used to only read RectSel.Rows, so shift-drag / rect-only selection exported all tickets.
-        const auto& sel = d.gridState.RectSel;
+        // Export targets the FOCUSED pane's selection (ADR-0018 focused-pane semantics).
+        const GridPane& pane = d.focusedPane();
+        const auto& sel = pane.gridState.RectSel;
         std::set<int> allRows;
         if (sel.Active) {
             for (int r = sel.MinRow(); r <= sel.MaxRow(); ++r) {
@@ -600,15 +602,15 @@ std::string BuildBulkExportText(AppController& app, UiDrawSession& d) {
             }
         }
         if (!allRows.empty()) {
-            const bool useSorted = !d.filteredIndices.empty();
+            const bool useSorted = !pane.filteredIndices.empty();
             for (int row : allRows) {
                 const size_t logicalRow = static_cast<size_t>(row);
                 size_t ticketIndex = logicalRow;
                 if (useSorted) {
-                    if (logicalRow >= d.filteredIndices.size()) {
+                    if (logicalRow >= pane.filteredIndices.size()) {
                         continue;
                     }
-                    ticketIndex = d.filteredIndices[logicalRow];
+                    ticketIndex = pane.filteredIndices[logicalRow];
                 }
                 if (ticketIndex < snap->size()) {
                     tickets.push_back((*snap)[ticketIndex]);

@@ -167,16 +167,17 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
                     d.viewsTitleEditing = true;
                 }
                 if (ImGui::MenuItem("Duplicate")) {
+                    // DEFERRED create (Pillar 3 crash fix): creating here would reallocate
+                    // store.Views WHILE this loop iterates it (and dangle ctx.activeView for
+                    // the rest of the frame). Copy the payload now; apply next frame.
                     ViewDefinition dup = view;
                     dup.Id.clear();
                     dup.Name = view.Name + " (copy)";
-                    ViewState.Create(dup);
-                    const ViewDefinition* nowActive = ViewState.GetActiveView();
-                    if (nowActive) {
-                        LoadBuffersFromView(d, *nowActive);
-                        SmatchetToastManager::Instance().Push("View duplicated", nowActive->Name, ToastType::Success,
-                                                              1500);
-                    }
+                    d.viewsPendingCreate = true;
+                    d.viewsPendingCreatePayload = std::move(dup);
+                    d.viewsPendingCreateToastTitle = "View duplicated";
+                    d.viewsPendingCreateToastMs = 1500;
+                    d.viewsPendingCreateAdoptCfg = false;
                 }
                 ImGui::Separator();
                 const bool canDelete = store.Views.size() > 1;
@@ -700,7 +701,8 @@ void SmatchetUI::drawViewsAddSortKeyPopup(ViewsDashboardDrawCtx& ctx, ViewDefini
 }
 
 void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
-    AppController& app = ctx.app;
+    // ctx.app no longer needed here: the delete-confirm handler latches instead of
+    // mutating (applyPendingViewDelete owns the post-delete SyncWithCurrentView).
     UiDrawSession& d = ctx.d;
     const ViewDefinition* activeView = ctx.activeView;
 
@@ -748,17 +750,13 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.25f, 0.25f, 1.0f));
         if (ImGui::Button("Delete")) {
-            const std::string deletedName = activeView->Name;
-            if (ViewState.DeleteActive()) {
-                const ViewDefinition* nowActive = ViewState.GetActiveView();
-                if (nowActive) {
-                    LoadBuffersFromView(d, *nowActive);
-                    d.cfg.JqlQuery = nowActive->Jql;
-                    d.cfg.SelectedFields = nowActive->Fields;
-                    SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-                }
-                SmatchetToastManager::Instance().Push("View deleted", deletedName, ToastType::Info, 1800);
-            }
+            // Defer the erase to top-of-next-frame: Views::DeleteActive erases from
+            // store.Views — same pointer-invalidation class as the create latch, and
+            // ctx.activeView IS the erased element (pre-latch it was safe only
+            // because this modal happened to be the frame's last view-pointer
+            // reader — delta-review HIGH). Copy the name now, mutate next frame.
+            d.viewsPendingDeleteActive = true;
+            d.viewsPendingDeleteToastName = activeView->Name;
             ImGui::CloseCurrentPopup();
         }
         ImGui::PopStyleColor(3);
@@ -951,17 +949,75 @@ void SmatchetUI::viewsRequestActivate(AppController& app, UiDrawSession& d, cons
 }
 
 // Create a new view from the current editing buffers. Former createNewView closure body.
+// DEFERRED (Pillar 3 crash fix): a mid-frame ViewState.Create reallocates store.Views and
+// dangles every ViewDefinition* resolved this frame (this window's ctx.activeView, the
+// captured action lambdas, each pane's activeViewForGrid). The payload is copied while
+// *activeView is still valid; applyPendingViewCreate consumes the latch next frame.
 void SmatchetUI::viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView) {
     ReconcileEditingColumnOrder(d);
     ViewDefinition created = BuildUpdatedView(*activeView, d);
     created.Name = "New View";
     created.Id.clear();
-    ViewState.Create(created);
+    d.viewsPendingCreate = true;
+    d.viewsPendingCreatePayload = std::move(created);
+    d.viewsPendingCreateToastTitle = "View created";
+    d.viewsPendingCreateToastMs = 1800;
+    d.viewsPendingCreateAdoptCfg = false;
+}
+
+// Consume the one-frame deferred view-create latch (see UiDrawSession::viewsPendingCreate).
+// Runs at the top of SmatchetUI::Draw, BEFORE any ViewDefinition* is resolved for the
+// frame, so the store mutation can never invalidate a live pointer.
+void SmatchetUI::applyPendingViewCreate(UiDrawSession& d) {
+    if (!d.viewsPendingCreate) {
+        return;
+    }
+    // Consume-once means ALL latch state — capture + reset the auxiliary fields
+    // up front so no early return can leak them into a later latch cycle
+    // (review M: the reset was previously split across the success path only).
+    const bool adoptCfg = d.viewsPendingCreateAdoptCfg;
+    const std::string toastTitle = d.viewsPendingCreateToastTitle;
+    const int toastMs = d.viewsPendingCreateToastMs;
+    d.viewsPendingCreateAdoptCfg = false;
+    d.viewsPendingCreateToastTitle.clear();
+    d.viewsPendingCreateToastMs = 1800;
+    const ViewDefinition* nowActive = SmatchetViewsDashboardUiDetail::ApplyPendingViewCreateCore(
+        ViewState, d.viewsPendingCreate, d.viewsPendingCreatePayload);
+    if (!nowActive) {
+        return;
+    }
+    LoadBuffersFromView(d, *nowActive);
+    if (adoptCfg) {
+        d.cfg.JqlQuery = nowActive->Jql;
+        d.cfg.SelectedFields = nowActive->Fields;
+        ConfigManager::Save(d.cfg);
+    }
+    SmatchetToastManager::Instance().Push(toastTitle, nowActive->Name, ToastType::Success, toastMs);
+}
+
+// Consume the one-frame deferred view-DELETE latch (see
+// UiDrawSession::viewsPendingDeleteActive). Runs immediately after the create
+// latch at the top of SmatchetUI::Draw — same rationale: Views::DeleteActive
+// erases from store.Views, so it must never run while frame-resolved
+// ViewDefinition* are live.
+void SmatchetUI::applyPendingViewDelete(AppController& app, UiDrawSession& d) {
+    if (!d.viewsPendingDeleteActive) {
+        return;
+    }
+    d.viewsPendingDeleteActive = false;
+    const std::string deletedName = d.viewsPendingDeleteToastName;
+    d.viewsPendingDeleteToastName.clear();
+    if (!ViewState.DeleteActive()) {
+        return;
+    }
     const ViewDefinition* nowActive = ViewState.GetActiveView();
     if (nowActive) {
         LoadBuffersFromView(d, *nowActive);
-        SmatchetToastManager::Instance().Push("View created", nowActive->Name, ToastType::Success, 1800);
+        d.cfg.JqlQuery = nowActive->Jql;
+        d.cfg.SelectedFields = nowActive->Fields;
+        SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
     }
+    SmatchetToastManager::Instance().Push("View deleted", deletedName, ToastType::Info, 1800);
 }
 
 // Window-level keyboard shortcuts: Ctrl+Enter = Apply, Ctrl+N = New. Split out of

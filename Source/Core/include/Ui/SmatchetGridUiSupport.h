@@ -57,6 +57,22 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d,
                            Views& viewState,
                            const TrackerConnectivityBannerForUi& trackerBanner);
 
+/// Enqueue half of the grid field-edit pipeline — called once per visible PANE per
+/// frame; folds the pane's freshly committed edits into the session queue
+/// (latest-per-cell). No dispatch / chip decay (review MEDIUM-1 split).
+void EnqueueGridFieldEdits(UiDrawSession& d,
+                           const std::vector<PendingFieldEdit>& pendingEdits,
+                           bool readOnlyMode);
+
+/// Pump half — called ONCE per frame by the pane-window host with the FOCUSED
+/// pane's live ticket snapshot: dispatches the next queued edit to a worker and
+/// decays success chips.
+void PumpGridFieldEdits(AppController& app, UiDrawSession& d,
+                        const std::vector<CachedTicket>& tickets,
+                        bool readOnlyMode);
+
+/// Composed enqueue+pump for single-shot callers outside the pane-window loop
+/// (perf.grid_edit_pump command).
 void ProcessGridFieldEdits(AppController& app, UiDrawSession& d,
                            const std::vector<CachedTicket>& tickets,
                            const std::vector<PendingFieldEdit>& pendingEdits,

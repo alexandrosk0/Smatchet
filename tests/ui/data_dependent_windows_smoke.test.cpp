@@ -327,7 +327,7 @@ void RegisterAnnotateAnalysisWindowRenderSmoke(ImGuiTestEngine* engine) {
         // annotateAnalysisUi_.DrawWindow(app, &g_ui.showAnnotateAnalysis,
         //   g_ui.gridState.ActiveIssueId), so a non-empty string is all that is
         // needed to proceed past the early-return guard inside DrawWindow.
-        g_ui.gridState.ActiveIssueId = "SMAT-TEST-1";
+        g_ui.focusedPane().gridState.ActiveIssueId = "SMAT-TEST-1"; // per-pane since multi-grid Slice 2
         g_ui.showAnnotateAnalysis = true;
 
         // "###AnnotateAnalysisModal" is the stable id suffix — FindWindowByName
@@ -354,7 +354,7 @@ void RegisterAnnotateAnalysisWindowRenderSmoke(ImGuiTestEngine* engine) {
 
         // Restore: clear the synthetic key and close the window.
         g_ui.showAnnotateAnalysis = false;
-        g_ui.gridState.ActiveIssueId = "";
+        g_ui.focusedPane().gridState.ActiveIssueId = "";
         ctx->Yield();
     };
 }
