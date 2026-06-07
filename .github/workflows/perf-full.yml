@@ -63,7 +63,7 @@ jobs:
       # hidden-GLFW-window "headless" run still needs a working opengl32 ICD;
       # without it every --spawn child fails device-object creation and all
       # scenarios are run_failures. Keep MESA_VERSION + cache key in lockstep
-      # with build-and-test.yml. docs/plans/active/perf-gate-revival.md step 1.
+      # with build-and-test.yml. docs/plans/perf-gate-revival.md step 1.
       - name: Cache Mesa software-GL DLLs
         uses: actions/cache@v4
         with:

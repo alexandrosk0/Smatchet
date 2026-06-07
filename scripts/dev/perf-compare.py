@@ -58,7 +58,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "min_baseline_calls": 10,
     # Pillar 1 absolute mean budget (6.94 ms = 1000/144) gates on a row's
     # avgPerCallMs when set. Ships DISABLED (None) until the calibration pass
-    # of docs/plans/active/perf-gate-revival.md step 5 observes real CI runs —
+    # of docs/plans/perf-gate-revival.md step 5 observes real CI runs —
     # a blanket 6.94 would be perpetually red for legitimately-heavy scopes
     # (e.g. SmatchetUI::Draw) on CI hardware; enable via regression-policy.json
     # default + perScenario overrides once baselines exist.

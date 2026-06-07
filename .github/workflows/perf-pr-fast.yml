@@ -11,39 +11,29 @@ name: Perf PR-fast
 # First-run bootstrap: when no baseline exists yet for ci-windows-latest,
 # the workflow captures one into a workflow artefact + opens a PR adding
 # it under docs/perf/baselines/. The gate becomes active after a human
-# reviews + merges that bootstrap PR.
+# reviews + merges that bootstrap PR. (Bootstrapped 2026-06-07 — the 4
+# ci-windows-latest baselines are committed and the gate is ARMED.)
 #
 # Override: applying the `perf-out-of-band` label downgrades regression
 # failures to warnings (mirrors the existing `tests-out-of-band` pattern
 # from AGENTS.md § Merge gates).
+#
+# REQUIRED-CHECK shape (perf-gate-revival steps 7 + 6b, 2026-06-07): the
+# job is a branch-protection required context, so it must REPORT on every
+# PR (docs/agent-rules/ci-required-check-pattern.md § Invariant). The old
+# workflow-level positive `paths:` filter would wedge docs-only PRs
+# ("Expected — Waiting for status"). Pattern C is used instead of the
+# plan's original Pattern-B skip-companion because the filter's `!**/*.md`
+# negation has no expressible inverse in `paths-ignore` (GitHub supports
+# `!` only under `paths`) — a Source-markdown-only PR would have triggered
+# NEITHER workflow of a Pattern-B pair. Now: no workflow-level filter, a
+# fast `changes` detect job classifies the diff (fail-safe: defaults to
+# perf=true on any uncertainty), and a skipped required job counts as
+# success for branch protection.
 
 on:
   pull_request:
     branches: [develop]
-    # Positive path-filter: only fire when production code or the perf
-    # tooling itself changes. Excludes doc-only / agent-doc / workflow-only
-    # PRs — those have no Source/Core to measure, and self-triggering on
-    # the workflow file itself defeats the gate (the new workflow runs
-    # against a PR that introduces it, where there are no baselines yet
-    # and the spawn-on-CI environment hasn't been bootstrapped).
-    paths:
-      - 'Source/Core/**'
-      - 'Source/Plugins/**'
-      - 'Source/Standalone/**'
-      - 'Source/UnrealPlugins/**'
-      # Markdown is never compiled — exclude the per-subsystem leaf docs now
-      # living under Source/Core/src/<ctx>/*.md (and any other .md) so a
-      # docs-only change doesn't spin up a perf build. Negation must follow the
-      # Source positives (GitHub: later matching pattern wins); the perf-*.{py,sh}
-      # positives below don't match .md, so they don't re-include it.
-      - '!**/*.md'
-      - 'scripts/dev/perf-*.py'
-      - 'scripts/dev/perf-*.sh'
-      - 'scripts/dev/perf-*.json'
-      - 'docs/perf/baselines/**'
-      - 'docs/perf/regression-policy.json'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
 
 concurrency:
   group: perf-pr-fast-${{ github.ref }}
@@ -62,8 +52,53 @@ permissions:
   pull-requests: write
 
 jobs:
+  changes:
+    name: Detect perf-relevant changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      perf: ${{ steps.detect.outputs.perf }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect perf-relevant changes
+        id: detect
+        shell: bash
+        run: |
+          set -uo pipefail
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+          files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" 2>/dev/null || true)
+          echo "Changed files:"; printf '  %s\n' $files
+          # Default perf=true (fail-safe): only flip to false when we have a
+          # non-empty file list AND every entry is irrelevant to the perf gate.
+          # Mirrors the retired workflow-level filter: Source/** (minus .md),
+          # the perf tooling, baselines, policy, and the CMake roots.
+          perf=true
+          if [ -n "$files" ]; then
+            perf=false
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                *.md) ;;  # markdown is never compiled — incl. Source/**/AGENTS.md leaf docs
+                Source/*) perf=true; break ;;
+                scripts/dev/perf-*.py|scripts/dev/perf-*.sh|scripts/dev/perf-*.json) perf=true; break ;;
+                docs/perf/baselines/*|docs/perf/regression-policy.json) perf=true; break ;;
+                CMakeLists.txt|CMakePresets.json) perf=true; break ;;
+                .github/workflows/perf-pr-fast.yml) perf=true; break ;;
+                *) ;;
+              esac
+            done <<< "$files"
+          fi
+          echo "perf-relevant changes present: ${perf}"
+          echo "perf=${perf}" >> "$GITHUB_OUTPUT"
+
   perf-pr-fast:
     name: Perf PR-fast (windows-2022)
+    needs: changes
+    if: ${{ needs.changes.outputs.perf == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 30
 
@@ -115,7 +150,7 @@ jobs:
       # to reach ImGui_ImplOpenGL3_CreateDeviceObjects — without it the
       # --spawn child dies before MCP comes up and every scenario.run is a
       # run_failure. Keep MESA_VERSION + cache key in lockstep with
-      # build-and-test.yml. docs/plans/active/perf-gate-revival.md step 1.
+      # build-and-test.yml. docs/plans/perf-gate-revival.md step 1.
       - name: Cache Mesa software-GL DLLs
         uses: actions/cache@v4
         with:
