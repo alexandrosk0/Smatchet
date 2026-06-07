@@ -7,6 +7,24 @@
 
 ## Triage log
 
+- 2026-06-07 · orchestrator · [tooling] · P2 — `oob-label-implementation-lint`: nothing validates that a documented `*-out-of-band` escape label has an implementation (preventing gate from postmortems.md 2026-06-07 coverage prose-promise)
+  Details: `coverage.yml` documented the `coverage-out-of-band` escape since the gate graduated to blocking (#834) but no code read the label — discovered only when #939 first needed it (unblocked mid-flight by #941). The class: an escape hatch specified in prose at gate-graduation time, never wired, never tested.
+  Concrete next action: a self-test-style case (in `test-lint-rules.sh` or `test-docs.sh`) that extracts every `*-out-of-band` label name documented in `.github/workflows/*.yml` comments + `AGENTS.md` § Merge gates, and asserts each is matched by a non-comment implementation line (a `labels`-reading workflow step or a `merge-gates.sh` downgrade branch). Est ~45 min incl. fixtures.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · orchestrator · [tooling] · P2 — `scenario.run` rows emit no `p99Ms` → the Pillar-1 `p99_abs_ceiling_ms` policy check is structurally inert
+  Details: Confirmed live during perf-gate-revival step 3 (CI run 27080545207 + local runs): snapshot rows carry `avgPerCallMs`/`emaAvgMs`/`lastTotalMs`/`maxMs`/`calls` only. `perf-compare.py` enforces `p99_abs_ceiling_ms=16.67` against a field that never exists, so the 60 Hz-floor half of Pillar 1 is unenforced (the `maxMs` ceiling is the only outlier guard). Also noted for step-5 calibration: top scopes are `calls=1` per snapshot, filtered by `min_baseline_calls=10`.
+  Concrete next action: extend the perf-monitor snapshot emitter (C++, `Source/Core` perf scope accumulator) to track a per-scope p99 (ring buffer or P² estimator) and emit `p99Ms`; then verify a CI run shows the field and the ceiling can fire (route via `perf-detective`/`grid-engine` owner of the perf monitor). Est ~2-3 h.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · orchestrator · [tooling] · P3 — `test-shell-lint.sh` SIGPIPE flake: CI job died exit 141 with zero findings (PR #938), green on plain rerun
+  Details: The shell-lint job failed with exit 141 (= 128+SIGPIPE) printing no rule output — almost certainly a `head`/`grep -m`-style early-exit closing a pipe the script writes to under `set -o pipefail`. Cost a full gate round-trip on #938.
+  Concrete next action: audit `agents/scripts/core/test-shell-lint.sh` for pipelines into `head`/early-exit consumers; guard with `|| [ $? -eq 141 ]`, restructure to `awk 'NR<=N'`, or drop pipefail around the known-benign pipes. Est ~30 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-06 · test-author · [tooling] · P3 — bucket-E inline-panel smoke recipe missing for New Issue Draft row and Offline Queue panel (plan #12 batch 2)
   Details: Two of the 8 data-dependent windows targeted by plan #12 (`SmatchetNewIssueDraftUi` inline row and Offline Queue panel) are not top-level `ImGui::Begin` windows — embedded inside `drawActiveProjectWindow` / `drawSecondaryWindowsTail`. The current bucket-E smoke pattern (`YieldUntil(WindowIsLive(...))`) cannot drive them without: (a) activating the fixture backend so tickets load, (b) setting `g_ui.newIssueDraftActive = true` + seeding `newIssueDraft`, (c) waiting until a draft-row item renders via `ctx->ItemExists`. The Attachment Preview (window 6) needs a helper to push a synthetic `AttachmentCollectionRequest` into `g_ui.attachmentCollectionQueue` before the window guard passes.
   Concrete next action: batch-2 PR on branch `test/bucket-e-data-dependent-windows-batch2` — fixture-coupled smoke that (1) boots with `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`, (2) syncs, (3) sets `g_ui.newIssueDraftActive = true`, (4) waits for `"##newIssueSummary"` in the active-project window item tree. Est ~2-3 h. Cross-ref: plan `build-quality-velocity-hardening.md` #12 §Deviations; PR #926.

@@ -11,6 +11,12 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-07 · orchestrator · [debt] · P2 — `backend-impl-coverage-recovery`: `JiraClient` impl TUs entered the coverage denominator largely uncovered (70% → 64%); raise backend-impl coverage so the `coverage-out-of-band` label class shrinks
+  Details: PR #939 linked 5 real `JiraClient` implementation TUs into `SmatchetTests` (vtable requirement for the catalog-build fixture) — absolute coverage rose, but the line-rate dropped below the 65% floor and needed the freshly-implemented `coverage-out-of-band` label (#941, postmortems.md 2026-06-07). The newly-measured backend-impl surface is real product code with thin direct coverage: the catalog fixture exercises catalog endpoints only.
+  Concrete next action: extend the scripted-HTTP fixture (`JiraCatalogHttpFixture.h`) pattern to the search/mutation/user-meta paths of `JiraClient` (and later Plane/GitHub when their impl TUs get linked) until the measured rate clears 65% with headroom; then remove the label from the class. Pairs with multi-grid Slice-0 WS2's pinned mapping-edge findings. Est ~3-4 h across 2-3 sittings.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-06 · orchestrator · [debt] · P3 — Duplicated standalone bootstrap logic between `main.cpp` and `StandaloneAppBootstrap.cpp` (code-health, DRY)
   Details: Surfaced as a `[dup] WARN` by the duplication scanner during `shrink-over-100-line-functions` Batch E (PR #898). Decomposing `StandaloneAppBootstrap::Initialize` extracted `ConfigureGlfwWindowHints` / `SetupImGuiContext` / `ApplyUserDataEnvOverride` helpers, which now textually match the parallel inline bootstrap blocks in `Source/Standalone/main.cpp` (lines ~267/521 vs `StandaloneAppBootstrap.cpp` ~275/310). **Pre-existing duplication surfaced, not introduced** — the two bootstrap paths (windowed app vs ephemeral/headless) have long carried parallel GLFW-window-hint + ImGui-context + user-data-env-override setup. WARN-only under the WARN-first DRY calibration phase (ADR-0015), so non-blocking. Related to the older `light-release-unreal-default` item 10 follow-up (`applied.md` 2026-05-25) that DRY'd part of the boot path.
   Concrete next action: extract a shared `smatchet::standalone_boot` helper (GLFW window hints + ImGui context setup + user-data-env-override) into a small `*_detail.h`/`.cpp` seam, called by both `main.cpp` and `StandaloneAppBootstrap.cpp`. ~1 h, behaviour-preserving; clears the `[dup] WARN`.
