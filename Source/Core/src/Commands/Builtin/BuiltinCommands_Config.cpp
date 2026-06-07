@@ -6,6 +6,7 @@
 #include "Commands/CommandRegistry.h"
 
 #include "ConfigManager.h"
+#include "Logger.h"
 #include "VsyncControl.h"
 
 #include <string>
@@ -163,10 +164,13 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
     // and the live hub both see a real boolean.
     if (key == "vsync") {
         if (val.is_string()) {
+            // Quoted forms too ("true"/"false"/"1"/"0" arrive as strings when the
+            // caller quotes them past the JSON parse) — the validation hint lists
+            // them all, so all of them must actually normalise (CR-953 review).
             const std::string& s = val.get_ref<const std::string&>();
-            if (s == "on") {
+            if (s == "on" || s == "true" || s == "1") {
                 val = true;
-            } else if (s == "off") {
+            } else if (s == "off" || s == "false" || s == "0") {
                 val = false;
             }
         } else if (val.is_number_integer()) {
@@ -189,6 +193,7 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
     // the file write above covers the next launch.
     if (key == "vsync") {
         smatchet::vsync::SetEnabled(val.get<bool>());
+        LOG_DEBUG("config.set vsync — live hub set to %s", val.get<bool>() ? "enabled" : "disabled");
     }
     nlohmann::json out;
     out["key"] = key;
