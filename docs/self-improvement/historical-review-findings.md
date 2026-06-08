@@ -51,17 +51,18 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 - ⏭ **#908** (CMake dead sol2 re-run-cleanup group) — left as-is: editing the
   sol2 patch chain is higher-risk than the harmless dead comment; deferred.
 
-## Sweep status & remaining work (as of 2026-06-07)
+## Sweep status & remaining work (as of 2026-06-08)
 
-- **Swept:** PRs **#602–#951** — **325 reviewed** across batches 1–5 (below).
-  Tooling: `agents/scripts/core/historical-review-survivors.sh` + the
+- **Swept:** **#602–#1028** (batches 1–5 + batch-6 newer half) **and #601–#542**
+  (batch-6 older half) — **~440 PRs reviewed** across 6 batches. Tooling:
+  `agents/scripts/core/historical-review-survivors.sh` + the
   `historical-code-review` skill (shipped PR #968).
-- **Remaining (UNSWEPT):** **551 merged PRs**, **#601 → #13** (oldest). Not yet
-  historically reviewed.
+- **Remaining (UNSWEPT):** merged PRs **#541 → #13** (~500). Not yet historically
+  reviewed.
 - **Resume instructions:**
   1. List the next batch — `gh pr list --state merged --base develop --limit 900
-     --json number --jq '[.[] | select(.number < 602) | .number] | sort |
-     reverse | .[0:100]'` (lower the `< 602` bound as you progress).
+     --json number --jq '[.[] | select(.number < 542) | .number] | sort |
+     reverse | .[0:100]'` (lower the `< 542` bound as you progress).
   2. Drop that array into the `const prs = [...]` line of the workflow script
      `…/workflows/scripts/historical-review-sweep-wf_f01ca79f-9a0.js` and re-run
      `Workflow({scriptPath})`; or, per PR, run
@@ -76,6 +77,31 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   false-passing). User-visible ones → GitHub Issues per ADR-0014 when actioned.
 
 <!-- Batches appended at the top. -->
+
+## Batch 6 — newer #952–#1028 (64) + older #601–#542 (50) (115-PR sweep, 2026-06-08)
+
+Coverage: **115 reviewed — 20 with findings, 82 clean, 13 fully superseded.** Net: **1 CRITICAL, 6 MEDIUM, 13 LOW.** Survivor-filtered against origin/develop, so every finding is current (already-fixed code excluded by construction — see the Remediation log above for prior-batch fixes).
+
+### CRITICAL
+- **#565 (1a9db3b0) · `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp:212`** — the `colorRow` lambda in `DrawAnnotateCacheAndColors` (render path) calls `ConfigManager::SaveAnnotateAnalysis(cfg)` **synchronously on each color-edit commit** — takes the shared config RMW mutex, re-reads merged config, JSON-encodes, atomically rewrites `smatchet_config.json` on disk, all on the UI thread. The rest of the file deliberately routes this off-thread via `PersistAnnotateCfg`/`ScheduleAnnotateConfigSaveDetached`; line 212 is the survivor on the sync path. **→ Issue candidate (joins the #611/#761 sync-I/O cluster).** Fix: `PersistAnnotateCfg("edit_color")`.
+
+### MEDIUM
+- **#975 (d304eab3) · `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:681`** — `EnsureProjectComponentsLoaded` inserts the `projectComponentsInFlight_` marker into the kick-time focused context but the worker re-resolves `fieldCatalog()` at completion (L697) and erases/writes into the *completion-time* focused context. A pane focus-switch mid-fetch **permanently leaks the in-flight marker** in the original pane → that project stuck "Loading components…" forever until restart (NOT self-healing, contra the debt note). Fix: capture the kick-time `GridLiveContext*` and write through it.
+- **#967 (c742847d) · `docs/harness/claude-code/hooks/guard-head-drift.sh:107`** — NEW fail-open: `all_git_ops_target_safe_worktree`'s `grep -oE` trailing boundary `(\$|[;&|)[:space:]])` is *consuming*, so `git -C /safe-wt commit;git commit` (single separator, no space) — grep eats the `;`, the second bare `git commit` loses its leading boundary and isn't extracted → exemption validates only the safe op → deny skipped → **bare commit to develop slips through**. Distinct from the shapes in tooling.md:54. Fix: zero-width trailing boundary (`grep -oP` lookahead) or normalize separators to whitespace first; add a bats case.
+- **#978 (d68f0f32) · `docs/plans/active/subagent-eval-agentic-coverage.md:72`** — Phase-3 schema design uses a JSON-schema `else` clause but `validate_schema.py` only resolves `if`→`then` inside `allOf` (no `else`); implemented verbatim, the single-shot branch is never evaluated → `expectedFindingCount` silently un-enforced (false-pass), contradicting the plan's own "grill-verified" guarantee. Fix: express as two `allOf` if/then branches, or extend the validator.
+- **#976 (cdc7b8dd) · `docs/agent-rules/process-rules.md:172`** — the Claude Code row prescribes `autoCompactEnabled: true` + numeric `autoCompactWindow` in `~/.claude/settings.json`; these keys appear nowhere in the repo/harness docs and don't match Claude Code's known settings schema (auto-compact isn't a numeric knob) → an operator adds a no-op key (~75% confidence). Fix: verify vs the real schema; if absent, describe the built-in auto-compact as advisory (like the Codex/Cursor rows).
+- **#572 (d4a31a75) · `tests/ui/annotate_prefs_persist_flow.test.cpp:240`** — host config restore not failure-safe: the test writes a seed into the REAL config file then restores via `EndConfigSnapshot` only after all asserts; `IM_CHECK` expands to `if(!res) return;`, so a failing check skips the restore → leaves the host's real config polluted (violates the file's "byte-identical" guarantee; compounds across variants). Fix: RAII scope-guard restore on every return path.
+- **#548 (e9688342) · `docs/adr/0003-github-as-itrackerclient.md:9`** — #548's link-retarget points two Context links at `../plans/active/agentic-flow-implementation.md` + `agentic-triage-flow.md`, both hard-deleted by the agentic ripout 8 days prior → 404 inside an Accepted ADR. (+2 LOW same pattern in ADR-0004.) Fix: repoint to `docs/plans/shipped/github-tracker-backend.md`.
+
+### LOW (13)
+- **#968 (d01ca584) — in the historical-review tool itself:** `historical-review-survivors.sh:157` hardcodes 40-hex SHA-1 in the blame-porcelain parser → on a SHA-256 repo every file reads as FULLY SUPERSEDED (false-clean; latent); `:173` `--context N>0` range-merge vs ±N pad can overlap → context printed twice + backwards `@@` numbers (cosmetic). Fix: accept 40-or-64-hex; merge when `gap ≤ 2*ctx+1`.
+- **#1017 (508277ba)** `SmatchetResult.h:142` — `Result<T,E>` not exception-safe like sibling `Optional<T>`: assignment ops set `ok_` before a throwing placement-new + the private default ctor leaves no member; a throw → `Destroy()` runs a dtor on unconstructed storage (silent UB). Narrow (current types have noexcept moves) but a foundational reusable primitive. Fix: construct-then-commit + a constructed-member guard.
+- **#962 (472c2de3)** `GridPane.h:13,72` — header still states the Slice-2 model ("exactly ONE GridLiveContext is live … until Slice 3"); Slice 3 shipped (#986) making every visible pane live; sibling headers updated, this central data-structure header missed → misstates the liveness/thread-safety model. Doc-only.
+- **#578 (6eab3dbc)** `SmatchetUI.cpp:459` — `ParseImGuiHotkey` re-tokenizes the config string into a heap `vector<string>` every frame on the render path (Pillar-1 per-frame alloc); negligible but trivially memoizable.
+- Doc-drift / broken-ref / stale-status cluster (all LOW, doc-only): **#1010** plan "4 PRs" miscount; **#980** `merge_gates.bats:516` ordering-coverage gap (fixture has "too many files" so the arm-order invariant is never exercised); **#952** golden-image `SMATCHET_TEST_DEFAULT_IMGUI_THEME` knob documented but unread in source; **#590** DeepSeek buffer-shape comment contradicts the sizes; **#563** `p4-annotate.md:18` duplicate `- annotate` trigger from the rename; **#555** `test-doctor.sh:91` strip-dir only removes first PATH copy; **#549** `smatchet-merge-watcher.md:90` `../guides/` link + `STRUCTURE.md:68` stale "157" (now 192) purity count; **#545×3** stale `docs/plans/active/applied/` refs in coverage-gate.yml + 2 Lua test comments; **#542** `PORTABILITY.md:34,41` stale `p4-blame` (→ `p4-annotate`).
+
+### Prior-findings re-verification (this request's "what's been fixed")
+The **Remediation log (top of file)** already records the prior-batch fixes done in the 2026-06-08 pass — confirmed independently here: **#918, #834, #630, #657, #722, #755, #853, #909/#855, #940, #670 are FIXED** at origin/develop; **#854, #611, #761, #732, #767, #892, #671, #948** are deferred to GitHub Issues (user-visible), still alive. Batch 6's survivor filter excludes all of those fixed lines automatically, so no batch-6 finding re-reports a remediated one. (Note: the new **#565** CRITICAL is the same sync-I/O class as the deferred #611/#761 — fold it into that Issue.)
 
 ## Batch 5 — PRs #602–707 (100-PR workflow sweep, 2026-06-07) — FINAL BATCH
 
