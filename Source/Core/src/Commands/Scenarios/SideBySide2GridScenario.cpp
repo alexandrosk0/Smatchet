@@ -48,12 +48,11 @@ class SideBySide2GridScenario : public IScenario {
         const std::string baseViewId = base.viewId;
         const std::string baseTitle = base.title;
 
-        // Select the SECOND pane. Branch order avoids indexing a size-1 vector:
-        //   (1) a leftover perf pane (prior run crashed before cleanup) — reclaim
-        //       it (own it → removed on finish);
-        //   (2) the user already runs >= 2 panes — observe their second pane;
-        //   (3) otherwise add a synthetic second pane cloning the base's backend
-        //       / view so it renders the same offline rows.
+        // Select the SECOND pane. Branch order avoids indexing a size-1 vector.
+        // First: reclaim a leftover perf pane (a prior run crashed before cleanup),
+        // owned and removed on finish. Next: when the user already runs two or more
+        // panes, observe their second pane. Otherwise: add a synthetic second pane
+        // cloning the base's backend and view so it renders the same offline rows.
         std::string secondPaneId;
         std::string secondBackendKey;
         if (const GridPane* leftover = FindGridPaneById(g_ui.gridPanes, kPerfSecondPaneId)) {

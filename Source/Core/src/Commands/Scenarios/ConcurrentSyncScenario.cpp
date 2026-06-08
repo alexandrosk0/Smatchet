@@ -3,7 +3,6 @@
 // docs/plans/multi-grid-tabs.md § Shared-budget hazard: "N panes posting sync
 // applies could stack on one UI frame ... route through the existing drain-time
 // budget + round-robin; gated by the concurrent-sync scenario").
-//
 // Spins TWO live contexts via EnsurePaneContextLive (deterministic + offline —
 // no backend swap or network sync is kicked, so CI runs without tracker creds
 // are reproducible), then runs N frames. The host's per-frame
