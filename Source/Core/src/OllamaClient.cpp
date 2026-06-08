@@ -165,6 +165,8 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
     }
 
     if (r.error.code != cpr::ErrorCode::OK && r.error.code != cpr::ErrorCode::REQUEST_CANCELLED) {
+        LOG_ERROR("OllamaClient: transport error - cpr code %d, message: %s", static_cast<int>(r.error.code),
+                  r.error.message.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
         err.Message = std::string("transport: ") + r.error.message;
@@ -173,12 +175,17 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
     }
 
     if (r.status_code < 200 || r.status_code >= 300) {
+        // Provider HTTP error visibility - see parallel comment in
+        // AnthropicClient.cpp. LOG_ERROR carries the redacted body so users
+        // can diagnose 400/401/429/5xx without leaking secrets.
+        const std::string redactedBody = smatchet::ai::pure::RedactProviderErrorBody(r.text);
+        LOG_ERROR("OllamaClient: HTTP %ld - body: %s", static_cast<long>(r.status_code), redactedBody.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
         err.Message = std::string("HTTP ") + std::to_string(r.status_code);
-        if (!r.text.empty()) {
+        if (!redactedBody.empty()) {
             err.Message.append(": ");
-            err.Message.append(smatchet::ai::pure::RedactProviderErrorBody(r.text));
+            err.Message.append(redactedBody);
         }
         onError(err);
         return;
