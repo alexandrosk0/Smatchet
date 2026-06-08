@@ -11,6 +11,11 @@
 # a new worktree, NOT switching the shared HEAD back — so this guard does not
 # exempt "switch back to my baseline".
 #
+# Sibling liveness is the shared authoritative-pid-preferred rule in
+# session-registry-lib.sh (a real session pid that has exited is NOT live even
+# inside the 30-min ts window — so a just-closed sibling stops blocking at once);
+# legacy ppid=1 entries fall back to ts freshness exactly as before.
+#
 # Allow = exit 0 (no stdout). Deny = permissionDecision JSON.
 # Override: SMATCHET_ALLOW_SHARED_SWITCH=1.
 #
@@ -32,6 +37,19 @@ json_escape() {
 PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 # Integration tree only (main worktree has a .git directory).
 [ -d "$PROJ/.git" ] || exit 0
+
+# Shared liveness lib. This hook is COPIED into .claude/hooks/ at setup, so it
+# can't source a sibling — resolve via CLAUDE_PROJECT_DIR (runtime), then the git
+# top-level of the hook's own location (covers the in-repo source path the bats
+# suite runs). Missing lib -> fail OPEN (advisory guard never false-blocks).
+_sr_lib="$PROJ/agents/scripts/core/session-registry-lib.sh"
+if [ ! -f "$_sr_lib" ]; then
+  _sr_top="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$_sr_top" ] && _sr_lib="$_sr_top/agents/scripts/core/session-registry-lib.sh"
+fi
+[ -f "$_sr_lib" ] || exit 0
+# shellcheck source=agents/scripts/core/session-registry-lib.sh
+. "$_sr_lib"
 
 INPUT="$(cat || true)"
 [ -n "$INPUT" ] || exit 0
@@ -57,18 +75,7 @@ REGDIR="$PROJ/.claude/.active-sessions"
 [ -d "$REGDIR" ] || exit 0
 
 NOW="$(date -u +%s)"
-live=0
-for f in "$REGDIR"/*; do
-  [ -f "$f" ] || continue
-  [ -n "$SID" ] && [ "$(basename "$f")" = "$SID" ] && continue
-  fts="$(sed -n 's/^ts=//p' "$f" | head -n1)"
-  fpid="$(sed -n 's/^ppid=//p' "$f" | head -n1)"
-  fresh=0
-  case "$fts" in ''|*[!0-9]*) : ;; *) [ $((NOW - fts)) -lt 1800 ] && fresh=1 ;; esac
-  alive=0
-  case "$fpid" in ''|*[!0-9]*) : ;; *) kill -0 "$fpid" 2>/dev/null && alive=1 ;; esac
-  { [ "$fresh" = 1 ] || [ "$alive" = 1 ]; } && live=$((live + 1))
-done
+live="$(sr_count_live_siblings "$REGDIR" "$SID" "$NOW")"
 
 if [ "$live" -gt 0 ]; then
   reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. Override: SMATCHET_ALLOW_SHARED_SWITCH=1."

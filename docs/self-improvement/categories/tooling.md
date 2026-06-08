@@ -232,6 +232,12 @@
   Status: open
   Last-reviewed: 2026-05-18
 
+- 2026-06-08 · orchestrator · [tooling] · P2 — session-registry liveness fix shipped (ppid=1 → authoritative pid)
+  Details: the per-tree session registry (`<tree>/.claude/.active-sessions/<id>`) recorded `ppid=1` on every entry — MSYS/git-bash `$PPID` sentinel on Windows. `kill -0 1` always fails there, so the PID-liveness arm of the concurrent-session guards was dead: liveness collapsed onto the 30-min ts-freshness arm alone, over-blocking legitimate HEAD-moving git ops for up to 30 min after a sibling closes, and letting the registry accrete dead entries nothing prunes. Fixed by capturing the real parent pid in the SessionStart writer (`session-tree-banner.sh`), an authoritative-pid (`numeric AND >4`) Win32 liveness probe (`tasklist`) in the shared lib (`session-registry-lib.sh`), and a SessionStart prune that removes an entry ONLY when BOTH dead-pid AND ts-stale. Shipped PR #996 with 18 bats scenarios + a 20-assertion `--selftest`.
+  Concrete next action: two follow-ups — (1) wire a git-janitor registry sweep that calls `sr_prune_dead_stale` over every worktree's `.active-sessions/` (today prune only fires on the writing tree's SessionStart); (2) when the planned `guard.mjs` Node rewrite lands (`docs/plans/active/session-guard-agnostic.md`), port-forward the authoritative-pid liveness + dead+stale prune, reusing the bats scenarios as acceptance.
+  Status: open
+  Last-reviewed: 2026-06-08
+
 ## Parked
 
 > P3 entries with no immediate owner. Reassess when adjacent feature lands or when a P2 promotion is justified.
