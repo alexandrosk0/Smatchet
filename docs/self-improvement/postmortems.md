@@ -27,6 +27,65 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-08 · PR #1021, #1016 · `tests-out-of-band` override (load-bearing, both legitimate)
+
+### What escaped
+Nothing defective. Two PRs merged carrying a **load-bearing** `tests-out-of-band`
+label that dismissed a RED Test-delta gate — both correct to ship without a new
+desktop test:
+- **#1021** (Phase-0 mobile triple-target build infra, Slices 0–2) — touched
+  `Source/Core/src/Tracker/TrackerHttpUtils.cpp` + `Source/Core/src/SubprocessCapture.cpp`
+  alongside build-only CMake/CI/preset files. The two Core edits are
+  **cross-compile-only**: a `static_cast<std::int32_t>` that is an **identity no-op
+  on the desktop test target** (LLP64 `long` is already 32-bit — it only narrows on
+  LP64 Android/Linux), and a `std::string(ptr,length)` ctor swap living in a
+  **Bionic-only `#else` arm the desktop unit-test binary never compiles**. No
+  meaningful `*.test.cpp` delta is possible on the desktop test target; the edits
+  were validated by the advisory `android-ndk-arm64` + `posix-core-check` jobs.
+- **#1016** (AppController pImpl / sol2 header-lift) — a **behaviour-preserving
+  refactor**; logic moved between TUs with no semantic change, so no new
+  `*.test.cpp` is warranted (the unchanged existing suite already covers it and
+  stayed green).
+
+Both overrides were load-bearing (the Test-delta gate was genuinely RED and the
+label dismissed it), but neither change is desktop-unit-testable and each was
+validated by other means.
+
+### Root cause
+Blameless. The Test-delta line-classifier (`coverage-delta-gate.sh` `_classify_diff`)
+has no exemption for two legitimate classes of `Source/Core/src/*.cpp` change that
+**cannot** carry a desktop test delta by construction:
+1. **Cross-compile-only edits.** A hunk confined to a platform `#else`/`#elif` arm of
+   a `#if defined(<platform-macro>)` block is unreachable on the desktop test target
+   (it compiles only under the other platform's toolchain); an identity cast that is
+   a no-op on the test platform's type model is untestable there.
+2. **Behaviour-preserving refactors.** Logic moved between files with no semantic
+   change adds production-line churn the classifier counts as testable surface, even
+   though the existing suite already covers it.
+The classifier sees production `.cpp` churn + zero `*.test.cpp` delta and trips,
+forcing a manual `tests-out-of-band` override for changes correct to ship without a
+new test. (The existing auto-exemptions cover comment/log/`static_assert`/include/
+catch-scaffold/build-only — not a real statement inside a platform `#else` arm.)
+
+### Preventing gate
+Extend `coverage-delta-gate.sh` `_classify_diff` with a **platform-guard exemption**:
+while walking the diff, track `#if defined(<macro>)` / `#ifdef` / `#else` / `#elif` /
+`#endif` nesting, and auto-exempt added/removed lines that sit inside an
+`#else`/`#elif` arm of a guard keyed on a known cross-target macro set (`__ANDROID__`,
+`__APPLE__`, `__linux__`, and the non-`_WIN32` else of a `_WIN32`/`WIN32` guard) —
+unreachable on the desktop test target by construction, exactly like the existing
+comment/log/include auto-exemptions. Filed to tooling (P2,
+`coverage-gate-platform-else-arm-exemption`). **P3 residue** (same entry, harder to
+classify mechanically — likely stays a manual override): (a) behaviour-preserving
+cross-TU refactors like #1016; (b) an identity cast on the desktop-**reachable**
+side — #1021's LP64 cast is compiled by both targets and is *not* `#else`-confined,
+so the platform-arm exemption won't cover it (would need a separate
+"no-op-on-test-platform" heuristic, probably not worth the complexity).
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` 2026-06-08 —
+`coverage-gate-platform-else-arm-exemption` (P2) + the refactor / identity-cast P3 residue note.
+
 ## 2026-06-08 · PR #991 · `tests-out-of-band` override (moot at merge — non-load-bearing)
 
 ### What escaped
