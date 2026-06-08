@@ -668,31 +668,30 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
 
 bool JiraClient::UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values, std::string& outError) {
-    nlohmann::json payload;
-    if (!BuildFieldPayload(field, values, payload, outError)) {
+    auto payloadResult = BuildFieldPayload(field, values);
+    if (!payloadResult) {
+        outError = payloadResult.error().Detail;
         return false;
     }
-    return UpdateIssueFields(issueId, payload, outError);
+    return UpdateIssueFields(issueId, payloadResult.value(), outError);
 }
 
-bool JiraClient::BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
-                                   nlohmann::json& outPayload, std::string& outError) {
+Result<nlohmann::json, TrackerError> JiraClient::BuildFieldPayload(const TrackerField& field,
+                                                                   const std::vector<std::string>& values) {
     nlohmann::json builtValue;
-    if (!TrackerFieldPayload::BuildValue(field, values, builtValue, outError)) {
-        return false;
+    std::string buildErr;
+    if (!TrackerFieldPayload::BuildValue(field, values, builtValue, buildErr)) {
+        return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(buildErr));
     }
-    outPayload = nlohmann::json::object({{field.Id, builtValue}});
-    return true;
+    return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json::object({{field.Id, std::move(builtValue)}}));
 }
 
-bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
-                                    nlohmann::json& outPayload, std::string& outError) {
-    outPayload = nlohmann::json::object();
-    outError.clear();
+Result<nlohmann::json, TrackerError> JiraClient::BuildCreatePayload(const IssueDraft& draft,
+                                                                    const std::vector<TrackerField>& catalog) {
+    nlohmann::json outPayload = nlohmann::json::object();
 
     if (draft.ProjectKey.empty()) {
-        outError = "Project key is empty.";
-        return false;
+        return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest("Project key is empty."));
     }
     outPayload["project"] = nlohmann::json{{"key", draft.ProjectKey}};
 
@@ -701,8 +700,7 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
     } else if (!draft.IssueTypeName.empty()) {
         outPayload["issuetype"] = nlohmann::json{{"name", draft.IssueTypeName}};
     } else {
-        outError = "Issue type is empty.";
-        return false;
+        return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest("Issue type is empty."));
     }
 
     if (!draft.ParentKey.empty()) {
@@ -743,8 +741,8 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
         nlohmann::json value;
         std::string err;
         if (!TrackerFieldPayload::BuildValue(TrackerField, {raw}, value, err)) {
-            outError = "Field '" + fieldId + "': " + err;
-            return false;
+            return Result<nlohmann::json, TrackerError>::Err(
+                TrackerErrorInvalidRequest("Field '" + fieldId + "': " + err));
         }
         if (!value.is_null()) {
             outPayload[fieldId] = std::move(value);
@@ -773,13 +771,12 @@ bool JiraClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<T
         outPayload["timetracking"] = std::move(timetrackingPayload);
     }
 
-    return true;
+    return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
 }
 
-bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
-                                    nlohmann::json& outPayload, std::string& outError) {
-    outPayload = nlohmann::json::object();
-    outError.clear();
+Result<nlohmann::json, TrackerError> JiraClient::BuildUpdatePayload(const IssueDraft& draft,
+                                                                    const std::vector<TrackerField>& catalog) {
+    nlohmann::json outPayload = nlohmann::json::object();
 
     if (!draft.ParentKey.empty()) {
         outPayload["parent"] = nlohmann::json{{"key", draft.ParentKey}};
@@ -819,8 +816,8 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
         nlohmann::json value;
         std::string err;
         if (!TrackerFieldPayload::BuildValue(TrackerField, {raw}, value, err)) {
-            outError = "Field '" + fieldId + "': " + err;
-            return false;
+            return Result<nlohmann::json, TrackerError>::Err(
+                TrackerErrorInvalidRequest("Field '" + fieldId + "': " + err));
         }
         if (!value.is_null()) {
             outPayload[fieldId] = std::move(value);
@@ -849,7 +846,7 @@ bool JiraClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<T
         outPayload["timetracking"] = std::move(timetrackingPayload);
     }
 
-    return true;
+    return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
 }
 
 std::string JiraClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,

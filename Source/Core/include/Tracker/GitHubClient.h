@@ -62,10 +62,10 @@ class GitHubClient : public ITrackerBackend,
     bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
     bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
                      std::string& outError) override;
-    bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
-                           nlohmann::json& outPayload, std::string& outError) override;
-    bool BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
-                            nlohmann::json& outPayload, std::string& outError) override;
+    Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
+                                                           const std::vector<std::string>& values) override;
+    Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,
+                                                            const std::vector<TrackerField>& catalog) override;
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                     const std::string& value) const override;
     std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override;

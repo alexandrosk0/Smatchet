@@ -73,8 +73,8 @@ class GitHubFixtureBackend : public ITrackerBackend,
     bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
                      std::string& outError) override;
 
-    bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
-                           nlohmann::json& outPayload, std::string& outError) override;
+    Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
+                                                           const std::vector<std::string>& values) override;
 
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                     const std::string& value) const override;

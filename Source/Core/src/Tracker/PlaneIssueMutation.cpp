@@ -109,9 +109,10 @@ bool PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::
     return true;
 }
 
-bool PlaneClient::BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
-                                    nlohmann::json& outPayload, std::string& outError) {
+Result<nlohmann::json, TrackerError> PlaneClient::BuildFieldPayload(const TrackerField& field,
+                                                                    const std::vector<std::string>& values) {
     std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+    nlohmann::json outPayload = nlohmann::json::object();
     if (field.Id == "summary") {
         outPayload["name"] = values.empty() ? "" : values[0];
     } else if (field.Id == "description") {
@@ -149,19 +150,20 @@ bool PlaneClient::BuildFieldPayload(const TrackerField& field, const std::vector
     } else if (field.Id == "sprint") {
         outPayload["cycle"] = values.empty() ? nullptr : nlohmann::json(values[0]);
     } else {
-        outError = "Field not supported for update in Plane: " + field.Id;
-        return false;
+        return Result<nlohmann::json, TrackerError>::Err(
+            TrackerErrorInvalidRequest("Field not supported for update in Plane: " + field.Id));
     }
-    return true;
+    return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
 }
 
 bool PlaneClient::UpdateField(const std::string& issueId, const TrackerField& field,
                               const std::vector<std::string>& values, std::string& outError) {
-    nlohmann::json payload;
-    if (!BuildFieldPayload(field, values, payload, outError)) {
+    auto payloadResult = BuildFieldPayload(field, values);
+    if (!payloadResult) {
+        outError = payloadResult.error().Detail;
         return false;
     }
-    return UpdateIssueFields(issueId, payload, outError);
+    return UpdateIssueFields(issueId, payloadResult.value(), outError);
 }
 
 std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
@@ -349,10 +351,9 @@ bool PlaneClient::AddIssueToSprint(const std::string& issueKey, const std::strin
     return UpdateIssueFields(issueKey, payload, outError);
 }
 
-bool PlaneClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& /*catalog*/,
-                                     nlohmann::json& outPayload, std::string& outError) {
-    outPayload = nlohmann::json::object();
-    outError.clear();
+Result<nlohmann::json, TrackerError> PlaneClient::BuildCreatePayload(const IssueDraft& draft,
+                                                                     const std::vector<TrackerField>& /*catalog*/) {
+    nlohmann::json outPayload = nlohmann::json::object();
 
     outPayload["name"] = draft.FieldValues.count("summary") ? draft.FieldValues.at("summary") : "";
 
@@ -385,11 +386,11 @@ bool PlaneClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<
         outPayload["assignee"] = draft.FieldValues.at("assignee");
     }
 
-    return true;
+    return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
 }
 
-bool PlaneClient::BuildUpdatePayload(const IssueDraft& draft, const std::vector<TrackerField>& catalog,
-                                     nlohmann::json& outPayload, std::string& outError) {
+Result<nlohmann::json, TrackerError> PlaneClient::BuildUpdatePayload(const IssueDraft& draft,
+                                                                     const std::vector<TrackerField>& catalog) {
     // For Plane, update payload is the same as create payload (subset of fields)
-    return BuildCreatePayload(draft, catalog, outPayload, outError);
+    return BuildCreatePayload(draft, catalog);
 }

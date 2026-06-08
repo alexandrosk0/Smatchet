@@ -448,31 +448,29 @@ bool GitHubClient::UpdateField(const std::string& issueId, const TrackerField& f
     return false;
 }
 
-bool GitHubClient::BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
-                                     nlohmann::json& outPayload, std::string& outError) {
-    outError.clear();
+Result<nlohmann::json, TrackerError> GitHubClient::BuildFieldPayload(const TrackerField& field,
+                                                                     const std::vector<std::string>& values) {
     if (field.Id == "labels" || field.Id == "assignees") {
-        outPayload = values; // array of strings
-        return true;
+        return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json(values)); // array of strings
     }
     if (field.Id == "state" || field.Id == "milestone" || field.Id == "title" || field.Id == "body") {
-        outPayload = values.empty() ? std::string() : values.front();
-        return true;
+        return Result<nlohmann::json, TrackerError>::Ok(
+            nlohmann::json(values.empty() ? std::string() : values.front()));
     }
-    outError = std::string("GitHubClient::BuildFieldPayload: unknown field '") + field.Id + "'";
-    return false;
+    return Result<nlohmann::json, TrackerError>::Err(
+        TrackerErrorInvalidRequest(std::string("GitHubClient::BuildFieldPayload: unknown field '") + field.Id + "'"));
 }
 
-bool GitHubClient::BuildCreatePayload(const IssueDraft& draft, const std::vector<TrackerField>& /*catalog*/,
-                                      nlohmann::json& outPayload, std::string& outError) {
+Result<nlohmann::json, TrackerError> GitHubClient::BuildCreatePayload(const IssueDraft& draft,
+                                                                      const std::vector<TrackerField>& /*catalog*/) {
     // catalog ignored — GitHub's create surface is title/body/labels/assignees,
     // not a configurable customfield schema. Resolve target repo from ProjectKey
     // ("owner/repo") and delegate the body shape to the cpr-free pure helper.
     const std::string& projectKey = draft.ProjectKey;
     const std::size_t slash = projectKey.find('/');
     if (slash == std::string::npos || slash == 0 || slash + 1 >= projectKey.size()) {
-        outError = "GitHub create requires ProjectKey shaped 'owner/repo' (got '" + projectKey + "')";
-        return false;
+        return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(
+            "GitHub create requires ProjectKey shaped 'owner/repo' (got '" + projectKey + "')"));
     }
     const std::string owner = projectKey.substr(0, slash);
     const std::string repo = projectKey.substr(slash + 1);
@@ -485,12 +483,9 @@ bool GitHubClient::BuildCreatePayload(const IssueDraft& draft, const std::vector
     auto payloadResult = smatchet::github::BuildGitHubCreatePayload(
         fieldOr("summary"), fieldOr("description"), fieldOr("labels"), fieldOr("assignees"), owner, repo);
     if (!payloadResult) {
-        outError = payloadResult.error();
-        return false;
+        return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(payloadResult.error()));
     }
-    outPayload = std::move(payloadResult.value());
-    outError.clear();
-    return true;
+    return Result<nlohmann::json, TrackerError>::Ok(std::move(payloadResult.value()));
 }
 
 std::string GitHubClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* /*field*/,

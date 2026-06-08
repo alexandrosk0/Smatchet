@@ -135,16 +135,15 @@ bool GitHubFixtureBackend::UpdateField(const std::string& issueId, const Tracker
     return true;
 }
 
-bool GitHubFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/, const std::vector<std::string>& values,
-                                             nlohmann::json& outPayload, std::string& outError) {
+Result<nlohmann::json, TrackerError> GitHubFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/,
+                                                                             const std::vector<std::string>& values) {
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& v : values) {
         arr.push_back(v);
     }
-    outPayload = nlohmann::json::object();
-    outPayload["values"] = arr;
-    outError.clear();
-    return true;
+    nlohmann::json outPayload = nlohmann::json::object();
+    outPayload["values"] = std::move(arr);
+    return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
 }
 
 std::string GitHubFixtureBackend::ResolveDisplayValue(const std::string& /*fieldId*/, const TrackerField* /*field*/,

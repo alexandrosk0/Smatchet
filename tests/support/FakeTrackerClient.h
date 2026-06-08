@@ -171,41 +171,35 @@ class FakeTrackerClient : public ITrackerBackend,
         return true;
     }
 
-    bool BuildFieldPayload(const TrackerField& /*field*/, const std::vector<std::string>& values,
-                           nlohmann::json& outPayload, std::string& outError) override {
+    Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& /*field*/,
+                                                           const std::vector<std::string>& values) override {
         ++buildFieldPayloadCalls_;
         if (!buildFieldPayloadOk_) {
-            outError = buildFieldPayloadError_;
-            return false;
+            return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(buildFieldPayloadError_));
         }
         // Default: stuff values as an array under "values" — tests rarely care about the exact
         // shape here because the production ITrackerBackend impls own the wire format.
         nlohmann::json arr = nlohmann::json::array();
         std::copy(values.begin(), values.end(), std::back_inserter(arr));
-        outPayload = nlohmann::json{{"values", arr}};
-        return true;
+        return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json{{"values", std::move(arr)}});
     }
 
-    bool BuildCreatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
-                            nlohmann::json& outPayload, std::string& outError) override {
+    Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& /*draft*/,
+                                                            const std::vector<TrackerField>& /*catalog*/) override {
         ++buildCreatePayloadCalls_;
         if (!buildCreatePayloadOk_) {
-            outError = buildCreatePayloadError_;
-            return false;
+            return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(buildCreatePayloadError_));
         }
-        outPayload = buildCreatePayloadResult_;
-        return true;
+        return Result<nlohmann::json, TrackerError>::Ok(buildCreatePayloadResult_);
     }
 
-    bool BuildUpdatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
-                            nlohmann::json& outPayload, std::string& outError) override {
+    Result<nlohmann::json, TrackerError> BuildUpdatePayload(const IssueDraft& /*draft*/,
+                                                            const std::vector<TrackerField>& /*catalog*/) override {
         ++buildUpdatePayloadCalls_;
         if (!buildUpdatePayloadOk_) {
-            outError = buildUpdatePayloadError_;
-            return false;
+            return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(buildUpdatePayloadError_));
         }
-        outPayload = buildUpdatePayloadResult_;
-        return true;
+        return Result<nlohmann::json, TrackerError>::Ok(buildUpdatePayloadResult_);
     }
 
     std::string ResolveDisplayValue(const std::string& /*fieldId*/, const TrackerField* /*field*/,

@@ -4,6 +4,8 @@
 #include <utility>
 #include <vector>
 
+#include "SmatchetResult.h"
+#include "TrackerError.h"
 #include "TrackerFieldSchema.h"
 
 struct IssueDraft;
@@ -17,19 +19,19 @@ class ITrackerIssueMutations {
     virtual bool UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values, std::string& outError) = 0;
 
-    virtual bool BuildFieldPayload(const TrackerField& field, const std::vector<std::string>& values,
-                                   nlohmann::json& outPayload, std::string& outError) = 0;
+    virtual Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
+                                                                   const std::vector<std::string>& values) = 0;
 
-    virtual bool BuildCreatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
-                                    nlohmann::json& /*outPayload*/, std::string& outError) {
-        outError = "BuildCreatePayload is not supported by this backend.";
-        return false;
+    virtual Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& /*draft*/,
+                                                                    const std::vector<TrackerField>& /*catalog*/) {
+        return Result<nlohmann::json, TrackerError>::Err(
+            TrackerErrorInvalidRequest("BuildCreatePayload is not supported by this backend."));
     }
 
-    virtual bool BuildUpdatePayload(const IssueDraft& /*draft*/, const std::vector<TrackerField>& /*catalog*/,
-                                    nlohmann::json& /*outPayload*/, std::string& outError) {
-        outError = "BuildUpdatePayload is not supported by this backend.";
-        return false;
+    virtual Result<nlohmann::json, TrackerError> BuildUpdatePayload(const IssueDraft& /*draft*/,
+                                                                    const std::vector<TrackerField>& /*catalog*/) {
+        return Result<nlohmann::json, TrackerError>::Err(
+            TrackerErrorInvalidRequest("BuildUpdatePayload is not supported by this backend."));
     }
 
     virtual std::string CreateIssue(const nlohmann::json& /*fields*/, std::string& outError) {
