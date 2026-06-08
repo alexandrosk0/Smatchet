@@ -174,13 +174,38 @@ Per `AGENTS.md` § Verification automation. Note the structural constraint: **bu
 - **Tablet / responsive layout**: phone-portrait only for MVP; responsive density is a Phase-1 polish item.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `8ffefad3` · **PR #1021** — Phase-0 triple-target build infra, Slices 0–2 (CI-only) in one squash commit. Delivered:
+  - **Slice 0** (desktop pre-flight): confirmed the light + `SMATCHET_WITH_LUA_AUTOMATION=OFF` union builds the non-asan `SmatchetStandalone`/`SmatchetCore_DX12` dual-target (no novel target — exercised by the existing Windows+MSVC light job).
+  - **Slice 0b** (`#else`-side compile): `add_library(SmatchetCore_PosixCheck STATIC EXCLUDE_FROM_ALL ${CORE_SOURCES})` behind `option(SMATCHET_BUILD_POSIX_CORE_CHECK … OFF)` + a `posix-core-check` CMake preset (configure+build) + an advisory CI job — compiles `CORE_SOURCES` through the non-`_WIN32` `#else` arms with host Linux clang.
+  - **Slice 1** (TLS configure spike): `smatchet_prepare_cpr()` `if(ANDROID)` arm forces `CPR_FORCE_OPENSSL_BACKEND ON` + `OPENSSL_USE_STATIC_LIBS` + `CMAKE_FIND_ROOT_PATH_MODE_*=BOTH`; an `android-ndk-arm64` preset gets cpr/curl past the `cpr-src/CMakeLists.txt:112` SSL-backend configure-FATAL (per-ABI OpenSSL).
+  - **Slice 2** (empty `.so` link): `add_library(SmatchetMobile SHARED ${CORE_SOURCES} ${MOBILE_SOURCES})` (`MOBILE_SOURCES` empty — host shell is Slice 3) + `ImGuiLib_Mobile` + `smatchet_configure_mobile_core_impl_target` + an advisory `android-ndk-arm64` CI job linking `libSmatchetMobile.so` for `arm64-v8a`.
+  - **Portability fixes** surfaced by the cross-compile: `TrackerHttpUtils.cpp` LP64 `long`→`std::int32_t` narrowing cast; `SubprocessCapture.cpp` Bionic-only `#else` `std::string(ptr,length)` ctor swap.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred vs the original plan, one-line rationale each)*
+*(what changed, removed, or deferred vs the original plan, one-line rationale each — all verified against the merged diff `8ffefad3`)*
+
+- **File #7 (platform-link arm)** — plan said *add an `elseif(ANDROID)` arm to the Standalone `WIN32`/`APPLE` link chain*. Actual: the mobile link libs (`log android EGL GLESv3`) are set on the `SmatchetMobile` target **directly** via its own `target_link_libraries`, not threaded into the Standalone elseif chain — the mobile target is a separate sibling, so coupling its link list to the Standalone exe's branch would be the wrong seam.
+- **`android_native_app_glue` deferred to Slice 3** — plan #7's link list named it; `MOBILE_SOURCES` ships **empty** (no `android_main`/native_app_glue/JNI bridge yet — those are the Slice-3 host shell). `SmatchetMobile` links with `-Wl,-z,undefs` + a `TODO(Slice-3)` to drop it once the host provides the `SmatchetImGuiHost` symbols.
+- **Slice 0b realized as a dedicated compile-only target** — plan described "compile `CORE_SOURCES` with host Linux clang"; concrete form is `SmatchetCore_PosixCheck` (STATIC, `EXCLUDE_FROM_ALL`, zero GLFW/GL/X11 link surface) gated by `SMATCHET_BUILD_POSIX_CORE_CHECK`, rather than an ad-hoc CI invocation.
+- **Two presets added, not one** — plan #3 named `android-ndk`; shipped as `android-ndk-arm64` (ABI-explicit) **plus** a `posix-core-check` preset (the Slice-0b gate) that the plan hadn't separately enumerated.
+- **cpr/OpenSSL cache vars consolidated (DRY)** — the TLS-backend force-set vars live **only** in `smatchet_prepare_cpr()` (`cmake/SmatchetThirdParty.cmake`), deliberately **not** mirrored into the `android-ndk-arm64` preset, so there is one authoritative home (per Pillar 5 DRY).
+- **Unplanned Core edit — `TrackerHttpUtils.cpp`** — LP64 `long`→`std::int32_t` narrowing: `cpr::ConnectTimeout`/`Timeout` take `std::int32_t`; a braced-init `{long}` narrows under clang on LP64 (hard error), passing on Windows only because LLP64 `long` is 32-bit. Fixed with an explicit `static_cast`.
+- **Unplanned Core edit — `SubprocessCapture.cpp`** — the Bionic-only `#else` environ-purge branch used the two-iterator `std::string(char*, const char*)` ctor, which NDK libc++ rejects on the pointer-type mismatch; swapped to the unambiguous `(const char*, size_type)` ctor. (Host glibc takes the `clearenv()` `#if` side and never compiled this arm — surfaced only on the NDK.)
+- **Gate-coverage learning (recorded for Slices 3–4)** — `SmatchetCore_PosixCheck` runs host Linux clang, which defines `__GLIBC__` and so compiles the **glibc** side of any `#if defined(__GLIBC__)` split; it **cannot** proxy a bug living only in a non-glibc (`#else`) Bionic arm. Only the `android-ndk-arm64` job compiles those. posix-core-check de-risks `_WIN32`-vs-POSIX divergence, **not** glibc-vs-Bionic divergence — the latter needs the NDK job. The `SubprocessCapture.cpp` fix is the worked example.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result: passed / failed / not-run)*
+*(what was actually tested + result)*
+
+- **Slice 0** — dual-target + Lua-off: **PASS**. Windows+MSVC light (non-asan) required job green at merge.
+- **Slice 0b** — `posix-core-check`: **PASS** (advisory). `CORE_SOURCES` compiles through the non-`_WIN32` `#else` arms under host Linux clang.
+- **Slice 1** — `android-ndk-arm64` configure: **PASS** (advisory). cpr/curl resolve OpenSSL per-ABI and clear the `cpr-src/CMakeLists.txt:112` SSL-backend FATAL.
+- **Slice 2** — `libSmatchetMobile.so` link: **PASS** (advisory). Links clean for `arm64-v8a` on the Ubuntu runner with an empty `MOBILE_SOURCES`.
+- **Portability fixes** (LP64 cast, Bionic ctor) — validated by the advisory `android-ndk-arm64` job, the only gate that compiles the non-glibc `#else` (see § Deviations gate-coverage learning).
+- **Test-delta gate** — RED (2 production `Source/Core/src/*.cpp` changes / 0 `*.test.cpp` delta), dismissed via the `tests-out-of-band` label: the two Core edits are cross-compile-only (an identity cast on the desktop type model; a Bionic-only `#else` arm) and have no desktop-unit-testable surface. Gate-escape postmortem filed (`docs/self-improvement/postmortems.md` 2026-06-08 · PR #1021, #1016) with a preventing-gate proposal (`coverage-gate-platform-else-arm-exemption`).
+- **Merge** — all PR checks green; the 5 required checks passed on the PR's own head; the advisory `mobile-*` jobs (posix-core-check, android-ndk-arm64) green but not required and not on the merge-gate poller's allow-list.
+- **Not run** (deferred to Slice 3/4 by Q1 scope = Slices 0–2 CI-only): on-device/emulator boot, EGL host render loop, soft-keyboard IME, the live JQL→render→edit→PUT data path. No hardware was in scope this phase.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *In the SAME PR that populates the three sections above —*
