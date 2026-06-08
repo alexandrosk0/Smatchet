@@ -51,6 +51,21 @@ setup() {
     [[ "$output" == *"Passed: 0  Failed: 1"* ]]
 }
 
+@test "rule 1 (deps): many-line unguarded use does not SIGPIPE the gate (exit 141 regression)" {
+    # The deps rule's first-line extraction used to be `printf … | head -1`;
+    # with a large $real_use (a tool on many lines) head closed the pipe early,
+    # SIGPIPE'd printf, and under `set -euo pipefail` the plain assignment
+    # returned 141 → the whole gate aborted with exit 141 (CI-only; msys bash
+    # ignores SIGPIPE so it passed locally). Force the default SIGPIPE
+    # disposition so this reproduces off-msys, and assert a clean finding, not a
+    # crash.
+    run bash -c "trap - PIPE; exec bash '$LINT' --target '$FIXTURE_DIR/known-bad-1-deps-manylines.sh'"
+    [ "$status" -eq 1 ]   # a finding, NEVER 141
+    [[ "$output" == *"SHELL_LINT_DEPS"* ]]
+    [[ "$output" == *"jq"* ]]
+    [[ "$output" == *"Passed: 0  Failed: 1"* ]]
+}
+
 @test "rule 1 (deps): does NOT fire on graceful '|| fallback' / if-while-condition shapes" {
     # Relaxation lock-in (follow-up to PR #624): tools used with same-line
     # `|| <fallback>` or as an if/while/until condition self-handle a missing

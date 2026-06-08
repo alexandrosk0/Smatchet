@@ -111,8 +111,16 @@ check_deps() {
         if printf '%s\n' "$nc" | grep -qE "(command -v|which|type -p)[[:space:]]+${tool_escaped}\\b"; then
             continue
         fi
-        local lno
-        lno=$(printf '%s\n' "$real_use" | head -1 | cut -d: -f1)
+        # First line's leading line-number (grep -n "<lno>:..."). Pure param
+        # expansion — NOT `printf | head -1 | cut`: under `set -euo pipefail`,
+        # head closing the pipe early SIGPIPEs printf, so the PLAIN assignment
+        # returns 141 and set -e aborts the whole gate (exit 141). It trips only
+        # when $real_use is multi-line (a tool used on many lines in a scanned
+        # script), and is CI-only — msys bash ignores SIGPIPE, so it kept
+        # passing 137/137 locally while breaking every PR's Shell-lint job.
+        local lno first_line
+        first_line="${real_use%%$'\n'*}"
+        lno="${first_line%%:*}"
         emit "$script" "$lno" "SHELL_LINT_DEPS" "external '$tool' used without 'command -v $tool' (or which/type -p) preflight"
     done
 }
