@@ -205,31 +205,28 @@ class FakeTrackerClient : public ITrackerBackend,
         return value;
     }
 
-    std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override {
+    Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override {
         CreateIssueCall call;
         call.Fields = fields;
         createIssueCalls_.push_back(std::move(call));
         const ScriptedReply reply = NextOrDefault(createIssueQueue_, defaultCreateIssue_);
         if (!reply.Ok) {
-            outError = reply.Error;
-            return std::string();
+            return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(reply.Error));
         }
-        return reply.IssueKey;
+        return Result<std::string, TrackerError>::Ok(reply.IssueKey);
     }
 
-    bool AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths,
-                            std::vector<std::pair<std::string, std::string>>& outFailures,
-                            std::string& outError) override {
+    Result<std::vector<std::pair<std::string, std::string>>, TrackerError>
+    AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths) override {
         AttachFilesCall call;
         call.IssueKey = issueKey;
         call.Paths = absolutePaths;
         attachFilesCalls_.push_back(std::move(call));
         if (!attachFilesOk_) {
-            outError = attachFilesError_;
-            return false;
+            return Result<std::vector<std::pair<std::string, std::string>>, TrackerError>::Err(
+                TrackerErrorInvalidRequest(attachFilesError_));
         }
-        outFailures = attachFilesFailures_;
-        return true;
+        return Result<std::vector<std::pair<std::string, std::string>>, TrackerError>::Ok(attachFilesFailures_);
     }
 
     TrackerError AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) override {
