@@ -184,7 +184,15 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - Non-tracker `outError` sites (Whisper / P4 / config / texture cache) — separate hardening item.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*Slices 1–7 shipped (the FULL `ITrackerBackend` virtual-interface migration). Plan stays `active` — Slices 8–9 (public-API flip) are scoped-but-not-executed follow-on.*
+
+- `775b462f` (#1020) · Slice 1 · `GitHubClientHelpers` validators/parsers → `Result<T>` (default-E `std::string`): `IsValidGitHubBaseUrl` / `ParseIso8601ToUnixSec` / `BuildGitHubCreatePayload`.
+- `09fa95f4` (#1022) · Slice 2 · FieldCatalog virtuals → `Result<T, TrackerError>`: `FetchFieldCatalog` / `FetchIssueEditMeta` / `FetchProjectComponents` (+ FIX-1 2xx guard, FIX-3 Unknown-wrap deferral).
+- `a406c696` (#1023) · Slice 3 · Mutations payload builders → `Result<nlohmann::json, TrackerError>`: `BuildFieldPayload` / `BuildCreatePayload` / `BuildUpdatePayload`.
+- `1cc98f9b` (#1029) · Slice 4 · Mutations void-payload writes → bare `TrackerError`: `UpdateIssueFields` / `UpdateField` / `AddIssueToSprint`.
+- `f62105cd` (#1030) · Slice 5 · Mutations create/attach → `Result<T, TrackerError>`: `CreateIssue` / `AttachFilesToIssue` (L3 — per-file failures are the Ok payload).
+- `d5eed664` (#1033) · Slice 6 · Reader `FetchIssuesForKeys` → `Result<std::vector<CachedTicket>, TrackerError>` (incl. the `GitHubIssueSearch::FetchIssuesForKeysViaRestApi` helper).
+- (#1035, merging) · Slice 7 · Collaboration virtuals → `Result<T>` reads / bare `TrackerError` writes (9 methods) + the `TrackerIssueVotes` struct. *(fill squash sha when #1035 merges)*
 
 ## Deviations from plan
 - **Slice 7 — Collaboration (7a reads + 7b writes shipped together as one PR):** the plan flagged a 7a/7b split "if over ceiling"; the combined diff is ~8 files (well under), so both ship in one "Collaboration" PR per the one-PR-per-feature batching rule. `FetchIssueComments` migrated **decl-only** (L5 — no override, no caller; Jira uses the internal `JiraFetchIssueCommentsPages` helper, untouched). `FetchIssueVotes`' four out-params (`outVoters` + `int* outVoteCount` + `bool* outHasVoted` + `bool* outVotersInResponse`) collapsed into the `TrackerIssueVotes` Ok struct; the `AppController::FetchIssueVotes` wrapper unpacks the struct back into its existing out-pointer signature (zero-inits them up-front to match the old virtual's entry-zeroing) so UI callers (`TrackerGridFieldDisplay`, `BuiltinCommands_Users`) are untouched. All Jira HTTP failure branches carry the FIX-1 2xx guard before `TrackerErrorFromHttpStatus`. `EnsureTrackerAuthConfig`/missing-creds fails → `Auth`; empty-key/precondition → `InvalidRequest`; parse/missing-key → `Parse`. The 8 `AppController` wrappers translate the Result/`TrackerError` back to their existing `bool + outError`(+ out-param) public signatures, so **all UI/command callers stay untouched** (the public-wrapper flip is Slices 8–9). GitHub/Plane/all fixtures use the new interface defaults (Collaboration is Jira-only).
