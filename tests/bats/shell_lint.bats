@@ -51,6 +51,36 @@ setup() {
     [[ "$output" == *"Passed: 0  Failed: 1"* ]]
 }
 
+@test "rule 1 (deps): many-line unguarded use does not SIGPIPE the gate (exit 141 regression)" {
+    # The deps rule's first-line extraction used to be `printf … | head -1`;
+    # with a large $real_use (a tool on many lines) head closed the pipe early,
+    # SIGPIPE'd printf, and under `set -euo pipefail` the plain assignment
+    # returned 141 → the whole gate aborted with exit 141 (CI-only; msys bash
+    # ignores SIGPIPE so it passed locally). Force the default SIGPIPE
+    # disposition so this reproduces off-msys, and assert a clean finding, not a
+    # crash.
+    run bash -c "trap - PIPE; exec bash '$LINT' --target '$FIXTURE_DIR/known-bad-1-deps-manylines.sh'"
+    [ "$status" -eq 1 ]   # a finding, NEVER 141
+    [[ "$output" == *"SHELL_LINT_DEPS"* ]]
+    [[ "$output" == *"jq"* ]]
+    [[ "$output" == *"Passed: 0  Failed: 1"* ]]
+}
+
+@test "rule 5 (flag-parity): long ;;-free case body does not SIGPIPE the gate (exit 141 regression)" {
+    # The flag-parity rule scanned a case-branch body with
+    # `awk … "$script" | head -10`. awk STREAMS the whole file from the flag
+    # line until the first `;;`; a branch whose body runs >10 lines (here >64KB,
+    # no early `;;`) keeps awk writing after head closes the pipe → awk SIGPIPE →
+    # 141 → set -e aborts the gate. This is the SECOND exit-141 trigger (#995
+    # fixed only the deps-rule pipe). Force the default SIGPIPE disposition so it
+    # reproduces off-msys, and assert a clean finding, not a crash.
+    run bash -c "trap - PIPE; exec bash '$LINT' --target '$FIXTURE_DIR/known-bad-5-parity-manylines.sh'"
+    [ "$status" -eq 1 ]   # a finding, NEVER 141
+    [[ "$output" == *"SHELL_LINT_FLAG_PARITY"* ]]
+    [[ "$output" == *"bigflag"* ]]
+    [[ "$output" == *"Passed: 0  Failed: 1"* ]]
+}
+
 @test "rule 1 (deps): does NOT fire on graceful '|| fallback' / if-while-condition shapes" {
     # Relaxation lock-in (follow-up to PR #624): tools used with same-line
     # `|| <fallback>` or as an if/while/until condition self-handle a missing
