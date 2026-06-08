@@ -4,9 +4,13 @@
 # Three jobs:
 #   1. Record THIS session's HEAD baseline {branch,sha,ppid,ts} in the per-tree
 #      registry (<tree>/.claude/.active-sessions/<session_id>). guard-head-drift.sh
-#      reads this to detect HEAD moving under the session.
-#   2. Lazily sweep registry entries older than 7d (the only hard cleanup — there
-#      is no SessionEnd hook; Stop fires per-turn and only heartbeats the ts).
+#      reads this to detect HEAD moving under the session. ppid is the AUTHORITATIVE
+#      session pid (the first claude.exe ancestor on Windows, $PPID on POSIX) — see
+#      session-registry-lib.sh for why the old $PPID=1 made liveness useless.
+#   2. Cleanup: prune entries that are BOTH provably dead AND ts-stale (the precise
+#      net), plus a lazy >7d sweep for legacy/unprovable entries. There is no
+#      SessionEnd hook, so SessionStart is the only safe cleanup point (Stop fires
+#      per-turn and only heartbeats the ts).
 #   3. Print a banner: integration tree (shared) vs isolated worktree, plus a live
 #      sibling count and a nudge toward worktree-per-session.
 #
@@ -18,6 +22,20 @@
 set -u
 
 PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+
+# Shared liveness primitives (real-pid liveness + dead+stale prune). Source the
+# sibling lib; if it is somehow absent, fall back to degraded inline shims so the
+# banner never breaks SessionStart.
+_sr_lib="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/session-registry-lib.sh"
+[ -f "$_sr_lib" ] || _sr_lib="$PROJ/agents/scripts/core/session-registry-lib.sh"
+if [ -f "$_sr_lib" ]; then
+  # shellcheck source=agents/scripts/core/session-registry-lib.sh
+  . "$_sr_lib"
+else
+  sr_session_pid() { printf '%s' "$PPID"; }
+  sr_prune_dead_stale() { :; }
+  sr_count_live_siblings() { printf '0'; }
+fi
 
 # session id from stdin JSON, falling back to env.
 SESSION_ID="${CLAUDE_SESSION_ID:-}"
@@ -37,43 +55,36 @@ CUR_BRANCH="$(git -C "$PROJ" symbolic-ref --short HEAD 2>/dev/null || true)"
 CUR_SHA="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null || true)"
 NOW="$(date -u +%s)"
 
-# 2. Sweep dead entries (> 7 days).
+# 2. Cleanup. Precise net first: prune entries that are BOTH provably dead AND
+#    ts-stale (never the current session, never a live or unprovable one). Then a
+#    lazy >7d sweep mops up legacy/unprovable (ppid=1) entries that the dead-check
+#    can't reach.
+sr_prune_dead_stale "$REGDIR" "$SESSION_ID" "$NOW"
 if [ -d "$REGDIR" ]; then
   for f in "$REGDIR"/*; do
     [ -f "$f" ] || continue
+    [ "$(basename "$f")" = "$SESSION_ID" ] && continue
     fts="$(sed -n 's/^ts=//p' "$f" | head -n1)"
     case "$fts" in ''|*[!0-9]*) continue ;; esac
     [ $((NOW - fts)) -gt 604800 ] && rm -f "$f" 2>/dev/null || true
   done
 fi
 
-# 1. Record / refresh own baseline.
+# 1. Record / refresh own baseline (ppid = authoritative session pid, not $PPID).
 if [ -n "$SESSION_ID" ] && [ -n "$CUR_BRANCH" ] && [ -n "$CUR_SHA" ]; then
   {
     printf 'branch=%s\n' "$CUR_BRANCH"
     printf 'sha=%s\n' "$CUR_SHA"
-    printf 'ppid=%s\n' "$PPID"
+    printf 'ppid=%s\n' "$(sr_session_pid)"
     printf 'ts=%s\n' "$NOW"
   } > "$REGDIR/$SESSION_ID" 2>/dev/null || true
 fi
 
 # 3. Banner.
 if [ -d "$PROJ/.git" ]; then
-  # Integration (main) tree — count live siblings (exclude self).
-  live=0
-  if [ -d "$REGDIR" ]; then
-    for f in "$REGDIR"/*; do
-      [ -f "$f" ] || continue
-      [ "$(basename "$f")" = "$SESSION_ID" ] && continue
-      fts="$(sed -n 's/^ts=//p' "$f" | head -n1)"
-      fpid="$(sed -n 's/^ppid=//p' "$f" | head -n1)"
-      fresh=0
-      case "$fts" in ''|*[!0-9]*) : ;; *) [ $((NOW - fts)) -lt 1800 ] && fresh=1 ;; esac
-      alive=0
-      case "$fpid" in ''|*[!0-9]*) : ;; *) kill -0 "$fpid" 2>/dev/null && alive=1 ;; esac
-      { [ "$fresh" = 1 ] || [ "$alive" = 1 ]; } && live=$((live + 1))
-    done
-  fi
+  # Integration (main) tree — count live siblings (exclude self) via the shared
+  # authoritative-pid-preferred rule.
+  live="$(sr_count_live_siblings "$REGDIR" "$SESSION_ID" "$NOW")"
   printf '🌳 Integration tree (%s) on branch %s. ' "$PROJ" "${CUR_BRANCH:-?}"
   [ "$live" -gt 0 ] && printf '⚠ %s other live session(s) share this tree — HEAD/branch changes WILL collide. ' "$live"
   printf 'Prefer one worktree per session: `nsc <slug>` (or pwsh scripts/dev/worktree.ps1 new <slug>). Direct commits to develop/main here are blocked.\n'
