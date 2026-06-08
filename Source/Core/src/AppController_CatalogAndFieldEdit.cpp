@@ -116,8 +116,16 @@ bool AppController::RefreshFieldCatalog(const TrackerConfig& cfg, const std::str
     }
     TrackerFieldCatalogResult catalog;
     std::string error;
-    const bool ok =
-        backend->FieldCatalog() && backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, catalog, error);
+    bool ok = false;
+    if (backend->FieldCatalog()) {
+        auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey);
+        ok = static_cast<bool>(catalogResult);
+        if (ok) {
+            catalog = std::move(catalogResult.value());
+        } else {
+            error = catalogResult.error().Detail;
+        }
+    }
     if (!ok) {
         SetFieldCatalog({}, {}, error);
         LOG_ERROR("AppController::RefreshFieldCatalog failed: %s", error.c_str());
@@ -141,9 +149,17 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCata
     }
     // PR 6: project is per-operation. This convenience overload is called by config-time
     // probes that don't pin a project; backend returns the unscoped catalog.
-    return backend->FieldCatalog()
-               ? backend->FieldCatalog()->FetchFieldCatalog(cfg, std::string(), outCatalog, outError)
-               : (outError = "FetchFieldCatalog is not supported by this backend.", false);
+    if (!backend->FieldCatalog()) {
+        outError = "FetchFieldCatalog is not supported by this backend.";
+        return false;
+    }
+    auto result = backend->FieldCatalog()->FetchFieldCatalog(cfg, std::string());
+    if (!result) {
+        outError = result.error().Detail;
+        return false;
+    }
+    outCatalog = std::move(result.value());
+    return true;
 }
 
 bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
@@ -157,8 +173,17 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, const std::strin
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    return backend->FieldCatalog() ? backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey, outCatalog, outError)
-                                   : (outError = "FetchFieldCatalog is not supported by this backend.", false);
+    if (!backend->FieldCatalog()) {
+        outError = "FetchFieldCatalog is not supported by this backend.";
+        return false;
+    }
+    auto result = backend->FieldCatalog()->FetchFieldCatalog(cfg, projectKey);
+    if (!result) {
+        outError = result.error().Detail;
+        return false;
+    }
+    outCatalog = std::move(result.value());
+    return true;
 }
 
 std::string AppController::BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
@@ -589,12 +614,11 @@ void AppController::WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std:
             cat.projectComponentsInFlight_.erase(projectKey);
             break;
         }
-        std::vector<TrackerComponent> comps;
-        std::vector<TrackerFieldOption> opts;
-        std::string err;
         // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
-        if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
-            LOG_DEBUG("AppController: per-project component warm skipped for %s: %s", projectKey.c_str(), err.c_str());
+        auto componentsResult = catalog->FetchProjectComponents(trackerCfgForWorker, projectKey);
+        if (!componentsResult) {
+            LOG_DEBUG("AppController: per-project component warm skipped for %s: %s", projectKey.c_str(),
+                      componentsResult.error().Detail.c_str());
             std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
             // Same backoff as the lazy path so a later open doesn't immediately re-hammer.
             cat.projectComponentsRetryAfter_[projectKey] = std::chrono::steady_clock::now() + std::chrono::seconds(30);
@@ -602,7 +626,7 @@ void AppController::WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std:
             continue;
         }
         std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
-        cat.projectComponentOptions_[projectKey] = std::move(opts);
+        cat.projectComponentOptions_[projectKey] = std::move(componentsResult.value().Options);
         cat.projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
         cat.projectComponentsInFlight_.erase(projectKey);
     }
@@ -672,13 +696,11 @@ void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
             cat.projectComponentsInFlight_.erase(projectKey);
             return;
         }
-        std::vector<TrackerComponent> comps;
-        std::vector<TrackerFieldOption> opts;
-        std::string err;
         // Lock is NOT held across the HTTP call — fetch into locals, then lock-insert.
-        if (!catalog->FetchProjectComponents(trackerCfgForWorker, projectKey, comps, opts, err)) {
+        auto componentsResult = catalog->FetchProjectComponents(trackerCfgForWorker, projectKey);
+        if (!componentsResult) {
             LOG_DEBUG("AppController: lazy per-project component load failed for %s: %s", projectKey.c_str(),
-                      err.c_str());
+                      componentsResult.error().Detail.c_str());
             std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
             // Record a backoff deadline so the every-frame paint path stops relaunching until it
             // passes (~once / 30s per failing project instead of every frame).
@@ -689,7 +711,7 @@ void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
         std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
         // Insert the key on success regardless of count — presence == loaded, so a genuinely empty
         // project settles to "(no options)" instead of showing "Loading components…" forever.
-        cat.projectComponentOptions_[projectKey] = std::move(opts);
+        cat.projectComponentOptions_[projectKey] = std::move(componentsResult.value().Options);
         cat.projectComponentsRetryAfter_.erase(projectKey); // success clears any prior backoff
         cat.projectComponentsInFlight_.erase(projectKey);
     });
@@ -790,8 +812,16 @@ bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::s
     const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     std::unordered_map<std::string, bool> meta;
     std::string fetchError;
-    const bool ok = backend->FieldCatalog() != nullptr &&
-                    backend->FieldCatalog()->FetchIssueEditMeta(cfg, issueId, meta, fetchError);
+    bool ok = false;
+    if (backend->FieldCatalog() != nullptr) {
+        auto metaResult = backend->FieldCatalog()->FetchIssueEditMeta(cfg, issueId);
+        ok = static_cast<bool>(metaResult);
+        if (ok) {
+            meta = std::move(metaResult.value());
+        } else {
+            fetchError = metaResult.error().Detail;
+        }
+    }
 
     IssueEditMetaCache cache;
     // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made

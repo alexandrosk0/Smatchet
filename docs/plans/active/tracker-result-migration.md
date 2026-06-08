@@ -176,7 +176,8 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Slice 2 — 2xx-non-200 guard (FIX 1):** `TrackerErrorFromHttpStatus` returns `Ok()` (Kind==None, detail discarded) for any status in [200,300). Two migrated failure branches (`JiraClient::FetchIssueEditMeta` non-200 branch, `JiraClient::FetchProjectComponents` per-project non-200 branch) gated on `status_code != 200`, so a 201/202/204 reaching the failure path produced a contradictory `Err` with an empty `.Detail` — the user-visible message vanished. Fixed: both branches now guard `status >= 200 && status < 300` → `TrackerErrorUnknown(detail, status)` (preserving the verbatim detail string), falling through to `TrackerErrorFromHttpStatus` only for genuine non-2xx. Learning: any `status != 200` (rather than `< 200 || >= 300`) failure branch must not feed `TrackerErrorFromHttpStatus` without this guard.
+- **Slice 2 — classification-lossy Unknown wrap (FIX 3, known, deferred):** the Jira virtual `FetchFieldCatalog` delegated-helper unwrap (`TrackerFieldCatalog.cpp`) and the Plane `ResolvePlaneProject`-fail unwrap (`PlaneFieldCatalog.cpp`) collapse the inner helper's error to `TrackerErrorUnknown`, losing HTTP-status classification (a real 5xx becomes Unknown → `IsRetryable()` false). No consumer reads `.Kind` this slice; `// TODO(#21b later slice)` markers left at both sites. Re-threading status from the inner helper lands in a later slice when `IsRetryable()` consumers arrive.
 
 ## Verification (actual)
 *(populated post-ship)*

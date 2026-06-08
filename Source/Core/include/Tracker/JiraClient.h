@@ -67,16 +67,15 @@ class JiraClient : public ITrackerBackend,
                            std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
                            std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError);
 
-    bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
-                           TrackerFieldCatalogResult& outCatalog, std::string& outError) override;
+    Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
+                                                                      const std::string& projectKey) override;
 
     /** GET /rest/api/3/project/{key}/component (paged) — components valid for ONE project.
-     * Fills outComponents + outOptions directly (no catalog/fields vector). Used to warm the
-     * per-project component map for cross-project grid views. outOptions is sorted by lower-case
-     * value then id. */
-    bool FetchProjectComponents(const TrackerConfig& cfg, const std::string& projectKey,
-                                std::vector<TrackerComponent>& outComponents,
-                                std::vector<TrackerFieldOption>& outOptions, std::string& outError) override;
+     * Returns the components + their dropdown options together (no out-vectors). Used to warm
+     * the per-project component map for cross-project grid views. Options are sorted by
+     * lower-case value then id. */
+    Result<TrackerProjectComponents, TrackerError> FetchProjectComponents(const TrackerConfig& cfg,
+                                                                          const std::string& projectKey) override;
 
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
 
@@ -84,8 +83,8 @@ class JiraClient : public ITrackerBackend,
      * GET /rest/api/3/issue/{issueKeyOrId}/editmeta
      * Fills outFieldIdCanEdit: field id -> true if Jira lists an edit operation (set/add/remove).
      */
-    bool FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
-                            std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) override;
+    Result<std::unordered_map<std::string, bool>, TrackerError>
+    FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
     /** GET /rest/api/3/issue/{issueKey}/watchers — fills display names / account ids. */
     bool FetchIssueWatchers(const TrackerConfig& cfg, const std::string& issueKey,
@@ -171,11 +170,11 @@ class JiraClient : public ITrackerBackend,
 
     // UpdateIssueFields sub-paths — split to keep the public orchestrator within size caps.
     bool UpdateIssueFieldsViaTransition(const std::string& issueId, const nlohmann::json& statusValue,
-                                        const std::string& base, const cpr::Header& headers,
-                                        const std::string& auditOp, std::string& outError);
+                                        const std::string& base, const cpr::Header& headers, const std::string& auditOp,
+                                        std::string& outError);
     bool UpdateIssueFieldsViaPut(const std::string& issueId, const nlohmann::json& fieldsAudited,
-                                 const std::string& base, const cpr::Header& headers,
-                                 const std::string& auditOp, std::string& outError);
+                                 const std::string& base, const cpr::Header& headers, const std::string& auditOp,
+                                 std::string& outError);
 };
 
 #endif

@@ -407,9 +407,9 @@ TEST_CASE("FetchFieldCatalog result overload — users fetched and injected into
                                          {{"accountId", "u3"}, {"displayName", "Gone"}, {"active", false}}}));
 
     JiraClient client;
-    TrackerFieldCatalogResult catalog;
-    std::string error;
-    REQUIRE(client.FetchFieldCatalog(fx.Config(), std::string(), catalog, error));
+    auto catalogResult = client.FetchFieldCatalog(fx.Config(), std::string());
+    REQUIRE(catalogResult);
+    const TrackerFieldCatalogResult& catalog = catalogResult.value();
 
     CHECK(catalog.Warning.empty());
     REQUIRE(catalog.Users.size() == 2); // inactive user dropped
@@ -433,11 +433,61 @@ TEST_CASE("FetchFieldCatalog result overload — users fetch failure degrades to
     fx.ScriptStatus("/rest/api/3/users/search", 403);
 
     JiraClient client;
-    TrackerFieldCatalogResult catalog;
-    std::string error;
-    REQUIRE(client.FetchFieldCatalog(fx.Config(), std::string(), catalog, error));
+    auto catalogResult = client.FetchFieldCatalog(fx.Config(), std::string());
+    REQUIRE(catalogResult);
+    const TrackerFieldCatalogResult& catalog = catalogResult.value();
 
     CHECK(!catalog.Warning.empty());
     CHECK(catalog.Users.empty());
     CHECK(FindField(catalog.Fields, "components") != nullptr);
+}
+
+TEST_CASE("FetchFieldCatalog result overload — /field failure returns an Err with a TrackerError") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus("/rest/api/3/field", 500);
+
+    JiraClient client;
+    auto catalogResult = client.FetchFieldCatalog(fx.Config(), std::string());
+    REQUIRE_FALSE(catalogResult);
+    // The virtual unwraps the internal bool 5-vector helper, so the kind is the
+    // deliberately-unclassified Unknown; the detail string is preserved from the
+    // helper's HTTP-failure message (non-empty).
+    CHECK(catalogResult.error().Kind == TrackerErrorKind::Unknown);
+    CHECK_FALSE(catalogResult.error().Detail.empty());
+}
+
+TEST_CASE("FetchIssueEditMeta result overload — editmeta fields map into the Ok payload") {
+    JiraCatalogHttpFixture fx;
+    nlohmann::json editmeta;
+    editmeta["fields"]["summary"]["operations"] = nlohmann::json::array({"set"});
+    fx.ScriptJson("/rest/api/3/issue/TEST-1/editmeta", editmeta);
+
+    JiraClient client;
+    auto metaResult = client.FetchIssueEditMeta(fx.Config(), "TEST-1");
+    REQUIRE(metaResult);
+    CHECK(metaResult.value().count("summary") == 1);
+}
+
+TEST_CASE("FetchIssueEditMeta result overload — HTTP 404 returns an Err classified NotFound") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus("/rest/api/3/issue/TEST-1/editmeta", 404);
+
+    JiraClient client;
+    auto metaResult = client.FetchIssueEditMeta(fx.Config(), "TEST-1");
+    REQUIRE_FALSE(metaResult);
+    CHECK(metaResult.error().Kind == TrackerErrorKind::NotFound);
+}
+
+TEST_CASE("FetchIssueEditMeta result overload — 2xx-non-200 (202) yields Err with preserved Detail, not Ok") {
+    // Regression: the !=200 failure branch fed TrackerErrorFromHttpStatus, which returns Ok()
+    // (Kind==None, detail discarded) for any 2xx — producing a contradictory Err with empty Detail.
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus("/rest/api/3/issue/TEST-1/editmeta", 202);
+
+    JiraClient client;
+    auto metaResult = client.FetchIssueEditMeta(fx.Config(), "TEST-1");
+    REQUIRE_FALSE(metaResult);
+    CHECK(metaResult.error().Kind != TrackerErrorKind::None);
+    CHECK_FALSE(metaResult.error().Detail.empty());
+    CHECK(metaResult.error().Detail.find("HTTP 202") != std::string::npos);
 }

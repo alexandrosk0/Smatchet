@@ -262,12 +262,11 @@ bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vecto
     return smatchet::github::FetchIssuesForKeysViaRestApi(auth.BaseUrl, auth.Pat, issueKeys, outTickets, outError);
 }
 
-bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
-                                     TrackerFieldCatalogResult& outCatalog, std::string& outError) {
+Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/,
+                                                                                const std::string& /*projectKey*/) {
     // 6 native fields. Static — no per-project enumeration like Jira's
     // create-meta or Plane's custom fields.
-    outError.clear();
-    outCatalog = TrackerFieldCatalogResult{};
+    TrackerFieldCatalogResult outCatalog;
     auto addField = [&outCatalog](const char* id, const char* label, const char* type) {
         TrackerField f;
         f.Id = id;
@@ -310,11 +309,11 @@ bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::st
     addField("commit.url", "Commit URL", "string");
     addField("commit.parents", "Commit Parents", "string");
     addField("commit.verified", "Commit Verified", "string");
-    return true;
+    return Result<TrackerFieldCatalogResult, TrackerError>::Ok(std::move(outCatalog));
 }
 
-bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& issueKeyOrId,
-                                      std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
+Result<std::unordered_map<std::string, bool>, TrackerError>
+GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& issueKeyOrId) {
     // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly
     // editable when the PAT has repo write scope. Return success with all-true so
     // AppController caches the result and doesn't refetch every UI frame (the
@@ -323,11 +322,10 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
     // github-commit-tracker-rows — commit rows are immutable git history. Return
     // success with every field non-editable so the grid never offers an edit
     // affordance and offline replay never enqueues against a commit key.
+    std::unordered_map<std::string, bool> outFieldIdCanEdit;
     {
         smatchet::github::ParsedCommitKey ck;
         if (smatchet::github::ParseGitHubCommitKey(issueKeyOrId, ck)) {
-            outError.clear();
-            outFieldIdCanEdit.clear();
             // Every catalog field id maps to false so the grid offers no edit
             // affordance on any column of a commit row (CR #504).
             const char* const kCommitReadOnlyFields[] = {"summary",
@@ -352,11 +350,9 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
             for (const char* id : kCommitReadOnlyFields) {
                 outFieldIdCanEdit[id] = false;
             }
-            return true;
+            return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(outFieldIdCanEdit));
         }
     }
-    outError.clear();
-    outFieldIdCanEdit.clear();
     // Field IDs aligned with the catalog (summary/description/status/assignee).
     outFieldIdCanEdit["summary"] = true;
     outFieldIdCanEdit["description"] = true;
@@ -367,7 +363,7 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
     outFieldIdCanEdit["author"] = false; // immutable on GitHub
     outFieldIdCanEdit["created"] = false;
     outFieldIdCanEdit["updated"] = false;
-    return true;
+    return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(outFieldIdCanEdit));
 }
 
 std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
