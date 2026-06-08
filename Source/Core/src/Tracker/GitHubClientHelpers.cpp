@@ -165,46 +165,40 @@ std::string BuildIssuePatchUrlSuffix(const std::string& owner, const std::string
     return out.str();
 }
 
-bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError) {
+Result<bool, std::string> IsValidGitHubBaseUrl(const std::string& baseUrl) {
     // Strict per CodeRabbit on PR #357 — accept exactly "https://api.github.com" (cloud) or
     // any URL whose path is exactly "/api/v3" on an arbitrary https host (Enterprise).
     // Reject any other shape so downstream URL composition lands on a working REST root.
     if (baseUrl.empty()) {
-        outError = "GitHub base URL is empty";
-        return false;
+        return Result<bool, std::string>::Err("GitHub base URL is empty");
     }
     if (baseUrl.compare(0, 8, "https://") != 0) {
-        outError = "GitHub base URL must start with https://";
-        return false;
+        return Result<bool, std::string>::Err("GitHub base URL must start with https://");
     }
     if (baseUrl.back() == '/') {
-        outError = "GitHub base URL must not have a trailing slash";
-        return false;
+        return Result<bool, std::string>::Err("GitHub base URL must not have a trailing slash");
     }
     // Exact cloud match.
     if (baseUrl == "https://api.github.com") {
-        outError.clear();
-        return true;
+        return Result<bool, std::string>::Ok(true);
     }
     // Enterprise — must end with /api/v3 + host portion non-empty.
     const std::string apiSuffix = "/api/v3";
     if (baseUrl.size() <= 8 + apiSuffix.size()) {
-        outError = "GitHub base URL must be 'https://api.github.com' or 'https://<host>/api/v3'";
-        return false;
+        return Result<bool, std::string>::Err(
+            "GitHub base URL must be 'https://api.github.com' or 'https://<host>/api/v3'");
     }
     if (baseUrl.compare(baseUrl.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) != 0) {
-        outError = "GitHub Enterprise base URL must end with '/api/v3' (got '" + baseUrl + "')";
-        return false;
+        return Result<bool, std::string>::Err("GitHub Enterprise base URL must end with '/api/v3' (got '" + baseUrl +
+                                              "')");
     }
     // Verify the host portion (between 'https://' and '/api/v3') is non-empty + contains no
     // additional path segments.
     const std::string host = baseUrl.substr(8, baseUrl.size() - 8 - apiSuffix.size());
     if (host.empty() || host.find('/') != std::string::npos) {
-        outError = "GitHub Enterprise base URL has invalid host portion: '" + host + "'";
-        return false;
+        return Result<bool, std::string>::Err("GitHub Enterprise base URL has invalid host portion: '" + host + "'");
     }
-    outError.clear();
-    return true;
+    return Result<bool, std::string>::Ok(true);
 }
 
 namespace {
@@ -233,18 +227,17 @@ nlohmann::json SplitCsvToJsonArray(const std::string& csv) {
 
 } // namespace
 
-bool BuildGitHubCreatePayload(const std::string& summary, const std::string& body, const std::string& labelsCsv,
-                              const std::string& assigneesCsv, const std::string& owner, const std::string& repo,
-                              nlohmann::json& out, std::string& outError) {
+Result<nlohmann::json, std::string> BuildGitHubCreatePayload(const std::string& summary, const std::string& body,
+                                                             const std::string& labelsCsv,
+                                                             const std::string& assigneesCsv, const std::string& owner,
+                                                             const std::string& repo) {
     if (summary.empty()) {
-        outError = "GitHub issue create requires a non-empty title (summary)";
-        return false;
+        return Result<nlohmann::json, std::string>::Err("GitHub issue create requires a non-empty title (summary)");
     }
     if (owner.empty() || repo.empty()) {
-        outError = "GitHub issue create requires a target repo (owner/repo)";
-        return false;
+        return Result<nlohmann::json, std::string>::Err("GitHub issue create requires a target repo (owner/repo)");
     }
-    out = nlohmann::json::object();
+    nlohmann::json out = nlohmann::json::object();
     out["title"] = summary;
     if (!body.empty()) {
         out["body"] = body;
@@ -263,8 +256,7 @@ bool BuildGitHubCreatePayload(const std::string& summary, const std::string& bod
     target["owner"] = owner;
     target["repo"] = repo;
     out["__target"] = target;
-    outError.clear();
-    return true;
+    return Result<nlohmann::json, std::string>::Ok(std::move(out));
 }
 
 std::string FormatGitHubIssueKey(const std::string& owner, const std::string& repo, std::int64_t number) {
@@ -289,10 +281,9 @@ std::string ExtractGitHubErrorMessage(int httpStatus, const std::string& body) {
     return out.str();
 }
 
-std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outError) {
+Result<std::int64_t, std::string> ParseIso8601ToUnixSec(const std::string& iso8601) {
     if (iso8601.empty()) {
-        outError = "empty timestamp";
-        return 0;
+        return Result<std::int64_t, std::string>::Err("empty timestamp");
     }
     // Parse YYYY-MM-DDTHH:MM:SS first, then handle the optional timezone suffix.
     // Per CodeRabbit on PR #357 — prior impl ignored non-zero offsets (e.g. +05:30)
@@ -302,8 +293,7 @@ std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outE
     int year = 0, mon = 0, day = 0, hour = 0, minute = 0, sec = 0;
     int consumed = 0;
     if (std::sscanf(iso8601.c_str(), "%d-%d-%dT%d:%d:%d%n", &year, &mon, &day, &hour, &minute, &sec, &consumed) != 6) {
-        outError = "bad ISO-8601 format: " + iso8601;
-        return 0;
+        return Result<std::int64_t, std::string>::Err("bad ISO-8601 format: " + iso8601);
     }
     const std::string suffix = iso8601.substr(static_cast<std::size_t>(consumed));
     std::int64_t offsetSec = 0;
@@ -315,19 +305,19 @@ std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outE
         // Tolerate `+HH:MM` and `+HHMM` shapes (both standard ISO-8601).
         if (std::sscanf(suffix.c_str() + 1, "%d:%d", &offH, &offM) != 2 &&
             std::sscanf(suffix.c_str() + 1, "%2d%2d", &offH, &offM) != 2) {
-            outError = "unrecognised timezone offset: '" + suffix + "' in " + iso8601;
-            return 0;
+            return Result<std::int64_t, std::string>::Err("unrecognised timezone offset: '" + suffix + "' in " +
+                                                          iso8601);
         }
         // Bounds-check the parsed offset per CodeRabbit nitpick on PR #358 — `%d:%d` accepts
         // arbitrary integers (e.g. `+53:99`). Max real-world offset is `+14:00` (Pacific/Kiritimati).
         if (offH < 0 || offH > 14 || offM < 0 || offM > 59 || (offH == 14 && offM != 0)) {
-            outError = "timezone offset out of range (expected ±00:00 to ±14:00): '" + suffix + "' in " + iso8601;
-            return 0;
+            return Result<std::int64_t, std::string>::Err(
+                "timezone offset out of range (expected ±00:00 to ±14:00): '" + suffix + "' in " + iso8601);
         }
         offsetSec = sign * (static_cast<std::int64_t>(offH) * 3600 + static_cast<std::int64_t>(offM) * 60);
     } else {
-        outError = "ISO-8601 timestamp missing timezone suffix (need 'Z' or '\xC2\xB1HH:MM'): " + iso8601;
-        return 0;
+        return Result<std::int64_t, std::string>::Err(
+            "ISO-8601 timestamp missing timezone suffix (need 'Z' or '\xC2\xB1HH:MM'): " + iso8601);
     }
     std::tm tm{};
     tm.tm_year = year - 1900;
@@ -342,12 +332,10 @@ std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outE
     const std::time_t t = timegm(&tm);
 #endif
     if (t == static_cast<std::time_t>(-1)) {
-        outError = "timegm/mkgmtime rejected: " + iso8601;
-        return 0;
+        return Result<std::int64_t, std::string>::Err("timegm/mkgmtime rejected: " + iso8601);
     }
-    outError.clear();
     // UTC = local - offset (e.g. 12:00 +05:30 → 06:30 UTC → subtract 5:30 from local epoch).
-    return static_cast<std::int64_t>(t) - offsetSec;
+    return Result<std::int64_t, std::string>::Ok(static_cast<std::int64_t>(t) - offsetSec);
 }
 
 GitHubRequestAuth ResolveGitHubRequestAuth(const std::string& cfgBaseUrl, const std::string& cfgPat,

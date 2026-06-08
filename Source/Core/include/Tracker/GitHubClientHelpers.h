@@ -6,6 +6,8 @@
 
 #include <nlohmann/json_fwd.hpp>
 
+#include "SmatchetResult.h"
+
 // GitHubClientHelpers — pure helpers consumed by GitHubClient. Slice 1 of
 // docs/plans/shipped/github-tracker-backend.md PR2. Mirrors the JiraIssueSearch /
 // PlaneFieldCatalog split convention (pure helpers live in their own TU so
@@ -74,8 +76,8 @@ std::string BuildIssuePatchUrlSuffix(const std::string& owner, const std::string
 
 /// Validate a GitHub base URL — accepts `https://api.github.com` (cloud) or
 /// `https://<host>/api/v3` (GitHub Enterprise). Rejects empty / non-https /
-/// trailing-slash inconsistencies. Returns false + sets `outError` on reject.
-bool IsValidGitHubBaseUrl(const std::string& baseUrl, std::string& outError);
+/// trailing-slash inconsistencies. `Ok(true)` when valid; `Err(msg)` on reject.
+Result<bool, std::string> IsValidGitHubBaseUrl(const std::string& baseUrl);
 
 /// Best-effort extract a human-readable error message from a GitHub error JSON
 /// payload (e.g. `{"message": "Not Found", "documentation_url": "..."}`).
@@ -94,9 +96,11 @@ std::string ExtractGitHubErrorMessage(int httpStatus, const std::string& body);
 /// entries skipped; omitted entirely when no non-blank token remains). The
 /// resolved target repo is carried out-of-band as `out["__target"] = {owner,
 /// repo}` so `CreateIssue` can form the POST URL without re-parsing ProjectKey.
-bool BuildGitHubCreatePayload(const std::string& summary, const std::string& body, const std::string& labelsCsv,
-                              const std::string& assigneesCsv, const std::string& owner, const std::string& repo,
-                              nlohmann::json& out, std::string& outError);
+/// `Ok(payload)` with the built json; `Err(msg)` on a missing title or repo.
+Result<nlohmann::json, std::string> BuildGitHubCreatePayload(const std::string& summary, const std::string& body,
+                                                             const std::string& labelsCsv,
+                                                             const std::string& assigneesCsv, const std::string& owner,
+                                                             const std::string& repo);
 
 /// Inverse of `ParseGitHubIssueKey` — compose the canonical `owner/repo#N` key
 /// string from its parts (used by `GitHubClient::CreateIssue` to return the new
@@ -120,10 +124,10 @@ GitHubRequestAuth ResolveGitHubRequestAuth(const std::string& cfgBaseUrl, const 
                                            const std::string& fallbackBaseUrl);
 
 /// Parse an ISO-8601 timestamp ("2024-01-15T12:34:56Z") into unix epoch seconds.
-/// Returns 0 + sets `outError` on parse failure. Permissive on offset format
-/// (accepts `+00:00`, `Z`, missing offset = UTC). Used by FetchIssues to
+/// `Ok(epochSec)` on success; `Err(msg)` on parse failure. Permissive on offset
+/// format (accepts `+00:00`, `Z`, missing offset = UTC). Used by FetchIssues to
 /// populate `CachedTicket::CreatedAtSec` + `UpdatedAtSec`.
-std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outError);
+Result<std::int64_t, std::string> ParseIso8601ToUnixSec(const std::string& iso8601);
 
 } // namespace github
 } // namespace smatchet
