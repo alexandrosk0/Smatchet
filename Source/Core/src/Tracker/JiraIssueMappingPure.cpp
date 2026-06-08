@@ -9,6 +9,7 @@
 #include "TrackerFieldValueParser.h"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <string>
 #include <unordered_set>
@@ -16,6 +17,83 @@
 
 namespace smatchet {
 namespace jira {
+
+namespace {
+
+std::string TransitionFieldToString(const nlohmann::json& v) {
+    if (v.is_string()) {
+        return v.get<std::string>();
+    }
+    if (v.is_number_integer()) {
+        return std::to_string(v.get<long long>());
+    }
+    if (v.is_number_unsigned()) {
+        return std::to_string(v.get<unsigned long long>());
+    }
+    return std::string();
+}
+
+bool IEquals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray, const std::string& targetStatusId,
+                                         const std::string& targetStatusName) {
+    JiraTransitionMatch fallback; // first transition-name match; used only if no exact match exists
+    if (!transitionsArray.is_array()) {
+        return JiraTransitionMatch();
+    }
+    for (const auto& transition : transitionsArray) {
+        if (!transition.is_object()) {
+            continue;
+        }
+        std::string thisId;
+        if (transition.contains("id")) {
+            thisId = TransitionFieldToString(transition["id"]);
+        }
+        if (thisId.empty()) {
+            continue;
+        }
+
+        const std::string transitionName = transition.value("name", std::string());
+        std::string toStatusId;
+        std::string toStatusName;
+        if (transition.contains("to") && transition["to"].is_object()) {
+            const auto& to = transition["to"];
+            if (to.contains("id")) {
+                toStatusId = TransitionFieldToString(to["id"]);
+            }
+            toStatusName = to.value("name", std::string());
+        }
+
+        // Pass-1 priority (global): exact status id or exact to.name wins outright.
+        if ((!targetStatusId.empty() && toStatusId == targetStatusId) ||
+            (!targetStatusName.empty() && IEquals(toStatusName, targetStatusName))) {
+            JiraTransitionMatch m;
+            m.id = thisId;
+            return m;
+        }
+        // Pass-2 candidate: remember the FIRST transition-name match, do NOT return
+        // yet — a later transition may still be an exact status match.
+        if (fallback.id.empty() && !targetStatusName.empty() && IEquals(transitionName, targetStatusName)) {
+            fallback.id = thisId;
+            fallback.usedNameFallback = true;
+            fallback.transitionName = transitionName;
+            fallback.toStatusName = toStatusName;
+        }
+    }
+    return fallback;
+}
 
 void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::string>& outFieldsList,
                                   std::vector<std::string>& outSelectedFields) {
