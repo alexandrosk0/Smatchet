@@ -6,7 +6,6 @@
 // the UiDrawSession singleton (g_ui), not on AppController, so SmatchetUI passes the
 // live session in once panes are loaded. Registering here surfaces pane scripting on
 // all five command frontends (CLI / Palette / MCP / Lua / Scenarios) for free.
-//
 // Every handler mutates UI-thread-owned pane state through the SAME request latches the
 // "+" / close-X / focus-cycle UI uses (paneAddRequestSourceId, pane.open, focusedPaneId
 // + gridPaneFocusReassigned) — never resizing/reordering d.gridPanes mid-frame. The
