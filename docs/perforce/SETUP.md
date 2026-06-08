@@ -277,3 +277,4 @@ Used by the P4-gated ship-loop's perf gate (per [`docs/plans/shipped/p4-gated-sh
 - Remote `<REMOTE_HOST>` to be supplied by user post-install.
 - Brick-side `P4PORT` default — set via `p4 set -s P4PORT=<REMOTE_HOST>:1666` (system-wide) after smoke test passes.
 - Phase 1 stream depot `//smatchet` creation depends on Phase 0 close.
+- **Optional add-on — GitHub → p4d backup mirror** ([`MIRROR.md`](MIRROR.md)): a read-only, git-native graph-depot (`//repo/smatchet`) replica of the GitHub repo, populated by the Helix4Git Git Connector on WSL2. Independent of the classic `//smatchet` stream depot; stand it up any time post-Phase-0 (graph depots work on this server's free/unlicensed tier).

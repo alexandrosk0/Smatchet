@@ -105,13 +105,27 @@ Per `AGENTS.md` § Verification automation. This plan's product surface is one b
 - **Automating the host-level WSL2 bootstrap** — flagged as a `tooling.md` follow-up (§ Verification § Manual residue), not designed here.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `<this PR>` · Ship the mirror **artifacts** (docs + health-check + bats). New `docs/perforce/MIRROR.md` (full operator runbook), `scripts/dev/p4-mirror-healthcheck.sh` + `tests/bats/p4_mirror_healthcheck.bats`, and the `AGENT_FLOWS.md` (topology row + When-NOT bullet) + `SETUP.md` (Open-items cross-link) edits.
+
+**Status stays `active` (deliberate).** The plan's § Intended outcome is the *running* mirror ("a scheduled job keeps `//repo/smatchet` in lock-step with GitHub"). That requires the one-time WSL2 + connector + Deploy-Key install on the user's box — host-level infra/secrets this PR cannot perform (§ Verification § Manual residue). This PR ships everything that *can* be checked into the repo; the operator stands the mirror up by following `MIRROR.md`, after which the plan archives. INDEX.md regenerates from `shipped/` only, so no index entry is owed while active.
 
 ## Deviations from plan
 *(populated post-ship)*
 
+- **Licensing risk retired, not escalated** (§ Risks "Helix4Git licensing", § Approach step 1). The plan gated on confirming whether graph depots need a paid license, with an abort-to-user if so. A read-only probe this session created an empty graph depot via `p4 depot -t graph` **successfully on the unlicensed free tier** (`Server license: none`) — so no cost decision was needed and the build proceeded under the user's "Probe server, then build" authorization. `MIRROR.md` § Prerequisites records the free-tier confirmation.
+- **Repo is PUBLIC, not private** (§ Approach step 2, § Risks "GitHub secret" assumed private). `gh repo view` showed `alexandrosk0/Smatchet` is public — anonymous HTTPS read works with no credential. Kept the read-only Deploy Key as the documented primary (operator's explicit auth choice; future-proofs a flip to private + dodges anon rate limits) but added a `MIRROR.md` § 3 note that the public HTTPS URL is a valid simpler path while public.
+- **`//repo` graph depot pre-existed** (created 2026-05-21, empty). The plan's "create graph depot" step became idempotent verify-then-create-if-absent in `MIRROR.md` § 1(a).
+- **Health-check ref-comparison sharpened** (grill outcome). Original § Files #5 mixed `gh api commits` and `p4 graph`; the shipped script standardizes on `git ls-remote refs/heads/develop` for BOTH sides (pure git-protocol, SHA-exact) with a `p4 graph log` fallback only when the connector doesn't serve smart-http. Removed the `gh api` dependency from the hot path.
+
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Bash-driver bats**: `tests/bats/p4_mirror_healthcheck.bats` — **8/8 PASS** (in-sync→0; drift→non-zero+`DRIFT`; mirror unreachable; GitHub unreachable; mirror ref absent; `MIRROR_REMOTE` unset; p4-fallback in-sync; p4-fallback unreachable). Stubs `git`+`p4` on PATH, no live p4d/GitHub/connector needed.
+- **shellcheck**: `scripts/dev/p4-mirror-healthcheck.sh` — **CLEAN**.
+- **Doc validation**: `MIRROR.md` + `AGENT_FLOWS.md`/`SETUP.md` edits cross-linked bidirectionally; ref-integrity/anchors to be confirmed green by `test-docs.sh` in CI on the PR.
+- **Plan stress-test — `grill-with-docs` (actual)**: ran against the dual-VCS domain model. Outcomes folded in: (1) **graph-depot vs classic-depot** terminology kept distinct throughout (`//repo` graph depot = git-native objects; `//smatchet` classic stream depot = agentic-WIP; "two depots, two purposes, zero interference"). (2) **"mirror" chosen over "replica"/"consumer"** — "replica" implies HA/failover semantics this is not; "consumer" is too generic. Standardized on **"one-way mirror"** + **"non-authoritative"**. (3) **One-way invariant** stated as a named invariant at the top of `MIRROR.md` and echoed in `AGENT_FLOWS.md` (topology row + When-NOT bullet). (4) **Health-check mechanism judged sound** — exact-SHA equality of `develop` via `git ls-remote` on both sides is the tightest available drift signal (catches staleness, divergence, and unpopulated-repo distinctly); the `p4 graph log` fallback covers the no-smart-http connector build. **Storage-substrate pre-flight**: confirmed the substrate is a real graph depot (live `p4 depot -t graph` probe), not a fabricated schema — no phantom-migration risk.
+- **Manual residue** (carried, per plan): the one-time WSL2 + connector + Deploy-Key standup stays manual host infra. Deferred-automation action plan unchanged — `MIRROR.md` ships the deterministic copy-paste sequence; ongoing verification is automated by the health-check + cron; a `docs/self-improvement/categories/tooling.md` entry proposes an idempotent `scripts/dev/p4-mirror-bootstrap.sh`. **Known server quirk** (also in `MIRROR.md` § Known issues): `p4 depot -d <graph-depot>` hits a `db.counters locked after db.group` lock-order abort on this `p4d` 2025.2 (independent of `-f`); a stray empty probe depot `testgraphprobe` (0 repos/0 data, harmless) awaits a `db.peeking` maintenance-window cleanup. Steady-state mirror writes never touch the delete path, so the mirror is unaffected.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *In the SAME PR that populates the three sections above —*
