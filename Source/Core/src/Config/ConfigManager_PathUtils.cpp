@@ -8,6 +8,7 @@
 
 #include "ConfigManager.h"
 #include "ConfigManager_Internal.h"
+#include "UiThreadAffinity.h"
 
 #include "Logger.h"
 
@@ -639,6 +640,11 @@ std::string ConfigManager::NormalizeUiLanguageCode(const std::string& code) {
 }
 
 void ConfigManager::WriteConfigJson(const nlohmann::json& j) {
+    // Pillar-2 gate (close-gate-gaps Slice 1a): the central config-write chokepoint — every
+    // ConfigManager::Save* funnels here. Blocking (lock + ScopedFileLock + atomic disk write),
+    // so it must never run on the UI render thread (#565/#732). Warn-only for now; hardens to a
+    // debug assert once Slice 1b clears the live violators.
+    UiThreadAffinity::WarnIfOnUiThread("ConfigManager::WriteConfigJson");
     const std::string path = GetConfigPath();
     std::lock_guard<std::mutex> lock(GetIoMutexRef());
     ScopedFileLock fileLock(path);

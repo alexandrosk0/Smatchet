@@ -1,5 +1,6 @@
 #include "P4Annotate.h"
 #include "Logger.h"
+#include "UiThreadAffinity.h"
 #include "P4AnnotateParse.h"
 #include "P4ErrorUtil.h"
 #include "StringUtil.h"
@@ -41,6 +42,10 @@ bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::stri
                   static_cast<int>(ok));
         return ok;
     }
+    // Pillar-2 gate (close-gate-gaps Slice 1a): the real p4 subprocess spawn is a blocking
+    // server round-trip — must not run on the UI render thread (#761). Placed after the
+    // P4RunOverride short-circuit so the test seam (non-blocking) never trips it. Warn-only.
+    UiThreadAffinity::WarnIfOnUiThread("P4RunCommand (p4 subprocess spawn)");
     const std::string exe = cfg.P4Executable.empty() ? "p4" : cfg.P4Executable;
     LOG_INFO("P4: spawn exe=\"%s\" args: %s", exe.c_str(), JoinStrings(args, " ").c_str());
 

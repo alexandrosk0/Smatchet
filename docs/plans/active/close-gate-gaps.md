@@ -136,7 +136,11 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Slice 1a — warn-first, not hard-assert (justified gate-first sequencing).** The plan specified "debug/sanitizer build → assert". Implemented instead as a **warn-only** `UiThreadAffinity::WarnIfOnUiThread(context)` (LOG_ERROR, no abort) at the chokepoints. Reason: a hard assert added in Slice 1a — *before* Slice 1b fixes the live violators (#565/#611/#732/#761) — would **crash any existing test that drives a violator path on the UI thread**, breaking the build the gate is meant to protect. Warn-only is purely additive (cannot red an existing test) yet still surfaces the violation in logs/bucket-E. Hardening to a debug-build assert is deferred to a follow-up *after* Slice 1b clears the violators (the safe gate-first order). Also: **no `SMATCHET_ASSERT` macro exists** in the tree (the plan assumed one), so the warn helper lives in the util.
+- **Slice 1a — chokepoints, not the 55 call-sites.** Rather than instrument every `ConfigManager::Save*` call, the guard sits at the three blocking **chokepoints** every violator funnels through: `ConfigManager::WriteConfigJson` (the universal config-write funnel — covers #565 `SaveAnnotateAnalysis` + #732 `Save*`), `ConfigManager::LoadPersistentViewsFromDisk` (#611), and `P4RunCommand` *after* its `P4RunOverride` test-seam (#761; the override path is non-blocking so it's excluded). Three sites cover all four findings.
+
+## Implementation log
+- Slice 1a · new `Source/Core/include/UiThreadAffinity.h` + `Source/Core/src/UiThreadAffinity.cpp` (publish-once registry, mirrors `AppController::IsOnUiThread()` discipline in a low layer the Config/P4 wrappers can reach); `SetUiThread()` wired into `AppController::Initialize` beside the existing `uiThreadId_` capture; `WarnIfOnUiThread()` guard at the 3 chokepoints; `tests/Core/UiThreadAffinity.test.cpp` pins the registered-vs-off-thread contract. `pillar2-scan.sh` untouched (static scanner stays for direct primitives).
 
 ## Verification (actual)
 *(populated post-ship)*
