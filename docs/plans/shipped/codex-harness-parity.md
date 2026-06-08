@@ -34,7 +34,8 @@ Document the equivalent local workflows for hooks that Codex cannot receive dire
 12. `docs/harness/capability-adapter.md`: document Codex's native agent discovery and search fallback accurately.
 13. `docs/harness/cursor/hooks-equivalent.md`: point Cursor at the same tracked repo hook path so hook docs stay consistent across non-Claude harnesses.
 14. `AGENTS.md`: clarify that Codex uses native `AGENTS.md` discovery rather than a generated `.codex` mirror.
-15. `docs/plans/codex-harness-parity.md`: track the plan and verification outcomes.
+15. `agents/scripts/core/test-plan-index.sh`: normalize Git path arguments so Git Bash + Windows Python generates the same shipped-plan dates as Linux CI.
+16. `docs/plans/codex-harness-parity.md`: track the plan and verification outcomes.
 
 ## Existing utilities reused
 
@@ -95,11 +96,13 @@ N/A - planned diff is docs, harness scripts, and git hooks only; no `Source/Core
 
 - `256669a8` - Add the active Codex harness parity plan and verification scope.
 - `7979b346` - Wire Codex setup verification, repo-owned hooks, docs, and Windows-safe probe fixes.
+- `dd6314e4` - Archive the plan and regenerate the shipped-plan index.
 
 ## Deviations from plan
 
 - Scope widened from Codex setup/docs to shared tool and Python probe hardening after local verification exposed Git Bash / WSL false negatives.
 - `agents/scripts/core/test-setup-harness.sh` gained Codex coverage and Windows-safe Python assertion probing so the new behavior is guarded.
+- CI exposed a shipped-plan index date drift that local Windows Python masked; `test-plan-index.sh` now passes Git forward-slash paths to `git log --follow`.
 - Product-level Codex hook events, first-class named Codex specialist agents, and automatic Codex token telemetry remain out of repo control and are documented as runtime gaps.
 
 ## Verification (actual)
@@ -108,6 +111,7 @@ N/A - planned diff is docs, harness scripts, and git hooks only; no `Source/Core
 - `bash agents/scripts/core/setup-harness.sh codex` - passed; reported 26 agent files, 5 leaf `AGENTS.md` files, and git-hook wiring.
 - `powershell -NoProfile -ExecutionPolicy Bypass -File agents\scripts\core\setup-harness.ps1 codex` - passed.
 - `bash agents/scripts/core/test-setup-harness.sh` - passed, 19/19.
+- `bash agents/scripts/core/test-plan-index.sh --fix` - passed; regenerated `codex-harness-parity` with date `2026-06-08`.
 - `bash scripts/dev/test-docs.sh` - passed, 10/10.
 - `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` - passed; narrowing conversion opt-in skipped as designed.
 - `git diff --check` - passed.

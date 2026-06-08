@@ -48,7 +48,8 @@ archive_dir, index_file, begin, end, mode = sys.argv[1:6]
 
 def git_first_date(path):
     try:
-        out = subprocess.run(["git", "log", "--follow", "--format=%ad", "--date=short", "--", path],
+        git_path = path.replace(os.sep, "/")
+        out = subprocess.run(["git", "log", "--follow", "--format=%ad", "--date=short", "--", git_path],
                              capture_output=True, text=True, check=False).stdout.strip().splitlines()
         return out[-1] if out else "—"
     except Exception:
