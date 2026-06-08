@@ -13,6 +13,7 @@
 #include "../support/SqliteMemFixture.h"
 
 #include "ConfigManager.h"
+#include "ITrackerCollaboration.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "LocalCacheManager.h"
@@ -538,5 +539,63 @@ TEST_CASE("FetchIssuesForKeys returns Ok tickets on success and a detail-carryin
         auto r = client.FetchIssuesForKeys(TrackerConfig{}, {"PROJ-7"}, views);
         REQUIRE_FALSE(static_cast<bool>(r));
         CHECK(r.error().Detail == "Operation timed out after 30000 ms");
+    }
+}
+
+// Slice 7 of the tracker Result<T> migration flipped the ITrackerCollaboration virtuals: the reads
+// (FetchIssueWatchers / FetchIssueVotes / SearchUsersByQuery / FetchUserGroupNames / FetchIssueComments)
+// to Result<payload, TrackerError>, and the writes (AddIssueWatcher / AddIssueCommentPlain / AddWorklog /
+// AddIssueCommentAnnotateContext) to a bare TrackerError. FetchIssueVotes' four out-params (voters +
+// int* + bool* + bool*) collapsed into the TrackerIssueVotes Ok payload. These cases pin both the new
+// interface defaults (unsupported → Err) and the migrated value shapes via a minimal stub override.
+namespace {
+class StubCollaboration : public ITrackerCollaboration {
+  public:
+    // Override two methods to pin the Ok shapes; leave the rest as interface defaults (→ Err).
+    Result<TrackerIssueVotes, TrackerError> FetchIssueVotes(const TrackerConfig& /*cfg*/,
+                                                            const std::string& /*issueKey*/) override {
+        TrackerIssueVotes v;
+        v.VoteCount = 3;
+        v.HasVoted = true;
+        v.VotersArrayInResponse = true;
+        TrackerUser u;
+        u.AccountId = "acc-1";
+        v.Voters.push_back(u);
+        return Result<TrackerIssueVotes, TrackerError>::Ok(std::move(v));
+    }
+    TrackerError AddIssueWatcher(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) override {
+        return TrackerError::Ok();
+    }
+};
+} // namespace
+
+TEST_CASE("ITrackerCollaboration migrated shapes: Result reads, bare-TrackerError writes, votes struct") {
+    StubCollaboration collab;
+
+    SUBCASE("an overridden read returns its payload as the Ok value (votes struct collapses 4 out-params)") {
+        auto r = collab.FetchIssueVotes(TrackerConfig{}, "PROJ-1");
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value().VoteCount == 3);
+        CHECK(r.value().HasVoted);
+        CHECK(r.value().VotersArrayInResponse);
+        REQUIRE(r.value().Voters.size() == 1);
+        CHECK(r.value().Voters[0].AccountId == "acc-1");
+    }
+
+    SUBCASE("an overridden write returns an Ok TrackerError") {
+        const TrackerError e = collab.AddIssueWatcher(TrackerConfig{}, "PROJ-1");
+        CHECK(e.IsOk());
+    }
+
+    SUBCASE("a non-overridden read default is an InvalidRequest Err (Result<vector<string>>)") {
+        auto r = collab.FetchUserGroupNames(TrackerConfig{}, "acc-1");
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+    }
+
+    SUBCASE("a non-overridden write default is an InvalidRequest Err (bare TrackerError)") {
+        const TrackerError e = collab.AddWorklog(TrackerConfig{}, "PROJ-1", "1h", "", "", "", "");
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Kind == TrackerErrorKind::InvalidRequest);
     }
 }

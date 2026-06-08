@@ -1533,7 +1533,13 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->FetchIssueWatchers(cfg, issueKey, outWatchers, outError);
+    auto watchersResult = backend->Collaboration()->FetchIssueWatchers(cfg, issueKey);
+    const bool ok = static_cast<bool>(watchersResult);
+    if (ok) {
+        outWatchers = std::move(watchersResult.value());
+    } else {
+        outError = watchersResult.error().Detail;
+    }
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1561,8 +1567,10 @@ bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& ou
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->AddIssueWatcher(cfg, issueKey, outError);
+    const TrackerError addWatcherErr = backend->Collaboration()->AddIssueWatcher(cfg, issueKey);
+    const bool ok = addWatcherErr.IsOk();
     if (!ok) {
+        outError = addWatcherErr.Detail;
         LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
@@ -1578,6 +1586,15 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outVoters.clear();
     outError.clear();
+    if (outVoteCount) {
+        *outVoteCount = 0;
+    }
+    if (outHasVoted) {
+        *outHasVoted = false;
+    }
+    if (outVotersInResponse) {
+        *outVotersInResponse = false;
+    }
     if (!backend) {
         outError = "Tracker backend is not initialized.";
         return false;
@@ -1587,8 +1604,23 @@ bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<Tra
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->FetchIssueVotes(cfg, issueKey, outVoters, outError, outVoteCount,
-                                                              outHasVoted, outVotersInResponse);
+    auto votesResult = backend->Collaboration()->FetchIssueVotes(cfg, issueKey);
+    const bool ok = static_cast<bool>(votesResult);
+    if (ok) {
+        const TrackerIssueVotes& votes = votesResult.value();
+        outVoters = votes.Voters;
+        if (outVoteCount) {
+            *outVoteCount = votes.VoteCount;
+        }
+        if (outHasVoted) {
+            *outHasVoted = votes.HasVoted;
+        }
+        if (outVotersInResponse) {
+            *outVotersInResponse = votes.VotersArrayInResponse;
+        }
+    } else {
+        outError = votesResult.error().Detail;
+    }
     if (!ok) {
         LOG_ERROR("AppController::FetchIssueVotes failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
@@ -1613,7 +1645,13 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->SearchUsersByQuery(cfg, query, outUsers, outError);
+    auto usersResult = backend->Collaboration()->SearchUsersByQuery(cfg, query);
+    const bool ok = static_cast<bool>(usersResult);
+    if (ok) {
+        outUsers = std::move(usersResult.value());
+    } else {
+        outError = usersResult.error().Detail;
+    }
     if (!ok) {
         LOG_ERROR("AppController::SearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
                   outError.c_str());
@@ -1643,8 +1681,10 @@ bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std:
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->AddIssueCommentPlain(cfg, issueKey, plainText, outError);
+    const TrackerError commentErr = backend->Collaboration()->AddIssueCommentPlain(cfg, issueKey, plainText);
+    const bool ok = commentErr.IsOk();
     if (!ok) {
+        outError = commentErr.Detail;
         LOG_ERROR("AppController::AddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
@@ -1674,9 +1714,11 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->AddWorklog(cfg, issueId, timeSpent, timeRemaining, adjustEstimate,
-                                                         workDescription, startedDate, outError);
+    const TrackerError worklogErr = backend->Collaboration()->AddWorklog(cfg, issueId, timeSpent, timeRemaining,
+                                                                         adjustEstimate, workDescription, startedDate);
+    const bool ok = worklogErr.IsOk();
     if (!ok) {
+        outError = worklogErr.Detail;
         LOG_ERROR("AppController::SubmitWorklog failed issue=%s err=%s", issueId.c_str(), outError.c_str());
     } else {
         requestDeferredLiveTrackerBackendSuccessNotify_();
@@ -1708,10 +1750,11 @@ bool AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, 
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->AddIssueCommentAnnotateContext(cfg, issueKey, p4User, functionName,
-                                                                             filePath, lineNumber, changelist, date,
-                                                                             approximated, codeSnippet, outError);
+    const TrackerError annotateErr = backend->Collaboration()->AddIssueCommentAnnotateContext(
+        cfg, issueKey, p4User, functionName, filePath, lineNumber, changelist, date, approximated, codeSnippet);
+    const bool ok = annotateErr.IsOk();
     if (!ok) {
+        outError = annotateErr.Detail;
         LOG_ERROR("AppController::AddIssueCommentAnnotateContext failed issue=%s err=%s", issueKey.c_str(),
                   outError.c_str());
     } else {
@@ -1736,7 +1779,13 @@ bool AppController::FetchUserGroupNames(const std::string& accountId, std::vecto
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool ok = backend->Collaboration()->FetchUserGroupNames(cfg, accountId, outGroupNames, outError);
+    auto groupsResult = backend->Collaboration()->FetchUserGroupNames(cfg, accountId);
+    const bool ok = static_cast<bool>(groupsResult);
+    if (ok) {
+        outGroupNames = std::move(groupsResult.value());
+    } else {
+        outError = groupsResult.error().Detail;
+    }
     if (!ok) {
         LOG_ERROR("AppController::FetchUserGroupNames failed account=%s err=%s", TruncateForLog(accountId, 40).c_str(),
                   outError.c_str());
