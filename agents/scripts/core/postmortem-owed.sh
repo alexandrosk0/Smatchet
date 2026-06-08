@@ -51,7 +51,12 @@ has_entry() {
     [ -f "$LEDGER" ] || return 1
     # Match either a "PR #N" reference or a "commit <sha>" reference, so the
     # commit-only revert path (which passes a sha) dedupes too.
-    grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER"
+    grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0
+    # Combined-PR postmortem: one blameless RCA can cover several PRs in a single
+    # heading written `PR #A, #B, #C` — only the first carries the literal `PR #`
+    # prefix; the rest are bare `, #N`. Match #N inside such a heading line (scoped
+    # to `^#+ … PR #…` so a #N mention in prose body can't false-suppress a real owe).
+    grep -qE "^#+ .*PR #[0-9].*[,[:space:]]#$1([^0-9]|$)" "$LEDGER"
 }
 
 # --- Lossless merge-time snapshot ledger (PRIMARY source for trigger 1+2) -----
