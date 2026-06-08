@@ -1,0 +1,137 @@
+# Plan — Close the prevention-gate gaps (historical-review recurrence-proofing)
+
+> **Slug**: `close-gate-gaps` (matches this file's basename without `.md`).
+>
+> **Status**: `active`
+>
+> **Usage**: gap-closing plan. Each slice below is an independently-shippable PR that closes one recurrence gap **gate-first** (extend/repair/add the gate, then fix-or-grandfather the existing violators under it). Implement one slice per PR.
+>
+> **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
+
+## Context
+
+The `historical-code-review` sweep (`docs/self-improvement/historical-review-findings.md`, ~440 merged PRs #602–#1028) surfaced recurring defect **classes**, not just instances. Per `AGENTS.md` § "gate, don't trust", every fixed class should earn a code-enforced gate so new code can't reintroduce it. A session audit (2026-06-08) verified the gates are **partial**:
+
+- **Live + working** (hit this session): `smatchet_patch_or_die` (`cmake/SmatchetThirdParty.cmake`), `no-glfw-in-core-headers` lint, ImWchar `static_assert` (`SmatchetImGuiFonts.cpp:25`), comment-noise gate, Test-delta gate.
+- **Live but with a verified blind spot**: the **Pillar-2 sync-I/O scanner** (`scripts/dev/pillar2-scan.sh`) regex matches only *direct* primitives (`cpr::Get/Post`, `std::ifstream`, `popen(`, `system(`, `SQLite::…`, `.lock()`) — it does **not** see the project's own blocking **wrapper** functions, which is precisely why the entire surviving sync-I/O cluster (#565 `ConfigManager::SaveAnnotateAnalysis`, #611 `LoadPersistentViewsFromDisk`, #732 `ConfigManager::Save`, #761 `P4RunCommand`) slipped through.
+- **No gate at all**: semantic doc-signature drift (the `UpdateField(…, outError)` leaf-doc slip this session), `Result`/`Optional` exception-safety (#1017), the gate-false-pass meta-class (#918/#663/#784/#978), fresh-clone configure correctness (the cpr-submodule failure, #1031), and the `tests` glob-vs-list assert (#5, unconfirmed).
+
+**Intended outcome:** after this lands, every recurring class from the sweep either **fails a PR gate** when reintroduced, or carries a documented, tractable reason it can't be gated. The mop (fixing instances) follows the leak-fix (the gate).
+
+## Approach
+
+Close each gap **gate-first**, one gap per PR: extend/repair the existing gate (or add a new one), then fix-or-grandfather the existing violators *under* the now-active gate so it goes green. Ordering puts the highest-leverage gate (the Pillar-2 wrapper blind spot — it alone covers 4+ live findings) first, the cheap/contained gates next, and the one un-gateable instance (#1017) last.
+
+The non-obvious trade-off, named up front: teaching the Pillar-2 scanner the project's sync-I/O *wrapper* functions will flag **many existing legitimate off-thread call sites** that today pass only because the regex didn't know those wrappers — so Slice 1 is a regex edit **plus** an annotation/grandfather sweep, not a one-liner. That sweep is the real cost and is why the slice is split (1a gate + baseline, 1b fix the genuine render-path violators).
+
+## The gaps → the gate that closes each (roadmap)
+
+| Gap | Recurring class (findings) | Gate that closes it | Slice |
+|---|---|---|---|
+| **A** | sync-I/O wrapper on UI render path → freeze (#565, #611, #732, #761, #767, #892) | Pillar-2 scanner becomes **wrapper-aware** | 1a/1b |
+| **B** | stale function *signature* in leaf docs (this session's `UpdateField`; #928-adjacent) | new `doc-signature-drift` delta-lint | 2 |
+| **C** | a gate that itself **false-passes** (#918, #663, #784, #978) | mandatory **negative-fixture** in every gate `--selftest` | 3 |
+| **D** | fresh-clone / CI-cold-cache configure failure (cpr submodule, #1031) | **fresh-fetch configure** CI job | 4 |
+| **E** | uncompiled `*.test.cpp` → false-green (#5) | configure-time **glob-vs-list** assert | 5 |
+| **F** | `Result<T,E>` construct-then-throw UB (#1017) | **no tractable static gate** — fix instance + doctest, accept | 6 |
+| **G** | tribal-knowledge process workarounds (#3 worktree-reuse; #1 dep-fetch) | encode as guidance (Gap D's CI is the real gate for #1) | 7 |
+
+## Slices (ordered — implement one PR each)
+
+**Slice 1a — Pillar-2 scanner: wrapper-aware (gate + baseline).** Extend `SYNC_IO_REGEX` in `scripts/dev/pillar2-scan.sh` **and** the mirrored `.claude/hooks/lint-cpp-pillar2.sh` to flag the known blocking wrappers — start with the audited set `ConfigManager::Save`, `ConfigManager::Load[A-Za-z]*FromDisk`, `P4RunCommand` (grep-confirm the full blocking-wrapper list first; do **not** add a wrapper that is itself non-blocking). Run the scanner tree-wide; every *legitimate* hit (wrapper call already inside a `LaunchBackgroundTask`/worker lambda) gets the existing `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` annotation, and any genuine-but-out-of-scope survivor goes into an explicit **grandfather baseline** (mirror the delta-lint grandfathering pattern) so the gate is delta-only. Add `--selftest` fixtures: a wrapper call on a render path **FAILS**, an annotated one **PASSES**. **No product-behaviour change** — this slice only makes the gate see more. **~3–4 files** (2 scanner copies + baseline + selftest).
+
+**Slice 1b — fix the now-gated render-path violators.** With the gate live, fix the genuine survivors so the baseline shrinks to zero: #565 `AnnotateAnalysisUi_Preferences.cpp:212` → `PersistAnnotateCfg("edit_color")` (same-file off-thread helper); #732 `SmatchetPreferencesUi_Templates.cpp` → `MarkPrefsDirty(d)` (sibling sub-tabs already do this); #611 `SmatchetToolbarUi.cpp:124` + #761 `AnnotateAnalysisUi_Window.cpp:191` → `LaunchBackgroundTask` + `PostToMainThread` with a status cue. Each removes its grandfather entry. **Split per-file if the diff is large**; route to `spike-hunter`/`grid-engine`/`p4-annotate` owners as appropriate. These are **Pillar-2 user-visible** — pair each with its bucket-E / scenario evidence. *(If any fix needs product judgement, file the GitHub Issue per ADR-0014 instead and leave the grandfather entry with an `// Issue #N` note.)*
+
+**Slice 2 — `doc-signature-drift` gate (Gap B).** New delta rule in `agents/scripts/project/test-lint-rules.sh`: for each `Source/Core/**/{CONTEXT,AGENTS}.md` leaf doc, extract `` `Type::method(param-list)` `` references and flag when a **param name in the doc is absent from the current declaration** in the matching header (high-signal: removed/renamed params — the exact shape of this session's `UpdateField(…, outError)` slip). Pragmatic scope to keep false-positives near zero: leaf-doc → owning-subsystem-header only; only flag param-name **removals**, not full signature parse. Delta-gated vs `origin/develop`, grandfathered, `SMATCHET_DEVIATION(rule=doc-signature-drift; …)` escape. Ship with `--selftest` (a stale `(…, outError)` doc line FAILS; the corrected one PASSES). **~3 files** (the rule + selftest fixtures + the contract-card row in `AGENTS.md`).
+
+**Slice 3 — mandatory negative-fixture selftest (Gap C).** A meta-gate (`agents/scripts/core/test-gate-selftests.sh` + a `tests/bats` case) that enumerates every gate script exposing `--selftest` and asserts it **exits non-zero on a known-bad fixture** (a gate that can only pass is the bug — the class behind #918 coverage-false-exempt, #663 zero-test-pass, #784 postmortem-false-nag, #978 schema-false-pass). Gates lacking a failing-fixture path get one added. **~2–4 files** (the meta-runner + bats + any gate missing a negative fixture).
+
+**Slice 4 — fresh-clone configure CI (Gap D).** A CI job (PR-fast or nightly per cost) that configures into a **clean temp `FETCHCONTENT_BASE_DIR`** (forces a real fresh fetch) and asserts `Configuring done` — catches cpr-style `git submodule` cold-cache failures (#1031) **before** a new worktree or a fresh CI runner hits them. Route to `build-doctor`. **~1–2 files** (`.github/workflows/*.yml` + maybe a `scripts/dev/` helper).
+
+**Slice 5 — glob-vs-list test assert (Gap E).** Confirm whether a configure-time assert that every `tests/Core/*.test.cpp` appears in the explicit `add_executable` list already exists (the 2026-06-08 audit could not find one); if absent, add it to `tests/CMakeLists.txt` (a globbed set diffed against the hand-list → `FATAL_ERROR` on a missing entry) so a new test file can't be silently uncompiled (false-green). Route to `test-rig`. **~1 file.**
+
+**Slice 6 — #1017 `Result<T,E>` exception-safety (instance fix; class accepted-ungated).** `Source/Core/include/SmatchetResult.h` — make assignment/emplace **construct-then-commit** (set `ok_` only after the placement-new succeeds) + a constructed-member guard, mirroring the sibling `Optional<T>` already in the same header. Add a `test-rig` doctest with a throwing-move payload type proving no dtor runs on unconstructed storage. **Accept**: no tractable static gate exists for construct-then-throw UB in a tagged union — the doctest is the regression guard. **~2 files.**
+
+**Slice 7 — process/doc encodings + residue (Gap G).** Add the serial-migration **worktree-reuse** one-liner to `docs/agent-rules/process-rules.md` (already filed as a `process.md` self-improvement entry this session); prune the now-superseded "configure via PowerShell to dodge the cpr submodule step" guidance from `build.md` / the 2026-06-07 infra entry (Gap D's CI job is the real gate). **~2–3 doc files.**
+
+## Files to modify
+
+Per-slice lists above are authoritative. Cross-cutting touch points (grep-confirm before editing):
+1. [`scripts/dev/pillar2-scan.sh`](scripts/dev/pillar2-scan.sh) + [`.claude/hooks/lint-cpp-pillar2.sh`](.claude/hooks/lint-cpp-pillar2.sh) — the two copies of `SYNC_IO_REGEX` must stay in lockstep (Slice 1a). Grep both for the regex before editing.
+2. [`agents/scripts/project/test-lint-rules.sh`](agents/scripts/project/test-lint-rules.sh) — new `doc-signature-drift` rule (Slice 2); the contract-card in `AGENTS.md` § Project rules gains its row.
+3. [`tests/CMakeLists.txt`](tests/CMakeLists.txt) — glob-vs-list assert (Slice 5).
+4. [`Source/Core/include/SmatchetResult.h`](Source/Core/include/SmatchetResult.h) — exception-safety (Slice 6); `Optional<T>` in the same file is the reference pattern.
+5. UI render-path files (Slice 1b): `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp`, `SmatchetPreferencesUi_Templates.cpp`, `SmatchetToolbarUi.cpp`, `AnnotateAnalysisUi_Window.cpp`.
+
+## Existing utilities reused
+
+- `PersistAnnotateCfg` / `ScheduleAnnotateConfigSaveDetached` (`AnnotateAnalysisUi_Preferences.cpp`) — the off-thread save path #565 must use (the rest of the file already does).
+- `MarkPrefsDirty(d)` (`SmatchetPreferencesUi_Templates.cpp` sibling sub-tabs) — the deferred-save path #732 must use.
+- `LaunchBackgroundTask` + `mainThreadDispatcher.PostToMainThread` (`AppController`) — the worker-offload pattern for #611/#761.
+- The existing grep-rule + grandfather-baseline + `--selftest` patterns in `test-lint-rules.sh` (`no-printf-stderr`, `no-glfw-in-core-headers`) — cloned for `doc-signature-drift` (Slice 2).
+- The `/* PILLAR2_WORKER_ONLY */ // est-latency:` + `TODO(pillar2)` annotation grammar already parsed by `pillar2-scan.sh` (Slice 1a annotations).
+- `Optional<T>`'s construct-then-commit assignment in `SmatchetResult.h` — the exact exception-safe shape #1017 needs (Slice 6).
+
+## UX Pillar callouts
+
+- **Pillar 1 (perf, 144 Hz / 6.94 ms)**: net-positive — Slice 1b moves blocking saves/loads/p4 OFF the UI thread (removes per-edit main-thread stalls); the gate/lint/CI/header slices are build-time only, zero runtime delta.
+- **Pillar 2 (UI-thread never blocks > 100 ms)**: this plan's headline — Slice 1a makes the gate that *enforces* Pillar 2 actually see the wrapper-shaped violations, and Slice 1b removes four live render-path blocks (#565/#611/#732/#761), each with a visible-cue/worker offload.
+- **Pillar 3 (never crash)**: net-positive — Slice 6 removes a latent construct-then-throw UB from the foundational `Result<T,E>` (now the tracker layer's most-used primitive).
+- **Pillar 4 (accessibility)**: N/A — no accessibility surface touched.
+
+## Perf-review-system gates (diff touches `Source/Core/` in Slices 1b + 6 → applies; gate-only slices are N/A)
+
+Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
+
+1. **PR-fast CI** — Slice 1b: scenario `field-edit` / `idle` exercise the preferences + annotate + toolbar save paths the fixes relocate; expect **improvement or neutral** (work leaves the UI thread). Slices 1a/2/3/4/5/7 — **N/A** (no `Source/Core/` runtime code). Slice 6 — **N/A** (header-only value-type, no runtime path).
+2. **Pillar 2 static scanner** — Slice 1b is *defined by* it: each relocated call must pass the now-wrapper-aware scanner (no annotation needed once off-thread).
+3. **Dispatcher drain** — N/A: no slice touches `MainThreadDispatcher::Drain()` (Slice 1b *posts* to it via the existing `PostToMainThread`, not its drain logic).
+4. **Visible-cue bucket-E harness** — Slice 1b #611/#761 add a "Resolving…/Saving…" status cue on the newly-async path → bucket-E asserts the cue appears.
+5. **Marker inventory** — N/A: adds no `SMATCHET_UI_PERF_SCOPE` markers.
+
+**Pre-push local check**: run `docs/guides/perf-workflow.md` § Gate-check against `field-edit` on Slice 1b before opening its PR.
+
+**Override**: `perf-out-of-band` not expected.
+
+## Risks / non-goals
+
+- **Risk — Slice 1a floods the scanner with legitimate wrapper-in-lambda hits.** Mitigation: the scanner is file-level + annotation-aware; sweep + annotate the legit sites and grandfather the rest so the gate ships **delta-only** (no existing-violator wall). If the annotation sweep is larger than ~1 PR, split 1a into "regex + baseline" then "annotate" sub-PRs.
+- **Risk — `doc-signature-drift` (Slice 2) false-positives** on prose that mentions a param informally. Mitigation: scope to backtick-quoted `` `Type::method(...)` `` forms in leaf docs only, flag **removed param names** only, delta-gated + `SMATCHET_DEVIATION` escape. Calibrate WARN-first (mirror the `duplication` rollout) if noisy.
+- **Risk — Slice 6 destabilises the foundational `Result<T,E>`.** Mitigation: mirror the *already-shipped* `Optional<T>` pattern in the same header exactly; the doctest with a throwing-move type is the proof; dual-target build + full `SmatchetTests` is the blast-radius check (the tracker layer is now its biggest consumer).
+- **Non-goal — the user-visible *correctness* instances that aren't sync-I/O**: #854 (offline scalar-edit data-loss), #975 (components-marker leak), #671 (orphaned subprocess), #948 (migration key). These are **not gateable by the Pillar-2 scanner** and need product judgement → **GitHub Issues per ADR-0014**, tracked separately, not in this plan.
+- **Non-goal — sweeping the unswept PRs (#541 → #13)**: that's the historical-review backlog's own resume path, not this plan.
+- **Non-goal — a general C++ signature/AST doc-checker**: Slice 2 is the narrow param-removal heuristic, not a full clang-based doc verifier (cost ≫ value at this stage).
+
+## Verification
+
+Per `AGENTS.md` § Verification automation — zero manual steps.
+
+- **Bucket A (pure-logic ctest, `test-rig`)**: Slice 6 throwing-move doctest (no dtor on unconstructed storage); Slice 5 the glob-vs-list assert is itself a configure-time check.
+- **Bucket E (ImGui Test Engine)**: Slice 1b #611/#761 — boot-open-assert the "Resolving…/Saving…" cue appears on the now-async path; the existing field-edit/annotate flows re-run unchanged.
+- **Bash-driver scenario / screenshot / sanitizer**: each new gate ships a `--selftest` with **both** a passing and a **failing** fixture (Slice 3 *is* the meta-assertion of this across all gates); Slice 1a/2 selftests prove the gate fires on the bad input and passes on the good.
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target) on Slices 1b + 6.
+- **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green.
+- **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model + sharpen "gate vs gate-gap vs grandfather" terms before executing Slice 1; record the outcome.
+- **Manual residue**: none — every slice's gate is a script/CI assertion. Slice 1b's per-file Pillar-2 evidence is the only judgement step and is bucket-E-automatable.
+
+## Out of scope (flagged, not designed)
+
+**Deferral residue-sweep (keep this note)** — before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here (esp. the #854/#975/#671/#948 instances routed to Issues), and revise or delete them.
+
+- The four non-sync-I/O correctness instances (#854/#975/#671/#948) → GitHub Issues per ADR-0014.
+- Sweeping unreviewed PRs #541 → #13 → the historical-review resume path.
+- A full AST-based doc-signature verifier → only the narrow param-removal heuristic ships (Slice 2).
+
+## Implementation log
+*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+## Deviations from plan
+*(populated post-ship)*
+
+## Verification (actual)
+*(populated post-ship)*
+
+## Archive (post-ship — DO IN THIS PR, never a follow-up)
+1. flip § Status to `shipped`,
+2. `git mv docs/plans/active/close-gate-gaps.md docs/plans/shipped/close-gate-gaps.md`,
+3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
