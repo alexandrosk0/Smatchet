@@ -248,18 +248,17 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     return summary;
 }
 
-bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                                      const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
-                                      std::string& outError) {
+Result<std::vector<CachedTicket>, TrackerError>
+GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                 const ViewsStore& /*views*/) {
     // PR4 — single-issue GET loop per key. Credentials resolve from the live cfg
     // (issue #979); owner/repo aren't consulted because the canonical owner/repo
     // is already embedded in each key (`owner/repo#N`).
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
     if (auth.Pat.empty()) {
-        outError = kPatMissingError;
-        return false;
+        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorAuth(kPatMissingError));
     }
-    return smatchet::github::FetchIssuesForKeysViaRestApi(auth.BaseUrl, auth.Pat, issueKeys, outTickets, outError);
+    return smatchet::github::FetchIssuesForKeysViaRestApi(auth.BaseUrl, auth.Pat, issueKeys);
 }
 
 Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/,

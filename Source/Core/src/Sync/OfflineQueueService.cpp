@@ -840,7 +840,13 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
         const TrackerConfig cfgForFetch = ConfigManager::Load();
         const ViewsStore viewsForFetch = ConfigManager::LoadViewsOrBootstrap(cfgForFetch);
         const std::vector<std::string> keysForFetch = {row.IssueKey};
-        fetchOk = reader->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch, freshTickets, fetchErr);
+        auto fetchResult = reader->FetchIssuesForKeys(cfgForFetch, keysForFetch, viewsForFetch);
+        fetchOk = static_cast<bool>(fetchResult);
+        if (fetchOk) {
+            freshTickets = std::move(fetchResult.value());
+        } else {
+            fetchErr = fetchResult.error().Detail;
+        }
     } catch (const std::exception& ex) {
         fetchOk = false;
         fetchErr = ex.what();

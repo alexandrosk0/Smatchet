@@ -12,6 +12,7 @@
 #include "../support/FakeTrackerClient.h"
 #include "../support/SqliteMemFixture.h"
 
+#include "ConfigManager.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "LocalCacheManager.h"
@@ -509,5 +510,33 @@ TEST_CASE("AttachFilesToIssue: per-file failures are an Ok payload (L3), hard fa
         REQUIRE_FALSE(static_cast<bool>(r));
         CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
         CHECK(r.error().Detail == "Issue key is empty.");
+    }
+}
+
+// Slice 6 of the tracker Result<T> migration flipped the Reader virtual FetchIssuesForKeys off
+// bool(..., vector<CachedTicket>& out, std::string& outError) to Result<vector<CachedTicket>,
+// TrackerError> (Ok = the fetched tickets). These cases pin the migrated shape via the fake's
+// unchanged SetFetchIssuesForKeysResult scripting API (the callers — AppController prefetch +
+// OfflineQueueService conflict re-fetch — translate the Result back to their bool/string surfaces,
+// preserving the .Detail text their IsTrackerTransportErrorText checks read).
+TEST_CASE("FetchIssuesForKeys returns Ok tickets on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+    ViewsStore views;
+
+    SUBCASE("ok carries the scripted tickets") {
+        CachedTicket t;
+        t.id = "PROJ-7";
+        client.SetFetchIssuesForKeysResult(true, {t});
+        auto r = client.FetchIssuesForKeys(TrackerConfig{}, {"PROJ-7"}, views);
+        REQUIRE(static_cast<bool>(r));
+        REQUIRE(r.value().size() == 1);
+        CHECK(r.value()[0].id == "PROJ-7");
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail (transport text preserved)") {
+        client.SetFetchIssuesForKeysResult(false, {}, "Operation timed out after 30000 ms");
+        auto r = client.FetchIssuesForKeys(TrackerConfig{}, {"PROJ-7"}, views);
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Detail == "Operation timed out after 30000 ms");
     }
 }

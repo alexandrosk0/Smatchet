@@ -8,6 +8,8 @@
 // PR4 of docs/plans/shipped/github-tracker-backend.md.
 
 #include "CachedTicketTypes.h"
+#include "SmatchetResult.h"
+#include "TrackerError.h"
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
@@ -70,12 +72,11 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
 /// PR4 — single-issue lookup loop used by GitHubClient::FetchIssuesForKeys.
 /// For each key in `issueKeys` (canonical `owner/repo#N` shape), issues a
 /// GET /repos/{owner}/{repo}/issues/{number}. Stops at the first failure
-/// and writes the diagnostic into outError. Returns false on any failure
-/// (some tickets may have been appended to outTickets before the abort —
-/// caller decides whether to keep them or discard).
-bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
-                                  const std::vector<std::string>& issueKeys, std::vector<CachedTicket>& outTickets,
-                                  std::string& outError);
+/// and returns Err carrying the diagnostic (any tickets appended before the
+/// abort are dropped with the Err — Ok carries the full list on success).
+Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeysViaRestApi(const std::string& baseUrl,
+                                                                             const std::string& pat,
+                                                                             const std::vector<std::string>& issueKeys);
 
 } // namespace github
 } // namespace smatchet

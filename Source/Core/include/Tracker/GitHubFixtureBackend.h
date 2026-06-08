@@ -64,9 +64,9 @@ class GitHubFixtureBackend : public ITrackerBackend,
                                           std::string* outFetchError = nullptr,
                                           std::string* outWarning = nullptr) override;
 
-    bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                            const ViewsStore& views, std::vector<CachedTicket>& outTickets,
-                            std::string& outError) override;
+    Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
+                                                                       const std::vector<std::string>& issueKeys,
+                                                                       const ViewsStore& views) override;
 
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
 

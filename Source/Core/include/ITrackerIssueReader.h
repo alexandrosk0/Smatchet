@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "CachedTicketTypes.h"
+#include "SmatchetResult.h"
+#include "TrackerError.h"
 #include "TrackerFieldSchema.h"
 
 struct TrackerConfig;
@@ -51,9 +53,9 @@ class ITrackerIssueReader {
         return summary;
     }
 
-    virtual bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                                    const ViewsStore& views, std::vector<CachedTicket>& outTickets,
-                                    std::string& outError) = 0;
+    virtual Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                       const ViewsStore& views) = 0;
 
     virtual std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                             const std::string& value) const = 0;

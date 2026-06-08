@@ -954,7 +954,13 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
 
     std::vector<CachedTicket> tickets;
 
-    const bool ok = backend->Reader().FetchIssuesForKeys(cfg, toFetch, views, tickets, err);
+    auto fetchResult = backend->Reader().FetchIssuesForKeys(cfg, toFetch, views);
+    const bool ok = static_cast<bool>(fetchResult);
+    if (ok) {
+        tickets = std::move(fetchResult.value());
+    } else {
+        err = fetchResult.error().Detail;
+    }
 
     {
 
