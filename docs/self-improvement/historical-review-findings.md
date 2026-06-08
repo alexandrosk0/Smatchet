@@ -13,6 +13,32 @@
 
 <!-- Batches appended at the top. -->
 
+## Batch 5 — PRs #602–707 (100-PR workflow sweep, 2026-06-07) — FINAL BATCH
+
+Coverage: **100 reviewed — 13 with findings, 73 clean, 14 fully superseded.** Net: **1 CRITICAL, 1 HIGH, 3 MEDIUM, 8 LOW.** Sweep stopped here per user.
+
+### CRITICAL
+- **#611 (246b5238) · `Source/Core/src/Ui/SmatchetToolbarUi.cpp:124`** — `RefreshTrackerAppendCache()` calls `ConfigManager::LoadPersistentViewsFromDisk()` (sync ifstream + JSON parse under `GetIoMutexRef()` + OS `ScopedFileLock`) from `RenderBar()` (`:142`) on the ImGui render path → Pillar-2 CRITICAL. Memoized (backend-change/startup/post-save), but those frames block + can stall under contention with a concurrent `SavePersistentViewsToDisk`. **→ Issue candidate.** Fix: source the per-tracker append from in-memory config, or hoist off-thread (`std::async` + per-frame poll) on backend-change.
+
+### HIGH
+- **#671 (2533b9ab) · `Source/Standalone/CliCommandRunner.cpp:915`** — `SpawnAndRunHandleAsync`'s invalid-JSON `catch(...)` returns `kExitHandler` **without** sending `app.quit`, breaking its own documented invariant (`:845`) that the caller relies on. Result: when the scenario result file exists but isn't valid JSON, the spawned ephemeral instance is never told to quit → **orphaned subprocess holding a TCP port**. The other two failure branches do send the best-effort quit. Fix: POST the same `app.quit` before the `return` (mirror `:887-890`).
+
+### MEDIUM
+- **#670 (333a133f) · `Source/Core/src/Tracker/JiraIssueMutation.cpp:81`** — `FindTransitionIdInArray` applies its match priority **per-transition** instead of globally (contradicting its own doc: id → status-name → transition-name). An earlier transition whose *name* matches the requested status but whose `to.name` differs is returned ahead of a later transition that actually leads to the requested status → **the issue moves to the WRONG status in the user's Jira** (WARN logged, but wrong transition still executes). **→ Issue candidate (user-visible external mutation).** Fix: two-pass — exact id/status-name match across all transitions first, transition-name fallback only if none.
+- **#630 (8a824ef7) · `docs/guides/imgui-draw-pattern.md:91`** — Rule 4's audit command greps `Source/Core/src/Smatchet*Ui*.cpp` but all UI sources are under `Source/Core/src/Ui/` → matches **zero** files, silently implying "no `static` locals to extract", defeating the rule. Fix: `Source/Core/src/Ui/Smatchet*Ui*.cpp`.
+- **#620 (ac7dcb58) · `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md:77`** (+85,112-114) — instructs agents to run `test-backlog-counts.sh --fix` to sync a § Index count column; the script was rewritten 2026-06-03: no `--fix` flag, the count column was deliberately removed, and the gate now **FAILS** if a count column is re-added. Following the doc trips the guard (inverse of documented effect). Fix: drop `--fix` + count-sync; state counts are on-demand via `--list` and a count column must never be re-added.
+
+### LOW (8)
+- **#664 (9765cf4a)** `SmatchetAiAssistantUi.cpp:232` — hash-collision recovery branch uses `emplace` (no-op on existing key) → returns stale plan + duplicate insertion-order key + byte-gauge drift. Unreachable (64-bit FNV collision) but the guard is a no-op. Use `[]=` / erase-then-insert.
+- **#663 (57769145)** `test-ui-jira-deterministic-backend.sh:75` — `passed=0 failed=0` (filter matches nothing / all skipped) exits 0 → silent false-pass bucket-E gate. Add a positive-test floor.
+- **#657 (bf921a6b)** `docs/CONTEXT.md:77` stale line refs `AppController.cpp:574/:595` (now 826/880). Use symbol-only refs.
+- **#653 (9ae9c24e)** `tests/agent-eval/code-review/cr-dpapi-secret-loss.json:37` — fixture shows 3 unguarded data-loss sites but `expectedFindingCount=1`; a more-thorough prompt scoring 3 would regress to 0.0 (false gate fail). Trim to 1 site or set count=3.
+- **#643 (feb9d903)** `TrackerFieldCatalogPure.cpp:195` dead `is_number_unsigned()` branch (unreachable after `is_number_integer()`); latent narrowing via `get<long long>()`. Reorder or drop.
+- **#640 (bdd2644a)** `subagent-eval-flywheel.md:9` + **#623 (0772d4be)** `bug-report-font-redaction-censor.md:5,9,96` + earlier batch's #747 — same broken AGENTS.md `§ Plan *` cross-links (restructured to `§ Process rules § Plan-doc family`) + a stale in-flight-branch claim + a `log-a-bug-github.md` link now under `shipped/`.
+- **#610 (f938ac5b)** `verify-cr-reply.sh:20` stale usage-example path `scripts/dev/verify-cr-reply.sh` (moved to `agents/scripts/core/`).
+
+**Cluster (confirms batches 3–4):** Pillar-2 **sync-I/O-on-render survived decompositions** — now #611 (CRITICAL) joins #761/#732/#767/#892. Strong candidate for a single targeted audit + the accepted off-thread/`MarkPrefsDirty`/snapshot-on-open patterns. Plus the **bucket-E/gate false-pass-on-0-tests** recurrence (#663 + batch-4 #719). #670 is the one genuinely user-facing *correctness* bug (wrong Jira status).
+
 ## Batch 4 — PRs #708–808 (100-PR workflow sweep, 2026-06-07)
 
 Coverage: **100 reviewed — 14 with findings, 75 clean, 11 fully superseded.** Net: **1 CRITICAL, 4 HIGH, 5 MEDIUM, 12 LOW.**
