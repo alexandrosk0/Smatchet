@@ -136,11 +136,29 @@ bool SmatchetMergeWatchNotifyServer::Start(AppController& app, std::uint16_t por
         return false;
     }
 
+    // #987: cap httplib's worker pool. The default task queue spawns
+    // max(8, hardware_concurrency()-1) threads — a 47-thread creation burst on a
+    // 48-core box — and one failed std::thread ctor under full build load threw
+    // std::system_error out of the listen thread -> std::terminate. A localhost
+    // endpoint receiving rare single POSTs needs 2 workers, not 47.
+    server_->new_task_queue = [] {
+        return new httplib::ThreadPool(2); // httplib owns the queue
+    };
+
     running_.store(true, std::memory_order_release);
     // Spawn listen-loop thread. listen_after_bind blocks until Stop().
     listenThread_ = std::make_unique<std::thread>([this]() {
-        if (server_) {
-            server_->listen_after_bind();
+        // #987 / Pillar 3: an exception escaping a thread entry-point is
+        // std::terminate. The notify server is non-critical — log + mark the
+        // server down so callers see it as unavailable; never kill the app.
+        try {
+            if (server_) {
+                server_->listen_after_bind();
+            }
+        } catch (const std::exception& e) {
+            LOG_ERROR("SmatchetMergeWatchNotifyServer: listen thread died: %s", e.what());
+        } catch (...) {
+            LOG_ERROR("SmatchetMergeWatchNotifyServer: listen thread died: unknown exception");
         }
         running_.store(false, std::memory_order_release);
     });

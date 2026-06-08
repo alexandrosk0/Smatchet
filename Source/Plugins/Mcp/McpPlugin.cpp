@@ -832,6 +832,16 @@ void McpPlugin::StartServerThread() {
         return;
     }
 
+    // #987: cap httplib's worker pool — the default queue spawns
+    // max(8, hardware_concurrency()-1) threads (a 47-thread burst on a 48-core
+    // box; one failed std::thread ctor under build load = std::system_error).
+    // 4 (not the notify server's 2): each SSE client parks a worker in the
+    // heartbeat wait loop, so MCP needs headroom for an SSE stream or two PLUS
+    // concurrent JSON-RPC tool calls.
+    impl_->svr.new_task_queue = [] {
+        return new httplib::ThreadPool(4); // httplib owns the queue
+    };
+
     AppController* appPtr = impl_->app;
     impl_->thread = std::thread([this, appPtr]() {
         try {
