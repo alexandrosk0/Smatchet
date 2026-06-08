@@ -68,9 +68,9 @@ void LuaDrawList::RequireActive(const char* method) const {
     }
 }
 
-AppController::ImCmd* LuaDrawList::LastInteractive() {
-    auto it = std::find_if(cmds_.rbegin(), cmds_.rend(), [](const AppController::ImCmd& c) {
-        return c.op == AppController::ImCmd::Op::Button || c.op == AppController::ImCmd::Op::InputText;
+smatchet::lua::ImCmd* LuaDrawList::LastInteractive() {
+    auto it = std::find_if(cmds_.rbegin(), cmds_.rend(), [](const smatchet::lua::ImCmd& c) {
+        return c.op == smatchet::lua::ImCmd::Op::Button || c.op == smatchet::lua::ImCmd::Op::InputText;
     });
     return it == cmds_.rend() ? nullptr : &(*it);
 }
@@ -78,8 +78,8 @@ AppController::ImCmd* LuaDrawList::LastInteractive() {
 void LuaDrawList::Text(std::string s) {
     RequireActive("text");
     TruncateInPlace(s, kRecorderStringCap);
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::Text;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::Text;
     c.str = std::move(s);
     cmds_.push_back(std::move(c));
 }
@@ -87,8 +87,8 @@ void LuaDrawList::Text(std::string s) {
 void LuaDrawList::TextUnformatted(std::string s) {
     RequireActive("text_unformatted");
     TruncateInPlace(s, kRecorderStringCap);
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::TextUnformatted;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::TextUnformatted;
     c.str = std::move(s);
     cmds_.push_back(std::move(c));
 }
@@ -99,8 +99,8 @@ void LuaDrawList::Image(std::string path, float w, float h) {
         return;
     if (!IsFiniteF(w) || !IsFiniteF(h) || w < 0.0f || h < 0.0f || w > kRecorderSizeCap || h > kRecorderSizeCap)
         return;
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::Image;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::Image;
     c.str = std::move(path);
     c.f1 = w;
     c.f2 = h;
@@ -119,8 +119,8 @@ void LuaDrawList::ProgressBar(float frac, float w, float h, sol::optional<std::s
         return;
     if (h < -1.0f || h > kRecorderSizeCap)
         return;
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::ProgressBar;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::ProgressBar;
     c.f1 = frac;
     c.f2 = w;
     c.f3 = h;
@@ -134,8 +134,8 @@ void LuaDrawList::ProgressBar(float frac, float w, float h, sol::optional<std::s
 
 void LuaDrawList::SameLine(sol::optional<float> offset, sol::optional<float> spacing) {
     RequireActive("same_line");
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::SameLine;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::SameLine;
     const float off = offset ? offset.value() : 0.0f;
     const float sp = spacing ? spacing.value() : -1.0f;
     c.f1 = IsFiniteF(off) ? ClampFloat(off, -kRecorderOffsetCap, kRecorderOffsetCap) : 0.0f;
@@ -145,8 +145,8 @@ void LuaDrawList::SameLine(sol::optional<float> offset, sol::optional<float> spa
 
 void LuaDrawList::Separator() {
     RequireActive("separator");
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::Separator;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::Separator;
     cmds_.push_back(std::move(c));
 }
 
@@ -154,8 +154,8 @@ void LuaDrawList::Dummy(float w, float h) {
     RequireActive("dummy");
     if (!IsFiniteF(w) || !IsFiniteF(h) || w < 0.0f || h < 0.0f || w > kRecorderSizeCap || h > kRecorderSizeCap)
         return;
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::Dummy;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::Dummy;
     c.f1 = w;
     c.f2 = h;
     cmds_.push_back(std::move(c));
@@ -165,8 +165,8 @@ void LuaDrawList::PushColor(int idx, float r, float g, float b, float a) {
     RequireActive("push_color");
     if (idx < 0 || idx >= ImGuiCol_COUNT)
         return;
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::PushColor;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::PushColor;
     c.i1 = idx;
     c.f1 = ClampFloat(IsFiniteF(r) ? r : 0.0f, 0.0f, 1.0f);
     c.f2 = ClampFloat(IsFiniteF(g) ? g : 0.0f, 0.0f, 1.0f);
@@ -177,8 +177,8 @@ void LuaDrawList::PushColor(int idx, float r, float g, float b, float a) {
 
 void LuaDrawList::PopColor(sol::optional<int> count) {
     RequireActive("pop_color");
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::PopColor;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::PopColor;
     c.i1 = count.value_or(1);
     if (c.i1 <= 0)
         c.i1 = 1;
@@ -188,8 +188,8 @@ void LuaDrawList::PopColor(sol::optional<int> count) {
 void LuaDrawList::SetTooltip(std::string s) {
     RequireActive("set_tooltip");
     TruncateInPlace(s, kRecorderStringCap);
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::SetTooltip;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::SetTooltip;
     c.str = std::move(s);
     cmds_.push_back(std::move(c));
 }
@@ -199,8 +199,8 @@ void LuaDrawList::Button(std::string label, sol::protected_function onClick) {
     TruncateInPlace(label, kRecorderLabelCap);
     // Auto-disambiguate IDs across multiple interactive widgets in the same recording.
     // The cell / window outer ID scope handles cross-cell / cross-window collisions.
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::Button;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::Button;
     c.str = std::move(label);
     c.str.append("##b");
     c.str.append(std::to_string(interactiveIndex_++));
@@ -219,8 +219,8 @@ void LuaDrawList::InputText(std::string label, std::string initial, int maxLen, 
         maxLen = kRecorderMaxLen;
     if (static_cast<int>(initial.size()) > maxLen)
         initial.resize(maxLen);
-    AppController::ImCmd c;
-    c.op = AppController::ImCmd::Op::InputText;
+    smatchet::lua::ImCmd c;
+    c.op = smatchet::lua::ImCmd::Op::InputText;
     c.str = std::move(label);
     c.str.append("##it");
     c.str.append(std::to_string(interactiveIndex_++));
@@ -238,7 +238,7 @@ void LuaDrawList::InputText(std::string label, std::string initial, int maxLen, 
 
 void LuaDrawList::OnDeactivated(sol::protected_function fn) {
     RequireActive("on_deactivated");
-    AppController::ImCmd* last = LastInteractive();
+    smatchet::lua::ImCmd* last = LastInteractive();
     if (!last) {
         LOG_WARN("LuaDrawList::on_deactivated called with no prior interactive op; ignoring");
         return;
@@ -249,7 +249,7 @@ void LuaDrawList::OnDeactivated(sol::protected_function fn) {
 
 void LuaDrawList::OnDeactivatedAfterEdit(sol::protected_function fn) {
     RequireActive("on_deactivated_after_edit");
-    AppController::ImCmd* last = LastInteractive();
+    smatchet::lua::ImCmd* last = LastInteractive();
     if (!last) {
         LOG_WARN("LuaDrawList::on_deactivated_after_edit called with no prior interactive op; ignoring");
         return;
@@ -318,7 +318,7 @@ struct ReplayCtx {
 
 // on_deactivated / on_deactivated_after_edit fire identically for Button and InputText
 // against the same just-submitted ImGui item. Centralised so both handlers stay in lockstep.
-void ReplayFireDeactivationCallbacks(ReplayCtx& ctx, AppController::ImCmd& c) {
+void ReplayFireDeactivationCallbacks(ReplayCtx& ctx, smatchet::lua::ImCmd& c) {
     using K = LuaReplayCallbackKind;
     if (c.onDeactivated && ImGui::IsItemDeactivated()) {
         InvokeLuaCallbackSandboxed(ctx.lua, c.onDeactivated, ctx.cbArg1, ctx.cbArg2);
@@ -330,7 +330,7 @@ void ReplayFireDeactivationCallbacks(ReplayCtx& ctx, AppController::ImCmd& c) {
     }
 }
 
-void ReplayProgressBar(const AppController::ImCmd& c) {
+void ReplayProgressBar(const smatchet::lua::ImCmd& c) {
     ImVec2 sz(c.f2, c.f3);
     if (c.f2 < 0.0f)
         sz.x = ImGui::GetContentRegionAvail().x;
@@ -339,14 +339,14 @@ void ReplayProgressBar(const AppController::ImCmd& c) {
     ImGui::ProgressBar(c.f1, sz, c.str.empty() ? nullptr : c.str.c_str());
 }
 
-void ReplayPushColor(ReplayCtx& ctx, const AppController::ImCmd& c) {
+void ReplayPushColor(ReplayCtx& ctx, const smatchet::lua::ImCmd& c) {
     if (c.i1 < 0 || c.i1 >= ImGuiCol_COUNT)
         return;
     ImGui::PushStyleColor(c.i1, ImVec4(c.f1, c.f2, c.f3, c.f4));
     ++ctx.pushed;
 }
 
-void ReplayPopColor(ReplayCtx& ctx, const AppController::ImCmd& c) {
+void ReplayPopColor(ReplayCtx& ctx, const smatchet::lua::ImCmd& c) {
     int n = c.i1 > 0 ? c.i1 : 1;
     if (n > ctx.pushed)
         n = ctx.pushed;
@@ -356,7 +356,7 @@ void ReplayPopColor(ReplayCtx& ctx, const AppController::ImCmd& c) {
     }
 }
 
-void ReplayButton(ReplayCtx& ctx, AppController::ImCmd& c) {
+void ReplayButton(ReplayCtx& ctx, smatchet::lua::ImCmd& c) {
     using K = LuaReplayCallbackKind;
     // Read-only cells get visually disabled + no callback firing. Wrap the
     // call in BeginDisabled so click events are suppressed at the ImGui layer
@@ -377,7 +377,7 @@ void ReplayButton(ReplayCtx& ctx, AppController::ImCmd& c) {
     }
 }
 
-void ReplayInputText(ReplayCtx& ctx, AppController::ImCmd& c) {
+void ReplayInputText(ReplayCtx& ctx, smatchet::lua::ImCmd& c) {
     using K = LuaReplayCallbackKind;
     if (c.textBuf.empty())
         return;
@@ -399,8 +399,8 @@ void ReplayInputText(ReplayCtx& ctx, AppController::ImCmd& c) {
 
 // Dispatch one recorded command to ImGui. Kept as a thin per-Op switch so the orchestrator
 // loop stays well under the branch cap; each multi-branch widget delegates to a handler.
-void ReplayOne(ReplayCtx& ctx, AppController::ImCmd& c) {
-    using Op = AppController::ImCmd::Op;
+void ReplayOne(ReplayCtx& ctx, smatchet::lua::ImCmd& c) {
+    using Op = smatchet::lua::ImCmd::Op;
     switch (c.op) {
     case Op::Text:
         ImGui::Text("%s", c.str.c_str());
@@ -442,12 +442,12 @@ void ReplayOne(ReplayCtx& ctx, AppController::ImCmd& c) {
     }
 }
 
-std::uint8_t ReplayCmdList(std::vector<AppController::ImCmd>& cmds, AppController& app, sol::state& lua,
+std::uint8_t ReplayCmdList(std::vector<smatchet::lua::ImCmd>& cmds, AppController& app, sol::state& lua,
                            const std::string& cbArg1, const std::string& cbArg2, bool isReadOnly) {
     SMATCHET_UI_PERF_SCOPE("LuaDrawList::Replay");
     ReplayCtx ctx{app, lua, cbArg1, cbArg2, isReadOnly, 0, 0};
     try {
-        for (AppController::ImCmd& c : cmds) {
+        for (smatchet::lua::ImCmd& c : cmds) {
             ReplayOne(ctx, c);
         }
     } catch (const std::exception& ex) {
@@ -501,15 +501,15 @@ void InvokeCachedFieldProvider(sol::state& lua, sol::protected_function& provide
 
 } // namespace
 
-sol::protected_function* AppController::ResolveLuaFieldProvider(const std::string& fieldId,
-                                                                const TrackerField* fieldMeta) {
-    const auto itId = impl_->fieldDisplayCachedProviders_.find(fieldId);
-    if (itId != impl_->fieldDisplayCachedProviders_.end() && itId->second.valid()) {
+sol::protected_function* AppController::Impl::ResolveLuaFieldProvider(const std::string& fieldId,
+                                                                      const TrackerField* fieldMeta) {
+    const auto itId = fieldDisplayCachedProviders_.find(fieldId);
+    if (itId != fieldDisplayCachedProviders_.end() && itId->second.valid()) {
         return &itId->second;
     }
-    if (fieldMeta && !fieldMeta->Name.empty() && !impl_->fieldDisplayCachedProvidersByName_.empty()) {
-        const auto itName = impl_->fieldDisplayCachedProvidersByName_.find(AsciiLowerCopy(fieldMeta->Name));
-        if (itName != impl_->fieldDisplayCachedProvidersByName_.end() && itName->second.valid()) {
+    if (fieldMeta && !fieldMeta->Name.empty() && !fieldDisplayCachedProvidersByName_.empty()) {
+        const auto itName = fieldDisplayCachedProvidersByName_.find(AsciiLowerCopy(fieldMeta->Name));
+        if (itName != fieldDisplayCachedProvidersByName_.end() && itName->second.valid()) {
             return &itName->second;
         }
     }
@@ -519,7 +519,7 @@ sol::protected_function* AppController::ResolveLuaFieldProvider(const std::strin
 void AppController::SurfaceLuaFieldError(const std::string& fieldName, const std::string& issueId,
                                          const std::string& errMsg) {
     const std::string bare = "[LUA cell] field=" + fieldName + " id=" + issueId + ": " + errMsg;
-    LuaLogInfoBind(std::string("[ERROR] ") + bare);
+    impl_->LuaLogInfoBind(std::string("[ERROR] ") + bare);
     for (const auto& sink : errorSinks_) {
         sink(bare);
     }
@@ -531,7 +531,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
                                             const TrackerField* fieldMeta, bool allowEdits) {
     sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     // 1. Provider lookup — by field id first, then lowercased display name.
-    sol::protected_function* providerSlot = ResolveLuaFieldProvider(fieldId, fieldMeta);
+    sol::protected_function* providerSlot = impl_->ResolveLuaFieldProvider(fieldId, fieldMeta);
     if (providerSlot == nullptr)
         return false;
 
@@ -548,7 +548,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     key.append(fieldId);
     auto cit = impl_->luaFieldCache_.find(key);
     if (cit != impl_->luaFieldCache_.end()) {
-        LuaFieldCacheEntry& entry = cit->second;
+        smatchet::lua::LuaFieldCacheEntry& entry = cit->second;
         const bool inputsMatch = entry.rawValue == rawValue && entry.fieldName == fieldName &&
                                  entry.intAvailWidth == intAvailWidth && entry.isReadOnly == isReadOnly &&
                                  entry.providerGen == curProviderGen;
@@ -573,7 +573,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
                               rec, callOk, callValid, truthy, errMsg);
     rec->Deactivate();
 
-    LuaFieldCacheEntry entry;
+    smatchet::lua::LuaFieldCacheEntry entry;
     entry.rawValue = rawValue;
     entry.fieldName = fieldName;
     entry.intAvailWidth = intAvailWidth;
@@ -806,9 +806,9 @@ std::string McpLuaResultToString(sol::protected_function_result& result) {
 }
 } // namespace
 
-std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() const {
-    std::lock_guard<std::mutex> lock(impl_->luaMcpToolsMutex_);
-    return impl_->luaMcpTools_;
+std::vector<smatchet::lua::McpToolDefinition> AppController::Impl::GetLuaMcpTools() const {
+    std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
+    return luaMcpTools_;
 }
 
 std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson,
@@ -820,7 +820,7 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
     {
         std::lock_guard<std::mutex> lock(impl_->luaMcpToolsMutex_);
         const bool known = std::any_of(impl_->luaMcpTools_.begin(), impl_->luaMcpTools_.end(),
-                                       [&](const McpToolDefinition& tool) { return tool.name == name; });
+                                       [&](const smatchet::lua::McpToolDefinition& tool) { return tool.name == name; });
         if (!known) {
             outError = "Tool not found";
             LOG_TRACE("ExecuteLuaMcpTool: not_found name=%s", name.c_str());
@@ -838,28 +838,28 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
     // state — the protected_function-before-state invariant). The rebuilt callback is
     // bound to callState; nothing here touches `lua`.
     sol::state callState;
-    PrepareFreshLuaState(callState);
-    std::vector<McpToolDefinition> localTools;
+    impl_->PrepareFreshLuaState(callState);
+    std::vector<smatchet::lua::McpToolDefinition> localTools;
 
     sol::table mcpTbl = callState["mcp"];
     if (mcpTbl.valid()) {
-        std::vector<McpToolDefinition>* sink = &localTools;
+        std::vector<smatchet::lua::McpToolDefinition>* sink = &localTools;
         mcpTbl.set_function("register_tool", [sink](sol::table def, sol::function cb) {
             if (!def.valid() || !cb.valid()) {
                 return;
             }
-            McpToolDefinition d;
-            AppController::ParseMcpToolDef(def, d);
+            smatchet::lua::McpToolDefinition d;
+            AppController::Impl::ParseMcpToolDef(def, d);
             d.callback = sol::protected_function(std::move(cb));
             sink->erase(std::remove_if(sink->begin(), sink->end(),
-                                       [&](const McpToolDefinition& x) { return x.name == d.name; }),
+                                       [&](const smatchet::lua::McpToolDefinition& x) { return x.name == d.name; }),
                         sink->end());
             sink->push_back(std::move(d));
         });
     }
 
     sol::environment sandbox = CreateSandboxEnvironment(callState);
-    ReplayActiveSetupScripts(callState, sandbox);
+    impl_->ReplayActiveSetupScripts(callState, sandbox);
 
     sol::protected_function callback;
     for (auto& t : localTools) {
@@ -924,7 +924,7 @@ std::string AppController::ExecuteLuaSnippetForMcp(const std::string& code, cons
     // Fresh per-call state: this runs on an httplib worker thread, while the main
     // `lua` state is driven by the UI thread. Never share a lua_State across threads.
     sol::state callState;
-    PrepareFreshLuaState(callState);
+    impl_->PrepareFreshLuaState(callState);
     sol::environment sandbox = CreateSandboxEnvironment(callState);
     sandbox["args"] = JsonToLua(callState, args);
 
@@ -979,7 +979,7 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
         sol::error err = script;
         outError = err.what();
         LOG_TRACE("ExecuteLuaConsoleSnippet: load_error %s", TruncateForTrace(outError).c_str());
-        LuaLogInfoBind(std::string("[ERROR] ") + outError);
+        impl_->LuaLogInfoBind(std::string("[ERROR] ") + outError);
         for (const auto& sink : errorSinks_) {
             sink(outError);
         }
@@ -1003,7 +1003,7 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
         outError = e.what();
         LOG_TRACE("ExecuteLuaConsoleSnippet: runtime_error %s", TruncateForTrace(outError).c_str());
         // Red scrolling-log entry + persistent error panel + auto-open window.
-        LuaLogInfoBind(std::string("[ERROR] ") + outError);
+        impl_->LuaLogInfoBind(std::string("[ERROR] ") + outError);
         for (const auto& sink : errorSinks_) {
             sink(outError);
         }
@@ -1057,7 +1057,7 @@ std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName,
     // Fresh per-call state: runs on an httplib worker thread; the main `lua` state
     // is the UI thread's. Never share a lua_State across threads.
     sol::state callState;
-    PrepareFreshLuaState(callState);
+    impl_->PrepareFreshLuaState(callState);
     sol::environment sandbox = CreateSandboxEnvironment(callState);
     sandbox["args"] = JsonToLua(callState, args);
 
@@ -1136,7 +1136,7 @@ void AppController::RecordLuaWindow(smatchet::lua::LuaWindowEntry& w, std::uint6
         // auto-open Scripting window. Negative-cache below means this fires
         // once per record-event per window, not per frame.
         const std::string bare = "[LUA window] " + w.name + ": " + callErr;
-        LuaLogInfoBind(std::string("[ERROR] ") + bare);
+        impl_->LuaLogInfoBind(std::string("[ERROR] ") + bare);
         for (const auto& sink : errorSinks_) {
             sink(bare);
         }
@@ -1157,7 +1157,7 @@ void AppController::DrawLuaWindows() {
     inDrawLuaWindows_ = true;
     const std::uint64_t curDataGen = luaWindowDataGen_.load();
     const std::uint64_t curProviderGen = luaProviderGen_.load();
-    for (LuaWindowEntry& w : impl_->luaWindows_) {
+    for (smatchet::lua::LuaWindowEntry& w : impl_->luaWindows_) {
         if (!w.drawFn.valid())
             continue;
         bool open = true;
@@ -1194,15 +1194,15 @@ void AppController::DrawLuaWindows() {
     // invalidate). ApplyOrQueueLuaWindowOp now hits the direct-mutation path because the
     // flag flipped to false.
     if (!impl_->pendingLuaWindowOps_.empty()) {
-        std::vector<PendingLuaWindowOp> drained;
+        std::vector<smatchet::lua::PendingLuaWindowOp> drained;
         drained.swap(impl_->pendingLuaWindowOps_);
-        for (PendingLuaWindowOp& op : drained) {
+        for (smatchet::lua::PendingLuaWindowOp& op : drained) {
             ApplyOrQueueLuaWindowOp(std::move(op));
         }
     }
 
     impl_->luaWindows_.erase(std::remove_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
-                                            [](const LuaWindowEntry& w) { return !w.drawFn.valid(); }),
+                                            [](const smatchet::lua::LuaWindowEntry& w) { return !w.drawFn.valid(); }),
                              impl_->luaWindows_.end());
 }
 

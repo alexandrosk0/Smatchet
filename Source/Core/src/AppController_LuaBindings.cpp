@@ -373,13 +373,13 @@ namespace smatchet_lua_init_detail {
 // multiple inheritance offsets, so resolving an AppController* from a
 // stored ILuaBindingHost* would corrupt with the wrong base offset. The
 // dedicated UI key keeps the cast site straightforward.
-static AppController* ResolveApp(sol::this_state L) {
+static AppController::Impl* ResolveApp(sol::this_state L) {
     sol::state_view lua(L);
     const sol::object appObj = lua["__smatchet_app_ui"];
     if (!appObj.valid() || appObj.get_type() == sol::type::lua_nil) {
         return nullptr;
     }
-    return appObj.as<AppController*>();
+    return appObj.as<AppController::Impl*>();
 }
 
 // TicketSetFieldGlue / TicketTransitionGlue lifted to AppController_LuaBindingsCore.cpp
@@ -449,57 +449,57 @@ bool ImGuiButtonGlue(sol::this_state L, const std::string& label) {
 // lifted to AppController_LuaBindingsCore.cpp.
 
 void LuaRegisterFieldDisplayCachedGlue(sol::this_state L, const std::string& fieldId, sol::function fn) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaRegisterFieldDisplayCachedBind(fieldId, std::move(fn));
 }
 
 void LuaUnregisterFieldDisplayCachedGlue(sol::this_state L, const std::string& fieldId) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUnregisterFieldDisplayCachedBind(fieldId);
 }
 
 void LuaRegisterFieldDisplayCachedByNameGlue(sol::this_state L, const std::string& displayName, sol::function fn) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaRegisterFieldDisplayCachedByNameBind(displayName, std::move(fn));
 }
 
 void LuaUnregisterFieldDisplayCachedByNameGlue(sol::this_state L, const std::string& displayName) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUnregisterFieldDisplayCachedByNameBind(displayName);
 }
 
 void LuaUiInvalidateWindowGlue(sol::this_state L, const std::string& name) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
-        app->LuaUiInvalidateWindowBind(name);
+        app->app_.LuaUiInvalidateWindowBind(name);
 }
 
 void LuaUiInvalidateFieldCacheGlue(sol::this_state L, sol::optional<std::string> ticketId,
                                    sol::optional<std::string> fieldId) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUiInvalidateFieldCacheBind(ticketId, fieldId);
 }
 
 void LuaUiUnregisterWindowGlue(sol::this_state L, const std::string& name) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUiUnregisterWindowBind(name);
 }
 
 void LuaRegisterFieldIconMapGlue(sol::this_state L, const std::string& fieldKey, sol::table map,
                                  sol::optional<bool> byName) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaRegisterFieldIconMapBind(fieldKey, std::move(map), byName);
 }
 
 void LuaUnregisterFieldIconMapGlue(sol::this_state L, const std::string& fieldKey, sol::optional<bool> byName) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUnregisterFieldIconMapBind(fieldKey, byName);
 }
@@ -510,7 +510,7 @@ void LuaImGuiTextGlue(sol::this_state L, const std::string& s) {
         luaL_error(L, kImmediateModeErrorMsg);
         return;
     }
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaImGuiTextBind(s);
 }
@@ -521,7 +521,7 @@ void LuaImGuiTextUnformattedGlue(sol::this_state L, const std::string& s) {
         luaL_error(L, kImmediateModeErrorMsg);
         return;
     }
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaImGuiTextUnformattedBind(s);
 }
@@ -532,24 +532,24 @@ bool LuaImGuiImageGlue(sol::this_state L, const std::string& path, float w, floa
         luaL_error(L, kImmediateModeErrorMsg);
         return false;
     }
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     return app ? app->LuaImGuiImageBind(path, w, h) : false;
 }
 
 void LuaUiRegisterWindowGlue(sol::this_state L, const std::string& name, sol::function drawFn) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUiRegisterWindowBind(name, std::move(drawFn));
 }
 
 void LuaUiRegisterTicketActionGlue(sol::this_state L, const std::string& name, const std::string& cb) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUiRegisterTicketActionBind(name, cb);
 }
 
 void LuaUiRegisterGlobalActionGlue(sol::this_state L, const std::string& name, const std::string& cb) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
         app->LuaUiRegisterGlobalActionBind(name, cb);
 }
@@ -599,20 +599,20 @@ static AiContextBlock LuaTableToAiContextBlock(const sol::table& tbl) {
 }
 
 void LuaAiAddContextGlue(sol::this_state L, sol::table blockTbl) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (!app)
         return;
-    app->AddAiContext(LuaTableToAiContextBlock(blockTbl));
+    app->app_.AddAiContext(LuaTableToAiContextBlock(blockTbl));
 }
 
 void LuaAiClearContextGlue(sol::this_state L) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (app)
-        app->ClearAiContext();
+        app->app_.ClearAiContext();
 }
 
 void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional<sol::table> extraBlocks) {
-    AppController* app = ResolveApp(L);
+    AppController::Impl* app = ResolveApp(L);
     if (!app)
         return;
     // Optional extra context blocks: appended to the controller's context vector
@@ -626,10 +626,10 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
                 break;
             if (!el.is<sol::table>())
                 break;
-            app->AddAiContext(LuaTableToAiContextBlock(el.as<sol::table>()));
+            app->app_.AddAiContext(LuaTableToAiContextBlock(el.as<sol::table>()));
         }
     }
-    app->PromptAi(prompt);
+    app->app_.PromptAi(prompt);
 }
 
 // LuaCommandsInvokeGlue / LuaMcpRegisterToolGlue / LuaCreateIssueGlue /
@@ -640,8 +640,8 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
 
 void AppController::InitLua() {
     sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
-    InitLuaCore(lua);
-    InitLuaUi(lua);
+    impl_->InitLuaCore(lua);      // #19c: Init* relocated onto Impl
+    impl_->InitLuaUi(lua);
 }
 
 // Lifted to `smatchet::lua::InitLuaCore(state, host)` in AppController_LuaBindingsCore.cpp.
@@ -649,9 +649,9 @@ void AppController::InitLua() {
 // AutomationWorkerLoop `InitLuaCore(bgState)`) source-compatible. The host
 // pointer passed through is `this` (AppController inherits from ILuaBindingHost
 // when SMATCHET_WITH_LUA_AUTOMATION is on).
-void AppController::InitLuaCore(sol::state& state) { smatchet::lua::InitLuaCore(state, this); }
+void AppController::Impl::InitLuaCore(sol::state& state) { smatchet::lua::InitLuaCore(state, this); }
 
-void AppController::InitLuaUi(sol::state& state) {
+void AppController::Impl::InitLuaUi(sol::state& state) {
     // Mirror of `__smatchet_app` (ILuaBindingHost*) -- this slot holds the concrete
     // AppController* so UI glues in this TU (which still call AppController-only
     // members like LuaRegisterFieldDisplayCachedBind / LuaUiRegisterWindowBind)
@@ -718,10 +718,10 @@ void AppController::InitLuaUi(sol::state& state) {
     state["ai"] = aiTbl;
 }
 
-void AppController::LuaLogInfoBind(const std::string& msg) {
+void AppController::Impl::LuaLogInfoBind(const std::string& msg) {
     const std::string clean = SanitizeLogText(msg);
-    if (impl_->luaHost_ && !impl_->luaHost_->SnapshotLogSinks().empty()) {
-        for (const auto& sink : impl_->luaHost_->SnapshotLogSinks()) {
+    if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
+        for (const auto& sink : luaHost_->SnapshotLogSinks()) {
             sink(clean);
         }
     } else {
@@ -729,12 +729,24 @@ void AppController::LuaLogInfoBind(const std::string& msg) {
     }
 }
 
+// Sol-free interface methods kept on AppController (see AppController.h); Impl forwards to app_.
 std::vector<CachedTicket> AppController::LuaGetActiveTicketsBind() {
     const auto snap = GetActiveTicketsSnapshot();
     return std::vector<CachedTicket>(snap->begin(), snap->end());
 }
+std::vector<CachedTicket> AppController::Impl::LuaGetActiveTicketsBind() { return app_.LuaGetActiveTicketsBind(); }
+const TrackerField* AppController::Impl::FindFieldById(const std::string& fieldId) const {
+    return app_.FindFieldById(fieldId);
+}
+bool AppController::Impl::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                                          const std::vector<std::string>& rawValues, std::string& outError) {
+    return app_.SubmitFieldEdit(issueId, field, rawValues, outError);
+}
+smatchet::cmd::CommandRegistry& AppController::Impl::LuaCommands() { return app_.Commands(); }
+AppController* AppController::Impl::AppForCommandContext() { return &app_; }
 
-std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(sol::state_view sv, const std::string& issueId) {
+std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::state_view sv,
+                                                                           const std::string& issueId) {
     // Marshal against the *calling* state `sv`, not the member `lua`: the caller may be an
     // off-UI-thread fresh state (MCP / automation worker). Touching `lua` here would re-introduce
     // cross-thread lua_State access + a cross-state sol::object return. See
@@ -742,13 +754,13 @@ std::tuple<sol::object, std::string> AppController::LuaGetTicketBind(sol::state_
     CachedTicket ticket;
     // CacheBackendKeyCopy is mutex-guarded — this bind runs on the Lua automation / MCP
     // worker thread while the UI thread may re-stamp the key on a tracker swap (Slice 1b).
-    if (Cache->TryGetTicket(focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
+    if (app_.Cache->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
         return {sol::make_object(sv, ticket), ""};
     }
     return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};
 }
 
-std::tuple<sol::object, std::string> AppController::LuaDecodeJsonBind(sol::state_view sv, const std::string& s) {
+std::tuple<sol::object, std::string> AppController::Impl::LuaDecodeJsonBind(sol::state_view sv, const std::string& s) {
     // Marshal against the calling state `sv` (see LuaGetTicketBind).
     constexpr size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
     if (s.size() > kMaxDecodeBytes) {
@@ -763,12 +775,12 @@ std::tuple<sol::object, std::string> AppController::LuaDecodeJsonBind(sol::state
     }
 }
 
-std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::state_view sv, sol::table spec) {
+std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol::state_view sv, sol::table spec) {
     // Marshal against the calling state `sv`, not the member `lua` (see LuaGetTicketBind):
     // `spec` is already on `sv`, and the result table must be too.
     const TrackerConfig cfg = ConfigManager::Load();
     // Same base as the grid new-issue row: config fallbacks plus last-row project / issue type when present.
-    IssueDraft draft = BuildDraftFromLastTicket(cfg);
+    IssueDraft draft = app_.BuildDraftFromLastTicket(cfg);
 
     sol::object offlineObj = spec["offline"];
     if (!offlineObj.valid() || offlineObj.get_type() == sol::type::lua_nil) {
@@ -776,16 +788,16 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::stat
     }
     const bool offline = LuaTruthy(offlineObj);
 
-    LuaMergeIssueCreateSpec(draft, std::move(spec), fieldCatalog().AvailableFields);
+    LuaMergeIssueCreateSpec(draft, std::move(spec), app_.fieldCatalog().AvailableFields);
 
     sol::table result = sv.create_table();
 
     if (offline) {
-        if (!Cache) {
+        if (!app_.Cache) {
             return {sol::make_object(sv, sol::nil),
                     std::string("Local cache not initialized (cannot queue offline create)")};
         }
-        const std::int64_t qid = QueueCreateOffline(draft);
+        const std::int64_t qid = app_.QueueCreateOffline(draft);
         if (qid <= 0) {
             result["ok"] = false;
             result["error"] = std::string("Failed to queue offline create (see logs)");
@@ -798,7 +810,7 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::stat
         return {result, std::string()};
     }
 
-    std::future<IssueCreateResult> fut = CreateIssueAsync(draft);
+    std::future<IssueCreateResult> fut = app_.CreateIssueAsync(draft);
     IssueCreateResult r;
     try {
         r = fut.get();
@@ -837,37 +849,37 @@ std::tuple<sol::object, std::string> AppController::LuaCreateIssueBind(sol::stat
     return {result, std::string()};
 }
 
-void AppController::LuaRegisterFieldDisplayCachedBind(const std::string& fieldId, sol::function fn) {
+void AppController::Impl::LuaRegisterFieldDisplayCachedBind(const std::string& fieldId, sol::function fn) {
     if (fieldId.empty() || !fn.valid()) {
         return;
     }
-    impl_->fieldDisplayCachedProviders_[fieldId] = sol::protected_function(std::move(fn));
+    fieldDisplayCachedProviders_[fieldId] = sol::protected_function(std::move(fn));
     // Bump invalidates every cached entry that holds a (possibly-stale) provider ref. Per-entry
     // input comparison in TryRenderCachedLuaField handles ordinary value changes; this is the
     // explicit "registration churn happened" channel.
-    luaProviderGen_.fetch_add(1);
+    app_.luaProviderGen_.fetch_add(1);
 }
 
-void AppController::LuaUnregisterFieldDisplayCachedBind(const std::string& fieldId) {
-    impl_->fieldDisplayCachedProviders_.erase(fieldId);
-    luaProviderGen_.fetch_add(1);
+void AppController::Impl::LuaUnregisterFieldDisplayCachedBind(const std::string& fieldId) {
+    fieldDisplayCachedProviders_.erase(fieldId);
+    app_.luaProviderGen_.fetch_add(1);
 }
 
-void AppController::LuaRegisterFieldDisplayCachedByNameBind(const std::string& displayName, sol::function fn) {
+void AppController::Impl::LuaRegisterFieldDisplayCachedByNameBind(const std::string& displayName, sol::function fn) {
     if (displayName.empty() || !fn.valid()) {
         return;
     }
-    impl_->fieldDisplayCachedProvidersByName_[AsciiLowerCopy(displayName)] = sol::protected_function(std::move(fn));
-    luaProviderGen_.fetch_add(1);
+    fieldDisplayCachedProvidersByName_[AsciiLowerCopy(displayName)] = sol::protected_function(std::move(fn));
+    app_.luaProviderGen_.fetch_add(1);
 }
 
-void AppController::LuaUnregisterFieldDisplayCachedByNameBind(const std::string& displayName) {
-    impl_->fieldDisplayCachedProvidersByName_.erase(AsciiLowerCopy(displayName));
-    luaProviderGen_.fetch_add(1);
+void AppController::Impl::LuaUnregisterFieldDisplayCachedByNameBind(const std::string& displayName) {
+    fieldDisplayCachedProvidersByName_.erase(AsciiLowerCopy(displayName));
+    app_.luaProviderGen_.fetch_add(1);
 }
 
-void AppController::LuaRegisterFieldIconMapBind(const std::string& fieldKey, sol::table map,
-                                                sol::optional<bool> byName) {
+void AppController::Impl::LuaRegisterFieldIconMapBind(const std::string& fieldKey, sol::table map,
+                                                      sol::optional<bool> byName) {
     if (fieldKey.empty() || !map.valid()) {
         return;
     }
@@ -877,41 +889,41 @@ void AppController::LuaRegisterFieldIconMapBind(const std::string& fieldKey, sol
             inner[ToLowerAsciiCopy(kObj.as<std::string>())] = vObj.as<std::string>();
         }
     });
-    std::lock_guard<std::mutex> lock(impl_->fieldIconMapsMutex_);
+    std::lock_guard<std::mutex> lock(fieldIconMapsMutex_);
     if (byName.value_or(false)) {
-        impl_->fieldIconMapsByDisplayName_[ToLowerAsciiCopy(fieldKey)] = std::move(inner);
+        fieldIconMapsByDisplayName_[ToLowerAsciiCopy(fieldKey)] = std::move(inner);
     } else {
-        impl_->fieldIconMapsByFieldId_[fieldKey] = std::move(inner);
+        fieldIconMapsByFieldId_[fieldKey] = std::move(inner);
     }
 }
 
-void AppController::LuaUnregisterFieldIconMapBind(const std::string& fieldKey, sol::optional<bool> byName) {
-    std::lock_guard<std::mutex> lock(impl_->fieldIconMapsMutex_);
+void AppController::Impl::LuaUnregisterFieldIconMapBind(const std::string& fieldKey, sol::optional<bool> byName) {
+    std::lock_guard<std::mutex> lock(fieldIconMapsMutex_);
     if (byName.value_or(false)) {
-        impl_->fieldIconMapsByDisplayName_.erase(ToLowerAsciiCopy(fieldKey));
+        fieldIconMapsByDisplayName_.erase(ToLowerAsciiCopy(fieldKey));
     } else {
-        impl_->fieldIconMapsByFieldId_.erase(fieldKey);
+        fieldIconMapsByFieldId_.erase(fieldKey);
     }
 }
 
-void AppController::LuaImGuiTextBind(const std::string& s) { ImGui::TextUnformatted(s.c_str()); }
+void AppController::Impl::LuaImGuiTextBind(const std::string& s) { ImGui::TextUnformatted(s.c_str()); }
 
-void AppController::LuaImGuiTextUnformattedBind(const std::string& s) { ImGui::TextUnformatted(s.c_str()); }
+void AppController::Impl::LuaImGuiTextUnformattedBind(const std::string& s) { ImGui::TextUnformatted(s.c_str()); }
 
-bool AppController::LuaImGuiImageBind(const std::string& path, float w, float h) {
-    return SmatchetFieldIconRender::DrawImagePathOrUrl(*this, path, w, h);
+bool AppController::Impl::LuaImGuiImageBind(const std::string& path, float w, float h) {
+    return SmatchetFieldIconRender::DrawImagePathOrUrl(app_, path, w, h);
 }
 
-void AppController::ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op) {
+void AppController::ApplyOrQueueLuaWindowOp(smatchet::lua::PendingLuaWindowOp op) {
     // UI-thread-only. See plan §Explicit window invalidation (F1).
     if (inDrawLuaWindows_) {
         impl_->pendingLuaWindowOps_.push_back(std::move(op));
         return;
     }
     switch (op.kind) {
-    case PendingLuaWindowOp::Kind::Invalidate: {
+    case smatchet::lua::PendingLuaWindowOp::Kind::Invalidate: {
         auto it = std::find_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
-                               [&](const LuaWindowEntry& w) { return w.name == op.name; });
+                               [&](const smatchet::lua::LuaWindowEntry& w) { return w.name == op.name; });
         if (it != impl_->luaWindows_.end()) {
             it->dirty = true;
             it->hasError = false;
@@ -920,60 +932,61 @@ void AppController::ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op) {
         }
         break;
     }
-    case PendingLuaWindowOp::Kind::Register: {
+    case smatchet::lua::PendingLuaWindowOp::Kind::Register: {
         auto it = std::find_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
-                               [&](const LuaWindowEntry& w) { return w.name == op.name; });
+                               [&](const smatchet::lua::LuaWindowEntry& w) { return w.name == op.name; });
         if (it != impl_->luaWindows_.end())
             impl_->luaWindows_.erase(it);
-        LuaWindowEntry e;
+        smatchet::lua::LuaWindowEntry e;
         e.name = op.name;
         e.drawFn = std::move(op.drawFn);
         e.dirty = true;
         impl_->luaWindows_.push_back(std::move(e));
         break;
     }
-    case PendingLuaWindowOp::Kind::Unregister:
-        impl_->luaWindows_.erase(std::remove_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
-                                                [&](const LuaWindowEntry& w) { return w.name == op.name; }),
-                                 impl_->luaWindows_.end());
+    case smatchet::lua::PendingLuaWindowOp::Kind::Unregister:
+        impl_->luaWindows_.erase(
+            std::remove_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
+                           [&](const smatchet::lua::LuaWindowEntry& w) { return w.name == op.name; }),
+            impl_->luaWindows_.end());
         break;
     }
 }
 
-void AppController::LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn) {
-    PendingLuaWindowOp op;
-    op.kind = PendingLuaWindowOp::Kind::Register;
+void AppController::Impl::LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn) {
+    smatchet::lua::PendingLuaWindowOp op;
+    op.kind = smatchet::lua::PendingLuaWindowOp::Kind::Register;
     op.name = name;
     if (drawFn.valid()) {
         op.drawFn = sol::protected_function(std::move(drawFn));
     }
     // F1 timing: on-UI uses the in-frame queue so a callback fired inside DrawLuaWindows
     // takes effect this frame, not the next. Off-UI hops the dispatcher first.
-    if (IsOnUiThread()) {
-        ApplyOrQueueLuaWindowOp(std::move(op));
+    if (app_.IsOnUiThread()) {
+        app_.ApplyOrQueueLuaWindowOp(std::move(op));
     } else {
-        AppController* self = this;
-        mainThreadDispatcher.PostToMainThread(
+        AppController* self = &app_;
+        app_.mainThreadDispatcher.PostToMainThread(
             [self, opCap = std::move(op)]() mutable { self->ApplyOrQueueLuaWindowOp(std::move(opCap)); });
     }
 }
 
-void AppController::LuaUiUnregisterWindowBind(const std::string& name) {
-    PendingLuaWindowOp op;
-    op.kind = PendingLuaWindowOp::Kind::Unregister;
+void AppController::Impl::LuaUiUnregisterWindowBind(const std::string& name) {
+    smatchet::lua::PendingLuaWindowOp op;
+    op.kind = smatchet::lua::PendingLuaWindowOp::Kind::Unregister;
     op.name = name;
-    if (IsOnUiThread()) {
-        ApplyOrQueueLuaWindowOp(std::move(op));
+    if (app_.IsOnUiThread()) {
+        app_.ApplyOrQueueLuaWindowOp(std::move(op));
     } else {
-        AppController* self = this;
-        mainThreadDispatcher.PostToMainThread(
+        AppController* self = &app_;
+        app_.mainThreadDispatcher.PostToMainThread(
             [self, opCap = std::move(op)]() mutable { self->ApplyOrQueueLuaWindowOp(std::move(opCap)); });
     }
 }
 
 void AppController::LuaUiInvalidateWindowBind(const std::string& name) {
-    PendingLuaWindowOp op;
-    op.kind = PendingLuaWindowOp::Kind::Invalidate;
+    smatchet::lua::PendingLuaWindowOp op;
+    op.kind = smatchet::lua::PendingLuaWindowOp::Kind::Invalidate;
     op.name = name;
     if (IsOnUiThread()) {
         ApplyOrQueueLuaWindowOp(std::move(op));
@@ -984,23 +997,23 @@ void AppController::LuaUiInvalidateWindowBind(const std::string& name) {
     }
 }
 
-void AppController::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> ticketId,
-                                                  sol::optional<std::string> fieldId) {
+void AppController::Impl::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> ticketId,
+                                                        sol::optional<std::string> fieldId) {
     const std::string tid = ticketId.value_or(std::string());
     const std::string fid = fieldId.value_or(std::string());
     const bool hasTicket = static_cast<bool>(ticketId);
     const bool hasField = static_cast<bool>(fieldId);
     auto apply = [this, hasTicket, hasField, tid, fid]() {
         if (!hasTicket) {
-            impl_->luaFieldCache_.clear();
+            luaFieldCache_.clear();
             return;
         }
         if (!hasField) {
-            for (auto it = impl_->luaFieldCache_.begin(); it != impl_->luaFieldCache_.end();) {
+            for (auto it = luaFieldCache_.begin(); it != luaFieldCache_.end();) {
                 const std::string& key = it->first;
                 const std::size_t nul = key.find('\0');
                 if (nul != std::string::npos && key.compare(0, nul, tid) == 0)
-                    it = impl_->luaFieldCache_.erase(it);
+                    it = luaFieldCache_.erase(it);
                 else
                     ++it;
             }
@@ -1009,37 +1022,37 @@ void AppController::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> tic
         std::string key = tid;
         key.push_back('\0');
         key.append(fid);
-        impl_->luaFieldCache_.erase(key);
+        luaFieldCache_.erase(key);
     };
-    if (IsOnUiThread()) {
+    if (app_.IsOnUiThread()) {
         apply();
     } else {
-        mainThreadDispatcher.PostToMainThread(std::move(apply));
+        app_.mainThreadDispatcher.PostToMainThread(std::move(apply));
     }
 }
 
 void AppController::NotifyLuaTicketDataChanged() { luaWindowDataGen_.fetch_add(1); }
 
-void AppController::LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName) {
-    std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
-    impl_->luaTicketActions_.erase(
-        std::remove_if(impl_->luaTicketActions_.begin(), impl_->luaTicketActions_.end(),
+void AppController::Impl::LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName) {
+    std::lock_guard<std::mutex> lock(luaActionsMutex_);
+    luaTicketActions_.erase(
+        std::remove_if(luaTicketActions_.begin(), luaTicketActions_.end(),
                        [&](const std::pair<std::string, std::string>& p) { return p.first == name; }),
-        impl_->luaTicketActions_.end());
+        luaTicketActions_.end());
     if (!callbackFuncName.empty()) {
-        impl_->luaTicketActions_.push_back({name, callbackFuncName});
+        luaTicketActions_.push_back({name, callbackFuncName});
     }
 }
 
-void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName) {
+void AppController::Impl::LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName) {
     {
-        std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
-        impl_->luaGlobalActions_.erase(
-            std::remove_if(impl_->luaGlobalActions_.begin(), impl_->luaGlobalActions_.end(),
+        std::lock_guard<std::mutex> lock(luaActionsMutex_);
+        luaGlobalActions_.erase(
+            std::remove_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
                            [&](const std::pair<std::string, std::string>& p) { return p.first == name; }),
-            impl_->luaGlobalActions_.end());
+            luaGlobalActions_.end());
         if (!callbackFuncName.empty()) {
-            impl_->luaGlobalActions_.push_back({name, callbackFuncName});
+            luaGlobalActions_.push_back({name, callbackFuncName});
         }
     }
     // commandRegistry_ has its own internal locking; do NOT hold luaActionsMutex_ across this
@@ -1047,12 +1060,12 @@ void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const
 
     // Mirror into the unified command registry as a `lua.<name>` command so it is
     // discoverable via CLI / MCP / Palette without extra registration. See plan §Lua.
-    if (commandRegistry_) {
+    if (app_.commandRegistry_) {
         const std::string cmdName = "lua." + name;
         // De-dup: if the action was already registered (e.g. script reloaded), remove the old one
         // from the registry. There is no `Unregister` API (registrations are permanent for safety),
         // so we skip re-registration when the exact name is already present.
-        if (!commandRegistry_->HasExact(cmdName) && !name.empty() && !callbackFuncName.empty()) {
+        if (!app_.commandRegistry_->HasExact(cmdName) && !name.empty() && !callbackFuncName.empty()) {
             smatchet::cmd::Command c;
             c.Name = cmdName;
             c.Category = "lua";
@@ -1062,13 +1075,13 @@ void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const
             c.AsyncSafe = true;
             // Capture by value so the handler owns a copy of the callback name string.
             const std::string cbName = callbackFuncName;
-            AppController* appPtr = this;
+            AppController* appPtr = &app_;
             c.Handler = [appPtr, cbName](const nlohmann::json& /*args*/, const smatchet::cmd::CommandContext& /*ctx*/) {
                 appPtr->ExecuteLuaGlobalAction(cbName);
                 return smatchet::cmd::CommandResult::Success(nlohmann::json::object());
             };
             try {
-                commandRegistry_->Register(std::move(c));
+                app_.commandRegistry_->Register(std::move(c));
             } catch (const std::exception& ex) {
                 LOG_WARN("LuaUiRegisterGlobalActionBind: could not register '%s' in registry: %s", cmdName.c_str(),
                          ex.what());
@@ -1077,7 +1090,7 @@ void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const
     }
 }
 
-void AppController::ParseMcpToolDef(const sol::table& toolDef, McpToolDefinition& out) {
+void AppController::Impl::ParseMcpToolDef(const sol::table& toolDef, smatchet::lua::McpToolDefinition& out) {
     out.name = toolDef.get_or<std::string>("name", "");
     out.description = toolDef.get_or<std::string>("description", "");
 
@@ -1095,20 +1108,20 @@ void AppController::ParseMcpToolDef(const sol::table& toolDef, McpToolDefinition
     }
 }
 
-void AppController::LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) {
+void AppController::Impl::LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) {
     if (!toolDef.valid() || !callback.valid()) {
         return;
     }
-    McpToolDefinition def;
+    smatchet::lua::McpToolDefinition def;
     ParseMcpToolDef(toolDef, def);
     def.callback = sol::protected_function(std::move(callback));
 
-    std::lock_guard<std::mutex> lock(impl_->luaMcpToolsMutex_);
-    impl_->luaMcpTools_.erase(std::remove_if(impl_->luaMcpTools_.begin(), impl_->luaMcpTools_.end(),
-                                             [&](const McpToolDefinition& d) { return d.name == def.name; }),
-                              impl_->luaMcpTools_.end());
+    std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
+    luaMcpTools_.erase(std::remove_if(luaMcpTools_.begin(), luaMcpTools_.end(),
+                                      [&](const smatchet::lua::McpToolDefinition& d) { return d.name == def.name; }),
+                       luaMcpTools_.end());
 
-    impl_->luaMcpTools_.push_back(std::move(def));
+    luaMcpTools_.push_back(std::move(def));
 }
 
 void AppController::ClearLuaTicketContextGlue() {
@@ -1139,22 +1152,22 @@ void AppController::RunFlatScriptAsync(const std::string& scriptPath) {
     impl_->automationJobCv_.notify_one();
 }
 
-void AppController::PrepareFreshLuaState(sol::state& state) {
+void AppController::Impl::PrepareFreshLuaState(sol::state& state) {
     InitLuaCore(state);
     // The shutdown-watchdog hook in RunAutomationJob resolves `__smatchet_app_ui`
-    // as AppController* to read `shuttingDown_`. InitLuaUi is intentionally not run
+    // as AppController::Impl* to read `app_.shuttingDown_`. InitLuaUi is intentionally not run
     // on these off-UI-thread states (no ImGui surface) — UI-mutating bindings stay
     // no-ops here (see smatchet::lua::InitLuaCore) — so set the UI alias directly.
     state["__smatchet_app_ui"] = this;
 }
 
-void AppController::ReplayActiveSetupScripts(sol::state& state, sol::environment& sandbox) {
+void AppController::Impl::ReplayActiveSetupScripts(sol::state& state, sol::environment& sandbox) {
     // Snapshot activeSetupScripts_ under the same mutex used by RunLuaSetupScript so the
     // iteration below sees a stable view even if the UI thread mutates the vector mid-job.
     std::vector<std::string> setupScriptsSnapshot;
     {
-        std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
-        setupScriptsSnapshot = impl_->activeSetupScripts_;
+        std::lock_guard<std::mutex> lock(automationJobMutex_);
+        setupScriptsSnapshot = activeSetupScripts_;
     }
 
     // Load and run setup scripts so global actions / mcp.register_tool definitions are
@@ -1170,7 +1183,7 @@ void AppController::ReplayActiveSetupScripts(sol::state& state, sol::environment
     // a destroyed state cannot be replayed, and persisting the state across jobs would lose the
     // isolation guarantee.
     for (const auto& path : setupScriptsSnapshot) {
-        std::string resolved = ResolveLuaScriptPath(path);
+        std::string resolved = app_.ResolveLuaScriptPath(path);
         if (resolved.empty()) {
             continue;
         }
@@ -1179,10 +1192,10 @@ void AppController::ReplayActiveSetupScripts(sol::state& state, sol::environment
             sol::error err = script;
             const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
             LuaLogInfoBind(std::string("[ERROR] ") + bare);
-            for (const auto& sink : errorSinks_) {
+            for (const auto& sink : app_.errorSinks_) {
                 sink(bare);
             }
-            scriptingWindowOpenRequested_.store(true);
+            app_.scriptingWindowOpenRequested_.store(true);
             continue;
         }
         sol::protected_function func = script;
@@ -1192,32 +1205,31 @@ void AppController::ReplayActiveSetupScripts(sol::state& state, sol::environment
             sol::error err = res;
             const std::string bare = "[LUA setup-bg] " + path + ": " + err.what();
             LuaLogInfoBind(std::string("[ERROR] ") + bare);
-            for (const auto& sink : errorSinks_) {
+            for (const auto& sink : app_.errorSinks_) {
                 sink(bare);
             }
-            scriptingWindowOpenRequested_.store(true);
+            app_.scriptingWindowOpenRequested_.store(true);
         }
     }
 }
 
-void AppController::AutomationWorkerLoop() {
+void AppController::Impl::AutomationWorkerLoop() {
     // Per-iteration try/catch wrapping all sol2/JSON/STL paths. Without this, a single throw
     // (sol::error from a malformed script, std::bad_alloc from a runaway capture, etc.) escapes
     // the thread function and triggers std::terminate. The error is logged and the worker
     // continues serving the next job — same liveness contract as a UI-thread exception handler.
     while (true) {
-        AutomationJob job;
+        AppController::AutomationJob job;
         {
-            std::unique_lock<std::mutex> lock(impl_->automationJobMutex_);
-            impl_->automationJobCv_.wait(lock, [this]() {
-                return shuttingDown_.load() || impl_->automationWorkerShuttingDown_.load() ||
-                       !impl_->automationJobs_.empty();
+            std::unique_lock<std::mutex> lock(automationJobMutex_);
+            automationJobCv_.wait(lock, [this]() {
+                return app_.shuttingDown_.load() || automationWorkerShuttingDown_.load() || !automationJobs_.empty();
             });
-            if (shuttingDown_.load() || impl_->automationWorkerShuttingDown_.load()) {
+            if (app_.shuttingDown_.load() || automationWorkerShuttingDown_.load()) {
                 break;
             }
-            job = std::move(impl_->automationJobs_.front());
-            impl_->automationJobs_.pop_front();
+            job = std::move(automationJobs_.front());
+            automationJobs_.pop_front();
         }
 
         try {
@@ -1238,22 +1250,23 @@ void AppController::AutomationWorkerLoop() {
     }
 }
 
-void AppController::RunAutomationJob(sol::state& state, sol::environment& env, const AutomationJob& job) {
+void AppController::Impl::RunAutomationJob(sol::state& state, sol::environment& env,
+                                           const AppController::AutomationJob& job) {
     FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
 
     lua_sethook(
         state.lua_state(),
         [](lua_State* L, lua_Debug* /*ar*/) {
             sol::state_view sv(L);
-            // `__smatchet_app_ui` is the AppController* alias (see ResolveApp comment).
+            // `__smatchet_app_ui` is the AppController::Impl* alias (see ResolveApp comment).
             // The Core `__smatchet_app` now holds an `ILuaBindingHost*`; resolving it
-            // as AppController* would corrupt under multiple inheritance.
+            // as Impl* would corrupt under multiple inheritance.
             const sol::object appObj = sv["__smatchet_app_ui"];
-            AppController* app = nullptr;
+            AppController::Impl* app = nullptr;
             if (appObj.valid() && appObj.get_type() != sol::type::lua_nil) {
-                app = appObj.as<AppController*>();
+                app = appObj.as<AppController::Impl*>();
             }
-            if (app && app->shuttingDown_.load()) {
+            if (app && app->app_.shuttingDown_.load()) {
                 luaL_error(L, "Script execution aborted (shutdown).");
             }
         },
@@ -1264,10 +1277,10 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
         // Route through the normal info sink so the console shows it, but also
         // through dedicated error sinks (persistent error panel + window-open).
         LuaLogInfoBind(std::string("[ERROR] ") + bare);
-        for (const auto& sink : errorSinks_) {
+        for (const auto& sink : app_.errorSinks_) {
             sink(bare);
         }
-        scriptingWindowOpenRequested_.store(true);
+        app_.scriptingWindowOpenRequested_.store(true);
     };
 
     if (job.type == AutomationJob::Type::RunAutoScript) {
@@ -1283,9 +1296,9 @@ void AppController::RunAutomationJob(sol::state& state, sol::environment& env, c
     lua_sethook(state.lua_state(), nullptr, 0, 0);
 }
 
-void AppController::RunAutomationAutoScript(sol::state& state, const AutomationJob& job,
-                                            const AutomationErrorSink& logErr) {
-    const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
+void AppController::Impl::RunAutomationAutoScript(sol::state& state, const AppController::AutomationJob& job,
+                                                  const AutomationErrorSink& logErr) {
+    const std::string path = app_.ResolveLuaScriptPath(job.scriptPathOrActionName);
     if (path.empty()) {
         logErr("[LUA auto] ", "invalid script path");
         return;
@@ -1315,7 +1328,7 @@ void AppController::RunAutomationAutoScript(sol::state& state, const AutomationJ
         return;
     }
 
-    const auto snap = GetActiveTicketsSnapshot();
+    const auto snap = app_.GetActiveTicketsSnapshot();
     std::unordered_set<std::string> selectedSet(job.selectedIds.begin(), job.selectedIds.end());
 
     // Issue #824: an empty selection must require explicit intent. Without process_all we refuse
@@ -1343,8 +1356,8 @@ void AppController::RunAutomationAutoScript(sol::state& state, const AutomationJ
     }
 }
 
-void AppController::RunAutomationActionCall(sol::environment& env, const AutomationJob& job, bool passTargetId,
-                                            const AutomationErrorSink& logErr) {
+void AppController::Impl::RunAutomationActionCall(sol::environment& env, const AppController::AutomationJob& job,
+                                                  bool passTargetId, const AutomationErrorSink& logErr) {
     sol::protected_function func = env[job.scriptPathOrActionName];
     if (!func.valid()) {
         logErr("[LUA action] ", "Function not found: " + job.scriptPathOrActionName);
@@ -1357,9 +1370,9 @@ void AppController::RunAutomationActionCall(sol::environment& env, const Automat
     }
 }
 
-void AppController::RunAutomationFlatScript(sol::state& state, const AutomationJob& job,
-                                            const AutomationErrorSink& logErr) {
-    const std::string path = ResolveLuaScriptPath(job.scriptPathOrActionName);
+void AppController::Impl::RunAutomationFlatScript(sol::state& state, const AppController::AutomationJob& job,
+                                                  const AutomationErrorSink& logErr) {
+    const std::string path = app_.ResolveLuaScriptPath(job.scriptPathOrActionName);
     if (path.empty()) {
         logErr("[LUA run] ", "invalid script path");
         return;

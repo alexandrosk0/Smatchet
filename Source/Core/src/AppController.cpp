@@ -418,13 +418,24 @@ const std::chrono::milliseconds kHiddenContextGrace(30000);
 // src-only AppControllerImpl.h (included above) where its sol2 / subsystem member types are
 // complete. The out-of-line ctor/dtor here keep the incomplete-type unique_ptr<Impl> in the
 // header legal.
-AppController::AppController() : impl_(std::make_unique<Impl>()) {
+AppController::AppController() : impl_(std::make_unique<Impl>(*this)) {
     // Multi-grid (ADR-0018): the default context is created here — not lazily — and is
     // PERMANENT, so focusedContext()'s fallback stays valid for the controller's entire
     // lifetime (delegators, the deps adapter, and the destructor all assume it exists).
     gridContexts_[kDefaultPaneId] = std::make_unique<GridLiveContext>();
     focusedPaneId_ = kDefaultPaneId;
     focusedContextPtr_ = gridContexts_.find(kDefaultPaneId)->second.get();
+}
+
+// Sol-free accessor to the Lua binding host. AppController::Impl implements ILuaBindingHost in
+// the Lua build; returns nullptr in the no-Lua build (Impl has no such base there). Keeps sol2
+// out of AppController.h — hardening #19c. (ILuaBindingHost is complete here via AppControllerImpl.h.)
+ILuaBindingHost* AppController::GetLuaBindingHost() {
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    return impl_.get();
+#else
+    return nullptr;
+#endif
 }
 
 void AppController::refreshFocusedContextPtr_() {
@@ -2006,7 +2017,7 @@ void AppController::InitPlugins(const std::string& activeTrackerType) {
 
     RunLuaSetupScript("SmatchetHooks.lua");
 
-    impl_->automationWorker_ = std::thread(&AppController::AutomationWorkerLoop, this);
+    impl_->automationWorker_ = std::thread(&AppController::Impl::AutomationWorkerLoop, impl_.get());
 
 #endif
 

@@ -175,6 +175,11 @@ class FakeLuaBindingHost : public ILuaBindingHost {
         McpRegistrations.push_back({std::move(toolDef), std::move(callback)});
     }
 
+    /// `GetLuaMcpTools` snapshot (added in #19c). Defaults to empty; tests that exercise the
+    /// MCP tool-listing path populate `McpTools` directly.
+    std::vector<smatchet::lua::McpToolDefinition> McpTools;
+    std::vector<smatchet::lua::McpToolDefinition> GetLuaMcpTools() const override { return McpTools; }
+
     smatchet::cmd::CommandRegistry& LuaCommands() override { return Commands_; }
 
     AppController* AppForCommandContext() override { return nullptr; }
