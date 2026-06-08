@@ -371,6 +371,14 @@ std::string& GetUserDataDirectoryRef() {
     return s;
 }
 
+// Host-injected override for the platform shared-data dir. Lets a host (Android)
+// supply a resolved path Core can't compute itself (no <android/...> headers in
+// Core) without an #ifdef branch — empty means "fall through to the OS resolver".
+std::string& GetPlatformSharedOverrideRef() {
+    static std::string s;
+    return s;
+}
+
 } // namespace config_detail
 } // namespace smatchet
 
@@ -383,6 +391,7 @@ using smatchet::config_detail::FileExists;
 using smatchet::config_detail::GetCacheMutexRef;
 using smatchet::config_detail::GetHasCachedConfigRef;
 using smatchet::config_detail::GetIoMutexRef;
+using smatchet::config_detail::GetPlatformSharedOverrideRef;
 using smatchet::config_detail::GetRuntimeAssetDirectoryRef;
 using smatchet::config_detail::GetUserDataDirectoryRef;
 using smatchet::config_detail::NormalizeDirectoryPath;
@@ -400,6 +409,10 @@ void ConfigManager::SetRuntimeAssetDirectory(const std::string& baseDir) {
 
 void ConfigManager::SetUserDataDirectory(const std::string& baseDir) {
     GetUserDataDirectoryRef() = NormalizeDirectoryPath(baseDir);
+}
+
+void ConfigManager::SetPlatformSharedUserDataDirectoryOverride(const std::string& dir) {
+    GetPlatformSharedOverrideRef() = dir.empty() ? std::string() : NormalizeDirectoryPath(dir);
 }
 
 const std::string& ConfigManager::GetFilesBaseDirectory() { return GetUserDataDirectory(); }
@@ -499,6 +512,10 @@ bool ConfigManager::SetStoragePreference(const std::string& runtimeAssetDir, Sto
 }
 
 std::string ConfigManager::GetPlatformSharedUserDataDirectory() {
+    const std::string& overrideDir = GetPlatformSharedOverrideRef();
+    if (!overrideDir.empty()) {
+        return overrideDir;
+    }
 #if defined(_WIN32)
     char buf[MAX_PATH] = {};
     DWORD n = ::GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);

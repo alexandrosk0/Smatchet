@@ -645,6 +645,14 @@ class ConfigManager {
      *  the runtime asset dir). Cross-platform: %LOCALAPPDATA% \ macOS Library \ XDG. */
     static std::string GetPlatformSharedUserDataDirectory();
 
+    /** Host-injected override for the platform shared user-data dir. A host that knows a
+     *  path Core cannot compute itself (e.g. Android's app-private dir, resolved via JNI in
+     *  the host and unavailable to Core's <android/...>-free translation units) calls this
+     *  before bootstrap; GetPlatformSharedUserDataDirectory() then returns it verbatim,
+     *  letting the mobile host reuse the desktop config bootstrap with no #ifdef branch.
+     *  Empty string clears the override (resume OS resolution). Stored normalized. */
+    static void SetPlatformSharedUserDataDirectoryOverride(const std::string& dir);
+
     static nlohmann::json LoadJsonFile(const std::string& path);
     static nlohmann::json LoadMergedConfigJson();
     static std::string NormalizeUiLanguageCode(const std::string& code);

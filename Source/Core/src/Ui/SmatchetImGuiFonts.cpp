@@ -14,6 +14,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 // WCHAR32 ABI parity guard (build-quality-velocity-hardening #23). IMGUI_USE_WCHAR32 is
 // hand-synced across three points — SmatchetImConfig.h, the Unreal SmatchetImGuiPlugin.Build.cs,
@@ -224,6 +225,14 @@ std::string g_PendingFontName;
 float g_PendingFontSize = 0.0f;
 std::atomic<bool> g_FontReloadRequested{false};
 
+// Host-injected font bytes (#12, mobile host-injection seam). A host with no system-font
+// path Core can read (Android — Core TUs carry no <android/asset_manager.h>) calls
+// SmatchetSetInjectedFontBytes with a raw TTF blob *before* the first font build; the bytes
+// are copied into this Core-owned buffer and loaded via AddFontFromMemoryTTF on any platform.
+// Empty buffer means "no injection — use the per-platform default font path below".
+std::vector<unsigned char> g_InjectedFontBytes;
+float g_InjectedFontSizePixels = 0.0f;
+
 // Set by SmatchetApplyImGuiFont after the atlas rebuild. Pointers remain valid
 // until the next SmatchetApplyImGuiFont call clears the atlas. Consumers go
 // through SmatchetGetPreviewFonts() rather than reading this directly.
@@ -333,7 +342,77 @@ ImFont* BuildRedactionFont(ImGuiIO& io, const char* path, float fontSizePixels, 
 }
 #endif
 
+// Build the UI font from host-injected TTF bytes (#12, mobile seam). Returns true and fully
+// populates io.FontDefault + g_PreviewFonts + current-font state when injection is active and
+// the blob parses; returns false (atlas left as the caller's prior Clear left it) when no bytes
+// are injected or the TTF fails to parse, so the caller falls through to its per-platform default.
+// Body font + extended glyph_ranges only — FA / symbol / markdown-variant merges live behind
+// #if _WIN32 (system-font helpers), so they're absent here and every preview font aliases the
+// body font, exactly like the AddFontDefault fallback. FA-from-injected-blob is a follow-up.
+bool TryBuildInjectedFont(ImGuiIO& io, const ImFontConfig& main_cfg, const ImWchar* glyph_ranges) {
+    if (g_InjectedFontBytes.empty() || g_InjectedFontSizePixels <= 0.0f) {
+        return false;
+    }
+    // Pre-validate the blob before AddFontFromMemoryTTF. In asserts-on builds (debug + the
+    // ninja-msvc-asan CI preset) ImGui's stb_truetype path IM_ASSERTs on a malformed blob and
+    // aborts; a NULL return only degrades gracefully under NDEBUG. Checking the sfnt magic + a
+    // sane minimum size here makes the documented fallback deterministic on every build config
+    // (Pillar 3 — never crash). 100 bytes is below any real font yet above truncated garbage.
+    if (g_InjectedFontBytes.size() < 100) {
+        LOG_WARN("Injected font blob too small (%d bytes); falling back to default font",
+                 static_cast<int>(g_InjectedFontBytes.size()));
+        return false;
+    }
+    const unsigned char* magicBytes = g_InjectedFontBytes.data();
+    const unsigned int sfntMagic = (static_cast<unsigned int>(magicBytes[0]) << 24) |
+                                   (static_cast<unsigned int>(magicBytes[1]) << 16) |
+                                   (static_cast<unsigned int>(magicBytes[2]) << 8) |
+                                   static_cast<unsigned int>(magicBytes[3]);
+    const bool sfntMagicOk = sfntMagic == 0x00010000u || // TrueType outlines
+                             sfntMagic == 0x4F54544Fu || // 'OTTO' — OpenType / CFF
+                             sfntMagic == 0x74727565u || // 'true' — legacy Apple TrueType
+                             sfntMagic == 0x74797031u || // 'typ1' — PostScript Type 1
+                             sfntMagic == 0x74746366u;   // 'ttcf' — TrueType Collection
+    if (!sfntMagicOk) {
+        LOG_WARN("Injected font blob has no valid sfnt magic (0x%08X); falling back to default font",
+                 sfntMagic);
+        return false;
+    }
+    ImFontConfig mem_cfg = main_cfg;
+    mem_cfg.FontDataOwnedByAtlas = false; // bytes live in g_InjectedFontBytes for the atlas lifetime
+    ImFont* newFont = io.Fonts->AddFontFromMemoryTTF(g_InjectedFontBytes.data(),
+                                                     static_cast<int>(g_InjectedFontBytes.size()),
+                                                     g_InjectedFontSizePixels, &mem_cfg, glyph_ranges);
+    if (!newFont) {
+        LOG_WARN("Injected font bytes failed to load (%d bytes); falling back to default font",
+                 static_cast<int>(g_InjectedFontBytes.size()));
+        return false;
+    }
+    g_PreviewFonts.Regular = newFont;
+    g_PreviewFonts.Bold = newFont;
+    g_PreviewFonts.Italic = newFont;
+    g_PreviewFonts.BoldItalic = newFont;
+    g_PreviewFonts.Mono = newFont;
+    g_PreviewFonts.Redaction = newFont; // injected path: no real block glyph; degrade to no-op
+    std::lock_guard<std::mutex> lock(g_FontReloadMutex);
+    g_CurrentFontName = "Injected (host)";
+    g_CurrentFontSize = g_InjectedFontSizePixels;
+    io.FontDefault = newFont;
+    return true;
+}
+
 } // namespace
+
+void SmatchetSetInjectedFontBytes(const void* data, int dataSize, float sizePixels) {
+    if (!data || dataSize <= 0 || sizePixels <= 0.0f) {
+        g_InjectedFontBytes.clear();
+        g_InjectedFontSizePixels = 0.0f;
+        return;
+    }
+    const unsigned char* bytes = static_cast<const unsigned char*>(data);
+    g_InjectedFontBytes.assign(bytes, bytes + dataSize);
+    g_InjectedFontSizePixels = sizePixels;
+}
 
 void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float fontSizePixels) {
     static ImVector<ImWchar> glyph_ranges;
@@ -357,6 +436,15 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
     g_PreviewFonts = SmatchetPreviewFonts{};
 
     ImFont* newFont = nullptr;
+
+    // Host-injected font path (#12, mobile seam): an Android host has no readable system-font
+    // path and injects raw TTF bytes through SmatchetSetInjectedFontBytes before this runs.
+    // TryBuildInjectedFont consumes them on any platform and short-circuits the per-OS path
+    // below. Returns false (no injection, or the blob failed to parse) → fall through to the
+    // per-platform default rather than leave a null FontDefault.
+    if (TryBuildInjectedFont(io, main_cfg, glyph_ranges.Data)) {
+        return;
+    }
 
 #if defined(_WIN32)
     const char* path = GetFontFilePath(fontName);

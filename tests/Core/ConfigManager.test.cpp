@@ -97,6 +97,26 @@ TEST_CASE("ConfigManager::SetBaseDirectoryForFiles sets both runtime + user-data
     CHECK(ConfigManager::GetRuntimeAssetDirectory().empty());
 }
 
+TEST_CASE("ConfigManager::SetPlatformSharedUserDataDirectoryOverride wins over OS resolution") {
+    // Capture whatever the OS resolver yields on this platform (may be empty on a degraded
+    // env). The override must take precedence over this baseline and clearing must restore it,
+    // so the assertion is hermetic regardless of which platform the test runs on.
+    const std::string baseline = ConfigManager::GetPlatformSharedUserDataDirectory();
+
+    // Inject a host-resolved path (mirrors the Android host supplying its app-private dir).
+    // Backslashes are normalized and a trailing separator is appended, like every other setter.
+    ConfigManager::SetPlatformSharedUserDataDirectoryOverride("C:\\android\\app\\data");
+    CHECK(ConfigManager::GetPlatformSharedUserDataDirectory() == "C:/android/app/data/");
+
+    // Re-injecting an already-normalized path is idempotent.
+    ConfigManager::SetPlatformSharedUserDataDirectoryOverride("/data/data/com.smatchet/files/");
+    CHECK(ConfigManager::GetPlatformSharedUserDataDirectory() == "/data/data/com.smatchet/files/");
+
+    // Empty string clears the override — OS resolution resumes and we get the baseline back.
+    ConfigManager::SetPlatformSharedUserDataDirectoryOverride("");
+    CHECK(ConfigManager::GetPlatformSharedUserDataDirectory() == baseline);
+}
+
 TEST_CASE("ConfigManager::EnsureDefaultImGuiSettingsFile creates imgui.ini under redirected dir") {
     smatchet_tests::TestEnvGuard env;
     const std::string imguiPath = ConfigManager::GetImGuiSettingsPath();
