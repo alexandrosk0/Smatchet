@@ -27,6 +27,21 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-08 · PR #995 (fix); escaped via an earlier merge · `test-shell-lint.sh` SIGPIPE-aborted (exit 141), blocking the required Shell-lint check on ALL open PRs
+
+### What escaped
+The required **Shell lint (shellcheck)** check went red on `develop` (~01:31 UTC 2026-06-08) and stayed red on every open PR built afterward (#993, #994, and any other). The failure was **exit 141 (SIGPIPE)**, not a real finding: `test-shell-lint.sh`'s deps rule extracted the first hit's line number with `lno=$(printf '%s\n' "$real_use" | head -1 | cut -d: -f1)`. Once a scanned script used an allow-listed tool on enough lines that `$real_use` exceeded the **64 KB pipe buffer**, `head` closed the pipe after one line → `printf` got SIGPIPE → under `set -euo pipefail` the **plain assignment** returned 141 → `set -e` aborted the whole gate. The script that crossed the threshold merged in the 00:51–01:31 window.
+
+### Root cause
+Two compounding holes:
+1. **The gate's own CI run never reproduced the failure mode it ships under.** `test-shell-lint.sh` runs on the **msys2** dev shell locally (which sets `SIGPIPE` to `SIG_IGN`, inherited by children — so `printf` gets a benign `EPIPE` write error, not a signal) and passed **137/137**. CI runs on **ubuntu** with the **default** SIGPIPE disposition, where the same pipeline kills `printf` and trips `set -e`. The 137/137 local pass was a false green for the CI environment.
+2. **Pipe-fragile idiom under `pipefail`.** `producer | head -N` in a plain assignment is inherently SIGPIPE-prone with `set -euo pipefail`; the gate had no rule against its own shape, and the failure was **data-dependent** (only trips past 64 KB), so it lay dormant until a large-enough script entered the scan set.
+
+### Preventing gate
+A bats regression in the **required** Shell-lint set that runs `test-shell-lint.sh` with the **default SIGPIPE disposition** (`trap - PIPE`) against a **>64 KB** unguarded-tool fixture and asserts a clean finding (exit 1), **never 141** — shipped in PR #995 (`tests/bats/shell_lint.bats` "many-line unguarded use does not SIGPIPE the gate"; fixture `tests/fixtures/shell_lint/known-bad-1-deps-manylines.sh`). Mutation-verified: the case fails (141) against the old pipeline. This makes the CI-only environment difference reproducible in the gate's own test suite, closing hole 1 for this class. Follow-up (filed below) generalizes hole 2: a lint forbidding `… | head` in a plain assignment under `pipefail`.
+
+### Filed as
+[`docs/self-improvement/categories/tooling.md`](categories/tooling.md) — 2026-06-08 P2: a shell self-lint rule flagging `<producer> | head` in a bare (`set -e`-exposed) assignment under `pipefail` as SIGPIPE-fragile, repo-wide.
 ## 2026-06-07 · PR #966 · vsync CR-953 follow-ups merged past RED Tests + Perf via tests-out-of-band + perf-out-of-band
 
 ### What escaped
