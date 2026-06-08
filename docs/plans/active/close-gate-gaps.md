@@ -133,5 +133,5 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,
-2. `git mv docs/plans/active/close-gate-gaps.md docs/plans/shipped/close-gate-gaps.md`,
+2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md` (slug = `close-gate-gaps`),
 3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
