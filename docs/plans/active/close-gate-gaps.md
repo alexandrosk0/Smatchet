@@ -16,11 +16,13 @@ The `historical-code-review` sweep (`docs/self-improvement/historical-review-fin
 - **Live but with a verified blind spot**: the **Pillar-2 sync-I/O scanner** (`scripts/dev/pillar2-scan.sh`) regex matches only *direct* primitives (`cpr::Get/Post`, `std::ifstream`, `popen(`, `system(`, `SQLite::…`, `.lock()`) — it does **not** see the project's own blocking **wrapper** functions, which is precisely why the entire surviving sync-I/O cluster (#565 `ConfigManager::SaveAnnotateAnalysis`, #611 `LoadPersistentViewsFromDisk`, #732 `ConfigManager::Save`, #761 `P4RunCommand`) slipped through.
 - **No gate at all**: semantic doc-signature drift (the `UpdateField(…, outError)` leaf-doc slip this session), `Result`/`Optional` exception-safety (#1017), the gate-false-pass meta-class (#918/#663/#784/#978), fresh-clone configure correctness (the cpr-submodule failure, #1031), and the `tests` glob-vs-list assert (#5, unconfirmed).
 
+**Self-demonstration (2026-06-08):** authoring *this very plan* tripped two more gate-gaps, now folded in as Gap **H** — (1) the local `scripts/dev/test-docs.sh` mirror passed **10/0** on the brand-new uncommitted plan file, yet CI's `test-plan-ref-integrity` + markdown-link checks failed on the same content once committed (the mirror's changed-file checks scan only git-diffed files, so a new *untracked* file false-passes pre-push); and (2) the plan-template § Archive `git mv` step, when its `<slug>` placeholder is expanded to the literal filename, manufactures a dangling `docs/plans/shipped/<name>.md` reference that `test-plan-ref-integrity` flags. Both are textbook instances of the thesis — gates that gave false-green — and are exactly why the local mirror must match CI scope.
+
 **Intended outcome:** after this lands, every recurring class from the sweep either **fails a PR gate** when reintroduced, or carries a documented, tractable reason it can't be gated. The mop (fixing instances) follows the leak-fix (the gate).
 
 ## Approach
 
-Close each gap **gate-first**, one gap per PR: extend/repair the existing gate (or add a new one), then fix-or-grandfather the existing violators *under* the now-active gate so it goes green. Ordering puts the highest-leverage gate (the Pillar-2 wrapper blind spot — it alone covers 4+ live findings) first, the cheap/contained gates next, and the one un-gateable instance (#1017) last.
+Close each gap **gate-first**, one gap per PR: extend/repair the existing gate (or add a new one), then fix-or-grandfather the existing violators *under* the now-active gate so it goes green. Ordering puts the highest-leverage gate (the Pillar-2 wrapper blind spot — it alone covers 4+ live findings) first, the cheap/contained gates next, the one un-gateable instance (#1017, Slice 6) accepted with a doctest, and the doc-validation mirror/template hardening (Gap H, Slice 8) last.
 
 The non-obvious trade-off, named up front: teaching the Pillar-2 scanner the project's sync-I/O *wrapper* functions will flag **many existing legitimate off-thread call sites** that today pass only because the regex didn't know those wrappers — so Slice 1 is a regex edit **plus** an annotation/grandfather sweep, not a one-liner. That sweep is the real cost and is why the slice is split (1a gate + baseline, 1b fix the genuine render-path violators).
 
@@ -35,6 +37,7 @@ The non-obvious trade-off, named up front: teaching the Pillar-2 scanner the pro
 | **E** | uncompiled `*.test.cpp` → false-green (#5) | configure-time **glob-vs-list** assert | 5 |
 | **F** | `Result<T,E>` construct-then-throw UB (#1017) | **no tractable static gate** — fix instance + doctest, accept | 6 |
 | **G** | tribal-knowledge process workarounds (#3 worktree-reuse; #1 dep-fetch) | encode as guidance (Gap D's CI is the real gate for #1) | 7 |
+| **H** | doc-validation **false-passes locally** (mirror scans only git-diffed files → new untracked file slips; template Archive `<slug>` expansion → dangling `shipped/` ref) — both observed authoring this plan | make the `test-docs.sh` mirror match CI scope (include untracked files) + harden the template/ref-integrity against the Archive self-reference | 8 |
 
 ## Slices (ordered — implement one PR each)
 
@@ -54,6 +57,8 @@ The non-obvious trade-off, named up front: teaching the Pillar-2 scanner the pro
 
 **Slice 7 — process/doc encodings + residue (Gap G).** Add the serial-migration **worktree-reuse** one-liner to `docs/agent-rules/process-rules.md` (already filed as a `process.md` self-improvement entry this session); prune the now-superseded "configure via PowerShell to dodge the cpr submodule step" guidance from `build.md` / the 2026-06-07 infra entry (Gap D's CI job is the real gate). **~2–3 doc files.**
 
+**Slice 8 — doc-validation: local mirror matches CI + template self-ref hardening (Gap H).** Two sub-fixes for the false-passes observed authoring this plan: **(8a)** make `scripts/dev/test-docs.sh`'s changed-file checks (`test-markdown-links`, and the ref/anchor scans) also include **untracked** files (`git status --porcelain` / `git ls-files --others --exclude-standard`, not just the diff against `origin/develop`), so a brand-new uncommitted plan/doc file gets the same scope CI gives it — pre-push green then means CI-green. Ship a `--selftest` proving an untracked file with a dangling link **FAILS** locally. **(8b)** Harden the plan-template Archive footgun: add an explicit authoring note in `docs/plans/active/_plan-template.md` that step 2 keeps the literal `<slug>` placeholder (never expand to the real filename — it manufactures a dangling `shipped/` ref), **and/or** teach `agents/scripts/core/test-plan-ref-integrity.sh` to skip a `docs/plans/shipped/<basename>.md` reference that occurs inside a plan's own § Archive block (self-reference, not a real cross-link). Route to `mechanic`/`build-doctor`. **~3 files.**
+
 ## Files to modify
 
 Per-slice lists above are authoritative. Cross-cutting touch points (grep-confirm before editing):
@@ -62,6 +67,7 @@ Per-slice lists above are authoritative. Cross-cutting touch points (grep-confir
 3. [`tests/CMakeLists.txt`](../../../tests/CMakeLists.txt) — glob-vs-list assert (Slice 5).
 4. [`Source/Core/include/SmatchetResult.h`](../../../Source/Core/include/SmatchetResult.h) — exception-safety (Slice 6); `Optional<T>` in the same file is the reference pattern.
 5. UI render-path files (Slice 1b): `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp`, `SmatchetPreferencesUi_Templates.cpp`, `SmatchetToolbarUi.cpp`, `AnnotateAnalysisUi_Window.cpp`.
+6. [`scripts/dev/test-docs.sh`](../../../scripts/dev/test-docs.sh) (mirror-scope incl. untracked, Slice 8a) + [`docs/plans/active/_plan-template.md`](../../../docs/plans/active/_plan-template.md) + [`agents/scripts/core/test-plan-ref-integrity.sh`](../../../agents/scripts/core/test-plan-ref-integrity.sh) (Archive self-ref hardening, Slice 8b).
 
 ## Existing utilities reused
 
@@ -83,7 +89,7 @@ Per-slice lists above are authoritative. Cross-cutting touch points (grep-confir
 
 Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
-1. **PR-fast CI** — Slice 1b: scenario `field-edit` / `idle` exercise the preferences + annotate + toolbar save paths the fixes relocate; expect **improvement or neutral** (work leaves the UI thread). Slices 1a/2/3/4/5/7 — **N/A** (no `Source/Core/` runtime code). Slice 6 — **N/A** (header-only value-type, no runtime path).
+1. **PR-fast CI** — Slice 1b: scenario `field-edit` / `idle` exercise the preferences + annotate + toolbar save paths the fixes relocate; expect **improvement or neutral** (work leaves the UI thread). Slices 1a/2/3/4/5/7/8 — **N/A** (no `Source/Core/` runtime code). Slice 6 — **N/A** (header-only value-type, no runtime path).
 2. **Pillar 2 static scanner** — Slice 1b is *defined by* it: each relocated call must pass the now-wrapper-aware scanner (no annotation needed once off-thread).
 3. **Dispatcher drain** — N/A: no slice touches `MainThreadDispatcher::Drain()` (Slice 1b *posts* to it via the existing `PostToMainThread`, not its drain logic).
 4. **Visible-cue bucket-E harness** — Slice 1b #611/#761 add a "Resolving…/Saving…" status cue on the newly-async path → bucket-E asserts the cue appears.
