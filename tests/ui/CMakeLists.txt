@@ -50,6 +50,24 @@ set(_SMATCHET_UI_TEST_SOURCES
 target_sources(SmatchetStandalone PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
 target_link_libraries(SmatchetStandalone PRIVATE SmatchetImGuiTestEngine)
 
+# The ImGui Test Engine IM_CHECK_* macros compare against literal expecteds, which MSVC
+# (14.44 on the CI bucket-E runner) flags as C4127 "conditional expression is constant" —
+# a false positive that the project's /WX turns fatal. Scope /wd4127 to the bucket-E test
+# sources only (not product code). MSVC-only flag; the bucket-E build is MSVC.
+# TARGET_DIRECTORY is required: SmatchetStandalone / SmatchetCore_DX12 are defined in the
+# ROOT CMakeLists, so a bare set_source_files_properties here (tests/ui/ scope) would not
+# reach the compile line (CMake source-file properties are directory-scoped).
+if(MSVC)
+    set_source_files_properties(${_SMATCHET_UI_TEST_SOURCES}
+        TARGET_DIRECTORY SmatchetStandalone
+        PROPERTIES COMPILE_OPTIONS "/wd4127")
+    if(TARGET SmatchetCore_DX12)
+        set_source_files_properties(${_SMATCHET_UI_TEST_SOURCES}
+            TARGET_DIRECTORY SmatchetCore_DX12
+            PROPERTIES COMPILE_OPTIONS "/wd4127")
+    endif()
+endif()
+
 # Slice 3 of deterministic-jira-test-backend — fixture
 # support source + include path for the Jira backend injection hook in
 # StandaloneAppBootstrap.cpp. Also compiled into DX12 as a no-GL tripwire.
