@@ -11,6 +11,30 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Sweep status & remaining work (as of 2026-06-07)
+
+- **Swept:** PRs **#602–#951** — **325 reviewed** across batches 1–5 (below).
+  Tooling: `agents/scripts/core/historical-review-survivors.sh` + the
+  `historical-code-review` skill (shipped PR #968).
+- **Remaining (UNSWEPT):** **551 merged PRs**, **#601 → #13** (oldest). Not yet
+  historically reviewed.
+- **Resume instructions:**
+  1. List the next batch — `gh pr list --state merged --base develop --limit 900
+     --json number --jq '[.[] | select(.number < 602) | .number] | sort |
+     reverse | .[0:100]'` (lower the `< 602` bound as you progress).
+  2. Drop that array into the `const prs = [...]` line of the workflow script
+     `…/workflows/scripts/historical-review-sweep-wf_f01ca79f-9a0.js` and re-run
+     `Workflow({scriptPath})`; or, per PR, run
+     `historical-review-survivors.sh --pr <N>` and review the survivor digest per
+     the skill.
+  3. Append each batch's findings here (newest on top) + commit/push.
+- **Cost guide:** ~100 PRs/batch ≈ 5.7M output tokens, ~30 min wall-clock.
+- **Top still-alive findings to act on first** (logged, NOT fixed per the
+  no-fix directive): #854 (offline edit data-loss), #670 (wrong Jira status
+  transition), #611/#761/#732/#892 (sync I/O on UI render thread → freeze),
+  #671 (orphaned subprocess), #834/#918 (blocking gates measuring wrong /
+  false-passing). User-visible ones → GitHub Issues per ADR-0014 when actioned.
+
 <!-- Batches appended at the top. -->
 
 ## Batch 5 — PRs #602–707 (100-PR workflow sweep, 2026-06-07) — FINAL BATCH
