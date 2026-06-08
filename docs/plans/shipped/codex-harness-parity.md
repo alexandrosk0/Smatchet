@@ -2,7 +2,7 @@
 
 > **Slug**: `codex-harness-parity`
 >
-> **Status**: `active` - repo-side work to make Codex setup self-verifying and as close as possible to the Claude Code harness without pretending Codex has Claude-only hook/runtime features.
+> **Status**: `shipped` - Codex setup is self-verifying for repo-owned parity surfaces and explicit about Claude Code runtime features that Codex cannot receive from this repository.
 >
 > **Usage**: this plan drives the Codex adapter hardening requested in-session on 2026-06-08.
 >
@@ -34,7 +34,7 @@ Document the equivalent local workflows for hooks that Codex cannot receive dire
 12. `docs/harness/capability-adapter.md`: document Codex's native agent discovery and search fallback accurately.
 13. `docs/harness/cursor/hooks-equivalent.md`: point Cursor at the same tracked repo hook path so hook docs stay consistent across non-Claude harnesses.
 14. `AGENTS.md`: clarify that Codex uses native `AGENTS.md` discovery rather than a generated `.codex` mirror.
-15. `docs/plans/active/codex-harness-parity.md`: track the plan and verification outcomes.
+15. `docs/plans/codex-harness-parity.md`: track the plan and verification outcomes.
 
 ## Existing utilities reused
 
@@ -92,20 +92,24 @@ N/A - planned diff is docs, harness scripts, and git hooks only; no `Source/Core
 - Automatic token telemetry under Codex: opt-in follow-up when a stable subagent stop event exists.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` Plan revision after implementation - bullet per shipped commit: `<sha> - <one-line summary>`)*
+
+- `256669a8` - Add the active Codex harness parity plan and verification scope.
+- `7979b346` - Wire Codex setup verification, repo-owned hooks, docs, and Windows-safe probe fixes.
 
 ## Deviations from plan
-*(populated post-ship - what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- Scope widened from Codex setup/docs to shared tool and Python probe hardening after local verification exposed Git Bash / WSL false negatives.
+- `agents/scripts/core/test-setup-harness.sh` gained Codex coverage and Windows-safe Python assertion probing so the new behavior is guarded.
+- Product-level Codex hook events, first-class named Codex specialist agents, and automatic Codex token telemetry remain out of repo control and are documented as runtime gaps.
 
 ## Verification (actual)
-*(populated post-ship - what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship - DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above -*
-1. *flip the Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep - references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 - once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- `bash -n agents/scripts/core/setup-harness.sh agents/scripts/core/test-setup-harness.sh agents/scripts/core/test-markdown-links.sh scripts/dev/check-required-tools.sh scripts/git-hooks/pre-commit scripts/git-hooks/pre-push` - passed.
+- `bash agents/scripts/core/setup-harness.sh codex` - passed; reported 26 agent files, 5 leaf `AGENTS.md` files, and git-hook wiring.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File agents\scripts\core\setup-harness.ps1 codex` - passed.
+- `bash agents/scripts/core/test-setup-harness.sh` - passed, 19/19.
+- `bash scripts/dev/test-docs.sh` - passed, 10/10.
+- `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` - passed; narrowing conversion opt-in skipped as designed.
+- `git diff --check` - passed.
+- PR #1008 CI / CodeRabbit before plan archive - all checks green, CodeRabbit completed with zero actionable findings.
+- Plan stress-test - inline review against `docs/harness/codex/setup.md`, `docs/harness/codex/hooks-equivalent.md`, and `setup-harness` behavior; outcome: keep native `AGENTS.md` discovery plus repo-owned hooks, no `.codex` mirror.
