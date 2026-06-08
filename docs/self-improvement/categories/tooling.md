@@ -7,6 +7,12 @@
 
 ## Triage log
 
+- 2026-06-08 · orchestrator · [tooling] · P2 — shell self-lint should flag SIGPIPE-fragile `<producer> | head` in a bare assignment under `pipefail` (preventing gate from postmortems.md 2026-06-08 shell-lint SIGPIPE)
+  Details: `test-shell-lint.sh` exit-141'd on CI (default SIGPIPE) but passed on msys (SIG_IGN) because `lno=$(printf … | head -1 | cut …)` SIGPIPEs the producer once the upstream exceeds the 64 KB pipe buffer; under `set -euo pipefail` the plain assignment returns 141 and `set -e` aborts. Fixed for that one line in #995 (pure param expansion) + a bats regression, but the *class* (`producer | head` in a `set -e`-exposed assignment) is unguarded repo-wide and data-dependent (only trips past 64 KB), so the next instance lies dormant until a big-enough input appears.
+  Concrete next action: add a 6th rule to `test-shell-lint.sh` (or a shellcheck-driven check) flagging a top-level `var=$(... | head ...)` / `var=$(... | head ...)` assignment in a script that sets `pipefail` — recommend the pure-param-expansion or `{ producer || true; } | head` idiom. Lint itself + the existing scripts (grandfather current clean state). Est ~1-1.5 h incl. a fixture + bats case. Cross-ref: postmortems.md 2026-06-08, PR #995.
+  Status: open
+  Last-reviewed: 2026-06-08
+
 - 2026-06-07 · orchestrator · [tooling] · P2 — `perf-pr-fast.yml` reads override labels from the frozen event payload — label-then-rerun cannot downgrade (PR #966)
   Details: The Gate-decision step parses `github.event.pull_request.labels`, which is snapshotted at the triggering `pull_request` event. Applying `perf-out-of-band` AFTER a red run and re-running replays the old payload → `override=false` → still red; the only way through is an empty commit to mint a fresh event (done on #966). `coverage-gate.yml` doesn't have this trap (its label check queries live data), so the two named-downgrade gates behave inconsistently for the exact same operator flow.
   Concrete next action: in `perf-pr-fast.yml` Gate decision, replace the event-payload parse with a live API query (`gh api repos/$R/issues/$PR/labels --jq '.[].name'`), mirroring coverage-gate; one-line behavioural note in `merge-gates.md` § labels. Est ~20 min.
