@@ -72,6 +72,11 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps 
     void SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) override;
     void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override;
     void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) override;
+    // Failed session → re-arm the context's initial-sync latch + drop its recorded JQL so
+    // the next pane focus switch retries instead of suppressing the re-sync forever
+    // (PR #986 review MEDIUM-1). UI thread (TickStreamingApply) — same single-thread
+    // discipline as the latch itself.
+    void OnStreamingSyncSessionFinished(bool fetchOk) override;
     // RequestDeferredLiveTrackerBackendSuccessNotify shared with IOfflineQueueDeps.
     std::mutex& ActiveTicketsMutex() override;
     std::vector<CachedTicket>& ActiveTickets() override;

@@ -922,14 +922,22 @@ void SmatchetUI::viewsDiscardChanges(UiDrawSession& d) {
 }
 
 // Activate a view by id + reload buffers/grid. Former activateView closure body.
-void SmatchetUI::viewsActivateView(AppController& app, UiDrawSession& d, const std::string& id) {
+void SmatchetUI::viewsActivateView(AppController& app, UiDrawSession& d, const std::string& id, bool kickSync) {
     if (ViewState.Activate(id)) {
         const ViewDefinition* nowActive = ViewState.GetActiveView();
         if (nowActive) {
             LoadBuffersFromView(d, *nowActive);
             d.cfg.JqlQuery = nowActive->Jql;
             d.cfg.SelectedFields = nowActive->Fields;
-            SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+            if (kickSync) {
+                SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+            } else {
+                // Pane focus switch onto an already-sync-live context (Slice 3): persist the
+                // adopted identity + keep nav history, but skip the SyncWithBackend network
+                // re-fetch — the pane's own GridLiveContext data is already fresh.
+                ConfigManager::Save(d.cfg);
+                d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
+            }
         }
     }
 }

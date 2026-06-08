@@ -481,22 +481,56 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
     }
     it->second->initialSyncKicked = true;
     TrackerConfig cfgCopy = paneCfg;
-    LaunchBackgroundTask([this, paneId, cfgCopy, viewId]() {
+    LaunchBackgroundTask([this, paneId, cfgCopy, viewId]() mutable {
         /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms — smatchet_views.json bucket read off the UI thread
         ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
         if (!viewId.empty()) {
             for (size_t i = 0; i < views.Views.size(); ++i) {
                 if (views.Views[i].Id == viewId) {
                     views.ActiveViewId = viewId;
+                    // Adopt the pane's OWN view query + field set (review HIGH-1): the caller's
+                    // cfg snapshot carries the FOCUSED view's JqlQuery/SelectedFields, and all
+                    // three fetchers consume cfg.JqlQuery for the actual query (the viewsOverride
+                    // re-point only fixes the field list) — without this the unfocused pane's
+                    // first sync fetched the focused view's result set.
+                    cfgCopy.JqlQuery = views.Views[i].Jql;
+                    cfgCopy.SelectedFields = views.Views[i].Fields;
                     break;
                 }
             }
         }
         mainThreadDispatcher.PostToMainThread([this, paneId, cfgCopy, views]() {
             // UI thread: the context may have been retired while the load ran — find() guards.
+            std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator ctxIt = gridContexts_.find(paneId);
+            if (ctxIt != gridContexts_.end()) {
+                // Record the JQL this kick syncs (UI thread only — same discipline as
+                // initialSyncKicked). The focus-switch path compares it against the adopted
+                // view's saved JQL to detect drift (view edited after the context synced) and
+                // re-kick instead of adopting stale rows (review MEDIUM-2). Cleared (with the
+                // latch) by the session-end deps hook when the sync fails (review MEDIUM-1).
+                ctxIt->second->lastSyncedJql = cfgCopy.JqlQuery;
+            }
             SyncPaneWithBackend(paneId, &cfgCopy, &views);
         });
     });
+}
+
+bool AppController::IsPaneSyncLive(const std::string& paneId) const {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    return it != gridContexts_.end() && it->second->initialSyncKicked;
+}
+
+std::string AppController::GetPaneLastSyncedJql(const std::string& paneId) const {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    return (it == gridContexts_.end()) ? std::string() : it->second->lastSyncedJql;
+}
+
+void AppController::RecordPaneSyncKick(const std::string& paneId, const std::string& jql) {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it != gridContexts_.end()) {
+        it->second->initialSyncKicked = true;
+        it->second->lastSyncedJql = jql;
+    }
 }
 
 std::shared_ptr<const std::vector<CachedTicket>>

@@ -1033,7 +1033,20 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             // Initial refresh already covers a same-frame connectivity-recovery latch; skip the
             // follow-up resync on the next frame (would duplicate SyncWithBackend / toasts).
             d.connectivityRecoveryTicketResyncPending = false;
-            app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+            const bool suppressKeyMatches =
+                d.suppressNextBackendSwitchInitialSyncKey == ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+            const bool suppressThisKick = d.suppressNextBackendSwitchInitialSync && suppressKeyMatches;
+            // Consume-once either way — a stale latch (key mismatch, e.g. a same-frame
+            // Preferences backend switch) must not survive to swallow a later sync.
+            d.suppressNextBackendSwitchInitialSync = false;
+            d.suppressNextBackendSwitchInitialSyncKey.clear();
+            // suppressThisKick = pane focus switch onto a sync-live cross-backend context
+            // (Slice-3 follow-up): the backend-switch session reset above still refreshed
+            // catalog/editor state, but the focused pane's own GridLiveContext already
+            // fetched its tickets — a SyncWithBackend here would duplicate that fetch.
+            if (!suppressThisKick) {
+                app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+            }
             d.appliedInitialView = true;
         }
     }
