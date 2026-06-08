@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-commit: cheap staged-file checks shared by harnesses that do not have
+# Claude Code's PostToolUse lint hook surface.
+#
+# Wired via: git config --local core.hooksPath scripts/git-hooks  (installed
+# by `bash agents/scripts/core/setup-harness.sh <harness>` when safe).
+#
+# Today this runs the harness-agnostic Pillar 2 static scanner on staged
+# first-party C++ files. It intentionally skips non-C++ commits and deleted
+# paths so docs/plan churn is not blocked by an empty scanner invocation.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+if [[ -z "$repo_root" ]]; then
+    exit 0
+fi
+cd "$repo_root"
+
+mapfile -t cpp_files < <(
+    git diff --cached --name-only --diff-filter=ACM \
+        | grep -E '\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$' \
+        || true
+)
+
+if [[ "${#cpp_files[@]}" -eq 0 ]]; then
+    exit 0
+fi
+
+if [[ -x "scripts/dev/pillar2-scan.sh" ]]; then
+    bash scripts/dev/pillar2-scan.sh "${cpp_files[@]}"
+else
+    echo "pre-commit: WARN scripts/dev/pillar2-scan.sh missing or not executable; skipping Pillar 2 scan." >&2
+fi

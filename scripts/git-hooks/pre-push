@@ -11,7 +11,7 @@
 # Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
 #
 # Wired via: git config --local core.hooksPath scripts/git-hooks  (installed
-# by `bash agents/scripts/core/setup-harness.sh claude-code`).
+# by `bash agents/scripts/core/setup-harness.sh <harness>` when safe).
 #
 # Skips silently when:
 #   - branch is develop / main / detached HEAD

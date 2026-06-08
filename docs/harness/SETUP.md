@@ -6,12 +6,12 @@ Smatchet ships **harness-agnostic** agent definitions:
 - [`agents/*.md`](../../agents/) — one file per delegated agent (per the [agents.md spec](https://agents.md/)).
 - [`agents/_shared/`](../../agents/_shared/) — shared skills + token-tracking scripts any harness can wire.
 
-Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`) are **gitignored** — they're local build output that links into the canonical `agents/` tree and copies a small number of templates. After cloning the repo, run the setup script for the harness you use:
+Per-harness adapter directories (`.claude/`, `.cursor/`, `.pi/`) are **gitignored** — they're local build output that links into the canonical `agents/` tree and copies a small number of templates. Codex is the exception: it reads `AGENTS.md` natively and does not need a `.codex/` adapter mirror. After cloning the repo, run the setup script for the harness you use:
 
 | Harness | Setup command | Details |
 |---|---|---|
 | Claude Code | `bash agents/scripts/core/setup-harness.sh claude-code` | [claude-code/setup.md](claude-code/setup.md) |
-| Codex / OpenAI Agents | `bash agents/scripts/core/setup-harness.sh codex` (no-op confirmation) | [codex/setup.md](codex/setup.md) |
+| Codex / OpenAI Agents | `bash agents/scripts/core/setup-harness.sh codex` | [codex/setup.md](codex/setup.md) |
 | Cursor | `bash agents/scripts/core/setup-harness.sh cursor` | [cursor/setup.md](cursor/setup.md) |
 | pi (earendil-works) | `bash agents/scripts/core/setup-harness.sh pi` | [pi/README.md](pi/README.md) |
 | Aider / generic | Manual — paste agent files from `agents/` as needed. No adapter dir. | — |
@@ -61,7 +61,7 @@ Ad-hoc invocation: `bash scripts/dev/check-required-tools.sh` (add `--quiet` to 
 
 ## Why links + copies, not a tracked mirror
 
-The setup script uses **directory junctions** (Windows) / **symlinks** (Unix) for agent definitions and shared skills so edits to `agents/*.md` are picked up by the harness immediately — no sync step, no banner injection, no drift-check.
+The setup script uses **directory junctions** (Windows) / **symlinks** (Unix) for harnesses that need linked agent definitions and shared skills, so edits to `agents/*.md` are picked up immediately — no sync step, no banner injection, no drift-check. Codex skips this because its native discovery path is already `AGENTS.md` + `agents/{core,project}/*.md`.
 
 Templates that the user might locally tweak (`settings.json`, hook shell scripts, `CLAUDE.md`) are **copies**. The script preserves user-modified copies on re-run.
 

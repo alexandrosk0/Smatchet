@@ -73,23 +73,54 @@ WARN=0
 
 # Prepend known toolchain dirs idempotently so the probe doesn't false-fail
 # on tools that ARE installed but not on the inherited PATH (the exact issue
-# `jq` + `gh` hit last session). Mirrors the lint-cpp-common.sh pattern.
-case ":$PATH:" in
-    *":/c/msys64/ucrt64/bin:"*) ;;
-    *) [[ -d /c/msys64/ucrt64/bin ]] && export PATH="/c/msys64/ucrt64/bin:$PATH" ;;
-esac
-case ":$PATH:" in
-    *":/c/Program Files/GitHub CLI:"*) ;;
-    *) [[ -d "/c/Program Files/GitHub CLI" ]] && export PATH="/c/Program Files/GitHub CLI:$PATH" ;;
-esac
+# `jq` + `gh` hit last session). Mirrors the lint-cpp-common.sh pattern, with
+# both Git-Bash/MSYS (`/c`) and WSL (`/mnt/c`) spellings because Codex may invoke
+# bash through either bridge while the tools live on the Windows side.
+prepend_path_dir() {
+    local dir="$1"
+    [[ -d "$dir" ]] || return 0
+    case ":$PATH:" in
+        *":$dir:"*) ;;
+        *) export PATH="$dir:$PATH" ;;
+    esac
+}
+
+for win_root in /c /mnt/c; do
+    prepend_path_dir "$win_root/msys64/ucrt64/bin"
+    prepend_path_dir "$win_root/msys64/usr/bin"
+    prepend_path_dir "$win_root/Program Files/CMake/bin"
+    prepend_path_dir "$win_root/Program Files/GitHub CLI"
+    prepend_path_dir "$win_root/Program Files/LLVM/bin"
+    prepend_path_dir "$win_root/Python314"
+    prepend_path_dir "$win_root/Python314/Scripts"
+
+    if [[ -d "$win_root/Users" ]]; then
+        for pkg_dir in "$win_root"/Users/*/AppData/Local/Microsoft/WinGet/Packages/*; do
+            [[ -d "$pkg_dir" ]] || continue
+            prepend_path_dir "$pkg_dir"
+            prepend_path_dir "$pkg_dir/bin"
+            prepend_path_dir "$pkg_dir/mingw64/bin"
+        done
+    fi
+done
+
+resolve_tool() {
+    local tool="$1"
+    if command -v "$tool" 2>/dev/null; then
+        return 0
+    fi
+    case "$tool" in
+        *.exe) return 1 ;;
+        *) command -v "${tool}.exe" 2>/dev/null ;;
+    esac
+}
 
 (( QUIET )) || echo "check-required-tools — Smatchet orchestrator tool set"
 (( QUIET )) || echo
 
 for row in "${TOOLS[@]}"; do
     IFS="$SEP" read -r tool category hint <<<"$row"
-    if command -v "$tool" >/dev/null 2>&1; then
-        loc="$(command -v "$tool")"
+    if loc="$(resolve_tool "$tool")"; then
         (( QUIET )) || printf "  PASS  %-18s -> %s\n" "$tool" "$loc"
         PASS=$((PASS + 1))
     else

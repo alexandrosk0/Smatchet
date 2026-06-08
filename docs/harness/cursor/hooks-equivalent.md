@@ -12,11 +12,11 @@ The two viable invocation paths:
 
 ### 1. Pre-commit hook (recommended)
 
-Same as Codex (and any other harness): wire the scanner into
-`.git/hooks/pre-commit` so any commit touching first-party C++ files runs
-the scan. Git enforces it independently of which agent harness produced the
-change. See `docs/harness/codex/hooks-equivalent.md` § 1 for the installer
-one-liner.
+Same as Codex (and any other harness): wire the tracked hook path with
+`git config --local core.hooksPath scripts/git-hooks` so any commit touching
+first-party C++ files runs the scan. Git enforces it independently of which
+agent harness produced the change. See `docs/harness/codex/hooks-equivalent.md`
+for the shared hook contract.
 
 ### 2. Manual agent invocation
 
