@@ -67,6 +67,12 @@ sr_pid_alive() { # $1 = pid ; 0 = alive
   sr_pid_authoritative "${1:-}" || return 1
   local pid="$1"
   if sr_is_windows; then
+    # tasklist is the Win32 liveness probe. If it is somehow off PATH we cannot
+    # prove the pid dead, so treat an authoritative pid as alive — conservative:
+    # never false-prune a live session, never false-allow a HEAD-moving op. On a
+    # real Windows host tasklist is always present. (Also satisfies the
+    # SHELL_LINT_DEPS preflight contract for the allowlisted `tasklist`.)
+    command -v tasklist >/dev/null 2>&1 || return 0
     if [ -z "$_sr_snapshot_ready" ]; then
       _sr_snapshot_ready=1
       _sr_live_snapshot="$(tasklist //FO CSV //NH //FI "IMAGENAME eq ${SMATCHET_SESSION_IMAGE:-claude.exe}" 2>/dev/null \
