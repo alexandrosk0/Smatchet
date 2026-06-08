@@ -126,6 +126,13 @@ add_executable(SmatchetTests
     # role handles: swap-during-replay completes against the latched backend (create tick)
     # and swap-to-null / context-retirement shape does not crash (field-edit tick).
     Core/OfflineQueueBackendSwap.test.cpp
+    # Multi-grid Slice 4 (plan item 20) — TWO live backends (Jira + GitHub panes) over ONE
+    # shared queue DB, queuing interleaved while offline then replaying: each backend replays
+    # ONLY its own backend_key rows (strict-equality filter under logical concurrency), dead
+    # rows under both keys coexist + restore under their own key, and a swap-mid-replay never
+    # leaks across keys. Real-thread/TSan concurrency is gated to Slice 5. Links the production
+    # LCM + OfflineQueueService TUs already pulled in below.
+    Core/OfflineQueueTwoBackendReplay.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).
