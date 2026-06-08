@@ -1,6 +1,7 @@
 #ifndef SMATCHET_GITHUB_CLIENT_H
 #define SMATCHET_GITHUB_CLIENT_H
 
+#include "GitHubClientHelpers.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
@@ -8,6 +9,8 @@
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 
+#include <atomic>
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 
@@ -15,9 +18,11 @@
 // docs/plans/shipped/github-tracker-backend.md). Tracker-only — does NOT implement
 // the PR / check-run / GraphQL surface the deleted agentic flow used.
 // Lifecycle: factory-owned `unique_ptr<GitHubClient>` per `Create("github")`
-// call (same shape as JiraClient / PlaneClient). Ctor takes baseUrl + PAT
-// snapshot at construction time; runtime PAT rotation requires a fresh
-// Create call.
+// call (same shape as JiraClient / PlaneClient). Ctor takes a baseUrl + PAT
+// snapshot, but every request re-resolves credentials from the live
+// TrackerConfig (cfg parameter where present, settled on-disk config on the
+// cfg-less mutation paths — JiraClient's pattern) so a PAT entered or rotated
+// in Preferences takes effect without recreating the client (issue #979).
 
 class GitHubClient : public ITrackerBackend,
                      public ITrackerIssueReader,
@@ -74,8 +79,20 @@ class GitHubClient : public ITrackerBackend,
                             std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) override;
 
   private:
-    std::string baseUrl_; // e.g. "https://api.github.com" or "https://<enterprise>/api/v3"
-    std::string pat_;     // Personal Access Token; empty disables all writes
+    /// Issue #979 — resolve baseUrl + PAT for one request. `configOverride` non-null →
+    /// the live cfg PAT is used unconditionally (empty = user cleared the credential;
+    /// only the base URL falls back to the ctor snapshot); null → reads the settled
+    /// on-disk config (mirrors JiraIssueMutation's per-request `ConfigManager::Load()`
+    /// pattern on cfg-less call paths). Logs once whenever the resolved PAT byte-count
+    /// changes so credential rotation is verifiable in logs alongside the ctor
+    /// `pat_bytes=` line. Const because read paths call it; the log-dedup counter is
+    /// `mutable` + atomic (called concurrently from the sync worker, the connectivity
+    /// probe async, and the UI thread).
+    smatchet::github::GitHubRequestAuth ResolveAuth(const TrackerConfig* configOverride) const;
+
+    std::string baseUrl_; // ctor snapshot fallback for the base URL only (issue #979)
+    std::string pat_;     // ctor snapshot, log-visibility only; never used for requests (issue #979)
+    mutable std::atomic<std::size_t> lastLoggedPatBytes_; // rotation-visibility log dedup (issue #979)
 };
 
 #endif // SMATCHET_GITHUB_CLIENT_H

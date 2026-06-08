@@ -494,17 +494,20 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     const bool isCurrentlyPlane = (currentLower == "plane");
     const bool isCurrentlyGitHub = (currentLower == "github");
 
+    // Issue #979: pass the live cfgCopy into every Create — the factory must build the
+    // new client from the caller's in-memory config, not a disk re-read that races the
+    // debounced prefs save.
     bool backendSwapped = false;
     if (trackerLower == "plane" && !isCurrentlyPlane) {
-        deps_.SetBackend(deps_.BackendFactory()->Create("Plane"));
+        deps_.SetBackend(deps_.BackendFactory()->Create("Plane", cfgCopy));
         LOG_INFO("TicketSyncService: Switched backend to Plane.");
         backendSwapped = true;
     } else if (trackerLower == "jira" && !isCurrentlyJira) {
-        deps_.SetBackend(deps_.BackendFactory()->Create("Jira"));
+        deps_.SetBackend(deps_.BackendFactory()->Create("Jira", cfgCopy));
         LOG_INFO("TicketSyncService: Switched backend to Jira.");
         backendSwapped = true;
     } else if (trackerLower == "github" && !isCurrentlyGitHub) {
-        deps_.SetBackend(deps_.BackendFactory()->Create("GitHub"));
+        deps_.SetBackend(deps_.BackendFactory()->Create("GitHub", cfgCopy));
         LOG_INFO("TicketSyncService: Switched backend to GitHub.");
         backendSwapped = true;
     }

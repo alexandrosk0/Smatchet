@@ -23,7 +23,7 @@ class ScriptedTrackerBackendFactory : public ITrackerBackendFactory {
   public:
     explicit ScriptedTrackerBackendFactory(JiraFakeTrackerFixture fixture) : fixture_(std::move(fixture)) {}
 
-    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
+    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& /*cfg*/) override {
         if (trackerType == "Jira" || trackerType == "jira") {
             return fixture_.CreateClient();
         }
