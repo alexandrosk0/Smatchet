@@ -41,11 +41,11 @@ Three layers, provisioned once, then self-running:
 Pure infra + docs + one script — **no `Source/` C++ touched**.
 
 1. `docs/perforce/MIRROR.md` *(new)* — the GitHub→p4d mirror runbook: WSL2 install, graph-depot create, connector config, GitHub read-only auth, mirror-fetch cron, health-check usage, teardown. Sibling to `SETUP.md` (server bring-up) and `RUNBOOK.md`.
-2. [`docs/perforce/AGENT_FLOWS.md:15`](docs/perforce/AGENT_FLOWS.md) § Topology table — add one concern row: `Mirror ship-line → p4 (read-only backup)` | git path = `(canonical — GitHub)` | p4 path = `//repo/smatchet graph depot via Git Connector (one-way, non-authoritative)`. Reinforce the existing "never authoritative, never on the ship-line" invariant for this new consumer.
-3. [`docs/perforce/AGENT_FLOWS.md:169`](docs/perforce/AGENT_FLOWS.md) § When NOT to use Perforce — add a bullet: the graph-depot mirror is **read-only and one-way**; never push from `//repo/smatchet` back to GitHub, never treat it as a source of truth.
-4. [`docs/perforce/SETUP.md:275`](docs/perforce/SETUP.md) § Open items — cross-link the new `MIRROR.md` as a post-Phase-0 optional add-on (the mirror depends on Phase-0 server bring-up being complete).
+2. [`docs/perforce/AGENT_FLOWS.md:15`](../../perforce/AGENT_FLOWS.md) § Topology table — add one concern row: `Mirror ship-line → p4 (read-only backup)` | git path = `(canonical — GitHub)` | p4 path = `//repo/smatchet graph depot via Git Connector (one-way, non-authoritative)`. Reinforce the existing "never authoritative, never on the ship-line" invariant for this new consumer.
+3. [`docs/perforce/AGENT_FLOWS.md:169`](../../perforce/AGENT_FLOWS.md) § When NOT to use Perforce — add a bullet: the graph-depot mirror is **read-only and one-way**; never push from `//repo/smatchet` back to GitHub, never treat it as a source of truth.
+4. [`docs/perforce/SETUP.md:275`](../../perforce/SETUP.md) § Open items — cross-link the new `MIRROR.md` as a post-Phase-0 optional add-on (the mirror depends on Phase-0 server bring-up being complete).
 5. `scripts/dev/p4-mirror-healthcheck.sh` *(new)* — bash; compares the **mirrored `develop` ref SHA** against GitHub's. Primary mechanism: `git ls-remote <connector-smart-http-url>/repo/smatchet refs/heads/develop` vs `git ls-remote https://github.com/<owner>/Smatchet develop` (pure git-protocol, no `p4 graph` plumbing, works as long as the connector serves smart-http). Fallback when smart-http isn't served: `p4 graph log -n 1 -m1 //repo/smatchet develop`. Exits 0 on SHA match, non-zero + diagnostic on drift/staleness/unreachable. Runnable by the WSL2 cron and ad hoc.
-6. [`docs/plans/INDEX.md`](docs/plans/INDEX.md) — regenerated via `agents/scripts/core/test-plan-index.sh --fix` (mechanical).
+6. [`docs/plans/INDEX.md`](../INDEX.md) — regenerated via `agents/scripts/core/test-plan-index.sh --fix` (mechanical).
 
 ## Existing utilities reused
 
@@ -127,10 +127,9 @@ Per `AGENTS.md` § Verification automation. This plan's product surface is one b
 - **Plan stress-test — `grill-with-docs` (actual)**: ran against the dual-VCS domain model. Outcomes folded in: (1) **graph-depot vs classic-depot** terminology kept distinct throughout (`//repo` graph depot = git-native objects; `//smatchet` classic stream depot = agentic-WIP; "two depots, two purposes, zero interference"). (2) **"mirror" chosen over "replica"/"consumer"** — "replica" implies HA/failover semantics this is not; "consumer" is too generic. Standardized on **"one-way mirror"** + **"non-authoritative"**. (3) **One-way invariant** stated as a named invariant at the top of `MIRROR.md` and echoed in `AGENT_FLOWS.md` (topology row + When-NOT bullet). (4) **Health-check mechanism judged sound** — exact-SHA equality of `develop` via `git ls-remote` on both sides is the tightest available drift signal (catches staleness, divergence, and unpopulated-repo distinctly); the `p4 graph log` fallback covers the no-smart-http connector build. **Storage-substrate pre-flight**: confirmed the substrate is a real graph depot (live `p4 depot -t graph` probe), not a fabricated schema — no phantom-migration risk.
 - **Manual residue** (carried, per plan): the one-time WSL2 + connector + Deploy-Key standup stays manual host infra. Deferred-automation action plan unchanged — `MIRROR.md` ships the deterministic copy-paste sequence; ongoing verification is automated by the health-check + cron; a `docs/self-improvement/categories/tooling.md` entry proposes an idempotent `scripts/dev/p4-mirror-bootstrap.sh`. **Known server quirk** (also in `MIRROR.md` § Known issues): `p4 depot -d <graph-depot>` hits a `db.counters locked after db.group` lock-order abort on this `p4d` 2025.2 (independent of `-f`); a stray empty probe depot `testgraphprobe` (0 repos/0 data, harmless) awaits a `db.peeking` maintenance-window cleanup. Steady-state mirror writes never touch the delete path, so the mirror is unaffected.
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*In the SAME PR that populates the three sections above —*
+## Archive (deferred — when the operator stands the mirror up)
+*This plan deliberately stays `active` until the one-time WSL2 + connector + Deploy-Key standup is done (§ Implementation log). It is NOT archived in this artifacts-only PR. Once the mirror is live and the health-check passes, in that follow-up —*
 1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/p4-git-connector-github-mirror.md docs/plans/shipped/p4-git-connector-github-mirror.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
+2. *`git mv` this plan from the `active/` tier into the `shipped/` tier (same slug),*
+3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`,*
+4. *delete this `## Archive` block as part of step 2.*

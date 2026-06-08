@@ -44,6 +44,7 @@ resolve_git_sha() {
 resolve_mirror_sha() {
     if [ "$MIRROR_RESOLVE" = "p4" ]; then
         local out
+        command -v p4 >/dev/null 2>&1 || die "MIRROR_RESOLVE=p4 but 'p4' not on PATH — install the Helix client or use MIRROR_RESOLVE=git. See docs/perforce/MIRROR.md."
         out="$(p4 graph log -n 1 -m1 "//${MIRROR_REPO_PATH}" "$MIRROR_REF" 2>/dev/null)" || return 1
         printf '%s\n' "$out" | awk '/^commit /{print $2; exit}'
     else
