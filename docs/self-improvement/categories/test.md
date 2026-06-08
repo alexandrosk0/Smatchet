@@ -7,6 +7,18 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+- 2026-06-07 · code-review (via orchestrator) · [test] · P2 — bucket-E coverage missing for multi-grid Slice-3 observable lifecycle (PR #975)
+  Details: PR #975 (multi-grid Slice 3 — N concurrent live contexts, per-context catalog, visibility lifecycle) ships with bucket-A unit coverage only. The two user-observable lifecycle behaviours have no headless ImGui-Test-Engine coverage: (1) a non-focused but VISIBLE pane goes live and receives ticket updates (`EnsurePaneLiveSyncStarted` one-shot kick + `TickAllContexts` streaming apply); (2) a hidden pane's context is retired after the grace window and a reshow regenerates a fresh context (fresh initial-sync kick, catalog starts empty). Regressions in either would be silent — nothing red-flags a pane that stops syncing or a retired context that never regenerates.
+  Concrete next action: route to `test-author` — two `tests/ui/*.test.cpp` bucket-E cases on the deterministic fake-tracker fixture: (a) open two panes, focus one, script a fetch for the non-focused visible pane, assert its grid rows update; (b) hide a pane past `kHiddenContextGrace` (or inject a short grace), assert context retirement (husk), reshow, assert a fresh context syncs from scratch. Cite PR #975.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · 1b/1c agents · [test] · P2 — `CallstackParser.test.cpp` ReDoS sentinel's fixed 2000 ms wall-clock cap deterministically fails under ASan (~2.1 s); recurred 3× this session
+  Details: The ReDoS sentinel at `tests/Core/CallstackParser.test.cpp:289-304` asserts `CHECK(elapsedMs < 2000)` on a 1 KiB hostile line. Under ASan instrumentation slowdown the parse takes ~2.1 s, so the sentinel deterministically fails on sanitizer builds — a timing artifact, not a memory error or a real ReDoS (true catastrophic backtracking on 1 KiB would be seconds-to-minutes). Hit 3× this session in sanitizer-build runs. `docs/agent-rules/build.md` (§ ASan note) already documents the caveat as known, but the test itself still red-flags every full-suite sanitizer run, training agents to ignore a failing check.
+  Concrete next action: scale or skip the cap under sanitizer builds — e.g. detect ASan at compile time (`__SANITIZE_ADDRESS__` / `__has_feature(address_sanitizer)`) and multiply the budget (×4) or skip the timing SUBCASE (the content assertions still run); then drop the build.md caveat line. ~20 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-04 · orchestrator · [test] · P2 — raise Source/Core line coverage 67% → 70% (ramp the just-graduated gate to its target floor)
   Details: `coverage-threshold-graduation` graduated the numeric coverage gate advisory→blocking on 2026-06-04, but the first **real** measurement (after #833 fixed OCC's substring-not-regex `--sources` bug that had made it measure 0 lines) was **67%** on the Ui-excluded `Source/Core` surface — below the 70% end-state target. So the gate graduated at a **floor of 65** (stable, ~2pt headroom) with `--threshold 65` in `coverage.yml`, NOT the target 70. The gap is ~3pp of line coverage.
   Concrete next action: add `test-author` unit tests on the lowest-covered strict-zone units (read the per-package `line-rate` in a `coverage.yml` artifact `coverage.xml` to target the biggest gaps) to push global ≥ 70%, then raise `project.config.json` § coverage `threshold` 65 → 70 and `coverage.yml --threshold 65 → 70` (one-line each, config-sourced). Until then the gate holds the floor (prevents backslide) but doesn't enforce the target.

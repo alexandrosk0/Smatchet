@@ -400,15 +400,201 @@ void AppController::SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> fa
     backendFactory_ = std::move(factory);
 }
 
-// Out-of-line definition: map<int,...>::find binds kDefaultPaneId to a const int&
-// (ODR-use), so the in-class declaration alone is not enough in C++14.
-const int AppController::kDefaultPaneId = 0;
+// Out-of-line definition (ODR-use in map lookups; C++14).
+const std::string AppController::kDefaultPaneId = "main";
+
+namespace {
+/// Hidden-pane grace window before a non-default context is retired (multi-grid Slice 3,
+/// plan item 17). Long enough that tab-flipping never churns contexts; short enough that a
+/// pane parked behind another all session frees its sync worker + ticket memory.
+const std::chrono::milliseconds kHiddenContextGrace(30000);
+} // namespace
 
 AppController::AppController() {
-    // Multi-grid Slice 1 (ADR-0018): exactly one live context. Created here — not lazily —
-    // so focusedContext() is valid for the controller's entire lifetime (delegators, the
-    // deps adapter, and the destructor all assume the entry exists).
+    // Multi-grid (ADR-0018): the default context is created here — not lazily — and is
+    // PERMANENT, so focusedContext()'s fallback stays valid for the controller's entire
+    // lifetime (delegators, the deps adapter, and the destructor all assume it exists).
     gridContexts_[kDefaultPaneId] = std::make_unique<GridLiveContext>();
+    focusedPaneId_ = kDefaultPaneId;
+    focusedContextPtr_ = gridContexts_.find(kDefaultPaneId)->second.get();
+}
+
+void AppController::refreshFocusedContextPtr_() {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(focusedPaneId_);
+    if (it == gridContexts_.end()) {
+        it = gridContexts_.find(kDefaultPaneId); // permanent — always present
+    }
+    focusedContextPtr_ = it->second.get();
+}
+
+void AppController::SetFocusedPane(const std::string& paneId) {
+    if (paneId == focusedPaneId_) {
+        return;
+    }
+    focusedPaneId_ = paneId;
+    refreshFocusedContextPtr_();
+}
+
+GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId, const std::string& backendKey) {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it == gridContexts_.end()) {
+        std::unique_ptr<GridLiveContext> ctx = std::make_unique<GridLiveContext>();
+        std::unique_ptr<GridContextDepsAdapter> adapter = std::make_unique<GridContextDepsAdapter>(*this, *ctx);
+        ctx->ticketSync_ = std::make_unique<TicketSyncService>(*adapter);
+        if (!backendKey.empty()) {
+            ctx->SetCacheBackendKey(backendKey); // namespaced cache writes before the first swap re-stamps
+        }
+        // Same-backend seed: copy the default context's catalog so a duplicated / same-backend
+        // pane renders dropdown-eligible cells immediately (one-time, pane-show — off any per
+        // cell or steady-state path). Cross-backend panes start empty and fill via the focused
+        // backend-switch catalog refetch.
+        GridLiveContext& defaultCtx = *gridContexts_.find(kDefaultPaneId)->second;
+        if (!backendKey.empty() && backendKey == defaultCtx.CacheBackendKeyCopy()) {
+            std::lock_guard<std::mutex> srcLock(defaultCtx.fieldCatalog.availableFieldsMutex_);
+            ctx->fieldCatalog.AvailableFields = defaultCtx.fieldCatalog.AvailableFields;
+            ctx->fieldCatalog.AvailableComponents = defaultCtx.fieldCatalog.AvailableComponents;
+            ctx->fieldCatalog.AvailableIssueTypeMeta = defaultCtx.fieldCatalog.AvailableIssueTypeMeta;
+            ctx->fieldCatalog.AvailableUsers = defaultCtx.fieldCatalog.AvailableUsers;
+            ctx->fieldCatalog.projectComponentOptions_ = defaultCtx.fieldCatalog.projectComponentOptions_;
+            ctx->fieldCatalog.fieldCatalogEverLoaded_ = defaultCtx.fieldCatalog.fieldCatalogEverLoaded_;
+            ctx->fieldCatalog.currentCatalogProjectKey_ = defaultCtx.fieldCatalog.currentCatalogProjectKey_;
+            ctx->fieldCatalog.TrackerFieldCatalogRevision.fetch_add(1);
+        }
+        paneAdapters_[paneId] = std::move(adapter);
+        it = gridContexts_.emplace(paneId, std::move(ctx)).first;
+        LOG_INFO("AppController: spun up GridLiveContext for pane '%s' backendKey='%s' (%zu live)", paneId.c_str(),
+                 backendKey.c_str(), gridContexts_.size());
+        if (paneId == focusedPaneId_) {
+            refreshFocusedContextPtr_();
+        }
+    }
+    it->second->lastVisibleAt = std::chrono::steady_clock::now();
+    it->second->everVisible = true;
+    return it->second.get();
+}
+
+void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const TrackerConfig& paneCfg,
+                                              const std::string& viewId) {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it == gridContexts_.end() || it->second->initialSyncKicked) {
+        return;
+    }
+    it->second->initialSyncKicked = true;
+    TrackerConfig cfgCopy = paneCfg;
+    LaunchBackgroundTask([this, paneId, cfgCopy, viewId]() {
+        /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms — smatchet_views.json bucket read off the UI thread
+        ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
+        if (!viewId.empty()) {
+            for (size_t i = 0; i < views.Views.size(); ++i) {
+                if (views.Views[i].Id == viewId) {
+                    views.ActiveViewId = viewId;
+                    break;
+                }
+            }
+        }
+        mainThreadDispatcher.PostToMainThread([this, paneId, cfgCopy, views]() {
+            // UI thread: the context may have been retired while the load ran — find() guards.
+            SyncPaneWithBackend(paneId, &cfgCopy, &views);
+        });
+    });
+}
+
+std::shared_ptr<const std::vector<CachedTicket>>
+AppController::GetPaneTicketsSnapshot(const std::string& paneId) const {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    if (it == gridContexts_.end()) {
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(it->second->activeTicketsMutex_);
+    return it->second->activeTicketsPublished_;
+}
+
+std::uint64_t AppController::GetPaneTicketsRevision(const std::string& paneId) const {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    return (it == gridContexts_.end()) ? 0 : it->second->ActiveTicketsRevision.load();
+}
+
+void AppController::SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
+                                        const ViewsStore* viewsOverride) {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it != gridContexts_.end() && it->second->ticketSync_) {
+        it->second->ticketSync_->SyncWithBackend(configOverride, viewsOverride);
+    }
+}
+
+void AppController::TickAllContexts() {
+    const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    // Shared drain deadline across N panes' streaming applies (plan item 18): each
+    // TicketSyncService::TickStreamingApply is internally budgeted (3 ms / 20 tickets), so N
+    // visible panes applying at once could stack N× on one frame. The deadline bounds the
+    // total; the ROTATING start order means a deferred context is first in line next frame —
+    // the design-addendum § 3.4 verdict (no dispatcher-level round-robin machinery unless the
+    // concurrent-sync scenario shows starvation) holds.
+    const std::chrono::steady_clock::time_point deadline = start + std::chrono::milliseconds(4);
+    const std::size_t n = gridContexts_.size();
+    if (n != 0) {
+        std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.begin();
+        std::advance(it, static_cast<std::ptrdiff_t>(tickRotation_ % n));
+        ++tickRotation_;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (it == gridContexts_.end()) {
+                it = gridContexts_.begin();
+            }
+            if (it->second->ticketSync_) {
+                it->second->ticketSync_->TickStreamingApply();
+            }
+            ++it;
+            if (i + 1 < n && std::chrono::steady_clock::now() >= deadline) {
+                break; // remaining contexts run next frame, rotated to the front
+            }
+        }
+    }
+    retireExpiredHiddenContexts_(start);
+}
+
+void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now) {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.begin();
+    while (it != gridContexts_.end()) {
+        GridLiveContext& ctx = *it->second;
+        const bool retirable = it->first != kDefaultPaneId && it->first != focusedPaneId_ && ctx.everVisible &&
+                               (now - ctx.lastVisibleAt) >= kHiddenContextGrace;
+        if (!retirable || (ctx.ticketSync_ && ctx.ticketSync_->IsActive())) {
+            // Busy sync: postpone — the join inside ~TicketSyncService must stay instant
+            // (Pillar 2: no UI-thread block). Retried next frame.
+            ++it;
+            continue;
+        }
+        LOG_INFO("AppController: retiring hidden GridLiveContext for pane '%s'", it->first.c_str());
+        ctx.ticketSync_.reset(); // idle — worker join returns immediately
+        std::shared_ptr<ITrackerBackend> oldBackend =
+            std::atomic_exchange(&ctx.Backend, std::shared_ptr<ITrackerBackend>());
+        if (oldBackend) {
+            RetireBackend(std::move(oldBackend)); // ADR-0012 graveyard (raw subobject ptrs stay valid)
+        }
+        {
+            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+            std::vector<CachedTicket>().swap(ctx.ActiveTickets);
+            ctx.activeTicketsPublished_.reset();
+        }
+        {
+            // Husk hygiene: the retired context stays alive for latched readers (graveyard
+            // below), but must not retain a fully-populated field catalog — that would grow
+            // unboundedly over show/hide cycles. Clear under the catalog mutex so a worker
+            // that latched this context's catalog sees empty (not freed) containers.
+            std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
+            std::vector<TrackerField>().swap(ctx.fieldCatalog.AvailableFields);
+            std::vector<TrackerComponent>().swap(ctx.fieldCatalog.AvailableComponents);
+            std::vector<TrackerIssueTypeCreateMeta>().swap(ctx.fieldCatalog.AvailableIssueTypeMeta);
+            std::vector<TrackerUser>().swap(ctx.fieldCatalog.AvailableUsers);
+            ctx.fieldCatalog.projectComponentOptions_.clear();
+        }
+        // Defer-free husk: a worker may have latched a pointer to this context (it was the
+        // focused context once) — keep the now-tiny object alive until ~AppController, the
+        // ADR-0012 graveyard pattern applied to contexts.
+        retiredContexts_.push_back(std::move(it->second));
+        paneAdapters_.erase(it->first);
+        it = gridContexts_.erase(it);
+    }
 }
 
 AppController::~AppController() {
@@ -1368,7 +1554,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
             LOG_ERROR("AppController::InitBackends pending-queue backend_key stamp failed: %s", ex.what());
         }
     }
-    std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
+    std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker, cfg)));
     if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {
@@ -1422,7 +1608,7 @@ void AppController::MaybeInstallGitHubFixtureFactory(const std::string& activeTr
     class FixtureGitHubFactory : public ITrackerBackendFactory {
       public:
         explicit FixtureGitHubFactory(const std::string& path) : path_(path) {}
-        std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
+        std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& cfg) override {
             const std::string lower = ToLowerAsciiCopy(trackerType);
             if (lower == "github") {
                 return std::make_unique<smatchet::github::GitHubFixtureBackend>(path_, std::string(), std::string(),
@@ -1430,7 +1616,7 @@ void AppController::MaybeInstallGitHubFixtureFactory(const std::string& activeTr
             }
             // Non-GitHub backends fall through to the default factory shape.
             DefaultTrackerBackendFactory fallback;
-            return fallback.Create(trackerType);
+            return fallback.Create(trackerType, cfg);
         }
 
       private:
@@ -1582,22 +1768,25 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
                                                      std::vector<TrackerComponent> snapComponents,
                                                      std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                                      const std::string& activeTrackerType) {
-    AvailableFields = std::move(snapFields);
-    AvailableComponents = std::move(snapComponents);
-    AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-    fieldCatalogEverLoaded_ = true;
-    LastTrackerFieldCatalogError.clear();
+    // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
+    // switch between two calls would split this compound write across two contexts (Pillar 3).
+    GridContextFieldCatalog& cat = fieldCatalog();
+    cat.AvailableFields = std::move(snapFields);
+    cat.AvailableComponents = std::move(snapComponents);
+    cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+    cat.fieldCatalogEverLoaded_ = true;
+    cat.LastTrackerFieldCatalogError.clear();
 
     if (activeTrackerType == "Plane") {
-        LastTrackerFieldCatalogWarning =
+        cat.LastTrackerFieldCatalogWarning =
             "Working offline: Plane field catalog loaded from local snapshot until a live refresh succeeds.";
     } else {
-        LastTrackerFieldCatalogWarning =
+        cat.LastTrackerFieldCatalogWarning =
             "Working offline: tracker field catalog loaded from local snapshot until a live refresh succeeds.";
     }
 
     if (activeTrackerType == "Jira") {
-        for (auto& field : AvailableFields) {
+        for (auto& field : cat.AvailableFields) {
             if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
                 field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
                 field.ReadOnly = true;
@@ -1606,8 +1795,9 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
         EnsureCatalogHistoryField();
     }
 
-    TrackerFieldCatalogRevision.fetch_add(1);
-    LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)", AvailableFields.size());
+    cat.TrackerFieldCatalogRevision.fetch_add(1);
+    LOG_INFO("AppController::Initialize: restored field catalog from snapshot (%zu fields)",
+             cat.AvailableFields.size());
 }
 
 void AppController::InitPlugins(const std::string& activeTrackerType) {

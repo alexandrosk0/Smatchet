@@ -150,7 +150,7 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
 
     if (sortChanged) {
         d.viewSortDirty = true;
-        d.forceApplySortSpecs = true;
+        d.pane().forceApplySortSpecs = true; // per-pane since Slice 2
         d.viewsDirty = true;
     }
 }
@@ -158,6 +158,13 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
 // Left toolbar: view selector combo, refresh button, quick filter, sort-by popup.
 void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
                            const std::vector<TicketGridColumn>& columns, Views& viewState) {
+    // Live-focus gate context (review MEDIUM-2): pane.focused is LAST frame's host
+    // verdict. Single-click actions ("Refresh View") fired from a not-yet-focused
+    // pane must defer one frame so the host applies the focus/view switch first.
+    // Multi-frame widgets (view combo, Sort By popup) self-heal: their opening click
+    // moves window focus, so the mutating click lands on a post-switch frame where
+    // this pane's view IS the active view.
+    GridPane& pane = d.pane();
     ImGui::Separator();
     // View Dropdown Selector (replaces old plain text label)
     ImGui::SetNextItemWidth(180.0f);
@@ -191,24 +198,33 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
     if (activeViewForGrid) {
         ImGui::SameLine();
         if (ImGui::Button("Refresh View")) {
-            d.cfg.JqlQuery = activeViewForGrid->Jql;
-            d.cfg.SelectedFields = activeViewForGrid->Fields;
-            SyncWithCurrentView(app, d, viewState.GetStore(), true);
+            if (pane.focused) {
+                d.cfg.JqlQuery = activeViewForGrid->Jql;
+                d.cfg.SelectedFields = activeViewForGrid->Fields;
+                SyncWithCurrentView(app, d, viewState.GetStore(), true);
+            } else {
+                // Not-yet-focused pane (review MEDIUM-2): syncing NOW would re-run a
+                // query against the still-focused pane's live context. Defer — the
+                // host consumes this after applying the focus/view switch this click
+                // triggered (drawGridPaneWindows; consume-once).
+                d.paneDeferredActionPaneId = pane.id;
+                d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::RefreshView;
+            }
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Re-run this view's query and refresh the grid.");
     }
 
-    // Quick Filter UI
+    // Quick Filter UI — per-pane buffer (Slice 2): each pane window filters alone.
     ImGui::SameLine(0, 30.0f);
     ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::InputTextWithHint("##GridFilter", "Filter...", d.gridFilterBuf, sizeof(d.gridFilterBuf))) {
+    if (ImGui::InputTextWithHint("##GridFilter", "Filter...", pane.gridFilterBuf, sizeof(pane.gridFilterBuf))) {
         // Filter changed
     }
-    if (d.gridFilterBuf[0] != '\0') {
+    if (pane.gridFilterBuf[0] != '\0') {
         ImGui::SameLine();
         if (ImGui::Button("Clear")) {
-            d.gridFilterBuf[0] = '\0';
+            pane.gridFilterBuf[0] = '\0';
         }
     }
 
@@ -389,15 +405,19 @@ void UpdateMcpChip(AppController& app, UiDrawSession& d, const TrackerConnectivi
 }
 #endif
 
-// Begin a new-issue draft seeded from the last visible ticket (or last-ticket fallback).
+} // namespace
+
+// Begin a new-issue draft seeded from the last visible ticket (or last-ticket fallback). Also
+// the entry point through which the pane-window host replays a deferred "+ New Issue" from a
+// not-yet-focused pane after the focus/view switch lands (multi-grid Slice 3, plan item 19).
 void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
                         const std::vector<CachedTicket>& tickets) {
     if (!d.newIssueDraftActive) {
         const CachedTicket* lastVisibleTicket = nullptr;
         if (!tickets.empty()) {
             size_t lastIndex = tickets.size() - 1;
-            if (!d.filteredIndices.empty()) {
-                lastIndex = d.filteredIndices.back();
+            if (!d.pane().filteredIndices.empty()) {
+                lastIndex = d.pane().filteredIndices.back();
             }
             if (lastIndex < tickets.size()) {
                 lastVisibleTicket = &tickets[lastIndex];
@@ -432,6 +452,8 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
     d.newIssueScrollDraftRowIntoViewPending = true;
     d.newIssueFocusSummaryPending = true;
 }
+
+namespace { // reopened — see the external-linkage note above StartNewIssueDraft
 
 // Right-aligned cluster: tracker chip, READ ONLY chip, MCP chip, "+ New Issue" button.
 void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
@@ -506,7 +528,17 @@ void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* 
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.58f, 0.98f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.38f, 0.78f, 1.0f));
         if (ImGui::Button("+ New Issue")) {
-            StartNewIssueDraft(app, d, activeViewForGrid, tickets);
+            const GridPane& clickPane = d.pane();
+            if (clickPane.focused) {
+                StartNewIssueDraft(app, d, activeViewForGrid, tickets);
+            } else {
+                // Not-yet-focused pane (multi-grid Slice 3, plan item 19 — same shape as
+                // the deferred Refresh View above): drafting NOW would seed from the
+                // still-focused pane's active view/backend. Defer to the host, which
+                // applies it after the focus/view switch this click triggered.
+                d.paneDeferredActionPaneId = clickPane.id;
+                d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::NewIssueDraft;
+            }
         }
         ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered()) {

@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "GridPane.h"
 #include "SmatchetDefaults.h"
 
 #include <nlohmann/json.hpp>
@@ -290,8 +291,6 @@ struct UiDrawSession {
     std::string fieldCatalogWarning;
 
     bool appliedInitialView = false;
-    /** Last `ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType)` applied to views + initial sync. */
-    std::string lastViewsBackendKey;
     /** First JQL fetch runs async so the UI thread is not blocked for multi-second Jira searches. */
     bool initialTicketSyncStarted = false;
     bool initialTicketSyncLoading = false;
@@ -420,8 +419,118 @@ struct UiDrawSession {
     // column order / name / JQL / fields back to the on-disk state. Captured lazily.
     bool viewsHasOriginalSnapshot = false;
     ViewDefinition viewsOriginalSnapshot;
+    /// One-frame deferred view-create latch (Pillar 3 — crash fix). Views::Create
+    /// push_backs into store.Views: a mid-frame create from a click handler
+    /// ("+ New" / Ctrl+N / "Duplicate" / the grid "Save as new" modal) reallocates
+    /// the vector and dangles every ViewDefinition* resolved earlier in the frame
+    /// (the dashboard's ctx.activeView, each pane's ActiveProjectDrawCtx
+    /// .activeViewForGrid); the remainder of the frame then reads freed memory
+    /// (observed crash: unhandled C++ exception -> std::terminate minidump).
+    /// Click sites copy a full payload while their pointers are still valid and
+    /// latch it here; SmatchetUI::Draw consumes the latch (applyPendingViewCreate)
+    /// at the TOP of the next frame, BEFORE any view pointer is resolved.
+    /// Consume-once; SINGLE-SLOT, LAST-WINS (a second latch in the same frame
+    /// overwrites the first — reachable only by Ctrl+N + a same-frame click,
+    /// where both payloads are identical anyway).
+    bool viewsPendingCreate = false;
+    ViewDefinition viewsPendingCreatePayload;
+    std::string viewsPendingCreateToastTitle;
+    int viewsPendingCreateToastMs = 1800;
+    /// Grid "Save as new" also adopts the created view's Jql/fields into cfg + saves.
+    bool viewsPendingCreateAdoptCfg = false;
+    /// Same deferral for DELETE: Views::DeleteActive erases from the same vector
+    /// (same invalidation class as Create — it was safe pre-latch only because the
+    /// delete modal happened to be the frame's last view-pointer reader). Consumed
+    /// by SmatchetUI::applyPendingViewDelete, immediately after the create latch.
+    bool viewsPendingDeleteActive = false;
+    std::string viewsPendingDeleteToastName;
 
-    SpreadsheetState gridState;
+    // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
+    // The per-pane grid runtime that used to live here as singleton fields
+    // (gridState / gridFilterBuf / sort+filter caches / lastGridActiveViewId /
+    // lastGridContextSignature / wheel hysteresis / forceApplySortSpecs) migrated
+    // into GridPane. Bootstrapped from smatchet_panes.json by the pane-window host
+    // (SmatchetGridPaneWindows).
+    std::vector<GridPane> gridPanes;
+    /// SESSION-level backend bucket the views/catalog/initial-sync state was last
+    /// loaded for. Deliberately NOT per-pane: the live context is session-scoped, so
+    /// the backend-change session reset (drawViewStateAndConnectivity) must key on a
+    /// session delta — per-pane tracking went blind on A→B→A pane-focus hops because
+    /// the returning pane's own key never changed (review HIGH-4). Fires on host pane
+    /// focus switches too, since a switch re-points cfg.TrackerType.
+    std::string lastViewsBackendKey;
+    /// One-frame latch: the HOST reassigned focusedPaneId outside the normal
+    /// window-focus path (focused-pane close, "+" duplicate, bootstrap restore).
+    /// Consumed by drawGridPaneWindows, which treats it as a real focus switch so
+    /// the newly focused pane's saved viewId is activated — without it the
+    /// steady-state pane↔view sync rebound the survivor to the CLOSED pane's view
+    /// and persisted the loss (review HIGH-2 / MEDIUM-3).
+    bool gridPaneFocusReassigned = false;
+    /// Kinds for the one-frame deferred pane action latch below (multi-grid Slice 3,
+    /// plan item 19 — extends Slice 2's refresh-only latch, review MEDIUM-2).
+    enum class PaneDeferredActionKind { None, RefreshView, NewIssueDraft };
+    /// One-frame deferred toolbar action from a not-yet-focused pane ({paneId, kind}):
+    /// acting on the click frame would target the still-focused pane's live context /
+    /// active view. The host consumes this AFTER applying the focus/view switch;
+    /// consume-once (a request whose pane didn't gain focus drops).
+    std::string paneDeferredActionPaneId;
+    PaneDeferredActionKind paneDeferredActionKind = PaneDeferredActionKind::None;
+    std::string focusedPaneId;
+    bool gridPanesLoaded = false;
+    /// Debounced smatchet_panes.json save latch (mirrors prefsDirty).
+    bool gridPanesDirty = false;
+    std::chrono::steady_clock::time_point gridPanesSaveDueAt{};
+    /// Transient (one frame): pane id whose window reported ImGui focus this frame.
+    /// Written inside the pane window's Begin/End scope, consumed by the host loop
+    /// to detect focus switches (drives the Slice-2 focused-pane live-context swap).
+    std::string paneWindowFocusedThisFrame;
+    /// Transient (one frame): the "+" button in a pane window requests a new pane
+    /// duplicating this source pane. Applied by the host AFTER the pane loop so the
+    /// gridPanes vector never mutates mid-iteration.
+    std::string paneAddRequestSourceId;
+    /// Set by the pane-window host (RAII) to the pane currently being drawn so
+    /// shared grid helpers (header toolbar, cell support, new-issue draft) reach
+    /// the CURRENT pane through `pane()` without signature churn. Null outside
+    /// the pane render loop — `pane()` then resolves to the focused pane, which
+    /// is the permanent semantics for global actions (command palette, menus,
+    /// MCP/Lua) per ADR-0018.
+    GridPane* activePaneForDraw = nullptr;
+
+    /// Focused pane (never null): resolves focusedPaneId, falls back to the first
+    /// pane, and self-heals an empty vector with a default pane so pre-bootstrap
+    /// reads (frame 1) and a corrupt panes file can never crash (Pillar 3).
+    GridPane& focusedPane() {
+        if (gridPanes.empty()) {
+            GridPane fallback;
+            fallback.id = "main";
+            fallback.title = "Grid";
+            gridPanes.push_back(fallback);
+            focusedPaneId = "main";
+        }
+        if (GridPane* byId = FindGridPaneById(gridPanes, focusedPaneId)) {
+            return *byId;
+        }
+        focusedPaneId = gridPanes.front().id;
+        return gridPanes.front();
+    }
+
+    /// Read-only focused pane for const consumers (AI context build, exports). Cannot
+    /// self-heal — returns a static empty pane when the vector is empty (pre-bootstrap).
+    const GridPane& focusedPane() const {
+        static const GridPane kEmptyPane;
+        if (gridPanes.empty()) {
+            return kEmptyPane;
+        }
+        if (const GridPane* byId = FindGridPaneById(gridPanes, focusedPaneId)) {
+            return *byId;
+        }
+        return gridPanes.front();
+    }
+
+    /// The pane the current draw call targets: the pane being rendered inside the
+    /// pane-window loop, the focused pane everywhere else. See activePaneForDraw.
+    GridPane& pane() { return activePaneForDraw ? *activePaneForDraw : focusedPane(); }
+
     std::string gridEditError;
     std::string gridEditSuccess;
     /** Edge-trigger dedupe for tracker connectivity toasts (Active Project window). */
@@ -456,23 +565,9 @@ struct UiDrawSession {
     int inFlightDelayFrames = 0;
     std::unordered_map<std::string, CellWriteFeedback> cellFeedbackByKey;
 
-    char gridFilterBuf[128]{};
-    std::string lastGridActiveViewId;
-    std::string lastGridContextSignature;
     bool newIssueDiscardAsyncCreateResult = false;
-    std::vector<size_t> cachedSortedIndices;
-    std::vector<size_t> filteredIndices;
-    std::string cachedSortFingerprint;
-    std::uint64_t cachedSortTicketsRevision = 0;
-    std::uint64_t cachedSortCatalogRevision = 0;
-    bool cachedSortValid = false;
     bool viewSortDirty = false;
-    bool forceApplySortSpecs = false;
-    std::chrono::steady_clock::time_point lastGridSortAt{};
     bool logAutoScroll = true;
-
-    int gridBottomHorizontalWheelSwallowsRemaining = 0;
-    int gridTopHorizontalWheelSwallowsRemaining = 0;
 
     bool appUpdateStartupCheckStarted = false;
     bool appUpdateCheckInFlight = false;

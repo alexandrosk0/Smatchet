@@ -622,7 +622,7 @@ class AppController
     bool IsStreamingSyncActive() const;
 
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
-    std::uint64_t GetFieldCatalogRevision() const { return TrackerFieldCatalogRevision.load(); }
+    std::uint64_t GetFieldCatalogRevision() const { return fieldCatalog().TrackerFieldCatalogRevision.load(); }
 
     bool RefreshFieldCatalog(const TrackerConfig& cfg);
     /** PR 6: refetch the catalog scoped to a specific project. The project key is plumbed to
@@ -647,13 +647,13 @@ class AppController
     std::string BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const;
     static std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql);
 
-    const std::vector<TrackerField>& GetAvailableFields() const { return AvailableFields; }
-    const std::vector<TrackerComponent>& GetAvailableComponents() const { return AvailableComponents; }
+    const std::vector<TrackerField>& GetAvailableFields() const { return fieldCatalog().AvailableFields; }
+    const std::vector<TrackerComponent>& GetAvailableComponents() const { return fieldCatalog().AvailableComponents; }
     /// Last-fetched user catalog. May be empty before the first catalog fetch completes
     /// or when the active backend doesn't surface a users endpoint.
-    const std::vector<TrackerUser>& GetAvailableUsers() const { return AvailableUsers; }
-    const std::string& GetFieldCatalogError() const { return LastTrackerFieldCatalogError; }
-    const std::string& GetFieldCatalogWarning() const { return LastTrackerFieldCatalogWarning; }
+    const std::vector<TrackerUser>& GetAvailableUsers() const { return fieldCatalog().AvailableUsers; }
+    const std::string& GetFieldCatalogError() const { return fieldCatalog().LastTrackerFieldCatalogError; }
+    const std::string& GetFieldCatalogWarning() const { return fieldCatalog().LastTrackerFieldCatalogWarning; }
     /** Set when a live JQL refresh failed with a transport-style error; UI may show cached tickets. */
     const std::string& GetLastTicketSyncWarning() const { return LastTrackerTicketSyncWarning; }
 
@@ -717,7 +717,7 @@ class AppController
     void SetAvailableUsers(std::vector<TrackerUser> users);
 
     const std::vector<TrackerIssueTypeCreateMeta>& GetTrackerIssueTypeCreateMeta() const {
-        return AvailableIssueTypeMeta;
+        return fieldCatalog().AvailableIssueTypeMeta;
     }
 
     /** Read-only accessor used by UI sites (e.g. `ResolveProjectForDraft`) to call
@@ -1006,23 +1006,79 @@ class AppController
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
     /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
     std::unique_ptr<OfflineQueueService> offlineQueue_;
-    /// Default pane id — Slice 1 of the multi-grid foundation (ADR-0018) runs exactly one
-    /// GridLiveContext under this key; later slices add per-pane entries.
-    static const int kDefaultPaneId;
-    /// Per-pane live engine bundles (backend + TicketSyncService + ActiveTickets snapshot —
-    /// the former singleton members, moved verbatim; see GridLiveContext.h). Declared AFTER
-    /// `depsAdapter_` so every context (and its TicketSyncService, whose teardown joins the
-    /// sync worker) is destroyed BEFORE the adapter it captured a reference to — the same
-    /// ordering the old inline `ticketSync_` member had. Slice 1: exactly one entry
-    /// (kDefaultPaneId), created in the constructor, behaviour-identical to the singleton.
-    std::map<int, std::unique_ptr<GridLiveContext>> gridContexts_;
+    /// Default pane id ("main" — matches ConfigManager_Panes bootstrap). The default
+    /// context is PERMANENT: created in the constructor, never retired (offlineQueue_
+    /// holds a deps-adapter reference chain into it), so focusedContext() fallback and
+    /// every delegator stay valid for the controller's whole lifetime.
+    static const std::string kDefaultPaneId;
+    /// Per-pane deps adapters for the NON-default contexts created by EnsurePaneContextLive
+    /// (the default pane keeps `depsAdapter_` above). Declared BEFORE `gridContexts_` so each
+    /// context (whose TicketSyncService teardown joins the sync worker and may call back into
+    /// its deps) is destroyed BEFORE the adapter it references.
+    std::map<std::string, std::unique_ptr<GridContextDepsAdapter>> paneAdapters_;
+    /// Per-pane live engine bundles (backend + TicketSyncService + ActiveTickets snapshot +
+    /// field catalog; see GridLiveContext.h), keyed by GridPane id. Visibility-driven
+    /// lifecycle (multi-grid Slice 3, plan item 17): visible pane → EnsurePaneContextLive;
+    /// pane not drawn → no new syncs; hidden past the grace window → retired (backend to the
+    /// ADR-0012 graveyard) by TickAllContexts. The kDefaultPaneId entry is permanent.
+    std::map<std::string, std::unique_ptr<GridLiveContext>> gridContexts_;
 
     /// The context global actions target (permanent focused-pane semantics, ADR-0018).
-    /// Slice 1: the lone kDefaultPaneId entry — created in the constructor and destroyed
-    /// only with this AppController, so the reference never dangles. Slice 3 must define
-    /// the fallback before per-pane teardown exists (design addendum § 6.2).
-    GridLiveContext& focusedContext() { return *gridContexts_.find(kDefaultPaneId)->second; }
-    const GridLiveContext& focusedContext() const { return *gridContexts_.find(kDefaultPaneId)->second; }
+    /// Cached raw pointer (focused-pane lookups sit under per-frame delegators — keep O(1));
+    /// re-pointed by SetFocusedPane / EnsurePaneContextLive / context retirement, and falls
+    /// back to the permanent default context when the focused pane has no live context
+    /// (design addendum § 6.2).
+    GridLiveContext& focusedContext() { return *focusedContextPtr_.load(); }
+    const GridLiveContext& focusedContext() const { return *focusedContextPtr_.load(); }
+    /// Re-resolve focusedContextPtr_ from focusedPaneId_ (default-context fallback).
+    void refreshFocusedContextPtr_();
+    /// Atomic: workers (MCP / Lua / replay) read focusedContext() while the UI thread
+    /// re-points it on a pane-focus switch. The pointee outlives any latched read — retired
+    /// contexts park as defer-free husks in retiredContexts_ until ~AppController.
+    std::atomic<GridLiveContext*> focusedContextPtr_{nullptr};
+    std::string focusedPaneId_;
+    /// Defer-free husks of retired pane contexts (sync torn down, tickets cleared, backend
+    /// moved to retiredBackends_) — the ADR-0012 graveyard pattern applied to contexts so a
+    /// worker that latched focusedContextPtr_ pre-switch never dereferences freed memory.
+    std::vector<std::unique_ptr<GridLiveContext>> retiredContexts_;
+
+  public:
+    // --- Multi-grid Slice 3: visibility-driven context lifecycle (plan item 17) ---------
+    /// UI thread. Record which pane drives global actions; falls back to the default
+    /// context when that pane has no live context yet.
+    void SetFocusedPane(const std::string& paneId);
+    /// UI thread. Ensure a live GridLiveContext exists for `paneId` (constructs the
+    /// per-context deps adapter + TicketSyncService on first sight — backend instantiation
+    /// happens inside the first sync's SwapBackendIfTrackerChanged, off the UI thread) and
+    /// stamp it visible this frame. A brand-new context whose `backendKey` matches the
+    /// default context's gets the default's field catalog copied in (one-time, pane-show —
+    /// duplicate/same-backend panes render dropdowns immediately instead of raw values).
+    /// Returns the context (never null after return).
+    GridLiveContext* EnsurePaneContextLive(const std::string& paneId, const std::string& backendKey);
+    /// UI thread. One-shot per context generation: kick the pane's FIRST sync against its
+    /// own (config, views) pair. The smatchet_views.json bucket load runs on a worker
+    /// (Pillar 2 — no disk I/O on the UI thread), then hops back via mainThreadDispatcher
+    /// to start the sync on the pane's own TicketSyncService.
+    void EnsurePaneLiveSyncStarted(const std::string& paneId, const TrackerConfig& paneCfg, const std::string& viewId);
+    /// Any pane's live published snapshot (null when the pane has no live context yet).
+    std::shared_ptr<const std::vector<CachedTicket>> GetPaneTicketsSnapshot(const std::string& paneId) const;
+    /// Per-pane ActiveTickets revision (0 when the pane has no live context).
+    std::uint64_t GetPaneTicketsRevision(const std::string& paneId) const;
+    /// Kick a sync on ONE pane's context with its own (config, views) pair — the per-pane
+    /// twin of SyncWithBackend (which targets the focused context).
+    void SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
+                             const ViewsStore* viewsOverride);
+    /// Once per frame (replaces the bare TickStreamingApply call): drain every live
+    /// context's streaming applies under one shared deadline (rotating start order so a
+    /// busy early context cannot systematically starve later ones), then retire contexts
+    /// hidden past the grace window whose sync is idle. See plan § Performance / item 18.
+    void TickAllContexts();
+
+  private:
+    /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
+    /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
+    void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);
+    std::size_t tickRotation_ = 0;
     /// Owns the Lua sandbox + automation worker + Lua bindings. Phase 1A of the item 14
     /// extraction only routes log-sink methods through it; later phases migrate the Lua
     /// state and worker thread. Constructed eagerly in `Initialize` to keep the
@@ -1036,39 +1092,17 @@ class AppController
     // ActiveTickets + activeTicketsPublished_ + ActiveTicketsRevision (and their
     // activeTicketsMutex_) moved into GridLiveContext (multi-grid Slice 1, ADR-0018) —
     // access via `focusedContext()`.
-    std::atomic<std::uint64_t> TrackerFieldCatalogRevision{0};
-    mutable std::mutex availableFieldsMutex_; ///< Guards AvailableFields writes (UI) vs. FindFieldById reads (workers).
-    std::vector<TrackerField> AvailableFields;
-    std::vector<TrackerComponent> AvailableComponents;
-    std::vector<TrackerIssueTypeCreateMeta> AvailableIssueTypeMeta;
-    /// Last-fetched user catalog (full payload from `/rest/api/3/users/search` for Jira).
-    /// Surfaced to JQL autocomplete to suggest assignees / reporters by display name; the
-    /// engine filters out non-human accounts (AccountType == "app" / "customer") at query
-    /// time so the raw list stays pristine for other callers.
-    std::vector<TrackerUser> AvailableUsers;
-    std::string LastTrackerFieldCatalogError;
-    std::string LastTrackerFieldCatalogWarning;
+    // The in-memory field-catalog block (TrackerFieldCatalogRevision / AvailableFields /
+    // AvailableComponents / AvailableIssueTypeMeta / AvailableUsers / catalog error+warning /
+    // currentCatalogProjectKey_ / projectComponentOptions_ + in-flight/backoff sets and
+    // availableFieldsMutex_) moved into GridLiveContext::fieldCatalog (multi-grid Slice 3,
+    // plan item 17 + slice1-design § 3.1): it was semantically single-backend, so two live
+    // different-backend panes would have overwritten each other's catalog. Access via the
+    // fieldCatalog() accessor below (focused-context routing — same delegator semantics as
+    // the rest of the engine state, ADR-0018).
+    GridContextFieldCatalog& fieldCatalog() { return focusedContext().fieldCatalog; }
+    const GridContextFieldCatalog& fieldCatalog() const { return focusedContext().fieldCatalog; }
     std::string LastTrackerTicketSyncWarning;
-    bool fieldCatalogEverLoaded_ = false;
-    /** PR 6: project key for the most-recent in-flight catalog fetch — used by SetFieldCatalog
-     *  to write the snapshot under the right per-project cache entry now that
-     *  TrackerConfig::ProjectKey / PlaneProjectId are gone. Guarded by availableFieldsMutex_. */
-    std::string currentCatalogProjectKey_;
-    /** Per-project component option lists for cross-project grid views, keyed by Jira project key
-     *  (e.g. "PROJ"). Warmed async by WarmIssueTypeEditMetaAtStartAsync; read by the components
-     *  MultiSelect editor via GetComponentOptionsForProject. In-memory only (no disk persistence).
-     *  Guarded by availableFieldsMutex_. */
-    std::unordered_map<std::string, std::vector<TrackerFieldOption>> projectComponentOptions_;
-    /** Project keys with an in-flight lazy component fetch (EnsureProjectComponentsLoaded), so a
-     *  not-yet-warmed project opened in the editor fetches exactly once instead of per frame.
-     *  Guarded by availableFieldsMutex_. */
-    std::unordered_set<std::string> projectComponentsInFlight_;
-    /** Per-project backoff after a FAILED component fetch: the paint path re-checks
-     *  EnsureProjectComponentsLoaded every frame a components cell is visible+empty, so without a
-     *  backoff a failing project would re-launch a worker every frame (retry storm + log spam).
-     *  A failed fetch records now()+30s here; EnsureProjectComponentsLoaded skips relaunch until
-     *  the deadline passes. Cleared on a successful load. Guarded by availableFieldsMutex_. */
-    mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> projectComponentsRetryAfter_;
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
     /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once

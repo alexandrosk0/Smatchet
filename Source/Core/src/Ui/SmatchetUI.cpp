@@ -263,6 +263,14 @@ void SmatchetUI::Draw(AppController& app) {
     drawInitConfigOnce(app, d);
     drawApplyAppearanceSettings(d);
     drawPerFrameTicksAndHandlers(app, d);
+    // Deferred view-create/-delete latches (Pillar 3 crash fix — see
+    // UiDrawSession::viewsPendingCreate / viewsPendingDeleteActive): the store
+    // mutations run HERE, before any ViewDefinition* is resolved for the frame, so
+    // they can never invalidate a live pointer held by the dashboard / pane draw
+    // contexts. Every Views store mutation that resizes the vector MUST go through
+    // one of these latches — never mid-frame from a click handler.
+    applyPendingViewCreate(d);
+    applyPendingViewDelete(app, d);
     UiPerfMonitor::Instance().BeginFrame();
     SmatchetImageTextureCache::TickPendingDestroys();
     drawPreWindowOverlays(app, d);
@@ -369,7 +377,7 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
     app.TickOfflineCreates();
     app.TickOfflineFieldEdits();
     d.cachedPendingFieldEditCount = static_cast<int>(app.GetPendingFieldEdits().size());
-    app.TickStreamingApply();
+    app.TickAllContexts(); // all live pane contexts under one shared deadline (multi-grid Slice 3)
     if (!g_ui.attachmentPreviewCallbackRegistered) {
         app.SetAttachmentPreviewHandler([](const std::string& localPath, const std::string& mimeType,
                                            const std::string& filename, const std::string& sourceUrl) -> bool {
@@ -476,7 +484,14 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         SMATCHET_UI_PERF_SCOPE("ViewState::EnsureLoaded");
         ViewState.EnsureLoaded(g_ui.cfg);
         const std::string bk = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-        if (!d.lastViewsBackendKey.empty() && d.lastViewsBackendKey != bk) {
+        // SESSION-level backend-change detector (review HIGH-4): the state this reset
+        // guards (catalog, initial sync, live context, view-editor buffers) is
+        // session-scoped, so the delta must be too. Per-pane tracking went blind on
+        // A→B→A pane-focus hops — the returning pane's own key never changed — and
+        // the reset never fired. A pane focus switch re-points cfg.TrackerType, so
+        // this fires on host focus switches as well.
+        std::string& lastViewsBackendKey = d.lastViewsBackendKey;
+        if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
             d.appliedInitialView = false;
             d.initialTicketSyncStarted = false;
             d.initialTicketSyncLoading = false;
@@ -487,7 +502,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             d.triggerCatalogRefetch = true;
             d.editingViewId.clear();
         }
-        d.lastViewsBackendKey = bk;
+        lastViewsBackendKey = bk;
     }
     // Register view.* commands once ViewState is loaded (idempotent — skips on 2nd+ call).
     smatchet::cmd::RegisterViewCommands(app, ViewState);
@@ -767,7 +782,7 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
         }
     }
     if (g_ui.showAnnotateAnalysis) {
-        annotateAnalysisUi_.DrawWindow(app, &g_ui.showAnnotateAnalysis, g_ui.gridState.ActiveIssueId);
+        annotateAnalysisUi_.DrawWindow(app, &g_ui.showAnnotateAnalysis, g_ui.focusedPane().gridState.ActiveIssueId);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
@@ -782,7 +797,9 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawActiveProjectWindow");
-        drawActiveProjectWindow(app, d);
+        // Slice 2 (multi-grid-tabs): one dockable window PER GridPane; the host loops
+        // the re-entrant drawActiveProjectWindow over d.gridPanes.
+        drawGridPaneWindows(app, d);
     }
     {
         SMATCHET_UI_PERF_SCOPE("drawAttachmentPreviewWindow");

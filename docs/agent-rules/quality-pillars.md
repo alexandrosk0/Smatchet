@@ -13,6 +13,7 @@ Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are u
 - 100 Hz floor: no single frame > **10.0 ms** in normal operation; >10.0 ms outliers are spike-tracked at p99.
 - `perf-detective` regression-fails any commit that lifts steady-state mean above budget on the same scenario.
 - `spike-hunter` regression-fails any commit that introduces a new p99 > 10.0 ms on the UI thread under a previously-clean scenario.
+- CI-only exception: `docs/perf/regression-policy.json` `perScenario` may raise a scenario's CI ceiling above 10.0 ms when the shared 2-core runner is proven the bottleneck (first: `cell-edit-burst` at 15.0, Issue #973) — the real-hardware floor is unchanged and each override must carry a rationale + tracking Issue.
 
 **Tools**: `SMATCHET_UI_PERF_SCOPE("perf_temp:...")` markers per `agents/core/perf-instrument.md`; `perf.reset` → `scenario.run` → `perf.snapshot` loop per `agents/core/perf-measure.md`; `docs/guides/perf-workflow.md` for full ladder. **Baseline registry + delta gate** (Slice 1 of `docs/plans/shipped/pillar-1-2-perf-review-system.md`): `bash scripts/dev/perf-run.sh <scenario>` writes a fresh snapshot; `python scripts/dev/perf-compare.py <baseline> <fresh>` exits non-zero on regression beyond `docs/perf/regression-policy.json` thresholds. Baselines live at `docs/perf/baselines/<scenario>.<host>.json` (per-host per § D1 of the plan). Manage via `bash scripts/dev/perf-baseline.sh {list|init|bump}`.
 

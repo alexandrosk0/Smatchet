@@ -103,6 +103,22 @@ bool BuildGitHubCreatePayload(const std::string& summary, const std::string& bod
 /// issue key in the shape the rest of Smatchet expects).
 std::string FormatGitHubIssueKey(const std::string& owner, const std::string& repo, std::int64_t number);
 
+/// Issue #979 — per-request GitHub credential resolution. The client used to latch
+/// baseUrl/PAT in its ctor for the whole session, so a client constructed before the
+/// debounced prefs save flushed (or before the user entered a PAT) stayed dead until
+/// restart. Mirrors JiraClient's per-request pattern: the live cfg PAT is used
+/// unconditionally (an empty live PAT means the user cleared the credential — no
+/// fallback to a possibly-revoked ctor snapshot); the base URL falls back to the ctor
+/// snapshot and defaults to https://api.github.com when both are empty. Pure —
+/// unit-tested without network.
+struct GitHubRequestAuth {
+    std::string BaseUrl;
+    std::string Pat;
+};
+
+GitHubRequestAuth ResolveGitHubRequestAuth(const std::string& cfgBaseUrl, const std::string& cfgPat,
+                                           const std::string& fallbackBaseUrl);
+
 /// Parse an ISO-8601 timestamp ("2024-01-15T12:34:56Z") into unix epoch seconds.
 /// Returns 0 + sets `outError` on parse failure. Permissive on offset format
 /// (accepts `+00:00`, `Z`, missing offset = UTC). Used by FetchIssues to

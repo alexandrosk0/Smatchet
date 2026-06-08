@@ -112,6 +112,8 @@ Additional conditions for the carve-out to apply: ahead-range contains zero non-
 
 **Build / ctest cadence — slice-boundary only**: within a single agent turn (= one logical slice), invoke `cmake --build` and `scripts/dev/test-all.sh` **at most once each**, and only after the implementation is complete. Mid-slice rebuilds and mid-slice ctest runs are wasted work — Ninja is already incremental and the doctest rig is fast at the slice boundary but expensive when amortised across N edits.
 
+**Code-review before every commit** (user-mandated 2026-06-07): every commit's diff gets a `code-review` agent pass BEFORE it lands — orchestrator-direct commits review the staged diff; agent-produced branches get the review on the PR diff before merge (the orchestrator dispatches it at PR-open). Delta commits answering a review get a scoped delta re-review. The review is advisory-blocking: Critical/High findings block the commit/merge until fixed or explicitly waived by the user. The practice caught 6 HIGH findings across PRs #959/#962 on its first day.
+
 **Gate output is consumed by verdict, never by `tail`**: read a gate/test suite's result from its exit code (`bash scripts/dev/test-docs.sh && …`) or by grepping its verdict lines (`grep -E "FAIL|Failed: [1-9]"`) — never by eyeballing `| tail -N`. A truncated tail shows only the LAST sub-test's "Passed/Failed" line and hides earlier red sub-tests (this shipped a red doc-validation suite to PR #946; entry: `categories/process.md` 2026-06-07).
 
 **P4-gated loops carve-out**: when running the small-change variant of [`docs/agent-rules/ship-loops.md`](ship-loops.md) § P4-gated ship-loop, the loop sequence has a legitimate `[smoke build] → [shelf] → [full tests]` phase split. The shelf-review boundary is a real phase transition (user-in-the-loop), so the pre-shelf smoke build (`ninja-iter-msvc` target `SmatchetStandalone`) and the post-shelf test-rig build (`ninja-test-msvc`) count as **distinct gates within the slice** — at-most-once per gate, not at-most-once total. The "wasteful mid-implementation rebuilds" rule the cadence targets still applies; the user-review boundary is not "mid-implementation".
@@ -160,6 +162,20 @@ Do NOT use `replace_all: true` as a "force-write" — it amplifies race-collisio
 The harness maintains a `.claude/.tree-dirty` sentinel file written by `.claude/hooks/lint-cpp.sh` on every first-party `.cpp` / `.h` edit and cleared automatically by the `PreToolUse:Bash` hook (`clear-tree-dirty.sh`) the moment any `cmake --build …` invocation is about to run. Agents reading the sentinel know edits have happened since the last build — if your implementation isn't done yet, defer the build.
 
 The deferred lint pipeline (`.claude/hooks/lint-cpp.sh` PostToolUse → `.claude/hooks/lint-cpp-drain.sh` Stop) follows the same principle for `cppcheck` / `clang-tidy` / dual-target syntax: heavy passes drain once at end-of-turn against the dedup'd set of edited files, not after each Edit/Write. `clang-format -i` still runs inline. Escape hatches: `SMATCHET_LINT_INLINE=1` reverts to per-edit, `bash agents/scripts/core/lint-flush.sh` drains explicitly mid-turn. The trivial-visual-only envelope above is a special case of this rule.
+
+## Context compaction
+
+**Target ~80% of the context window** — compact / summarise the conversation when it reaches ≈80% of the active harness's context window, preserving headroom for the in-flight turn rather than waiting for the hard limit. This is a **harness-agnostic operating convention**, not a portable config key: compaction is a runtime feature of the harness, not agent-controllable, so each harness enforces the target through its own mechanism (or, where it exposes no knob, the operator applies it by hand).
+
+| Harness | Mechanism for the ~80% target |
+|---|---|
+| Claude Code | `autoCompactEnabled: true` + `autoCompactWindow: <≈0.8 × window>` in `settings.json` (e.g. `160000` for a 200K window). Personal preference → user `~/.claude/settings.json`, never team-committed `.claude/settings.json`. |
+| Codex / OpenAI Agents | Built-in auto-summarisation; threshold not user-tunable — convention is advisory. |
+| Cursor | Built-in auto-summarise; not tunable — convention is advisory. |
+| Aider | Manual (`/tokens`, `/clear`) — operator applies the 80% target by hand. |
+| Generic CLI / script | Operator or wrapper trims / summarises history at ≈80% of the model's window. |
+
+Where the harness offers no threshold setting, treat this as a documented operating convention, not an enforced gate. Per-harness tool/equivalent table: [`docs/harness/capability-adapter.md`](../harness/capability-adapter.md).
 
 ## Triggered follow-ups
 

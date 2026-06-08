@@ -46,8 +46,11 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps 
 
     // ---- IOfflineQueueDeps ------------------------------------------------------------
     LocalCacheManager* Cache() override;
-    ITrackerIssueReader* Reader() override;
-    ITrackerIssueMutations* Mutations() override;
+    /// Latched role handles (aliasing shared_ptr onto the atomic_load'ed backend) — replay
+    /// workers capture these so a live backend swap / Slice-3 context retirement can never
+    /// dangle the subobject pointers (debt 2026-06-07).
+    std::shared_ptr<ITrackerIssueReader> ReaderShared() const override;
+    std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override;
     const std::vector<TrackerField>& AvailableFields() const override;
     RequiredFieldSet GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
                                          const std::string& issueTypeName) const override;

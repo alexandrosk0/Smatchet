@@ -88,7 +88,7 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
                         tickets,
                         *gridFrameCtx_.catalogIndex,
                         gridFrameCtx_.columns,
-                        d.gridState.RectSel.HasAnySelection(),
+                        d.focusedPane().gridState.RectSel.HasAnySelection(),
                         !tickets.empty(),
                         trackerLocked};
 
@@ -211,21 +211,22 @@ void SmatchetUI::drawMenuBarUnrealCloseButton(MainMenuDrawCtx& ctx) {
 // Rect-select "Select All" over the active filtered/unfiltered row set. Was the
 // `selectAllRows` lambda inside the menu-bar body.
 void SmatchetUI::selectAllGridRows(MainMenuDrawCtx& ctx) {
-    UiDrawSession& d = ctx.d;
+    // Menu actions target the FOCUSED pane (ADR-0018 focused-pane semantics).
+    GridPane& pane = ctx.d.focusedPane();
     const std::vector<CachedTicket>& tickets = ctx.tickets;
-    auto& sel = d.gridState.RectSel;
+    auto& sel = pane.gridState.RectSel;
     sel.ClearAll();
-    const size_t rowCount = !d.filteredIndices.empty() ? d.filteredIndices.size() : tickets.size();
+    const size_t rowCount = !pane.filteredIndices.empty() ? pane.filteredIndices.size() : tickets.size();
     for (size_t row = 0; row < rowCount; ++row) {
         sel.Rows.insert(static_cast<int>(row));
     }
     if (rowCount > 0) {
         sel.PrimaryRow = 0;
         sel.SortSignature =
-            ComputeGridSortSignature(d.cachedSortFingerprint, d.cachedSortTicketsRevision, tickets.size());
-        const size_t firstTicketIndex = !d.filteredIndices.empty() ? d.filteredIndices.front() : 0;
+            ComputeGridSortSignature(pane.cachedSortFingerprint, pane.cachedSortTicketsRevision, tickets.size());
+        const size_t firstTicketIndex = !pane.filteredIndices.empty() ? pane.filteredIndices.front() : 0;
         if (firstTicketIndex < tickets.size()) {
-            d.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
+            pane.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
         }
     }
 }
@@ -259,7 +260,9 @@ void SmatchetUI::drawMenuBarEditMenu(MainMenuDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     if (ImGui::BeginMenu("Edit")) {
         if (ImGui::MenuItem("Copy", "Ctrl+C", false, ctx.hasSelection && !ctx.columns.empty())) {
-            CopyGridRectAsTsv(ctx.tickets, d.filteredIndices, ctx.columns, ctx.catalogIndex, d.gridState.RectSel);
+            GridPane& pane = d.focusedPane();
+            CopyGridRectAsTsv(ctx.tickets, pane.filteredIndices, ctx.columns, ctx.catalogIndex,
+                              pane.gridState.RectSel);
         }
         ImGui::EndMenu();
     }
@@ -273,10 +276,12 @@ void SmatchetUI::drawMenuBarSelectionMenu(MainMenuDrawCtx& ctx) {
             selectAllGridRows(ctx);
         }
         if (ImGui::MenuItem("Clear Selection", "Ctrl+Shift+A", false, ctx.hasSelection)) {
-            d.gridState.RectSel.ClearAll();
+            d.focusedPane().gridState.RectSel.ClearAll();
         }
         if (ImGui::MenuItem("Copy Selection", "Ctrl+Shift+C", false, ctx.hasSelection && !ctx.columns.empty())) {
-            CopyGridRectAsTsv(ctx.tickets, d.filteredIndices, ctx.columns, ctx.catalogIndex, d.gridState.RectSel);
+            GridPane& pane = d.focusedPane();
+            CopyGridRectAsTsv(ctx.tickets, pane.filteredIndices, ctx.columns, ctx.catalogIndex,
+                              pane.gridState.RectSel);
         }
         ImGui::EndMenu();
     }

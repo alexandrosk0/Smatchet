@@ -480,12 +480,16 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     d.cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
     d.cfg.PlaneApiKey = d.planeApiKeyBuf;
     d.cfg.GitHubBaseUrl = d.githubBaseUrlBuf;
-    if (d.cfg.GitHubBaseUrl.empty()) {
-        d.cfg.GitHubBaseUrl = "https://api.github.com";
-    }
     d.cfg.GitHubPat = d.githubPatBuf;
     d.cfg.GitHubOwner = d.githubOwnerBuf;
     d.cfg.GitHubRepo = d.githubRepoBuf;
+    // Issue #979 — trim leading/trailing whitespace on every credential/identity field
+    // BEFORE the base-URL empty-default below, so a whitespace-only buffer still gets the
+    // default. A trailing space in the Jira email made Atlassian 401 every request.
+    SmatchetPreferencesUiDetail::TrimTrackerCredentialFields(d.cfg);
+    if (d.cfg.GitHubBaseUrl.empty()) {
+        d.cfg.GitHubBaseUrl = "https://api.github.com";
+    }
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsBuf, d.cfg.NewIssueInheritFieldIds);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsPlaneBuf, d.cfg.NewIssueInheritFieldIdsPlane);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsGitHubBuf, d.cfg.NewIssueInheritFieldIdsGitHub);
@@ -518,7 +522,7 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
                  smatchet::logging::pure::MaskEmailForLog(d.cfg.Email).c_str());
     }
     d.triggerCatalogRefetch = true;
-    const std::string oldBackend = d.lastViewsBackendKey;
+    const std::string oldBackend = d.lastViewsBackendKey; // session-level (review HIGH-4)
     ViewState.EnsureLoaded(d.cfg);
     const std::string newBackend = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     if (oldBackend != newBackend) {

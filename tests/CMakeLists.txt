@@ -72,6 +72,10 @@ add_executable(SmatchetTests
     # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
     # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
     Core/PreferencesDateFormatIndex.test.cpp
+    # Issue #979 — pure credential-trim helper applied by onPreferencesSaveAndSync
+    # (trailing-space Jira email → persistent 401). Inline in the same _detail
+    # header; no extra .cpp link.
+    Core/PreferencesCredentialTrim.test.cpp
     # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
     # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
     # (the largest function in the tree) to cut its branch count. The _detail TU is
@@ -118,6 +122,10 @@ add_executable(SmatchetTests
     # matching (A-rows replay, B-rows stay queued), dead-letter key carry + restore. Links
     # the production LCM + OfflineQueueService TUs already pulled in below.
     Core/OfflineQueueBackendKey.test.cpp
+    # Multi-grid Slice 3 pre-staged debt (debt.md 2026-06-07) — replay workers latch STRONG
+    # role handles: swap-during-replay completes against the latched backend (create tick)
+    # and swap-to-null / context-retirement shape does not crash (field-edit tick).
+    Core/OfflineQueueBackendSwap.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).
@@ -140,6 +148,11 @@ add_executable(SmatchetTests
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
     Core/TicketSyncService.test.cpp
+    # Issue #979 — ITrackerBackendFactory::Create(trackerType, cfg) must receive the
+    # caller's LIVE cfg (never a disk re-read racing the debounced prefs save).
+    # Exercises the TicketSyncService swap path with a recording factory; no extra
+    # production .cpp beyond what TicketSyncService.test.cpp already links.
+    Core/TrackerBackendFactoryConfig.test.cpp
     Core/OfflineQueueServiceRuntime.test.cpp
     Core/OfflineFieldEditMerge.test.cpp
     # ADR-0016 — pure scalar offline-conflict classifier (ServerMovedFromBase). Header-only
@@ -415,6 +428,21 @@ add_executable(SmatchetTests
     # and Ui/Views.cpp are already linked above; no new production TUs.
     Core/ConfigManagerViews.test.cpp
     Core/ViewsClass.test.cpp
+    # June 2026 view-create crash fix (Pillar 3) — deferred view-create latch core
+    # (ApplyPendingViewCreateCore, inline in SmatchetViewsDashboardUi_detail.h):
+    # consume-once apply, unset-latch no-mutation, duplicate-path source survival.
+    # Views.cpp / ConfigManager_Views.cpp already linked above; no new production TUs.
+    Core/ViewsPendingCreate.test.cpp
+    # multi-grid-tabs.md Slice 2 — smatchet_panes.json round-trip + zero-migration
+    # default-pane bootstrap (plan item 13) + GridPane per-pane sort-cache isolation
+    # (plan items 7/10). ConfigManager_Panes.cpp is the new production TU.
+    Core/ConfigManagerPanes.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Panes.cpp"
+    # PR #962 review fixes — pure pane-request core (close sweep focus-reassignment
+    # report, min-1 invariant, "+" duplicate, cross-backend view self-repair gate).
+    # The _detail TU is ImGui-free (mirrors SmatchetGridHeaderUi_detail.cpp).
+    Core/GridPaneRequests.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.

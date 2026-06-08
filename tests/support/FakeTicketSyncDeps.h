@@ -31,7 +31,7 @@ namespace smatchet_tests {
 /// this with their own factory.
 class FakeTrackerBackendFactory : public ITrackerBackendFactory {
   public:
-    std::unique_ptr<ITrackerBackend> Create(const std::string& /*trackerType*/) override {
+    std::unique_ptr<ITrackerBackend> Create(const std::string& /*trackerType*/, const TrackerConfig& /*cfg*/) override {
         return std::unique_ptr<ITrackerBackend>(new FakeTrackerClient());
     }
 };

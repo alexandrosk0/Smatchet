@@ -789,16 +789,18 @@ void DrawContextBlockCheckboxes(UiDrawSession& d) {
 std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSession& d,
                                              const ViewDefinition* activeView) {
     AiContextBuilder::Inputs inputs;
+    // AI auto-context targets the FOCUSED pane (ADR-0018 focused-pane semantics).
+    const GridPane& pane = d.focusedPane();
     inputs.Tickets = app.GetActiveTicketsSnapshot();
-    inputs.SortedIndices = &d.cachedSortedIndices;
-    inputs.SelectedRows = &d.gridState.RectSel.Rows;
-    inputs.ActiveIssueId = d.gridState.ActiveIssueId;
+    inputs.SortedIndices = &pane.cachedSortedIndices;
+    inputs.SelectedRows = &pane.gridState.RectSel.Rows;
+    inputs.ActiveIssueId = pane.gridState.ActiveIssueId;
     inputs.ActiveView = activeView;
     // VisibleRows = the same sort-order list (capped internally at kRowsCap). Phase B
     // intentionally does not yet plumb the precise top-of-viewport range — using the
     // sorted-index list gives a deterministic "top N rows" approximation matching the
     // grid's natural rendering order.
-    inputs.VisibleRows = &d.cachedSortedIndices;
+    inputs.VisibleRows = &pane.cachedSortedIndices;
     inputs.EnableSelection = d.cfg.AssistantContextBlockSelection;
     inputs.EnableVisibleRows = d.cfg.AssistantContextBlockVisibleRows;
     inputs.EnableActiveTicket = d.cfg.AssistantContextBlockActiveTicket;

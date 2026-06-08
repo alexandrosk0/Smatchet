@@ -323,11 +323,15 @@ poll_merge_gates() {
     # 17 mergeStateStatus · 18 crOob (cr-out-of-band label) ·
     # 19 crSizeSkipped (CR posted a "review skipped — too many files" comment) ·
     # 20 crContextPresent · 21 reqAbsentNames (", "-joined config-required
-    # contexts absent from the head rollup) · 22 reqAbsentCount (their count).
-    # reqAbsentCount is LAST because it is always a non-empty number — a trailing
-    # EMPTY field (reqAbsentNames is "" in the common case) would be stripped by
-    # the `data=$(gh …)` command substitution (trailing-newline collapse),
-    # deflating the 23-field count and tripping the fail-closed assertion.
+    # contexts absent from the head rollup) · 22 reqAbsentCount (their count) ·
+    # 23 crReviewSkipped (bool: CR StatusContext SUCCESS + description "Review
+    # skipped" and NOT the too-many-files size-skip — a TERMINAL generic skip).
+    # crReviewSkipped is LAST because it is always a non-empty "true"/"false" —
+    # a trailing EMPTY field (reqAbsentNames is "" in the common case) would be
+    # stripped by the `data=$(gh …)` command substitution (trailing-newline
+    # collapse), deflating the 24-field count and tripping the fail-closed
+    # assertion. reqAbsentCount (22) is also non-empty (numeric) so it is safe
+    # in the middle now that crReviewSkipped trails it.
     local GATE_FILTER
     GATE_FILTER='
 .data.repository.pullRequest as $pr
@@ -380,7 +384,22 @@ poll_merge_gates() {
     | (.body // "")]
    | any(
        contains("skip review by coderabbit.ai")
-       or (contains("Review skipped") and contains("Too many files")))) as $crskip
+       or (test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files"))))) as $crskip
+# crReviewSkipped — the GENERIC terminal "Review skipped" (docs-only /
+# path-filtered / trivial diff per .coderabbit.yaml): the "CodeRabbit"
+# StatusContext is SUCCESS and its description says "Review skipped" WITHOUT
+# "too many files" (the size-skip variant, handled by $crskip + the NONE size
+# branch). This is TERMINAL — CR processed the PR and declined an incremental
+# review, so no inline review will ever land and the NONE+status-SUCCESS grace
+# must NOT wait it out (PR #976 burned ~10 cycles on a docs-only PR). Distinct
+# from $crskip (a too-many-files BLOCK read from a CONVERSATION COMMENT); this
+# reads the STATUS description and is a PASS signal.
+| ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+    | select(.__typename == "StatusContext" and .context == "CodeRabbit"
+             and (.state == "SUCCESS"))
+    | (.description // "")]
+   | any((test("review skipped"; "i"))
+         and ((test("too many files"; "i")) | not))) as $crreviewskipped
 | (
     ($pr.state // "UNKNOWN"),
     $sha,
@@ -425,7 +444,8 @@ poll_merge_gates() {
                     and ((.name == "CodeRabbit") or (.name == "CR findings (0 actionable)"))))] | length) > 0
      then 1 else 0 end),
     ($reqAbsent | join(", ")),
-    ($reqAbsent | length)
+    ($reqAbsent | length),
+    ($crreviewskipped | tostring)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
@@ -473,11 +493,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 23 ]; then
-            # Exactly 23 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 24 ]; then
+            # Exactly 24 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 23); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 24); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -583,6 +603,16 @@ poll_merge_gates() {
         # new head, so poking `@coderabbitai review` while it is already reviewing is
         # noise (the "multiple pokes" symptom on auto-commit head churn).
         local cr_context_present="${fields[20]:-0}"
+
+        # crReviewSkipped — true when CR's "CodeRabbit" StatusContext is SUCCESS
+        # with description "Review skipped" and NOT the too-many-files size-skip
+        # (filter field 23). A TERMINAL generic skip: CR processed the PR and
+        # declined an incremental review (docs-only / path-filtered / trivial
+        # diff). The NONE branch uses it to fast-pass instead of burning the
+        # status-SUCCESS grace waiting for an inline review that never lands
+        # (PR #976). Empty (parse miss) → false, so the NONE-grace path still
+        # binds (fail-safe — no spurious terminal pass).
+        local cr_review_skipped="${fields[23]:-false}"
 
         # Required-context ground-truth cross-check (P1 fix —
         # docs/self-improvement/categories/tooling.md:328). Count + names of the
@@ -715,6 +745,22 @@ poll_merge_gates() {
                 elif [ "$cr_installed" != true ]; then
                     # Repo doesn't have CodeRabbit installed — NONE is the steady state.
                     cr_pass=true
+                elif [ "$cr_review_skipped" = "true" ]; then
+                    # Generic terminal "Review skipped" — CR's StatusContext is
+                    # SUCCESS with description "Review skipped" (NOT the
+                    # too-many-files size-skip, which the first arm caught and
+                    # short-circuited). CR processed the PR and deliberately
+                    # declined an incremental review (docs-only / path-filtered /
+                    # trivial diff per .coderabbit.yaml). This is TERMINAL, not
+                    # pending: no inline review will ever land, so the
+                    # status-SUCCESS-waiting-for-inline grace below would burn the
+                    # full CR_GRACE_POLLS window for nothing (PR #976: a docs-only
+                    # PR sat ~10 cycles before the passive grace-then-pass fired).
+                    # Treat as an immediate pass. Ordered AFTER the size-skip arm
+                    # so a too-many-files skip can never reach here even if CR's
+                    # description text overlaps.
+                    cr_pass=true
+                    cr_state_print="NONE+review-skipped (CR terminal skip — no incremental review for this diff)"
                 elif [ "$cr_status_state" = "SUCCESS" ] && [ "$cr_thread_comments_on_head" -gt 0 ]; then
                     # C4 prong 2: status-SUCCESS PLUS at least one CR review-thread
                     # comment on the current head. CR has actively reviewed this

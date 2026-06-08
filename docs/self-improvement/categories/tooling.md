@@ -7,6 +7,18 @@
 
 ## Triage log
 
+- 2026-06-07 · orchestrator · [tooling] · P2 — `perf-pr-fast.yml` reads override labels from the frozen event payload — label-then-rerun cannot downgrade (PR #966)
+  Details: The Gate-decision step parses `github.event.pull_request.labels`, which is snapshotted at the triggering `pull_request` event. Applying `perf-out-of-band` AFTER a red run and re-running replays the old payload → `override=false` → still red; the only way through is an empty commit to mint a fresh event (done on #966). `coverage-gate.yml` doesn't have this trap (its label check queries live data), so the two named-downgrade gates behave inconsistently for the exact same operator flow.
+  Concrete next action: in `perf-pr-fast.yml` Gate decision, replace the event-payload parse with a live API query (`gh api repos/$R/issues/$PR/labels --jq '.[].name'`), mirroring coverage-gate; one-line behavioural note in `merge-gates.md` § labels. Est ~20 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · test-author (Slice-2 agent) · [tooling] · P2 — bucket-E failures are blind: spawned-child stdout is reliably 0 bytes on Windows, so a failing UI test reports nothing
+  Details: When a bucket-E run fails under the spawned-child runner on Windows, the child's stdout reliably comes back 0 bytes — the test engine's per-test log (which names the failing step/assertion) never reaches the caller, so every failure triage starts blind. The per-test output already exists in memory in the engine (`ctx->Test->Output.Log`); it just has no file egress. The `ui_test.run` command (`Source/Core/src/Commands/Builtin/BuiltinCommands_UiTest.cpp:27`) currently exposes no output-log parameter.
+  Concrete next action: add a `ui_test.run --outLog=<path>` parameter that dumps `ctx->Test->Output.Log` per test to the given file, so a failed bucket-E run leaves a readable per-test log regardless of spawned-child stdout loss; wire the bucket-E bash drivers to pass it and cat it on failure. Est ~1-2 h.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · code-review · [tooling] · P3 — `guard-head-drift.sh` residual fail-open shapes after the CR-953 regex hardening (quoted -C paths with spaces; no-jq sed fallback truncation)
   Details: Post-merge review of #947/#953 + the regex-hardening follow-up fixed `git.exe` / quoted-full-path / subshell forms, but two shapes still fail OPEN: (a) `git -C "C:\a b" commit` — `GIT_OPTS_RE`'s `-C[[:space:]]+[^[:space:]]+` can't span a quoted path containing spaces, so the whole invocation mismatches and no deny fires (low practical risk: no repo/worktree path contains spaces today); (b) the no-jq `json_field` sed fallback truncates `.tool_input.command` at the first escaped quote, silently degrading every downstream regex — if jq is a hard prerequisite for the hook set, the hook should deny (or at least warn) when jq is absent instead of parsing garbage. Also: the protected-branch list `develop|main` is hardcoded at 3 sites; per portable-purity it should eventually read `project.config.json`.
   Concrete next action: (a) extend `GIT_OPTS_RE` with a quoted-path alternation (`-C[[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]]+)`) + a bats case; (b) add an explicit `command -v jq || deny "jq required"` (or WARN-and-allow with a log line) + a bats case with jq shadowed; (c) source the branch list from project.config.json via a build/copy-time substitution. Est ~1 h together.
@@ -212,6 +224,18 @@
 
 <!-- Latest first within Parked. -->
 
+- 2026-06-07 · debug-detective · [tooling] · P3 — no cdb/WinDbg locally — minidump triage needed a hand-rolled python minidump scan
+  Details: This session's crash-dump triage had no native debugger on the box (no cdb/WinDbg/kd) — the debug-detective had to hand-roll a python minidump-stream parser to extract the exception record + module list, which is slow, lossy (no symbolized stacks), and re-derived per incident. The `SmatchetCrashHandler` dump path (`Source/Standalone/SmatchetCrashHandler.cpp`) makes dumps a recurring triage surface, so the tooling gap recurs.
+  Concrete next action: either `winget install Microsoft.WinDbg` once on the dev box (and note the canonical `cdb -z <dump> -c "!analyze -v; q"` invocation in `docs/agent-rules/debug-techniques.md`), or commit a dump-triage script in `agents/scripts/` wrapping the python minidump scan so the next incident doesn't re-derive it. Est ~30-60 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
+- 2026-06-07 · 1b agent · [tooling] · P3 — no `testPresets` in `CMakePresets.json` — `ctest --preset ninja-test-msvc` doesn't exist, every agent rediscovers it
+  Details: `CMakePresets.json` defines configure/build presets only (verified: zero `testPresets` entries), so the natural `ctest --preset ninja-test-msvc` invocation fails and each agent independently rediscovers the working form (`ctest --test-dir build/ninja-test-msvc` or the bash drivers). Recurring small token/time tax across agents.
+  Concrete next action: add a `testPresets` section to `CMakePresets.json` (one per test-bearing configure preset), OR a one-line note in `docs/agent-rules/build.md` naming the canonical ctest invocation. Est ~20 min.
+  Status: open
+  Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [tooling] · P3 — guard-head-drift `-C` path matcher stops at the first space → a space-containing worktree path bypasses the no-direct-commit guard
   Details: `docs/harness/claude-code/hooks/guard-head-drift.sh` matches `-C[[:space:]]+[^[:space:]]+`, so `git -C "C:/my path/wt" commit` is not detected (falls through to ALLOW). Harmless for the default trees (`C:\Dev	rees\<slug>`, no spaces). (CR sweep CR-947-2; the separator-boundary HIGH sibling CR-947-1 is fixed.)
   Concrete next action: quote-aware tokenizing of the `-C` argument (or a documented "no spaces in worktree paths" invariant + a guard in `worktree.ps1 new`). Only worth doing if spaced repo paths ever enter scope. Est ~45 min incl. bats.
@@ -380,7 +404,7 @@
 
 - 2026-05-31 · orchestrator · [tooling] · P2 — subagent eval harness MVP is advisory; the live `code-review` smoke + judge-vs-human calibration are manual residue with no automation yet
   Details: The Phase-1 subagent eval harness (`scripts/dev/agent-eval-{run.sh,score.py}`, `docs/agent-eval/*`, plan `docs/plans/shipped/subagent-eval-harness.md`) proves the scoring contract against fixtures — the bats suites (`tests/bats/agent_eval_score.bats`, `agent_eval_run.bats`) run fully deterministic with a fake judge + `--fake-runner`, no live tokens. Two things remain inherently manual: (a) one live `code-review` end-to-end smoke off-CI (real `claude -p` adapter against a curated case, real judge) to confirm the live path produces a conformant result; (b) judge-vs-human calibration — the corpus of agreement data needed before the advisory WARN can graduate to a blocking gate. Until (b) exists, a quality regression only WARNs (malformed artifacts still FAIL).
-  Concrete next action: (1) run the live smoke once and record the result JSON + any adapter-parse gaps (free-text→findings parsing in `agent-eval-run.sh` is best-effort regex today). (2) Stand up a calibration loop: collect N judge scores vs human labels on the same runs, measure agreement, then set BLOCK thresholds. (3) The trace flywheel (`docs/plans/active/subagent-eval-flywheel.md`) is the prerequisite for replacing the seed cases with harvested real traces. Smoke ~30 min; calibration is a follow-up plan.
+  Concrete next action: (1) run the live smoke once and record the result JSON + any adapter-parse gaps (free-text→findings parsing in `agent-eval-run.sh` is best-effort regex today). (2) Stand up a calibration loop: collect N judge scores vs human labels on the same runs, measure agreement, then set BLOCK thresholds. (3) The trace flywheel — now Phase 2 of the unified `docs/plans/subagent-eval-agentic-coverage.md` plan (the former standalone `subagent-eval-flywheel.md` is superseded) — is the prerequisite for replacing the seed cases with harvested real traces; that unified plan's Phase 0 is the judge-calibration loop this entry's item (2) asks for. Smoke ~30 min; calibration is the unified plan.
   Status: open
   Last-reviewed: 2026-05-31
 

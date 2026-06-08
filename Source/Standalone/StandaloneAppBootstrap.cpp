@@ -477,13 +477,10 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     }
 
     glfwMakeContextCurrent(window);
-    // Ephemeral/hidden-window path: no --vsync/--no-vsync here (CLI is the
-    // command runner's), so precedence is env SMATCHET_FPS_VSYNC > config.
-    {
-        const char* vsyncSource = smatchet::vsync::SeedFromBootSources(windowStateCfg.VsyncEnabled, false, true);
-        LOG_INFO("Vsync %s at boot (source: %s)", smatchet::vsync::Enabled() ? "enabled" : "disabled", vsyncSource);
-    }
-    glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
+    // Initial vsync-on; the resolved value (env > --vsync/--no-vsync flag >
+    // config) is applied right after the ParseStandaloneCli call below — this
+    // path parses the standalone CLI itself, so the flag works here too.
+    glfwSwapInterval(1);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -513,6 +510,15 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load(cli);
+
+    // Seed the live vsync hub with the documented precedence and apply it to the
+    // (current) hidden-window GL context — --vsync/--no-vsync works on this path
+    // too since the parse above consumes the same standalone grammar (CR-953).
+    {
+        const char* vsyncSource = smatchet::vsync::SeedFromBootSources(cfg.VsyncEnabled, cli.HasVsync, cli.Vsync);
+        LOG_INFO("Vsync %s at boot (source: %s)", smatchet::vsync::Enabled() ? "enabled" : "disabled", vsyncSource);
+        glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
+    }
 
     ctx.window = window;
     if (InitAppAndPlugins(ctx, cfg, forceMcp, err)) {
