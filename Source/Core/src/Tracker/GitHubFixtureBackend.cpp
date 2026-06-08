@@ -120,19 +120,16 @@ bool GitHubFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, cons
     return true;
 }
 
-bool GitHubFixtureBackend::UpdateIssueFields(const std::string& issueId, const nlohmann::json& /*fields*/,
-                                             std::string& outError) {
+TrackerError GitHubFixtureBackend::UpdateIssueFields(const std::string& issueId, const nlohmann::json& /*fields*/) {
     LOG_INFO("GitHubFixtureBackend::UpdateIssueFields no-op on fixture backend (issueId=%s)", issueId.c_str());
-    outError.clear();
-    return true;
+    return TrackerError::Ok();
 }
 
-bool GitHubFixtureBackend::UpdateField(const std::string& issueId, const TrackerField& field,
-                                       const std::vector<std::string>& /*values*/, std::string& outError) {
+TrackerError GitHubFixtureBackend::UpdateField(const std::string& issueId, const TrackerField& field,
+                                               const std::vector<std::string>& /*values*/) {
     LOG_INFO("GitHubFixtureBackend::UpdateField no-op on fixture backend (issueId=%s field=%s)", issueId.c_str(),
              field.Id.c_str());
-    outError.clear();
-    return true;
+    return TrackerError::Ok();
 }
 
 Result<nlohmann::json, TrackerError> GitHubFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/,

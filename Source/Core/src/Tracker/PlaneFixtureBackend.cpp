@@ -134,16 +134,13 @@ bool PlaneFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const
     return true;
 }
 
-bool PlaneFixtureBackend::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/,
-                                            std::string& outError) {
-    outError = "PlaneFixtureBackend is read-only";
-    return false;
+TrackerError PlaneFixtureBackend::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/) {
+    return TrackerErrorInvalidRequest("PlaneFixtureBackend is read-only");
 }
 
-bool PlaneFixtureBackend::UpdateField(const std::string& /*issueId*/, const TrackerField& /*field*/,
-                                      const std::vector<std::string>& /*values*/, std::string& outError) {
-    outError = "PlaneFixtureBackend is read-only";
-    return false;
+TrackerError PlaneFixtureBackend::UpdateField(const std::string& /*issueId*/, const TrackerField& /*field*/,
+                                              const std::vector<std::string>& /*values*/) {
+    return TrackerErrorInvalidRequest("PlaneFixtureBackend is read-only");
 }
 
 Result<nlohmann::json, TrackerError>

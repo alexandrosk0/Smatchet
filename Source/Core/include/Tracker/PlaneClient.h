@@ -49,10 +49,10 @@ class PlaneClient : public ITrackerBackend,
 
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
 
-    bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
+    TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
 
-    bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
-                     std::string& outError) override;
+    TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
+                             const std::vector<std::string>& values) override;
 
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
@@ -69,7 +69,7 @@ class PlaneClient : public ITrackerBackend,
                             std::vector<std::pair<std::string, std::string>>& outFailures,
                             std::string& outError) override;
 
-    bool AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) override;
+    TrackerError AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) override;
 
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;

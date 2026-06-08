@@ -969,7 +969,9 @@ bool AppController::SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx, std::st
         std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });
     BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", field.Id}, {"kind", "sprint"}});
-    if (!mutations->AddIssueToSprint(issueId, sprintId, outError)) {
+    const TrackerError sprintErr = mutations->AddIssueToSprint(issueId, sprintId);
+    outError = sprintErr.Detail;
+    if (!sprintErr.IsOk()) {
         LOG_ERROR("AppController::SubmitFieldEdit sprint update failed issue=%s field=%s sprint=%s err=%s",
                   issueId.c_str(), field.Id.c_str(), sprintId.c_str(), outError.c_str());
         BackendAuditTrail::AppendResult(
@@ -1049,7 +1051,9 @@ bool AppController::SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx, s
     fieldsPayload["timetracking"] = std::move(timetrackingPayload);
     BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", "timetracking"}, {"kind", "timetracking"}});
-    if (!mutations->UpdateIssueFields(issueId, fieldsPayload, outError)) {
+    const TrackerError timetrackingErr = mutations->UpdateIssueFields(issueId, fieldsPayload);
+    outError = timetrackingErr.Detail;
+    if (!timetrackingErr.IsOk()) {
         std::string payloadForLog;
         try {
             payloadForLog = fieldsPayload.dump();
@@ -1119,7 +1123,9 @@ bool AppController::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::s
 
     BackendAuditTrail::AppendBegin("field_edit_diff", fieldEditAuditSource, issueId, fieldEditAuditOp,
                                    nlohmann::json{{"field_id", field.Id}, {"kind", "issue_fields"}});
-    bool updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outError);
+    TrackerError updateErr = mutations->UpdateIssueFields(issueId, fieldsPayload);
+    outError = updateErr.Detail;
+    bool updateOk = updateErr.IsOk();
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outError, 400)) {
         didRetryAfter400 = true;
@@ -1136,7 +1142,9 @@ bool AppController::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::s
                     {"after", rawValues}});
             return false;
         }
-        updateOk = mutations->UpdateIssueFields(issueId, fieldsPayload, outError);
+        updateErr = mutations->UpdateIssueFields(issueId, fieldsPayload);
+        outError = updateErr.Detail;
+        updateOk = updateErr.IsOk();
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -1334,7 +1342,9 @@ bool AppController::ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId
                                                       const nlohmann::json& fieldsPayload,
                                                       const std::string* issueTypeKeyOpt,
                                                       ITrackerIssueMutations& mutations, FieldEditResult& outResult) {
-    bool updateOk = mutations.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+    TrackerError updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
+    outResult.Error = updateErr.Detail;
+    bool updateOk = updateErr.IsOk();
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
@@ -1346,7 +1356,9 @@ bool AppController::ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId
                      issueId.c_str(), field.Id.c_str());
             return false;
         }
-        updateOk = mutations.UpdateIssueFields(issueId, fieldsPayload, outResult.Error);
+        updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
+        outResult.Error = updateErr.Detail;
+        updateOk = updateErr.IsOk();
     }
     if (!updateOk) {
         std::string payloadForLog;
@@ -1374,7 +1386,9 @@ bool AppController::SubmitSprintFieldEditNetworkOnly(const std::string& issueId,
         return false;
     }
     const std::string sprintId = values.front();
-    if (!mutations.AddIssueToSprint(issueId, sprintId, outResult.Error)) {
+    const TrackerError sprintErr = mutations.AddIssueToSprint(issueId, sprintId);
+    if (!sprintErr.IsOk()) {
+        outResult.Error = sprintErr.Detail;
         return false;
     }
     std::string displayValue = sprintId;
@@ -1423,7 +1437,9 @@ bool AppController::SubmitTimetrackingFieldEditNetworkOnly(const std::string& is
 
     nlohmann::json fieldsPayload = nlohmann::json::object();
     fieldsPayload["timetracking"] = std::move(timetrackingPayload);
-    if (!mutations.UpdateIssueFields(issueId, fieldsPayload, outResult.Error)) {
+    const TrackerError updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
+    if (!updateErr.IsOk()) {
+        outResult.Error = updateErr.Detail;
         return false;
     }
     outResult.Ok = true;

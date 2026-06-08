@@ -203,8 +203,8 @@ bool JiraClient::UpdateIssueFieldsViaPut(const std::string& issueId, const nlohm
     return true;
 }
 
-bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) {
-    outError.clear();
+TrackerError JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) {
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-update");
     const bool auditIsTransition = fields.is_object() && fields.size() == 1 && fields.contains("status");
     const std::string auditAction = auditIsTransition ? "issue_transition" : "issue_update_fields";
@@ -240,29 +240,36 @@ bool JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::j
     TrackerConfig cfg = ConfigManager::Load();
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult(auditAction, "jira_client", issueId, auditOp, false, outError);
-        return false;
+        return TrackerErrorAuth(outError);
     }
     if (issueId.empty()) {
         outError = "Issue id is empty.";
         LOG_WARN("JiraClient: %s", outError.c_str());
         BackendAuditTrail::AppendResult(auditAction, "jira_client", issueId, auditOp, false, outError);
-        return false;
+        return TrackerErrorInvalidRequest(outError);
     }
     if (!fields.is_object() || fields.empty()) {
         outError = "Update fields payload is empty.";
         LOG_WARN("JiraClient: %s", outError.c_str());
         BackendAuditTrail::AppendResult(auditAction, "jira_client", issueId, auditOp, false, outError);
-        return false;
+        return TrackerErrorInvalidRequest(outError);
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg, true);
 
-    // Jira requires status updates via transitions endpoint, not field PUT.
-    if (auditIsTransition) {
-        return UpdateIssueFieldsViaTransition(issueId, fields["status"], base, headers, auditOp, outError);
+    // Jira requires status updates via transitions endpoint, not field PUT. The private Via* helpers
+    // keep their string-out signatures (out of the ITrackerIssueMutations virtual scope — plan
+    // landmine L2); wrap their string error as Unknown — HTTP-status re-threading is a later slice
+    // (#21b) when an IsRetryable() consumer arrives. Detail is preserved verbatim so the caller's
+    // status-text parsing (ErrorTextContainsHttpStatus / IsTrackerTransportErrorText) is unaffected.
+    const bool ok = auditIsTransition
+                        ? UpdateIssueFieldsViaTransition(issueId, fields["status"], base, headers, auditOp, outError)
+                        : UpdateIssueFieldsViaPut(issueId, fieldsAudited, base, headers, auditOp, outError);
+    if (!ok) {
+        return TrackerErrorUnknown(outError); // TODO(#21b later slice): re-thread HTTP status from Via* helpers
     }
-    return UpdateIssueFieldsViaPut(issueId, fieldsAudited, base, headers, auditOp, outError);
+    return TrackerError::Ok();
 }
 
 bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
@@ -613,9 +620,14 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
     return allOk;
 }
 
-bool JiraClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) {
+TrackerError JiraClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) {
     const TrackerConfig cfg = ConfigManager::Load();
-    return AddIssueToSprint(cfg, issueKey, sprintId, outError);
+    // The cfg-overload stays bool + outError (non-virtual, out of interface scope — plan landmine L2).
+    std::string outError;
+    if (!AddIssueToSprint(cfg, issueKey, sprintId, outError)) {
+        return TrackerErrorUnknown(outError); // TODO(#21b later slice): re-thread HTTP status from cfg-overload
+    }
+    return TrackerError::Ok();
 }
 
 bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& issueKey, const std::string& sprintId,
@@ -666,14 +678,13 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
     return true;
 }
 
-bool JiraClient::UpdateField(const std::string& issueId, const TrackerField& field,
-                             const std::vector<std::string>& values, std::string& outError) {
+TrackerError JiraClient::UpdateField(const std::string& issueId, const TrackerField& field,
+                                     const std::vector<std::string>& values) {
     auto payloadResult = BuildFieldPayload(field, values);
     if (!payloadResult) {
-        outError = payloadResult.error().Detail;
-        return false;
+        return payloadResult.error();
     }
-    return UpdateIssueFields(issueId, payloadResult.value(), outError);
+    return UpdateIssueFields(issueId, payloadResult.value());
 }
 
 Result<nlohmann::json, TrackerError> JiraClient::BuildFieldPayload(const TrackerField& field,
