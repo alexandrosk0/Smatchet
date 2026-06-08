@@ -536,8 +536,8 @@ const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pa
     // its context sync (paneOwnResolvedView, matched on viewId), builds the pane's real
     // columns here through the pane's OWN catalog (catalogIndex is already pane-routed). The
     // result is captured below so subsequent frames hit CachedFrozen — never per cell.
-    if (source == PaneColumnsSource::SharedFallback && paneOwnResolvedView != nullptr && !pane.viewId.empty() &&
-        paneOwnResolvedView->Id == pane.viewId) {
+    if (paneOwnResolvedView != nullptr && SmatchetGridPaneWindows::detail::ShouldBuildColumnsFromOwnResolvedView(
+                                              source, pane.viewId, paneOwnResolvedView->Id)) {
         if (!pane.cachedColumnsValid || pane.cachedColumnsViewId != paneOwnResolvedView->Id ||
             pane.cachedColumnsCatalogRevision != gridFrameCtx_.catalogRevision ||
             pane.cachedColumnsViewsRevision != gridFrameCtx_.viewsRevision) {

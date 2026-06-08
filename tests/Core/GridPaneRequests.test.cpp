@@ -162,6 +162,24 @@ TEST_CASE("Pane columns source: empty pane viewId never claims ownership or a ca
           PaneColumnsSource::SharedFallback);
 }
 
+TEST_CASE("Cold-start upgrade: a pane's OWN context-resolved view rebuilds its columns past SharedFallback (Slice 4)") {
+    using SmatchetGridPaneWindows::detail::PaneColumnsSource;
+    using SmatchetGridPaneWindows::detail::ShouldBuildColumnsFromOwnResolvedView;
+    // The user defect this closes: after a restart a cross-backend pane has no session
+    // capture (SharedFallback) and would render the focused view's columns. Its context's
+    // own resolved view ("plane_v1", published by the first-sync worker) matches the
+    // pane's own viewId → rebuild from the pane's REAL view, not the fallback.
+    CHECK(ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource::SharedFallback, "plane_v1", "plane_v1"));
+    // A context-resolved view that is NOT the pane's own must never drive the build.
+    CHECK_FALSE(ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource::SharedFallback, "plane_v1", "jira_v2"));
+    // Only the fallback path upgrades — an own/active or already-frozen source is left alone.
+    CHECK_FALSE(ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource::SharedActive, "plane_v1", "plane_v1"));
+    CHECK_FALSE(ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource::CachedFrozen, "plane_v1", "plane_v1"));
+    CHECK_FALSE(ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource::OwnViewBuild, "plane_v1", "plane_v1"));
+    // Empty pane id never owns a resolved view (pre-bootstrap placeholder).
+    CHECK_FALSE(ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource::SharedFallback, "", ""));
+}
+
 TEST_CASE("Pane view self-repair: cross-backend pane viewId is never rebound (HIGH-1)") {
     // A Plane pane rendered while Jira is the focused backend: its viewId is valid
     // in the Plane bucket — the loaded Jira slice simply can't see it. Repair must

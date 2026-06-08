@@ -108,6 +108,11 @@ PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const s
     return PaneColumnsSource::SharedFallback;
 }
 
+bool ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource source, const std::string& paneViewId,
+                                           const std::string& ownResolvedViewId) {
+    return source == PaneColumnsSource::SharedFallback && !paneViewId.empty() && ownResolvedViewId == paneViewId;
+}
+
 } // namespace detail
 
 } // namespace SmatchetGridPaneWindows
