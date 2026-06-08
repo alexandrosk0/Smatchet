@@ -112,6 +112,56 @@ TEST_CASE("Pane requests: '+' duplicate consumes the request, focuses the new pa
     CHECK(focusedPaneId == "pane-2");
 }
 
+TEST_CASE("Pane columns source: own active view renders the shared build (and captures it)") {
+    using SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource;
+    using SmatchetGridPaneWindows::detail::PaneColumnsSource;
+    // Focused pane steady state: pane.viewId == resolved == active.
+    CHECK(ChoosePaneColumnsSource("v1", "v1", "v1", /*cachedColumnsValid=*/false, "") ==
+          PaneColumnsSource::SharedActive);
+}
+
+TEST_CASE("Pane columns source: own non-active view uses the per-pane build (same-backend unfocused pane)") {
+    using SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource;
+    using SmatchetGridPaneWindows::detail::PaneColumnsSource;
+    // Unfocused same-backend pane: its view resolved from the loaded bucket, but a
+    // different view is active.
+    CHECK(ChoosePaneColumnsSource("v1", "v1", "v2", /*cachedColumnsValid=*/true, "v1") ==
+          PaneColumnsSource::OwnViewBuild);
+}
+
+TEST_CASE("Pane columns source: fallback-resolved view never leaks the focused field set (user defect)") {
+    using SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource;
+    using SmatchetGridPaneWindows::detail::PaneColumnsSource;
+    // Cross-backend unfocused pane: its viewId is unresolvable in the loaded bucket,
+    // so resolvePaneView handed back the ACTIVE view ("v2") as a render fallback.
+    // With a bind-time capture for the pane's own view, the frozen capture wins —
+    // the pane must NOT render v2's columns.
+    CHECK(ChoosePaneColumnsSource("plane_v1", "v2", "v2", /*cachedColumnsValid=*/true, "plane_v1") ==
+          PaneColumnsSource::CachedFrozen);
+
+    // A stale capture for a DIFFERENT view does not qualify — fall back to shared.
+    CHECK(ChoosePaneColumnsSource("plane_v1", "v2", "v2", /*cachedColumnsValid=*/true, "plane_v0") ==
+          PaneColumnsSource::SharedFallback);
+
+    // Cold start (restored from disk, never focused, nothing captured): shared fallback.
+    CHECK(ChoosePaneColumnsSource("plane_v1", "v2", "v2", /*cachedColumnsValid=*/false, "") ==
+          PaneColumnsSource::SharedFallback);
+
+    // No view resolvable at all (empty bucket) but a capture exists: keep the capture.
+    CHECK(ChoosePaneColumnsSource("plane_v1", "", "", /*cachedColumnsValid=*/true, "plane_v1") ==
+          PaneColumnsSource::CachedFrozen);
+}
+
+TEST_CASE("Pane columns source: empty pane viewId never claims ownership or a capture") {
+    using SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource;
+    using SmatchetGridPaneWindows::detail::PaneColumnsSource;
+    // Pre-bootstrap placeholder pane (empty viewId, nothing resolved/active yet).
+    CHECK(ChoosePaneColumnsSource("", "", "", /*cachedColumnsValid=*/false, "") == PaneColumnsSource::SharedFallback);
+    // Even a (bogus) valid cache with an empty key must not match an empty pane id.
+    CHECK(ChoosePaneColumnsSource("", "v1", "v1", /*cachedColumnsValid=*/true, "") ==
+          PaneColumnsSource::SharedFallback);
+}
+
 TEST_CASE("Pane view self-repair: cross-backend pane viewId is never rebound (HIGH-1)") {
     // A Plane pane rendered while Jira is the focused backend: its viewId is valid
     // in the Plane bucket — the loaded Jira slice simply can't see it. Repair must

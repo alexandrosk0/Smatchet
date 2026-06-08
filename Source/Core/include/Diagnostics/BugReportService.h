@@ -85,6 +85,16 @@ ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::st
 std::string BuildMarkdownBody(const BugReportOptions& opts, const ContextBundle& bundle,
                               const std::string& screenshotMarkdown);
 
+/// Build the "[Bug] <first description line>" issue title, capped UTF-8-safely
+/// under GitHub's 256-char title limit (a longer title 422s the create — #989).
+/// Pure; falls back to "Report from Smatchet" on an empty description.
+std::string BuildIssueTitle(const std::string& userDescription);
+
+/// Truncate `s` to at most `cap` bytes without splitting a UTF-8 sequence
+/// (backs off continuation bytes). A byte-level resize can produce invalid
+/// UTF-8 that GitHub rejects with 422 Validation Failed (#989). Pure.
+void TruncateUtf8(std::string& s, std::size_t cap);
+
 /// Build the JSON payload POSTed to the bug-report relay (`tools/bug-report-relay`).
 /// Pure. `screenshotBase64` is included only when non-empty. The relay re-files
 /// the issue + uploads the screenshot server-side, so no GitHub token is needed

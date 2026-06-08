@@ -19,6 +19,13 @@ namespace {
 // markdown we always append after the (potentially truncated) log block.
 const std::size_t kBodyHardCap = 60000;
 
+// Per-block caps so no single input can starve the others (issue #989: an
+// uncapped crash-mode description — it embeds a 200-line log tail — or a large
+// audit-event dump pushed the body past 65536, and the byte-level backstop cut
+// mid-UTF-8 → GitHub 422 "Validation Failed" → relay 502).
+const std::size_t kDescriptionCap = 24000;
+const std::size_t kAuditJsonCap = 12000;
+
 // Split "owner/repo" -> {owner, repo}. Returns false on malformed input.
 bool SplitOwnerRepo(const std::string& s, std::string& owner, std::string& repo) {
     const std::size_t slash = s.find('/');
@@ -31,6 +38,35 @@ bool SplitOwnerRepo(const std::string& s, std::string& owner, std::string& repo)
 }
 
 } // namespace
+
+void TruncateUtf8(std::string& s, std::size_t cap) {
+    if (s.size() <= cap) {
+        return;
+    }
+    // Back off past continuation bytes (0b10xxxxxx) so the cut never splits a
+    // UTF-8 sequence — GitHub 422s an invalid body/title (#989).
+    std::size_t cut = cap;
+    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0u) == 0x80u) {
+        --cut;
+    }
+    s.resize(cut);
+}
+
+std::string BuildIssueTitle(const std::string& userDescription) {
+    // GitHub rejects titles over 256 chars; keep headroom for the prefix + an
+    // ellipsis marker.
+    const std::size_t kTitleCap = 200;
+    const std::size_t nl = userDescription.find('\n');
+    std::string firstLine = (nl == std::string::npos) ? userDescription : userDescription.substr(0, nl);
+    if (firstLine.empty()) {
+        return "[Bug] Report from Smatchet";
+    }
+    if (firstLine.size() > kTitleCap) {
+        TruncateUtf8(firstLine, kTitleCap);
+        firstLine += u8"…";
+    }
+    return std::string("[Bug] ") + firstLine;
+}
 
 ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::string& envToken) {
     ResolvedBugTarget out;
@@ -129,17 +165,26 @@ std::string BuildMarkdownBody(const BugReportOptions& opts, const ContextBundle&
     head << "| Active tracker | " << envStr("tracker") << " |\n";
     head << "| Captured (UTC) | " << envStr("utc") << " |\n\n";
     head << "### Description\n\n";
-    const std::string desc = opts.UserDescription.empty() ? "_(no description provided)_" : opts.UserDescription;
+    std::string desc = opts.UserDescription.empty() ? "_(no description provided)_" : opts.UserDescription;
+    if (desc.size() > kDescriptionCap) {
+        TruncateUtf8(desc, kDescriptionCap);
+        desc += "\n\n… _(description truncated — full text exceeded the issue-body budget)_";
+    }
     head << desc << "\n\n";
     if (!screenshotMarkdown.empty()) {
         head << screenshotMarkdown << "\n\n";
     }
 
-    // Tail = audit + env blocks (always small relative to the cap).
+    // Tail = audit + env blocks, each capped (audit dumps scale with the trail).
     std::ostringstream tail;
     if (bundle.AuditEvents.is_array() && !bundle.AuditEvents.empty()) {
+        std::string auditJson = bundle.AuditEvents.dump(2);
+        const bool auditCut = auditJson.size() > kAuditJsonCap;
+        if (auditCut) {
+            TruncateUtf8(auditJson, kAuditJsonCap);
+        }
         tail << "<details><summary>Recent audit events (" << bundle.AuditEvents.size() << ")</summary>\n\n";
-        tail << "```json\n" << bundle.AuditEvents.dump(2) << "\n```\n\n</details>\n\n";
+        tail << "```json\n" << auditJson << (auditCut ? "\n… (truncated)" : "") << "\n```\n\n</details>\n\n";
     }
     if (env.is_object() && env.contains("summary")) {
         tail << "<details><summary>Environment</summary>\n\n";
@@ -188,9 +233,9 @@ std::string BuildMarkdownBody(const BugReportOptions& opts, const ContextBundle&
     out << tailStr;
 
     std::string result = out.str();
-    if (result.size() > 65536) {
-        result.resize(65536); // absolute backstop — should never trip given the cap above
-    }
+    // Absolute backstop — UTF-8-safe so a trip can never produce an invalid
+    // body (GitHub 422s on broken UTF-8, issue #989).
+    TruncateUtf8(result, 65536);
     return result;
 }
 

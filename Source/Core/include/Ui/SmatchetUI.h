@@ -267,7 +267,10 @@ class SmatchetUI {
     // ViewsDashboardDrawCtx now just forward to these); the banner + shortcut helpers are chrome.
     void viewsApplyAndSync(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
     void viewsDiscardChanges(UiDrawSession& d);
-    void viewsActivateView(AppController& app, UiDrawSession& d, const std::string& id);
+    /// kickSync=false: adopt the view identity (Activate + buffers + cfg JQL/fields + Save +
+    /// nav history) WITHOUT the SyncWithCurrentView network re-fetch — used by the pane
+    /// focus-switch path when the pane's own GridLiveContext already synced (Slice 3).
+    void viewsActivateView(AppController& app, UiDrawSession& d, const std::string& id, bool kickSync = true);
     void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               const std::string& id);
     void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);
