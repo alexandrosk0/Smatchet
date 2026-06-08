@@ -1257,6 +1257,8 @@ if(ANDROID)
     # android_native_app_glue is deferred to Slice 3 (it is an NDK-sources static lib
     # consumed only by the android_main host, which does not exist yet).
     target_link_libraries(SmatchetMobile PRIVATE log android EGL GLESv3)
+    # TODO(Slice-3): drop -Wl,-z,undefs once the android_main host provides the
+    # SmatchetImGuiHost symbols CORE_SOURCES currently leaves undefined.
     target_link_options(SmatchetMobile PRIVATE -Wl,-z,undefs)
 endif()
 

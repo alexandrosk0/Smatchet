@@ -57,6 +57,11 @@ function(smatchet_prepare_cpr)
     # curl's) must succeed, so widen the modes to BOTH for this configure. The actual
     # absolute paths stay caller-supplied (runtime-dependent: $RUNNER_TEMP in CI) — do
     # not hardcode them here. This is the Slice 1 TLS-backend spike deliverable.
+    #
+    # This block is the SINGLE authoritative home for these TLS-backend cache vars: it
+    # runs before add_subdirectory(cpr) and FORCE-wins over any pre-seed, so it applies
+    # to a raw `cmake -DANDROID=...` invocation too — they are deliberately NOT mirrored
+    # in the android-ndk-arm64 preset (that copy was removed to keep this DRY).
     if(ANDROID)
         set(CPR_FORCE_OPENSSL_BACKEND ON CACHE BOOL "Android: force cpr OpenSSL backend (no system TLS)" FORCE)
         set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "Android: link the prebuilt static OpenSSL" FORCE)

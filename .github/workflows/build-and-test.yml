@@ -904,7 +904,10 @@ jobs:
         # A static archive only compiles its objects; it never links, so there is
         # zero GLFW/GL/X11 link surface. Green == every #else branch in the
         # engine-agnostic core compiles under a non-_WIN32 clang.
-        run: cmake --build --preset posix-core-check --target SmatchetCore_PosixCheck
+        # `-- -k 0` (ninja keep-going) surfaces EVERY failing TU in one run instead
+        # of stopping at the first — so a fresh portability sweep enumerates all
+        # LP64/#else errors at once rather than one CI round-trip per fix.
+        run: cmake --build --preset posix-core-check --target SmatchetCore_PosixCheck -- -k 0
 
   mobile-android-ndk:
     name: Mobile — Android NDK arm64-v8a (.so configure+link, advisory)
@@ -943,7 +946,15 @@ jobs:
           set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           test -n "$SDK" || { echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME unset on runner"; exit 1; }
-          yes | "${SDK}/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" >/dev/null
+          SDKMANAGER="${SDK}/cmdline-tools/latest/bin/sdkmanager"
+          # Accept licenses without tripping pipefail: `yes` takes EPIPE when sdkmanager
+          # closes stdin and exits non-zero (the "yes: standard output: Broken pipe" that
+          # `set -o pipefail` turns into a step failure) — guard the whole pipeline with
+          # `|| true`. The install needs no stdin once licenses are accepted, so it runs
+          # pipe-free and its real exit code surfaces; `test -d` below is the authoritative
+          # success gate either way.
+          yes 2>/dev/null | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;${NDK_VERSION}" >/dev/null
           NDK="${SDK}/ndk/${NDK_VERSION}"
           test -d "$NDK" || { echo "::error::NDK ${NDK_VERSION} not found at $NDK"; exit 1; }
           # Export for every subsequent step: the android.toolchain.cmake path in the
@@ -1016,4 +1027,5 @@ jobs:
       - name: Compile + link SmatchetMobile .so (validates Slice 2 — empty .so link)
         # Builds CORE_SOURCES through the NDK (#else side) and links the SHARED object.
         # -Wl,-z,undefs (set on the target) permits the host symbols Slice 3 resolves.
-        run: cmake --build --preset android-ndk-arm64 --target SmatchetMobile
+        # `-- -k 0` (ninja keep-going) enumerates every failing TU in one run.
+        run: cmake --build --preset android-ndk-arm64 --target SmatchetMobile -- -k 0
