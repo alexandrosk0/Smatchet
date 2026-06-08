@@ -207,6 +207,15 @@ if(SMATCHET_EMBEDDED_IN_UNREAL)
 endif()
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source/Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
+# Gate the entire GUI/app surface — GLFW, Dear ImGui (+ImGuiLib), Lua/sol2,
+# whisper.cpp, the SmatchetStandalone exe, and every DX12/Unreal target — behind
+# one option. Default ON: every existing preset (Windows iter/debug/test/publish,
+# Unreal, the asan/ui-test presets) is byte-for-byte unaffected. Flipped OFF only
+# by the headless Linux ThreadSanitizer preset (ninja-tsan-linux), where building
+# GLFW would drag in X11/OpenGL -dev packages and the Lua tarball download for zero
+# TSan value — the curated SmatchetTsanTests target (tests/CMakeLists.txt) links
+# only the portable, ImGui-free threading subset. Pure-additive (hardening #10).
+option(SMATCHET_BUILD_APP "Build the GUI application + GLFW/ImGui/Lua/whisper/Standalone/DX12 targets (OFF for the headless TSan-subset Linux preset)" ON)
 option(SMATCHET_BUILD_LUA_TESTS "Build SmatchetLuaTests binary (sandbox + timeout + stubs-compile drift sentinel; requires SMATCHET_WITH_LUA_AUTOMATION=ON)" OFF)
 # Slice 7 of docs/design/autonomous-debugging-no-creds.md — production-resident
 # NDJSON helper at tests/_debug/SmatchetAgentDebug.h. OFF in iter/publish
@@ -318,6 +327,11 @@ FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GI
     GIT_SUBMODULES "")
 FetchContent_MakeAvailable(json)
 
+# cpr (libcurl HTTP) is app-only — the headless TSan subset links no HTTP client.
+# Gated behind SMATCHET_BUILD_APP so the Linux runner never FetchContent-builds
+# cpr's bundled curl (heavy, and the codeload download is 504-flaky). Pure-additive:
+# ON for every existing preset, so the Windows test rig still gets cpr.
+if(SMATCHET_BUILD_APP)
 smatchet_fetch_status("Fetching cpr (C++ Requests)...")
 smatchet_prepare_cpr()
 # Pinned to the exact commit the 1.9.2 tag resolves to (reproducible builds /
@@ -343,6 +357,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     file(WRITE "${cpr_SOURCE_DIR}/CMakeLists.txt" "${_cpr_cml}")
 endif()
 add_subdirectory("${cpr_SOURCE_DIR}" "${cpr_BINARY_DIR}" EXCLUDE_FROM_ALL)
+endif() # SMATCHET_BUILD_APP — cpr/curl (app-only HTTP)
 
 smatchet_fetch_status("Fetching SQLiteCpp...")
 smatchet_prepare_sqlitecpp()
@@ -441,6 +456,18 @@ if(EXISTS "${_ghc_filesystem_cmakelists}")
 endif()
 
 add_subdirectory("${ghc_filesystem_SOURCE_DIR}" "${ghc_filesystem_BINARY_DIR}" EXCLUDE_FROM_ALL)
+
+# ============================================================================
+# GUI / APPLICATION SURFACE (SMATCHET_BUILD_APP) — everything from GLFW down to
+# the SmatchetStandalone exe and the DX12/Unreal targets. The portable Core
+# FetchContent deps above (json, cpr, SQLiteCpp, cpp-httplib, md4c,
+# ghc::filesystem) are declared BEFORE this guard so the headless TSan-subset
+# Linux build (SMATCHET_BUILD_APP=OFF) still links the threading subset without
+# fetching/building GLFW, Dear ImGui, Lua, sol2, whisper.cpp, or any app target.
+# Default ON — no behavioural change for any existing preset. See the option
+# declaration above + agents/build-doctor.md (hardening #10 / Slice-5 TSan).
+# ============================================================================
+if(SMATCHET_BUILD_APP)
 
 smatchet_fetch_status("Fetching GLFW...")
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -1704,6 +1731,8 @@ if(SMATCHET_AGENT_DEBUG)
     target_compile_definitions(SmatchetStandalone PRIVATE SMATCHET_AGENT_DEBUG=1)
     target_include_directories(SmatchetStandalone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/_debug")
 endif()
+
+endif() # SMATCHET_BUILD_APP — GUI/app surface (GLFW/ImGui/Lua/whisper/Standalone/DX12)
 
 # Pure-logic doctest rig for Source/Core helpers. Opt-in via SMATCHET_BUILD_TESTS.
 # Standalone + DX12 default builds never link test code. See tests/CMakeLists.txt

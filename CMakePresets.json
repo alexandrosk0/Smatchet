@@ -281,6 +281,41 @@
                 "SMATCHET_AGENT_DEBUG": "OFF",
                 "SMATCHET_BUILD_AGENT_DEBUG_TESTS": "OFF"
             }
+        },
+        {
+            "name": "_smatchet-clang-linux-base",
+            "hidden": true,
+            "description": "Shared Linux Clang defaults (native clang++/clang + Ninja). Distinct from _smatchet-clang-base, which uses clang-cl for the Windows MSVC ABI. Install via: apt-get install -y clang lld.",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "SMATCHET_WARNINGS_AS_ERRORS": "ON"
+            }
+        },
+        {
+            "name": "ninja-tsan-linux",
+            "inherits": [
+                "_smatchet-clang-linux-base"
+            ],
+            "displayName": "Ninja TSan Subset (Linux Clang)",
+            "description": "Headless Linux Clang ThreadSanitizer build over the curated, ImGui-free threading subset (SmatchetTsanTests). SMATCHET_BUILD_APP=OFF skips GLFW/ImGui/Lua/whisper/Standalone/DX12 so no X11/OpenGL -dev packages are needed. Nightly + workflow_dispatch only (advisory; not on the develop merge-gate). See .github/workflows/tsan-linux-nightly.yml.",
+            "binaryDir": "${sourceDir}/build/ninja-tsan-linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "tsan",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_BUILD_APP": "OFF",
+                "SMATCHET_WITH_LUA_AUTOMATION": "OFF",
+                "SMATCHET_WITH_MCP": "OFF",
+                "SMATCHET_WITH_AI": "OFF",
+                "SMATCHET_WITH_WHISPER": "OFF",
+                "SMATCHET_WHISPER_LOCAL_BACKEND": "OFF",
+                "SMATCHET_BUILD_LUA_TESTS": "OFF",
+                "SMATCHET_AGENT_DEBUG": "OFF",
+                "SMATCHET_BUILD_AGENT_DEBUG_TESTS": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -397,6 +432,14 @@
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-tsan-linux",
+            "configurePreset": "ninja-tsan-linux",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetTsanTests"
             ]
         }
     ]

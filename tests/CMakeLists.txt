@@ -10,6 +10,74 @@ FetchContent_Declare(doctest
     GIT_TAG ae7a13539fb71f270b87eb2e874fbac80bc8dda2)  # doctest v2.4.11
 FetchContent_MakeAvailable(doctest)
 
+# ============================================================================
+# Curated ThreadSanitizer subset (hardening #10 + multi-grid Slice-5 TSan).
+#
+# When the headless Linux Clang TSan preset (ninja-tsan-linux) is active, build
+# ONLY SmatchetTsanTests over the portable, ImGui-FREE threading subset and skip
+# the full SmatchetTests rig entirely (it links ImGuiLib → GLFW/X11/OpenGL, which
+# we deliberately do not configure on the Linux runner — see SMATCHET_BUILD_APP in
+# the root CMakeLists). Gated on UNIX so a Windows tsan misconfig can never reach
+# here (MSVC no-ops TSan in cmake/Sanitizers.cmake anyway).
+#
+# Scope rationale: this subset is the genuinely-decoupled threading surface —
+# each TU below pulls NO ImGui header. The GridLiveContext / TicketSyncService /
+# OfflineQueueService sync layer is intentionally DEFERRED: TicketSyncService.cpp
+# calls SmatchetToastManager::Push and SmatchetToast.h #includes <imgui.h>, so
+# that path is ImGui-header-coupled and cannot link without ImGuiLib (i.e. without
+# GLFW/X11 on the runner). Expanding to it requires decoupling Toast from the sync
+# layer (filed as debt) or building ImGuiLib on Linux — out of scope for this
+# pure-additive infra PR. See docs/plans/active/build-quality-velocity-hardening.md
+# § Verification (#10).
+#
+# smatchet_apply_sanitizers() (cmake/Sanitizers.cmake, included at root) appends
+# -fsanitize=thread -fno-omit-frame-pointer (compile) + -fsanitize=thread (link)
+# PRIVATE to this target under a non-MSVC compiler.
+# ============================================================================
+if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
+    add_executable(SmatchetTsanTests
+        test_main.cpp
+        # --- Pure-logic units (no threads) — prove the subset compiles + links
+        #     under -fsanitize=thread end-to-end on the runner (pipeline de-risk).
+        Core/TrackerLabelsPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
+        Core/TrackerDateTimePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
+        #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
+        #     LocalCacheManager.cpp + IssueDraft.cpp + Logger.cpp (header deps only).
+        Core/LocalCacheManager.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+    )
+    target_include_directories(SmatchetTsanTests PRIVATE
+        _helpers
+        "${CMAKE_SOURCE_DIR}/Source/Core/include"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
+        "${CMAKE_SOURCE_DIR}/tests/support"
+    )
+    target_compile_definitions(SmatchetTsanTests PRIVATE
+        "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
+    target_link_libraries(SmatchetTsanTests PRIVATE
+        doctest::doctest
+        nlohmann_json::nlohmann_json
+        SQLiteCpp
+        ghc_filesystem
+    )
+    target_compile_features(SmatchetTsanTests PRIVATE cxx_std_14)
+    smatchet_apply_sanitizers(SmatchetTsanTests)
+    add_test(NAME smatchet_tsan_tests COMMAND SmatchetTsanTests)
+    # Skip the full SmatchetTests rig below (ImGuiLib-linked).
+    return()
+endif()
+
 # Per-unit linkage: each test target lists the specific Core/*.cpp files
 # it exercises. No production target links test code. Refactor to a SmatchetCore
 # static lib only if per-test link lists grow unwieldy.
