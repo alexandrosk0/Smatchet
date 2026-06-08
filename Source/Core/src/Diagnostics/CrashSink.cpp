@@ -160,6 +160,30 @@ void CrashSinkBreadcrumb(const char* activity) {
     std::fclose(f);
 }
 
+void CrashSinkAppendBreadcrumbLine(const char* prefix, const char* text) noexcept {
+    // Crash-path append (#987): the set_terminate handler records the active
+    // exception's what() here BEFORE the minidump — the terminate path writes
+    // dumps with NO exception stream, so this is the only record of WHICH
+    // exception killed us. Plain fopen/fwrite: no heap, no locks, no logger
+    // (LOG_* is unavailable / unsafe mid-crash); appends so the last normal
+    // activity breadcrumb is kept above it.
+    if (g_breadcrumbPath[0] == '\0') {
+        return;
+    }
+    std::FILE* f = std::fopen(g_breadcrumbPath, "ab");
+    if (f == nullptr) {
+        return;
+    }
+    std::fwrite("\n", 1, 1, f);
+    if (prefix != nullptr) {
+        std::fwrite(prefix, 1, std::strlen(prefix), f);
+    }
+    if (text != nullptr) {
+        std::fwrite(text, 1, std::strlen(text), f);
+    }
+    std::fclose(f);
+}
+
 void CrashSinkWriteMarkerAsyncSafe(const char* reason) noexcept {
     if (g_markerPath[0] == '\0') {
         return;

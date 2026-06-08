@@ -154,8 +154,19 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     // view gets activated (review HIGH-2 / MEDIUM-3 — without it, focusSwitched
     // stayed false and the steady-state sync rebound the survivor to the CLOSED
     // pane's still-active view, then persisted the loss).
-    const bool windowFocusMoved =
-        !d.paneWindowFocusedThisFrame.empty() && d.paneWindowFocusedThisFrame != d.focusedPaneId;
+    // Debounce focus switches across two consecutive frames. With two split panes
+    // visible at once on different backends, adopting the focused pane rewrites the
+    // session-global cfg.TrackerType (+ Save + ViewState reload + the
+    // lastViewsBackendKey session reset); that global churn perturbs which split
+    // window holds ImGui nav focus, flipping the report to the sibling next frame and
+    // re-triggering adoption — an infinite cross-backend ping-pong (PR #986). Requiring
+    // the same pane to report focus on two frames in a row drops single-frame nav
+    // bounces while a genuine click (focus held for many frames) still switches with
+    // only one frame of latency.
+    const std::string focusReport = d.paneWindowFocusedThisFrame;
+    const bool rawFocusMoved = !focusReport.empty() && focusReport != d.focusedPaneId;
+    const bool windowFocusMoved = rawFocusMoved && focusReport == d.lastPaneFocusReport;
+    d.lastPaneFocusReport = focusReport;
     const bool focusSwitched = windowFocusMoved || d.gridPaneFocusReassigned;
     d.gridPaneFocusReassigned = false; // consume-once
     if (windowFocusMoved) {
@@ -226,23 +237,61 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
 void SmatchetUI::syncFocusedPaneWithActiveView(AppController& app, UiDrawSession& d, GridPane& pane,
                                                bool focusSwitched) {
     if (focusSwitched) {
+        // Slice-3 follow-up: every VISIBLE pane already owns a live GridLiveContext whose
+        // own sync ran (EnsurePaneContextLive / EnsurePaneLiveSyncStarted). When that holds,
+        // a focus switch only ADOPTS the pane's view + backend identity — kicking another
+        // SyncWithBackend would re-fetch data the pane's context already published (the
+        // user-visible "updating" flash on every cross-pane click). A pane whose context is
+        // NOT yet sync-live (cold start / restored-from-disk before its first draw) keeps
+        // the full sync path.
+        const bool paneSyncLive = app.IsPaneSyncLive(pane.id);
         const std::string cfgKey = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-        if (!pane.backendKey.empty() && pane.backendKey != cfgKey) {
-            // SLICE-2 BOUNDARY: one live GridLiveContext. Re-point the config at the
-            // pane's backend; the SESSION-level lastViewsBackendKey delta (consumed
-            // in drawViewStateAndConnectivity — review HIGH-4) resets catalog +
-            // initial sync next frame, and the sync path performs the actual swap.
+        const bool crossBackend = !pane.backendKey.empty() && pane.backendKey != cfgKey;
+        if (crossBackend) {
+            // Re-point the config at the pane's backend; the SESSION-level
+            // lastViewsBackendKey delta (consumed in drawViewStateAndConnectivity —
+            // review HIGH-4) resets catalog + initial sync next frame, and the sync
+            // path performs the actual swap.
             d.cfg.TrackerType = pane.backendKey;
             ConfigManager::Save(d.cfg);
             ViewState.EnsureLoaded(d.cfg);
             LOG_INFO("GridPaneWindows: focused pane '%s' re-pointed backend to '%s'", pane.id.c_str(),
                      pane.backendKey.c_str());
         }
+        // JQL-drift guard (review MEDIUM-2 + the HIGH-1 provenance rule): "the pane's
+        // data is already fresh" only holds when its context actually fetched with the
+        // view's CURRENT saved JQL. A drift (view edited after the context synced, or a
+        // failed first sync whose session-end hook cleared the recorded JQL) re-kicks.
+        // Looked up AFTER EnsureLoaded so the store holds the pane's backend bucket.
+        std::string adoptedViewJql;
+        const ViewsStore& store = ViewState.GetStore();
+        for (size_t i = 0; i < store.Views.size(); ++i) {
+            if (store.Views[i].Id == pane.viewId) {
+                adoptedViewJql = store.Views[i].Jql;
+                break;
+            }
+        }
+        const bool provenanceTrusted = paneSyncLive && app.GetPaneLastSyncedJql(pane.id) == adoptedViewJql;
+        if (crossBackend && provenanceTrusted) {
+            // The session reset must still run (catalog refetch targets this pane's
+            // context), but its downstream initial SyncWithBackend kick would
+            // double-sync a context that already fetched with this exact JQL —
+            // suppress that one kick, bound to this pane's backend key (review LOW).
+            d.suppressNextBackendSwitchInitialSync = true;
+            d.suppressNextBackendSwitchInitialSyncKey = pane.backendKey;
+        }
         const ViewDefinition* active = ViewState.GetActiveView();
         if (!pane.viewId.empty() && (active == nullptr || active->Id != pane.viewId)) {
-            // Views::Activate(pane.viewId) + JQL/fields adoption + SyncWithCurrentView
-            // (which routes through SwapBackendIfTrackerChanged) — the existing path.
-            viewsActivateView(app, d, pane.viewId);
+            // Views::Activate(pane.viewId) + JQL/fields adoption; SyncWithCurrentView
+            // (which routes through SwapBackendIfTrackerChanged) only when the pane's
+            // context data provenance can't be trusted.
+            viewsActivateView(app, d, pane.viewId, /*kickSync=*/!provenanceTrusted);
+            if (!provenanceTrusted) {
+                // Stamp the kick so the NEXT focus switch onto this pane sees a matching
+                // JQL and adopts without another re-fetch (the deps session-end hook
+                // clears the stamp again if this kick fails).
+                app.RecordPaneSyncKick(pane.id, adoptedViewJql);
+            }
         }
     }
 

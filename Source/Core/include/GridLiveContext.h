@@ -104,7 +104,17 @@ struct GridLiveContext {
     /// One-shot latch for AppController::EnsurePaneLiveSyncStarted (UI thread only):
     /// a non-focused visible pane's first sync is kicked exactly once per context
     /// generation (a retired-then-reshown pane gets a fresh context → fresh kick).
+    /// Re-armed (set back to false) by GridContextDepsAdapter::OnStreamingSyncSessionFinished
+    /// when the session ends with a fetch error, so the next focus switch / visibility kick
+    /// retries instead of suppressing the re-sync forever (review MEDIUM-1).
     bool initialSyncKicked = false;
+    /// JQL the most-recent kicked sync for this context used (UI thread only — written by
+    /// the EnsurePaneLiveSyncStarted main-thread post and AppController::RecordPaneSyncKick,
+    /// cleared by the session-end deps hook on fetch error; same single-thread discipline
+    /// as initialSyncKicked). Compared against the adopted view's saved JQL on a pane focus
+    /// switch: a drift (view edited after the context synced) re-kicks the sync instead of
+    /// rendering stale rows (review MEDIUM-2).
+    std::string lastSyncedJql;
 
   private:
     /// Guarded by backendKeyMutex_ — see CacheBackendKeyCopy/SetCacheBackendKey above.

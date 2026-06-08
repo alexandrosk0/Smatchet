@@ -111,6 +111,25 @@ bool PaneViewSelfRepairAllowed(const std::string& paneBackendKey, const std::str
     return paneBackendKey.empty() || paneBackendKey == cfgBackendKey;
 }
 
+PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const std::string& resolvedViewId,
+                                          const std::string& activeViewId, bool cachedColumnsValid,
+                                          const std::string& cachedColumnsViewId) {
+    // Strict ownership: resolvePaneView may hand back the ACTIVE view as a render
+    // fallback for a cross-backend pane (its own bucket isn't loaded) — that view is
+    // only "the pane's own" when the ids match exactly (empty pane id never owns).
+    const bool viewIsPanesOwn = !paneViewId.empty() && resolvedViewId == paneViewId;
+    if (viewIsPanesOwn) {
+        return (paneViewId == activeViewId) ? PaneColumnsSource::SharedActive : PaneColumnsSource::OwnViewBuild;
+    }
+    // Unresolvable own view: keep the column set captured while it WAS resolvable.
+    // Frozen until refocus reloads the pane's bucket — only the column SET is
+    // isolated here. Per-pane catalog VALUE routing is the documented Slice-4 deferral.
+    if (cachedColumnsValid && !paneViewId.empty() && cachedColumnsViewId == paneViewId) {
+        return PaneColumnsSource::CachedFrozen;
+    }
+    return PaneColumnsSource::SharedFallback;
+}
+
 } // namespace detail
 
 } // namespace SmatchetGridPaneWindows

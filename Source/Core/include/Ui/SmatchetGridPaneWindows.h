@@ -78,6 +78,23 @@ PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& 
 /// pre-bootstrap placeholder — repair allowed (Pillar 3).
 bool PaneViewSelfRepairAllowed(const std::string& paneBackendKey, const std::string& cfgBackendKey);
 
+/// Column-set source for one pane this frame (SmatchetUI::resolvePaneColumns policy core).
+enum class PaneColumnsSource {
+    SharedActive,  ///< Pane's own view IS the active view — shared per-frame build (captured per pane on change).
+    OwnViewBuild,  ///< Own view resolved but not active — per-pane build, rebuilt on revision change only.
+    CachedFrozen,  ///< Own view unresolvable (cross-backend bucket not loaded) — keep the bind-time capture.
+    SharedFallback ///< No own view AND no capture (cold start / pre-bootstrap) — shared columns.
+};
+
+/// Pure column-source policy: only a view that IS the pane's own (strict id match —
+/// the same per-pane discipline as the sort-mirror gate) may drive the pane's column
+/// set. A fallback-resolved view (the focused backend's active view standing in for a
+/// cross-backend pane whose views bucket isn't loaded) must NEVER leak its field set
+/// into this pane — user defect: focusing pane B changed unfocused pane A's columns.
+PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const std::string& resolvedViewId,
+                                          const std::string& activeViewId, bool cachedColumnsValid,
+                                          const std::string& cachedColumnsViewId);
+
 } // namespace detail
 
 } // namespace SmatchetGridPaneWindows

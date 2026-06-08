@@ -89,8 +89,11 @@ struct TrackerConfig {
     // owner/repo/PAT path below. BugReportRelayKey is a low-value shared access
     // key (NOT a GitHub credential; rate-limited + rotatable server-side), safe
     // to bundle. See tools/bug-report-relay/.
-    std::string BugReportRelayUrl;
-    std::string BugReportRelayKey;
+    // Seeded with the project relay so a FRESH INSTALL can submit bug/crash
+    // reports with zero setup; clear the URL in Preferences (or the config) to
+    // disable relay mode and fall through to the direct owner/repo/PAT path.
+    std::string BugReportRelayUrl = SmatchetDefaults::kDefaultBugReportRelayUrl;
+    std::string BugReportRelayKey = SmatchetDefaults::kDefaultBugReportRelayKey;
     std::string BugReportGitHubOwner;   // dev-repo owner; empty disables direct submit
     std::string BugReportGitHubRepo;    // dev-repo name
     std::string BugReportGitHubBaseUrl; // empty -> falls back to GitHubBaseUrl -> api.github.com

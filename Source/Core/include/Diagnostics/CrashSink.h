@@ -36,6 +36,13 @@ void CrashSinkInit(const std::string& userDataDir, const std::string& activeLogP
 /// later crash report can say what was happening. No-op before Init.
 void CrashSinkBreadcrumb(const char* activity);
 
+/// Crash path (terminate handler). Append `prefix + text` as a new line to the
+/// breadcrumb file via plain fopen/fwrite — no heap, no locks, no logger. Used
+/// to record the active exception's what() before the minidump, since the
+/// terminate path writes dumps with no exception stream (#987). No-op before
+/// Init. Either argument may be null.
+void CrashSinkAppendBreadcrumbLine(const char* prefix, const char* text) noexcept;
+
 /// Async-signal-safe. Write the crash marker file (so the next launch knows a
 /// crash happened). `reason` MUST be a short string literal. Never allocates.
 void CrashSinkWriteMarkerAsyncSafe(const char* reason) noexcept;
