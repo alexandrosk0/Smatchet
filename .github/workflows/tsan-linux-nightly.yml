@@ -1,0 +1,123 @@
+name: TSan Linux nightly
+
+# Nightly ThreadSanitizer over a CURATED, ImGui-free threading subset on
+# ubuntu-latest (hardening #10 + multi-grid Slice-5 TSan). TSan has no Windows
+# toolchain (MSVC no-ops -fsanitize=thread; the MinGW runtime is partial), so
+# this is the project's only real data-race gate — it runs on a Linux Clang
+# build of the SmatchetTsanTests target (tests/CMakeLists.txt), which links only
+# the portable threading TUs (LocalCacheManager SQLite cache + Pure units today;
+# expansion tracked in docs/plans/active/build-quality-velocity-hardening.md).
+#
+# ADVISORY / non-required: NOT on the develop merge-gate critical path and NOT in
+# project.config.json required_contexts. The pull_request trigger (paths-scoped)
+# runs it on PRs that touch the build/sanitizer/threading surface so a race
+# regression surfaces at review time; the nightly cron is the develop backstop.
+#
+# SMATCHET_BUILD_APP=OFF (set by the ninja-tsan-linux preset) skips GLFW / Dear
+# ImGui / Lua / whisper / Standalone / DX12, so no X11 / OpenGL -dev packages are
+# needed — only clang, lld, and the TLS/zlib headers cpr's (unbuilt) curl config
+# probes at configure time.
+
+on:
+  schedule:
+    - cron: '0 5 * * *'    # 05:00 UTC daily
+  workflow_dispatch: {}     # manual trigger (gh workflow run tsan-linux-nightly.yml --ref <branch>)
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'cmake/Sanitizers.cmake'
+      - 'tests/CMakeLists.txt'
+      - 'Source/Core/src/Sync/**'
+      - 'Source/Core/src/Persistence/**'
+      - 'Source/Core/src/Config/**'
+      - 'Source/Core/src/GridLiveContext.cpp'
+      - '.github/workflows/tsan-linux-nightly.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: tsan-linux-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  tsan-linux:
+    name: TSan Linux subset (Clang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain (clang, lld, ninja, TLS/zlib headers)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld ninja-build libssl-dev zlib1g-dev libcurl4-openssl-dev
+
+      - name: Verify clang
+        run: clang++ --version
+
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            .fetchcontent-src
+          key: ${{ runner.os }}-tsan-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-tsan-fetchcontent-
+
+      - name: Configure ninja-tsan-linux
+        run: cmake --preset ninja-tsan-linux
+
+      - name: Build SmatchetTsanTests (Clang ThreadSanitizer)
+        run: cmake --build --preset ninja-tsan-linux
+
+      - name: Run TSan subset under ctest
+        working-directory: build/ninja-tsan-linux
+        env:
+          # halt_on_error=1 → first race aborts non-zero (fail the gate);
+          # second_deadlock_stack surfaces both stacks of a lock-order inversion.
+          TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1"
+        run: ctest --output-on-failure
+
+      - name: Surface TSan report in job summary
+        if: failure()
+        run: |
+          echo "## TSan Linux nightly failure (Clang ThreadSanitizer)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          log=build/ninja-tsan-linux/Testing/Temporary/LastTest.log
+          if [ -f "$log" ]; then
+            grep -A 40 -E 'WARNING: ThreadSanitizer|data race|lock-order-inversion|SUMMARY: ThreadSanitizer' "$log" \
+              | head -160 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update issue on nightly failure
+        if: ${{ failure() && github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          title="TSan Linux nightly failed (data race on develop)"
+          existing=$(gh issue list --state open --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          body="The nightly Linux Clang ThreadSanitizer subset build on \`develop\` failed.
+
+          Run: ${RUN_URL}
+
+          See the job summary for the ThreadSanitizer report. This is the only
+          real data-race gate (TSan has no Windows toolchain) — a race regression
+          has landed on develop in the curated threading subset (hardening #10)."
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true
+          else
+            gh issue create --title "$title" --body "$body" || true
+          fi
