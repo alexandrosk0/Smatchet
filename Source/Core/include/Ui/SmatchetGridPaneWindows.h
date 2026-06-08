@@ -86,6 +86,15 @@ PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const s
                                           const std::string& activeViewId, bool cachedColumnsValid,
                                           const std::string& cachedColumnsViewId);
 
+/// Cold-start upgrade decision (Slice 4): when ChoosePaneColumnsSource yields
+/// SharedFallback (no session capture — e.g. a cross-backend pane after restart), the
+/// pane context's own resolved view (published by its first-sync worker) can still build
+/// the pane's REAL column set, closing the cold-start leak. True only when the source is
+/// the fallback AND the context-published view IS the pane's own (strict id match, empty
+/// pane id never owns) — so a fallback/foreign view can never drive the build.
+bool ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource source, const std::string& paneViewId,
+                                           const std::string& ownResolvedViewId);
+
 } // namespace detail
 
 } // namespace SmatchetGridPaneWindows

@@ -97,13 +97,20 @@ PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const s
     if (viewIsPanesOwn) {
         return (paneViewId == activeViewId) ? PaneColumnsSource::SharedActive : PaneColumnsSource::OwnViewBuild;
     }
-    // Unresolvable own view: keep the column set captured while it WAS resolvable.
-    // Frozen until refocus reloads the pane's bucket — only the column SET is
-    // isolated here. Per-pane catalog VALUE routing is the documented Slice-4 deferral.
+    // Unresolvable own view: keep the column set captured while it WAS resolvable. Frozen
+    // until refocus reloads the pane's bucket. The cold-start hole (no session capture after a
+    // restart) is closed by the pane context's resolvedOwnView upgrade in
+    // SmatchetUI::resolvePaneColumns. Per-pane catalog VALUE routing stays deferred (it needs
+    // per-context catalog population first — see docs/self-improvement/categories/debt.md).
     if (cachedColumnsValid && !paneViewId.empty() && cachedColumnsViewId == paneViewId) {
         return PaneColumnsSource::CachedFrozen;
     }
     return PaneColumnsSource::SharedFallback;
+}
+
+bool ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource source, const std::string& paneViewId,
+                                           const std::string& ownResolvedViewId) {
+    return source == PaneColumnsSource::SharedFallback && !paneViewId.empty() && ownResolvedViewId == paneViewId;
 }
 
 } // namespace detail

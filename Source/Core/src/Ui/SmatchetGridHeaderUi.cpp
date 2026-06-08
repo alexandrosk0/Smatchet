@@ -166,12 +166,21 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
     // this pane's view IS the active view.
     GridPane& pane = d.pane();
     ImGui::Separator();
+    // Header view-identity text (Slice 4 fallback-leak fix): for a non-owned pane,
+    // activeViewForGrid is the FOCUSED view standing in as a render fallback (cross-backend
+    // unfocused pane whose own bucket isn't loaded). Showing its Name leaked the focused
+    // view's identity into the wrong pane's header. Strict-Id ownership (same discipline as
+    // the columns/widths/sort gates): when not the pane's own, show the pane's OWN persisted
+    // view name (pane.title) and never highlight a focused-bucket view as this pane's.
+    const bool headerViewIsPanesOwn = activeViewForGrid && activeViewForGrid->Id == pane.viewId;
+    const char* headerViewLabel = headerViewIsPanesOwn
+                                      ? activeViewForGrid->Name.c_str()
+                                      : (!pane.title.empty() ? pane.title.c_str() : "(no active view)");
     // View Dropdown Selector (replaces old plain text label)
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::BeginCombo("##ViewSelectorCombo",
-                          activeViewForGrid ? activeViewForGrid->Name.c_str() : "(no active view)")) {
+    if (ImGui::BeginCombo("##ViewSelectorCombo", headerViewLabel)) {
         for (const auto& view : viewState.GetStore().Views) {
-            const bool isSelected = activeViewForGrid && (activeViewForGrid->Id == view.Id);
+            const bool isSelected = headerViewIsPanesOwn && (activeViewForGrid->Id == view.Id);
             if (ImGui::Selectable(view.Name.c_str(), isSelected)) {
                 if (viewState.Activate(view.Id)) {
                     activeViewForGrid = viewState.GetActiveViewMutable();
