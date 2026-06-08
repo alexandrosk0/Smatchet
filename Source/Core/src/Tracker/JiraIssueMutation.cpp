@@ -272,20 +272,20 @@ TrackerError JiraClient::UpdateIssueFields(const std::string& issueId, const nlo
     return TrackerError::Ok();
 }
 
-bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
-                                      const std::string& plainText, std::string& outError) {
-    outError.clear();
+TrackerError JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                              const std::string& plainText) {
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("comment");
     BackendAuditTrail::AppendBegin("issue_add_comment", "jira_client", issueKey, auditOp,
                                    nlohmann::json{{"comment_text", plainText}});
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError);
-        return false;
+        return TrackerErrorAuth(outError);
     }
     if (issueKey.empty()) {
         outError = "Issue key is empty.";
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError);
-        return false;
+        return TrackerErrorInvalidRequest(outError);
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -306,17 +306,20 @@ bool JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::strin
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
                                         nlohmann::json{{"comment_text", plainText}});
-        return false;
+        if (response.status_code >= 200 && response.status_code < 300) {
+            return TrackerErrorUnknown(outError, response.status_code);
+        }
+        return TrackerErrorFromHttpStatus(response.status_code, outError);
     }
     BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, true, std::string(),
                                     nlohmann::json{{"comment_text", plainText}});
-    return true;
+    return TrackerError::Ok();
 }
 
-bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKey, const std::string& timeSpent,
-                            const std::string& timeRemaining, const std::string& adjustEstimate,
-                            const std::string& workDescription, const std::string& startedDate, std::string& outError) {
-    outError.clear();
+TrackerError JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKey, const std::string& timeSpent,
+                                    const std::string& timeRemaining, const std::string& adjustEstimate,
+                                    const std::string& workDescription, const std::string& startedDate) {
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("worklog");
     nlohmann::json auditData = nlohmann::json{{"time_spent", timeSpent},
                                               {"time_remaining", timeRemaining},
@@ -328,13 +331,13 @@ bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKe
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
-        return false;
+        return TrackerErrorAuth(outError);
     }
     if (issueKey.empty()) {
         outError = "Issue key is empty.";
         BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
-        return false;
+        return TrackerErrorInvalidRequest(outError);
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -368,21 +371,23 @@ bool JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string& issueKe
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
         BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
-        return false;
+        if (response.status_code >= 200 && response.status_code < 300) {
+            return TrackerErrorUnknown(outError, response.status_code);
+        }
+        return TrackerErrorFromHttpStatus(response.status_code, outError);
     }
 
     BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, true, std::string(),
                                     auditData);
-    return true;
+    return TrackerError::Ok();
 }
 
-bool JiraClient::AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const std::string& issueKey,
-                                                const std::string& p4User, const std::string& functionName,
-                                                const std::string& filePath, const int lineNumber,
-                                                const std::string& changelist, const std::string& date,
-                                                const bool approximated, const std::string& codeSnippet,
-                                                std::string& outError) {
-    outError.clear();
+TrackerError JiraClient::AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const std::string& issueKey,
+                                                        const std::string& p4User, const std::string& functionName,
+                                                        const std::string& filePath, const int lineNumber,
+                                                        const std::string& changelist, const std::string& date,
+                                                        const bool approximated, const std::string& codeSnippet) {
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("comment");
     const nlohmann::json auditData = nlohmann::json{{"comment_kind", "annotate_context"},
                                                     {"p4_user", p4User},
@@ -394,13 +399,13 @@ bool JiraClient::AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const 
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
-        return false;
+        return TrackerErrorAuth(outError);
     }
     if (issueKey.empty()) {
         outError = "Issue key is empty.";
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
-        return false;
+        return TrackerErrorInvalidRequest(outError);
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -449,11 +454,14 @@ bool JiraClient::AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const 
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
         BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
                                         auditData);
-        return false;
+        if (response.status_code >= 200 && response.status_code < 300) {
+            return TrackerErrorUnknown(outError, response.status_code);
+        }
+        return TrackerErrorFromHttpStatus(response.status_code, outError);
     }
     BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, true, std::string(),
                                     auditData);
-    return true;
+    return TrackerError::Ok();
 }
 
 Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& fields) {

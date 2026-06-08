@@ -85,21 +85,20 @@ class JiraClient : public ITrackerBackend,
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
-    /** GET /rest/api/3/issue/{issueKey}/watchers — fills display names / account ids. */
-    bool FetchIssueWatchers(const TrackerConfig& cfg, const std::string& issueKey,
-                            std::vector<TrackerUser>& outWatchers, std::string& outError) override;
+    /** GET /rest/api/3/issue/{issueKey}/watchers — Ok = watcher display names / account ids. */
+    Result<std::vector<TrackerUser>, TrackerError> FetchIssueWatchers(const TrackerConfig& cfg,
+                                                                      const std::string& issueKey) override;
 
     /** POST /rest/api/3/issue/{issueKey}/watchers — adds the authenticated user as a watcher. */
-    bool AddIssueWatcher(const TrackerConfig& cfg, const std::string& issueKey, std::string& outError) override;
+    TrackerError AddIssueWatcher(const TrackerConfig& cfg, const std::string& issueKey) override;
 
     /**
-     * GET /rest/api/3/issue/{issueKey}/votes — fills voter users when `voters` is present.
-     * On success, optional out-pointers are set from JSON (omit or null to ignore).
-     * If `voters` is missing (e.g. permissions), outVoters stays empty and *outVotersArrayInResponse is false.
+     * GET /rest/api/3/issue/{issueKey}/votes — Ok = TrackerIssueVotes (voters + count + has-voted +
+     * voters-array-present). If `voters` is missing (e.g. permissions), Voters stays empty and
+     * VotersArrayInResponse is false.
      */
-    bool FetchIssueVotes(const TrackerConfig& cfg, const std::string& issueKey, std::vector<TrackerUser>& outVoters,
-                         std::string& outError, int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
-                         bool* outVotersArrayInResponse = nullptr) override;
+    Result<TrackerIssueVotes, TrackerError> FetchIssueVotes(const TrackerConfig& cfg,
+                                                            const std::string& issueKey) override;
 
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* configOverride = nullptr,
@@ -120,29 +119,29 @@ class JiraClient : public ITrackerBackend,
                                                                        const ViewsStore& viewStore) override;
 
     /** GET /rest/api/3/user/search — for matching Perforce users to Jira accounts. */
-    bool SearchUsersByQuery(const TrackerConfig& cfg, const std::string& query, std::vector<TrackerUser>& outUsers,
-                            std::string& outError) override;
+    Result<std::vector<TrackerUser>, TrackerError> SearchUsersByQuery(const TrackerConfig& cfg,
+                                                                      const std::string& query) override;
 
     /** POST /rest/api/3/issue/{key}/comment with Atlassian Document Format body. */
-    bool AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey, const std::string& plainText,
-                              std::string& outError) override;
+    TrackerError AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                      const std::string& plainText) override;
 
-    bool AddWorklog(const TrackerConfig& cfg, const std::string& issueKey, const std::string& timeSpent,
-                    const std::string& timeRemaining, const std::string& adjustEstimate,
-                    const std::string& workDescription, const std::string& startedDate, std::string& outError) override;
+    TrackerError AddWorklog(const TrackerConfig& cfg, const std::string& issueKey, const std::string& timeSpent,
+                            const std::string& timeRemaining, const std::string& adjustEstimate,
+                            const std::string& workDescription, const std::string& startedDate) override;
 
     /** Annotate-context comment: paragraphs plus ADF `codeBlock` for the snippet. */
-    bool AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const std::string& issueKey,
-                                        const std::string& p4User, const std::string& functionName,
-                                        const std::string& filePath, int lineNumber, const std::string& changelist,
-                                        const std::string& date, bool approximated, const std::string& codeSnippet,
-                                        std::string& outError) override;
+    TrackerError AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const std::string& issueKey,
+                                                const std::string& p4User, const std::string& functionName,
+                                                const std::string& filePath, int lineNumber,
+                                                const std::string& changelist, const std::string& date,
+                                                bool approximated, const std::string& codeSnippet) override;
 
     /**
-     * Best-effort group names for a user (Cloud may return 403; then outGroupNames stays empty).
+     * Best-effort group names for a user (Cloud may return 403; then the Ok list is empty).
      */
-    bool FetchUserGroupNames(const TrackerConfig& cfg, const std::string& accountId,
-                             std::vector<std::string>& outGroupNames, std::string& outError) override;
+    Result<std::vector<std::string>, TrackerError> FetchUserGroupNames(const TrackerConfig& cfg,
+                                                                       const std::string& accountId) override;
 
     /** Move/add an issue to a sprint via Jira Agile API. */
     bool AddIssueToSprint(const TrackerConfig& cfg, const std::string& issueKey, const std::string& sprintId,
