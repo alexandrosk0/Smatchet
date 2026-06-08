@@ -27,6 +27,54 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-08 · PR #991 · `tests-out-of-band` override (moot at merge — non-load-bearing)
+
+### What escaped
+Nothing defective. #991 (log Ollama streaming transport + HTTP errors) merged
+carrying a `tests-out-of-band` label that was **moot by merge time**. The label
+was applied on commit `3ef73d64` while the diff was logging-only; a later commit
+`644b32be` then extracted the message assembly into pure helpers
+(`OllamaStreamError.{h,cpp}` — `FormatOllamaTransportError`,
+`FormatOllamaHttpError`) and added `tests/Core/OllamaStreamError.test.cpp`
+(4 `TEST_CASE`s / redaction-aware), so on the merged head the **Test-delta gate
+passes on its own "production + test files both changed" branch** —
+`coverage-delta-gate.sh:447`. The override was no longer load-bearing, but the
+label was never removed, so `postmortem-owed.sh` flagged a *resolved* override as
+an escape.
+
+### Root cause
+Blameless — two gate holes, neither an agent/person:
+1. **Stale-override hygiene.** An override applied mid-PR (when the diff genuinely
+   tripped the gate) was not removed after a follow-up commit resolved the gate
+   *in kind* (added the test). No step in the ship-loop prompts dropping a
+   now-moot `*-out-of-band` label before merge.
+2. **`postmortem-owed.sh` keys on label _presence_, not load-bearing-ness.** A
+   resolved/moot override reads identically to one that actually dismissed a RED
+   required check. So the detector raises a phantom "owed" nudge — the same
+   false-positive class as the 2026-05-23 revert-prose detector bug (which matched
+   commit *bodies* and flagged feature PRs that merely mentioned "revert").
+
+### Preventing gate
+Teach `postmortem-owed.sh` to **suppress an `*-out-of-band` flag when the override
+was not load-bearing** — i.e. the named check is terminal-`SUCCESS` on the merge
+head AND (for `tests-out-of-band`) the PR's diff carries a test delta
+(`tests/**/*.test.cpp` add/modify), meaning the gate would have passed without the
+label. Only a load-bearing override (the named check would be RED without the
+label) owes a postmortem. Mirrors the 2026-05-23 subject-match tightening that
+stopped phantom revert nudges. Filed to tooling. **Defensive sibling** (also
+filed, the latent hole that would have forced a *real* override had `644b32be`
+not added the test): teach `coverage-delta-gate.sh` to join multi-line `LOG_*`
+continuations before the per-line classifier — a logging-only `LOG_` call wrapped
+across lines (forced by `.clang-format` ColumnLimit 120, leaving an
+identifier-bearing tail like `r.error.message.c_str());`) is currently classified
+as real runtime surface and trips the gate, even though the whole statement is a
+single no-new-runtime-surface log call.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` 2026-06-08 — two entries:
+`postmortem-owed-moot-override-false-positive` (P2) +
+`coverage-gate-multiline-log-join` (P3).
+
 ## 2026-06-08 · PR #995 (fix); escaped via an earlier merge · `test-shell-lint.sh` SIGPIPE-aborted (exit 141), blocking the required Shell-lint check on ALL open PRs
 
 ### What escaped
