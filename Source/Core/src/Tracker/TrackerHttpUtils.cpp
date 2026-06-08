@@ -128,8 +128,13 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                long connectTimeoutMs, long overallTimeoutMs) {
     cpr::Redirect redirect(true, true);
-    cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{connectTimeoutMs},
-                                      cpr::Timeout{overallTimeoutMs});
+    // cpr's ConnectTimeout/Timeout take std::int32_t. These params are `long`, which is
+    // 64-bit on LP64 (Linux/Android), so a braced-init {long} narrows — ill-formed under
+    // clang (hard error, not a warning). It compiles on Windows only because LLP64 `long`
+    // is 32-bit. Cast explicitly; HTTP timeouts in ms always fit int32 (<= ~24.8 days).
+    cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect,
+                                      cpr::ConnectTimeout{static_cast<std::int32_t>(connectTimeoutMs)},
+                                      cpr::Timeout{static_cast<std::int32_t>(overallTimeoutMs)});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
     LogTrackerHttpResult(clientName, "GET", url, response);

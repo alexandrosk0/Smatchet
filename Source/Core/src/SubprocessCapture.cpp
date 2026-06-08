@@ -472,7 +472,12 @@ void PosixChildExec(const CaptureOptions& opts, int* pipeOutFds, int* pipeErrFds
             if (!eq) {
                 break;
             }
-            std::string name(environ[0], eq);
+            // environ[0] is char*, eq is const char* — the two-iterator
+            // std::string(first, last) ctor needs matching pointer types, which
+            // Bionic's libc++ rejects (host glibc takes the clearenv() #if side and
+            // never compiles this #else, so the mismatch only surfaces on Android).
+            // The (ptr, length) ctor is unambiguous on every stdlib.
+            std::string name(environ[0], static_cast<size_t>(eq - environ[0]));
             unsetenv(name.c_str());
         }
 #endif

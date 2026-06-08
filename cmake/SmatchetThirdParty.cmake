@@ -44,6 +44,31 @@ function(smatchet_prepare_cpr)
     if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         set(HAVE_IOCTLSOCKET_FIONBIO 1 CACHE INTERNAL "curl: ioctlsocket FIONBIO (GCC14+ / clang-cl probe fix)" FORCE)
     endif()
+    # Android: cpr 1.9.2 (cpr-src/CMakeLists.txt) FATAL_ERRORs at configure time if
+    # no SSL backend is selected, because cpr::Response/Header/Error are PUBLIC types
+    # the whole tree depends on. On Windows cpr auto-selects WinSSL; on Android there
+    # is no system TLS the bundled curl can find, so we force the OpenSSL backend and
+    # rely on a per-ABI prebuilt OpenSSL provisioned by the caller (CI / preset) via
+    # OPENSSL_ROOT_DIR + explicit OPENSSL_{SSL,CRYPTO}_LIBRARY / OPENSSL_INCLUDE_DIR.
+    #
+    # CMAKE_FIND_ROOT_PATH_MODE_* default to ONLY under android.toolchain.cmake, which
+    # re-roots every find_package() probe into the NDK sysroot and hides an OpenSSL
+    # installed outside it. Both find_package(OpenSSL) calls (cpr's, then bundled
+    # curl's) must succeed, so widen the modes to BOTH for this configure. The actual
+    # absolute paths stay caller-supplied (runtime-dependent: $RUNNER_TEMP in CI) — do
+    # not hardcode them here. This is the Slice 1 TLS-backend spike deliverable.
+    #
+    # This block is the SINGLE authoritative home for these TLS-backend cache vars: it
+    # runs before add_subdirectory(cpr) and FORCE-wins over any pre-seed, so it applies
+    # to a raw `cmake -DANDROID=...` invocation too — they are deliberately NOT mirrored
+    # in the android-ndk-arm64 preset (that copy was removed to keep this DRY).
+    if(ANDROID)
+        set(CPR_FORCE_OPENSSL_BACKEND ON CACHE BOOL "Android: force cpr OpenSSL backend (no system TLS)" FORCE)
+        set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "Android: link the prebuilt static OpenSSL" FORCE)
+        set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
+        set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
+        set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
+    endif()
     # Smatchet uses libcurl for HTTPS transport but does not need zlib-backed
     # transfer decoding in the standalone runtime.
     set(CURL_ZLIB OFF CACHE BOOL "Disable optional curl zlib support" FORCE)
