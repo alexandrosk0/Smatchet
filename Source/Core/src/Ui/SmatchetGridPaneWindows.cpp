@@ -154,8 +154,19 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     // view gets activated (review HIGH-2 / MEDIUM-3 — without it, focusSwitched
     // stayed false and the steady-state sync rebound the survivor to the CLOSED
     // pane's still-active view, then persisted the loss).
-    const bool windowFocusMoved =
-        !d.paneWindowFocusedThisFrame.empty() && d.paneWindowFocusedThisFrame != d.focusedPaneId;
+    // Debounce focus switches across two consecutive frames. With two split panes
+    // visible at once on different backends, adopting the focused pane rewrites the
+    // session-global cfg.TrackerType (+ Save + ViewState reload + the
+    // lastViewsBackendKey session reset); that global churn perturbs which split
+    // window holds ImGui nav focus, flipping the report to the sibling next frame and
+    // re-triggering adoption — an infinite cross-backend ping-pong (PR #986). Requiring
+    // the same pane to report focus on two frames in a row drops single-frame nav
+    // bounces while a genuine click (focus held for many frames) still switches with
+    // only one frame of latency.
+    const std::string focusReport = d.paneWindowFocusedThisFrame;
+    const bool rawFocusMoved = !focusReport.empty() && focusReport != d.focusedPaneId;
+    const bool windowFocusMoved = rawFocusMoved && focusReport == d.lastPaneFocusReport;
+    d.lastPaneFocusReport = focusReport;
     const bool focusSwitched = windowFocusMoved || d.gridPaneFocusReassigned;
     d.gridPaneFocusReassigned = false; // consume-once
     if (windowFocusMoved) {

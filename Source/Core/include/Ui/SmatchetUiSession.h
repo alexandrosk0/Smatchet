@@ -496,6 +496,15 @@ struct UiDrawSession {
     /// Written inside the pane window's Begin/End scope, consumed by the host loop
     /// to detect focus switches (drives the Slice-2 focused-pane live-context swap).
     std::string paneWindowFocusedThisFrame;
+    /// Previous frame's `paneWindowFocusedThisFrame`. A focus switch is only committed
+    /// once the SAME pane has reported focus on two consecutive frames (PR #986
+    /// ping-pong guard): adopting a focused pane rewrites the session-global
+    /// cfg.TrackerType, and with two simultaneously-visible split panes on different
+    /// backends that global churn perturbs ImGui nav focus, flipping the report to the
+    /// sibling next frame — an infinite re-adopt loop. A genuine click holds focus for
+    /// many frames (commits with 1-frame latency); a 1-frame nav bounce never reaches
+    /// the two-frame threshold, so the rewrite never fires and focus settles.
+    std::string lastPaneFocusReport;
     /// Transient (one frame): the "+" button in a pane window requests a new pane
     /// duplicating this source pane. Applied by the host AFTER the pane loop so the
     /// gridPanes vector never mutates mid-iteration.
