@@ -60,9 +60,16 @@ class SideBySide2GridScenario : public IScenario {
             secondBackendKey = leftover->backendKey;
             addedPane_ = true; // reclaim ownership → RemoveSyntheticPane erases it on finish
         } else if (g_ui.gridPanes.size() >= 2) {
-            const GridPane& existing = g_ui.gridPanes[1];
-            secondPaneId = existing.id;
-            secondBackendKey = existing.backendKey;
+            // The base pane is the FOCUSED one, which is not necessarily index 0 — pick the
+            // first pane that is not the base so the two grids are genuinely distinct (review
+            // CR-1013: a hardcoded index 1 could re-select the focused base pane).
+            for (size_t i = 0; i < g_ui.gridPanes.size(); ++i) {
+                if (g_ui.gridPanes[i].id != basePaneId) {
+                    secondPaneId = g_ui.gridPanes[i].id;
+                    secondBackendKey = g_ui.gridPanes[i].backendKey;
+                    break;
+                }
+            }
         } else {
             GridPane second;
             second.id = kPerfSecondPaneId;
