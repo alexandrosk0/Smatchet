@@ -22,8 +22,8 @@ Usage: bash agents/scripts/core/setup-harness.sh <harness>
 Harnesses:
   claude-code   Generate .claude/ with junctions/symlinks into agents/ +
                 copies of settings.json, CLAUDE.md, lint hooks.
-  codex         Verify AGENTS.md + agents/{core,project}/*.md and install
-                repo-owned git hooks. No .codex adapter mirror is created.
+  codex         Generate .codex/ config/hooks/custom agents from tracked
+                templates + verify AGENTS.md and repo-owned git hooks.
   cursor        Generate .cursor/rules/agents.mdc.
   pi            Generate .pi/agents/*.md (pi-native, from agents/{core,project}/)
                 + install the subagent extension into .pi/extensions/ with
@@ -64,6 +64,18 @@ git_cmd() {
     git.exe "$@"
     return $?
   fi
+  return 1
+}
+
+find_python() {
+  local cand path
+  for cand in python3 python py; do
+    path="$(command -v "$cand" 2>/dev/null)" || continue
+    if "$path" -c "" >/dev/null 2>&1; then
+      echo "$path"
+      return 0
+    fi
+  done
   return 1
 }
 
@@ -364,9 +376,20 @@ setup_pi() {
 
 setup_codex() {
   echo "Setting up Codex / OpenAI Agents repo-owned wiring ..."
-  echo "Codex reads AGENTS.md + agents/{core,project}/*.md directly per the"
-  echo "agents.md spec; no .codex adapter mirror is created."
+  echo "Codex reads AGENTS.md natively; setup adds gitignored .codex/"
+  echo "config/hooks/custom-agent files generated from tracked templates."
   echo
+  copy_template "docs/harness/codex/config.toml.tmpl" ".codex/config.toml"
+  copy_template "docs/harness/codex/hooks.json.tmpl" ".codex/hooks.json"
+
+  local py
+  if py="$(find_python)"; then
+    "$py" agents/scripts/core/gen-codex-agents.py "$ROOT" "$ROOT/.codex/agents"
+  else
+    echo "  FAIL python not found - needed to generate .codex/agents/*.toml" >&2
+    exit 1
+  fi
+
   echo "Verify:"
   if [[ -f "AGENTS.md" ]]; then
     echo "  OK  AGENTS.md present at repo root"
@@ -385,6 +408,15 @@ setup_codex() {
   fi
   echo "  OK  agents/{core,project}/*.md = $count files ($core_count core, $project_count project)"
 
+  local codex_agent_count
+  codex_agent_count="$(find .codex/agents -maxdepth 1 -name '*.toml' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$codex_agent_count" -eq "$count" ]]; then
+    echo "  OK  .codex/agents/*.toml = $codex_agent_count generated custom agent(s)"
+  else
+    echo "  FAIL .codex/agents/*.toml = $codex_agent_count generated custom agent(s), expected $count"
+    exit 1
+  fi
+
   duplicate_basenames="$(
     find agents/core agents/project -maxdepth 1 -name '*.md' -exec basename {} \; 2>/dev/null \
       | sort | uniq -d
@@ -399,18 +431,27 @@ setup_codex() {
   leaf_count="$(git_cmd ls-files 'Source/Core/src/*/AGENTS.md' 2>/dev/null | wc -l | tr -d ' ' || true)"
   echo "  OK  Codex native nearest-AGENTS leaf rules = $leaf_count file(s)"
 
+  if [[ -f ".codex/config.toml" && -f ".codex/hooks.json" ]]; then
+    echo "  OK  Codex-native hooks/config installed under .codex/ (trust locally before use)"
+  else
+    echo "  FAIL .codex/config.toml or .codex/hooks.json missing"
+    exit 1
+  fi
+
   install_git_hooks
 
   cat <<'EOF'
 
 Codex parity report:
   OK   Agent/rule discovery is native: AGENTS.md + agents/{core,project}/*.md.
+  OK   Project specialist agents are generated as .codex/agents/*.toml.
+  OK   Safe SessionStart/Stop command hooks are installed in .codex/hooks.json.
   OK   Stable repo hooks are wired through scripts/git-hooks when core.hooksPath allows it.
-  NOTE Claude Code hook events are runtime-owned, not repo-owned:
-       SessionStart, PreToolUse, PostToolUse, Stop, and SubagentStop hooks do
-       not run in Codex unless a future Codex runtime exposes equivalent events.
-       Use docs/harness/codex/hooks-equivalent.md for the manual/git-hook
-       equivalents that this repo can enforce today.
+  NOTE Payload-dependent Claude Code hooks remain intentionally unwired in Codex:
+       PreToolUse edit/HEAD guards, PostToolUse edit lint, Bash PR
+       autoregistration, and SubagentStop token telemetry need Codex payload
+       validation before they can block safely. See
+       docs/harness/codex/hooks-equivalent.md.
 EOF
 }
 

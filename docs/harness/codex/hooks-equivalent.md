@@ -1,9 +1,9 @@
 # Codex Hook Equivalents
 
-Codex does not currently expose a stable project hook surface equivalent to
-Claude Code's `.claude/settings.json` events. The project therefore uses repo-owned
-git hooks plus explicit commands for the checks that can be enforced outside the
-agent runtime.
+Codex supports project-local hooks through `.codex/hooks.json` or inline
+`[hooks]` tables in `.codex/config.toml` after the project `.codex/` layer is
+trusted. The project uses `hooks.json` so the hook wiring is easy to diff, review,
+and regenerate.
 
 ## Install
 
@@ -13,11 +13,17 @@ Run:
 bash agents/scripts/core/setup-harness.sh codex
 ```
 
-This sets `core.hooksPath=scripts/git-hooks` when the local config is unset,
+This creates:
+
+- `.codex/config.toml` - enables lifecycle hooks for this trusted project layer.
+- `.codex/hooks.json` - safe SessionStart/Stop command hooks.
+- `.codex/agents/*.toml` - generated Codex custom agents from canonical markdown prompts.
+
+It also sets `core.hooksPath=scripts/git-hooks` when the local config is unset,
 still points at the default `.git/hooks`, or already points there. It does not
 overwrite a custom hook path.
 
-Manual opt-in:
+Manual git-hook opt-in:
 
 ```bash
 git config --local core.hooksPath scripts/git-hooks
@@ -31,15 +37,16 @@ git config --local --unset core.hooksPath
 
 ## Coverage Matrix
 
-| Claude Code surface | Codex repo-owned equivalent | Status |
+| Claude Code surface | Codex equivalent | Status |
 |---|---|---|
-| `SessionStart` scratchpad reset / nudges | Run the referenced scripts manually when needed (`memory-drain-nudge.sh`, `postmortem-owed.sh`, `plan-archival-owed.sh`, etc.) | Manual |
+| `SessionStart` scratchpad reset / nudges | `.codex/hooks.json` runs memory drain, postmortem owed, due follow-up, and plan archival nudges | Codex-native after trust |
 | `PreToolUse` raw-search vexp guard | Use semantic search when available; otherwise follow `AGENTS.md` text-search fallback | Manual |
 | `PreToolUse` HEAD/shared-tree guards | Prefer Codex worktrees under `.codex/worktrees/`; run `git status --short --branch` before edits/commits | Manual |
 | `PostToolUse` edit lint | `scripts/git-hooks/pre-commit` runs staged-file Pillar 2 scan; run lint scripts manually for broader checks | Partial |
 | `PostToolUse` Bash PR autoregistration | Merge-watcher registration remains manual unless an external watcher is running | Manual |
-| `SubagentStop` token telemetry | Wire `agents/_shared/token-tracking/agent-token-log.py` only if Codex exposes a future hook | Not automatic |
-| `Stop` deferred lint / pre-ship gate | Run `bash scripts/dev/pre-ship.sh` and targeted build/test commands before push | Manual |
+| `SubagentStop` token telemetry | Wire `agents/_shared/token-tracking/agent-token-log.py` only after Codex payload compatibility is verified | Not automatic |
+| `Stop` deferred lint / pre-ship gate | `.codex/hooks.json` runs the committed-diff pre-ship gate when the branch is clean and ahead of `origin/develop` | Codex-native after trust |
+| `Stop` wrong-worktree warning | `.codex/hooks.json` runs `check-main-repo-clean.sh` | Codex-native after trust |
 | Git push safety | `scripts/git-hooks/pre-push` blocks pushes to merged/closed PR branches when `gh` can resolve the PR | Enforced |
 
 ## Pre-Commit: Pillar 2 Static Scanner
@@ -85,9 +92,10 @@ by `docs/agent-rules/build.md` and the active plan.
 PR workflows still run the canonical gates. The local hooks exist to catch cheap
 failures before push; they do not replace CI or merge-gate polling.
 
-## Why Not Copy Claude Hooks Into `.codex/`
+## Why Not Copy Every Claude Hook Into Codex
 
-Claude Code hook templates rely on event names and payload shapes that Codex
-does not guarantee. Copying them would create an attractive no-op. The Codex
-adapter keeps the stable contract small: native `AGENTS.md` discovery plus
-git-enforced repo checks.
+Claude Code hook templates use Claude event names, environment variables, and
+payload shapes. Codex now has hook events, but payload-dependent blockers still
+need Codex-specific validation before they can safely deny a tool call or mutate
+session state. The Codex adapter wires stable repo-root command hooks now and
+keeps the risky payload-dependent hooks documented as gaps.

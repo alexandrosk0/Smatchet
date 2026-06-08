@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/memory-drain-nudge.sh\"'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/memory-drain-nudge.sh\"'",
+            "statusMessage": "Checking memory drain nudge",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/postmortem-owed.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/postmortem-owed.sh\" --nudge'",
+            "statusMessage": "Checking owed gate-escape postmortems",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/followup-due-nudge.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/followup-due-nudge.sh\" --nudge'",
+            "statusMessage": "Checking due follow-ups",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/plan-archival-owed.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/plan-archival-owed.sh\" --nudge'",
+            "statusMessage": "Checking shipped active plans",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/docs/harness/codex/hooks/pre-ship-stop-gate.sh\"'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/docs/harness/codex/hooks/pre-ship-stop-gate.sh\"'",
+            "statusMessage": "Checking committed diff before ship",
+            "timeout": 120
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/check-main-repo-clean.sh\"'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/check-main-repo-clean.sh\"'",
+            "statusMessage": "Checking main repo cleanliness",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+
