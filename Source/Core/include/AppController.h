@@ -5,16 +5,21 @@
 #include <limits>
 #include <cstdint>
 
-// 2. Lua / sol2 (optional build — see SMATCHET_WITH_LUA_AUTOMATION in CMake)
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-#define SOL_ALL_SAFETIES_ON 1
-#include <sol/sol.hpp>
-#include "ILuaBindingHost.h"
-#endif
-// 2b. Lua recorder + replay value types (extracted from this header — see § A5
-//     of docs/plans/shipped/large-files-and-phase-2.md). Self-guarded by the same
-//     SMATCHET_WITH_LUA_AUTOMATION macro.
-#include "AppController_LuaTypes.h"
+// 2. Lua / sol2 fully lifted off this header (hardening #19c). AppController.h includes
+//    ZERO sol2: the sol-typed binding methods + the recorder/replay value types + the
+//    McpToolDefinition type all live on AppController::Impl (src-only AppControllerImpl.h)
+//    behind the ILuaBindingHost interface. The ~100 Ui/Commands includers no longer
+//    transitively compile <sol/sol.hpp>. Only forward declarations are needed here.
+class ILuaBindingHost;
+namespace smatchet {
+namespace lua {
+struct ImCmd;
+struct LuaFieldCacheEntry;
+struct LuaWindowEntry;
+struct PendingLuaWindowOp;
+struct McpToolDefinition;
+} // namespace lua
+} // namespace smatchet
 
 #include <chrono>
 #include <condition_variable>
@@ -117,11 +122,7 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    : public ILuaBindingHost
-#endif
-{
+class AppController {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -137,11 +138,18 @@ class AppController
     /// Creates the default (kDefaultPaneId) GridLiveContext so `focusedContext()` is valid
     /// from construction onward (multi-grid Slice 1, ADR-0018).
     AppController();
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    ~AppController() override;
-#else
     ~AppController();
-#endif
+
+    /// Sol-free accessor to the Lua binding host (AppController::Impl implements ILuaBindingHost).
+    /// Returns nullptr in the no-Lua build. Pointer return keeps sol2 out of this header — see
+    /// hardening #19c. McpPlugin reads tool metadata through `GetLuaBindingHost()->GetLuaMcpTools()`.
+    ILuaBindingHost* GetLuaBindingHost();
+
+    // pImpl forward-decl made PUBLIC (#19c): the lifted Lua-binding glue free functions in
+    // AppController_LuaBindings.cpp resolve `__smatchet_app_ui` to `AppController::Impl*`, so the
+    // *name* must be reachable from outside the class. The full definition stays src-only
+    // (AppControllerImpl.h); `impl_` itself remains a private member below.
+    struct Impl;
 
     struct FieldEditResult {
         bool Ok = false;
@@ -325,7 +333,8 @@ class AppController
     /// `mainThreadDispatcher` while in-flight callbacks drain.
     AiAssistantController& GetAiAssistantController();
     /// Phase B safety probe — false during early init before the controller is wired.
-    bool HasAiAssistantController() const { return aiAssistant_ != nullptr; }
+    /// Out-of-line (pImpl #19b): `aiAssistant_` now lives in the src-only AppController::Impl.
+    bool HasAiAssistantController() const;
 #endif
 
     /// Always-on no-op stubs (gated only on the implementation side via SMATCHET_WITH_AI).
@@ -393,21 +402,10 @@ class AppController
                                           std::string& outError,
                                           std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
 
+    /// Opens the libraries + registers the binding surface on the member `lua` state.
+    /// InitLuaCore / InitLuaUi / PrepareFreshLuaState / ReplayActiveSetupScripts moved onto
+    /// AppController::Impl (hardening #19c) — they are sol-typed and no longer visible here.
     void InitLua();
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    void InitLuaCore(sol::state& state);
-    void InitLuaUi(sol::state& state);
-    /// Build a fresh per-call sol::state for off-UI-thread (MCP / automation
-    /// worker) Lua execution: InitLuaCore + the `__smatchet_app_ui` alias. The
-    /// returned state shares no lua_State with the UI-thread `lua` member, which
-    /// is the whole point — running two threads through one lua_State is UB.
-    /// See docs/plans/shipped/mcp-lua-fresh-state-race.md.
-    void PrepareFreshLuaState(sol::state& state);
-    /// Replay the registered setup scripts (`activeSetupScripts_`) onto `state`
-    /// under `sandbox` so global helpers / actions / mcp.register_tool definitions
-    /// are present. Snapshots `activeSetupScripts_` under `automationJobMutex_`.
-    void ReplayActiveSetupScripts(sol::state& state, sol::environment& sandbox);
-#endif
 
     std::string ResolveLuaScriptPath(const std::string& filename) const;
     /** Basenames of `*.lua` files in the configured scripts directory (non-recursive). */
@@ -448,55 +446,16 @@ class AppController
                                   std::string& outPathOrUrl) const;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    /**
-     * Lua InitLua uses one functor struct per binding (see AppController_LuaBindings.cpp) so sol2/GCC never
-     * merges unrelated lambdas or member-wrappers that share the same demangled metatable name.
-     */
-    void LuaLogInfoBind(const std::string& msg) override;
-    std::tuple<sol::object, std::string> LuaGetTicketBind(sol::state_view sv, const std::string& issueId) override;
-    std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) override;
-    /// Recorded-command-list cell renderer: Lua provider returns a static draw recording that
-    /// the C++ side replays every frame until one of the cache-key inputs changes. See
-    /// docs/plans/shipped/lua-recorded-cmd-list.md.
-    void LuaRegisterFieldDisplayCachedBind(const std::string& fieldId, sol::function fn);
-    void LuaUnregisterFieldDisplayCachedBind(const std::string& fieldId);
-    void LuaRegisterFieldDisplayCachedByNameBind(const std::string& displayName, sol::function fn);
-    void LuaUnregisterFieldDisplayCachedByNameBind(const std::string& displayName);
-    void LuaRegisterFieldIconMapBind(const std::string& fieldKey, sol::table map, sol::optional<bool> byName);
-    void LuaUnregisterFieldIconMapBind(const std::string& fieldKey, sol::optional<bool> byName);
-    void LuaImGuiTextBind(const std::string& s);
-    void LuaImGuiTextUnformattedBind(const std::string& s);
-    bool LuaImGuiImageBind(const std::string& path, float w, float h);
-    /// Window register / unregister: thread-safe via mainThreadDispatcher when off the UI
-    /// thread, mid-iteration-safe via pendingLuaWindowOps_ when re-entered from a callback.
-    void LuaUiRegisterWindowBind(const std::string& name, sol::function drawFn);
-    void LuaUiUnregisterWindowBind(const std::string& name);
-    void LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName);
-    void LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName);
-    void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) override;
-    std::vector<CachedTicket> LuaGetActiveTicketsBind() override;
-    /** Live create or offline queue from a Lua spec table; see LUA_GUIDE.md. */
-    std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::state_view sv, sol::table spec) override;
+    // NOTE (hardening #19c): every sol-typed Lua binding method (LuaGetTicketBind /
+    // LuaDecodeJsonBind / LuaCreateIssueBind / LuaMcpRegisterToolBind / the UI binds /
+    // ParseMcpToolDef / GetLuaMcpTools / ResolveLuaFieldProvider / Init* / the automation
+    // quartet) moved onto AppController::Impl (AppControllerImpl.h) behind ILuaBindingHost.
+    // Only the sol-FREE Lua API stays on AppController; the Impl forwards to these via app_.
+
+    /** Active-ticket snapshot for `smatchet.get_active_tickets` (sol-free; Impl forwards here). */
+    std::vector<CachedTicket> LuaGetActiveTicketsBind();
     void ClearLuaTicketContextGlue();
 
-    // --- ILuaBindingHost forwarders (interface required for the lifted InitLuaCore
-    // glue functions in AppController_LuaBindingsCore.cpp). ---
-    smatchet::cmd::CommandRegistry& LuaCommands() override { return Commands(); }
-    AppController* AppForCommandContext() override { return this; }
-
-    struct McpToolDefinition {
-        std::string name;
-        std::string description;
-        nlohmann::json parametersSchema;
-        sol::protected_function callback;
-    };
-    /// Parse a Lua `mcp.register_tool` definition table into the name / description /
-    /// parametersSchema fields of `out` (does NOT set `callback`). Shared by
-    /// LuaMcpRegisterToolBind and the per-call register_tool override that
-    /// ExecuteLuaMcpTool installs on its fresh state.
-    static void ParseMcpToolDef(const sol::table& toolDef, McpToolDefinition& out);
-    /** Thread-safe snapshot (e.g. MCP server thread vs Lua registration on the app thread). */
-    std::vector<McpToolDefinition> GetLuaMcpTools() const;
     std::string ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson, std::string& outError);
     std::string ExecuteLuaSnippetForMcp(const std::string& code, const nlohmann::json& args, std::string& outError);
     std::string ExecuteLuaScriptForMcp(const std::string& scriptName, const nlohmann::json& args,
@@ -506,10 +465,6 @@ class AppController
     /// DrawLuaWindows helper — (re-)record one Lua window's draw fn into its cached cmd-list,
     /// updating the cache generations and error state. Runs only on a dirty / gen-mismatch frame.
     void RecordLuaWindow(smatchet::lua::LuaWindowEntry& w, std::uint64_t curDataGen, std::uint64_t curProviderGen);
-
-    /// TryRenderCachedLuaField helper — resolve the cell provider by field id, else by lowercased
-    /// display name. Returns nullptr when no valid provider is registered for the field.
-    sol::protected_function* ResolveLuaFieldProvider(const std::string& fieldId, const TrackerField* fieldMeta);
 
     /// TryRenderCachedLuaField helper — surface a Lua cell-provider error to the persistent
     /// errors panel, scrolling log, and auto-open the Scripting window.
@@ -575,13 +530,8 @@ class AppController
     /// fuzzed). No-op stub in the no-Lua build.
     void ScenarioInvalidateLuaFieldCache();
 
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    /// Drop entries from luaFieldCache_. No-arg = drop all; (ticketId) = drop one ticket's
-    /// entries; (ticketId, fieldId) = drop a single cell. Off-UI hops the dispatcher.
-    /// Lua-only because the sol::optional<std::string> overload threads through sol2.
-    void LuaUiInvalidateFieldCacheBind(sol::optional<std::string> ticketId, sol::optional<std::string> fieldId);
-
-#endif
+    // LuaUiInvalidateFieldCacheBind(sol::optional<std::string>, sol::optional<std::string>) moved
+    // onto AppController::Impl (#19c) — its sol::optional signature can't be declared here.
 
     /**
      * Sync issues from the tracker into the local cache.
@@ -858,11 +808,7 @@ class AppController
     void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive = false);
     bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        override
-#endif
-        ;
+    const TrackerField* FindFieldById(const std::string& fieldId) const;
 
     /** Component options valid for one Jira project key (e.g. "PROJ"), warmed async for cross-project
      *  grid views. Returns a by-value copy taken under availableFieldsMutex_; empty when the project
@@ -902,11 +848,7 @@ class AppController
                               const std::string* issueTypeKeyOverride = nullptr) const;
 
     bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                         const std::vector<std::string>& rawValues, std::string& outError)
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        override
-#endif
-        ;
+                         const std::vector<std::string>& rawValues, std::string& outError);
     /// SubmitFieldEditNetworkOnly helper — push the built payload, retrying once after a 400 with
     /// a refreshed editmeta + edit-permission re-check. Returns true on a successful update.
     bool ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId, const TrackerField& field,
@@ -1119,11 +1061,7 @@ class AppController
     /// frees the least-recently-visible one. Resolved from cfg.HiddenPaneResidentCap at
     /// InitConfig (0/negative → default 4). Visible + focused panes are exempt.
     std::size_t hiddenPaneResidentCap_ = 4;
-    /// Owns the Lua sandbox + automation worker + Lua bindings. Phase 1A of the item 14
-    /// extraction only routes log-sink methods through it; later phases migrate the Lua
-    /// state and worker thread. Constructed eagerly in `Initialize` to keep the
-    /// `Add*LogSink` calls from `OnEarlyInit` working.
-    std::unique_ptr<LuaAutomationHost> luaHost_;
+    // `luaHost_` (unique_ptr<LuaAutomationHost>) moved into AppController::Impl (pImpl #19b).
     /// Unified Command System registry — owns the catalog of named commands and dispatches them to
     /// CLI / MCP / Lua / Palette callers. Constructed eagerly in `Initialize` after the tracker
     /// backend so handlers can capture `*this` and safely call AppController methods.
@@ -1167,75 +1105,34 @@ class AppController
     OpenFilePathsHandler OpenFilePathsHandlerCallback;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    // Recorder + replay value types live in `AppController_LuaTypes.h` so this header
-    // stays under ~900 LOC. The `using` aliases below preserve the existing
-    // `AppController::ImCmd` / `LuaFieldCacheEntry` / `LuaWindowEntry` / `PendingLuaWindowOp`
-    // qualified names every call site uses (notably the anonymous-namespace `LuaDrawList`
-    // class in AppController_LuaBindings.cpp). Members holding these types stay `private`
-    // further down. See docs/plans/shipped/large-files-and-phase-2.md § A5 and
-    // docs/plans/shipped/lua-recorded-cmd-list.md.
+    // Recorder + replay value types live in `AppController_LuaTypes.h`; the `AppController::`
+    // `using` aliases were removed in hardening #19c (they aliased sol-backed types and forced
+    // sol2 into this header). Call sites now use the canonical `smatchet::lua::*` names, and the
+    // alias shorthands live on AppController::Impl. ApplyOrQueueLuaWindowOp takes the value type
+    // by a forward-declared name (complete only in the binding TUs).
   public:
-    using ImCmd = smatchet::lua::ImCmd;
-    using LuaFieldCacheEntry = smatchet::lua::LuaFieldCacheEntry;
-    using LuaWindowEntry = smatchet::lua::LuaWindowEntry;
-    using PendingLuaWindowOp = smatchet::lua::PendingLuaWindowOp;
-
     /// UI-thread helper: applies a window register / unregister / invalidate op immediately
     /// when DrawLuaWindows is not iterating, otherwise enqueues onto pendingLuaWindowOps_
     /// for in-frame drain. Off-thread callers must hop the dispatcher BEFORE this.
-    void ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op);
+    void ApplyOrQueueLuaWindowOp(smatchet::lua::PendingLuaWindowOp op);
 
   private:
-    // Member-order invariant: `sol::state lua` MUST be declared BEFORE every container that
-    // stores `sol::protected_function`. C++ destroys members in reverse declaration order, so
-    // the containers below tear down first (their Lua-handle members touch a still-alive
-    // state), then `lua` last. Inverting this order is a UAF — see plan §Shutdown ordering.
-    // Threading invariant: `lua` is driven EXCLUSIVELY by the UI thread (DrawLuaWindows,
-    // cell-providers, ExecuteLuaConsoleSnippet). Off-UI-thread Lua execution (MCP run_lua /
-    // registered-tool handlers on httplib workers, the automation worker) MUST run on a fresh
-    // per-call sol::state via PrepareFreshLuaState — never `lua`. Two threads through one
-    // lua_State is UB. See docs/plans/shipped/mcp-lua-fresh-state-race.md.
-    sol::state lua;
-    std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProviders_;
-    /** Lowercased Jira field display name (from catalog) -> handler. */
-    std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProvidersByName_;
-    /// Per-cell cmd-list cache. Key = `ticket.id + '\0' + fieldId`. UI-thread only.
-    std::unordered_map<std::string, LuaFieldCacheEntry> luaFieldCache_;
+    // pImpl (hardening #19, step 19b): the sol-typed STORAGE for this Lua block (`sol::state lua`
+    // + the three `sol::protected_function` maps + the field-cache / window / mcp-tool / action /
+    // icon-map containers + their mutexes) moved into `struct AppController::Impl` (defined in
+    // AppControllerImpl.h, included only by the AppController*.cpp TUs). The member-order /
+    // shutdown-destruction invariant (`sol::state lua` declared FIRST so it tears down LAST,
+    // after the protected_function containers) is preserved verbatim inside Impl. Only these
+    // NON-sol-typed generation/iteration scalars stay here (hot, read per-cell; no sol2 needed):
     /// Bumped on provider (un)register. Init to 1 so cached entries with `providerGen=0`
     /// always miss on first compare.
     std::atomic<std::uint64_t> luaProviderGen_{1};
     /// Bumped by NotifyLuaTicketDataChanged; cells use per-entry comparison instead.
     std::atomic<std::uint64_t> luaWindowDataGen_{1};
-    std::vector<LuaWindowEntry> luaWindows_;
-    std::vector<PendingLuaWindowOp> pendingLuaWindowOps_;
-    /// Snapshot of user-side providers displaced by a scenario register call. Keyed by
-    /// fieldId; the value is the *prior* provider (may be empty if the field had none).
-    /// `ScenarioUnregisterLuaCachedProvider` restores from this map so a scenario run never
-    /// silently destroys a user-side provider for the session.
-    std::unordered_map<std::string, sol::protected_function> scenarioPriorFieldProviders_;
-    /// Set membership tracks fields whose prior was *empty* (no provider) — distinguishes
-    /// "had nothing, restore to nothing" from "field absent in scenario map → leave alone".
-    std::unordered_set<std::string> scenarioPriorEmptyFields_;
     /// True while inside DrawLuaWindows iteration. Callbacks fired during replay route
     /// register/unregister/invalidate ops into pendingLuaWindowOps_ instead of mutating
     /// luaWindows_ directly. Plain bool — UI-thread-only.
     bool inDrawLuaWindows_ = false;
-    std::vector<McpToolDefinition> luaMcpTools_;
-    mutable std::mutex luaMcpToolsMutex_;
-    /// Guards `luaTicketActions_` and `luaGlobalActions_`. Both vectors are mutated from
-    /// the worker thread when `AutomationWorkerLoop` re-executes setup scripts (e.g.
-    /// `SmatchetHooks.lua`) which call `ui.register_ticket_action` / `ui.register_global_action`
-    /// — these resolve `__smatchet_app_ui` on the worker `bgState` and call
-    /// `LuaUiRegister{Ticket,Global}ActionBind` on the worker thread. Meanwhile UI thread reads
-    /// them every frame via `Get{Ticket,Global}ActionNames()` (LuaConsolePlugin). Without this
-    /// lock the std::vector erase/push_back reallocates concurrently with std::transform — UB,
-    /// crash. Mirrors the `luaMcpToolsMutex_` pattern for the same shape on `luaMcpTools_`.
-    mutable std::mutex luaActionsMutex_;
-    std::vector<std::pair<std::string, std::string>> luaTicketActions_;
-    std::vector<std::pair<std::string, std::string>> luaGlobalActions_;
-    mutable std::mutex fieldIconMapsMutex_;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByFieldId_;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByDisplayName_;
 
 #endif
 
@@ -1384,22 +1281,19 @@ class AppController
     PluginHost* runtimePluginHost_ = nullptr;
 
 #if defined(SMATCHET_WITH_MCP)
-    static constexpr size_t kMcpActivityLogMax = 100;
-    mutable std::mutex mcpActivityMutex_;
-    std::deque<std::string> mcpActivityLog_;
+    // `kMcpActivityLogMax` + `mcpActivityMutex_` + `mcpActivityLog_` moved into
+    // AppController::Impl (pImpl #19b). The HTTP-traffic tracking atomics below stay (hot,
+    // lock-free, read on the UI thread; not part of the activity-log storage).
     /** `steady_clock` epoch offset in nanoseconds; 0 means no client HTTP activity yet. */
     std::atomic<std::uint64_t> mcpLastClientHttpActivityNs_{0};
     std::atomic<std::uint64_t> mcpHttpTrafficEpoch_{0};
 #endif
 
 #if defined(SMATCHET_WITH_AI)
-    // Smatchet Assistant — Phase B. Held in a unique_ptr so the header can forward-declare
-    // `AiAssistantController` and avoid pulling in AiTypes.h + AiClientFactory transitively.
-    // Lifetime contract: constructed at the end of `Initialize` (after ConfigManager::Load
-    // has settled the Ai* config fields); destroyed at the *top* of `~AppController` BEFORE
-    // mainThreadDispatcher.BeginShutdown() fires, so any in-flight worker callback can
-    // still post to the dispatcher during its shutdown drain.
-    std::unique_ptr<AiAssistantController> aiAssistant_;
+    // Smatchet Assistant — Phase B. `aiAssistant_` (unique_ptr<AiAssistantController>) moved into
+    // AppController::Impl (pImpl #19b). Lifetime contract unchanged: constructed at the end of
+    // `Initialize`; destroyed at the *top* of `~AppController` (impl_->aiAssistant_.reset())
+    // BEFORE mainThreadDispatcher.BeginShutdown() fires.
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
@@ -1414,28 +1308,13 @@ class AppController
         // no silent no-op). See RunAutomationAutoScript and Issue #824.
         bool processAll = false;
     };
-    mutable std::mutex automationJobMutex_;
-    std::condition_variable automationJobCv_;
-    std::deque<AutomationJob> automationJobs_;
-    // Lifetime contract (see ~AppController and AutomationWorkerLoop):
-    //   - The worker reads `this` indirectly via each iteration's `bgState["__smatchet_app"] = this`.
-    //   - `bgState` is a stack-local per iteration; it never escapes the iteration's try-block.
-    //   - `~AppController` flips `automationWorkerShuttingDown_` and `automationWorker_.join()` BEFORE
-    //     any AppController member is destroyed. The join therefore provides both the
-    //     happens-before barrier and the guarantee that no live `bgState` (and no `__smatchet_app`
-    //     pointer reachable from worker code) survives into member destruction.
-    std::thread automationWorker_;
-    std::atomic<bool> automationWorkerShuttingDown_{false};
-    void AutomationWorkerLoop();
-    void RunAutomationJob(sol::state& state, sol::environment& env, const AutomationJob& job);
-    // RunAutomationJob branch bodies, split out to keep the dispatcher under the size cap.
-    // Each takes the job's error reporter so log routing stays identical across branch types.
-    using AutomationErrorSink = std::function<void(const char*, const std::string&)>;
-    void RunAutomationAutoScript(sol::state& state, const AutomationJob& job, const AutomationErrorSink& logErr);
-    void RunAutomationFlatScript(sol::state& state, const AutomationJob& job, const AutomationErrorSink& logErr);
-    void RunAutomationActionCall(sol::environment& env, const AutomationJob& job, bool passTargetId,
-                                 const AutomationErrorSink& logErr);
-    std::vector<std::string> activeSetupScripts_;
+    // The automation queue + worker member STORAGE (automationJobMutex_ / automationJobCv_ /
+    // automationJobs_ / automationWorker_ / automationWorkerShuttingDown_ / activeSetupScripts_)
+    // moved into AppController::Impl (pImpl #19b), AND the sol-typed worker methods themselves
+    // (AutomationWorkerLoop / RunAutomationJob / RunAutomation{AutoScript,FlatScript,ActionCall})
+    // moved onto Impl in #19c — they take sol::state& / sol::environment& and cannot be declared
+    // here without sol2. `AutomationJob` (sol-free POD) stays on AppController so the queue
+    // storage in Impl + the RunAutoScript / RunFlatScriptAsync enqueuers reference one type.
 #endif
 
   private:
@@ -1458,6 +1337,18 @@ class AppController
     /// spawned), and never mutated afterwards. Reads are race-free under the "publish once,
     /// read many" pattern.
     std::thread::id uiThreadId_{};
+
+    // pImpl (hardening #19) — the COLD, sol2-/subsystem-heavy state lives in
+    // `struct Impl` (defined in the src-only header AppControllerImpl.h, included
+    // by the AppController*.cpp TUs where its full member types, including sol2,
+    // are visible). Lifting it out of this header is what lets AppController.h
+    // stop including <sol/sol.hpp> (step 19c), so the ~100 header includers no
+    // longer pull sol2 into their compile. Hot, per-frame members stay inline
+    // above (zero perf delta). MUST be declared LAST: it is constructed last and
+    // destroyed first, and its ctor/dtor are out-of-line in AppController.cpp
+    // where Impl is a complete type (incomplete-type unique_ptr discipline).
+    // (`struct Impl;` forward-declared publicly near the top — see GetLuaBindingHost.)
+    std::unique_ptr<Impl> impl_;
 };
 
 #endif

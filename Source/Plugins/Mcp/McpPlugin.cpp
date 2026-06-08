@@ -11,6 +11,9 @@
 #endif
 
 #include "AppController.h"
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+#include "ILuaBindingHost.h" // GetLuaBindingHost()->GetLuaMcpTools() — sol2-free MCP tool snapshot (#19c)
+#endif
 #include "ConfigManager.h"
 #include "Commands/Command.h"
 #include "McpJsonRpcPure.h"
@@ -402,7 +405,7 @@ void McpPlugin::RegisterToolsListRoute() {
             return nlohmann::json{{"name", c.Name}, {"description", c.Summary}, {"inputSchema", c.BuildJsonSchema()}};
         });
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-        const auto luaTools = impl_->app->GetLuaMcpTools();
+        const auto luaTools = impl_->app->GetLuaBindingHost()->GetLuaMcpTools();
         if (impl_->allow_lua_execution) {
             j.push_back(BuildRunLuaToolEntry());
         }
@@ -505,7 +508,7 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
             // trying ExecuteLuaMcpTool. If it's not a Lua MCP tool either, fall back to
             // the registry for a structured unknown-command response with fuzzy suggestions.
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            const auto luaTools = impl_->app->GetLuaMcpTools();
+            const auto luaTools = impl_->app->GetLuaBindingHost()->GetLuaMcpTools();
             const bool isLuaMcpTool =
                 std::any_of(luaTools.begin(), luaTools.end(), [&name](const auto& lt) { return lt.name == name; });
             if (isLuaMcpTool) {
@@ -791,7 +794,7 @@ void McpPlugin::RegisterJsonRpcRoutes() {
                 if (impl_->allow_lua_execution) {
                     toolList.push_back(BuildRunLuaToolEntry());
                 }
-                const auto tools = impl_->app->GetLuaMcpTools();
+                const auto tools = impl_->app->GetLuaBindingHost()->GetLuaMcpTools();
                 std::transform(tools.begin(), tools.end(), std::back_inserter(toolList), [](const auto& t) {
                     return nlohmann::json{
                         {"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}};

@@ -18,6 +18,8 @@
 #include <tuple>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "CachedTicketTypes.h" // POD: no SQLite, no HTTP, no ImGui
 #include "Commands/CommandRegistry.h"
 #include "TrackerFieldSchema.h" // TrackerField — POD
@@ -25,6 +27,24 @@
 // Forward-declared in Commands/Command.h. Re-declared here so callers of
 // `AppForCommandContext()` don't need to chase the include chain.
 class AppController;
+
+namespace smatchet {
+namespace lua {
+
+/// Definition of a Lua-registered MCP tool. Relocated here from `AppController`
+/// (hardening #19c) so the MCP plugin + ILuaBindingHost surface can read tool
+/// metadata (name / description / parametersSchema) without pulling sol2 into
+/// AppController.h. `callback` is the sol::protected_function bound to the
+/// registering state; McpPlugin reads only the first three fields.
+struct McpToolDefinition {
+    std::string name;
+    std::string description;
+    nlohmann::json parametersSchema;
+    sol::protected_function callback;
+};
+
+} // namespace lua
+} // namespace smatchet
 
 /**
  * Pure-virtual host interface that the lifted `InitLuaCore` glue functions resolve
@@ -77,6 +97,10 @@ class ILuaBindingHost {
 
     // --- MCP tool registration ---
     virtual void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) = 0;
+
+    // --- MCP tool snapshot (read by McpPlugin via AppController::GetLuaBindingHost) ---
+    /** Thread-safe snapshot (e.g. MCP server thread vs Lua registration on the app thread). */
+    virtual std::vector<smatchet::lua::McpToolDefinition> GetLuaMcpTools() const = 0;
 
     // --- Command registry pass-through (commands.invoke) ---
     virtual smatchet::cmd::CommandRegistry& LuaCommands() = 0;

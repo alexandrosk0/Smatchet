@@ -9,7 +9,10 @@
 
 #pragma once
 
-#include "AppController.h" // AppController::ImCmd, sol2, lua headers
+// AppControllerImpl.h pulls AppController.h + ILuaBindingHost.h (sol2) + AppController_LuaTypes.h
+// (smatchet::lua::ImCmd etc.). After hardening #19c, sol2 + the recorder value types no longer
+// live on AppController.h, so include the Impl header to get the full Lua surface.
+#include "AppControllerImpl.h"
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <stdexcept>
@@ -103,13 +106,13 @@ class LuaDrawList {
     void OnDeactivatedAfterEdit(sol::protected_function fn);
 
     void Deactivate() { active_ = false; }
-    std::vector<AppController::ImCmd> Take() { return std::move(cmds_); }
+    std::vector<smatchet::lua::ImCmd> Take() { return std::move(cmds_); }
 
   private:
     void RequireActive(const char* method) const;
-    AppController::ImCmd* LastInteractive();
+    smatchet::lua::ImCmd* LastInteractive();
 
-    std::vector<AppController::ImCmd> cmds_;
+    std::vector<smatchet::lua::ImCmd> cmds_;
     int interactiveIndex_ = 0;
     bool active_ = true;
 };
