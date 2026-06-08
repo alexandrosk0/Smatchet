@@ -278,6 +278,7 @@ const FieldDesc<int> kIntFields[] = {
     {"window_w", &TrackerConfig::WindowWidth},
     {"window_h", &TrackerConfig::WindowHeight},
     {"field_catalog_cache_max_projects", &TrackerConfig::FieldCatalogCacheMaxProjects},
+    {"hidden_pane_resident_cap", &TrackerConfig::HiddenPaneResidentCap},
     {"mcp_port", &TrackerConfig::McpPort},
     {"date_compact_relative_threshold_days", &TrackerConfig::DateCompactRelativeThresholdDays},
     {"import_max_concurrent", &TrackerConfig::ImportMaxConcurrent},

@@ -1098,7 +1098,27 @@ class AppController
     /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
     /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
     void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);
+    /// TickAllContexts phase 3 — hidden-pane LRU memory cap (multi-grid Slice 5a, plan item 21):
+    /// when more than hiddenPaneResidentCap_ HIDDEN contexts still hold an in-memory ticket
+    /// snapshot, drop the least-recently-visible idle one's ActiveTickets (rows survive in
+    /// tickets_v2 — re-showing re-seeds losslessly via EnsurePaneLiveSyncStarted). Visible /
+    /// focused / busy-sync contexts are never evicted. `now` distinguishes visible-this-frame
+    /// (lastVisibleAt fresh) from hidden.
+    void evictHiddenPanesOverCap_();
     std::size_t tickRotation_ = 0;
+    /// Monotonic source for GridLiveContext::lastVisibleOrder (UI thread only). Bumped in
+    /// EnsurePaneContextLive each frame a pane is visible so the LRU eviction order is the
+    /// reverse visibility order.
+    std::uint64_t paneVisibilityClock_ = 0;
+    /// Per-FRAME counter (bumped once at the top of TickAllContexts, UI thread). A pane stamps
+    /// GridLiveContext::lastVisibleFrame with it when drawn; the hidden-pane cap treats a pane
+    /// as visible when its stamp is within one frame of this — FPS-independent, unlike the
+    /// wall-clock lastVisibleAt window (which misclassifies a visible pane as hidden at low FPS).
+    std::uint64_t paneFrameClock_ = 0;
+    /// Max HIDDEN contexts that may retain an in-memory ticket snapshot before the LRU cap
+    /// frees the least-recently-visible one. Resolved from cfg.HiddenPaneResidentCap at
+    /// InitConfig (0/negative → default 4). Visible + focused panes are exempt.
+    std::size_t hiddenPaneResidentCap_ = 4;
     /// Owns the Lua sandbox + automation worker + Lua bindings. Phase 1A of the item 14
     /// extraction only routes log-sink methods through it; later phases migrate the Lua
     /// state and worker thread. Constructed eagerly in `Initialize` to keep the
