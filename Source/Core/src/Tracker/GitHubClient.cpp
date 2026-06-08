@@ -494,8 +494,8 @@ std::string GitHubClient::ResolveDisplayValue(const std::string& fieldId, const 
     return value;
 }
 
-std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
-    outError.clear();
+Result<std::string, TrackerError> GitHubClient::CreateIssue(const nlohmann::json& fields) {
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-create");
     BackendAuditTrail::AppendBegin("issue_create", "github_client", std::string(), auditOp,
                                    nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
@@ -506,12 +506,12 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
     if (auth.Pat.empty()) {
         outError = kPatMissingError;
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorAuth(outError));
     }
     if (!fields.is_object() || !fields.contains("__target")) {
         outError = "GitHubClient::CreateIssue: payload missing __target (call BuildCreatePayload first)";
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(outError));
     }
 
     // Extract + strip the out-of-band target before POSTing the body.
@@ -523,7 +523,7 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
     if (owner.empty() || repo.empty()) {
         outError = "GitHubClient::CreateIssue: __target missing owner/repo";
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(outError));
     }
 
     const std::string url = auth.BaseUrl + "/repos/" + owner + "/" + repo + "/issues";
@@ -533,7 +533,13 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
         outError = smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
         LOG_ERROR("GitHubClient::CreateIssue: HTTP %ld — %s", resp.status_code, outError.c_str());
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        // 2xx-but-not-200/201 reaches this failure branch; guard before FromHttpStatus (FIX-1 / Slice-2).
+        if (resp.status_code >= 200 && resp.status_code < 300) {
+            return Result<std::string, TrackerError>::Err(
+                TrackerErrorUnknown(outError, static_cast<int>(resp.status_code)));
+        }
+        return Result<std::string, TrackerError>::Err(
+            TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), outError));
     }
 
     try {
@@ -543,17 +549,17 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
             outError = "GitHubClient::CreateIssue: response missing issue 'number'";
             LOG_ERROR("GitHubClient::CreateIssue: %s", outError.c_str());
             BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-            return "";
+            return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
         }
         const std::string key = smatchet::github::FormatGitHubIssueKey(owner, repo, number);
         LOG_INFO("GitHubClient: created GitHub issue %s.", key.c_str());
         BackendAuditTrail::AppendResult("issue_create", "github_client", key, auditOp, true, std::string());
-        return key;
+        return Result<std::string, TrackerError>::Ok(key);
     } catch (const std::exception& ex) {
         outError = std::string("GitHubClient::CreateIssue: failed to parse response: ") + ex.what();
         LOG_ERROR("GitHubClient::CreateIssue: %s", outError.c_str());
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
     }
 }
 

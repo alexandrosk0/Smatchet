@@ -456,8 +456,8 @@ bool JiraClient::AddIssueCommentAnnotateContext(const TrackerConfig& cfg, const 
     return true;
 }
 
-std::string JiraClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
-    outError.clear();
+Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& fields) {
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-create");
     BackendAuditTrail::AppendBegin("issue_create", "jira_client", std::string(), auditOp,
                                    nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
@@ -465,13 +465,13 @@ std::string JiraClient::CreateIssue(const nlohmann::json& fields, std::string& o
     TrackerConfig cfg = ConfigManager::Load();
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_create", "jira_client", std::string(), auditOp, false, outError);
-        return {};
+        return Result<std::string, TrackerError>::Err(TrackerErrorAuth(outError));
     }
     if (!fields.is_object() || fields.empty()) {
         outError = "Create issue payload is empty.";
         LOG_WARN("JiraClient: %s", outError.c_str());
         BackendAuditTrail::AppendResult("issue_create", "jira_client", std::string(), auditOp, false, outError);
-        return {};
+        return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(outError));
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -493,7 +493,12 @@ std::string JiraClient::CreateIssue(const nlohmann::json& fields, std::string& o
         BackendAuditTrail::AppendResult(
             "issue_create", "jira_client", std::string(), auditOp, false, outError,
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
-        return {};
+        // 2xx-but-not-200/201 (e.g. 202/204) reaches this failure branch; guard before FromHttpStatus
+        // (which maps 2xx → Ok() and drops the detail — plan FIX-1 / Slice-2 precedent).
+        if (response.status_code >= 200 && response.status_code < 300) {
+            return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError, response.status_code));
+        }
+        return Result<std::string, TrackerError>::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
     }
 
     try {
@@ -505,28 +510,28 @@ std::string JiraClient::CreateIssue(const nlohmann::json& fields, std::string& o
             BackendAuditTrail::AppendResult(
                 "issue_create", "jira_client", std::string(), auditOp, false, outError,
                 nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
-            return {};
+            return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
         }
         LOG_INFO("JiraClient: created Jira issue %s.", key.c_str());
         BackendAuditTrail::AppendResult(
             "issue_create", "jira_client", key, auditOp, true, std::string(),
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
-        return key;
+        return Result<std::string, TrackerError>::Ok(key);
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse create response: ") + ex.what();
         LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(response.text, 300).c_str());
         BackendAuditTrail::AppendResult(
             "issue_create", "jira_client", std::string(), auditOp, false, outError,
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
-        return {};
+        return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
     }
 }
 
-bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths,
-                                    std::vector<std::pair<std::string, std::string>>& outFailures,
-                                    std::string& outError) {
-    outFailures.clear();
-    outError.clear();
+Result<std::vector<std::pair<std::string, std::string>>, TrackerError>
+JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths) {
+    using AttachResult = Result<std::vector<std::pair<std::string, std::string>>, TrackerError>;
+    std::vector<std::pair<std::string, std::string>> outFailures;
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("attach");
     nlohmann::json fileNames = nlohmann::json::array();
     for (const auto& path : absolutePaths) {
@@ -540,17 +545,17 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
     TrackerConfig cfg = ConfigManager::Load();
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_attach_files", "jira_client", issueKey, auditOp, false, outError);
-        return false;
+        return AttachResult::Err(TrackerErrorAuth(outError));
     }
     if (issueKey.empty()) {
         outError = "Issue key is empty.";
         BackendAuditTrail::AppendResult("issue_attach_files", "jira_client", issueKey, auditOp, false, outError);
-        return false;
+        return AttachResult::Err(TrackerErrorInvalidRequest(outError));
     }
     if (absolutePaths.empty()) {
         BackendAuditTrail::AppendResult("issue_attach_files", "jira_client", issueKey, auditOp, true, std::string(),
                                         nlohmann::json{{"file_count", 0}});
-        return true;
+        return AttachResult::Ok({});
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -617,7 +622,10 @@ bool JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vect
     BackendAuditTrail::AppendResult(
         "issue_attach_files", "jira_client", issueKey, auditOp, allOk, allOk ? std::string() : outError,
         nlohmann::json{{"file_count", fileNames.size()}, {"failure_count", outFailures.size()}});
-    return allOk;
+    // Per-file failures are NOT a hard error (plan landmine L3): partial success returns Ok with the
+    // (possibly non-empty) failures list — the caller inspects it. Err is reserved for the hard
+    // precondition failures above (auth / empty key) that abort the whole attach.
+    return AttachResult::Ok(std::move(outFailures));
 }
 
 TrackerError JiraClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) {

@@ -166,8 +166,13 @@ void ApplyPostIssueAttachmentStep(ITrackerIssueMutations& client, const std::str
         }
     }
     if (!paths.empty()) {
-        std::string attachErr;
-        client.AttachFilesToIssue(issueKey, paths, result.AttachmentFailures, attachErr);
+        // Ok payload = per-file failures (plan landmine L3). A hard Err (auth / empty key / Plane
+        // unsupported) leaves AttachmentFailures empty — matching the prior contract, where this
+        // caller ignored the bool/error and the hard-fail path never populated the failures list.
+        auto attachResult = client.AttachFilesToIssue(issueKey, paths);
+        if (attachResult) {
+            result.AttachmentFailures = std::move(attachResult.value());
+        }
         if (!result.AttachmentFailures.empty()) {
             LOG_WARN("IssueCreatePipeline: %zu attachment(s) failed for %s", result.AttachmentFailures.size(),
                      issueKey.c_str());
@@ -341,10 +346,13 @@ IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, 
     }
     nlohmann::json fields = std::move(createPayloadResult.value());
 
-    std::string createErr;
     LOG_DEBUG("IssueCreatePipeline: calling CreateIssue with payload: %s", fields.dump().c_str());
-    std::string issueKey = client.CreateIssue(fields, createErr);
+    auto createResult = client.CreateIssue(fields);
+    // Plane's "created, key unknown" path returns Ok(empty) (not Err); both an Err and an empty Ok key
+    // mean "no usable key" and take the same failure branch as the prior bool/string contract did.
+    std::string issueKey = createResult ? createResult.value() : std::string();
     if (issueKey.empty()) {
+        const std::string createErr = createResult ? std::string() : createResult.error().Detail;
         result.Error = createErr.empty() ? "Create failed." : createErr;
         LOG_ERROR("IssueCreatePipeline: CreateIssue failed: %s", result.Error.c_str());
         return result;

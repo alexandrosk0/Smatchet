@@ -169,10 +169,9 @@ TEST_CASE("JiraFakeTrackerFixture — CreateIssue scripted success returns key")
     const auto fixture = JiraFakeTrackerFixture::LoadFromString(kBasicFixture);
     const auto client = fixture.CreateClient();
 
-    std::string err;
-    const std::string key = client->CreateIssue({{"summary", "new"}}, err);
-    CHECK(key == "SMAT-99");
-    CHECK(err.empty());
+    const auto result = client->CreateIssue({{"summary", "new"}});
+    REQUIRE(static_cast<bool>(result));
+    CHECK(result.value() == "SMAT-99");
 }
 
 TEST_CASE("JiraFakeTrackerFixture — CreateClient produces independent instances") {

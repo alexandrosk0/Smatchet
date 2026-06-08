@@ -68,7 +68,7 @@ class GitHubClient : public ITrackerBackend,
                                                             const std::vector<TrackerField>& catalog) override;
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                     const std::string& value) const override;
-    std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override;
+    Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override;
     std::string ExtractProjectFromQuery(const std::string& query) const override;
     std::vector<RemoteProject> ListProjects() override;
     // GitHub issues have no per-issue editmeta concept (no field-level permission API like

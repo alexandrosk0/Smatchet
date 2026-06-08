@@ -34,16 +34,17 @@ class ITrackerIssueMutations {
             TrackerErrorInvalidRequest("BuildUpdatePayload is not supported by this backend."));
     }
 
-    virtual std::string CreateIssue(const nlohmann::json& /*fields*/, std::string& outError) {
-        outError = "CreateIssue is not supported by this backend.";
-        return {};
+    virtual Result<std::string, TrackerError> CreateIssue(const nlohmann::json& /*fields*/) {
+        return Result<std::string, TrackerError>::Err(
+            TrackerErrorInvalidRequest("CreateIssue is not supported by this backend."));
     }
 
-    virtual bool AttachFilesToIssue(const std::string& /*issueKey*/, const std::vector<std::string>& /*absolutePaths*/,
-                                    std::vector<std::pair<std::string, std::string>>& /*outFailures*/,
-                                    std::string& outError) {
-        outError = "AttachFilesToIssue is not supported by this backend.";
-        return false;
+    // Ok payload = the per-file failures list (possibly empty on full success — partial success is
+    // NOT an error, plan landmine L3); Err = a hard failure that aborted the whole attach.
+    virtual Result<std::vector<std::pair<std::string, std::string>>, TrackerError>
+    AttachFilesToIssue(const std::string& /*issueKey*/, const std::vector<std::string>& /*absolutePaths*/) {
+        return Result<std::vector<std::pair<std::string, std::string>>, TrackerError>::Err(
+            TrackerErrorInvalidRequest("AttachFilesToIssue is not supported by this backend."));
     }
 
     virtual TrackerError AddIssueToSprint(const std::string& /*issueKey*/, const std::string& /*sprintId*/) {

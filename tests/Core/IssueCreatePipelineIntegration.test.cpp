@@ -459,3 +459,55 @@ TEST_CASE("AddIssueToSprint returns Ok TrackerError on success and a detail-carr
         CHECK(e.Detail == "sprint not found");
     }
 }
+
+// Slice 5 of the tracker Result<T> migration flipped the two payload-returning Mutations virtuals:
+// CreateIssue (bool/string-out → Result<std::string, TrackerError>, Ok = new issue key) and
+// AttachFilesToIssue (bool + outFailures-out → Result<vector<pair>, TrackerError>, where the Ok
+// payload is the per-file failures list — partial success is NOT an error, plan landmine L3; Err
+// is reserved for a hard failure that aborts the whole attach). These cases pin both shapes.
+TEST_CASE("CreateIssue returns Ok key on success and an InvalidRequest Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("ok carries the new issue key") {
+        client.EnqueueCreateIssueSuccess("PROJ-77");
+        auto r = client.CreateIssue(nlohmann::json{{"summary", "x"}});
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value() == "PROJ-77");
+    }
+
+    SUBCASE("err carries the verbatim detail under InvalidRequest") {
+        client.EnqueueCreateIssueFailure("HTTP 400: bad fields");
+        auto r = client.CreateIssue(nlohmann::json{{"summary", "x"}});
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(r.error().Detail == "HTTP 400: bad fields");
+    }
+}
+
+TEST_CASE("AttachFilesToIssue: per-file failures are an Ok payload (L3), hard failure is an Err") {
+    FakeTrackerClient client;
+
+    SUBCASE("full success is Ok with an empty failures list") {
+        client.SetAttachFilesResult(true);
+        auto r = client.AttachFilesToIssue("PROJ-1", {"/tmp/a.png"});
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value().empty());
+    }
+
+    SUBCASE("partial success is Ok carrying the per-file failures (NOT an Err)") {
+        client.SetAttachFilesResult(true, {{"/tmp/b.png", "HTTP 413: too large"}});
+        auto r = client.AttachFilesToIssue("PROJ-1", {"/tmp/b.png"});
+        REQUIRE(static_cast<bool>(r));
+        REQUIRE(r.value().size() == 1);
+        CHECK(r.value()[0].first == "/tmp/b.png");
+        CHECK(r.value()[0].second == "HTTP 413: too large");
+    }
+
+    SUBCASE("a hard failure is an Err carrying the detail") {
+        client.SetAttachFilesResult(false, {}, "Issue key is empty.");
+        auto r = client.AttachFilesToIssue("", {"/tmp/c.png"});
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(r.error().Detail == "Issue key is empty.");
+    }
+}

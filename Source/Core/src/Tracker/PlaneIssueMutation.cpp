@@ -250,7 +250,8 @@ std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const T
     return value;
 }
 
-std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
+Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json& fields) {
+    std::string outError;
     // Resolve config + headers + project under the cache lock, then drop the lock before the HTTP
     // POST so UI display-name lookups are not blocked during the round trip. Re-acquire briefly at
     // the end to record `visualKey -> uuid` in `keyToId_`.
@@ -279,7 +280,9 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
                                 &outError);
         }
         if (planeProjectId_.empty()) {
-            return "";
+            // ResolvePlaneProject failure: inner HTTP status not surfaced here; wrap Unknown (Detail
+            // verbatim). TODO(#21b later slice): re-thread status when a consumer reads .Kind.
+            return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError));
         }
         resolvedProjectId = planeProjectId_;
         projectIdentifier = planeProjectIdentifier_;
@@ -310,7 +313,11 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
             detail = response.text;
         }
         outError = "Plane API error: " + std::to_string(response.status_code) + " " + detail;
-        return "";
+        // 2xx-but-not-200/201 reaches this failure branch; guard before FromHttpStatus (FIX-1 / Slice-2).
+        if (response.status_code >= 200 && response.status_code < 300) {
+            return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError, response.status_code));
+        }
+        return Result<std::string, TrackerError>::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
     }
 
     try {
@@ -332,7 +339,7 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
             keyToId_[visualKey] = uuid;
         }
 
-        return visualKey;
+        return Result<std::string, TrackerError>::Ok(visualKey);
     } catch (const std::exception& ex) {
         // Network/API tier (exception-handling-policy.md): the create succeeded server-side
         // (2xx above) but its response body did not parse — surface it instead of swallowing,
@@ -342,14 +349,15 @@ std::string PlaneClient::CreateIssue(const nlohmann::json& fields, std::string& 
         LOG_WARN("PlaneClient::CreateIssue: issue created but response JSON failed to parse: unknown exception");
     }
 
-    return "";
+    // "Created, key unknown" — preserve the prior empty-key-no-error contract: Ok(empty) (NOT Err),
+    // so the caller's existing empty-key check reports "Create failed." exactly as before.
+    return Result<std::string, TrackerError>::Ok(std::string());
 }
 
-bool PlaneClient::AttachFilesToIssue(const std::string& /*issueKey*/, const std::vector<std::string>& /*absolutePaths*/,
-                                     std::vector<std::pair<std::string, std::string>>& /*outFailures*/,
-                                     std::string& outError) {
-    outError = "AttachFilesToIssue not implemented for Plane";
-    return false;
+Result<std::vector<std::pair<std::string, std::string>>, TrackerError>
+PlaneClient::AttachFilesToIssue(const std::string& /*issueKey*/, const std::vector<std::string>& /*absolutePaths*/) {
+    return Result<std::vector<std::pair<std::string, std::string>>, TrackerError>::Err(
+        TrackerErrorInvalidRequest("AttachFilesToIssue not implemented for Plane"));
 }
 
 TrackerError PlaneClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) {
