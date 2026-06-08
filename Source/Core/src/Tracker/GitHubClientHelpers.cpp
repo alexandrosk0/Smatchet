@@ -350,5 +350,26 @@ std::int64_t ParseIso8601ToUnixSec(const std::string& iso8601, std::string& outE
     return static_cast<std::int64_t>(t) - offsetSec;
 }
 
+GitHubRequestAuth ResolveGitHubRequestAuth(const std::string& cfgBaseUrl, const std::string& cfgPat,
+                                           const std::string& fallbackBaseUrl) {
+    // Issue #979 — the live cfg PAT wins UNCONDITIONALLY (even when empty): every
+    // cfg-bearing call path passes a real user config, so an empty live PAT means the
+    // user deliberately cleared the credential and the client must stop sending the
+    // ctor snapshot (review 2026-06-07: a non-empty-wins rule kept authenticating with
+    // a revoked credential forever — the PAT deliberately has NO fallback). The base
+    // URL keeps the fallback chain and defaults to GitHub cloud when both are empty
+    // (the same default the ctor applies).
+    GitHubRequestAuth out;
+    out.Pat = cfgPat;
+    if (!cfgBaseUrl.empty()) {
+        out.BaseUrl = cfgBaseUrl;
+    } else if (!fallbackBaseUrl.empty()) {
+        out.BaseUrl = fallbackBaseUrl;
+    } else {
+        out.BaseUrl = "https://api.github.com";
+    }
+    return out;
+}
+
 } // namespace github
 } // namespace smatchet

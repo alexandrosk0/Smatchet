@@ -205,6 +205,50 @@ TEST_CASE("BuildGitHubCreatePayload — blank CSV entries are skipped, not emitt
     CHECK_FALSE(out.contains("labels"));
 }
 
+// ---------------------------------------------------------------------------
+// Issue #979 — per-request credential resolution (PAT rotation without a fresh
+// client). The client used to latch its ctor PAT for the whole session; a
+// client constructed before the user entered a PAT stayed dead until restart.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ResolveGitHubRequestAuth — rotation: empty ctor snapshot, live cfg PAT wins" *
+          doctest::test_suite("[high-risk]")) {
+    // The #979 scenario: client constructed with empty creds (stale disk read),
+    // then the user saves a PAT — the very next request must carry it.
+    const GitHubRequestAuth auth = ResolveGitHubRequestAuth("https://api.github.com", "new-pat", "");
+    CHECK(auth.Pat == "new-pat");
+    CHECK(auth.BaseUrl == "https://api.github.com");
+}
+
+TEST_CASE("ResolveGitHubRequestAuth — live cfg PAT supersedes a different ctor snapshot") {
+    const GitHubRequestAuth auth = ResolveGitHubRequestAuth("", "rotated-pat", "https://ghe.example/api/v3");
+    CHECK(auth.Pat == "rotated-pat");
+    // cfg base URL empty → ctor snapshot base URL retained.
+    CHECK(auth.BaseUrl == "https://ghe.example/api/v3");
+}
+
+TEST_CASE("ResolveGitHubRequestAuth — cleared cfg PAT stays cleared (no ctor-snapshot fallback)" *
+          doctest::test_suite("[high-risk]")) {
+    // Review 2026-06-07: an empty live PAT means the user deliberately cleared the
+    // credential — the client must NOT keep sending a possibly-revoked ctor snapshot.
+    // Only the base URL falls back.
+    const GitHubRequestAuth auth = ResolveGitHubRequestAuth("", "", "https://ghe.example/api/v3");
+    CHECK(auth.Pat.empty());
+    CHECK(auth.BaseUrl == "https://ghe.example/api/v3");
+}
+
+TEST_CASE("ResolveGitHubRequestAuth — everything empty: cloud default URL, empty PAT") {
+    const GitHubRequestAuth auth = ResolveGitHubRequestAuth("", "", "");
+    CHECK(auth.Pat.empty());
+    CHECK(auth.BaseUrl == "https://api.github.com");
+}
+
+TEST_CASE("ResolveGitHubRequestAuth — cfg base URL wins over ctor snapshot") {
+    const GitHubRequestAuth auth =
+        ResolveGitHubRequestAuth("https://ghe2.example/api/v3", "p", "https://ghe1.example/api/v3");
+    CHECK(auth.BaseUrl == "https://ghe2.example/api/v3");
+}
+
 TEST_CASE("BuildGitHubCreatePayload — rejects empty summary + empty repo target") {
     nlohmann::json out;
     std::string err;

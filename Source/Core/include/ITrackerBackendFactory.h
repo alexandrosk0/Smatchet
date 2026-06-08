@@ -4,6 +4,7 @@
 #include <string>
 
 class ITrackerBackend;
+struct TrackerConfig;
 
 /// Abstraction that creates concrete `ITrackerBackend` instances by tracker-type name.
 /// `AppController` owns one of these and asks it for a backend whenever the active tracker
@@ -17,10 +18,14 @@ class ITrackerBackendFactory {
   public:
     virtual ~ITrackerBackendFactory() = default;
 
-    /// Create a backend for the given tracker-type string.
+    /// Create a backend for the given tracker-type string, built from the CALLER's live
+    /// `cfg` — implementations must NOT re-read config from disk (issue #979: the prefs
+    /// "Save & Sync" path calls this while the debounced config write is still in flight,
+    /// so a disk re-read races the save and constructs clients with stale/empty
+    /// credentials).
     /// Lookup is case-insensitive ("Jira", "jira", "JIRA" all match). Implementations
     /// should fall back to a sensible default (`JiraClient` in the default impl) rather
     /// than returning `nullptr` for unknown input — `AppController` treats a null return
     /// as a hard error and aborts initialization.
-    virtual std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) = 0;
+    virtual std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& cfg) = 0;
 };

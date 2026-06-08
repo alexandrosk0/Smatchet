@@ -72,6 +72,10 @@ add_executable(SmatchetTests
     # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
     # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
     Core/PreferencesDateFormatIndex.test.cpp
+    # Issue #979 — pure credential-trim helper applied by onPreferencesSaveAndSync
+    # (trailing-space Jira email → persistent 401). Inline in the same _detail
+    # header; no extra .cpp link.
+    Core/PreferencesCredentialTrim.test.cpp
     # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
     # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
     # (the largest function in the tree) to cut its branch count. The _detail TU is
@@ -144,6 +148,11 @@ add_executable(SmatchetTests
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
     Core/TicketSyncService.test.cpp
+    # Issue #979 — ITrackerBackendFactory::Create(trackerType, cfg) must receive the
+    # caller's LIVE cfg (never a disk re-read racing the debounced prefs save).
+    # Exercises the TicketSyncService swap path with a recording factory; no extra
+    # production .cpp beyond what TicketSyncService.test.cpp already links.
+    Core/TrackerBackendFactoryConfig.test.cpp
     Core/OfflineQueueServiceRuntime.test.cpp
     Core/OfflineFieldEditMerge.test.cpp
     # ADR-0016 — pure scalar offline-conflict classifier (ServerMovedFromBase). Header-only

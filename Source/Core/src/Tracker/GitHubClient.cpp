@@ -1,6 +1,7 @@
 #include "GitHubClient.h"
 
 #include "BackendAuditTrail.h"
+#include "ConfigManager.h"
 #include "GitHubClientHelpers.h"
 #include "GitHubIssueSearch.h"
 #include "IssueDraft.h"
@@ -71,26 +72,55 @@ ITrackerIssueMutations* GitHubClient::Mutations() { return this; }
 ITrackerCollaboration* GitHubClient::Collaboration() { return nullptr; }
 
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
-    : baseUrl_(baseUrl.empty() ? std::string("https://api.github.com") : baseUrl), pat_(pat) {
+    : baseUrl_(baseUrl.empty() ? std::string("https://api.github.com") : baseUrl), pat_(pat),
+      lastLoggedPatBytes_(pat.size()) {
     LOG_INFO("GitHubClient: ctor baseUrl='%s' pat_bytes=%zu", baseUrl_.c_str(), pat_.size());
+}
+
+smatchet::github::GitHubRequestAuth GitHubClient::ResolveAuth(const TrackerConfig* configOverride) const {
+    // Issue #979 — per-request credential resolution (see header). cfg-less call paths
+    // (UpdateField / CreateIssue) read the settled on-disk config, mirroring
+    // JiraIssueMutation's per-request ConfigManager::Load() pattern; by mutation time the
+    // debounced prefs save has long flushed.
+    TrackerConfig loaded;
+    const TrackerConfig* cfg = configOverride;
+    if (!cfg) {
+        loaded = ConfigManager::Load();
+        cfg = &loaded;
+    }
+    const smatchet::github::GitHubRequestAuth auth =
+        smatchet::github::ResolveGitHubRequestAuth(cfg->GitHubBaseUrl, cfg->GitHubPat, baseUrl_);
+    // Rotation visibility — pairs with the ctor `pat_bytes=` line so the fixed flow
+    // (stale ctor snapshot superseded by the live cfg) is verifiable in logs. atomic
+    // exchange: this const method runs concurrently on the sync worker, the
+    // connectivity-probe async, and the UI thread (review 2026-06-07).
+    const std::size_t prev = lastLoggedPatBytes_.exchange(auth.Pat.size(), std::memory_order_relaxed);
+    if (auth.Pat.size() != prev) {
+        LOG_INFO("GitHubClient: per-request credential resolution pat_bytes=%zu (ctor snapshot=%zu, source=%s)",
+                 auth.Pat.size(), pat_.size(), configOverride ? "live-cfg" : "disk");
+    }
+    return auth;
 }
 
 std::string GitHubClient::GetTrackerType() const { return "github"; }
 
-TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConfig& /*cfg*/) {
+TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConfig& cfg) {
     // GET /rate_limit — cheap, always available even on free PATs, returns auth
     // status + remaining quota. Maps HTTP codes to TrackerReachabilityProbeKind
     // the same shape JiraClient::ProbeReachability uses so the connectivity
     // banner doesn't care which backend is active.
+    // Issue #979 — resolve from the caller's live cfg so a PAT entered after this
+    // client was constructed makes the very next probe succeed.
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
     TrackerReachabilityProbeResult out;
-    if (pat_.empty()) {
+    if (auth.Pat.empty()) {
         out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
         out.Diagnostic = kPatMissingError;
         return out;
     }
 
-    const std::string url = baseUrl_ + "/rate_limit";
-    const cpr::Header headers = BuildGitHubHeaders(pat_);
+    const std::string url = auth.BaseUrl + "/rate_limit";
+    const cpr::Header headers = BuildGitHubHeaders(auth.Pat);
     const cpr::Response resp =
         TrackerGetLogged("GitHubClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
 
@@ -163,8 +193,9 @@ std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, 
     // TicketSyncService::SyncWithBackend on a worker thread (never the UI
     // thread, per Pillar 2).
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
-    return smatchet::github::FetchIssuesViaRestApi(baseUrl_, pat_, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
-                                                   outFullSyncCompleted, outFetchError, outWarning);
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
+    return smatchet::github::FetchIssuesViaRestApi(auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo,
+                                                   cfg.JqlQuery, outFullSyncCompleted, outFetchError, outWarning);
 }
 
 TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& onBatch,
@@ -204,7 +235,8 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
         onBatch(std::move(batch));
     };
 
-    smatchet::github::FetchIssuesViaRestApi(baseUrl_, pat_, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
+    smatchet::github::FetchIssuesViaRestApi(auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
                                             &fullSyncCompleted, &fetchError, &fetchWarning, onPage);
 
     summary.FetchedCount = totalEmitted;
@@ -216,17 +248,18 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     return summary;
 }
 
-bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
+bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                       const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
                                       std::string& outError) {
-    // PR4 — single-issue GET loop per key. baseUrl_/pat_ snapshots captured
-    // at ctor time; the cfg/views overrides aren't consulted here because the
-    // canonical owner/repo is already embedded in each key (`owner/repo#N`).
-    if (pat_.empty()) {
+    // PR4 — single-issue GET loop per key. Credentials resolve from the live cfg
+    // (issue #979); owner/repo aren't consulted because the canonical owner/repo
+    // is already embedded in each key (`owner/repo#N`).
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
+    if (auth.Pat.empty()) {
         outError = kPatMissingError;
         return false;
     }
-    return smatchet::github::FetchIssuesForKeysViaRestApi(baseUrl_, pat_, issueKeys, outTickets, outError);
+    return smatchet::github::FetchIssuesForKeysViaRestApi(auth.BaseUrl, auth.Pat, issueKeys, outTickets, outError);
 }
 
 bool GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
@@ -337,11 +370,13 @@ bool GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::s
     return true;
 }
 
-std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& /*cfg*/, const std::string& issueKey) const {
+std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
     // Resolve the browse host once (api.github.com → github.com, or strip the
     // Enterprise `/api/v3` suffix). Shared by issue/PR and commit keys.
-    auto browseHost = [this]() -> std::string {
-        std::string host = baseUrl_;
+    // Issue #979 — base URL resolves from the live cfg like every other request.
+    const std::string resolvedBaseUrl = ResolveAuth(&cfg).BaseUrl;
+    auto browseHost = [&resolvedBaseUrl]() -> std::string {
+        std::string host = resolvedBaseUrl;
         const std::string apiSuffix = "/api/v3";
         if (host.size() > apiSuffix.size() &&
             host.compare(host.size() - apiSuffix.size(), apiSuffix.size(), apiSuffix) == 0) {
@@ -397,7 +432,10 @@ bool GitHubClient::UpdateField(const std::string& issueId, const TrackerField& f
         outError = "GitHubClient::UpdateField: invalid issueId shape (expected owner/repo#N): " + issueId;
         return false;
     }
-    if (pat_.empty()) {
+    // No cfg parameter on this interface — resolve from the settled on-disk config
+    // (issue #979; same per-request pattern JiraIssueMutation uses).
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(nullptr);
+    if (auth.Pat.empty()) {
         outError = kPatMissingError;
         return false;
     }
@@ -466,7 +504,10 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
     BackendAuditTrail::AppendBegin("issue_create", "github_client", std::string(), auditOp,
                                    nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
 
-    if (pat_.empty()) {
+    // No cfg parameter on this interface — resolve from the settled on-disk config
+    // (issue #979; same per-request pattern JiraIssueMutation uses).
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(nullptr);
+    if (auth.Pat.empty()) {
         outError = kPatMissingError;
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
         return "";
@@ -489,8 +530,8 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
         return "";
     }
 
-    const std::string url = baseUrl_ + "/repos/" + owner + "/" + repo + "/issues";
-    const cpr::Response resp = TrackerPostLogged("GitHubClient", url, BuildGitHubHeaders(pat_), body.dump());
+    const std::string url = auth.BaseUrl + "/repos/" + owner + "/" + repo + "/issues";
+    const cpr::Response resp = TrackerPostLogged("GitHubClient", url, BuildGitHubHeaders(auth.Pat), body.dump());
 
     if (resp.status_code != 201 && resp.status_code != 200) {
         outError = smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);

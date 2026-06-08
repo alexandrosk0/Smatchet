@@ -21,7 +21,7 @@ class PlaneFixtureBackendFactory : public ITrackerBackendFactory {
   public:
     explicit PlaneFixtureBackendFactory(std::string fixturePath) : fixturePath_(std::move(fixturePath)) {}
 
-    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
+    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& /*cfg*/) override {
         if (!trackerType.empty() && trackerType != "Plane") {
             LOG_WARN("PlaneFixtureBackendFactory: requested type '%s' but serving 'Plane' fixture from %s",
                      trackerType.c_str(), fixturePath_.c_str());
