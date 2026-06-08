@@ -40,6 +40,9 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenario() { r
 // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
 std::unique_ptr<smatchet::cmd::IScenario> MakeAnnotateOpenEntryTabScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario() { return NullScenario(); }
+// Multi-grid-tabs Slice 5b — multi-grid concurrency perf scenarios.
+std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySide2GridScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeConcurrentSyncScenario() { return NullScenario(); }
 #if defined(SMATCHET_WITH_AI)
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario() { return NullScenario(); }

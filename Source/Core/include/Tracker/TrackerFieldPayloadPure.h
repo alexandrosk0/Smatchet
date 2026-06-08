@@ -1,6 +1,7 @@
 #ifndef SMATCHET_TRACKER_FIELD_PAYLOAD_PURE_H
 #define SMATCHET_TRACKER_FIELD_PAYLOAD_PURE_H
 
+#include "SmatchetResult.h"
 #include "TrackerFieldSchema.h"
 
 #include <nlohmann/json.hpp>
@@ -48,18 +49,18 @@ nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw);
 /**
  * Build payload JSON for a TrackerFieldOption (option select / cascading parent).
  * If nestedChildId is non-empty, recurses into option.Children to attach `child`.
- * Returns false when the option carries no parseable PayloadJson, or the named
- * child is missing.
+ * Returns a disengaged Optional when the option carries no parseable PayloadJson,
+ * or the named child is missing.
  */
-bool TryBuildStructuredOptionPayload(const TrackerFieldOption& option, const std::string& nestedChildId,
-                                     nlohmann::json& outPayload);
+Optional<nlohmann::json> BuildStructuredOptionPayload(const TrackerFieldOption& option,
+                                                      const std::string& nestedChildId);
 
 /**
  * Resolve a field's selected value to a structured option payload using
  * AllowedValueOptions. Handles cascading selects (encoded "parent\x1fchild").
+ * Disengaged Optional on a catalog miss.
  */
-bool TryBuildFieldOptionPayload(const TrackerField& field, const std::string& selectedValue,
-                                nlohmann::json& outPayload);
+Optional<nlohmann::json> BuildFieldOptionPayload(const TrackerField& field, const std::string& selectedValue);
 
 /** True iff the string is non-empty and every byte is an ASCII digit. */
 bool IsDigitsOnly(const std::string& value);
@@ -79,10 +80,10 @@ nlohmann::json FallbackPayloadForSelectableField(const TrackerField& field, cons
 void BuildUserFieldPayload(const TrackerField& field, const std::string& scalarValue, nlohmann::json& outValue);
 
 /**
- * Parse a numeric string. Empty -> null + true. Non-numeric -> false. Otherwise
- * outValue is the parsed double.
+ * Parse a numeric string. Empty input yields an engaged JSON null. Non-numeric
+ * yields a disengaged Optional. Otherwise the engaged value is the parsed double.
  */
-bool TryParseNumberValue(const std::string& rawValue, nlohmann::json& outValue);
+Optional<nlohmann::json> ParseNumberValue(const std::string& rawValue);
 
 /** True when value looks like "PROJ-123" (uppercase / digit project + dash + digits). */
 bool LooksLikeIssueKey(const std::string& value);
@@ -110,8 +111,9 @@ std::string ResolveSprintIdForAgile(const TrackerField& field, const std::string
 
 std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, const std::string& value);
 
-bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
-                std::string& outError);
+// Build the Jira REST `fields` value for a field from raw grid strings. Ok holds the
+// built JSON; Err holds the validation message (formerly the outError out-parameter).
+Result<nlohmann::json> BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues);
 
 } // namespace TrackerFieldPayloadPure
 

@@ -39,6 +39,9 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeLongTextOpenLargeAdfScenari
 // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAnnotateOpenEntryTabScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownRenderScenario();
+// Multi-grid-tabs Slice 5b — two multi-grid concurrency / registration perf scenarios.
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySide2GridScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeConcurrentSyncScenario();
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario();
@@ -93,6 +96,13 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     runner.RegisterFactory("annotate-open-entry-tab", []() { return ::MakeAnnotateOpenEntryTabScenario(); });
     runner.RegisterFactory("description-tooltip-markdown-render",
                            []() { return ::MakeDescriptionTooltipMarkdownRenderScenario(); });
+    // Multi-grid-tabs Slice 5b — perf coverage of the multi-grid concurrency the
+    // plan flagged: side-by-side-2-grid (two panes drawing each frame) +
+    // concurrent-sync (two live contexts under TickAllContexts' shared deadline).
+    // Both are declared in scripts/dev/perf-pr-fast-set.json so the perf gate
+    // covers multi-grid on every Core PR.
+    runner.RegisterFactory("side-by-side-2-grid", []() { return ::MakeSideBySide2GridScenario(); });
+    runner.RegisterFactory("concurrent-sync", []() { return ::MakeConcurrentSyncScenario(); });
 #if defined(SMATCHET_WITH_AI)
     runner.RegisterFactory("ai-assistant-streaming-happy-path",
                            []() { return ::MakeAiAssistantStreamingHappyPathScenario(); });

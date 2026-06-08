@@ -94,6 +94,7 @@
 #include "Views.h"
 
 #include "SmatchetUI.h"
+#include "UiPerfMonitor.h" // SMATCHET_UI_PERF_SCOPE for TickAllContexts (multi-grid concurrent-sync perf scope)
 
 #include "SmatchetToast.h"
 #include "SmatchetMergeWatchNotifyServer.h"
@@ -632,6 +633,7 @@ void AppController::SyncPaneWithBackend(const std::string& paneId, const Tracker
 }
 
 void AppController::TickAllContexts() {
+    SMATCHET_UI_PERF_SCOPE("AppController::TickAllContexts");
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     // One frame tick — panes drawn this frame stamp lastVisibleFrame with it; the LRU cap
     // classifies visibility by frame recency (see paneFrameClock_).

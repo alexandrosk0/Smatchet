@@ -9,7 +9,6 @@
 #include <vector>
 
 using nlohmann::json;
-using TrackerFieldPayloadPure::BuildValue;
 using TrackerFieldPayloadPure::ExtractIssueKey;
 using TrackerFieldPayloadPure::FieldUsesAdfDocument;
 using TrackerFieldPayloadPure::IsSprintField;
@@ -33,6 +32,21 @@ TrackerFieldOption MakeOption(const std::string& id, const std::string& value,
     o.Value = value;
     o.PayloadJson = payloadJson;
     return o;
+}
+
+// #21: TrackerFieldPayloadPure::BuildValue now returns Result<json>. This shim unwraps
+// it back into the prior (outValue, outError) -> bool shape so every behaviour-parity
+// assertion below stays byte-for-byte identical to the pre-migration contract.
+bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, json& outValue,
+                std::string& outError) {
+    Result<json> result = TrackerFieldPayloadPure::BuildValue(field, rawValues);
+    if (!result.has_value()) {
+        outError = result.error();
+        return false;
+    }
+    outError.clear();
+    outValue = std::move(result.value());
+    return true;
 }
 
 } // namespace
@@ -473,6 +487,22 @@ TEST_CASE("BuildValue: array path — user, structured-multi, plain string items
         REQUIRE(out.size() == 2);
         CHECK(out[0].get<std::string>() == "x");
         CHECK(out[1].get<std::string>() == "y");
+    }
+}
+
+TEST_CASE("BuildValue: Result API — Ok carries the built json, Err carries the message") {
+    SUBCASE("valid scalar yields Ok with the value") {
+        TrackerField f = MakeField("summary", "string");
+        Result<json> r = TrackerFieldPayloadPure::BuildValue(f, {"hello"});
+        REQUIRE(r.has_value());
+        CHECK(r.value().get<std::string>() == "hello");
+    }
+
+    SUBCASE("invalid number yields Err with the message") {
+        TrackerField f = MakeField("storyPoints", "number");
+        Result<json> r = TrackerFieldPayloadPure::BuildValue(f, {"abc"});
+        REQUIRE_FALSE(r.has_value());
+        CHECK(r.error().find("Invalid numeric") != std::string::npos);
     }
 }
 
