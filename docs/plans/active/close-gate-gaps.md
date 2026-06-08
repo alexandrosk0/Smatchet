@@ -110,7 +110,7 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 - **Risk — Slice 6 destabilises the foundational `Result<T,E>`.** Mitigation: mirror the *already-shipped* `Optional<T>` pattern in the same header exactly; the doctest with a throwing-**copy** type exercised through **copy-assignment** is the proof; dual-target build + full `SmatchetTests` is the blast-radius check (the tracker layer is now its biggest consumer).
 - **Non-goal — the user-visible *correctness* instances that aren't sync-I/O**: #854 (offline scalar-edit data-loss), #975 (components-marker leak), #671 (orphaned subprocess), #948 (migration key). These are **not gateable by the Pillar-2 scanner** and need product judgement → **GitHub Issues per ADR-0014**, tracked separately, not in this plan.
 - **Non-goal — sweeping the unswept PRs (#541 → #13)**: that's the historical-review backlog's own resume path, not this plan.
-- **Non-goal — a general C++ signature/AST doc-checker**: Slice 2 is the narrow param-removal heuristic, not a full clang-based doc verifier (cost ≫ value at this stage).
+- **Non-goal — a general C++ signature/AST doc-checker**: Slice 2 is the cheap header-touched-without-leaf-doc WARN heuristic (grill Q2), not a clang-based signature verifier (cost ≫ value).
 
 ## Verification
 
