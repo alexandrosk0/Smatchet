@@ -417,7 +417,15 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
 
     ViewDefinition* activeViewForGrid = resolvePaneView(d, pane);
     const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
-    const std::vector<TicketGridColumn>& columns = resolvePaneColumns(pane, catalogIndex, activeViewForGrid);
+    // Cross-backend cold-start defense (Slice 4): the pane's OWN view resolved by its context
+    // sync, so resolvePaneColumns can build the pane's OWN column SET even when the focused
+    // ViewState bucket can't see it and no session capture exists yet (after a restart) —
+    // closing the frozen-capture hole that left a restarted unfocused cross-backend pane
+    // rendering the focused view's columns until first focus.
+    std::shared_ptr<const ViewDefinition> paneOwnResolvedView =
+        pane.focused ? nullptr : app.GetPaneResolvedView(pane.id);
+    const std::vector<TicketGridColumn>& columns =
+        resolvePaneColumns(pane, catalogIndex, activeViewForGrid, paneOwnResolvedView.get());
 
     // Orchestrator-owned cross-section state (was function-local in the monolith). These
     // outlive every section helper and are bound by reference into the DrawCtx below.
@@ -517,11 +525,30 @@ ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
 // keyed on catalog/views revisions + viewId — refreshed on change only, never per frame.
 const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pane,
                                                                     const TrackerFieldCatalogIndex& catalogIndex,
-                                                                    const ViewDefinition* paneView) {
+                                                                    const ViewDefinition* paneView,
+                                                                    const ViewDefinition* paneOwnResolvedView) {
     typedef SmatchetGridPaneWindows::detail::PaneColumnsSource PaneColumnsSource;
     const PaneColumnsSource source = SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource(
         pane.viewId, paneView ? paneView->Id : std::string(), gridFrameCtx_.activeViewId, pane.cachedColumnsValid,
         pane.cachedColumnsViewId);
+    // Cold-start frozen-capture hole (Slice 4): a cross-backend pane with no session capture
+    // would render the focused view's column set (SharedFallback). Its OWN view, resolved by
+    // its context sync (paneOwnResolvedView, matched on viewId), builds the pane's real
+    // columns here through the pane's OWN catalog (catalogIndex is already pane-routed). The
+    // result is captured below so subsequent frames hit CachedFrozen — never per cell.
+    if (paneOwnResolvedView != nullptr && SmatchetGridPaneWindows::detail::ShouldBuildColumnsFromOwnResolvedView(
+                                              source, pane.viewId, paneOwnResolvedView->Id)) {
+        if (!pane.cachedColumnsValid || pane.cachedColumnsViewId != paneOwnResolvedView->Id ||
+            pane.cachedColumnsCatalogRevision != gridFrameCtx_.catalogRevision ||
+            pane.cachedColumnsViewsRevision != gridFrameCtx_.viewsRevision) {
+            pane.cachedColumns = TicketGridColumnsBuilder::Build(*paneOwnResolvedView, catalogIndex);
+            pane.cachedColumnsCatalogRevision = gridFrameCtx_.catalogRevision;
+            pane.cachedColumnsViewsRevision = gridFrameCtx_.viewsRevision;
+            pane.cachedColumnsViewId = paneOwnResolvedView->Id;
+            pane.cachedColumnsValid = true;
+        }
+        return pane.cachedColumns;
+    }
     if (source == PaneColumnsSource::SharedFallback) {
         return gridFrameCtx_.columns;
     }
@@ -834,11 +861,16 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     const bool gridSortEnvironmentChanged = ctx.gridSortEnvironmentChanged;
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.setup");
+    // Column WIDTHS ownership gate (Slice 4 — same strict-Id discipline as the sort-apply
+    // and column-set gates): a fallback-resolved view (cross-backend unfocused pane) must
+    // NOT push ITS widths onto this pane by shared column-key match — a non-owned pane uses
+    // its own captured widths or the defaults, never the fallback's (review #986 class).
+    const bool widthsArePanesOwn = activeViewForGrid && activeViewForGrid->Id == ctx.pane.viewId;
     // Materialise column widths once (§3.1 item 56): avoids ColumnWidths.find per column per frame.
     std::vector<float> colWidths(columns.size());
     for (size_t ci = 0; ci < columns.size(); ++ci) {
         float w = (columns[ci].ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
-        if (activeViewForGrid) {
+        if (widthsArePanesOwn) {
             const auto wIt = activeViewForGrid->ColumnWidths.find(columns[ci].Key);
             if (wIt != activeViewForGrid->ColumnWidths.end() && wIt->second > 0.0f) {
                 w = wIt->second;
