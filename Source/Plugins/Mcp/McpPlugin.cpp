@@ -835,50 +835,66 @@ void McpPlugin::StartServerThread() {
     // #987: cap httplib's worker pool — the default queue spawns
     // max(8, hardware_concurrency()-1) threads (a 47-thread burst on a 48-core
     // box; one failed std::thread ctor under build load = std::system_error).
-    // 4 (not the notify server's 2): each SSE client parks a worker in the
-    // heartbeat wait loop, so MCP needs headroom for an SSE stream or two PLUS
-    // concurrent JSON-RPC tool calls.
+    // 8 (not the notify server's 2): EACH connected client parks ~2 workers — an
+    // SSE stream sits permanently in the heartbeat wait loop AND keep-alive parks
+    // one per persistent POST channel — so two clients already consume ~4. A pool
+    // that small would silently exhaust (the next connection queues forever in
+    // httplib's unbounded job deque with no log line — a hang that is worse to
+    // diagnose than the crash). 8 covers a few concurrent MCP hosts + long tool
+    // calls while still killing the 47-thread burst and its ~47 MB stack reserve.
     impl_->svr.new_task_queue = [] {
-        return new httplib::ThreadPool(4); // httplib owns the queue
+        return new httplib::ThreadPool(8); // httplib owns the queue
     };
 
     AppController* appPtr = impl_->app;
-    impl_->thread = std::thread([this, appPtr]() {
-        try {
-            // `listen()` blocks until `stop()`, so activity would stay empty during normal use.
-            // Split bind vs accept loop so we can log as soon as the port is open.
-            if (appPtr != nullptr) {
-                appPtr->AppendMcpActivity(std::string("MCP: binding ") + impl_->bind_host + ":" +
-                                          std::to_string(port_) + "...");
-            }
-            if (!impl_->svr.bind_to_port(impl_->bind_host.c_str(), port_)) {
+    // #987 review HIGH-2: guard the std::thread CONSTRUCTOR — it throws
+    // std::system_error under the same thread-exhaustion pressure, and unguarded
+    // it would escape StartServerThread() to std::terminate. The listen lambda's
+    // own body is already guarded below; this covers the spawn itself.
+    try {
+        impl_->thread = std::thread([this, appPtr]() {
+            try {
+                // `listen()` blocks until `stop()`, so activity would stay empty during normal use.
+                // Split bind vs accept loop so we can log as soon as the port is open.
                 if (appPtr != nullptr) {
-                    appPtr->AppendMcpActivity("MCP: bind failed (port in use or permission denied).");
+                    appPtr->AppendMcpActivity(std::string("MCP: binding ") + impl_->bind_host + ":" +
+                                              std::to_string(port_) + "...");
                 }
-                LOG_ERROR("MCP server: bind_to_port failed for %s:%d", impl_->bind_host.c_str(), port_);
-                return;
+                if (!impl_->svr.bind_to_port(impl_->bind_host.c_str(), port_)) {
+                    if (appPtr != nullptr) {
+                        appPtr->AppendMcpActivity("MCP: bind failed (port in use or permission denied).");
+                    }
+                    LOG_ERROR("MCP server: bind_to_port failed for %s:%d", impl_->bind_host.c_str(), port_);
+                    return;
+                }
+                if (appPtr != nullptr) {
+                    appPtr->AppendMcpActivity(std::string("MCP: listening on http://") + impl_->bind_host + ":" +
+                                              std::to_string(port_) + " (MCP routes ready).");
+                }
+                const bool ok = impl_->svr.listen_after_bind();
+                if (appPtr != nullptr) {
+                    appPtr->AppendMcpActivity(std::string("MCP: HTTP server stopped (listen returned ") +
+                                              (ok ? "true" : "false") + ").");
+                }
+            } catch (const std::exception& e) {
+                if (appPtr != nullptr) {
+                    appPtr->AppendMcpActivity(std::string("MCP: listen thread exception: ") + e.what());
+                }
+                LOG_ERROR("MCP server thread error: %s", e.what());
+            } catch (...) {
+                if (appPtr != nullptr) {
+                    appPtr->AppendMcpActivity("MCP: listen thread unknown exception.");
+                }
+                LOG_ERROR("MCP server thread unknown error");
             }
-            if (appPtr != nullptr) {
-                appPtr->AppendMcpActivity(std::string("MCP: listening on http://") + impl_->bind_host + ":" +
-                                          std::to_string(port_) + " (MCP routes ready).");
-            }
-            const bool ok = impl_->svr.listen_after_bind();
-            if (appPtr != nullptr) {
-                appPtr->AppendMcpActivity(std::string("MCP: HTTP server stopped (listen returned ") +
-                                          (ok ? "true" : "false") + ").");
-            }
-        } catch (const std::exception& e) {
-            if (appPtr != nullptr) {
-                appPtr->AppendMcpActivity(std::string("MCP: listen thread exception: ") + e.what());
-            }
-            LOG_ERROR("MCP server thread error: %s", e.what());
-        } catch (...) {
-            if (appPtr != nullptr) {
-                appPtr->AppendMcpActivity("MCP: listen thread unknown exception.");
-            }
-            LOG_ERROR("MCP server thread unknown error");
+        });
+    } catch (const std::exception& e) {
+        if (appPtr != nullptr) {
+            appPtr->AppendMcpActivity(std::string("MCP: listen thread spawn failed: ") + e.what());
         }
-    });
+        LOG_WARN("MCP server: listen thread spawn failed (%s); MCP server disabled this session", e.what());
+        impl_->svr.stop();
+    }
 }
 
 void McpPlugin::OnStop() {

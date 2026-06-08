@@ -54,11 +54,16 @@ LONG WINAPI TopLevelExceptionFilter(EXCEPTION_POINTERS* exPtrs) {
 #endif
 
 void TerminateHandler() {
-    // #987: the terminate path writes dumps with NO exception stream — capture
-    // the active exception's what() into the breadcrumb first, or the dump says
-    // only "std::terminate" with no clue WHICH exception escaped. Rethrow is the
-    // only portable way to inspect a current_exception in C++14. Kept minimal:
-    // one string copy into the breadcrumb file, no logger (unsafe mid-crash).
+    // #987 review MEDIUM-1: write the crash MARKER first — it is the keystone
+    // (crash *detection* on next boot), and a hang in the breadcrumb append
+    // below (fopen/fwrite AV-lock, disk-full stall) must not cost us detection.
+    // The marker write is async-safe; the heavier breadcrumb capture follows.
+    diagnostics::CrashSinkWriteMarkerAsyncSafe("std::terminate (unhandled C++ exception)");
+    // The terminate path writes dumps with NO exception stream — capture the
+    // active exception's what() into the breadcrumb so the dump isn't just
+    // "std::terminate" with no clue WHICH exception escaped. Rethrow is the only
+    // portable way to inspect a current_exception in C++14. Kept minimal: one
+    // string copy into the breadcrumb file, no logger (unsafe mid-crash).
     try {
         std::exception_ptr active = std::current_exception();
         if (active) {
@@ -71,7 +76,6 @@ void TerminateHandler() {
         // would silently drop the only diagnostic this path exists to capture).
         diagnostics::CrashSinkAppendBreadcrumbLine("terminate: ", "non-std exception type (no what())");
     }
-    diagnostics::CrashSinkWriteMarkerAsyncSafe("std::terminate (unhandled C++ exception)");
 #if defined(_WIN32)
     WriteMiniDump(nullptr);
 #endif
