@@ -112,6 +112,42 @@ TEST_CASE("Pane requests: '+' duplicate consumes the request, focuses the new pa
     CHECK(focusedPaneId == "pane-2");
 }
 
+TEST_CASE("Pane cycling: NextPaneId / PrevPaneId wrap around the render order (Slice 4)") {
+    std::vector<GridPane> panes;
+    panes.push_back(MakePane("main", "Jira", "v_a"));
+    panes.push_back(MakePane("pane-2", "Jira", "v_b"));
+    panes.push_back(MakePane("pane-3", "Jira", "v_c"));
+
+    // Forward steps + wrap past the last back to the first.
+    CHECK(SmatchetGridPaneWindows::NextPaneId(panes, "main") == "pane-2");
+    CHECK(SmatchetGridPaneWindows::NextPaneId(panes, "pane-2") == "pane-3");
+    CHECK(SmatchetGridPaneWindows::NextPaneId(panes, "pane-3") == "main");
+
+    // Backward steps + wrap past the front round to the last.
+    CHECK(SmatchetGridPaneWindows::PrevPaneId(panes, "pane-3") == "pane-2");
+    CHECK(SmatchetGridPaneWindows::PrevPaneId(panes, "pane-2") == "main");
+    CHECK(SmatchetGridPaneWindows::PrevPaneId(panes, "main") == "pane-3");
+}
+
+TEST_CASE("Pane cycling: single pane next/prev resolve to itself; unknown current → first pane") {
+    std::vector<GridPane> one;
+    one.push_back(MakePane("main", "Jira", "v_a"));
+    CHECK(SmatchetGridPaneWindows::NextPaneId(one, "main") == "main");
+    CHECK(SmatchetGridPaneWindows::PrevPaneId(one, "main") == "main");
+
+    std::vector<GridPane> two;
+    two.push_back(MakePane("main", "Jira", "v_a"));
+    two.push_back(MakePane("pane-2", "Jira", "v_b"));
+    // An unknown current id falls back to the first pane (safe focus fallback).
+    CHECK(SmatchetGridPaneWindows::NextPaneId(two, "ghost") == "main");
+    CHECK(SmatchetGridPaneWindows::PrevPaneId(two, "ghost") == "main");
+
+    // Empty pane set → empty string (no crash).
+    std::vector<GridPane> none;
+    CHECK(SmatchetGridPaneWindows::NextPaneId(none, "main").empty());
+    CHECK(SmatchetGridPaneWindows::PrevPaneId(none, "main").empty());
+}
+
 TEST_CASE("Pane view self-repair: cross-backend pane viewId is never rebound (HIGH-1)") {
     // A Plane pane rendered while Jira is the focused backend: its viewId is valid
     // in the Plane bucket — the loaded Jira slice simply can't see it. Repair must

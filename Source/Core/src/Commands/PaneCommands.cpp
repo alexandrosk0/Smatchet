@@ -1,0 +1,268 @@
+// pane.* command group — registered from SmatchetUI once grid panes are loaded.
+// Multi-grid-tabs Slice 4 (plan item 20). See Commands/PaneCommands.h for the
+// UI-thread + request-latch contract; mirrors ViewCommands.cpp's registration shape.
+
+#include "Commands/PaneCommands.h"
+
+#include "AppController.h"
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
+#include "Commands/MainThreadDispatch.h"
+#include "GridPane.h"
+#include "SmatchetGridPaneWindows.h"
+#include "SmatchetUiSession.h"
+
+#include <string>
+#include <vector>
+
+namespace smatchet {
+namespace cmd {
+
+namespace {
+
+nlohmann::json PaneToJson(const GridPane& p) {
+    nlohmann::json j;
+    j["id"]         = p.id;
+    j["title"]      = p.title;
+    j["backendKey"] = p.backendKey;
+    j["viewId"]     = p.viewId;
+    j["focused"]    = p.focused;
+    return j;
+}
+
+/// Resolve the pane an `[id]`-or-focused command targets. Returns nullptr (and sets a
+/// NotFound failure) when the explicit id is unknown; falls back to the focused pane
+/// when no id was supplied. Empty pane set → nullptr with a HandlerError.
+GridPane* ResolveNamedOrFocusedPane(UiDrawSession& d, const nlohmann::json& args,
+                                    CommandResult& outFailure) {
+    if (d.gridPanes.empty()) {
+        outFailure = CommandResult::Failure(ErrorCode::HandlerError, "No grid panes are loaded yet.");
+        return nullptr;
+    }
+    const std::string id = args.value("id", std::string());
+    if (!id.empty()) {
+        GridPane* byId = FindGridPaneById(d.gridPanes, id);
+        if (byId == nullptr) {
+            outFailure = CommandResult::Failure(ErrorCode::NotFound, "Pane '" + id + "' not found.",
+                                                "Call pane.list to see valid pane ids.");
+        }
+        return byId;
+    }
+    return &d.focusedPane();
+}
+
+void RegisterPaneListCommand(AppController& app, UiDrawSession& d, CommandRegistry& reg) {
+    Command c;
+    c.Name = "pane.list"; c.Category = "pane";
+    c.Summary = "List all open grid panes (id, title, backend, view, focus).";
+    // Reads d.gridPanes — mutated only on the UI thread by the pane-window host; hop
+    // to the UI thread so the read never races a pane add/close/focus switch.
+    c.Handler = [&app, &d](const nlohmann::json&, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&d]() {
+            nlohmann::json arr = nlohmann::json::array();
+            for (const GridPane& p : d.gridPanes) {
+                arr.push_back(PaneToJson(p));
+            }
+            nlohmann::json out;
+            out["items"]       = std::move(arr);
+            out["total"]       = static_cast<int>(d.gridPanes.size());
+            out["focusedId"]   = d.focusedPaneId;
+            return CommandResult::Success(std::move(out));
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+void RegisterPaneFocusCommand(AppController& app, UiDrawSession& d, CommandRegistry& reg) {
+    Command c;
+    c.Name = "pane.focus"; c.Category = "pane";
+    c.Summary = "Focus the grid pane with the given id.";
+    c.Idempotent = false;
+    c.Params = {[]{ ParamSpec p; p.Name="id"; p.Type=ParamType::String; p.Required=true;
+                    p.Description="Pane id from pane.list."; return p; }()};
+    c.Handler = [&app, &d](const nlohmann::json& args, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&d, args]() {
+            const std::string id = args.value("id", std::string());
+            if (FindGridPaneById(d.gridPanes, id) == nullptr) {
+                return CommandResult::Failure(ErrorCode::NotFound, "Pane '" + id + "' not found.",
+                                              "Call pane.list to see valid pane ids.");
+            }
+            // Same latch the window-focus / "+" / close paths use: set focusedPaneId and
+            // flag a host-side reassignment so drawGridPaneWindows replays it as a real
+            // focus switch (activating the pane's saved view) next frame.
+            d.focusedPaneId = id;
+            d.gridPaneFocusReassigned = true;
+            // CRITICAL: also move ImGui window focus to the target pane. Without this the
+            // still-ImGui-focused old pane window reports paneWindowFocusedThisFrame next
+            // frame and the host reverts focusedPaneId back to it (windowFocusMoved). The
+            // focused pane honors this via wantFocus = pane.focused && requestActiveProjectFocus.
+            d.requestActiveProjectFocus = true;
+            return CommandResult::Success({{"focusedId", id}});
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+/// pane.next / pane.prev share the cycle-then-latch body; `forward` picks the helper.
+void RegisterPaneCycleCommand(AppController& app, UiDrawSession& d, CommandRegistry& reg,
+                              bool forward) {
+    Command c;
+    c.Name = forward ? "pane.next" : "pane.prev"; c.Category = "pane";
+    c.Summary = forward ? "Focus the next grid pane (wraps past the last)."
+                        : "Focus the previous grid pane (wraps past the first).";
+    c.Idempotent = false;
+    c.Handler = [&app, &d, forward](const nlohmann::json&, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&d, forward]() {
+            if (d.gridPanes.empty()) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "No grid panes are loaded yet.");
+            }
+            const std::string next = forward
+                ? SmatchetGridPaneWindows::NextPaneId(d.gridPanes, d.focusedPaneId)
+                : SmatchetGridPaneWindows::PrevPaneId(d.gridPanes, d.focusedPaneId);
+            d.focusedPaneId = next;
+            d.gridPaneFocusReassigned = true;
+            // Move ImGui window focus too — see pane.focus for why (else the host reverts).
+            d.requestActiveProjectFocus = true;
+            return CommandResult::Success({{"focusedId", next}});
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+/// pane.new / pane.duplicate / pane.split all duplicate the focused pane via the exact
+/// "+" mechanism (paneAddRequestSourceId latch) — the host applies the add next frame,
+/// so the command never mutates d.gridPanes mid-render. `summary`/`description` differ
+/// per verb; `acceptDirection` adds the advisory split-direction arg.
+void RegisterPaneAddCommand(AppController& app, UiDrawSession& d, CommandRegistry& reg,
+                            const std::string& name, const std::string& summary,
+                            const std::string& description, bool acceptDirection) {
+    Command c;
+    c.Name = name; c.Category = "pane";
+    c.Summary = summary;
+    c.Description = description;
+    c.Idempotent = false;
+    if (acceptDirection) {
+        c.Params = {[]{ ParamSpec p; p.Name="direction"; p.Type=ParamType::String;
+                        p.Description="Advisory split hint (left/right/up/down) — recorded only; "
+                                      "native ImGui docking decides tab-vs-split geometry.";
+                        p.Enum = {"left", "right", "up", "down"}; return p; }()};
+    }
+    c.Handler = [&app, &d, acceptDirection](const nlohmann::json& args, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&d, args, acceptDirection]() {
+            if (d.gridPanes.empty()) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "No grid panes are loaded yet.");
+            }
+            // Duplicate-the-focused-pane request — identical to the pane window "+" button.
+            d.paneAddRequestSourceId = d.focusedPane().id;
+            nlohmann::json out;
+            out["requested"] = true;
+            out["sourceId"]  = d.paneAddRequestSourceId;
+            if (acceptDirection) {
+                out["direction"] = args.value("direction", std::string());
+            }
+            return CommandResult::Success(std::move(out));
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+void RegisterPaneCloseCommand(AppController& app, UiDrawSession& d, CommandRegistry& reg) {
+    Command c;
+    c.Name = "pane.close"; c.Category = "pane";
+    c.Summary = "Close a grid pane (focused pane when no id given).";
+    c.Description = "Marks the named (or focused) pane closed; the host applies the close "
+                    "next frame and enforces the min-1-pane invariant + focus fallback. "
+                    "Refuses to close the only remaining pane.";
+    c.Idempotent = false;
+    c.Params = {[]{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
+                    p.Description="Pane id to close (default: the focused pane)."; return p; }()};
+    c.Handler = [&app, &d](const nlohmann::json& args, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&d, args]() {
+            CommandResult failure;
+            GridPane* target = ResolveNamedOrFocusedPane(d, args, failure);
+            if (target == nullptr) {
+                return failure;
+            }
+            if (d.gridPanes.size() <= 1) {
+                return CommandResult::Failure(ErrorCode::HandlerError,
+                                              "Cannot close the only remaining grid pane.");
+            }
+            // close-X latch: the host's ApplyPaneAddAndCloseRequests consumes pane.open.
+            target->open = false;
+            return CommandResult::Success({{"closing", target->id}});
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+void RegisterPaneRenameCommand(AppController& app, UiDrawSession& d, CommandRegistry& reg) {
+    Command c;
+    c.Name = "pane.rename"; c.Category = "pane";
+    c.Summary = "Rename a grid pane's tab label (focused pane when no id given).";
+    c.Description = "Pins a custom tab title on the named (or focused) pane. The title "
+                    "otherwise tracks the active view name every frame; this command sets a "
+                    "session-scoped override so the label stays put across view switches. "
+                    "NOTE: the override is not persisted — on the next launch the title "
+                    "reverts to the active view's name on the first focus sync.";
+    c.Idempotent = false;
+    c.Params = {
+        []{ ParamSpec p; p.Name="title"; p.Type=ParamType::String; p.Required=true;
+            p.Description="New tab label."; return p; }(),
+        []{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
+            p.Description="Pane id to rename (default: the focused pane)."; return p; }(),
+    };
+    c.Handler = [&app, &d](const nlohmann::json& args, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&d, args]() {
+            const std::string title = args.value("title", std::string());
+            if (title.empty()) {
+                return CommandResult::Failure(ErrorCode::ValidationError, "Pane title must not be empty.");
+            }
+            CommandResult failure;
+            GridPane* target = ResolveNamedOrFocusedPane(d, args, failure);
+            if (target == nullptr) {
+                return failure;
+            }
+            target->title = title;
+            target->titleOverridden = true; // stop the steady-state view-name lockstep.
+            SmatchetGridPaneWindows::MarkPanesDirty(d);
+            return CommandResult::Success({{"id", target->id}, {"title", target->title}});
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+}  // namespace
+
+void RegisterPaneCommands(AppController& app, UiDrawSession& session) {
+    CommandRegistry& reg = app.Commands();
+    // Idempotent guard — don't re-register on second call (mirrors RegisterViewCommands).
+    if (reg.HasExact("pane.list")) return;
+
+    RegisterPaneListCommand(app, session, reg);
+    RegisterPaneFocusCommand(app, session, reg);
+    RegisterPaneCycleCommand(app, session, reg, /*forward=*/true);
+    RegisterPaneCycleCommand(app, session, reg, /*forward=*/false);
+    RegisterPaneAddCommand(app, session, reg, "pane.new",
+                           "Open a new grid pane duplicating the focused pane.",
+                           "Duplicates the focused pane (same backend + view) via the pane "
+                           "window \"+\" mechanism. The host opens it next frame and focuses it.",
+                           /*acceptDirection=*/false);
+    RegisterPaneAddCommand(app, session, reg, "pane.duplicate",
+                           "Duplicate the focused grid pane.",
+                           "Alias of pane.new: opens a copy of the focused pane (same backend + "
+                           "view) and focuses it. The new pane id is assigned by the host.",
+                           /*acceptDirection=*/false);
+    RegisterPaneAddCommand(app, session, reg, "pane.split",
+                           "Open a new pane; drag its tab to a window edge to split.",
+                           "Opens a new pane duplicating the focused one (same path as pane.new). "
+                           "The command cannot force dock geometry without DockBuilder, so native "
+                           "ImGui docking decides tab-vs-split: drag the new pane's tab to an edge "
+                           "to make it a side-by-side split. An optional 'direction' arg is recorded "
+                           "but advisory only.",
+                           /*acceptDirection=*/true);
+    RegisterPaneCloseCommand(app, session, reg);
+    RegisterPaneRenameCommand(app, session, reg);
+}
+
+}  // namespace cmd
+}  // namespace smatchet

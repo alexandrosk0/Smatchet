@@ -55,6 +55,8 @@ Smatchet exposes several core tools to connected AI agents by default:
 | `search_active_tickets` | Searches for a specific string within the IDs and field values of all loaded tickets. | `query` (string) |
 | `run_lua` (opt-in) | Executes sandboxed Lua from MCP. Hidden unless **Allow MCP run_lua tool (dangerous)** is enabled. | `mode` (`snippet`/`script`), plus `code` or `script`, optional `args` object |
 
+In addition, **every command in the unified command registry auto-publishes as an MCP tool** (its `inputSchema` is generated from the command's param specs). This includes the `view.*` (saved-view CRUD) and `pane.*` (grid-pane scripting) groups — e.g. `pane.list`, `pane.focus` (`id`), `pane.next` / `pane.prev`, `pane.new` / `pane.duplicate` / `pane.split` (`direction?`), `pane.close` (`id?`), and `pane.rename` (`title`, `id?`). Call `tools/list` against your running instance for the live, schema-complete set.
+
 ---
 
 ## 4. Custom Tools via Lua

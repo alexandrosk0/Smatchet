@@ -224,6 +224,43 @@ Smatchet.exe cmd view.delete --id=high_priority --yes
 
 ---
 
+### pane
+
+Scripts the dockable grid panes (multi-grid-tabs). Registered once grid panes are loaded
+(first render frame). All mutations route through the same request latches the pane UI uses,
+applied by the host on the next frame — so a `pane.new` / `pane.close` takes effect one frame later.
+
+| Command | Params | Notes |
+|---|---|---|
+| `pane.list` | — | All open panes: `{id, title, backendKey, viewId, focused}` + `focusedId` |
+| `pane.focus` | `id` *(required)* | Focus a pane by id (activates its saved view) |
+| `pane.next` | — | Focus the next pane (wraps past the last) |
+| `pane.prev` | — | Focus the previous pane (wraps past the first) |
+| `pane.new` | — | Open a new pane duplicating the focused pane |
+| `pane.duplicate` | — | Alias of `pane.new` |
+| `pane.split` | `direction?` *(left/right/up/down — advisory)* | Opens a new pane; drag its tab to a window edge to split (native ImGui docking decides geometry) |
+| `pane.close` | `id?` | Close a pane (focused pane when omitted). Refuses the last remaining pane |
+| `pane.rename` | `title` *(required)*, `id?` | Pin a custom tab label. Session-scoped override — not persisted across launch |
+
+```bash
+# List open panes
+Smatchet.exe cmd pane.list --quiet
+
+# Cycle focus to the next pane
+Smatchet.exe cmd pane.next
+
+# Open a duplicate of the focused pane
+Smatchet.exe cmd pane.new
+
+# Rename the focused pane's tab
+Smatchet.exe cmd pane.rename --title="Blockers"
+
+# Close a specific pane
+Smatchet.exe cmd pane.close --id=pane-2
+```
+
+---
+
 ### tickets
 
 Read-only queries against the active view's loaded ticket cache.
