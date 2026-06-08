@@ -27,6 +27,50 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-07 · PR #966 · vsync CR-953 follow-ups merged past RED Tests + Perf via tests-out-of-band + perf-out-of-band
+
+### What escaped
+PR #966 (`fix(vsync): honour --vsync/--no-vsync on hidden-window boot + config.set
+string forms`) merged to develop carrying BOTH `tests-out-of-band` and
+`perf-out-of-band` — i.e. it shipped past a red required Tests check AND a red
+required Perf PR-fast check, each downgraded to WARN by its named override. No
+`merge-snapshots.jsonl` line was written for #966, so the exact red checks can no
+longer be reconstructed (post-merge re-runs overwrote the live rollup); only the
+two override labels survive. postmortem-owed flagged it via trigger 2 (override
+label), not trigger 1 (no lossless snapshot to read).
+
+### Root cause
+Blameless — three gate holes, no person:
+1. **Perf gate is warmup-dominated.** A vsync change shifts frame pacing → the
+   perf-pr-fast p99 ceiling fires; per the #963 postmortem this ceiling currently
+   fires on *every* perf-relevant PR (cold-start frames dominate p99), so
+   `perf-out-of-band` is the routine escape, not a rare exception. #966 is another
+   instance of that still-open class.
+2. **Override labels can't downgrade a re-run** — `perf-pr-fast.yml` reads the
+   frozen `github.event.pull_request.labels` payload, so applying the label then
+   re-running replays the old payload; the author had to mint an empty commit to
+   apply it (already filed tooling P2).
+3. **No lossless audit of what an override bypassed.** ADR-0017's merge-snapshot
+   ledger was NOT written for #966, so the override-label merge left no record of
+   which checks were red. The `tests-out-of-band` half is now unrecoverable — we
+   cannot say which test was red.
+
+### Preventing gate
+NET-NEW (the auditability hole): **make the merge-snapshot ledger write mandatory
++ verified for any override-label merge.** The merge actors (orchestrator
+`handle_pass` / git-janitor / merge-watcher) must append the ADR-0017
+`{pr, mergeCommit, redChecks, overrideLabels}` line BEFORE an override-downgraded
+merge (fail the merge if the append fails), and postmortem-owed (or a post-merge
+job) must WARN when a develop merge commit's PR carried an override label but has
+no matching snapshot line. That guarantees every override is auditable after the
+fact, closing the "tests-out-of-band masked an unknown test" hole. The other two
+holes already have owners — cross-ref `p99-gate-warmup-frame-exclusion` (tooling
+P1, from #963) for #1 and the frozen-payload label read (tooling P2, PR #966) for
+#2. Do not duplicate those.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` 2026-06-07 `mandatory-merge-snapshot-on-override-merge` (P1).
+
 ## 2026-06-07 · PR #945, #953 · cr-out-of-band overrides — legitimate (findings triaged out-of-band, none dropped)
 
 ### What escaped
