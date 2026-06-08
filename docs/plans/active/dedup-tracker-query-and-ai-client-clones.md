@@ -65,7 +65,7 @@ Each cluster is one commit on `feat/dedup-clones`; all ship in **one PR** (PR-ba
 - `smatchet::ai::pure::RedactProviderErrorBody` — already shared; the extracted error block calls it unchanged (no secret-leak regression).
 - `NetworkUsageTracker::Instance().Record` — already the shared traffic accounting sink; called once inside `StreamSseRequest`.
 - `QuerySuggestion` struct — [`Source/Core/include/QuerySuggestTypes.h`](../../../Source/Core/include/QuerySuggestTypes.h) — already the shared suggestion type both engines include; the new helper header includes it (no new type introduced).
-- `TrackerField` / `TrackerFieldFamily` — [`Source/Core/include/TrackerFieldSchema.h`](../../../Source/Core/include/TrackerFieldSchema.h) — the field-schema vocabulary the reparameterized catalog helpers take directly (`const std::vector<TrackerField>&`), in place of `AppController`.
+- `TrackerField` / `TrackerFieldFamily` — [`Source/Core/include/Tracker/TrackerFieldSchema.h`](../../../Source/Core/include/Tracker/TrackerFieldSchema.h) — the field-schema vocabulary the reparameterized catalog helpers take directly (`const std::vector<TrackerField>&`), in place of `AppController`.
 
 ## UX Pillar callouts
 
@@ -139,7 +139,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
 1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/dedup-tracker-query-and-ai-client-clones.md docs/plans/shipped/dedup-tracker-query-and-ai-client-clones.md`,*
+2. *`git mv docs/plans/active/dedup-tracker-query-and-ai-client-clones.md docs/plans/shipped/` (the tier-less ref form `docs/plans/dedup-tracker-query-and-ai-client-clones.md` keeps citations move-proof),*
 3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
 
 *No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
