@@ -9,6 +9,11 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-06-08 · orchestrator (tracker-result-migration) · [infra] · P2 — cpr (and 8 sibling) `FetchContent_Declare` missing `GIT_SUBMODULES ""` → every fresh-worktree / CI-cold-cache configure failed on the unconditional `git submodule update` (`git-sh-setup: file not found` under vcvars)
+  Resolution: **applied by PR #1031** (merged 2026-06-08, build-doctor) — added `GIT_SUBMODULES ""` to all 9 git-based declares missing it (cpr/sqlitecpp/sol2/httplib/md4c/ghc_filesystem/glfw/whisper_cpp/imgui; `json` already had it → all 10 covered). Root cause was sharper than a `.gitmodules`-gated heuristic: FetchContent runs `git submodule update` UNCONDITIONALLY and crashes on `git-sh-setup` PATH resolution before any `.gitmodules` check, so the fix generalizes to every git declare on a cold cache. Verified by a forced fresh-clone into a temp `FETCHCONTENT_BASE_DIR` (zero submodule errors) + dual-target link + lint. Supersedes the workaround-only notes (configure-via-PowerShell / point `FETCHCONTENT_BASE_DIR` at the main tree) in the 2026-06-07 P2 "CMake fresh-configure" infra entry.
+  Status: applied
+  Last-reviewed: 2026-06-08
+
 - 2026-06-07 · test-author (Slice-2 agent) · [test] · P3 — fresh-profile bucket-E drivers must seed `whisper_setup_completed=true` or the first-launch `##WhisperSetupBanner` swallows ItemClicks
   Resolution: **applied in this PR** — gotcha appended to `agents/_shared/skills/test-authoring/SKILL.md` § Gotchas: fresh-profile drivers seed `whisper_setup_completed=true` (+ ideally `backend_has_been_reachable=true`; both keys verified in `Source/Core/src/Config/ConfigManager.cpp:240,541`) or the first-launch banner (`Source/Core/src/SmatchetWhisperSetupBanner.cpp:325` `ImGui::Begin("##WhisperSetupBanner", ...)`) overlays the UI and swallows clicks.
   Status: applied
