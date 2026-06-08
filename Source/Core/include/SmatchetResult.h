@@ -1,0 +1,242 @@
+#pragma once
+
+// Project-local Optional<T> + Result<T, E> value types. C++14 hard (Unreal compat)
+// bans std::optional / std::variant, so these provide the same "engaged-or-empty" and
+// "ok-or-error" shapes over manual aligned-storage with explicit placement-new / dtor.
+// Lives in the global namespace to match the sibling Tracker/TrackerError.h precedent
+// (also global, no namespace). Header-only — no .cpp.
+// Pillar 3 (never crash): value() / error() on the wrong state assert() in debug then
+// throw std::logic_error in release. Never silent undefined behaviour.
+
+#include <cassert>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+// Optional<T> — holds either nothing or one engaged T. Default-constructs empty.
+template <typename T> class Optional {
+  public:
+    Optional() noexcept : engaged_(false) {}
+
+    Optional(const T& value) : engaged_(false) { Construct(value); }
+    Optional(T&& value) : engaged_(false) { Construct(std::move(value)); }
+
+    Optional(const Optional& other) : engaged_(false) {
+        if (other.engaged_) {
+            Construct(*other.Ptr());
+        }
+    }
+
+    // Move ctor — steals the engaged value and leaves the source disengaged.
+    Optional(Optional&& other) : engaged_(false) {
+        if (other.engaged_) {
+            Construct(std::move(*other.Ptr()));
+            other.reset();
+        }
+    }
+
+    // Copy-and-swap assignment — handles copy and move via the by-value parameter.
+    Optional& operator=(Optional other) noexcept {
+        swap(other);
+        return *this;
+    }
+
+    ~Optional() { reset(); }
+
+    bool has_value() const noexcept { return engaged_; }
+    explicit operator bool() const noexcept { return engaged_; }
+
+    T& value() & {
+        assert(engaged_ && "Optional::value() on a disengaged Optional");
+        if (!engaged_) {
+            throw std::logic_error("Optional::value() called on a disengaged Optional");
+        }
+        return *Ptr();
+    }
+
+    const T& value() const& {
+        assert(engaged_ && "Optional::value() on a disengaged Optional");
+        if (!engaged_) {
+            throw std::logic_error("Optional::value() called on a disengaged Optional");
+        }
+        return *Ptr();
+    }
+
+    // Returns the engaged value, or fallback when empty. Never throws.
+    T value_or(T fallback) const { return engaged_ ? *Ptr() : std::move(fallback); }
+
+    void reset() noexcept {
+        if (engaged_) {
+            Ptr()->~T();
+            engaged_ = false;
+        }
+    }
+
+    void swap(Optional& other) {
+        if (engaged_ && other.engaged_) {
+            using std::swap;
+            swap(*Ptr(), *other.Ptr());
+        } else if (engaged_ && !other.engaged_) {
+            other.Construct(std::move(*Ptr()));
+            reset();
+        } else if (!engaged_ && other.engaged_) {
+            Construct(std::move(*other.Ptr()));
+            other.reset();
+        }
+    }
+
+  private:
+    T* Ptr() noexcept { return reinterpret_cast<T*>(&storage_); }
+    const T* Ptr() const noexcept { return reinterpret_cast<const T*>(&storage_); }
+
+    template <typename U> void Construct(U&& fromValue) {
+        // placement-new into in-object storage — no heap allocation
+        ::new (static_cast<void*>(&storage_)) T(std::forward<U>(fromValue));
+        engaged_ = true;
+    }
+
+    typename std::aligned_storage<sizeof(T), alignof(T)>::type storage_;
+    bool engaged_;
+};
+
+template <typename T> void swap(Optional<T>& a, Optional<T>& b) { a.swap(b); }
+
+// Result<T, E> — holds either an ok-value T or an error E, never both. A tagged union
+// over manual aligned storage (no std::variant). Construct via Ok() / Err().
+template <typename T, typename E = std::string> class Result {
+  public:
+    static Result Ok(T value) {
+        Result r;
+        r.ConstructValue(std::move(value));
+        return r;
+    }
+
+    static Result Err(E error) {
+        Result r;
+        r.ConstructError(std::move(error));
+        return r;
+    }
+
+    Result(const Result& other) : ok_(other.ok_) {
+        if (ok_) {
+            // placement-new into in-object storage — no heap allocation
+            ::new (static_cast<void*>(&storage_)) T(*other.ValuePtr());
+        } else {
+            // placement-new into in-object storage — no heap allocation
+            ::new (static_cast<void*>(&storage_)) E(*other.ErrorPtr());
+        }
+    }
+
+    Result(Result&& other) : ok_(other.ok_) {
+        if (ok_) {
+            // placement-new into in-object storage — no heap allocation
+            ::new (static_cast<void*>(&storage_)) T(std::move(*other.ValuePtr()));
+        } else {
+            // placement-new into in-object storage — no heap allocation
+            ::new (static_cast<void*>(&storage_)) E(std::move(*other.ErrorPtr()));
+        }
+    }
+
+    Result& operator=(const Result& other) {
+        if (this != &other) {
+            Destroy();
+            ok_ = other.ok_;
+            if (ok_) {
+                // placement-new into in-object storage — no heap allocation
+                ::new (static_cast<void*>(&storage_)) T(*other.ValuePtr());
+            } else {
+                // placement-new into in-object storage — no heap allocation
+                ::new (static_cast<void*>(&storage_)) E(*other.ErrorPtr());
+            }
+        }
+        return *this;
+    }
+
+    Result& operator=(Result&& other) {
+        if (this != &other) {
+            Destroy();
+            ok_ = other.ok_;
+            if (ok_) {
+                // placement-new into in-object storage — no heap allocation
+                ::new (static_cast<void*>(&storage_)) T(std::move(*other.ValuePtr()));
+            } else {
+                // placement-new into in-object storage — no heap allocation
+                ::new (static_cast<void*>(&storage_)) E(std::move(*other.ErrorPtr()));
+            }
+        }
+        return *this;
+    }
+
+    ~Result() { Destroy(); }
+
+    bool has_value() const noexcept { return ok_; }
+    explicit operator bool() const noexcept { return ok_; }
+
+    T& value() & {
+        assert(ok_ && "Result::value() on an error-state Result");
+        if (!ok_) {
+            throw std::logic_error("Result::value() called on an error-state Result");
+        }
+        return *ValuePtr();
+    }
+
+    const T& value() const& {
+        assert(ok_ && "Result::value() on an error-state Result");
+        if (!ok_) {
+            throw std::logic_error("Result::value() called on an error-state Result");
+        }
+        return *ValuePtr();
+    }
+
+    E& error() & {
+        assert(!ok_ && "Result::error() on an ok-state Result");
+        if (ok_) {
+            throw std::logic_error("Result::error() called on an ok-state Result");
+        }
+        return *ErrorPtr();
+    }
+
+    const E& error() const& {
+        assert(!ok_ && "Result::error() on an ok-state Result");
+        if (ok_) {
+            throw std::logic_error("Result::error() called on an ok-state Result");
+        }
+        return *ErrorPtr();
+    }
+
+    // Returns the ok-value, or fallback when in the error state. Never throws.
+    T value_or(T fallback) const { return ok_ ? *ValuePtr() : std::move(fallback); }
+
+  private:
+    Result() noexcept : ok_(false) {}
+
+    T* ValuePtr() noexcept { return reinterpret_cast<T*>(&storage_); }
+    const T* ValuePtr() const noexcept { return reinterpret_cast<const T*>(&storage_); }
+    E* ErrorPtr() noexcept { return reinterpret_cast<E*>(&storage_); }
+    const E* ErrorPtr() const noexcept { return reinterpret_cast<const E*>(&storage_); }
+
+    void ConstructValue(T value) {
+        // placement-new into in-object storage — no heap allocation
+        ::new (static_cast<void*>(&storage_)) T(std::move(value));
+        ok_ = true;
+    }
+
+    void ConstructError(E error) {
+        // placement-new into in-object storage — no heap allocation
+        ::new (static_cast<void*>(&storage_)) E(std::move(error));
+        ok_ = false;
+    }
+
+    void Destroy() noexcept {
+        if (ok_) {
+            ValuePtr()->~T();
+        } else {
+            ErrorPtr()->~E();
+        }
+    }
+
+    typename std::aligned_union<0, T, E>::type storage_;
+    bool ok_;
+};

@@ -139,50 +139,48 @@ nlohmann::json MinimalPayloadForStructuredOption(const nlohmann::json& raw) {
     return raw;
 }
 
-bool TryBuildStructuredOptionPayload(const TrackerFieldOption& option, const std::string& nestedChildId,
-                                     nlohmann::json& outPayload) {
+Optional<nlohmann::json> BuildStructuredOptionPayload(const TrackerFieldOption& option,
+                                                      const std::string& nestedChildId) {
     if (option.PayloadJson.empty()) {
-        return false;
+        return Optional<nlohmann::json>();
     }
     const nlohmann::json raw = nlohmann::json::parse(option.PayloadJson, nullptr, false);
     if (raw.is_discarded()) {
-        return false;
+        return Optional<nlohmann::json>();
     }
-    outPayload = MinimalPayloadForStructuredOption(raw);
+    nlohmann::json outPayload = MinimalPayloadForStructuredOption(raw);
     if (!nestedChildId.empty()) {
         const TrackerFieldOption* child = FindOptionByIdOrValue(option.Children, nestedChildId);
         if (child == nullptr) {
-            return false;
+            return Optional<nlohmann::json>();
         }
-        nlohmann::json childPayload;
-        if (!TryBuildStructuredOptionPayload(*child, std::string(), childPayload)) {
-            childPayload = nlohmann::json::object({{"id", nestedChildId}});
-        }
+        Optional<nlohmann::json> childPayload = BuildStructuredOptionPayload(*child, std::string());
+        nlohmann::json childJson = childPayload.has_value() ? std::move(childPayload.value())
+                                                            : nlohmann::json::object({{"id", nestedChildId}});
         if (!outPayload.is_object()) {
             outPayload = nlohmann::json::object();
         }
-        outPayload["child"] = std::move(childPayload);
+        outPayload["child"] = std::move(childJson);
     }
-    return true;
+    return Optional<nlohmann::json>(std::move(outPayload));
 }
 
-bool TryBuildFieldOptionPayload(const TrackerField& field, const std::string& selectedValue,
-                                nlohmann::json& outPayload) {
+Optional<nlohmann::json> BuildFieldOptionPayload(const TrackerField& field, const std::string& selectedValue) {
     if (field.Family == TrackerFieldFamily::CascadingSelect) {
         std::string parentId;
         std::string childId;
         DecodeCascadingSelection(selectedValue, parentId, childId);
         const TrackerFieldOption* option = FindOptionByIdOrValue(field.AllowedValueOptions, parentId);
         if (option == nullptr) {
-            return false;
+            return Optional<nlohmann::json>();
         }
-        return TryBuildStructuredOptionPayload(*option, childId, outPayload);
+        return BuildStructuredOptionPayload(*option, childId);
     }
     const TrackerFieldOption* option = FindOptionByIdOrValue(field.AllowedValueOptions, selectedValue);
     if (option == nullptr) {
-        return false;
+        return Optional<nlohmann::json>();
     }
-    return TryBuildStructuredOptionPayload(*option, std::string(), outPayload);
+    return BuildStructuredOptionPayload(*option, std::string());
 }
 
 bool IsDigitsOnly(const std::string& value) {
@@ -249,22 +247,20 @@ void BuildUserFieldPayload(const TrackerField& field, const std::string& scalarV
     outValue = nlohmann::json{{"accountId", trimmed}};
 }
 
-bool TryParseNumberValue(const std::string& rawValue, nlohmann::json& outValue) {
+Optional<nlohmann::json> ParseNumberValue(const std::string& rawValue) {
     const std::string trimmed = TrimCopy(rawValue);
     if (trimmed.empty()) {
-        outValue = nullptr;
-        return true;
+        return Optional<nlohmann::json>(nlohmann::json(nullptr));
     }
     size_t parsedChars = 0;
     try {
         const double parsed = std::stod(trimmed, &parsedChars);
         if (parsedChars != trimmed.size()) {
-            return false;
+            return Optional<nlohmann::json>();
         }
-        outValue = parsed;
-        return true;
+        return Optional<nlohmann::json>(nlohmann::json(parsed));
     } catch (...) {
-        return false;
+        return Optional<nlohmann::json>();
     }
 }
 
@@ -462,9 +458,9 @@ void AppendArrayItem(const TrackerField& field, const std::string& value, nlohma
         return;
     }
     if (ArrayItemUsesStructuredFamily(field)) {
-        nlohmann::json optionPayload;
-        if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
-            outArray.push_back(std::move(optionPayload));
+        Optional<nlohmann::json> optionPayload = BuildFieldOptionPayload(field, value);
+        if (optionPayload.has_value()) {
+            outArray.push_back(std::move(optionPayload.value()));
         } else if (ArrayItemIsSelectable(field)) {
             outArray.push_back(FallbackPayloadForSelectableField(field, value));
         } else {
@@ -473,9 +469,9 @@ void AppendArrayItem(const TrackerField& field, const std::string& value, nlohma
         return;
     }
     if (ArrayItemIsSelectable(field)) {
-        nlohmann::json optionPayload;
-        if (TryBuildFieldOptionPayload(field, value, optionPayload)) {
-            outArray.push_back(std::move(optionPayload));
+        Optional<nlohmann::json> optionPayload = BuildFieldOptionPayload(field, value);
+        if (optionPayload.has_value()) {
+            outArray.push_back(std::move(optionPayload.value()));
         } else {
             outArray.push_back(FallbackPayloadForSelectableField(field, value));
         }
@@ -548,9 +544,8 @@ bool BuildStructuredSelectScalar(const TrackerField& field, const std::string& s
           field.Family == TrackerFieldFamily::SelectSingle)) {
         return false;
     }
-    if (!TryBuildFieldOptionPayload(field, scalarValue, outValue)) {
-        outValue = FallbackPayloadForSelectableField(field, scalarValue);
-    }
+    Optional<nlohmann::json> payload = BuildFieldOptionPayload(field, scalarValue);
+    outValue = payload.has_value() ? std::move(payload.value()) : FallbackPayloadForSelectableField(field, scalarValue);
     return true;
 }
 
@@ -570,9 +565,9 @@ bool BuildPriorityLikeScalar(const TrackerField& field, const std::string& scala
     if (!(typeLower == "priority" || field.Id == "priority" || typeLower == "securitylevel")) {
         return false;
     }
-    nlohmann::json optPayload;
-    if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
-        outValue = std::move(optPayload);
+    Optional<nlohmann::json> optPayload = BuildFieldOptionPayload(field, scalarValue);
+    if (optPayload.has_value()) {
+        outValue = std::move(optPayload.value());
         return true;
     }
     const std::string t = TrimCopy(scalarValue);
@@ -587,9 +582,9 @@ bool BuildNamedOptionScalar(const TrackerField& field, const std::string& scalar
     if (!(typeLower == "version" || typeLower == "resolution")) {
         return false;
     }
-    nlohmann::json optPayload;
-    if (TryBuildFieldOptionPayload(field, scalarValue, optPayload)) {
-        outValue = std::move(optPayload);
+    Optional<nlohmann::json> optPayload = BuildFieldOptionPayload(field, scalarValue);
+    if (optPayload.has_value()) {
+        outValue = std::move(optPayload.value());
         return true;
     }
     outValue = nlohmann::json{{"name", TrimCopy(scalarValue)}};
@@ -637,7 +632,10 @@ bool BuildNumberScalar(const TrackerField& field, const std::string& scalarValue
     if (field.Type != "number") {
         return false;
     }
-    if (!TryParseNumberValue(scalarValue, outValue)) {
+    Optional<nlohmann::json> parsed = ParseNumberValue(scalarValue);
+    if (parsed.has_value()) {
+        outValue = std::move(parsed.value());
+    } else {
         outError = "Invalid numeric value: " + scalarValue;
     }
     return true;
@@ -672,29 +670,32 @@ bool BuildScalarValue(const TrackerField& field, const std::string& scalarValue,
 
 } // namespace
 
-bool BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues, nlohmann::json& outValue,
-                std::string& outError) {
-    outError.clear();
+Result<nlohmann::json> BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues) {
     std::vector<std::string> values;
     values.reserve(rawValues.size());
     std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
                  [](const std::string& value) { return !value.empty(); });
 
+    nlohmann::json outValue;
+
     if (field.Id == "labels" || field.Family == TrackerFieldFamily::Labels) {
         BuildLabelsValue(values, outValue);
-        return true;
+        return Result<nlohmann::json>::Ok(std::move(outValue));
     }
     if (field.IsArray) {
         BuildArrayValue(field, values, outValue);
-        return true;
+        return Result<nlohmann::json>::Ok(std::move(outValue));
     }
 
     const std::string scalarValue = values.empty() ? std::string() : values.front();
     if (scalarValue.empty()) {
-        outValue = nullptr;
-        return true;
+        return Result<nlohmann::json>::Ok(nlohmann::json(nullptr));
     }
-    return BuildScalarValue(field, scalarValue, outValue, outError);
+    std::string outError;
+    if (!BuildScalarValue(field, scalarValue, outValue, outError)) {
+        return Result<nlohmann::json>::Err(std::move(outError));
+    }
+    return Result<nlohmann::json>::Ok(std::move(outValue));
 }
 
 } // namespace TrackerFieldPayloadPure
