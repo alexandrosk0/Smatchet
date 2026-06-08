@@ -306,8 +306,14 @@ class SmatchetUI {
     // review HIGH-1); resolvePaneColumns reuses the shared GridFrameContext for the
     // active view and a per-pane revision-keyed cache otherwise.
     ViewDefinition* resolvePaneView(UiDrawSession& d, GridPane& pane);
-    const std::vector<TicketGridColumn>&
-    resolvePaneColumns(GridPane& pane, const TrackerFieldCatalogIndex& catalogIndex, const ViewDefinition* paneView);
+    // resolvePaneColumns: builds the pane's column SET. paneOwnResolvedView (Slice 4) is the
+    // pane context's OWN view resolved from its backend bucket — used only on the cold-start
+    // fallback path so a cross-backend pane with no session capture still renders ITS OWN
+    // columns instead of the focused view's (null for the focused pane / when unresolved).
+    const std::vector<TicketGridColumn>& resolvePaneColumns(GridPane& pane,
+                                                            const TrackerFieldCatalogIndex& catalogIndex,
+                                                            const ViewDefinition* paneView,
+                                                            const ViewDefinition* paneOwnResolvedView);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
     // the pre-existing SMATCHET_UI_PERF_SCOPE seams VERBATIM. Positional-ImGui Begin/End
     // pairs that span the table body stay in the orchestrator; these helpers run inside

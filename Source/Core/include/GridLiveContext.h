@@ -23,6 +23,7 @@
 
 class ITrackerBackend;
 class TicketSyncService;
+struct ViewDefinition;
 
 /// Per-context in-memory field-catalog block (multi-grid Slice 3, plan item 17 +
 /// slice1-design § 3.1). Moved verbatim out of AppController: the block is mutex-guarded but
@@ -115,6 +116,16 @@ struct GridLiveContext {
     /// switch: a drift (view edited after the context synced) re-kicks the sync instead of
     /// rendering stale rows (review MEDIUM-2).
     std::string lastSyncedJql;
+
+    /// The pane's OWN ViewDefinition, resolved from ITS backend's views bucket by the
+    /// first-sync worker (multi-grid Slice 4, cold-start frozen-capture hole). Published on
+    /// the UI thread via the EnsurePaneLiveSyncStarted main-thread hop; read on the UI
+    /// thread (same single-thread discipline as initialSyncKicked). A cross-backend pane
+    /// whose view the focused ViewState bucket can't see builds its OWN columns from this
+    /// instead of leaking the focused view's column set on cold start. Null until the
+    /// pane's first sync resolves it. shared_ptr<const> so the type stays forward-declared
+    /// here (full ViewDefinition is heavy — see ConfigManager.h).
+    std::shared_ptr<const ViewDefinition> resolvedOwnView;
 
   private:
     /// Guarded by backendKeyMutex_ — see CacheBackendKeyCopy/SetCacheBackendKey above.

@@ -1079,6 +1079,11 @@ class AppController
     std::shared_ptr<const std::vector<CachedTicket>> GetPaneTicketsSnapshot(const std::string& paneId) const;
     /// Per-pane ActiveTickets revision (0 when the pane has no live context).
     std::uint64_t GetPaneTicketsRevision(const std::string& paneId) const;
+    /// The pane context's OWN resolved ViewDefinition (from its backend bucket), published
+    /// by the pane's first-sync worker; null until that sync lands. Lets a cross-backend
+    /// pane build ITS OWN columns even when the focused ViewState bucket can't see its view
+    /// (multi-grid Slice 4 cold-start frozen-capture hole). UI thread only.
+    std::shared_ptr<const ViewDefinition> GetPaneResolvedView(const std::string& paneId) const;
     /// Kick a sync on ONE pane's context with its own (config, views) pair — the per-pane
     /// twin of SyncWithBackend (which targets the focused context).
     void SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,

@@ -499,7 +499,7 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
                 }
             }
         }
-        mainThreadDispatcher.PostToMainThread([this, paneId, cfgCopy, views]() {
+        mainThreadDispatcher.PostToMainThread([this, paneId, cfgCopy, views, viewId]() {
             // UI thread: the context may have been retired while the load ran — find() guards.
             std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator ctxIt = gridContexts_.find(paneId);
             if (ctxIt != gridContexts_.end()) {
@@ -509,6 +509,19 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
                 // re-kick instead of adopting stale rows (review MEDIUM-2). Cleared (with the
                 // latch) by the session-end deps hook when the sync fails (review MEDIUM-1).
                 ctxIt->second->lastSyncedJql = cfgCopy.JqlQuery;
+                // Publish the pane's OWN resolved view (multi-grid Slice 4 cold-start hole):
+                // `views` was loaded from the pane's backend bucket, so its matching entry is
+                // the pane's real view even when the focused ViewState bucket can't see it. The
+                // grid builds this cross-backend pane's columns from it instead of falling back
+                // to the focused view's column set on a cold start (no session capture yet).
+                if (!viewId.empty()) {
+                    for (size_t i = 0; i < views.Views.size(); ++i) {
+                        if (views.Views[i].Id == viewId) {
+                            ctxIt->second->resolvedOwnView = std::make_shared<const ViewDefinition>(views.Views[i]);
+                            break;
+                        }
+                    }
+                }
             }
             SyncPaneWithBackend(paneId, &cfgCopy, &views);
         });
@@ -546,6 +559,11 @@ AppController::GetPaneTicketsSnapshot(const std::string& paneId) const {
 std::uint64_t AppController::GetPaneTicketsRevision(const std::string& paneId) const {
     std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
     return (it == gridContexts_.end()) ? 0 : it->second->ActiveTicketsRevision.load();
+}
+
+std::shared_ptr<const ViewDefinition> AppController::GetPaneResolvedView(const std::string& paneId) const {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    return (it == gridContexts_.end()) ? nullptr : it->second->resolvedOwnView;
 }
 
 void AppController::SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
