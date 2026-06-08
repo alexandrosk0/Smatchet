@@ -33,6 +33,11 @@ query($owner: String!, $repo: String!, $pr: Int!) {
                   ... on StatusContext {
                     context
                     state
+                    # description carries CodeRabbit's terminal verdict text
+                    # ("Review skipped" / "N actionable comments"); the gate's
+                    # crReviewSkipped field reads it to distinguish a terminal
+                    # generic skip (docs/trivial diff) from a pending review.
+                    description
                     isRequired(pullRequestNumber: $pr)
                   }
                 }

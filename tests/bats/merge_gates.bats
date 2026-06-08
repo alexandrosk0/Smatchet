@@ -490,6 +490,52 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
+@test "CR installed + NONE + StatusContext=SUCCESS + description 'Review skipped' (generic) → terminal pass within grace" {
+    # PR #976 regression: CR processed a docs-only PR and deliberately skipped
+    # the incremental review — its "CodeRabbit" StatusContext is SUCCESS with
+    # description "Review skipped" (NOT the too-many-files size-skip). That is
+    # TERMINAL: no inline review will ever land. The gate must fast-pass instead
+    # of sitting in the status-SUCCESS-waiting-for-inline grace (which burned
+    # ~10 cycles before the passive grace-then-pass fired). Same shape as the
+    # waiting-for-inline test above, only the description differs — proving the
+    # description is the discriminator.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review skipped","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NONE+review-skipped"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR size-skip (Too many files) still BLOCKS even though description says Review skipped" {
+    # Guard: the too-many-files size-skip arm must win over the new generic
+    # terminal-skip pass. Here CR posts BOTH a size-skip conversation comment
+    # AND a StatusContext SUCCESS whose description contains "Review skipped".
+    # The size-skip arm is ordered first, so this must still BLOCK — the
+    # terminal-skip pass must never wave a 600-file reorg through.
+    local f
+    f="$(mktemp)"
+    jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes
+            += [{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review skipped — Too many files","isRequired":false}]
+        | .data.repository.pullRequest.comments.nodes
+            += [{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},
+                 "body":"Review skipped\n\nToo many files to review."}]' \
+        "$FIXTURES_DIR/merge_gates_pass.json" > "$f"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+size-skip"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
 @test "C4 prong 2: NONE + StatusContext=SUCCESS + no inline + grace expired → pass with no-inline-evidence WARN" {
     # Grace-expired path. Probably a status-only CR config — pass so the loop
     # never wedges. WARN names the suspicious shape so the operator can spot
