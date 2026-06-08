@@ -90,6 +90,7 @@
 #include "Logger.h"
 
 #include "StringUtil.h"
+#include "UiThreadAffinity.h"
 
 #include "Views.h"
 
@@ -1580,6 +1581,9 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // background thread is spawned, so this happens-before any worker that could call
     // IsOnUiThread() later. See AppController.h for the full reasoning.
     uiThreadId_ = std::this_thread::get_id();
+    // Same publish-once capture into the low-layer registry the sub-AppController blocking
+    // wrappers (ConfigManager / P4) query — they can't reach this private uiThreadId_.
+    UiThreadAffinity::SetUiThread();
 
     LOG_INFO("AppController::Initialize backendType=%s dbPath=%s", backendType.c_str(), dbPath.c_str());
 

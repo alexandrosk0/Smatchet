@@ -87,6 +87,10 @@ add_executable(SmatchetTests
     # value types (C++14 bans std::optional/std::variant). Header-only
     # (Source/Core/include/SmatchetResult.h); no production .cpp to link.
     Core/SmatchetResult.test.cpp
+    # close-gate-gaps Slice 1a — low-layer UI-thread registry behind the Pillar-2
+    # blocking-wrapper gate. Depends only on Logger (already linked below).
+    Core/UiThreadAffinity.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
     Core/AnnotateAnalysisConfig.test.cpp
     Core/AnnotateLocalization.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
