@@ -459,6 +459,18 @@ struct UiDrawSession {
     /// the returning pane's own key never changed (review HIGH-4). Fires on host pane
     /// focus switches too, since a switch re-points cfg.TrackerType.
     std::string lastViewsBackendKey;
+    /// Consume-once latch set by the pane focus-switch path when it re-points
+    /// cfg.TrackerType at a pane whose own GridLiveContext is already sync-live
+    /// (Slice 3): the lastViewsBackendKey session reset above must still fire
+    /// (catalog refetch, editor-buffer reset), but its downstream initial
+    /// SyncWithBackend kick would be a redundant network re-fetch of data the
+    /// pane's context already holds — the kick consumes this flag and skips it.
+    bool suppressNextBackendSwitchInitialSync = false;
+    /// Backend key the suppress latch above was set FOR (PR #986 review LOW): the
+    /// consume site honours the latch only while the session tracker still matches,
+    /// so a same-frame Preferences backend switch can't have its legitimate initial
+    /// sync swallowed by a stale pane-focus suppression.
+    std::string suppressNextBackendSwitchInitialSyncKey;
     /// One-frame latch: the HOST reassigned focusedPaneId outside the normal
     /// window-focus path (focused-pane close, "+" duplicate, bootstrap restore).
     /// Consumed by drawGridPaneWindows, which treats it as a real focus switch so
@@ -484,6 +496,15 @@ struct UiDrawSession {
     /// Written inside the pane window's Begin/End scope, consumed by the host loop
     /// to detect focus switches (drives the Slice-2 focused-pane live-context swap).
     std::string paneWindowFocusedThisFrame;
+    /// Previous frame's `paneWindowFocusedThisFrame`. A focus switch is only committed
+    /// once the SAME pane has reported focus on two consecutive frames (PR #986
+    /// ping-pong guard): adopting a focused pane rewrites the session-global
+    /// cfg.TrackerType, and with two simultaneously-visible split panes on different
+    /// backends that global churn perturbs ImGui nav focus, flipping the report to the
+    /// sibling next frame — an infinite re-adopt loop. A genuine click holds focus for
+    /// many frames (commits with 1-frame latency); a 1-frame nav bounce never reaches
+    /// the two-frame threshold, so the rewrite never fires and focus settles.
+    std::string lastPaneFocusReport;
     /// Transient (one frame): the "+" button in a pane window requests a new pane
     /// duplicating this source pane. Applied by the host AFTER the pane loop so the
     /// gridPanes vector never mutates mid-iteration.

@@ -921,6 +921,7 @@ set(_SMATCHET_AI_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiSseParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/OllamaStreamError.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp"

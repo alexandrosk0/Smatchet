@@ -29,10 +29,18 @@ inline std::string GetEnvString(const char* name) {
 constexpr char kDefaultDbPath[] = "Smatchet_LocalCache.sqlite";
 constexpr char kDefaultBackendType[] = "Jira";
 
+// Bug-report relay — seeded as the first-run default so a fresh install can
+// submit bug/crash reports with zero setup. The relay holds the GitHub token
+// server-side; the key below is a low-value shared access key (abuse
+// mitigation, rate-limited + rotatable on the worker — NOT a credential).
+// Users can point at their own relay or clear it in Preferences.
+constexpr char kDefaultBugReportRelayUrl[] = "https://smatchet-bug-report-relay.smatchet.workers.dev/report";
+constexpr char kDefaultBugReportRelayKey[] = "SmatchetKey";
+
 namespace Mcp {
 constexpr int kDefaultPort = 42360;
 constexpr char kBindLocalhost[] = "127.0.0.1";
 constexpr char kBindAny[] = "0.0.0.0";
 constexpr char kSsePath[] = "/mcp/sse";
-}
+} // namespace Mcp
 } // namespace SmatchetDefaults

@@ -44,6 +44,10 @@ class SmatchetMergeWatchNotifyServer {
     bool IsRunning() const { return running_.load(std::memory_order_acquire); }
 
   private:
+    /// Register the POST /merge-watch/notify + GET /merge-watch/health routes on
+    /// server_. Split out of Start() to keep it under the function-size cap.
+    void RegisterRoutes(AppController& app);
+
     std::unique_ptr<httplib::Server> server_;
     std::unique_ptr<std::thread> listenThread_;
     std::atomic<bool> running_;

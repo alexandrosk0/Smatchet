@@ -112,6 +112,16 @@ void GridContextDepsAdapter::PushOfflineReplayTimersDuringTransportOutage(std::c
     app_.PushOfflineReplayTimersDuringTransportOutage(now);
 }
 
+void GridContextDepsAdapter::OnStreamingSyncSessionFinished(bool fetchOk) {
+    if (!fetchOk) {
+        // Failed session: re-arm so the next focus switch / visibility kick retries the
+        // sync instead of treating the pane as sync-live forever (PR #986 review
+        // MEDIUM-1). UI thread — same single-thread discipline as the latch.
+        ctx_.initialSyncKicked = false;
+        ctx_.lastSyncedJql.clear();
+    }
+}
+
 std::mutex& GridContextDepsAdapter::ActiveTicketsMutex() { return ctx_.activeTicketsMutex_; }
 
 std::vector<CachedTicket>& GridContextDepsAdapter::ActiveTickets() { return ctx_.ActiveTickets; }
