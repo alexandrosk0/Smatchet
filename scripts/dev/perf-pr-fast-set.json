@@ -1,10 +1,12 @@
 {
   "schemaVersion": 1,
-  "description": "PR-fast scenario subset run by .github/workflows/perf-pr-fast.yml. Four scenarios chosen for broad coverage of the active code paths. Estimated combined wall-clock: < 120 s post-build on windows-2022. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D4. ai-chat-history-render added in Phase 6.7 of ai-chat-claude-desktop-parity so AI chat panel render regressions surface at PR time without manual perf-run invocation. command-palette-fuzzy removed (perf-gate-revival step 2): it is bucket-C-only — CommandPaletteFuzzyScenario hard-requires --screenshotPath, which the perf path's scenario.run never passes — so it would be a guaranteed run_failure (hard exit 1) the moment any ci-windows-latest baseline lands.",
+  "description": "PR-fast scenario subset run by .github/workflows/perf-pr-fast.yml. Scenarios chosen for broad coverage of the active code paths. Estimated combined wall-clock: < 120 s post-build on windows-2022. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D4. ai-chat-history-render added in Phase 6.7 of ai-chat-claude-desktop-parity so AI chat panel render regressions surface at PR time without manual perf-run invocation. command-palette-fuzzy removed (perf-gate-revival step 2): it is bucket-C-only — CommandPaletteFuzzyScenario hard-requires --screenshotPath, which the perf path's scenario.run never passes — so it would be a guaranteed run_failure (hard exit 1) the moment any ci-windows-latest baseline lands. side-by-side-2-grid + concurrent-sync added (multi-grid-tabs Slice 5b): the plan gates multi-grid render + dispatcher-budget concurrency at PR-fast. Both are offline + deterministic passive observers (no tracker creds / network on CI) with the same 600-frame cost profile as idle/attachment-preview-open, so they are PR-fast-safe rather than perf-full-only. NEW scenarios have no ci-windows-latest baseline yet — they bootstrap on first CI run (perf-pr-fast.yml first-run-bootstrap path captures + uploads the baseline as an artefact; a human reviews + commits it under docs/perf/baselines/ in a follow-up).",
   "scenarios": [
     "idle",
     "priority-grid-scroll",
     "cell-edit-burst",
-    "ai-chat-history-render"
+    "ai-chat-history-render",
+    "side-by-side-2-grid",
+    "concurrent-sync"
   ]
 }

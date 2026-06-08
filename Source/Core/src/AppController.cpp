@@ -92,6 +92,7 @@
 #include "Views.h"
 
 #include "SmatchetUI.h"
+#include "UiPerfMonitor.h" // SMATCHET_UI_PERF_SCOPE for TickAllContexts (multi-grid concurrent-sync perf scope)
 
 #include "SmatchetToast.h"
 #include "SmatchetMergeWatchNotifyServer.h"
@@ -575,6 +576,7 @@ void AppController::SyncPaneWithBackend(const std::string& paneId, const Tracker
 }
 
 void AppController::TickAllContexts() {
+    SMATCHET_UI_PERF_SCOPE("AppController::TickAllContexts");
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     // Shared drain deadline across N panes' streaming applies (plan item 18): each
     // TicketSyncService::TickStreamingApply is internally budgeted (3 ms / 20 tickets), so N

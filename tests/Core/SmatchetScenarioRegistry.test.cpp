@@ -45,6 +45,9 @@ std::set<std::string> ExpectedNames() {
     // Slice 8 of autonomous-debugging-no-creds — 5 missing-bug-path scenarios.
     expected.insert("annotate-open-entry-tab");
     expected.insert("description-tooltip-markdown-render");
+    // Multi-grid-tabs Slice 5b — multi-grid concurrency perf scenarios.
+    expected.insert("side-by-side-2-grid");
+    expected.insert("concurrent-sync");
 #if defined(SMATCHET_WITH_AI)
     expected.insert("ai-assistant-streaming-happy-path");
     expected.insert("ai-assistant-streaming-transport-down-within-5s");
