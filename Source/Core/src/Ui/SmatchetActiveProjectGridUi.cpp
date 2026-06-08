@@ -1,5 +1,5 @@
 #include "SmatchetUI.h"
-#include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (review HIGH-1)
+#include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 
@@ -484,10 +484,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
 // pane referencing a deleted/unknown view falls back to the ACTIVE view and
 // self-repairs its viewId (Pillar 3 — never dangle). A CROSS-backend pane's viewId
 // lives in ITS OWN backend's bucket — the loaded slice simply can't see it — so it
-// renders the active-view fallback WITHOUT any identity write (review HIGH-1: the
+// returns the active-view FALLBACK without any identity write (review HIGH-1: the
 // unconditional repair rebound such panes to the focused view every frame, and the
-// debounced PersistPanes made the loss durable). Returns null only when the loaded
-// bucket has no views at all.
+// debounced PersistPanes made the loss durable). Callers must treat the fallback as
+// NOT the pane's own view (strict id-vs-pane.viewId match): the sort mirror refuses
+// to write through it, and resolvePaneColumns refuses to render its field set
+// (per-pane column isolation — the frozen bind-time capture wins). Returns null only
+// when the loaded bucket has no views at all.
 ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
     ViewsStore& store = ViewState.GetStoreMutable();
     for (auto& view : store.Views) {
@@ -503,24 +506,42 @@ ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
     return active;
 }
 
-// Column set for a pane: the shared per-frame GridFrameContext when the pane renders the
-// active view (the common case — zero copies), otherwise a PER-PANE cached build keyed on
-// catalog/views revisions + viewId (rebuilt on revision change only, never per frame).
+// Column set for a pane (per-pane column isolation — the unfocused pane must keep ITS
+// OWN view's field set across focus switches). Source policy is the pure
+// ChoosePaneColumnsSource core (bucket-A covered): the shared per-frame GridFrameContext
+// only when the pane's OWN view (strict id match — same discipline as the sort-mirror
+// gate) is the active one; an own-but-inactive view uses the per-pane cached build; a
+// fallback-resolved view (cross-backend pane whose views bucket isn't loaded) renders
+// the FROZEN bind-time capture instead of leaking the focused view's columns (user
+// defect: focusing pane B changed unfocused pane A's columns). The capture below is
+// keyed on catalog/views revisions + viewId — refreshed on change only, never per frame.
 const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pane,
                                                                     const TrackerFieldCatalogIndex& catalogIndex,
                                                                     const ViewDefinition* paneView) {
-    if (!paneView || paneView->Id == gridFrameCtx_.activeViewId) {
+    typedef SmatchetGridPaneWindows::detail::PaneColumnsSource PaneColumnsSource;
+    const PaneColumnsSource source = SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource(
+        pane.viewId, paneView ? paneView->Id : std::string(), gridFrameCtx_.activeViewId, pane.cachedColumnsValid,
+        pane.cachedColumnsViewId);
+    if (source == PaneColumnsSource::SharedFallback) {
         return gridFrameCtx_.columns;
     }
+    if (source == PaneColumnsSource::CachedFrozen) {
+        return pane.cachedColumns;
+    }
+    // Own view resolved (SharedActive / OwnViewBuild): keep the per-pane capture fresh.
+    // SharedActive copies the shared build (no second TicketGridColumnsBuilder run) so a
+    // later cross-backend focus switch still finds this pane's own column set cached.
     if (!pane.cachedColumnsValid || pane.cachedColumnsCatalogRevision != gridFrameCtx_.catalogRevision ||
         pane.cachedColumnsViewsRevision != gridFrameCtx_.viewsRevision || pane.cachedColumnsViewId != paneView->Id) {
-        pane.cachedColumns = TicketGridColumnsBuilder::Build(*paneView, catalogIndex);
+        pane.cachedColumns = (source == PaneColumnsSource::SharedActive)
+                                 ? gridFrameCtx_.columns
+                                 : TicketGridColumnsBuilder::Build(*paneView, catalogIndex);
         pane.cachedColumnsCatalogRevision = gridFrameCtx_.catalogRevision;
         pane.cachedColumnsViewsRevision = gridFrameCtx_.viewsRevision;
         pane.cachedColumnsViewId = paneView->Id;
         pane.cachedColumnsValid = true;
     }
-    return pane.cachedColumns;
+    return (source == PaneColumnsSource::SharedActive) ? gridFrameCtx_.columns : pane.cachedColumns;
 }
 
 // View-switch + grid-context-change bookkeeping. Split out of drawActiveProjectWindow under the
