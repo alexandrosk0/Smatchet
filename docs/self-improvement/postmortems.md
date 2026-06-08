@@ -27,6 +27,41 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-07 · PR #945, #953 · cr-out-of-band overrides — legitimate (findings triaged out-of-band, none dropped)
+
+### What escaped
+PR #945 (multi-grid Slice 1a, GridLiveContext extraction) and PR #953 (full
+vsync toggle) each merged with the `cr-out-of-band` label, downgrading
+CodeRabbit's `COMMENTED + actionable` block to WARN. Override-label use owes a
+postmortem per AGENTS.md regardless of legitimacy.
+
+### Root cause
+Blameless — designed use of the label, not a hole. Both PRs were reviewed
+out-of-band of the CodeRabbit merge gate during the 2026-06-07 sprint:
+- **#945**: the in-repo `code-review` agent (opus/high) reviewed pre-merge and
+  caught 2 HIGH raw-pointer-across-async (backend-latch) bugs, fixed in-branch
+  before merge. CR's COMMENTED findings were triaged against that pass.
+- **#953**: CR's actionable findings were triaged into follow-up PR #966
+  (`fix(vsync): honour --vsync/--no-vsync on hidden-window boot + config.set
+  string forms (CR-953 follow-ups)`) — every actionable carried forward, none
+  dropped.
+
+### Preventing gate
+none — override legitimate (label used as designed: review happened
+out-of-band with a verifiable disposition for every actionable — in-branch
+fixes for #945, follow-up PR #966 for #953). One conformance residue found
+during this RCA: `merge-gates.md` says the label "MUST NOT stay on the PR
+post-merge", yet it was still on both PRs (and `perf-out-of-band` on #963) —
+all three stripped 2026-06-07. Residual class risk: the label *could*
+silently drop findings if applied without a disposition trail; a cheap
+tightening (label application must cite where each actionable was triaged,
+plus a janitor sweep for stale post-merge labels) is filed in the § Filed as
+entry rather than mandated here.
+
+### Filed as
+`docs/self-improvement/categories/process.md` 2026-06-07
+`cr-out-of-band-disposition-trail` (P3).
+
 ## 2026-06-07 · PR #963 · perf-out-of-band override merged the 100 Hz floor past a red required Perf PR-fast check
 
 ### What escaped

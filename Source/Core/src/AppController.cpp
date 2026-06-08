@@ -1554,7 +1554,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
             LOG_ERROR("AppController::InitBackends pending-queue backend_key stamp failed: %s", ex.what());
         }
     }
-    std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker)));
+    std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker, cfg)));
     if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {
@@ -1608,7 +1608,7 @@ void AppController::MaybeInstallGitHubFixtureFactory(const std::string& activeTr
     class FixtureGitHubFactory : public ITrackerBackendFactory {
       public:
         explicit FixtureGitHubFactory(const std::string& path) : path_(path) {}
-        std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType) override {
+        std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& cfg) override {
             const std::string lower = ToLowerAsciiCopy(trackerType);
             if (lower == "github") {
                 return std::make_unique<smatchet::github::GitHubFixtureBackend>(path_, std::string(), std::string(),
@@ -1616,7 +1616,7 @@ void AppController::MaybeInstallGitHubFixtureFactory(const std::string& activeTr
             }
             // Non-GitHub backends fall through to the default factory shape.
             DefaultTrackerBackendFactory fallback;
-            return fallback.Create(trackerType);
+            return fallback.Create(trackerType, cfg);
         }
 
       private:
