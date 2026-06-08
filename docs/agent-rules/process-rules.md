@@ -169,7 +169,7 @@ The deferred lint pipeline (`.claude/hooks/lint-cpp.sh` PostToolUse → `.claude
 
 | Harness | Mechanism for the ~80% target |
 |---|---|
-| Claude Code | `autoCompactEnabled: true` + `autoCompactWindow: <≈0.8 × window>` in `settings.json` (e.g. `160000` for a 200K window). Personal preference → user `~/.claude/settings.json`, never team-committed `.claude/settings.json`. |
+| Claude Code | Built-in **auto-compact**, toggled in the interactive `/config` menu (Auto-compact on) — it fires automatically as the context approaches the limit. The trigger point is **internal and not a settable numeric knob**, so the precise ~80% target is *not* configurable via settings; for a chosen point, run **`/compact`** (optionally `/compact <focus>`) by hand. NB: there is **no** `autoCompactEnabled` / `autoCompactWindow` settings key — auto-compact is a `/config` boolean, not a numeric `settings.json` value (do not add those keys; they are silent no-ops). |
 | Codex / OpenAI Agents | Built-in auto-summarisation; threshold not user-tunable — convention is advisory. |
 | Cursor | Built-in auto-summarise; not tunable — convention is advisory. |
 | Aider | Manual (`/tokens`, `/clear`) — operator applies the 80% target by hand. |
