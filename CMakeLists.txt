@@ -1623,6 +1623,17 @@ endif()
 if(SMATCHET_USE_PCH)
     target_precompile_headers(SmatchetStandalone PRIVATE
         "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include/SmatchetPch.h>")
+
+    # SmatchetCore_DX12 (Unreal-embedded DX12 lib) was PCH-less historically, yet
+    # ~64% of its ~225 TUs pull the heavy nlohmann/json.hpp. A json-ONLY PCH
+    # (SmatchetPchCoreDx12.h — deliberately no imgui.h / windows.h / GLFW so the
+    # DX12 backend defs and the no-glfw-in-core-headers gate stay intact)
+    # amortizes that parse across the target. Scoped separately from the
+    # Standalone PCH above because the two targets use different ImGui backends.
+    if(TARGET SmatchetCore_DX12)
+        target_precompile_headers(SmatchetCore_DX12 PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include/SmatchetPchCoreDx12.h>")
+    endif()
 endif()
 
 if(SMATCHET_IPO_ENABLED)
