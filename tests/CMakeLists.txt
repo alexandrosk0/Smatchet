@@ -88,6 +88,9 @@ add_executable(SmatchetTests
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
+    # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
+    # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
+    Core/GridPaneEvictionPolicy.test.cpp
     Core/MemoryTelemetry.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/MemoryTelemetry.cpp"
     # perf-p99-emitter — pure ring-buffer + percentile seam behind UiPerfMonitor's

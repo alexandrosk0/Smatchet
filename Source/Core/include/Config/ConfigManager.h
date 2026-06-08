@@ -139,6 +139,11 @@ struct TrackerConfig {
     // PR 3: max distinct projects retained in the on-disk field catalog cache; LRU evicted past cap.
     // 0/negative falls back to the in-cache default (16).
     int FieldCatalogCacheMaxProjects = 16;
+    // multi-grid-tabs Slice 5a (plan item 21): max HIDDEN grid panes that may retain an in-memory
+    // ticket snapshot before the LRU cap frees the least-recently-visible one (its rows survive in
+    // tickets_v2 — re-showing re-seeds). Visible/focused panes are never evicted. 0/negative falls
+    // back to the default (4).
+    int HiddenPaneResidentCap = 4;
     // Restores Settings -> Preferences window visibility on launch.
     bool ShowPreferencesWindow = false;
     // Restores Workspace -> Views & Queries window visibility on launch.

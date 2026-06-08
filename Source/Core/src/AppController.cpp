@@ -17,6 +17,7 @@
 
 #include "AppController.h"
 #include "GridContextDepsAdapter.h"
+#include "GridPaneEvictionPolicy.h"
 
 #include <algorithm>
 #include <array>
@@ -470,6 +471,12 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
     }
     it->second->lastVisibleAt = std::chrono::steady_clock::now();
     it->second->everVisible = true;
+    // LRU recency stamp (multi-grid Slice 5a): bump every frame the pane is visible so the
+    // hidden-pane memory cap evicts in reverse visibility order. UI thread only.
+    it->second->lastVisibleOrder = ++paneVisibilityClock_;
+    // Frame-recency stamp for the cap's visible/hidden classification — FPS-independent
+    // (the wall-clock lastVisibleAt above is kept only for the 30 s retirement grace).
+    it->second->lastVisibleFrame = paneFrameClock_;
     return it->second.get();
 }
 
@@ -482,7 +489,8 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
     it->second->initialSyncKicked = true;
     TrackerConfig cfgCopy = paneCfg;
     LaunchBackgroundTask([this, paneId, cfgCopy, viewId]() mutable {
-        /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms — smatchet_views.json bucket read off the UI thread
+        /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms — smatchet_views.json bucket + cached-ticket seed off the UI
+                                  // thread
         ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
         if (!viewId.empty()) {
             for (size_t i = 0; i < views.Views.size(); ++i) {
@@ -499,7 +507,29 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
                 }
             }
         }
-        mainThreadDispatcher.PostToMainThread([this, paneId, cfgCopy, views, viewId]() {
+        // Durable cross-restart pane snapshot (multi-grid Slice 5a, plan item 21, Deliverable 1):
+        // read this pane's LAST-synced rows from tickets_v2 off the UI thread, namespaced by the
+        // pane's OWN backend key (backend-key isolation — a GitHub pane reads only GitHub rows).
+        // Seeded into ActiveTickets on the main-thread hop below so the grid renders the cached
+        // snapshot instantly, before the live fetch completes (a restored pane is no longer a
+        // cold blank grid). GetAllTickets uses non-cached local statements, safe under the LCM's
+        // OPEN_FULLMUTEX connection.
+        std::vector<CachedTicket> seedTickets;
+        if (Cache) {
+            const std::string seedKey = ConfigManager::NormalizeViewsBackendKey(cfgCopy.TrackerType);
+            if (!seedKey.empty()) {
+                try {
+                    seedTickets = Cache->GetAllTickets(seedKey);
+                } catch (const std::exception& ex) {
+                    // Non-fatal: an unreadable cache just means no instant snapshot — the live
+                    // fetch still populates the grid. Logged, not swallowed (policy).
+                    LOG_WARN("AppController::EnsurePaneLiveSyncStarted seed read failed pane='%s' err=%s",
+                             paneId.c_str(), ex.what());
+                }
+            }
+        }
+        mainThreadDispatcher.PostToMainThread([this, paneId, cfgCopy, views, viewId,
+                                               seedTickets = std::move(seedTickets)]() mutable {
             // UI thread: the context may have been retired while the load ran — find() guards.
             std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator ctxIt = gridContexts_.find(paneId);
             if (ctxIt != gridContexts_.end()) {
@@ -523,7 +553,28 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
                     }
                 }
             }
+            // Kick the live fetch FIRST: for a fresh context SyncPaneWithBackend →
+            // SwapBackendIfTrackerChanged creates the backend (backendSwapped) and CLEARS
+            // ActiveTickets. Seeding before this would be wiped — so seed AFTER the swap.
             SyncPaneWithBackend(paneId, &cfgCopy, &views);
+            // Seed the just-cleared ActiveTickets with the durable cache rows so the grid shows
+            // the last snapshot immediately; the streaming fetch then UPSERTS by id (no double
+            // count — DrainPendingStreamingBatches updates-or-pushes per id) and the empty-fetch
+            // guard never wipes these rows before a real refresh confirms. Only seed an empty
+            // ActiveTickets (a fresh / re-shown husk) so we never clobber rows already applied.
+            if (!seedTickets.empty()) {
+                std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator seedIt = gridContexts_.find(paneId);
+                if (seedIt != gridContexts_.end()) {
+                    GridLiveContext& ctx = *seedIt->second;
+                    std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+                    if (ctx.ActiveTickets.empty()) {
+                        ctx.ActiveTickets = std::move(seedTickets);
+                        ctx.activeTicketsPublished_ =
+                            std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+                        ctx.ActiveTicketsRevision.fetch_add(1);
+                    }
+                }
+            }
         });
     });
 }
@@ -576,6 +627,9 @@ void AppController::SyncPaneWithBackend(const std::string& paneId, const Tracker
 
 void AppController::TickAllContexts() {
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    // One frame tick — panes drawn this frame stamp lastVisibleFrame with it; the LRU cap
+    // classifies visibility by frame recency (see paneFrameClock_).
+    ++paneFrameClock_;
     // Shared drain deadline across N panes' streaming applies (plan item 18): each
     // TicketSyncService::TickStreamingApply is internally budgeted (3 ms / 20 tickets), so N
     // visible panes applying at once could stack N× on one frame. The deadline bounds the
@@ -602,6 +656,69 @@ void AppController::TickAllContexts() {
         }
     }
     retireExpiredHiddenContexts_(start);
+    evictHiddenPanesOverCap_();
+}
+
+void AppController::evictHiddenPanesOverCap_() {
+    // Hidden-pane LRU memory cap (multi-grid Slice 5a, plan item 21, Deliverable 2). Builds the
+    // pure-decision candidate snapshot, then drops the least-recently-visible idle hidden pane's
+    // in-memory ActiveTickets while over cap. Rows survive in tickets_v2, so re-showing the pane
+    // re-seeds losslessly (initialSyncKicked is re-armed so EnsurePaneLiveSyncStarted re-runs).
+    std::vector<smatchet::HiddenPaneEvictionCandidate> candidates;
+    candidates.reserve(gridContexts_.size());
+    for (std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.begin();
+         it != gridContexts_.end(); ++it) {
+        GridLiveContext& ctx = *it->second;
+        smatchet::HiddenPaneEvictionCandidate c;
+        c.paneId = it->first;
+        // The default pane (permanent, holds the focused snapshot + offline-queue chain) and the
+        // focused pane are never hidden for cap purposes. A drawn pane stamps lastVisibleFrame
+        // with the current paneFrameClock_, so treating it as visible when drawn this frame or
+        // the previous one is FPS-independent (the old wall-clock window evicted a
+        // genuinely-visible pane at low FPS, flickering it — review finding).
+        c.isVisible =
+            it->first == kDefaultPaneId || it->first == focusedPaneId_ || (paneFrameClock_ - ctx.lastVisibleFrame) <= 1;
+        c.hasActiveSync = ctx.ticketSync_ && ctx.ticketSync_->IsActive();
+        {
+            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+            c.hasResidentRows = !ctx.ActiveTickets.empty();
+        }
+        c.lastVisibleOrder = ctx.lastVisibleOrder;
+        candidates.push_back(std::move(c));
+    }
+
+    for (;;) {
+        const std::string victimId = smatchet::ChooseHiddenPaneToEvict(candidates, hiddenPaneResidentCap_);
+        if (victimId.empty()) {
+            break;
+        }
+        std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(victimId);
+        if (it != gridContexts_.end()) {
+            GridLiveContext& ctx = *it->second;
+            {
+                std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+                std::vector<CachedTicket>().swap(ctx.ActiveTickets);
+                ctx.activeTicketsPublished_.reset();
+                // Bump the revision inside the lock — matches the seed + stale-drain paths so a
+                // reader never sees a null published pointer paired with the pre-bump revision.
+                ctx.ActiveTicketsRevision.fetch_add(1);
+            }
+            // Re-arm the one-shot first-sync latch so the next time this pane is shown,
+            // EnsurePaneLiveSyncStarted re-seeds from tickets_v2 + re-syncs (the cap dropped the
+            // in-memory snapshot, not the durable rows). Idle-only (busy panes are excluded by
+            // the policy), so no worker is racing this flag.
+            ctx.initialSyncKicked = false;
+            LOG_INFO("AppController: LRU-evicted hidden pane '%s' in-memory tickets (cap=%zu)", victimId.c_str(),
+                     hiddenPaneResidentCap_);
+        }
+        // Reflect the eviction in the local snapshot so the next iteration recomputes the count.
+        for (std::size_t i = 0; i < candidates.size(); ++i) {
+            if (candidates[i].paneId == victimId) {
+                candidates[i].hasResidentRows = false;
+                break;
+            }
+        }
+    }
 }
 
 void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now) {
@@ -1539,6 +1656,10 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
 
 std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     TrackerConfig cfg = ConfigManager::Load();
+
+    // Hidden-pane LRU cap (multi-grid Slice 5a, plan item 21): cache the config knob once so
+    // TickAllContexts never reads config on the per-frame path. 0/negative → default 4.
+    hiddenPaneResidentCap_ = cfg.HiddenPaneResidentCap > 0 ? static_cast<std::size_t>(cfg.HiddenPaneResidentCap) : 4;
 
     std::string activeTracker = cfg.TrackerType;
 

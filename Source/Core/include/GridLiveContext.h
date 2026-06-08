@@ -102,6 +102,18 @@ struct GridLiveContext {
     // (offlineQueue_ holds a reference chain through its deps adapter).
     std::chrono::steady_clock::time_point lastVisibleAt{};
     bool everVisible = false;
+    /// Monotonic LRU recency stamp (multi-grid Slice 5a, plan item 21): assigned from
+    /// AppController::paneVisibilityClock_ each frame the pane is visible (UI thread only, in
+    /// EnsurePaneContextLive). Smaller == less recently visible == evicted first by the
+    /// hidden-pane memory cap. A deterministic counter rather than a wall-clock so the
+    /// eviction order is reproducible in tests (mirrors the ActiveTicketsRevision pattern).
+    std::uint64_t lastVisibleOrder = 0;
+    /// Frame index (AppController::paneFrameClock_, bumped once per TickAllContexts frame) of
+    /// the last frame this pane was drawn. The hidden-pane cap classifies "visible" by frame
+    /// recency (drawn this/last frame) rather than wall-clock elapsed, so a genuinely-visible
+    /// non-focused pane is never misclassified as hidden under a low frame rate (vsync/power
+    /// throttle) — which would evict its snapshot and flicker/re-sync a pane the user is viewing.
+    std::uint64_t lastVisibleFrame = 0;
     /// One-shot latch for AppController::EnsurePaneLiveSyncStarted (UI thread only):
     /// a non-focused visible pane's first sync is kicked exactly once per context
     /// generation (a retired-then-reshown pane gets a fresh context → fresh kick).
