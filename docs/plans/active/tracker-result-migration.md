@@ -183,5 +183,5 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,
-2. `git mv docs/plans/active/tracker-result-migration.md docs/plans/shipped/tracker-result-migration.md`,
+2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md` (slug = `tracker-result-migration`),
 3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
